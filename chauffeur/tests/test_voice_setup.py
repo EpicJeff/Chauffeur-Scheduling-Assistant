@@ -165,6 +165,47 @@ class SatelliteDialogTests(unittest.TestCase):
                                    voice.context({'ha_instance_id': 'ha', 'satellite_id': KEY[1], 'device_id': 'device',
                                                   'request_id': 'r-closed', 'observed_at': time.time()}, True)))
 
+    def test_bare_digits_after_the_name_are_the_pin(self):
+        """Device, 2026-10-13: it took several tries to get past the name and
+        PIN. After a name, a reply of digits alone is the PIN."""
+        self.say('set up my voice'); self.say("it's Jeff")
+        speech, cont = self.say('one two three four')
+        self.assertIn(fp.QUESTIONS[0], speech, f'bare digits were not taken as the PIN: {speech}')
+
+    def test_bare_cancel_during_a_check_cancels_and_never_checks(self):
+        """Device, 2026-10-13: "cancel" during a check was scored as the
+        check's answer and came back "your phone voice works here"."""
+        fp._save([{'member_id': 'jeff', 'key': ['phone', 'jeff'], 'vector': vector(0), 'revision': fp.REVISION,
+                   'consent_actor': 'jeff', 'created_at': time.time(), 'checks': {}, 'calibrated': False,
+                   'provenance': 'phone', 'device_id': 'phone'}])
+        self.say('check my voice'); self.say("it's Jeff"); self.say('my PIN is one two three four')
+        speech, cont = self.say('cancel')
+        self.assertEqual(speech, 'Voice setup cancelled.'); self.assertFalse(cont)
+        self.assertEqual(fp.profiles()[0]['checks'], {}, 'cancel was scored as a check')
+        self.assertFalse(voice_setup._dialogs)
+
+    def test_a_setup_dialog_waits_the_enrollment_time_for_its_sample(self):
+        """Device, 2026-10-13: every check answer came back "a little longer"
+        because consume() waited only 0.4 s for the embedding of a ten-second
+        answer. With a dialog open it waits the enrollment's 3 s."""
+        self.say('check my voice')
+        waits = []
+
+        class Future:
+            def result(self, timeout=None):
+                waits.append(timeout); return vector(0), 8.0
+        ctx = voice.context({'ha_instance_id': 'ha', 'satellite_id': KEY[1], 'device_id': 'device',
+                             'request_id': 'r-wait', 'observed_at': time.time()}, True)
+        fp._observations['obs'] = {'key': ('ha', KEY[1], 'device', 'run', 'r-wait'), 'revision': ctx.service_revision,
+                                   'future': Future(), 'expires': time.time() + 60, 'enrollment_id': None}
+        with patch.object(fp, 'consume', wraps=None):
+            pass
+        patch.stopall()   # drop the scripted consume for this one call
+        patch.object(fp, 'model_ready', return_value=True).start()
+        row = fp.consume(ctx, {'observation_id': 'obs', 'device_id': 'device', 'run_id': 'run', 'utterance_id': 'r-wait'})
+        self.assertEqual(waits, [3], f'a setup dialog did not get the enrollment wait: {waits}')
+        self.assertEqual(row['seconds'], 8.0)
+
     def test_turn_on_recognition_by_name_is_a_parent_act(self):
         fp.begin(voice.context({'ha_instance_id': 'ha', 'satellite_id': KEY[1], 'device_id': 'device',
                                 'request_id': 'r', 'observed_at': time.time()}, True), 'lily', 'jeff', exclude=vector(0))

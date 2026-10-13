@@ -430,6 +430,15 @@ def intercept(text: str, ctx: VoiceContext, language='en') -> dict | None:
         return {'status': 'identity', 'message': f"Hi {member.get('name')}." + (' Say your PIN to verify here.' if row['pin_pending'] else '')}
 
 
+def expect_pin(installation, satellite):
+    """After a setup dialog names the room, bare digits are the PIN (the
+    intercept only reads a numeric reply while pin_pending is set)."""
+    with _lock:
+        row = _sessions.get((installation, satellite))
+        if row and row.get('member_id'):
+            row['pin_pending'] = True
+
+
 def challenge(ctx):
     with _lock:
         row = _sessions.get((ctx.ha_instance_id, ctx.satellite_id))

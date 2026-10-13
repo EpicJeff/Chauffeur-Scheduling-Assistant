@@ -8,6 +8,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import hashlib
+import logging
 import json
 import math
 from pathlib import Path
@@ -38,6 +39,7 @@ CHECK_QUESTION = 'Tell me what you did this morning, for about ten seconds.'
 PROMPTS = QUESTIONS   # the Config page and old tests read this name
 MIN_SAMPLE_SECONDS = 4
 MAX_RETRIES = 3
+logger = logging.getLogger(__name__)
 _lock = threading.RLock()
 _pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='voice-fingerprint')
 _slot = threading.BoundedSemaphore(1)
@@ -270,6 +272,15 @@ def consume(ctx, metadata, text=''):
         row = _observations.pop(oid)
         pending = _enrollments.get((ctx.ha_instance_id, ctx.satellite_id))
         setup_phrase = bool(pending and pending.get('awaiting'))
+        if not setup_phrase:
+            # A setup dialog's PIN anchor and check answer are long samples
+            # too (device, 2026-10-13: every check answer timed out at .4 s
+            # and was reported as "a little longer").
+            try:
+                from services import voice_setup
+                setup_phrase = (ctx.ha_instance_id, ctx.satellite_id) in voice_setup._dialogs
+            except Exception:
+                pass
     if 'future' in row:
         try:
             # Evidence is best effort; a timeout never clears the current identity.
@@ -470,6 +481,8 @@ def check(key, member_id, evidence, anchor):
         competing = max((score(vector, r['vector']) for r in rivals), default=-1)
         own = score(vector, row['vector'])
         ok = own >= THRESHOLD and own - competing >= MARGIN
+        logger.info(f"[voice-setup] check on {_key_str(key)}: voiced={evidence.get('seconds'):.1f}s own={own:.2f} "
+                    f"rival={competing:.2f} -> {'checked' if ok else 'does_not_transfer'}")
         row.setdefault('checks', {})[_key_str(key)] = 'checked' if ok else 'does_not_transfer'
         _save(rows)
     if ok:

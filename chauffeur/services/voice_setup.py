@@ -104,6 +104,7 @@ def _verify_turn(ctx, text, want_parent):
     if refreshed.level == 'verified' and want_parent:
         return refreshed, _reply("That is not a parent's PIN. A parent's PIN, please.", True)
     if refreshed.member_id and refreshed.level != 'verified' and out.get('status') == 'identity':
+        identity.expect_pin(ctx.ha_instance_id, ctx.satellite_id)
         return refreshed, _reply(out.get('message', '') + ' Say your PIN.', True)   # named; the PIN is next
     return refreshed, _reply(out.get('message', 'Say your PIN.') + ' Or say cancel voice setup.', True)
 
@@ -130,6 +131,8 @@ def intercept(text, ctx, evidence, conversation_id=None):
             if d['expires_at'] <= time.time():
                 _dialogs.pop(k, None)
         d = _dialogs.get(key)
+        if d is not None and low in ('cancel', 'stop', 'never mind', 'nevermind', 'quit', 'cancel voice setup', 'stop voice setup'):
+            low = 'cancel voice setup'
         if d is None and low != 'cancel voice setup':
             pending = fp._enrollments.get(key)
             if pending and pending.get('door') == 'satellite' and pending.get('phase') == 'questions':
@@ -178,6 +181,7 @@ def intercept(text, ctx, evidence, conversation_id=None):
             if member.get('role') == 'parent':
                 d['parent_id'] = member['id']
             identity.intercept(f"it's {member['name']}", ctx)   # names the session so the PIN verifies this member
+            identity.expect_pin(*key)                             # and bare digits count as the PIN
             return _reply('Say your PIN.', True)
 
         if phase == 'consent_parent':
