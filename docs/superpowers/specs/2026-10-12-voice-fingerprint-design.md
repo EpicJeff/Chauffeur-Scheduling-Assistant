@@ -164,4 +164,4 @@ The user explicitly chose missing-evidence continuity: only usable, confident co
 
 Disabled/archived members are excluded from matching but their stored templates remain intact. Enrollment or deletion of another member preserves those rows. Explicit voice/member deletion removes them. Enrollment tolerates bounded transcript slips while retaining exact observation/enrollment correlation and audio/held-out checks. Speech during active enrollment gets deterministic setup guidance or cancellation and never falls through to the chat model. A missing STT delegate presents an unavailable engine with safe empty capability lists.
 
-The guided phone replacement is specified in [App voice](2026-10-12-app-voice-design.md). Phone microphone capture and portable profiles are design only in this revision.
+Phone chat is specified independently in [App voice](2026-10-12-app-voice-design.md). Guided phone enrollment and portable profiles are deferred until the [cross-microphone experiment](../experiments/2026-10-13-phone-voice-feasibility.md) demonstrates a useful result. A failed experiment favors spoken satellite enrollment.
