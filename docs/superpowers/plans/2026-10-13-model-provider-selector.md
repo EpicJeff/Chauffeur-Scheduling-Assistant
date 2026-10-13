@@ -179,7 +179,7 @@ def scenario_candidates_dispatch_through_call_model():
         res = mp.call_pool_json('interactive', 'A', 'sys', 'hi', settings=CLAUDE, attempts=attempts)
         check(res.get('_model') == 'anthropic:claude-haiku-5-5', f'the prefixed id is the _model: {res}')
         check(seen == [('anthropic:claude-haiku-5-5', 'A')], f'call_model got the prefixed id and the claude key: {seen}')
-        check(attempts == ['anthropic:claude-haiku-5-5'], 'attempts records the prefixed id')
+        # `attempts` is written at the wire by llm_budget.urlopen (Task 3's tests); a faked call_model sends nothing.
     finally:
         llm.call_model = real
 

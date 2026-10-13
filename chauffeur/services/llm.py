@@ -64,7 +64,16 @@ def test_llm_connection(provider: str, url: str = None, api_key: str = None, mod
             
     return False, "Invalid provider selected."
 
-def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.1, tools: list = None, timeout_s: int = 180, images: list = None, metrics: dict = None, max_output_tokens: int = None, transient_retries: int = 2, thinking_level: str = None, strict_json: bool = False, response_schema: dict = None, use_system_instruction: bool = False) -> dict:
+def call_model(model_id: str, api_key: str, system_prompt: str, user_prompt: str, text: bool = False, **kw) -> dict:
+    """Dispatch by the id's provider prefix (model_pools.split_model): the
+    bare id goes on the wire. `text=True` asks for prose back ({'text': ...})
+    instead of parsed JSON."""
+    from services import model_pools
+    prov, bare = model_pools.split_model(model_id)
+    return _call_llm_json(prov, '', api_key, bare, system_prompt, user_prompt, text=text, **kw)
+
+
+def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.1, tools: list = None, timeout_s: int = 180, images: list = None, metrics: dict = None, max_output_tokens: int = None, transient_retries: int = 2, thinking_level: str = None, strict_json: bool = False, response_schema: dict = None, use_system_instruction: bool = False, text: bool = False) -> dict:
     from services.app_voice import current as phone_voice, MODEL_ATTEMPT_TIMEOUT
     phone_turn = phone_voice.get()
     if phone_turn is not None:

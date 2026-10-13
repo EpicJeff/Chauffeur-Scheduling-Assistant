@@ -72,6 +72,48 @@ DEFAULT_POOLS = {
     'cu': ["gemini-3.8-flash"],
 }
 
+PROVIDERS = ('gemini', 'anthropic', 'openai')
+
+# Each paid provider is a column of the same tier table (spec
+# docs/superpowers/specs/2026-10-13-model-provider-selector-design.md §1).
+# Bare ids here; _pool stamps the provider prefix on so every id that leaves
+# this module says where it goes. Gemma is a Gemini free-tier pool: empty
+# elsewhere, and an empty pool contributes nothing to a chain.
+PROVIDER_POOLS = {
+    'anthropic': {
+        'lite': ['claude-haiku-5-5'],
+        'flash': ['claude-sonnet-5-5'],
+        'gemma': [],
+        'pro': ['claude-opus-5-5'],
+        'cu': ['claude-sonnet-5-5'],
+    },
+    'openai': {
+        'lite': ['gpt-6-luna'],
+        'flash': ['gpt-6.1-sol'],
+        'gemma': [],
+        'pro': ['gpt-6.1-sol'],
+        'cu': ['gpt-6.1-sol'],
+    },
+}
+
+
+def split_model(model_id: str):
+    """('anthropic', 'claude-haiku-5-5') for a prefixed id; a bare id is
+    Gemini. A 'models/' path is Gemini's own namespace, never a prefix."""
+    head, sep, rest = (model_id or '').partition(':')
+    if sep and head in PROVIDER_POOLS and rest:
+        return head, rest
+    return 'gemini', model_id or ''
+
+
+def provider(settings: dict) -> str:
+    return (settings or {}).get('llm_provider') or 'gemini'
+
+
+def _prefixed(prov: str, bare: str) -> str:
+    return bare if prov == 'gemini' else f'{prov}:{bare}'
+
+
 TIER_CHAINS = {
     'interactive': ['lite', 'gemma'],
     'background': ['gemma', 'lite'],
@@ -102,6 +144,9 @@ def _pool(name: str, settings: dict) -> list:
     raw = (settings or {}).get(f'model_pool_{name}') or ''
     if raw.strip():
         return [m.strip() for m in raw.split(',') if m.strip()]
+    prov = provider(settings)
+    if prov in PROVIDER_POOLS:
+        return [_prefixed(prov, m) for m in PROVIDER_POOLS[prov].get(name, [])]
     if name == 'gemma':
         found = _discovered_gemma()
         if found:
@@ -200,6 +245,8 @@ def _maybe_discover(tier: str, api_key: str, settings: dict, wait: bool = False)
     call uses the list as it stands). One look at a time."""
     if not api_key or 'gemma' not in TIER_CHAINS.get(tier, []):
         return
+    if provider(settings) != 'gemini':
+        return          # discovery reads the Gemini key's model list; another provider has no Gemma
     if ((settings or {}).get('model_pool_gemma') or '').strip():
         return
     if not gemma_discovery_due() or not _discovery_lock.acquire(blocking=False):
@@ -217,17 +264,56 @@ def _maybe_discover(tier: str, api_key: str, settings: dict, wait: bool = False)
         t.join()
 
 
-def api_key_for_pool(pool_name: str, settings: dict) -> str:
-    """The pro and cu pools bill the paid key; every other pool stays on the
-    free key. This helper is the ONLY reader of llm_gemini_paid_api_key — the
-    source-pin test in test_missions_pins.py keeps all paid-key reads here.
-    Foreground paid fallback also resolves its key through this helper.
-    Missing paid key returns '' so a
-    caller fails loudly instead of quietly billing the free key."""
+def api_key_for(model_id: str, pool_name: str, settings: dict) -> str:
+    """The key an id bills. Gemini: the pro and cu pools bill the paid key,
+    every other pool the free key. This helper is the ONLY reader of
+    llm_gemini_paid_api_key — the source-pin test in test_missions_pins.py
+    keeps all paid-key reads here. Claude and OpenAI have one key each; the
+    pro/cu distinction is a Gemini free-tier artefact. A missing key returns
+    '' so a caller fails loudly instead of quietly billing another key."""
     s = settings or {}
+    prov, _ = split_model(model_id)
+    if prov == 'anthropic':
+        return s.get('llm_anthropic_api_key', '') or ''
+    if prov == 'openai':
+        return s.get('llm_openai_api_key', '') or ''
     if pool_name in ('pro', 'cu'):
         return s.get('llm_gemini_paid_api_key', '') or ''
     return s.get('llm_gemini_api_key', '') or ''
+
+
+def api_key_for_pool(pool_name: str, settings: dict) -> str:
+    """The key for a pool's first model under the selected table. Kept with
+    its old signature for the callers that only know a pool name."""
+    models = _pool(pool_name, settings)
+    return api_key_for(models[0] if models else '', pool_name, settings)
+
+
+def credentials(tier: str, settings: dict = None):
+    """(model_id, api_key) for a tier under the selected provider, or
+    ('', '') when that provider has no key. Replaces the 'no Gemini key'
+    preflights (spec §1): a Claude household is set up when it has a Claude key."""
+    if settings is None:
+        from services.storage import get_settings
+        settings = get_settings()
+    chain = TIER_CHAINS.get(tier) or ['lite']
+    model = resolve_model(tier, settings)
+    key = api_key_for(model, chain[0], settings)
+    return (model, key) if key else ('', '')
+
+
+def has_credentials(settings: dict = None) -> bool:
+    if settings is None:
+        from services.storage import get_settings
+        settings = get_settings()
+    if provider(settings) == 'ollama':
+        return True
+    return bool(credentials('interactive', settings)[1])
+
+
+def is_lite(model_id: str, settings: dict) -> bool:
+    """The model is in the selected provider's lite pool (the voice path)."""
+    return model_id in _pool('lite', settings)
 
 
 def _next_midnight_pacific() -> float:
@@ -248,7 +334,7 @@ def note_failure(model: str, err_str: str, paid: bool = False):
     err = str(err_str)
     low = err.lower()
     if "429" in err:
-        if "perday" in low or "per day" in low or "daily" in low:
+        if split_model(model)[0] == 'gemini' and ("perday" in low or "per day" in low or "daily" in low):
             until = _next_midnight_pacific()
             logger.warning(f"[model-pools] {model} daily quota exhausted — "
                            f"cooling down until midnight Pacific")
@@ -291,7 +377,9 @@ def models_for(tier: str, settings: dict = None, paid: bool = False) -> list:
         settings = get_settings()
     from services.app_voice import current as phone_voice
     if phone_voice.get() is not None:
-        chain = list(dict.fromkeys(m for m in _pool('lite', settings) if 'flash-lite' in m))
+        # The provider's lite pool; for Gemini, flash-lite only, as before.
+        chain = list(dict.fromkeys(m for m in _pool('lite', settings)
+                                   if split_model(m)[0] != 'gemini' or 'flash-lite' in m))
     else:
         chain = []
         for pool_name in TIER_CHAINS[tier]:
@@ -319,6 +407,9 @@ def with_paid_fallback(tier, api_key, settings, background, call_chain):
     if settings is None:
         from services.storage import get_settings
         settings = get_settings()
+    first = models_for(tier, settings)
+    if first and split_model(first[0])[0] != 'gemini':
+        return call_chain(api_key, False)   # a paid provider has nothing to fall over to (spec §3)
     if settings.get('llm_paid_fallback_mode', 'ask') == 'off' or not api_key_for_pool('pro', settings):
         return call_chain(api_key, False)
     from services import paid_fallback
@@ -440,13 +531,13 @@ def _call_candidates(tier, api_key, system_prompt, user_prompt, temperature, tim
                 return {'error': 'Paid fallback inactive or daily cap reached', 'transient': True}
         try:
             with llm_budget.request_scope(workflow, background), llm_budget.record_attempts(attempts):
-                res = _llm._call_llm_json('gemini', '', api_key, model, system_prompt,
-                                          user_prompt, temperature=temperature, timeout_s=t,
-                                          images=images, transient_retries=0,
-                                          strict_json=strict_json,
-                                          **({"response_schema": response_schema} if response_schema is not None else {}),
-                                          max_output_tokens=max_output_tokens,
-                                          **({"thinking_level": thinking_level} if thinking_level is not None else {}))
+                res = _llm.call_model(model, api_key, system_prompt,
+                                      user_prompt, temperature=temperature, timeout_s=t,
+                                      images=images, transient_retries=0,
+                                      strict_json=strict_json,
+                                      **({"response_schema": response_schema} if response_schema is not None else {}),
+                                      max_output_tokens=max_output_tokens,
+                                      **({"thinking_level": thinking_level} if thinking_level is not None else {}))
         except llm_budget.Deferred as e:
             # Only the workflow's own backoff stops a background call. A
             # penalised or used-up MODEL is a reason to try the next one,
@@ -484,16 +575,17 @@ def _call_candidates(tier, api_key, system_prompt, user_prompt, temperature, tim
             **({"deferred": True, "retry_at": deferred_until} if deferred_until and launched == 0 else {})}
 
 
-def pooled_or_direct(provider: str, url: str, api_key: str, model: str, tier: str,
+def pooled_or_direct(provider_name: str, url: str, api_key: str, model: str, tier: str,
                      system_prompt: str, user_prompt: str, temperature: float = 0.1,
                      timeout_s: int = 180, settings: dict = None) -> dict:
-    """Drop-in for _call_llm_json at provider-branched call sites: gemini goes
-    through the tier's pool chain (ignoring the passed model), ollama keeps its
-    single configured model."""
-    if provider == 'gemini':
+    """Drop-in for _call_llm_json at provider-branched call sites: Ollama keeps
+    its one configured model; every other provider goes through the tier's
+    pool chain on the selected table (retries, cooldowns, fallback), the
+    passed model ignored."""
+    if provider_name != 'ollama':
         return call_pool_json(tier, api_key, system_prompt, user_prompt,
                               temperature=temperature, timeout_s=timeout_s,
                               settings=settings)
     from services import llm as _llm
-    return _llm._call_llm_json(provider, url, api_key, model, system_prompt,
+    return _llm._call_llm_json(provider_name, url, api_key, model, system_prompt,
                                user_prompt, temperature=temperature, timeout_s=timeout_s)
