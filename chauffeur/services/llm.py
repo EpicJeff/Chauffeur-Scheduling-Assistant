@@ -5,9 +5,57 @@ from typing import List, Tuple, Dict
 from models.schemas import Rule, PriorityRule
 from services import llm_budget
 
+ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
+ANTHROPIC_MODELS_URL = 'https://api.anthropic.com/v1/models'
+OPENAI_URL = 'https://api.openai.com/v1/responses'
+OPENAI_MODELS_URL = 'https://api.openai.com/v1/models'
+DEFAULT_MAX_OUTPUT = 8192
+_EFFORT = {'low': 'low', 'medium': 'medium', 'high': 'high'}
+
+
+def effort_for(bare_model: str, thinking_level, is_pro: bool) -> str:
+    if thinking_level in _EFFORT:
+        return _EFFORT[thinking_level]
+    return 'medium' if is_pro else 'low'
+
+
+def _is_pro(bare_model: str) -> bool:
+    from services import model_pools
+    return any(bare_model in pools['pro'] for pools in model_pools.PROVIDER_POOLS.values())
+
+
+def _send_with_retries(req, timeout_s, transient_retries, model, label, metrics):
+    """Paid-provider transport with the same retry/error contract as Gemini."""
+    try:
+        for attempt in range(transient_retries + 1):
+            try:
+                with llm_budget.urlopen(req, timeout=timeout_s) as resp:
+                    return json.loads(resp.read().decode('utf-8'))
+            except urllib.error.HTTPError as e:
+                if e.code in (500, 502, 503, 504) and attempt < transient_retries:
+                    import time
+                    wait_s = 2 * (attempt + 1)
+                    print(f"{label} API returned {e.code} for {model} "
+                          f"(attempt {attempt + 1}/{transient_retries + 1}), retrying in {wait_s}s...")
+                    time.sleep(wait_s)
+                    continue
+                raise
+    except llm_budget.Deferred:
+        raise
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode('utf-8')
+        if metrics is not None:
+            metrics['http_status'] = e.code
+        if e.code == 429:
+            return {'error': f"429 Too Many Requests: {error_body}"}
+        raise RuntimeError(f"{label} API request failed: {str(e)}\nDetails: {error_body}")
+    except Exception as e:
+        raise RuntimeError(f"{label} API request failed: {str(e)}")
+
+
 def test_llm_connection(provider: str, url: str = None, api_key: str = None, model: str = None) -> Tuple[bool, str]:
     """
-    Tests the connection to Ollama or Gemini.
+    Tests the connection to the selected model provider.
     Returns: (success_bool, message_str)
     """
     if provider == 'ollama':
@@ -62,6 +110,33 @@ def test_llm_connection(provider: str, url: str = None, api_key: str = None, mod
         except Exception as e:
             return False, f"Unexpected error connecting to Gemini: {str(e)}"
             
+    elif provider in ('anthropic', 'openai'):
+        label = 'Claude' if provider == 'anthropic' else 'OpenAI'
+        if not api_key:
+            return False, f"{label} API key is required."
+        url = ANTHROPIC_MODELS_URL if provider == 'anthropic' else OPENAI_MODELS_URL
+        headers = ({'x-api-key': api_key, 'anthropic-version': '2023-06-01'} if provider == 'anthropic'
+                   else {'Authorization': f'Bearer {api_key}'})
+        try:
+            with llm_budget.urlopen(urllib.request.Request(url, headers=headers, method='GET'), timeout=8) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+            ids = [m.get('id') for m in data.get('data', [])]
+            from services import model_pools
+            table = sorted({m for pool in model_pools.PROVIDER_POOLS[provider].values() for m in pool})
+            missing = [m for m in table if m not in ids] + ([model] if model and model not in ids and model not in table else [])
+            n = f"{len(ids)} model" + ('' if len(ids) == 1 else 's')
+            if missing:
+                return True, f"Connected to {label} ({n} listed), but this key does not list: {', '.join(missing)}. Pick another model in the pool settings."
+            return True, f"Successfully connected to {label}! {n} listed."
+        except urllib.error.HTTPError as e:
+            try:
+                msg = json.loads(e.read().decode('utf-8')).get('error', {}).get('message', str(e))
+            except Exception:
+                msg = f"{e.code} {e.reason}"
+            return False, f"{label} API Error: {msg}"
+        except Exception as e:
+            return False, f"Unexpected error connecting to {label}: {str(e)}"
+
     return False, "Invalid provider selected."
 
 def call_model(model_id: str, api_key: str, system_prompt: str, user_prompt: str, text: bool = False, **kw) -> dict:
@@ -77,12 +152,14 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
     from services.app_voice import current as phone_voice, MODEL_ATTEMPT_TIMEOUT
     phone_turn = phone_voice.get()
     if phone_turn is not None:
-        if provider != 'gemini' or 'flash-lite' not in model:
+        from services import model_pools
+        from services.storage import get_settings
+        full = model if provider == 'gemini' else f'{provider}:{model}'
+        if provider == 'ollama' or not model_pools.is_lite(full, get_settings()):
             return {'error': 'That work needs the text/background path; voice uses the interactive lite tier.'}
         timeout_s = min(timeout_s, phone_turn.remaining(), MODEL_ATTEMPT_TIMEOUT)
         transient_retries = 0
-    # images: [{'mime': 'image/jpeg', 'b64': '<base64>'}] — Gemini only
-    # (attached as inline_data parts); the ollama branch ignores them.
+    # images: [{'mime': 'image/jpeg', 'b64': '<base64>'}]; Ollama ignores them.
     import json
     import urllib.request
     
@@ -124,6 +201,8 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
                     return {"tool_calls": tool_calls, "message": ""}
                 
                 raw_response = message.get('content', '')
+                if text:
+                    return {'text': raw_response.strip()}
         except Exception as e:
             raise RuntimeError(f"Ollama request failed: {str(e)}")
             
@@ -219,6 +298,8 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
                     return {"tool_calls": tool_calls, "message": text_resp}
 
                 raw_response = text_resp
+                if text:
+                    return {'text': raw_response.strip()}
             except (KeyError, IndexError, TypeError):
                 raise RuntimeError("Unexpected response format from Gemini API")
         except llm_budget.Deferred:
@@ -232,6 +313,72 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
             raise RuntimeError(f"Gemini API request failed: {str(e)}\nDetails: {error_body}")
         except Exception as e:
             raise RuntimeError(f"Gemini request failed: {str(e)}")
+    elif provider == 'anthropic':
+        content = [{'type': 'text', 'text': user_prompt}]
+        for img in (images or []):
+            content.append({'type': 'image', 'source': {
+                'type': 'base64', 'media_type': img.get('mime') or 'image/jpeg', 'data': img['b64']}})
+        payload = {
+            'model': model, 'max_tokens': max_output_tokens or DEFAULT_MAX_OUTPUT,
+            'system': system_prompt,
+            'messages': [{'role': 'user', 'content': content}],
+            'output_config': {'effort': effort_for(model, thinking_level, _is_pro(model))},
+        }
+        if response_schema is not None:
+            payload['output_config']['format'] = {'type': 'json_schema', 'schema': response_schema}
+        req = urllib.request.Request(
+            ANTHROPIC_URL, data=json.dumps(payload).encode('utf-8'), method='POST',
+            headers={'Content-Type': 'application/json', 'x-api-key': api_key, 'anthropic-version': '2023-06-01'})
+        data = _send_with_retries(req, timeout_s, transient_retries, model, 'Claude', metrics)
+        if isinstance(data, dict) and data.get('error'):
+            return data
+        if metrics is not None:
+            usage = data.get('usage') or {}
+            metrics.update({'promptTokenCount': usage.get('input_tokens', 0),
+                            'candidatesTokenCount': usage.get('output_tokens', 0),
+                            'modelVersion': model, 'finish_reason': data.get('stop_reason')})
+        if data.get('stop_reason') == 'refusal':
+            cat = (data.get('stop_details') or {}).get('category') or 'unspecified'
+            return {'error': f'refused: {cat}'}
+        if strict_json and data.get('stop_reason') != 'end_turn':
+            usage = data.get('usage') or {}
+            raise RuntimeError(f"Incomplete Claude JSON response (finish={data.get('stop_reason')}; output_tokens={usage.get('output_tokens', 0)}; limit={max_output_tokens})")
+        raw_response = ''.join(b.get('text', '') for b in (data.get('content') or []) if b.get('type') == 'text')
+        if text:
+            return {'text': raw_response.strip()}
+    elif provider == 'openai':
+        content = [{'type': 'input_text', 'text': user_prompt}]
+        for img in (images or []):
+            content.append({'type': 'input_image',
+                            'image_url': f"data:{img.get('mime') or 'image/jpeg'};base64,{img['b64']}",
+                            'detail': 'auto'})
+        payload = {
+            'model': model, 'instructions': system_prompt,
+            'input': [{'role': 'user', 'content': content}],
+            'max_output_tokens': max_output_tokens or DEFAULT_MAX_OUTPUT,
+            'reasoning': {'effort': effort_for(model, thinking_level, _is_pro(model))},
+        }
+        if response_schema is not None:
+            payload['text'] = {'format': {'type': 'json_schema', 'name': 'result', 'schema': response_schema, 'strict': False}}
+        elif strict_json:
+            payload['text'] = {'format': {'type': 'json_object'}}
+        req = urllib.request.Request(
+            OPENAI_URL, data=json.dumps(payload).encode('utf-8'), method='POST',
+            headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {api_key}'})
+        data = _send_with_retries(req, timeout_s, transient_retries, model, 'OpenAI', metrics)
+        if isinstance(data, dict) and data.get('error'):
+            return data
+        if metrics is not None:
+            usage = data.get('usage') or {}
+            metrics.update({'promptTokenCount': usage.get('input_tokens', 0),
+                            'candidatesTokenCount': usage.get('output_tokens', 0),
+                            'modelVersion': model, 'finish_reason': data.get('status')})
+        if strict_json and data.get('status') != 'completed':
+            raise RuntimeError(f"Incomplete OpenAI JSON response (status={data.get('status')}; reason={(data.get('incomplete_details') or {}).get('reason')}; limit={max_output_tokens})")
+        raw_response = ''.join(c.get('text', '') for item in (data.get('output') or []) if item.get('type') == 'message'
+                               for c in (item.get('content') or []) if c.get('type') == 'output_text')
+        if text:
+            return {'text': raw_response.strip()}
     else:
         raise ValueError(f"Unknown provider: {provider}")
         
