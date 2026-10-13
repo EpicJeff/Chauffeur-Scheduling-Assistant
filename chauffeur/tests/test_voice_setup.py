@@ -165,6 +165,19 @@ class SatelliteDialogTests(unittest.TestCase):
                                    voice.context({'ha_instance_id': 'ha', 'satellite_id': KEY[1], 'device_id': 'device',
                                                   'request_id': 'r-closed', 'observed_at': time.time()}, True)))
 
+    def test_a_bare_or_full_name_is_understood_in_setup_and_check(self):
+        """Device, 2026-10-13: "Tell me your name, then your PIN" over and
+        over. A name without a lead-in, or with a surname, must resolve."""
+        self.say('set up my voice')
+        speech, _ = self.say('Jeff Wilson')
+        self.assertIn('PIN', speech, speech)
+        self.say('cancel')
+        self.say('check my voice')
+        speech, _ = self.say('Jeff')
+        self.assertIn('PIN', speech, speech)
+        speech, _ = self.say('one two three four')
+        self.assertIn(fp.CHECK_QUESTION, speech, speech)
+
     def test_bare_digits_after_the_name_are_the_pin(self):
         """Device, 2026-10-13: it took several tries to get past the name and
         PIN. After a name, a reply of digits alone is the PIN."""

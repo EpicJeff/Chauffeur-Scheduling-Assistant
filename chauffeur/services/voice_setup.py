@@ -88,11 +88,44 @@ def _apply_switch(key, on):
         return _reply(str(error))
 
 
+def _members_named(spoken):
+    """Who a spoken name means: the full name, an alias, or a first name,
+    with or without a lead-in ("it's Jeff", "Jeff", "Jeff Wilson"). Device,
+    2026-10-13: the intercept's lead-in regex sent a bare name to "Tell me
+    your name, then your PIN" over and over."""
+    low = ' '.join((spoken or '').lower().split()).rstrip('.!?')
+    low = re.sub(NAME_LEAD, '', low)
+    low = re.sub(r"^(my name is|name's|name is)\s+", '', low)
+    if not low:
+        return []
+    people = [m for m in storage.get_all_members() if identity._active(m)]
+    exact = [m for m in people if low in identity.voice_names(m)]
+    if exact:
+        return exact
+    first = low.split()[0]
+    by_first = [m for m in people if (m.get('name', '').split() or [''])[0].casefold() == first
+                or any(n.split()[0] == first for n in identity.voice_names(m) if n)]
+    if len(by_first) == 1:
+        return by_first
+    # "Jeff Wilson" when the member is stored as "Jeff": the spoken name starts with theirs.
+    starts = [m for m in people if any(n and low.startswith(n + ' ') for n in identity.voice_names(m))]
+    return starts if len(starts) == 1 else by_first
+
+
 def _verify_turn(ctx, text, want_parent):
     """One credential turn through the ordinary intercept: the name when the
     room is unnamed, then the PIN. Returns (refreshed_context, reply) where a
     non-None reply means keep talking."""
     out = identity.intercept(text, ctx)
+    if out is None and not ctx.member_id:
+        # Not a PIN and not a lead-in name: resolve the name ourselves.
+        named = _members_named(text)
+        if len(named) == 1:
+            out = identity.intercept(f"it's {named[0]['name']}", ctx)
+            identity.expect_pin(ctx.ha_instance_id, ctx.satellite_id)
+            return _refresh(ctx), _reply(f"Hi {named[0]['name']}. Say your PIN.", True)
+        if len(named) > 1:
+            return _refresh(ctx), _reply('Which family member? Say the full name.', True)
     refreshed = _refresh(ctx)
     member = storage.get_member(refreshed.member_id) if refreshed.member_id else None
     if refreshed.level == 'verified' and member and (not want_parent or member.get('role') == 'parent'):
@@ -163,8 +196,7 @@ def intercept(text, ctx, evidence, conversation_id=None):
         phase = d['phase']
 
         if phase == 'who':
-            name = re.sub(NAME_LEAD, '', low)
-            matches = [m for m in storage.get_all_members() if identity._active(m) and name in identity.voice_names(m)]
+            matches = _members_named(text)
             if len(matches) != 1:
                 return _reply('Which family member? Say the full name.', True)
             member = matches[0]
@@ -185,7 +217,7 @@ def intercept(text, ctx, evidence, conversation_id=None):
             return _reply('Say your PIN.', True)
 
         if phase == 'consent_parent':
-            parents = identity.parents_named(re.sub(NAME_LEAD, '', low))
+            parents = [m for m in _members_named(text) if m.get('role') == 'parent']
             if len(parents) != 1:
                 return _reply('Which parent? Say the full name.', True)
             d['parent_id'] = parents[0]['id']
