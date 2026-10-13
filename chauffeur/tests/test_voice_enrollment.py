@@ -309,6 +309,11 @@ class ConfigWordsTests(unittest.TestCase):
         self.assertIn('profile.checks', src)
         self.assertIn('does not match', src.lower())
 
+    def test_config_says_short_answers_for_a_pooled_voice(self):
+        src = open(Path(__file__).resolve().parents[1] / 'templates' / 'config.html', encoding='utf-8').read()
+        self.assertIn('profile.pooled', src)
+        self.assertIn('short answers', src)
+
 
 if __name__ == '__main__':
     unittest.main()

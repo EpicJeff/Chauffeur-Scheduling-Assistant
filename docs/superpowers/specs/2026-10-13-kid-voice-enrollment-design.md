@@ -64,7 +64,7 @@ An adult can ask for the short questions too ("the short questions" or "the kid 
 - Thresholds: `THRESHOLD, MARGIN, CONTINUITY` and the rival margin are untouched. What is scored against them changes for a pooled check step (each short answer alone).
 - Activation: one household switch, a parent's spoken "yes" or Config.
 - Storage: `templates.json` gains only `pooled: true` on rows made this way; readers ignore it.
-- The phone door is unchanged in its steps; its child path already takes the parent's PIN at the start and keeps the "yes" tap before saving, since the phone session is the parent's own authenticated act. The adult satellite flow gains the consent fixes above (no child enrollment without an exclusion fingerprint; the parent's PIN instead of a yes before saving someone else's voice; the activation yes bound to its conversation), which it should have had.
+- The phone door is unchanged: it does not pool, and it has no closing confirmation (a present parent types the PIN on the child's screen at the start, which is the parent's own authenticated act). The adult satellite flow gains the consent fixes above (no child enrollment without an exclusion fingerprint; the parent's PIN instead of a yes before saving someone else's voice; the activation yes bound to its conversation), which it should have had.
 
 ## Risks and how they are met
 

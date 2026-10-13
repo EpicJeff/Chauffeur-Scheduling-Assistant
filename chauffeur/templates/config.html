@@ -1231,7 +1231,7 @@
                                     Leave it off if it assigns a wrong name. Short or noisy speech may remain unknown.</p>
                                 <template x-for="profile in voiceRecognition.profiles" :key="profile.member_id + ':' + profile.key.join(':')">
                                     <div class="flex gap-2 items-center flex-wrap">
-                                        <span class="text-xs" x-text="(members.find(m => m.id === profile.member_id)?.name || 'Family member') + ' · ' + (profile.provenance === 'phone' ? 'made on a phone' : 'made on this speaker') + ' · ' + (profile.calibrated ? 'five samples checked' : 'voices too similar — recognition unavailable')"></span>
+                                        <span class="text-xs" x-text="(members.find(m => m.id === profile.member_id)?.name || 'Family member') + ' · ' + (profile.provenance === 'phone' ? 'made on a phone' : 'made on this speaker') + (profile.pooled ? ' · short answers' : '') + ' · ' + (profile.calibrated ? 'five samples checked' : 'voices too similar — recognition unavailable')"></span>
                                         <template x-for="[where, state] in Object.entries(profile.checks || {})" :key="where">
                                             <span class="text-xs text-gray-400"
                                                   x-text="(voiceState.satellites.find(s => s.ha_instance_id + ':' + s.satellite_id === where)?.label || where) + ': '
