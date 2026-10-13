@@ -16,9 +16,13 @@ def vector(index=0):
 
 
 def wav(seconds=8):
+    """Speech-loud 16 kHz mono PCM: a square wave the real extractor accepts."""
+    import struct
+    frame = struct.pack('<h', 3000) * 40 + struct.pack('<h', -3000) * 40
     buf = io.BytesIO()
     with wave.open(buf, 'wb') as w:
-        w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(b'\x10\x00' * 16000 * seconds)
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+        w.writeframes(frame * (16000 * seconds // 80))
     return buf.getvalue()
 
 
@@ -34,7 +38,24 @@ class PhoneEnrollmentTests(unittest.TestCase):
         self.jeff = storage.create_member_token('jeff'); self.lily = storage.create_member_token('lily')
         patch.object(fp, 'model_ready', return_value=True).start()
         self.voices = [vector(0)] * 10
-        patch.object(fp, 'extract', lambda audio, metadata, enrollment=False: (self.voices.pop(0), 8.0)).start()
+
+        class Engine:
+            """A fake sherpa engine: the real extract() runs its metadata,
+            length and loudness checks, and only the vector comes from here."""
+            def create_stream(self): return self
+            def accept_waveform(self, sample_rate, waveform): pass
+            def input_finished(self): pass
+            def is_ready(self, stream): return True
+            def compute(self, stream): return self.next
+        engine = Engine()
+        real_extract = fp.extract
+        tests = self
+
+        def extract(audio, metadata, enrollment=False):
+            engine.next = tests.voices.pop(0)
+            with patch.object(fp, '_engine', return_value=engine):
+                return real_extract(audio, metadata, enrollment=enrollment)
+        patch.object(fp, 'extract', extract).start()
         patch.object(app_voice_audio, 'speak', lambda text: (b'ID3fake', 'audio/mpeg')).start()
         self.addCleanup(patch.stopall)
 

@@ -328,9 +328,13 @@ def phone_answer(member, enrollment_id, token, audio, content_type):
         raise ValueError('That voice setup has ended. Start again.')
     try:
         pcm = app_voice_audio.pcm(audio, content_type)
-        vec, seconds = fp.extract(pcm, {'sample_rate': 16000}, enrollment=True)
+        # The embedder wants the same description the satellite bridge sends.
+        vec, seconds = fp.extract(pcm, {'format': 'wav', 'codec': 'pcm', 'bit_rate': 16, 'channel': 1,
+                                        'sample_rate': 16000}, enrollment=True)
         evidence = {'vector': vec, 'seconds': seconds, 'enrollment_id': enrollment_id}
-    except ValueError:
+    except ValueError as error:
+        # Said to the person as "a little longer"; the real reason goes to the log.
+        logger.warning(f"[voice-setup] phone sample unusable: {error}")
         evidence = {'vector': None, 'seconds': 0, 'enrollment_id': enrollment_id}
     out = fp.answer(key, evidence, token=token)
     if out['status'] in ('accepted', 'retry') and key in fp._enrollments:
