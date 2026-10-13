@@ -17894,6 +17894,38 @@ def list_cancellations(days: int = 60, include_restored: bool = True):
     return [r for r in rows if (r.get('date') or '') >= floor]
 
 # --- Settings API ---
+class PaidFallbackSwitch(BaseModel):
+    active: bool
+
+
+@app.get("/api/ai/paid-fallback")
+def paid_fallback_status():
+    """What the AI drawer shows: whether the paid-key fallback is configured,
+    how many times the free tier failed lately, and whether it is on (until
+    when, how much of the daily cap is used). services/paid_fallback.py."""
+    from services import paid_fallback as _pf
+    return _pf.status(storage.get_settings() or {})
+
+
+@app.post("/api/ai/paid-fallback")
+def paid_fallback_switch(req: PaidFallbackSwitch, x_member_token: Optional[str] = Header(None)):
+    """A parent's own switch: on until the household's midnight, or off early.
+
+    Parent-gated the same way the rest of the money-adjacent levers are, and
+    a signed-in parent on an admin page is the ONLY way this is switched on
+    by hand: no agent tool exists for it, so the chat model can never turn
+    paid spending on because somebody typed "use the paid key". The
+    automatic path (mode auto) is a standing policy a parent set beforehand."""
+    from services import paid_fallback as _pf
+    require_parent_token(x_member_token)
+    settings = storage.get_settings() or {}
+    if req.active:
+        _pf.activate(settings, by='parent')
+    else:
+        _pf.deactivate()
+    return _pf.status(settings)
+
+
 @app.get("/api/settings")
 def get_settings():
     settings = storage.get_settings()

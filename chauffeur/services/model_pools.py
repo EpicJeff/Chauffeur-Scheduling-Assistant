@@ -92,7 +92,8 @@ TIER_CHAINS = {
     'mission_flash': ['flash'],
 }
 
-# model -> unix timestamp until which it is skipped
+# Free models use their id; paid cooldowns use (model, 'paid'). Keeping free
+# ids preserves existing diagnostics that inspect this mapping.
 _cooldowns: dict = {}
 _lock = threading.Lock()
 
@@ -219,8 +220,9 @@ def _maybe_discover(tier: str, api_key: str, settings: dict, wait: bool = False)
 def api_key_for_pool(pool_name: str, settings: dict) -> str:
     """The pro and cu pools bill the paid key; every other pool stays on the
     free key. This helper is the ONLY reader of llm_gemini_paid_api_key — the
-    source-pin test in test_missions_pins.py is the fence that keeps regular
-    traffic from ever spending paid money. Missing paid key returns '' so a
+    source-pin test in test_missions_pins.py keeps all paid-key reads here.
+    Foreground paid fallback also resolves its key through this helper.
+    Missing paid key returns '' so a
     caller fails loudly instead of quietly billing the free key."""
     s = settings or {}
     if pool_name in ('pro', 'cu'):
@@ -241,7 +243,7 @@ def _next_midnight_pacific() -> float:
     return tomorrow.timestamp()
 
 
-def note_failure(model: str, err_str: str):
+def note_failure(model: str, err_str: str, paid: bool = False):
     """Record a per-model failure so subsequent calls route around it."""
     err = str(err_str)
     low = err.lower()
@@ -266,7 +268,8 @@ def note_failure(model: str, err_str: str):
     else:
         return  # Parse and other errors are not a model-availability signal.
     with _lock:
-        _cooldowns[model] = max(until, _cooldowns.get(model, 0))
+        key = (model, 'paid') if paid else model
+        _cooldowns[key] = max(until, _cooldowns.get(key, 0))
 
 
 def reset_cooldowns():
@@ -279,7 +282,7 @@ def is_gemma(model: str) -> bool:
     return model.startswith("gemma")
 
 
-def models_for(tier: str, settings: dict = None) -> list:
+def models_for(tier: str, settings: dict = None, paid: bool = False) -> list:
     """Ordered candidate models for a tier, skipping cooled-down ones.
     If everything is cooling down, returns the full chain ordered by soonest
     cooldown expiry — the caller must always have something to try."""
@@ -296,11 +299,42 @@ def models_for(tier: str, settings: dict = None) -> list:
                 if m not in chain:
                     chain.append(m)
     now = time.time()
+    def cooldown(model):
+        return _cooldowns.get((model, 'paid') if paid else model, 0)
     with _lock:
-        ready = [m for m in chain if _cooldowns.get(m, 0) <= now]
+        ready = [m for m in chain if cooldown(m) <= now]
         if ready:
             return ready
-        return sorted(chain, key=lambda m: _cooldowns.get(m, 0))
+        return sorted(chain, key=cooldown)
+
+
+def with_paid_fallback(tier, api_key, settings, background, call_chain):
+    """Run a caller's chain, switching keys only for eligible foreground work.
+
+    call_chain(key, paid) retains the caller's request and time limits and
+    reserves each paid request with paid_fallback.count_call.
+    """
+    if background or tier not in ('interactive', 'vision', 'heavy'):
+        return call_chain(api_key, False)
+    if settings is None:
+        from services.storage import get_settings
+        settings = get_settings()
+    if settings.get('llm_paid_fallback_mode', 'ask') == 'off' or not api_key_for_pool('pro', settings):
+        return call_chain(api_key, False)
+    from services import paid_fallback
+    st = paid_fallback.status(settings)
+    paid = st['active']
+    res = call_chain(api_key_for_pool('pro', settings) if paid else api_key, paid)
+    if (not paid and isinstance(res, dict) and res.get('error') and res.get('transient')
+            and not res.get('deferred') and 'time budget' not in str(res['error']).lower()):
+        paid_fallback.note_throttle(settings)
+        if paid_fallback.status(settings)['active']:
+            res = call_chain(api_key_for_pool('pro', settings), True)
+    st = paid_fallback.status(settings)
+    if (isinstance(res, dict) and res.get('error') and st['configured']
+            and st['used_today'] >= st['cap']):
+        res['error'] = 'Paid fallback daily cap reached; ' + str(res['error'])
+    return res
 
 
 def resolve_model(tier: str, settings: dict = None) -> str:
@@ -360,11 +394,26 @@ def _call_chain(tier, api_key, system_prompt, user_prompt, temperature, timeout_
                 gemma_timeout_s, max_models, settings, images, background, workflow,
                 strict_json, max_output_tokens, attempts, total_timeout_s,
                 thinking_level, response_schema):
+    if settings is None and not background and tier in ('interactive', 'vision', 'heavy'):
+        from services.storage import get_settings
+        settings = get_settings()
+    deadline = None if total_timeout_s is None else time.monotonic() + total_timeout_s
+    return with_paid_fallback(tier, api_key, settings, background,
+        lambda key, paid: _call_candidates(
+            tier, key, system_prompt, user_prompt, temperature, timeout_s,
+            gemma_timeout_s, max_models, settings, images, background, workflow,
+            strict_json, max_output_tokens, attempts, deadline,
+            thinking_level, response_schema, paid))
+
+
+def _call_candidates(tier, api_key, system_prompt, user_prompt, temperature, timeout_s,
+                     gemma_timeout_s, max_models, settings, images, background, workflow,
+                     strict_json, max_output_tokens, attempts, deadline,
+                     thinking_level, response_schema, paid):
     from services import llm as _llm
     from services import llm_budget
     last_err = "no models available"
     transient = False
-    deadline = None if total_timeout_s is None else time.monotonic() + total_timeout_s
     launched = 0
     deferred_until = None
     # Background work makes one attempt — except that a SERVER failure
@@ -373,7 +422,7 @@ def _call_chain(tier, api_key, system_prompt, user_prompt, temperature, timeout_
     # whole workflow for hours while its twin was healthy. Never past Gemma:
     # the Lite pool's daily allowance is shared with interactive chat.
     bg_limit = 1
-    for model in models_for(tier, settings):
+    for model in models_for(tier, settings, paid=paid):
         if launched >= (bg_limit if background else max_models):
             break
         if background and launched and not is_gemma(model):
@@ -385,6 +434,10 @@ def _call_chain(tier, api_key, system_prompt, user_prompt, temperature, timeout_
                 return {"error": "Model pool time budget exhausted; last error: " + last_err,
                         "transient": True}
             t = min(t, remaining)
+        if paid:
+            from services import paid_fallback
+            if not paid_fallback.count_call(settings):
+                return {'error': 'Paid fallback inactive or daily cap reached', 'transient': True}
         try:
             with llm_budget.request_scope(workflow, background), llm_budget.record_attempts(attempts):
                 res = _llm._call_llm_json('gemini', '', api_key, model, system_prompt,
@@ -407,7 +460,7 @@ def _call_chain(tier, api_key, system_prompt, user_prompt, temperature, timeout_
         except Exception as e:
             launched += 1
             last_err = str(e)
-            note_failure(model, last_err)
+            note_failure(model, last_err, paid=paid)
             transient = any(c in last_err for c in ("429", "500", "502", "503", "504",
                                                     "timed out", "timeout"))
             if background and transient and is_gemma(model):
@@ -420,7 +473,7 @@ def _call_chain(tier, api_key, system_prompt, user_prompt, temperature, timeout_
         launched += 1
         if isinstance(res, dict) and res.get("error") and "429" in str(res["error"]):
             last_err = str(res["error"])
-            note_failure(model, last_err)
+            note_failure(model, last_err, paid=paid)
             transient = True
             logger.warning(f"[model-pools] {model} rate limited — trying next")
             continue

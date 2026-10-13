@@ -468,6 +468,16 @@ ENTRIES: List[dict] = [
     _e('llm_provider', 'ai', 'Model provider', 'Gemini or a local Ollama.'),
     _e('llm_gemini_api_key', 'ai', 'Gemini API key',
        'The key every extraction, suggestion and chat turn runs on.'),
+    _e('llm_paid_fallback_mode', 'ai', 'Paid fallback mode',
+       'When the free tier is throttled, ask a parent (default), switch to the '
+       'paid key automatically, or stay off. Background work always stays free.',
+       page=_CONFIG, anchor='general'),
+    _e('llm_paid_fallback_failures', 'ai', 'Failures before paid fallback',
+       'How many foreground calls must fail in 30 minutes before asking or '
+       'switching to the paid key. Default 3.', page=_CONFIG, anchor='general'),
+    _e('llm_paid_fallback_daily_cap', 'ai', 'Paid fallback daily request cap',
+       'Maximum paid fallback requests per local day, including failed requests. '
+       'Default 300; fallback ends at local midnight.', page=_CONFIG, anchor='general'),
     _e('llm_gemini_model', 'ai', 'Gemini model', 'Overrides the default model pool.'),
     _e('web_research_enabled', 'ai', 'Web research',
        'Lets Argyle look things up on the web and answer with sources. Off '

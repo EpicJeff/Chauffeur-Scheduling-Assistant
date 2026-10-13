@@ -533,6 +533,70 @@
                             </div>
                         </div>
 
+                        <!-- The paid-key fallback (v2.499.412). When Google sheds
+                             free-tier load, chat answers "overloaded"; the paid key
+                             (set in the Missions drawer) can run the same models with
+                             priority. A standing policy with a daily cap, or a one-time
+                             switch a parent flips here after the free tier has failed
+                             a set number of times. services/paid_fallback.py. -->
+                        <div class="mt-2 mb-6 pt-6 border-t border-gray-700" id="paid-fallback">
+                            <h3 class="text-gray-200 font-semibold mb-1">When the free tier is throttled</h3>
+                            <p class="text-gray-500 text-sm mb-4">
+                                Google sheds free-tier load on busy mornings and Argyle answers "overloaded".
+                                The paid Gemini key (Missions drawer) can run the same models with priority.
+                                Nothing here happens until that key is set and the free tier has failed the
+                                number of times below within thirty minutes.
+                            </p>
+                            <template x-if="paidFallback && !paidFallback.configured">
+                                <p class="text-amber-300 text-sm mb-4"
+                                   x-text="paidFallback.mode === 'off' ? 'Switched off.' : 'No paid key is set, so this cannot do anything yet.'"></p>
+                            </template>
+                            <template x-if="paidFallback && paidFallback.active">
+                                <div class="mb-4 p-3 rounded-lg bg-emerald-900/40 border border-emerald-700 text-sm text-emerald-100 flex flex-wrap items-center gap-3">
+                                    <span>Paid fallback is on until <span x-text="paidFallbackUntil()"></span>
+                                        (<span x-text="paidFallback.used_today"></span> of <span x-text="paidFallback.cap"></span> calls used,
+                                        switched on by <span x-text="paidFallback.activated_by === 'auto' ? 'the policy' : 'a parent'"></span>).</span>
+                                    <button type="button" @click="switchPaidFallback(false)"
+                                        class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-xs">Switch off now</button>
+                                </div>
+                            </template>
+                            <template x-if="paidFallback && paidFallback.configured && !paidFallback.active">
+                                <div class="mb-4 p-3 rounded-lg bg-gray-900/60 border border-gray-700 text-sm text-gray-300 flex flex-wrap items-center gap-3">
+                                    <span x-text="paidFallback.failures_recent
+                                        ? 'The free tier failed ' + paidFallback.failures_recent + ' time' + (paidFallback.failures_recent === 1 ? '' : 's') + ' in the last 30 minutes.'
+                                        : 'The free tier is answering normally.'"></span>
+                                    <button type="button" @click="switchPaidFallback(true)"
+                                        class="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded text-xs">Use paid key until midnight</button>
+                                </div>
+                            </template>
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                <div>
+                                    <label for="llmPaidFallbackMode"
+                                        class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">At the threshold</label>
+                                    <select id="llmPaidFallbackMode" x-model="llmPaidFallbackMode" @change="saveSettings(); loadPaidFallback()"
+                                        class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white">
+                                        <option value="ask">Ask the parents once a day</option>
+                                        <option value="auto">Switch to the paid key until midnight</option>
+                                        <option value="off">Do nothing</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label for="llmPaidFallbackFailures"
+                                        class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Failures before acting</label>
+                                    <input type="number" min="1" id="llmPaidFallbackFailures" x-model="llmPaidFallbackFailures" @change="saveSettings()"
+                                        class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
+                                    <p class="text-gray-600 text-xs mt-1">Within thirty minutes. One failure is usually a blip.</p>
+                                </div>
+                                <div>
+                                    <label for="llmPaidFallbackDailyCap"
+                                        class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Paid calls per day</label>
+                                    <input type="number" min="0" id="llmPaidFallbackDailyCap" x-model="llmPaidFallbackDailyCap" @change="saveSettings()"
+                                        class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
+                                    <p class="text-gray-600 text-xs mt-1">A chat turn on flash-lite costs a fraction of a cent; 300 is a busy day.</p>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- Web research: the only thing in the app that
                              reaches outside the house, so it is off until
                              somebody turns it on. -->
@@ -2141,6 +2205,11 @@
                 // AI assistant LLM settings
                 llmProvider: '',
                 llmGeminiApiKey: '',
+                // The paid-key fallback for a throttled free tier (v2.499.412).
+                llmPaidFallbackMode: 'ask',
+                llmPaidFallbackFailures: 3,
+                llmPaidFallbackDailyCap: 300,
+                paidFallback: null,
                 webResearchEnabled: false,
                 webResearchVia: 'model',
                 webSearchApiKey: '',
@@ -2435,6 +2504,10 @@
                     // (`settings.get('llm_provider') or 'gemini'`).
                     this.llmProvider = data.llm_provider || 'gemini';
                     this.llmGeminiApiKey = data.llm_gemini_api_key || '';
+                    this.llmPaidFallbackMode = data.llm_paid_fallback_mode || 'ask';
+                    this.llmPaidFallbackFailures = data.llm_paid_fallback_failures ?? 3;
+                    this.llmPaidFallbackDailyCap = data.llm_paid_fallback_daily_cap ?? 300;
+                    this.loadPaidFallback();
                     this.webResearchEnabled = !!data.web_research_enabled;
                     this.webResearchVia = data.web_research_via || 'model';
                     this.webSearchApiKey = data.web_search_api_key || '';
@@ -2515,6 +2588,35 @@
                     this.defaultCalendarId = this.defaultCalendarId === calId ? '' : calId;
                     await this.saveSettings();
                 },
+                // The paid-key fallback's status line and the parent's switch
+                // (v2.499.412; services/paid_fallback.py). The switch posts as
+                // the signed-in parent: it is a money lever, like invites.
+                async loadPaidFallback() {
+                    try {
+                        const r = await fetch(`${this.apiBase}api/ai/paid-fallback`);
+                        this.paidFallback = r.ok ? await r.json() : null;
+                    } catch (e) { this.paidFallback = null; }
+                },
+                async switchPaidFallback(on) {
+                    try {
+                        const r = await fetch(`${this.apiBase}api/ai/paid-fallback`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json',
+                                       'X-Member-Token': (window.chfAdminSession && window.chfAdminSession() || {}).token || '' },
+                            body: JSON.stringify({ active: !!on })
+                        });
+                        if (r.ok) { this.paidFallback = await r.json(); return; }
+                        showGlobalAlert(r.status === 403 || r.status === 401
+                            ? 'Only a signed-in parent can switch the paid key.'
+                            : 'Could not change the paid-key fallback.');
+                    } catch (e) { showGlobalAlert('Could not change the paid-key fallback.'); }
+                },
+                paidFallbackUntil() {
+                    const u = (this.paidFallback || {}).until;
+                    if (!u) return '';
+                    try { return new Date(u * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
+                    catch (e) { return ''; }
+                },
                 async saveSettings() {
                     this.saving = true;
                     try {
@@ -2543,6 +2645,9 @@
                             ma_token: this.maToken || '',
                             llm_provider: this.llmProvider,
                             llm_gemini_api_key: this.llmGeminiApiKey,
+                            llm_paid_fallback_mode: this.llmPaidFallbackMode,
+                            llm_paid_fallback_failures: Math.max(1, parseInt(this.llmPaidFallbackFailures, 10) || 3),
+                            llm_paid_fallback_daily_cap: Math.max(0, parseInt(this.llmPaidFallbackDailyCap, 10) || 0),
                             web_research_enabled: this.webResearchEnabled,
                             web_research_via: this.webResearchVia,
                             web_search_api_key: this.webSearchApiKey,

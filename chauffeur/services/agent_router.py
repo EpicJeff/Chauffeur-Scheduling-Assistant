@@ -24,7 +24,8 @@ class RateLimitException(Exception):
 
 def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Dict[str, Any]:
     """
-    Interactive agent LLM call over the free-tier model pools (see
+    Interactive agent LLM call over the model pools, with capped paid-key
+    fallback when enabled (see
     services/model_pools.py): flash-lite pool first (answers in seconds,
     ~1,000 requests/day pooled), overflowing into the gemma pool (slow but
     ~28,800/day). The scarce 20/day gemini-*-flash models are reserved for the
@@ -61,51 +62,59 @@ def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Di
         return any(code in err_str.lower() for code in
                    ("429", "500", "502", "503", "504", "timed out", "timeout"))
 
-    last_err = "no models available"
-    transient = False
     from services.app_voice import current as phone_voice, Stopped, MODEL_ATTEMPT_TIMEOUT
     phone_turn = phone_voice.get()
     deadline = time.monotonic() + 100
-    # Bound fallback to four candidates and 100s per LLM round. Phone turns
-    # have their own shorter shared deadline, including later tool rounds.
-    for model in model_pools.models_for('interactive', settings)[:4]:
-        # Preserve ordinary per-model caps, clipped to the remaining budget.
-        timeout_s = 90 if model_pools.is_gemma(model) else 60
-        try:
-            # Rotate once per candidate instead of spending the foreground
-            # budget retrying an overloaded endpoint before reaching siblings.
-            options = {'transient_retries': 0, 'use_system_instruction': not model_pools.is_gemma(model)}
-            if phone_turn is not None:
-                timeout_s = min(MODEL_ATTEMPT_TIMEOUT, phone_turn.remaining())
-            else:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    return {'error': 'Model pool time budget exhausted; last error: ' + last_err,
-                            'transient': True}
-                timeout_s = min(timeout_s, remaining)
-            res = _call_llm_json(provider, url, api_key, model, system_prompt, prompt, tools=None, timeout_s=timeout_s, **options)
-        except Stopped:
-            raise
-        except Exception as e:
-            last_err = str(e)
-            model_pools.note_failure(model, last_err)
-            # A temporary provider failure may leave a sibling model healthy.
-            if not _is_transient(last_err):
-                logger.error(f"Error calling agent LLM ({model}): {e}")
-                return {"error": last_err}
-            transient = True
-            logger.warning(f"{model} unavailable ({e}), trying next pool model...")
-            continue
-        if res.get("error") and _is_transient(str(res["error"])):
-            last_err = str(res["error"])
-            model_pools.note_failure(model, last_err)
-            transient = True
-            logger.warning(f"{model} unavailable, trying next pool model...")
-            continue
-        res["_model"] = model
-        return res
-    logger.error(f"All agent pool models failed; last error: {last_err}")
-    return {"error": last_err, "transient": transient}
+    def call_chain(api_key, paid):
+        last_err = "no models available"
+        transient = False
+        # Bound fallback to four candidates and 100s per LLM round. Phone turns
+        # have their own shorter shared deadline, including later tool rounds.
+        for model in model_pools.models_for('interactive', settings, paid=paid)[:4]:
+            # Preserve ordinary per-model caps, clipped to the remaining budget.
+            timeout_s = 90 if model_pools.is_gemma(model) else 60
+            try:
+                # Rotate once per candidate instead of spending the foreground
+                # budget retrying an overloaded endpoint before reaching siblings.
+                options = {'transient_retries': 0, 'use_system_instruction': not model_pools.is_gemma(model)}
+                if phone_turn is not None:
+                    timeout_s = min(MODEL_ATTEMPT_TIMEOUT, phone_turn.remaining())
+                else:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return {'error': 'Model pool time budget exhausted; last error: ' + last_err,
+                                'transient': True}
+                    timeout_s = min(timeout_s, remaining)
+                if paid:
+                    from services import paid_fallback
+                    if not paid_fallback.count_call(settings):
+                        return {"error": "Paid fallback inactive or daily cap reached", "transient": True}
+                res = _call_llm_json(provider, url, api_key, model, system_prompt, prompt, tools=None, timeout_s=timeout_s, **options)
+            except Stopped:
+                raise
+            except Exception as e:
+                last_err = str(e)
+                model_pools.note_failure(model, last_err, paid=paid)
+                # A temporary provider failure may leave a sibling model healthy.
+                if not _is_transient(last_err):
+                    logger.error(f"Error calling agent LLM ({model}): {e}")
+                    return {"error": last_err}
+                transient = True
+                logger.warning(f"{model} unavailable ({e}), trying next pool model...")
+                continue
+            if res.get("error") and _is_transient(str(res["error"])):
+                last_err = str(res["error"])
+                model_pools.note_failure(model, last_err, paid=paid)
+                transient = True
+                logger.warning(f"{model} unavailable, trying next pool model...")
+                continue
+            res["_model"] = model
+            return res
+        logger.error(f"All agent pool models failed; last error: {last_err}")
+        return {"error": last_err, "transient": transient}
+
+    return model_pools.with_paid_fallback(
+        'interactive', api_key, settings, False, call_chain)
 
 def _is_admin_member(member) -> bool:
     """Parents/adults may drive the scheduling-core (bridge) tools; children and

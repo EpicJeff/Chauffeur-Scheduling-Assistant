@@ -1213,6 +1213,9 @@ class Settings(BaseModel):
     routing_avoid_tolls: bool = False
     llm_provider: str = ""
     llm_gemini_api_key: Optional[str] = None
+    llm_paid_fallback_mode: Literal['off', 'ask', 'auto'] = 'ask'
+    llm_paid_fallback_failures: int = 3
+    llm_paid_fallback_daily_cap: int = 300
     llm_gemini_model: str = "gemini-3.5-flash-lite"
     llm_ollama_url: str = "http://localhost:11434"
     llm_ollama_model: str = "qwen2.5:7b"

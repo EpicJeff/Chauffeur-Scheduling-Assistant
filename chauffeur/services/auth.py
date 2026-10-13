@@ -158,6 +158,11 @@ RULES = [
     (ANY, '/api/settings/*', PARENTS, None),
     (ANY, '/api/scope/*', PARENTS, None),   # S14: the editor's metadata
     (ANY, '/api/settings', PARENTS, None),
+    # The paid-key fallback's status and the parent's own switch (the
+    # AI drawer; services/paid_fallback.py). Administration like the
+    # settings it sits beside; there is deliberately no agent tool.
+    ('GET', '/api/ai/paid-fallback', PARENTS, None),
+    ('POST', '/api/ai/paid-fallback', PARENTS, None),
     (ANY, '/api/ics_feeds/*', PARENTS, None),
     ('GET', '/api/calendar_health', PARENTS, None),   # which calendars are being skipped
     (ANY, '/api/drivers/*', PARENTS, None),
