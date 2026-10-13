@@ -2755,7 +2755,7 @@ def suggest_meal_metadata(description: str) -> dict:
     is worse than saving a rough one."""
     from services import model_pools
     settings = storage.get_settings() or {}
-    api_key = settings.get('llm_gemini_api_key', '')
+    api_key = model_pools.credentials('interactive', settings)[1]
     if not api_key or not (description or '').strip():
         return {}
     try:
@@ -3000,7 +3000,7 @@ def split_into_dishes(description: str) -> dict:
     something."""
     from services import model_pools
     settings = storage.get_settings() or {}
-    api_key = settings.get('llm_gemini_api_key', '')
+    api_key = model_pools.credentials('interactive', settings)[1]
     if not api_key or not (description or '').strip():
         return {}
     try:
@@ -3097,9 +3097,9 @@ def add_dishes_from_text(description: str) -> dict:
     from services import model_pools
     raw = (description or '').strip()
     settings = storage.get_settings() or {}
-    api_key = settings.get('llm_gemini_api_key', '')
+    api_key = model_pools.credentials('interactive', settings)[1]
     if not api_key or not raw:
-        return {'added': [], 'existing': [], 'error': 'no LLM API key configured'
+        return {'added': [], 'existing': [], 'error': 'no AI provider key configured'
                 if not api_key else 'nothing to add'}
     try:
         res = model_pools.call_pool_json(

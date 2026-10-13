@@ -373,7 +373,8 @@ def propose_fix(insight_id: str, actor: dict = None,
         return {'status': 'proposed', 'proposal_id': existing['proposal_id'],
                 'summary': existing.get('summary') or ''}
     settings = storage.get_settings() or {}
-    if not settings.get('llm_gemini_api_key', ''):
+    from services import model_pools as _mp
+    if not _mp.has_credentials(settings):
         return {'status': 'no_key'}
     cap = int(settings.get('mind_cap_handle', CAPS_DEFAULT['handle']))
     if not _bump_call('handle', cap):
@@ -482,7 +483,8 @@ def make_plan(insight_id: str, actor: dict = None,
     if (row.get('plan_json') or {}).get('steps'):
         return {'status': 'planned', 'plan': row['plan_json']}
     settings = storage.get_settings() or {}
-    api_key = settings.get('llm_gemini_api_key', '')
+    from services import model_pools as _mp
+    api_key = _mp.credentials('heavy', settings)[1]
     if not api_key:
         return {'status': 'no_key'}
     cap = int(settings.get('mind_cap_handle', CAPS_DEFAULT['handle']))
@@ -530,7 +532,8 @@ def bind_step(insight_id: str, step_id: str, actor: dict = None,
     if (step.get('proposal_json') or {}).get('proposal_id'):
         return {'status': 'proposed', **step['proposal_json']}
     settings = storage.get_settings() or {}
-    if not settings.get('llm_gemini_api_key', ''):
+    from services import model_pools as _mp
+    if not _mp.has_credentials(settings):
         return {'status': 'no_key'}
     cap = int(settings.get('mind_cap_handle', CAPS_DEFAULT['handle']))
     if not _bump_call('handle', cap):
@@ -792,7 +795,8 @@ def _gather_deltas(now: datetime.datetime) -> list:
 def sentinel_sweep(now: datetime.datetime = None) -> dict:
     now = now or datetime.datetime.now()
     settings = storage.get_settings() or {}
-    api_key = settings.get('llm_gemini_api_key', '')
+    from services import model_pools as _mp
+    api_key = _mp.credentials('background', settings)[1]
     from services import llm_budget
     if api_key and not llm_budget.workflow_ready(api_key, 'mind.sentinel'):
         return {'status': 'deferred'}  # do not consume deltas while paused
@@ -892,7 +896,8 @@ def deep_think(now: datetime.datetime = None, force: bool = False) -> dict:
     settings = storage.get_settings() or {}
     if not settings.get('mind_enabled', False):
         return {'status': 'disabled'}
-    api_key = settings.get('llm_gemini_api_key', '')
+    from services import model_pools as _mp
+    api_key = _mp.credentials('mind', settings)[1]
     if not api_key:
         return {'status': 'no_key'}
     if not force and not in_wake_window(now, settings):
@@ -1053,7 +1058,8 @@ def tick(now: datetime.datetime = None) -> dict:
         # sooner; everything else waits the floor out.
         last_attempt = float(storage.get_app_state('mind_think_attempt_ts') or 0)
         from services import llm_budget
-        ready = llm_budget.workflow_ready(settings.get('llm_gemini_api_key', ''), 'mind.think')
+        from services import model_pools as _mp
+        ready = llm_budget.workflow_ready(_mp.credentials('mind', settings)[1], 'mind.think')
         if ready and (requested or ts - last_attempt >= THINK_ATTEMPT_FLOOR_S):
             storage.set_app_state('mind_think_attempt_ts', ts)  # marker FIRST
             out['think'] = deep_think(now)
@@ -1066,7 +1072,8 @@ def maybe_promote() -> dict:
     if not urgent:
         return {'status': 'nothing'}
     settings = storage.get_settings() or {}
-    api_key = settings.get('llm_gemini_api_key', '')
+    from services import model_pools as _mp
+    api_key = _mp.credentials('interactive', settings)[1]
     if not api_key:
         return {'status': 'no_key'}
     from services import llm_budget

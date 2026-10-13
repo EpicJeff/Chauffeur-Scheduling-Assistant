@@ -7898,7 +7898,7 @@ def lesson_help_api(program_id: str, body: dict = Body(default={})):
     used[today] = count + 1
     storage.set_app_state('lesson_help_used', {today: used[today]})
     res = model_pools.call_pool_json(
-        'interactive', settings.get('llm_gemini_api_key', ''),
+        'interactive', model_pools.credentials('interactive', settings)[1],
         _LESSON_HELP_SYSTEM, prompt, timeout_s=25, settings=settings)
     if not isinstance(res, dict) or res.get('error'):
         return {'answer': ''}
@@ -17409,10 +17409,13 @@ def _run_analysis_task(task_id: str):
         settings = storage.get_settings()
         llm_provider = (settings.get('llm_provider') or 'gemini')
         llm_url = settings.get('llm_ollama_url', 'http://localhost:11434')
-        llm_api_key = settings.get('llm_gemini_api_key', '')
         # Heavy tier: override-pattern analysis is rare and quality-critical.
         from services import model_pools
-        llm_model = model_pools.resolve_model('heavy', settings) if llm_provider == 'gemini' else settings.get('llm_ollama_model', 'qwen2.5:7b')
+        if llm_provider == 'ollama':
+            llm_model = settings.get('llm_ollama_model', 'qwen2.5:7b')
+            llm_api_key = ''
+        else:
+            llm_model, llm_api_key = model_pools.credentials('heavy', settings)
         
         # 1. Fetch Overrides
         log_task(task_id, "Fetching overrides from database...")

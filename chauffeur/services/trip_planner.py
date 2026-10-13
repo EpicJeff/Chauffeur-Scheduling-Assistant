@@ -105,7 +105,7 @@ def generate_trip_pois(trip: TripMetadata, user_prompt: str, duration_nights: in
     else:
         url = ""
         model = settings.get('llm_gemini_model', 'gemini-3.5-flash-lite')
-        api_key = settings.get('llm_gemini_api_key')
+        api_key = model_pools.credentials('heavy', settings)[1]
         
     num_pois = max(1, duration_nights * 4)
     system_prompt = f"""You are an expert travel agent. 
@@ -1096,7 +1096,7 @@ def generate_trip_accommodations(trip: TripMetadata, user_prompt: str) -> Tuple[
     else:
         url = ""
         model = settings.get('llm_gemini_model', 'gemini-3.5-flash-lite')
-        api_key = settings.get('llm_gemini_api_key')
+        api_key = model_pools.credentials('heavy', settings)[1]
         
     system_prompt = """You are an expert travel agent. 
 The user wants to find accommodations (hotels, Airbnbs, chateaus, etc.) for their trip.
@@ -1250,7 +1250,7 @@ def generate_trip_flights(trip: 'TripMetadata', user_prompt: str) -> Tuple[Optio
     else:
         url = ""
         model = settings.get('llm_gemini_model', 'gemini-3.5-flash-lite')
-        api_key = settings.get('llm_gemini_api_key')
+        api_key = model_pools.credentials('heavy', settings)[1]
 
     home_location = settings.get('home_location')
     if not home_location and not user_prompt:
@@ -1375,7 +1375,7 @@ def generate_trip_plan(trip: 'TripMetadata', user_prompt: str, duration_nights: 
     else:
         url = ""
         model = settings.get('llm_gemini_model', 'gemini-3.5-flash-lite')
-        api_key = settings.get('llm_gemini_api_key')
+        api_key = model_pools.credentials('heavy', settings)[1]
         
     # Ask for what we actually want shipped (~3/night = 30 for a 10-night trip,
     # the healthy historical band): the floor instruction below makes the model
@@ -1750,7 +1750,7 @@ def suggest_trip_dates(trip: TripMetadata) -> Tuple[Optional[str], Optional[dict
     else:
         url = "https://generativelanguage.googleapis.com/v1beta/models"
         model = settings.get('llm_gemini_model', 'gemini-3.5-flash-lite')
-        api_key = settings.get('llm_gemini_api_key')
+        api_key = model_pools.credentials('heavy', settings)[1]
         
     if not api_key:
         return f"API key not configured for {provider}.", None

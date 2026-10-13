@@ -188,9 +188,9 @@ def wait_status(settings: dict = None) -> dict:
     """What the Intake page needs to explain a wait: today's request count
     against the allowance, and - while intake is waiting - why and until when.
     `waiting` is None once a later email has been read."""
-    from services import llm_budget
+    from services import llm_budget, model_pools
     settings = settings if settings is not None else (storage.get_settings() or {})
-    key = settings.get('llm_gemini_api_key', '') or ''
+    key = model_pools.credentials('background', settings)[1]
     used = llm_budget.workflow_attempts_today(key, WORKFLOW) if key else 0
     wait = storage.get_app_state(_WAIT_KEY) or None
     if wait and (wait.get('retry_at') or 0) <= time.time() and not wait.get('cap'):
@@ -538,9 +538,9 @@ def extract_items(subject: str, from_addr: str, body: str, member_names: list,
     """LLM relevance gate + extraction. Returns raw item dicts ([] on error)."""
     from services import model_pools
     settings = storage.get_settings() or {}
-    api_key = settings.get('llm_gemini_api_key', '')
+    api_key = model_pools.credentials('background', settings)[1]
     if not api_key:
-        raise RuntimeError('no LLM API key configured')
+        raise RuntimeError('no AI provider key configured')
 
     now = datetime.datetime.now().astimezone()
     prompt = (f"Current date: {now.strftime('%A %Y-%m-%d')}\n"
@@ -887,7 +887,7 @@ def run_photo_ingest(image_b64: str, mime: str, caption: str = '') -> dict:
     from services import model_pools
     summary = {'checked': 1, 'proposed': 0, 'error': None}
     settings = storage.get_settings() or {}
-    api_key = settings.get('llm_gemini_api_key', '')
+    api_key = model_pools.credentials('vision', settings)[1]
     log = {'from': '📸 photo', 'subject': (caption or '(photo)')[:120]}
     if not api_key:
         summary['error'] = 'no LLM API key configured'
@@ -1043,7 +1043,8 @@ def _run_ingest_locked() -> dict:
     if not messages:
         return summary
     summary['more'] = len(messages) >= MAX_MESSAGES_PER_RUN
-    api_key = settings.get('llm_gemini_api_key', '') or ''
+    from services import model_pools as _mp
+    api_key = _mp.credentials('background', settings)[1]
     limit = daily_limit(settings)
 
     member_names = [m.get('name') for m in storage.get_all_members() if m.get('name')]

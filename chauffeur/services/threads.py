@@ -115,8 +115,9 @@ def draft_message(thread_id: str, intent: str = '') -> dict:
     if not thread:
         return {'status': 'not_found'}
 
+    from services import model_pools
     settings = storage.get_settings() or {}
-    api_key = settings.get('llm_gemini_api_key', '')
+    api_key = model_pools.credentials('interactive', settings)[1]
     prompt = _draft_context(thread, intent)
     res = _pool_call('interactive', api_key, DRAFT_SYSTEM, prompt, timeout_s=30)
     if not isinstance(res, dict) or res.get('error'):
@@ -568,8 +569,9 @@ def read_photo(thread_id: str, media_id: str, data: bytes, mime: str) -> Optiona
     """One vision-tier call under thread_cap_photo_reads; None when there is
     no key, the cap is reached, or the call fails. Never raises."""
     import base64
+    from services import model_pools
     settings = storage.get_settings() or {}
-    api_key = settings.get('llm_gemini_api_key', '')
+    api_key = model_pools.credentials('vision', settings)[1]
     if not api_key:
         return None
     from services import situations as _sit

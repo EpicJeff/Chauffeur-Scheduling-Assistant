@@ -107,13 +107,13 @@ def scenario_router_falls_back_on_503():
     model_pools.reset_cooldowns()
     calls = []
 
-    def fake_call(provider, url, api_key, model, system_prompt, prompt, **kw):
+    def fake_call(model, api_key, system_prompt, prompt, **kw):
         calls.append(model)
         if len(calls) == 1:
             raise RuntimeError("Gemini API request failed: HTTP Error 503: Service Unavailable")
         return {"message": "done via fallback", "tool_calls": []}
 
-    with mock.patch.object(agent_router, "_call_llm_json", fake_call):
+    with mock.patch.object(agent_router, "call_model", fake_call):
         res = agent_router.call_gemma_with_fallback("do it", [], "sys")
     check(res.get("message") == "done via fallback", f"fallback result returned, got {res}")
     check(calls == ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"],
@@ -126,14 +126,14 @@ def scenario_router_skips_quota_exhausted_model():
     model_pools.reset_cooldowns()
     calls = []
 
-    def fake_call(provider, url, api_key, model, system_prompt, prompt, **kw):
+    def fake_call(model, api_key, system_prompt, prompt, **kw):
         calls.append(model)
         if model == "gemini-3.5-flash-lite":
             return {"error": "429 Too Many Requests: quota metric "
                              "GenerateRequestsPerDayPerProjectPerModel exceeded"}
         return {"message": "ok", "tool_calls": []}
 
-    with mock.patch.object(agent_router, "_call_llm_json", fake_call):
+    with mock.patch.object(agent_router, "call_model", fake_call):
         first = agent_router.call_gemma_with_fallback("one", [], "sys")
         second = agent_router.call_gemma_with_fallback("two", [], "sys")
     check(first.get("_model") == "gemini-3.1-flash-lite", f"429 rotates within call, got {first}")
@@ -147,7 +147,7 @@ def scenario_router_reports_transient_failure_honestly():
     def fake_call(*a, **kw):
         raise RuntimeError("Gemini API request failed: HTTP Error 503: Service Unavailable")
 
-    with mock.patch.object(agent_router, "_call_llm_json", fake_call):
+    with mock.patch.object(agent_router, "call_model", fake_call):
         res = agent_router.process_agent_request("assign a driver")
     check(res["status"] == "error", f"status must be error, got {res['status']}")
     check("processed your request" not in res["message"].lower(),
@@ -160,7 +160,7 @@ def scenario_router_reports_hard_failure_honestly():
     def fake_call(*a, **kw):
         raise RuntimeError("Gemini request failed: something exploded")
 
-    with mock.patch.object(agent_router, "_call_llm_json", fake_call):
+    with mock.patch.object(agent_router, "call_model", fake_call):
         res = agent_router.process_agent_request("assign a driver")
     check(res["status"] == "error", "status must be error")
     check("processed your request" not in res["message"].lower(), "must not fake success")

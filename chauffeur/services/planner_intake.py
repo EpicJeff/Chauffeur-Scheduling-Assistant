@@ -120,9 +120,9 @@ def extract(member_id: str, image_b64: str, mime: str, today: datetime.date = No
     today = today or datetime.date.today()
     out = {'page_dates': None, 'rows': [], 'error': None}
     settings = storage.get_settings() or {}
-    api_key = settings.get('llm_gemini_api_key', '')
+    api_key = model_pools.credentials('vision', settings)[1]
     if not api_key:
-        out['error'] = 'Reading photos needs the Gemini API key (Config).'
+        out['error'] = 'Reading photos needs an AI provider key (Config › AI).'
         return out
     classes, tasks = _context(member_id, today)
     by_id = {t['id']: t for t in tasks}

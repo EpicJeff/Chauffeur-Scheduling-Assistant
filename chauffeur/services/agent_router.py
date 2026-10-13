@@ -15,7 +15,7 @@ from services.agent_tools_v2 import (
     clear_trip_itinerary,
     auto_schedule_trip_itinerary
 )
-from services.llm import _call_llm_json
+from services.llm import call_model
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +36,7 @@ def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Di
     from services.storage import get_settings
     from services import model_pools
     settings = get_settings()
-    api_key = settings.get('llm_gemini_api_key', '')
-    provider = 'gemini'
-    url = ''
+    api_key = model_pools.credentials('interactive', settings)[1]
 
     import json
     # Inject tools into system prompt because Gemma on Gemini API doesn't support native tool calling payload
@@ -76,7 +74,9 @@ def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Di
             try:
                 # Rotate once per candidate instead of spending the foreground
                 # budget retrying an overloaded endpoint before reaching siblings.
-                options = {'transient_retries': 0, 'use_system_instruction': not model_pools.is_gemma(model)}
+                options = {'transient_retries': 0}
+                if model_pools.split_model(model)[0] == 'gemini':
+                    options['use_system_instruction'] = not model_pools.is_gemma(model)
                 if phone_turn is not None:
                     timeout_s = min(MODEL_ATTEMPT_TIMEOUT, phone_turn.remaining())
                 else:
@@ -89,7 +89,7 @@ def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Di
                     from services import paid_fallback
                     if not paid_fallback.count_call(settings):
                         return {"error": "Paid fallback inactive or daily cap reached", "transient": True}
-                res = _call_llm_json(provider, url, api_key, model, system_prompt, prompt, tools=None, timeout_s=timeout_s, **options)
+                res = call_model(model, api_key, system_prompt, prompt, tools=None, timeout_s=timeout_s, **options)
             except Stopped:
                 raise
             except Exception as e:

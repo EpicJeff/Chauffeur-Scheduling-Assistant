@@ -436,7 +436,8 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         event_str = f"Event '{o.get('event_title')}'" if o.get('event_title') else f"Event ID: {o.get('event_id')}"
         overrides_text += f"Date: {o.get('date_str')}, {event_str}, Reassigned to Driver: {o.get('driver_id')}\n"
         
-    res = _call_llm_json(provider, url, api_key, model, system_prompt, overrides_text)
+    from services import model_pools
+    res = model_pools.pooled_or_direct(provider, url, api_key, model, 'heavy', system_prompt, overrides_text)
     return res.get('clusters', [])
 
 def deduce_rules_from_context(provider: str, url: str, api_key: str, model: str, cluster: dict, original_schedules_context: str, modified_schedules_context: str, passengers: list) -> dict:
@@ -530,7 +531,8 @@ You MUST respond with a single valid JSON object of the following exact structur
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
 """
     
-    res = _call_llm_json(provider, url, api_key, model, system_prompt, "Please analyze the original vs modified schedules and generate the rules.")
+    from services import model_pools
+    res = model_pools.pooled_or_direct(provider, url, api_key, model, 'heavy', system_prompt, "Please analyze the original vs modified schedules and generate the rules.")
     return res
 
 def auto_name_conversation(conversation_id: str, first_message: str):
@@ -557,21 +559,14 @@ def auto_name_conversation(conversation_id: str, first_message: str):
             with llm_budget.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 title = data.get('message', {}).get('content', '')
-        elif provider == 'gemini':
-            api_key = settings.get('llm_gemini_api_key', '')
-            # One tiny call per new conversation — lite pool, never 20/day flash.
+        else:
+            # One tiny call per new conversation: the interactive tier's first
+            # model on whichever provider is selected, prose back, never JSON.
             from services import model_pools
-            gemini_model = model_pools.resolve_model('interactive', settings)
+            model_id, api_key = model_pools.credentials('interactive', settings)
             if api_key:
-                req_url = f"https://generativelanguage.googleapis.com/v1beta/models/{gemini_model}:generateContent?key={api_key}"
-                payload = {
-                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                    "generationConfig": {"temperature": 0.3}
-                }
-                req = urllib.request.Request(req_url, data=json.dumps(payload).encode('utf-8'), headers={"Content-Type": "application/json"}, method="POST")
-                with llm_budget.urlopen(req, timeout=30) as resp:
-                    data = json.loads(resp.read().decode('utf-8'))
-                    title = data['candidates'][0]['content']['parts'][0]['text']
+                res = call_model(model_id, api_key, 'You name conversations.', prompt, text=True, timeout_s=30, temperature=0.3)
+                title = res.get('text', '') if isinstance(res, dict) else ''
 
         title = title.strip().replace('"', '')
         if title:

@@ -1455,9 +1455,9 @@ def from_photo(image_b64, mime, supplemental=None):
     """Analyze structure first; the render review adds locked details. TTL: 15 minutes."""
     from services import model_pools
     settings = _settings()
-    api_key = settings.get('llm_gemini_api_key', '')
+    api_key = model_pools.credentials('house_photo', settings)[1]
     if not api_key:
-        return None, [], 'no LLM API key configured', None
+        return None, [], 'no AI provider key configured', None
     supplemental = supplemental or []
     if not isinstance(supplemental,list) or len(supplemental)>2 or any(
             not isinstance(p,dict) or p.get('view') not in PHOTO_VIEWS or
@@ -1625,7 +1625,7 @@ def critique(token, render_png_b64, *, automatic=False):
             with _PHOTO_LOCK:
                 e['photo_run']['pending'] = True
     settings = _settings()
-    api_key = settings.get('llm_gemini_api_key', '')
+    api_key = model_pools.credentials('house_photo', settings)[1]
     draft = copy.deepcopy(e['spec'])
     attempts = []
     issued_requests = e.get('requests') or 0
