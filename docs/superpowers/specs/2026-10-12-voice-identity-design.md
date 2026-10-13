@@ -2,9 +2,11 @@
 
 **Date:** 2026-10-12. **Status:** V1/V2 implemented locally for v2.499.402; real-satellite/device acceptance remains pending. Identity and voice approval both default off.
 **Builds on:** [Submit gate](2026-10-11-submit-gate-design.md). That gate is built through v2.499.399 but its spec still marks it not device-verified. Its approval, verification and lost-worker scenarios must pass before voice may invoke its approval rail.
-**Delivery order:** device-verify the submit gate, then establish the useful device-chat payment/handoff path described in [Payment gate](2026-10-12-payment-gate-design.md), before voice approval. Device-chat payment does not depend on this spec. [Voice fingerprint](2026-10-12-voice-fingerprint-design.md) is a separate, speculative follow-up gated by F0; it must not block PIN-based voice identity. A ten-minute voice session alone does not authorize spending.
+**Original delivery order (implementation order superseded below):** device-verify the submit gate, then establish the useful device-chat payment/handoff path described in [Payment gate](2026-10-12-payment-gate-design.md), before voice approval. Device-chat payment does not depend on this spec. [Voice fingerprint](2026-10-12-voice-fingerprint-design.md) is a separate follow-up with its own device gates; it must not block PIN-based voice identity. A ten-minute voice session alone does not authorize spending.
 
 **Updated authorization, 2026-10-12:** the user authorized implementation while device checks run, then selected voice identity as the active slice because it is useful independently of payment. Payment P0's target is left to the user. This supersedes the earlier implementation-order gate for V1/V2; approval activation and device acceptance remain required.
+
+**Scope clarification, 2026-10-12:** the intended independent value includes automatic speaker recognition, not just spoken name/PIN identity. The fingerprint follow-up now implements enrollment, named recognition and PIN-session continuity through component 1.4.0, pinned to HA 2026.10.0. It is off until enrollment and real family/device checks. Recognition does not provide approval authority or a payment-grade proof; see the fingerprint spec's implementation decision and remaining acceptance.
 
 ## Local implementation and remaining acceptance
 

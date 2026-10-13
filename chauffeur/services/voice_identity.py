@@ -51,10 +51,16 @@ def configure(enabled: bool, satellites: list, approvals_enabled: bool = False) 
         satellite = str(item.get('satellite_id') or '').strip()
         if not installation or not satellite or max(len(installation), len(satellite)) > 128:
             raise ValueError('Choose an observed satellite with its HA installation.')
+        recognition = item.get('recognition_enabled') is True
+        if recognition:
+            from services import voice_fingerprint
+            if not any(p['key'] == [installation, satellite] and p['calibrated'] for p in voice_fingerprint.profiles()):
+                raise ValueError('Enroll and check a voice before enabling recognition.')
         rows.append({'ha_instance_id': installation, 'satellite_id': satellite,
                      'device_id': item.get('device_id') or None,
                      'label': str(item.get('label') or satellite.split('.')[-1].replace('_', ' ').title())[:100],
-                     'enabled': bool(item.get('enabled')), 'service_revision': _revision()})
+                     'enabled': bool(item.get('enabled')), 'service_revision': _revision(),
+                     'recognition_enabled': recognition})
     if enabled and not _revision():
         raise ValueError('Set an Argyle service token before enabling voice identity.')
     with _lock:
@@ -78,6 +84,8 @@ class VoiceContext:
     expires_at: float = 0
     service_revision: str = ''
     paired: bool = False
+    fingerprint: list | None = None
+    greeting: str | None = None
 
     @property
     def scope_key(self):
@@ -322,12 +330,21 @@ def intercept(text: str, ctx: VoiceContext, language='en') -> dict | None:
             row.pop('readback', None)
             row.update(level='verified', pin_pending=False, expires_at=time.time() + SESSION_SECONDS,
                        pin_revision=member['pin_hash'], generation=uuid.uuid4().hex)
+            from services import voice_fingerprint
+            if voice_fingerprint.enabled(ctx):
+                if ctx.fingerprint:
+                    row['speaker_anchor'] = ctx.fingerprint
+                else:
+                    row.update(level='named', pin_revision=None)
+                    reply['message'] = "Your PIN matched, but the voice sample was unavailable. Say a longer introduction followed by 'my PIN is' and your digits, or use your phone."
+                    return reply
             storage.rate_clear(request_key)
             reply['message'] = 'Verified here for ten minutes.'
             return reply
-        if low.lower().rstrip('.!?') in ('forget who i am', "it's someone else", 'it is someone else'):
+        if low.lower().rstrip('.!?') in ('forget who i am', "it's someone else", 'it is someone else', "that's not me", 'that is not me'):
             if row:
                 _sessions[key] = _new_session(row.get('device_id'))
+                _sessions[key]['recognition_suppressed'] = True
             return {'status': 'identity', 'message': 'I have cleared your identity here.'}
         name_match = re.fullmatch(r"(?i)(?:it['’]s|it is|this is|i am|i['’]m)\s+(.+?)[.!]?", low)
         if low.lower().rstrip('.!?') == 'cancel':

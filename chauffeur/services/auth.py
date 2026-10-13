@@ -274,6 +274,9 @@ RULES = [
     (ANY, '/api/v2/*', ROBOTS, 'chat.agent'),
     (ANY, '/api/voice/identity', PARENTS, None),
     (ANY, '/api/voice/identity/*', PARENTS, None),
+    ('POST', '/api/voice/audio', ROBOTS, None),
+    (ANY, '/api/voice/recognition', PARENTS, None),
+    (ANY, '/api/voice/recognition/*', PARENTS, None),
     (ANY, '/api/announce/*', ROBOTS, 'music'),
 
     # --- the wall: pages and payloads a panel legitimately draws ------------

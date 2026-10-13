@@ -22,3 +22,6 @@ pyyaml
 google-search-results
 playwright
 google-genai
+# Local voice fingerprints: CPU ONNX inference + native filterbank, no torch.
+sherpa-onnx==1.13.8
+numpy>=1.26,<3

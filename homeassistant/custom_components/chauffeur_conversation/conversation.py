@@ -69,6 +69,11 @@ class ChauffeurConversationEntity(conversation.ConversationEntity):
             "conversation_id": user_input.conversation_id,
             "voice": await metadata(self.hass, user_input, self._entry.options.get('device_satellites', '{}')),
         }
+        from . import pipeline_bridge
+        observation = await pipeline_bridge.observation(self.hass, user_input)
+        if observation and payload['voice'].get('satellite_id'):
+            payload['voice'].update(observation)
+            payload['voice']['request_id'] = observation['utterance_id']
         continue_conversation = False
         try:
             resp = await session.post(

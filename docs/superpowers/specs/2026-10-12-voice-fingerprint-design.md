@@ -1,9 +1,68 @@
 # Voice fingerprint — keep the verified speaker, then recognize a familiar voice
 
-**Date:** 2026-10-12. **Status:** speculative design, parked behind F0; no production integration path has been demonstrated. F1/F2 are conditional, not committed delivery work.
+**Date:** 2026-10-12. **Status:** continuity and automatic recognition implemented for v2.499.406, off until enrollment and household checks. The user clarified that recognition is the useful independent outcome, so implementation proceeds alongside device checks. Real satellite correlation, host performance and household accuracy acceptance remain pending; F0/F1/F2 device acceptance is not claimed.
 **Builds on:** [Voice identity](2026-10-12-voice-identity-design.md). **Related:** [Payment gate](2026-10-12-payment-gate-design.md). A fingerprint never independently authorizes money. Per the user's payment policy, a fresh enrolled-parent match plus explicit transaction-bound approval is sufficient when Always require PIN for purchases is off; when on, even a recognized parent must supply a fresh PIN.
 
 ## Outcome and sequence
+
+### Implementation decision, 2026-10-12
+
+The bridge wraps `PipelineRun.async_execute` on **HA 2026.10.0**, the installed
+household version checked through its API. It sets an explicit `ContextVar`
+with controller run ID, HA context ID, device, satellite and utterance nonce,
+calls the original controller, then resets/cancels in `finally`. STT reads
+that explicit context; conversation checks the same HA context/device/satellite.
+This is not correlation by task identity, time or text. Unsupported versions
+or replacement of the installed wrapper disable recognition.
+
+Component **1.4.0** tees audio unchanged to an existing STT entity; the household
+Argyle pipeline currently uses `stt.home_assistant_cloud`. Local upload starts
+when the audio iterator ends, overlapping the delegate's final transcription.
+Chauffeur immediately returns an opaque reference to a bounded single-worker
+job. Ordinary turns split the 500ms extra-wait budget: 100ms for HA to receive
+the reference, 400ms server-side for inference. Explicit setup phrases may wait
+three seconds. References bind installation, satellite, device, run, utterance,
+service-token revision and the active server-owned enrollment ID. They are
+one-use with 60s expiry; a late result cannot attach to another turn.
+
+The selected candidate is English WeSpeaker VoxCeleb ResNet34 through
+**sherpa-onnx 1.13.8**, which supplies native features and CPU ONNX inference
+without PyTorch. Python 3.11 aarch64 wheels were checked. The
+[model asset](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models)
+is **26,534,365 bytes**, SHA-256
+`5ef208a9da1453335308a6b6f4e6dfbd7e183a38b604de0a57664f45d257fe94`.
+The [author's model card](https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34)
+and [runtime license](https://github.com/k2-fsa/sherpa-onnx/blob/v1.13.8/LICENSE)
+identify Apache-2.0. Model preparation explicitly downloads/verifies the pinned
+asset. Native inference releases the GIL; HA has no model/runtime dependency.
+
+The initial decode slice accepts HA's raw mono 16-bit PCM at 16/24/48 kHz.
+Duration, energy, clipping and inconsistent half-sample embeddings reject
+unusable observations. These are heuristics, not reliable diarization or proof
+of speech-only audio. Provisional cosine thresholds: naming 0.70 with 0.12
+margin, PIN-anchor continuity 0.65. They are not household-calibrated claims.
+
+Parent-owned personal-device enrollment requires consent, three varied phrases
+and two held-out checks. A new similar template invalidates affected checks.
+The internal `calibrated` flag means those two pilot checks passed; the full
+household matrix below still precedes parent activation. Templates live outside
+the general database in a protected file; status/member JSON omit vectors.
+Recognition only provides named identity; no payment-grade `recognized_parent`
+proof is implemented. That optional purchase path remains a separate gate.
+
+Local tests cover concurrent equal transcripts, exact context, one-use/stale/
+late references, cancellation/local-only runs, unchanged audio/transcripts,
+automatic naming, PIN anchors, speaker-change downgrade and deletion. A served
+phone check exercises all five enrollment phrases, activation, automatic
+naming and deletion with fixture inference. Synthetic workstation medians:
+125ms for two seconds, 716ms for seven seconds, 1496ms for fourteen seconds
+(long samples include half-sample checks). These are not host or accuracy
+results. `tools/voice_probe.py` supports the pending host probe. Real microphone
+correlation, host memory/latency, room/noise/impostor checks and one-word approval
+quality remain acceptance work. Naming/continuity need no payment target.
+
+The original gates below remain device acceptance requirements. Implementation
+in parallel does not mark them passed or enable recognition by default.
 
 First, the voice that supplied the PIN can retain the ten-minute session, while a different speaker loses its authority before their command reaches tools. Second, a voluntarily enrolled household member can get their non-sensitive lens and greeting without saying their name. Both are hints under the identity service's policy; neither upgrades a voice to verified without a PIN.
 

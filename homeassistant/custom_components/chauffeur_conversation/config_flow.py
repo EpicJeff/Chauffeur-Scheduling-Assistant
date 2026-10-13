@@ -103,20 +103,30 @@ class ChauffeurOptionsFlow(OptionsFlow):
             self.config_entry.data.get(CONF_SERVICE_TOKEN, ""),
         )
         mapping = self.config_entry.options.get('device_satellites', '{}')
+        delegate = self.config_entry.options.get('stt_delegate', '')
         if user_input is not None:
             base_url = user_input[CONF_BASE_URL].rstrip("/")
             current = base_url
             current_token = user_input.get(CONF_SERVICE_TOKEN, "").strip()
             mapping = user_input.get('device_satellites', '{}')
+            delegate = user_input.get('stt_delegate', '').strip()
             try:
                 parsed = json.loads(mapping)
                 valid_mapping = isinstance(parsed, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in parsed.items())
             except (ValueError, TypeError):
                 valid_mapping = False
-            error = await _async_validate_connection(self.hass, base_url, current_token) if valid_mapping else 'Device mapping must be a JSON object of device IDs to satellite entity IDs.'
+            delegate_error = None
+            if delegate:
+                from homeassistant.components.stt import async_get_speech_to_text_entity
+                from .stt import ChauffeurSpeech
+                target = async_get_speech_to_text_entity(self.hass, delegate)
+                if not target or isinstance(target, ChauffeurSpeech):
+                    delegate_error = 'Choose an existing non-Chauffeur STT entity, or leave the delegate empty.'
+            error = delegate_error or (await _async_validate_connection(self.hass, base_url, current_token) if valid_mapping else 'Device mapping must be a JSON object of device IDs to satellite entity IDs.')
             if error is None:
                 return self.async_create_entry(
-                    data={CONF_BASE_URL: base_url, CONF_SERVICE_TOKEN: current_token, 'device_satellites': mapping}
+                    data={CONF_BASE_URL: base_url, CONF_SERVICE_TOKEN: current_token, 'device_satellites': mapping,
+                          'stt_delegate': delegate}
                 )
             errors["base"] = "cannot_connect"
             placeholders["error"] = error
@@ -127,6 +137,7 @@ class ChauffeurOptionsFlow(OptionsFlow):
                     vol.Required(CONF_BASE_URL, default=current): str,
                     vol.Optional(CONF_SERVICE_TOKEN, default=current_token): str,
                     vol.Optional('device_satellites', default=mapping): str,
+                    vol.Optional('stt_delegate', default=delegate): str,
                 }
             ),
             errors=errors,

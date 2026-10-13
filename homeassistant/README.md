@@ -46,14 +46,18 @@ not verify a member or authorize a voice approval.
 
 ## Voice identity and approval
 
-The local v2.499.402 implementation needs component **1.3.0**. Copy the updated
+PIN identity was introduced in v2.499.402. Automatic recognition adds component
+**1.4.0**. Copy the updated
 custom component and restart HA. Keep voice approvals off until the submit-gate
 and satellite device checks pass; local automated tests have not exercised the
 household's microphone/STT pipeline.
 
 On your personal device, sign into Config as a parent. Open **People → Voice
-identity**. Speak an ordinary request on the satellite with its service token
-configured, then refresh voice status. Name/select that satellite and enable
+identity**. Configure the service token once under **HA → Settings → Devices &
+services → Chauffeur Conversation → Configure**, using the token from
+**Chauffeur → Config → People → Argyle**. Keep the existing token if it is already
+configured; the token is not configured on individual speakers. Speak an
+ordinary request on each satellite, then refresh voice status. Name/select that satellite and enable
 identity. A recent HA supplies its satellite entity and device IDs directly.
 Run **Sync Now** after updating Chauffeur so the schedule cache contains source
 calendar privacy flags before you enable the voice feature.
@@ -67,7 +71,11 @@ pending. Older versions may require another wake word for the next turn.
 - “It's Jeff” starts Jeff's non-sensitive lens. It grants no approvals.
 - “Verify me,” then “My PIN is one two three four” verifies here for ten minutes.
   It uses the same member PIN as the phone; anyone who hears it may reuse it.
-  Before fingerprint continuity exists, anyone in the room can use that session.
+  Without recognition enabled, anyone in the room can use that session. With
+  recognition enabled, the exact PIN utterance anchors the session and each
+  subsequent utterance must match. If the PIN sample is too short, try “To verify
+  my voice on this speaker, my PIN is one two three four”, using your real PIN.
+  The PIN must be at the end of the phrase.
 - Shared schedule/list questions, driver assignments, shopping adds/check-offs,
   internal messages and mission research use the household voice rail. An
   unverified internal message is explicitly relayed as Household voice.
@@ -83,6 +91,53 @@ pending. Older versions may require another wake word for the next turn.
 Private content, external sends, uncertain-outcome verification and purchases
 use their phone paths in this build. HA's built-in local intents retain their
 existing routing; the integration still does not advertise `CONTROL`.
+
+### Enroll a voice for automatic recognition
+
+Recognition works independently of booking or purchase approval. An enrolled
+voice can get its name and personal lens without saying a name or PIN. It
+supplies a **named** lens, never the **verified** authority required for approvals.
+
+1. Install component **1.4.0** and restart HA. Its exact-run bridge currently
+   supports **HA 2026.10.0**. Other versions retain STT but have no recognition
+   until their bridge is checked.
+2. In the Chauffeur integration's **Configure** form, set **Existing STT entity**
+   to your existing provider. The household's Argyle pipeline, checked
+   2026-10-12, uses `stt.home_assistant_cloud`. Keep the current URL/token.
+3. Under **HA → Settings → Voice assistants → Argyle**, change speech-to-text
+   to **Chauffeur Voice recognition**. Your original provider still receives
+   identical audio and transcribes it. Fingerprints are computed in Chauffeur
+   locally; recognition adds no cloud recipient.
+4. In **Chauffeur → Config → People → Voice identity**, enable the satellite,
+   click **Prepare local voice model (27 MB)**, select the person, confirm their
+   consent (parent authorization for a child), and click **Enroll voice on this satellite**.
+5. Wake Argyle and read the displayed phrase clearly, with other people quiet.
+   Refresh after each phrase. Three enrollment phrases are followed by two
+   checks. Each sample belongs to its exact HA run and active enrollment.
+   Say **“cancel voice setup”** to stop.
+6. Check ordinary requests with each family member and an unenrolled speaker,
+   near/far and in normal room noise. Then turn on **Recognize enrolled voices
+   here and check for speaker changes**. Leave it off if it assigns a wrong name.
+   Approval activation stays separate.
+
+Argyle greets a newly recognized person once and resolves “my” in supported
+shared-schedule requests to that person. **“That's not me”** clears the lens and
+suppresses automatic naming for that session. A different or unusable sample
+clears a prior verified session/readback before processing the request.
+Recognition has no replay/voice-cloning protection and is not authentication.
+
+Only templates persist in `/data/voice_private/templates.json`; audio and
+per-turn vectors stay in memory. **Delete voice samples** removes automatic
+naming and active speaker sessions. Templates are excluded from member JSON
+and general database downloads; full add-on backups can retain them. The five
+samples check consistency, not household-wide accuracy. Short, quiet, clipped
+or mixed speech may remain unknown. The model is downloaded only when prepared.
+
+Refresh voice status shows missing-model/quality errors and compute time.
+`python tools/voice_probe.py` runs a synthetic CPU/memory probe inside the add-on
+after model preparation; it does not assess accuracy. Real satellite
+correlation, host performance and family recognition acceptance remain device
+checks. Model failure preserves transcription and withholds speaker authority.
 
 ## 2. Create the Argyle wake word
 

@@ -3843,9 +3843,16 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
     ctx = voice_identity.context(req.voice, authenticated)
 
     def perform():
+        nonlocal ctx
         if req.voice and req.voice.get('satellite_id') and not ctx.ha_instance_id:
             # A delayed PIN reply or a revoked token must not turn into chat.
             return _voice_response('The satellite token or request metadata is no longer valid. Please try again.', req.language)
+        from services import voice_fingerprint
+        evidence = voice_fingerprint.consume(ctx, req.voice or {}, req.text)
+        enrollment = voice_fingerprint.enrollment_turn(req.text, ctx, evidence)
+        if enrollment:
+            return _voice_response(enrollment['message'], req.language)
+        ctx = voice_fingerprint.apply(ctx, evidence)
         # This executes before title creation, persistence, SSE and any model.
         control = voice_identity.intercept(req.text, ctx, req.language)
         if control is not None:
@@ -3911,7 +3918,10 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
         CHAT_EVENTS.append(event_data)
             
         # Return format expected by Home Assistant Conversation integration
-        return _voice_response(res.get('message', 'I did not understand that.'), req.language, voice_identity.expects_reply(ctx))
+        speech = res.get('message', 'I did not understand that.')
+        if ctx.greeting and not readback:
+            speech = ctx.greeting + ' ' + speech
+        return _voice_response(speech, req.language, voice_identity.expects_reply(ctx))
 
     # Cache only sanitized replies. Authentication retries never check a PIN twice.
     return voice_identity.once(ctx, perform)
@@ -3950,7 +3960,9 @@ def voice_identity_settings(payload: Dict[str, Any], request: Request):
     try:
         voice_identity.configure(payload.get('enabled') is True, payload.get('satellites') or [],
                                  payload.get('approvals_enabled') is True)
-    except (ValueError, TypeError, AttributeError):
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    except (TypeError, AttributeError):
         raise HTTPException(status_code=400, detail='Choose valid satellites and set an Argyle service token.')
     return voice_identity.admin_state()
 
@@ -3962,6 +3974,70 @@ def voice_identity_recovery(payload: Dict[str, Any], request: Request):
     voice_identity.recover(str(payload.get('ha_instance_id') or ''), str(payload.get('satellite_id') or ''),
                            clear_locks=payload.get('clear_locks') is True, member_id=payload.get('member_id'), by_member=parent['id'])
     return voice_identity.admin_state()
+
+
+@app.post('/api/voice/audio')
+async def voice_audio_observation(request: Request):
+    from services import voice_identity, voice_fingerprint
+    if not voice_identity.service_authenticated(request.headers):
+        raise HTTPException(status_code=403, detail='A valid Argyle service token is required.')
+    try:
+        import json
+        metadata = json.loads(request.headers.get('x-voice-metadata', '{}'))
+        if not isinstance(metadata, dict):
+            raise ValueError('Invalid voice metadata.')
+        ctx = voice_identity.context(metadata, True)
+        if not ctx.paired:
+            raise ValueError('Enable this satellite before capturing voice samples.')
+        audio = bytearray()
+        async for chunk in request.stream():
+            if len(audio) + len(chunk) > voice_fingerprint.MAX_AUDIO:
+                raise ValueError('Voice sample is too large.')
+            audio.extend(chunk)
+        return await voice_fingerprint.observe(bytes(audio), metadata, ctx)
+    except (ValueError, TypeError, KeyError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+
+
+@app.get('/api/voice/recognition')
+def voice_recognition_state(request: Request):
+    _voice_parent(request)
+    from services import voice_fingerprint
+    return voice_fingerprint.status()
+
+
+@app.post('/api/voice/recognition/model')
+async def voice_recognition_model(request: Request):
+    _voice_parent(request)
+    from services import voice_fingerprint
+    try:
+        return await asyncio.get_running_loop().run_in_executor(voice_fingerprint._pool, voice_fingerprint.prepare_model)
+    except Exception:
+        raise HTTPException(status_code=503, detail='Could not prepare the local voice model. Check connectivity and installed voice dependencies.') from None
+
+
+@app.post('/api/voice/recognition/enroll')
+def voice_recognition_enroll(payload: Dict[str, Any], request: Request):
+    parent = _voice_parent(request)
+    from services import voice_identity, voice_fingerprint
+    if payload.get('consent') is not True:
+        raise HTTPException(status_code=400, detail='Consent is required for voice enrollment.')
+    try:
+        installation, satellite = str(payload.get('ha_instance_id') or ''), str(payload.get('satellite_id') or '')
+        selected = next((r for r in voice_identity.configuration().get('satellites', [])
+                         if r['ha_instance_id'] == installation and r['satellite_id'] == satellite), {})
+        ctx = voice_identity.VoiceContext(installation, satellite, '', '', service_revision=voice_identity._revision(),
+                         paired=voice_identity._paired(installation, satellite, selected.get('device_id')))
+        return voice_fingerprint.begin(ctx, str(payload.get('member_id') or ''), parent['id'])
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+
+
+@app.delete('/api/voice/recognition/members/{member_id}')
+def voice_recognition_delete(member_id: str, request: Request):
+    _voice_parent(request)
+    from services import voice_fingerprint
+    return voice_fingerprint.delete(member_id)
 
 @app.get("/api/v2/chat/stream")
 async def stream_agent_chat():
@@ -8253,6 +8329,8 @@ def delete_member_endpoint(member_id: str, force: bool = False):
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
     storage.delete_member(member_id)
+    from services import voice_fingerprint
+    voice_fingerprint.delete(member_id)
     return {"status": "deleted"}
 
 class MergeMembersRequest(BaseModel):

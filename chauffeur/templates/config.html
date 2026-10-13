@@ -1060,9 +1060,11 @@
                              @toggle="if ($event.target.open) loadVoiceIdentity()">
                         <summary class="cursor-pointer px-4 py-3 font-semibold text-blue-200">🎙️ Voice identity</summary>
                         <div class="px-4 pb-4 space-y-3 text-sm">
-                            <p class="text-gray-400">Say your name for your context. Say your member PIN to verify
+                            <p class="text-gray-400">Enroll your voice below for automatic recognition and personal context.
+                                Recognition does not approve purchases or bookings by itself.
+                                You can also say your name. Say your member PIN to verify
                                 here for ten minutes. Anyone who hears it may use that PIN on your devices too.
-                                Until verification expires, anyone in the room can use this session.</p>
+                                Without recognition enabled, anyone in the room can use that session.</p>
                             <p class="text-gray-400">Approvals start off. Test them on this satellite before enabling.
                                 Each release or booking is read back before approval.
                                 Private content and payments use your phone.</p>
@@ -1076,6 +1078,13 @@
                                        :disabled="!voiceState.enabled">
                                 <span>Allow PIN-verified release and booking approvals</span>
                             </label>
+                            <p class="text-xs text-gray-400">For recognition, update the HA component to 1.4.0,
+                                configure its existing STT delegate, and select Chauffeur Voice recognition as the
+                                assistant's speech-to-text provider. Your existing provider still transcribes speech;
+                                fingerprints are computed locally. The bridge currently supports HA 2026.10.0.</p>
+                            <button type="button" @click="prepareVoiceModel()" :disabled="voiceBusy || voiceRecognition.model_ready"
+                                    class="bg-gray-700 disabled:opacity-40 px-3 py-2 rounded text-xs"
+                                    x-text="voiceBusy ? 'Preparing voice model…' : (voiceRecognition.model_ready ? 'Voice model ready' : 'Prepare local voice model (27 MB)')"></button>
                             <template x-for="s in voiceState.satellites" :key="s.ha_instance_id + ':' + s.satellite_id">
                                 <div class="py-2 border-b border-gray-800 space-y-2">
                                     <div class="flex items-center gap-2">
@@ -1088,6 +1097,41 @@
                                         <span x-text="s.locked ? 'voice verification locked' : (s.member_name ? s.member_name + ' — ' + s.level : 'unknown')"></span>
                                         <span x-show="s.expires_at" x-text="s.expires_at ? ' · until ' + new Date(s.expires_at * 1000).toLocaleTimeString() : ''"></span>
                                     </p>
+                                    <label class="flex items-start gap-2">
+                                        <input type="checkbox" x-model="s.recognition_enabled" @change="saveVoiceIdentity()"
+                                               :disabled="!voiceState.enabled || !s.enabled">
+                                        <span>Recognize enrolled voices here and check for speaker changes</span>
+                                    </label>
+                                    <div class="flex gap-2 flex-wrap">
+                                        <select x-model="voiceEnrollMember" @change="voiceConsent = false" aria-label="Family member to enroll"
+                                                class="bg-gray-800 border border-gray-600 rounded p-2 text-xs">
+                                            <option value="">Choose a family member</option>
+                                            <template x-for="m in members.filter(m => !m.system)" :key="m.id">
+                                                <option :value="m.id" x-text="m.name"></option>
+                                            </template>
+                                        </select>
+                                    </div>
+                                    <label class="flex items-start gap-2">
+                                        <input type="checkbox" x-model="voiceConsent">
+                                        <span class="text-xs">The selected person agrees to voice enrollment; I authorize enrollment for a child.
+                                            Only voice templates are saved locally. Audio is discarded. Backups may retain deleted templates.</span>
+                                    </label>
+                                    <div class="flex gap-2 flex-wrap">
+                                        <button type="button" @click="beginVoiceEnrollment(s)"
+                                                :disabled="voiceBusy || !voiceEnrollMember || !voiceConsent || !voiceRecognition.model_ready || !voiceState.enabled || !s.enabled"
+                                                class="bg-blue-700 disabled:opacity-40 px-3 py-2 rounded text-xs">Enroll voice on this satellite</button>
+                                    </div>
+                                    <template x-for="pending in voiceRecognition.enrollments.filter(e => e.key[0] === s.ha_instance_id && e.key[1] === s.satellite_id)" :key="pending.member_id">
+                                        <div class="bg-gray-800 rounded p-3 space-y-2">
+                                            <p class="text-sm" x-text="'Voice setup: phrase ' + pending.step + ' of 5'"></p>
+                                            <p class="text-sm text-blue-200" x-text="pending.prompt"></p>
+                                            <p class="text-xs text-gray-400">Wake Argyle, read this phrase clearly, then refresh voice status for the next phrase.
+                                                Keep other people quiet during the sample. Say &ldquo;cancel voice setup&rdquo; to stop.</p>
+                                        </div>
+                                    </template>
+                                    <template x-for="diagnostic in voiceRecognition.satellites.filter(e => e.key[0] === s.ha_instance_id && e.key[1] === s.satellite_id)" :key="diagnostic.key.join(':')">
+                                        <p class="text-xs text-gray-400" x-text="diagnostic.available ? 'Last fingerprint: ' + diagnostic.latency_ms + ' ms' : diagnostic.message"></p>
+                                    </template>
                                     <button type="button" @click="recoverVoiceIdentity(s, false)"
                                             class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-xs">Revoke session</button>
                                     <button type="button" @click="recoverVoiceIdentity(s, true)"
@@ -1100,7 +1144,20 @@
                                         x-text="'Clear voice lock for ' + member.name"></button>
                             </template>
                             <p x-show="!voiceState.satellites.length" class="text-gray-500 text-xs">
-                                Speak to Argyle once from a satellite with its service token configured, then refresh.</p>
+                                Configure the service token in Home Assistant's Chauffeur integration,
+                                then speak to Argyle from each satellite and refresh.</p>
+                            <div class="pt-3 border-t border-gray-700 space-y-3">
+                                <p class="text-xs text-gray-400">After the three enrollment phrases and two checks,
+                                    try ordinary requests with each family member and an unenrolled speaker.
+                                    Leave recognition off if it assigns a wrong name. Short or noisy speech may remain unknown.</p>
+                                <template x-for="profile in voiceRecognition.profiles" :key="profile.member_id + ':' + profile.key.join(':')">
+                                    <div class="flex gap-2 items-center flex-wrap">
+                                        <span class="text-xs" x-text="(members.find(m => m.id === profile.member_id)?.name || 'Family member') + ' · ' + (profile.calibrated ? 'five samples checked' : 'voices too similar — recognition unavailable')"></span>
+                                        <button type="button" @click="deleteVoiceEnrollment(profile.member_id)"
+                                                class="bg-red-900/60 px-3 py-2 rounded text-xs">Delete voice samples</button>
+                                    </div>
+                                </template>
+                            </div>
                             <button type="button" @click="loadVoiceIdentity()"
                                     class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-xs">Refresh voice status</button>
                             <template x-for="action in voiceState.history.slice(-5).reverse()" :key="action.id">
@@ -2135,6 +2192,8 @@
                 authAudit: null, enforceError: '',            // auth arc S8
                 voiceState: { enabled: false, approvals_enabled: false, satellites: [], locked_members: [], history: [] },
                 voiceError: '',
+                voiceRecognition: {model_ready: false, profiles: [], enrollments: [], satellites: []},
+                voiceEnrollMember: '', voiceConsent: false, voiceBusy: false,
                 pairBusy: false,
                 // Stages (load arc A4)
                 stageData: { kids: [], pending: [], stages: [], cutoffs: [6, 12, 15] },
@@ -3532,6 +3591,8 @@
                         const d = await r.json();
                         if (!r.ok) throw new Error(d.detail || 'Could not load voice identity.');
                         this.voiceState = d;
+                        const recognition = await fetch(`${this.apiBase}api/voice/recognition`);
+                        if (recognition.ok) this.voiceRecognition = await recognition.json();
                         this.voiceError = '';
                     } catch (e) { this.voiceError = e.message; }
                 },
@@ -3548,6 +3609,37 @@
                         this.voiceState = d;
                         this.voiceError = '';
                     } catch (e) { this.voiceError = e.message; await this.loadVoiceIdentity(); this.voiceError = e.message; }
+                },
+                async prepareVoiceModel() {
+                    this.voiceBusy = true;
+                    try {
+                        const r = await fetch(`${this.apiBase}api/voice/recognition/model`, {method: 'POST'});
+                        const d = await r.json();
+                        if (!r.ok) throw new Error(d.detail || 'Could not prepare voice model.');
+                        this.voiceRecognition = d; this.voiceError = '';
+                    } catch (e) { this.voiceError = e.message; }
+                    finally { this.voiceBusy = false; }
+                },
+                async beginVoiceEnrollment(s) {
+                    this.voiceBusy = true;
+                    try {
+                        const r = await fetch(`${this.apiBase}api/voice/recognition/enroll`, {
+                            method: 'POST', headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ha_instance_id: s.ha_instance_id, satellite_id: s.satellite_id,
+                                member_id: this.voiceEnrollMember, consent: this.voiceConsent})});
+                        const d = await r.json();
+                        if (!r.ok) throw new Error(d.detail || 'Could not start voice enrollment.');
+                        this.voiceRecognition = d; this.voiceError = '';
+                    } catch (e) { this.voiceError = e.message; }
+                    finally { this.voiceBusy = false; }
+                },
+                async deleteVoiceEnrollment(memberId) {
+                    try {
+                        const r = await fetch(`${this.apiBase}api/voice/recognition/members/${encodeURIComponent(memberId)}`, {method: 'DELETE'});
+                        const d = await r.json();
+                        if (!r.ok) throw new Error(d.detail || 'Could not delete voice enrollment.');
+                        this.voiceRecognition = d; await this.loadVoiceIdentity();
+                    } catch (e) { this.voiceError = e.message; }
                 },
                 async recoverVoiceIdentity(satellite, clear) {
                     try {
