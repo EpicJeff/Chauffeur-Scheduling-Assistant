@@ -7,6 +7,7 @@ import io
 import json
 import urllib.error
 import urllib.request
+import time
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 from harness import check
@@ -252,7 +253,87 @@ def scenario_a_penalised_model_hands_over_to_its_sibling():
 from contextlib import closing as contextlib_closing
 
 
+def _req(url, model, key):
+    body = json.dumps({'model': model}).encode('utf-8')
+    hdr = {'x-api-key': key} if 'anthropic' in url else {'Authorization': 'Bearer ' + key}
+    return urllib.request.Request(url, data=body, headers=hdr, method='POST')
+
+
+def scenario_paid_hosts_are_metered_by_body_model():
+    from services import storage
+    real = storage.get_settings
+    storage.get_settings = lambda: {'llm_anthropic_daily_cap': 500}
+    try:
+        with patch('urllib.request.urlopen', ok):
+            with budget.request_scope('t', False):
+                budget.urlopen(_req('https://api.anthropic.com/v1/messages', 'claude-haiku-5-5', 'A'))
+                budget.urlopen(_req('https://api.openai.com/v1/responses', 'gpt-6-luna', 'O'))
+        with contextlib_closing(budget._connect()) as db:
+            rows = db.execute('SELECT model FROM attempts ORDER BY id DESC LIMIT 2').fetchall()
+        check({r[0] for r in rows} == {'anthropic:claude-haiku-5-5', 'openai:gpt-6-luna'}, f'prefixed ids recorded: {rows}')
+        check(budget._limit('anthropic:claude-haiku-5-5') is None and budget._limit('openai:gpt-6.1-sol') is None,
+              'no guessed allowance for a paid provider')
+        with patch('urllib.request.urlopen', ok):
+            budget.urlopen(urllib.request.Request('https://api.anthropic.com/v1/models', headers={'x-api-key': 'A'}, method='GET'))
+        with contextlib_closing(budget._connect()) as db:
+            n = db.execute("SELECT COUNT(*) FROM attempts WHERE model LIKE 'anthropic:%'").fetchone()[0]
+        check(n == 1, 'a models listing is not a model call and is not metered')
+    finally:
+        storage.get_settings = real
+
+
+def scenario_provider_cap_counts_the_local_day():
+    from services import storage
+    real = storage.get_settings
+    storage.get_settings = lambda: {'llm_openai_daily_cap': 2}
+    try:
+        with contextlib_closing(budget._connect()) as db, db:
+            db.execute("DELETE FROM attempts WHERE model LIKE 'openai:%'")
+        with patch('urllib.request.urlopen', ok):
+            with budget.request_scope('t', False):
+                budget.urlopen(_req('https://api.openai.com/v1/responses', 'gpt-6-luna', 'O'))
+                budget.urlopen(_req('https://api.openai.com/v1/responses', 'gpt-6-luna', 'O'))
+                try:
+                    budget.urlopen(_req('https://api.openai.com/v1/responses', 'gpt-6-luna', 'O'))
+                    check(False, 'the third request must defer')
+                except budget.Deferred as e:
+                    check(e.scope == 'allowance' and 'OpenAI' in str(e), f'{e} {e.scope}')
+                    local_mid = budget._local_midnight(time.time())
+                    check(abs(e.retry_at - local_mid) < 2, 'retry at local midnight, not Pacific')
+        # yesterday's attempts do not count: move them back a day
+        with contextlib_closing(budget._connect()) as db, db:
+            db.execute("UPDATE attempts SET started = started - 86400 WHERE model LIKE 'openai:%'")
+        with patch('urllib.request.urlopen', ok):
+            with budget.request_scope('t', False):
+                budget.urlopen(_req('https://api.openai.com/v1/responses', 'gpt-6-luna', 'O'))
+        storage.get_settings = lambda: {'llm_openai_daily_cap': 0}
+        with patch('urllib.request.urlopen', ok):
+            with budget.request_scope('t', False):
+                for _ in range(5):
+                    budget.urlopen(_req('https://api.openai.com/v1/responses', 'gpt-6-luna', 'O'))
+        check(budget.provider_attempts_today('O', 'openai') >= 6, 'cap 0 never defers')
+    finally:
+        storage.get_settings = real
+
+
+def scenario_paid_429_pauses_two_minutes_only():
+    def throttled(*a, **k):
+        raise urllib.error.HTTPError('u', 429, 'rate', {}, io.BytesIO(b'{"error":{"message":"per day limit"}}'))
+    with patch('urllib.request.urlopen', throttled):
+        with budget.request_scope('t', False):
+            try:
+                budget.urlopen(_req('https://api.anthropic.com/v1/messages', 'claude-sonnet-5-5', 'A'))
+            except urllib.error.HTTPError:
+                pass
+    with contextlib_closing(budget._connect()) as db:
+        until = db.execute("SELECT until FROM pauses WHERE scope='model:anthropic:claude-sonnet-5-5'").fetchone()[0]
+    check(0 < until - time.time() <= 121, 'a paid 429 with "per day" text is still a two-minute pause')
+
+
 if __name__=='__main__':
+    scenario_paid_hosts_are_metered_by_body_model()
+    scenario_provider_cap_counts_the_local_day()
+    scenario_paid_429_pauses_two_minutes_only()
     scenario_a_model_penalty_never_pauses_the_workflow()
     scenario_retry_amplification();scenario_shared_budget_and_reserve()
     scenario_concurrency_and_day_reset();scenario_daily_quota_survives_restart()

@@ -1,4 +1,4 @@
-"""Persistent admission control at the Gemini HTTP boundary.
+"""Persistent admission control at the model-provider HTTP boundary.
 
 Reservations count attempts, not successful operations. No keys, prompts or
 responses are logged. SQLite transactions serialize threads and worker processes.
@@ -9,6 +9,7 @@ import contextvars
 import datetime
 import hashlib
 import io
+import json
 import sqlite3
 import time
 import urllib.error
@@ -19,6 +20,9 @@ from zoneinfo import ZoneInfo
 
 BACKGROUND_FLASH_LIMIT = 12  # shared across automated workflows/models per day
 FLASH_MODEL_LIMIT = 20
+PAID_HOSTS = {'api.anthropic.com': ('anthropic', '/v1/messages'),
+              'api.openai.com': ('openai', '/v1/responses')}
+PROVIDER_LABEL = {'anthropic': 'Claude', 'openai': 'OpenAI'}
 _scope = contextvars.ContextVar('llm_request_scope', default=('direct', False))
 _wire_attempts = contextvars.ContextVar('llm_wire_attempts', default=None)
 # While set (a list), a background failure's WORKFLOW pause is collected here
@@ -143,11 +147,35 @@ def _day(now):
     return local.date().isoformat(), tomorrow.timestamp()
 
 
+def _local_midnight(now):
+    """Next process-local midnight, resolving its own daylight-saving offset."""
+    tomorrow = datetime.datetime.fromtimestamp(now).date() + datetime.timedelta(days=1)
+    return datetime.datetime.combine(tomorrow, datetime.time()).timestamp()
+
+
+def provider_cap(prov, settings):
+    try:
+        return max(0, int((settings or {}).get(f'llm_{prov}_daily_cap', 500) or 0))
+    except (TypeError, ValueError):
+        return 500
+
+
+def provider_attempts_today(key, prov):
+    """Attempts for this key/provider since local midnight, failures included."""
+    today = datetime.datetime.fromtimestamp(time.time()).date()
+    since = datetime.datetime.combine(today, datetime.time()).timestamp()
+    with contextlib.closing(_connect()) as db:
+        return db.execute('SELECT COUNT(*) FROM attempts WHERE account=? AND model LIKE ? AND started >= ?',
+                          (_account(key), prov + ':%', since)).fetchone()[0]
+
+
 def is_flash(model):
     return 'flash' in model and 'lite' not in model
 
 
 def _limit(model):
+    if ':' in model:
+        return None
     if is_flash(model) or model.startswith('gemini-2.5-flash-lite'):
         return FLASH_MODEL_LIMIT
     if 'flash-lite' in model:
@@ -210,6 +238,18 @@ def _reserve(key, model):
                         continue          # a person asked; the backoff yields
                     raise Deferred('AI requests paused after provider failure', row[0])
                 raise Deferred(f'{model} is paused after a provider failure', row[0], 'model')
+        prov = model.split(':', 1)[0] if ':' in model else 'gemini'
+        if prov in PROVIDER_LABEL:
+            from services.storage import get_settings
+            cap = provider_cap(prov, get_settings())
+            if cap:
+                today = datetime.datetime.fromtimestamp(now).date()
+                since = datetime.datetime.combine(today, datetime.time()).timestamp()
+                used = db.execute('SELECT COUNT(*) FROM attempts WHERE account=? AND model LIKE ? AND started >= ?',
+                                  (account, prov + ':%', since)).fetchone()[0]
+                if used >= cap:
+                    raise Deferred(f"{PROVIDER_LABEL[prov]}'s daily request cap ({cap}) is used up",
+                                   _local_midnight(now), 'allowance')
         limit = _limit(model)
         count = db.execute('SELECT COUNT(*) FROM attempts WHERE account=? AND day=? AND model=?',
                            (account, day, model)).fetchone()[0]
@@ -250,12 +290,20 @@ def _finish(reservation, model, outcome, retry_at=0, failed=False):
 
 
 def urlopen(request, timeout=60):
-    """Only Gemini model calls are admitted/metered; other HTTP is unchanged."""
+    """Meter model endpoints for Gemini, Claude and OpenAI; pass other HTTP through."""
     url = urllib.parse.urlsplit(request.full_url)
-    if url.hostname != 'generativelanguage.googleapis.com' or '/models/' not in url.path:
+    paid = PAID_HOSTS.get(url.hostname)
+    if paid and url.path == paid[1]:
+        try:
+            model = paid[0] + ':' + json.loads(request.data.decode('utf-8')).get('model', '')
+        except (AttributeError, TypeError, ValueError):
+            model = paid[0] + ':unknown'
+        key = request.get_header('X-api-key', '') or request.get_header('Authorization', '').replace('Bearer ', '')
+    elif url.hostname == 'generativelanguage.googleapis.com' and '/models/' in url.path:
+        model = url.path.split('/models/', 1)[1].split(':', 1)[0]
+        key = urllib.parse.parse_qs(url.query).get('key', [''])[0] or request.get_header('X-goog-api-key', '')
+    else:
         return urllib.request.urlopen(request, timeout=timeout)
-    model = url.path.split('/models/', 1)[1].split(':', 1)[0]
-    key = urllib.parse.parse_qs(url.query).get('key', [''])[0] or request.get_header('X-goog-api-key', '')
     reservation = _reserve(key, model)
     attempts = _wire_attempts.get()
     if attempts is not None:
@@ -268,7 +316,7 @@ def urlopen(request, timeout=60):
         until = 0
         if error.code == 429:
             text = body.decode('utf-8', errors='replace').lower()
-            until = _day(now)[1] if any(s in text for s in ('perday', 'per day', 'daily')) else now + 120
+            until = _day(now)[1] if ':' not in model and any(s in text for s in ('perday', 'per day', 'daily')) else now + 120
         elif error.code == 404:
             until = now + 21600
         # 5xx background failures pause the workflow; foreground retries remain
