@@ -1,4 +1,4 @@
-"""Explicit per-run context, pinned to HA 2026.10.0; never correlate by time/text.
+"""Explicit per-run context for HA 2026.10.x; never correlate by time/text.
 
 HA does not pass the run identity to STT. Wrap its run controller, not the
 delegate or global latest audio. Context survives awaits and inherited tasks;
@@ -11,12 +11,24 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import wraps
 import inspect
+import re
 import uuid
 
 _current = ContextVar('chauffeur_pipeline_run', default=None)
 _owners = {}
 _original = None
 _wrapper = None
+_pipeline_class = None
+_status = {}
+
+
+def status(hass):
+    return _status.get(id(hass), {'available': False, 'reason': 'Choose an STT delegate to enable the voice bridge.'})
+
+
+def _unavailable(hass, reason, version=''):
+    _status[id(hass)] = {'available': False, 'reason': reason, 'version': version}
+    return False
 
 
 @dataclass
@@ -48,7 +60,7 @@ async def observation(hass, user_input):
     if not run.observation:
         return None
     try:
-        result = await asyncio.wait_for(asyncio.shield(run.observation), .1)
+        result = await asyncio.wait_for(asyncio.shield(run.observation), 1)
         if result:
             return {'run_id': run.run_id, 'utterance_id': run.utterance_id,
                     'observation_id': result['observation_id']}
@@ -61,24 +73,41 @@ async def observation(hass, user_input):
 
 
 def install(hass):
-    from homeassistant.const import __version__
-    from homeassistant.components.assist_pipeline.run import PipelineRun
-    global _original, _wrapper
-    if __version__ != '2026.10.0':
-        return False
-    if _wrapper and PipelineRun.async_execute is not _wrapper:
-        return False  # another component replaced the controller
+    global _original, _wrapper, _pipeline_class
+    try:
+        from homeassistant.const import __version__
+    except ImportError:
+        return _unavailable(hass, 'Home Assistant version is unavailable.')
+    if not re.fullmatch(r'2026\.10\.\d+', __version__):
+        return _unavailable(hass, 'Voice bridge supports HA 2026.10.x.', __version__)
+    try:
+        from homeassistant.components.assist_pipeline.run import PipelineRun
+    except (ImportError, AttributeError):
+        return _unavailable(hass, 'Assist pipeline controller is unavailable.', __version__)
+    method = getattr(PipelineRun, 'async_execute', None)
+    if method is None:
+        return _unavailable(hass, 'Assist pipeline entry point is unavailable.', __version__)
+    if _wrapper and method is not _wrapper:
+        return _unavailable(hass, 'Another component replaced the Assist pipeline controller.', __version__)
     if not _wrapper:
-        original = PipelineRun.async_execute
-        if tuple(inspect.signature(original).parameters) != ('self', 'pipeline_input', 'validate'):
-            return False
+        original = method
+        try:
+            compatible = tuple(inspect.signature(original).parameters) == ('self', 'pipeline_input', 'validate')
+        except (TypeError, ValueError):
+            compatible = False
+        if not compatible:
+            return _unavailable(hass, 'Assist pipeline signature is incompatible.', __version__)
 
         @wraps(original)
         async def execute(controller, pipeline_input, *, validate=False):
-            if id(controller.hass) not in _owners:
+            if id(getattr(controller, 'hass', None)) not in _owners:
                 return await original(controller, pipeline_input, validate=validate)
-            run = Run(controller.hass, controller.id, controller.context.id,
-                      pipeline_input.device_id, pipeline_input.satellite_id)
+            context_id = getattr(getattr(controller, 'context', None), 'id', None)
+            if not context_id or not getattr(controller, 'id', None):
+                _unavailable(controller.hass, 'Assist pipeline context is incompatible.', __version__)
+                return await original(controller, pipeline_input, validate=validate)
+            run = Run(controller.hass, controller.id, context_id,
+                      getattr(pipeline_input, 'device_id', None), getattr(pipeline_input, 'satellite_id', None))
             token = _current.set(run)
             try:
                 return await original(controller, pipeline_input, validate=validate)
@@ -88,19 +117,21 @@ def install(hass):
                     run.observation.cancel()
                 _current.reset(token)
 
-        _original, _wrapper = original, execute
+        _original, _wrapper, _pipeline_class = original, execute, PipelineRun
         PipelineRun.async_execute = execute
     _owners[id(hass)] = _owners.get(id(hass), 0) + 1
+    _status[id(hass)] = {'available': True, 'reason': '', 'version': __version__}
     return True
 
 
 def uninstall(hass):
-    from homeassistant.components.assist_pipeline.run import PipelineRun
-    global _original, _wrapper
+    global _original, _wrapper, _pipeline_class
     if _owners.get(id(hass), 0) > 1:
         _owners[id(hass)] -= 1
     else:
         _owners.pop(id(hass), None)
-    if not _owners and _wrapper and PipelineRun.async_execute is _wrapper:
-        PipelineRun.async_execute = _original
-        _original = _wrapper = None
+        _status.pop(id(hass), None)
+    if not _owners and _wrapper:
+        if _pipeline_class.async_execute is _wrapper:
+            _pipeline_class.async_execute = _original
+        _original = _wrapper = _pipeline_class = None

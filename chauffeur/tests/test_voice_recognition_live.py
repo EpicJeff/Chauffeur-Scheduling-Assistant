@@ -26,7 +26,7 @@ def seed():
         MODEL_READY = True
         return fp.status()
     fp.prepare_model = prepare
-    fp.extract = lambda audio, metadata: ([float(i == (1 if audio == b'other speaker' else 0)) for i in range(256)], 6)
+    fp.extract = lambda audio, metadata, **kwargs: ([float(i == (1 if audio == b'other speaker' else 0)) for i in range(256)], 6)
     from services import agent_router
     def answer(text, **kwargs):
         member = kwargs['voice_context'].member()

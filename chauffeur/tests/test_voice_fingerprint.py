@@ -76,14 +76,14 @@ class FingerprintTests(unittest.TestCase):
         self.assertEqual(again.expires_at, ctx.expires_at)
         self.assertIsNone(again.greeting)
 
-    def test_ambiguous_unknown_and_missing_do_not_borrow_person(self):
+    def test_ambiguous_and_missing_keep_lens_but_clear_on_contradiction(self):
         self.enable([self.profile(), self.profile('alex', 1)])
         first = fp.apply(self.ctx(), self.evidence())
         mixed = fp.normalized([a + b for a, b in zip(vector(), vector(1))])
-        self.assertEqual(fp.apply(self.ctx(), {'vector': mixed}).level, 'unknown')
+        self.assertEqual(fp.apply(self.ctx(), {'vector': mixed, 'seconds': 6}).member_id, 'jeff')
         self.assertEqual(fp.apply(self.ctx(), self.evidence(2)).level, 'unknown')
         self.assertNotEqual(fp.apply(self.ctx(), self.evidence(1)).generation, first.generation)
-        self.assertEqual(fp.apply(self.ctx(), None).level, 'unknown')
+        self.assertEqual(fp.apply(self.ctx(), None).member_id, 'alex')
 
     def test_pin_anchor_and_new_speaker_clear_readback(self):
         self.enable([self.profile(), self.profile('alex', 1)])
@@ -100,17 +100,40 @@ class FingerprintTests(unittest.TestCase):
         self.assertIsNone(other.verified_member())
         self.assertNotIn('readback', voice._sessions[('ha', 'assist_satellite.kitchen')])
 
-    def test_inconclusive_cannot_keep_verified_session(self):
+    def test_missing_evidence_keeps_verified_session_and_readback(self):
         self.enable()
         voice.intercept('My PIN is 1234', fp.apply(self.ctx(), self.evidence()))
-        self.assertEqual(fp.apply(self.ctx(), None).level, 'unknown')
+        ctx = self.ctx()
+        row = voice._sessions[('ha', 'assist_satellite.kitchen')]
+        row['readback'] = {'id': 'pending'}
+        after = fp.apply(self.ctx(), None)
+        self.assertEqual(after.verified_member()['id'], 'jeff')
+        self.assertEqual(after.generation, ctx.generation)
+        self.assertEqual(after.expires_at, ctx.expires_at)
+        self.assertEqual(row['readback']['id'], 'pending')
 
-    def test_pin_without_correlated_sample_never_creates_anchor(self):
+    def test_short_or_uncertain_followup_keeps_identity_and_original_expiry(self):
+        self.enable([self.profile(), self.profile('alex', 1)])
+        ctx = fp.apply(self.ctx(), self.evidence())
+        voice.intercept('My PIN is 1234', ctx)
+        ctx = self.ctx()
+        for evidence in (self.evidence(1, seconds=.5), {'vector': fp.normalized([.5 if i < 2 else 0 for i in range(256)]), 'seconds': 6}, None):
+            result = fp.apply(self.ctx(), evidence)
+            self.assertEqual(result.member_id, 'jeff')
+            self.assertEqual(result.level, 'verified')
+            self.assertEqual(result.expires_at, ctx.expires_at)
+        with patch.object(voice.time, 'time', return_value=ctx.expires_at + 1):
+            self.assertEqual(fp.apply(self.ctx(), None).level, 'unknown')
+
+    def test_correct_pin_without_fingerprint_verifies_without_rate_penalty(self):
         self.enable()
         voice.intercept("It's Jeff", self.ctx())
-        result = voice.intercept('My PIN is 1234', self.ctx())
-        self.assertIn('sample was unavailable', result['message'])
-        self.assertEqual(self.ctx().level, 'named')
+        for _ in range(8):
+            result = voice.intercept('My PIN is 1234', self.ctx())
+            self.assertIn('Verified', result['message'])
+            self.assertEqual(self.ctx().level, 'verified')
+        self.assertNotIn('speaker_anchor', voice._sessions[('ha', 'assist_satellite.kitchen')])
+        self.assertEqual(storage.get_app_state('voice_auth_history')[-1]['outcome'], 'verified')
 
     def test_correction_suppresses_automatic_name_in_session(self):
         self.enable()
@@ -170,6 +193,28 @@ class FingerprintTests(unittest.TestCase):
             with patch.object(fp, '_engine', side_effect=AssertionError('invalid audio reached model')):
                 with self.assertRaises(ValueError): fp.extract(audio, {**metadata, **changes})
 
+    def test_short_approval_audio_and_long_question_use_one_model_pass(self):
+        import numpy as np
+        metadata = {'codec': 'pcm', 'format': 'wav', 'bit_rate': 16, 'channel': 1, 'sample_rate': 16000}
+        calls = []
+        stream = types.SimpleNamespace(accept_waveform=lambda **kwargs: None, input_finished=lambda: None)
+        engine = types.SimpleNamespace(create_stream=lambda: stream, is_ready=lambda s: True,
+                                       compute=lambda s: (calls.append(1) or vector()))
+        for seconds in (.5, 6):
+            t = np.arange(int(seconds * 16000)) / 16000
+            audio = (.05 * np.sin(2 * np.pi * 150 * t) * 32768).astype('<i2').tobytes()
+            calls.clear()
+            with patch.object(fp, '_engine', return_value=engine):
+                result, voiced = fp.extract(audio, metadata)
+            self.assertEqual(result, vector())
+            self.assertEqual(len(calls), 1)
+            self.assertGreater(voiced, .3)
+
+        calls.clear()
+        with patch.object(fp, '_engine', return_value=engine):
+            fp.extract(audio, metadata, enrollment=True)
+        self.assertEqual(len(calls), 3)  # split-speaker checks belong to explicit enrollment
+
     def test_worker_is_bounded_and_audio_is_not_persisted(self):
         self.enable()
         ctx = self.ctx()
@@ -199,7 +244,7 @@ class FingerprintTests(unittest.TestCase):
     def test_three_training_two_held_out_samples_and_no_transcript_storage(self):
         with patch.object(fp, 'model_ready', return_value=True):
             fp.begin(self.ctx(), 'jeff', 'jeff')
-        self.assertIsNone(fp.enrollment_turn('ordinary request', self.ctx(), self.evidence()))
+        self.assertIn('Voice setup', fp.enrollment_turn('ordinary request', self.ctx(), self.evidence())['message'])
         for index, prompt in enumerate(fp.PROMPTS):
             result = fp.enrollment_turn(prompt, self.ctx(), self.evidence())
             if index < 4:
@@ -221,6 +266,14 @@ class FingerprintTests(unittest.TestCase):
         self.assertIn('not sound consistent', fp.enrollment_turn(fp.PROMPTS[1], self.ctx(), self.evidence(1))['message'])
         self.assertFalse(fp.profiles())
 
+    def test_enrollment_accepts_stt_slip_and_unrelated_speech_gets_feedback(self):
+        with patch.object(fp, 'model_ready', return_value=True): fp.begin(self.ctx(), 'jeff', 'jeff')
+        changed = fp.PROMPTS[0].replace('many things', 'many plans')
+        self.assertIn('accepted', fp.enrollment_turn(changed, self.ctx(), self.evidence())['message'])
+        result = fp.enrollment_turn('What time is practice?', self.ctx(), self.evidence())
+        self.assertIn('voice setup', result['message'].lower())
+        self.assertEqual(fp.status()['enrollments'][0]['step'], 2)
+
     def test_rival_blocks_calibration(self):
         fp._save([self.profile('alex')])
         with patch.object(fp, 'model_ready', return_value=True): fp.begin(self.ctx(), 'jeff', 'jeff')
@@ -238,6 +291,18 @@ class FingerprintTests(unittest.TestCase):
         fp._save([self.profile()])
         storage.set_member_status('jeff', 'disabled')
         self.assertFalse(fp.profiles())
+        self.assertEqual(len(fp._load()), 1)
+        storage.set_member_status('jeff', 'active')
+        self.assertEqual(fp.profiles()[0]['member_id'], 'jeff')
+
+    def test_delete_or_enroll_does_not_erase_other_disabled_templates(self):
+        fp._save([self.profile(), self.profile('alex', 1)])
+        storage.set_member_status('alex', 'disabled')
+        fp.delete('jeff')
+        self.assertEqual([r['member_id'] for r in fp._load()], ['alex'])
+        with patch.object(fp, 'model_ready', return_value=True): fp.begin(self.ctx(), 'jeff', 'jeff')
+        for prompt in fp.PROMPTS: fp.enrollment_turn(prompt, self.ctx(), self.evidence())
+        self.assertEqual({r['member_id'] for r in fp._load()}, {'jeff', 'alex'})
 
     def test_endpoint_recognition_precedes_model_and_uses_named_history(self):
         import main
@@ -319,6 +384,15 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(a['utterance_id'], b['utterance_id'])
         self.assertIsNone(self.bridge.current(self.hass))
 
+    async def test_upload_reference_survives_more_than_one_tenth_second(self):
+        async def process():
+            run = self.bridge.current(self.hass)
+            run.observation = asyncio.create_task(asyncio.sleep(.15, result={'observation_id': 'slow-upload'}))
+            user = types.SimpleNamespace(context=types.SimpleNamespace(id=run.context_id),
+                                         device_id=run.device_id, satellite_id=run.satellite_id)
+            self.assertEqual((await self.bridge.observation(self.hass, user))['observation_id'], 'slow-upload')
+        await self.run_pipeline('kitchen', process)
+
     async def test_local_only_cancellation_and_late_result_discarded(self):
         saved = []
         async def process():
@@ -355,10 +429,46 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.modules['homeassistant.const'].__version__ = '2026.11.0'
         self.assertFalse(self.bridge.install(object()))
 
+    async def test_patch_release_accepted_and_missing_module_is_optional(self):
+        self.bridge.uninstall(self.hass)
+        self.modules['homeassistant.const'].__version__ = '2026.10.1'
+        self.assertTrue(self.bridge.install(self.hass))
+        self.bridge.uninstall(self.hass)
+        with patch.dict(sys.modules, {'homeassistant.components.assist_pipeline.run': None}):
+            self.assertFalse(self.bridge.install(self.hass))
+        self.assertFalse(self.bridge.status(self.hass)['available'])
+
+    async def test_uninstall_works_when_module_path_is_gone(self):
+        with patch.dict(sys.modules, {'homeassistant.components.assist_pipeline.run': None}):
+            self.bridge.uninstall(self.hass)
+        self.assertFalse(self.bridge._owners)
+
+    async def test_delegate_removal_unloads_saved_bridge_owner(self):
+        import ast
+        self.bridge.uninstall(self.hass)
+        source = ast.parse((self.path / '__init__.py').read_text(encoding='utf-8'))
+        functions = [n for n in source.body if isinstance(n, ast.AsyncFunctionDef)]
+        code = ast.Module(body=[ast.ImportFrom(module='__future__', names=[ast.alias(name='annotations')], level=0), *functions], type_ignores=[])
+        ast.fix_missing_locations(code)
+        namespace = {'__package__': 'voice_test_component', 'PLATFORMS': ['conversation', 'stt']}
+        exec(compile(code, '__init__.py', 'exec'), namespace)
+        from unittest.mock import AsyncMock
+        self.hass.config_entries = types.SimpleNamespace(async_forward_entry_setups=AsyncMock(),
+                        async_unload_platforms=AsyncMock(return_value=True), async_reload=AsyncMock())
+        callbacks = []
+        entry = types.SimpleNamespace(options={'stt_delegate': 'stt.cloud'}, entry_id='entry',
+                    async_on_unload=callbacks.append, add_update_listener=lambda f: lambda: None)
+        self.assertTrue(await namespace['async_setup_entry'](self.hass, entry))
+        entry.options = {}  # HA replaces options before unloading the old entry
+        self.assertTrue(await namespace['async_unload_entry'](self.hass, entry))
+        for callback in callbacks: callback()
+        self.assertFalse(self.bridge._owners)
+
     async def speech_entity(self, delegate):
         class Base: pass
         fake_stt = types.SimpleNamespace(SpeechToTextEntity=Base,
-                    async_get_speech_to_text_entity=lambda hass, name: delegate)
+                    async_get_speech_to_text_entity=lambda hass, name: delegate,
+                    DEFAULT_AUDIO_PROCESSING=object())
         fake_components = types.ModuleType('homeassistant.components')
         fake_components.stt = fake_stt
         fake_helpers = types.ModuleType('homeassistant.helpers')
@@ -376,6 +486,14 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         entity = module.ChauffeurSpeech(entry, 'stt.existing')
         entity.hass = self.hass
         return entity
+
+    async def test_missing_delegate_properties_are_safe(self):
+        entity = await self.speech_entity(None)
+        self.assertFalse(entity.available)
+        for attribute in ('supported_languages', 'supported_formats', 'supported_codecs',
+                          'supported_bit_rates', 'supported_sample_rates', 'supported_channels'):
+            self.assertEqual(getattr(entity, attribute), [])
+        self.assertIsNotNone(entity.audio_processing)
 
     async def test_stt_audio_and_transcript_unchanged_and_exact_run(self):
         original = types.SimpleNamespace(text='identical transcript')

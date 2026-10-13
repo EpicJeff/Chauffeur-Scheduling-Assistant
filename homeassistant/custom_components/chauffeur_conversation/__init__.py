@@ -15,13 +15,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         installed = pipeline_bridge.install(hass)
         if not installed:
             import logging
-            logging.getLogger(__name__).warning('Voice recognition bridge requires HA 2026.10.0; STT still works without recognition.')
+            logging.getLogger(__name__).warning('Voice recognition bridge unavailable: %s STT and conversation still work.', pipeline_bridge.status(hass)['reason'])
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except BaseException:
         if installed:
             pipeline_bridge.uninstall(hass)
         raise
+    if installed:
+        # Capture the installation, not options that may already have changed.
+        entry.async_on_unload(lambda: pipeline_bridge.uninstall(hass))
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
 
@@ -33,8 +36,4 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unloaded and entry.options.get('stt_delegate'):
-        from . import pipeline_bridge
-        pipeline_bridge.uninstall(hass)
-    return unloaded
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

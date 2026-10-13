@@ -1064,7 +1064,8 @@
                                 Recognition does not approve purchases or bookings by itself.
                                 You can also say your name. Say your member PIN to verify
                                 here for ten minutes. Anyone who hears it may use that PIN on your devices too.
-                                Without recognition enabled, anyone in the room can use that session.</p>
+                                Voice matching is best effort. Missing or uncertain samples keep the room session
+                                until it expires; a confident speaker change clears it.</p>
                             <p class="text-gray-400">Approvals start off. Test them on this satellite before enabling.
                                 Each release or booking is read back before approval.
                                 Private content and payments use your phone.</p>
@@ -1078,10 +1079,10 @@
                                        :disabled="!voiceState.enabled">
                                 <span>Allow PIN-verified release and booking approvals</span>
                             </label>
-                            <p class="text-xs text-gray-400">For recognition, update the HA component to 1.4.0,
+                            <p class="text-xs text-gray-400">For recognition, update the HA component to 1.4.1,
                                 configure its existing STT delegate, and select Chauffeur Voice recognition as the
                                 assistant's speech-to-text provider. Your existing provider still transcribes speech;
-                                fingerprints are computed locally. The bridge currently supports HA 2026.10.0.</p>
+                                fingerprints are computed locally. The bridge supports HA 2026.10.x with a compatibility check.</p>
                             <button type="button" @click="prepareVoiceModel()" :disabled="voiceBusy || voiceRecognition.model_ready"
                                     class="bg-gray-700 disabled:opacity-40 px-3 py-2 rounded text-xs"
                                     x-text="voiceBusy ? 'Preparing voice model…' : (voiceRecognition.model_ready ? 'Voice model ready' : 'Prepare local voice model (27 MB)')"></button>
@@ -1132,6 +1133,9 @@
                                     <template x-for="diagnostic in voiceRecognition.satellites.filter(e => e.key[0] === s.ha_instance_id && e.key[1] === s.satellite_id)" :key="diagnostic.key.join(':')">
                                         <p class="text-xs text-gray-400" x-text="diagnostic.available ? 'Last fingerprint: ' + diagnostic.latency_ms + ' ms' : diagnostic.message"></p>
                                     </template>
+                                    <p x-show="s.fingerprint_bridge && !s.fingerprint_bridge.available"
+                                       class="text-xs text-amber-300"
+                                       x-text="'Voice recognition unavailable: ' + (s.fingerprint_bridge?.reason || 'Check the Home Assistant STT delegate.')"></p>
                                     <button type="button" @click="recoverVoiceIdentity(s, false)"
                                             class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-xs">Revoke session</button>
                                     <button type="button" @click="recoverVoiceIdentity(s, true)"

@@ -23,7 +23,8 @@ def seed():
 
 def metadata():
     return {'ha_instance_id': 'ha', 'satellite_id': 'assist_satellite.kitchen', 'device_id': 'device',
-            'observed_at': time.time(), 'request_id': uuid.uuid4().hex}
+            'observed_at': time.time(), 'request_id': uuid.uuid4().hex,
+            'fingerprint_bridge': {'available': False, 'reason': 'Assist pipeline controller is unavailable.', 'version': '2026.10.1'}}
 
 
 def main():
@@ -57,6 +58,8 @@ def main():
             speak('My PIN is 1234')
             page.get_by_role('button', name='Refresh voice status', exact=True).click()
             page.wait_for_function("() => Alpine.$data(document.body).voiceState.satellites[0].level === 'verified'")
+            check(page.get_by_text('Voice recognition unavailable: Assist pipeline controller is unavailable.', exact=True).is_visible(),
+                  'An optional bridge outage must be visible while PIN identity remains verified.')
             for name, viewport in [('desktop', {'width': 1400, 'height': 1000}), ('phone', {'width': 390, 'height': 844})]:
                 page.set_viewport_size(viewport)
                 page.locator('#voice-identity').scroll_into_view_if_needed()

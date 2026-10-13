@@ -5,6 +5,7 @@ import uuid
 
 
 async def metadata(hass, user_input, mapping=None):
+    from . import pipeline_bridge
     from homeassistant.helpers import device_registry, entity_registry, instance_id
     devices = device_registry.async_get(hass)
     entities = entity_registry.async_get(hass)
@@ -27,5 +28,6 @@ async def metadata(hass, user_input, mapping=None):
         satellite = None
     return {'ha_instance_id': await instance_id.async_get(hass), 'satellite_id': satellite,
             'device_id': device, 'request_id': uuid.uuid4().hex, 'observed_at': time.time(),
+            'fingerprint_bridge': pipeline_bridge.status(hass),
             'label': (getattr(entry, 'name', None) or getattr(device_entry, 'name_by_user', None)
                       or getattr(device_entry, 'name', None) or getattr(entry, 'original_name', None)) if satellite else None}

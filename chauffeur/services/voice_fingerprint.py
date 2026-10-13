@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from difflib import SequenceMatcher
 import hashlib
 import json
 import math
@@ -23,6 +24,8 @@ MODEL_SHA = '5ef208a9da1453335308a6b6f4e6dfbd7e183a38b604de0a57664f45d257fe94'
 MODEL_URL = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/' + MODEL
 REVISION = 'wespeaker-resnet34:' + MODEL_SHA + ':sherpa-1.13.8'
 THRESHOLD, MARGIN, CONTINUITY = .70, .12, .65
+DIFFERENT = .40  # uncertain similarities are neutral, not speaker changes
+IDENTIFY_SECONDS = 1.2
 MAX_AUDIO = 1_000_000
 PROMPTS = (
     'For my voice setup, our family has many things to do today and I want help keeping track of them.',
@@ -80,13 +83,11 @@ def _prune():
 
 
 def profiles():
-    """Drop disabled/deleted members and incompatible templates on every use."""
+    """Hide inactive/incompatible templates without destroying reversible state."""
     with _lock:
         rows = _load()
         active = [r for r in rows if r.get('revision') == REVISION
                   and identity._active(storage.get_member(r.get('member_id')))]
-        if rows != active:
-            _save(active)
         return active
 
 
@@ -151,7 +152,7 @@ def score(a, b):
     return sum(x * y for x, y in zip(a, b))
 
 
-def extract(audio, metadata):
+def extract(audio, metadata, *, enrollment=False):
     import numpy as np
     if metadata.get('codec') != 'pcm' or metadata.get('format') != 'wav' \
             or metadata.get('bit_rate') != 16 or metadata.get('channel') != 1 \
@@ -159,12 +160,12 @@ def extract(audio, metadata):
         raise ValueError('Recognition needs mono 16-bit PCM audio.')
     rate = metadata['sample_rate']
     samples = np.frombuffer(audio, dtype='<i2').astype('float32') / 32768
-    if not rate * 1.2 <= len(samples) <= rate * 15:
-        raise ValueError('Use a clear phrase between two and fifteen seconds.')
+    if not rate * .3 <= len(samples) <= rate * 15:
+        raise ValueError('Use a clear phrase between a third of a second and fifteen seconds.')
     frames = samples[:len(samples) // (rate // 50) * (rate // 50)].reshape(-1, rate // 50)
     rms = np.sqrt(np.mean(frames * frames, axis=1))
     voiced_seconds = float(np.count_nonzero(rms > .008) / 50)
-    if voiced_seconds < 1.2 or float(np.mean(np.abs(samples) >= .99)) > .03:
+    if voiced_seconds < .3 or float(np.mean(np.abs(samples) >= .99)) > .03:
         raise ValueError('Audio was too quiet, clipped, or short.')
     engine = _engine()
 
@@ -177,7 +178,7 @@ def extract(audio, metadata):
         return normalized(engine.compute(stream))
 
     vector = embedding(samples)
-    if len(samples) >= rate * 5:
+    if enrollment and len(samples) >= rate * 5:
         middle = len(samples) // 2
         if score(embedding(samples[:middle]), embedding(samples[middle:])) < .45:
             raise ValueError('Speaker evidence changed during the phrase.')
@@ -199,10 +200,11 @@ async def observe(audio, metadata, ctx):
     revision = identity._revision()
     started = time.monotonic()
     key = (ctx.ha_instance_id, ctx.satellite_id)
+    enrollment_id = None
 
     def compute():
         try:
-            return extract(audio, metadata)
+            return extract(audio, metadata, enrollment=bool(enrollment_id))
         finally:
             _slot.release()
 
@@ -215,6 +217,7 @@ async def observe(audio, metadata, ctx):
             _slot.release()
             raise ValueError('Too many pending voice observations.')
         oid = uuid.uuid4().hex
+        enrollment_id = (_enrollments.get(key) or {}).get('id')
         try:
             future = _pool.submit(compute)
         except Exception:
@@ -222,7 +225,7 @@ async def observe(audio, metadata, ctx):
             raise
         _observations[oid] = {'key': (*key, metadata.get('device_id'), metadata['run_id'], metadata['utterance_id']),
                               'revision': revision, 'future': future, 'expires': time.time() + 60,
-                              'enrollment_id': (_enrollments.get(key) or {}).get('id')}
+                              'enrollment_id': enrollment_id}
         _last[key] = {'available': False, 'message': 'Processing voice sample.'}
         if len(_last) > 256:
             _last.pop(next(iter(_last)))
@@ -253,10 +256,10 @@ def consume(ctx, metadata, text=''):
             return None
         row = _observations.pop(oid)
         pending = _enrollments.get((ctx.ha_instance_id, ctx.satellite_id))
-        setup_phrase = pending and _clean_phrase(text) == _clean_phrase(PROMPTS[pending['step']])
+        setup_phrase = pending and _matches_prompt(text, PROMPTS[pending['step']])
     if 'future' in row:
         try:
-            # Ordinary turns split 500ms: 100ms HA upload + 400ms inference.
+            # Evidence is best effort; a timeout never clears the current identity.
             # Explicit setup phrases may wait 3s for the longer enrollment checks.
             vector, seconds = row['future'].result(timeout=3 if setup_phrase else .4)
         except Exception:
@@ -270,6 +273,12 @@ def consume(ctx, metadata, text=''):
 
 def _clean_phrase(text):
     return ' '.join(re.findall(r'[a-z]+', text.lower()))
+
+
+def _matches_prompt(text, prompt):
+    actual, expected = _clean_phrase(text).split(), _clean_phrase(prompt).split()
+    return len(actual) >= 8 and .65 <= len(actual) / len(expected) <= 1.35 \
+        and SequenceMatcher(None, actual, expected, autojunk=False).ratio() >= .82
 
 
 def begin(ctx, member_id, consent_actor):
@@ -304,8 +313,8 @@ def enrollment_turn(text, ctx, evidence):
             _enrollments.pop(key, None)
             return {'message': 'Voice setup cancelled.'}
         step = pending['step']
-        if _clean_phrase(text) != _clean_phrase(PROMPTS[step]):
-            return None  # unrelated conversation is never an enrollment sample
+        if not _matches_prompt(text, PROMPTS[step]):
+            return {'message': 'Voice setup is in progress. Repeat the phrase shown on your phone, or say cancel voice setup.'}
         if not evidence or evidence.get('enrollment_id') != pending['id'] or evidence['seconds'] < 4:
             return {'message': 'That sample was not usable. Speak the setup phrase clearly again, or check voice status on your phone.'}
         vector = evidence['vector']
@@ -329,13 +338,15 @@ def enrollment_turn(text, ctx, evidence):
         if not identity._active(member):
             _enrollments.pop(key, None)
             return {'message': 'That member is no longer active.'}
-        rows = [r for r in profiles() if not (r['member_id'] == member['id'] and r['key'] == list(key))]
+        rows = [r for r in _load() if not (r['member_id'] == member['id'] and r['key'] == list(key))]
         rows.append({'member_id': member['id'], 'key': list(key), 'vector': reference,
                      'revision': REVISION, 'consent_actor': pending['consent_actor'], 'created_at': time.time(),
                      'checks': 2, 'calibrated': True})
         # A new rival can invalidate an older calibration; never silently retain it.
-        for row in rows:
-            if any(r['member_id'] != row['member_id'] and score(r['vector'], row['vector']) >= THRESHOLD - MARGIN for r in rows):
+        active = [r for r in rows if r.get('revision') == REVISION
+                  and identity._active(storage.get_member(r['member_id']))]
+        for row in active:
+            if any(r['member_id'] != row['member_id'] and score(r['vector'], row['vector']) >= THRESHOLD - MARGIN for r in active):
                 row['calibrated'] = False
         _save(rows)
         _enrollments.pop(key, None)
@@ -349,7 +360,8 @@ def apply(ctx, evidence):
     vector = evidence['vector'] if evidence else None
     with _lock:
         rows = [r for r in profiles() if r['key'] == [ctx.ha_instance_id, ctx.satellite_id] and r['calibrated']]
-    candidates = sorted(((score(vector, r['vector']), r['member_id']) for r in rows), reverse=True) if vector else []
+    usable = bool(vector and evidence.get('seconds', 0) >= IDENTIFY_SECONDS)
+    candidates = sorted(((score(vector, r['vector']), r['member_id']) for r in rows), reverse=True) if usable else []
     matched = candidates[0][1] if candidates and candidates[0][0] >= THRESHOLD \
         and (len(candidates) == 1 or candidates[0][0] - candidates[1][0] >= MARGIN) else None
     with identity._lock:
@@ -359,13 +371,13 @@ def apply(ctx, evidence):
             return ctx
         if row.get('recognition_suppressed'):
             return replace(ctx, fingerprint=vector)
-        if row['level'] == 'verified':
-            anchor = row.get('speaker_anchor')
-            if vector and anchor and score(vector, anchor) >= CONTINUITY \
-                    and (not matched or matched == row['member_id']):
-                return replace(ctx, fingerprint=vector)
-            identity._sessions[key] = row = identity._new_session(row.get('device_id'))
-        elif row.get('recognized') and (not matched or matched != row.get('member_id')):
+        anchor = row.get('speaker_anchor')
+        references = [r['vector'] for r in rows if r['member_id'] == row.get('member_id')]
+        # A PIN anchor is stronger continuity evidence than a stored template.
+        references = [anchor] if anchor else references
+        contradiction = usable and (bool(matched and matched != row.get('member_id'))
+            or bool(references and max(score(vector, ref) for ref in references) < DIFFERENT))
+        if (row['level'] == 'verified' or row.get('recognized')) and contradiction:
             identity._sessions[key] = row = identity._new_session(row.get('device_id'))
         greeting = None
         if matched and matched != row.get('member_id'):
@@ -380,7 +392,7 @@ def apply(ctx, evidence):
 
 def delete(member_id, key=None):
     with _lock:
-        _save([r for r in profiles() if not (r['member_id'] == member_id and (not key or r['key'] == list(key)))])
+        _save([r for r in _load() if not (r['member_id'] == member_id and (not key or r['key'] == list(key)))])
         for pending_key in list(_enrollments):
             if _enrollments[pending_key]['member_id'] == member_id:
                 _enrollments.pop(pending_key, None)

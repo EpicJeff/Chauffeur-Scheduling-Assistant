@@ -374,6 +374,33 @@ class VoiceIdentityTests(unittest.TestCase):
             approval.intercept('approve booking', self.context())
             self.assertEqual(start.call_count, 1)
 
+    def test_readback_approval_survives_missing_and_short_fingerprint(self):
+        from services import voice_fingerprint as fp
+        profile = {'member_id': 'jeff', 'key': ['ha', 'assist_satellite.kitchen'],
+                   'calibrated': True, 'vector': [float(i == 0) for i in range(256)]}
+        with patch.object(fp, 'profiles', return_value=[profile]):
+            voice.configure(True, [{'ha_instance_id': 'ha', 'satellite_id': 'assist_satellite.kitchen',
+                                    'device_id': 'device', 'enabled': True, 'recognition_enabled': True}],
+                            approvals_enabled=True)
+            self.verify()  # no observation: PIN still establishes the bounded room session
+            for kind, evidence in (('submit', None), ('release', {'vector': profile['vector'], 'seconds': .5})):
+                mid, _ = self.ask(kind)
+                ctx = self.context()
+                approval.prepare(ctx, mid, kind)
+                after = fp.apply(self.context(), evidence)
+                self.assertEqual(after.generation, ctx.generation)
+                with patch.object(missions, 'start_browse', return_value='browse') as start:
+                    result = approval.intercept('approve booking' if kind == 'submit' else 'approve release', after)
+                    self.assertEqual(result['status'], 'success')
+                    self.assertEqual(start.call_count, 1)
+
+    def test_bridge_failure_is_visible_without_exposing_extra_metadata(self):
+        self.context(fingerprint_bridge={'available': False, 'reason': 'Assist pipeline controller is unavailable.',
+                                         'version': '2026.10.1', 'vector': [1], 'secret': 'hidden'})
+        bridge = voice.admin_state()['satellites'][0]['fingerprint_bridge']
+        self.assertFalse(bridge['available'])
+        self.assertEqual(set(bridge), {'available', 'reason', 'version'})
+
     def test_approval_request_before_name_continues_after_pin(self):
         mid, _ = self.ask()
         ctx = self.context()
@@ -496,7 +523,9 @@ class VoiceIdentityTests(unittest.TestCase):
 
     def test_ha_registry_metadata_and_older_device_mapping(self):
         path = Path(__file__).resolve().parents[2] / 'homeassistant/custom_components/chauffeur_conversation/voice.py'
-        spec = importlib.util.spec_from_file_location('voice_metadata_test', path)
+        package = ModuleType('voice_metadata_test')
+        package.__path__ = [str(path.parent)]
+        spec = importlib.util.spec_from_file_location('voice_metadata_test.voice', path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         helpers = ModuleType('homeassistant.helpers')
@@ -504,7 +533,9 @@ class VoiceIdentityTests(unittest.TestCase):
         helpers.device_registry = SimpleNamespace(async_get=lambda _: SimpleNamespace(async_get=lambda device: object() if device == 'device' else None))
         async def installation(_): return 'ha'
         helpers.instance_id = SimpleNamespace(async_get=installation)
-        with patch.dict(sys.modules, {'homeassistant': ModuleType('homeassistant'), 'homeassistant.helpers': helpers}):
+        bridge = SimpleNamespace(status=lambda _: {'available': False, 'reason': 'Choose an STT delegate.'})
+        with patch.dict(sys.modules, {'homeassistant': ModuleType('homeassistant'), 'homeassistant.helpers': helpers,
+                                     'voice_metadata_test': package, 'voice_metadata_test.pipeline_bridge': bridge}):
             value = asyncio.run(module.metadata(None, SimpleNamespace(device_id='device'), {'device': 'assist_satellite.kitchen'}))
             self.assertEqual(value['satellite_id'], 'assist_satellite.kitchen')
             value = asyncio.run(module.metadata(None, SimpleNamespace(device_id='forged', satellite_id='assist_satellite.kitchen')))

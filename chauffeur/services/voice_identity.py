@@ -161,6 +161,11 @@ def context(metadata, authenticated: bool) -> VoiceContext:
         _observed[key] = {'ha_instance_id': installation, 'satellite_id': satellite,
                           'device_id': device, 'last_seen': time.time(),
                           'label': str(metadata.get('label') or satellite.split('.')[-1].replace('_', ' ').title())[:100]}
+        bridge = metadata.get('fingerprint_bridge')
+        if isinstance(bridge, dict) and isinstance(bridge.get('available'), bool):
+            _observed[key]['fingerprint_bridge'] = {
+                'available': bridge['available'], 'reason': str(bridge.get('reason', ''))[:200],
+                'version': str(bridge.get('version', ''))[:30]}
         if len(_observed) > 256:
             _observed.pop(next(iter(_observed)))
         paired = _paired(installation, satellite, device)
@@ -328,17 +333,17 @@ def intercept(text: str, ctx: VoiceContext, language='en') -> dict | None:
                 reply['message'] = 'That PIN did not match.' if not _locked(ctx, member['id']) else 'Voice verification is locked. Ask a parent to clear it on their phone.'
                 return reply
             row.pop('readback', None)
+            row.pop('speaker_anchor', None)
             row.update(level='verified', pin_pending=False, expires_at=time.time() + SESSION_SECONDS,
                        pin_revision=member['pin_hash'], generation=uuid.uuid4().hex)
             from services import voice_fingerprint
+            storage.rate_clear(request_key)
             if voice_fingerprint.enabled(ctx):
                 if ctx.fingerprint:
                     row['speaker_anchor'] = ctx.fingerprint
                 else:
-                    row.update(level='named', pin_revision=None)
-                    reply['message'] = "Your PIN matched, but the voice sample was unavailable. Say a longer introduction followed by 'my PIN is' and your digits, or use your phone."
+                    reply['message'] = 'Verified here for ten minutes. Voice matching is unavailable; this is a room session.'
                     return reply
-            storage.rate_clear(request_key)
             reply['message'] = 'Verified here for ten minutes.'
             return reply
         if low.lower().rstrip('.!?') in ('forget who i am', "it's someone else", 'it is someone else', "that's not me", 'that is not me'):

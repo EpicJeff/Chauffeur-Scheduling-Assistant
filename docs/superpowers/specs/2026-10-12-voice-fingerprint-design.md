@@ -1,26 +1,26 @@
 # Voice fingerprint — keep the verified speaker, then recognize a familiar voice
 
-**Date:** 2026-10-12. **Status:** continuity and automatic recognition implemented for v2.499.406, off until enrollment and household checks. The user clarified that recognition is the useful independent outcome, so implementation proceeds alongside device checks. Real satellite correlation, host performance and household accuracy acceptance remain pending; F0/F1/F2 device acceptance is not claimed.
+**Date:** 2026-10-12. **Status:** continuity and automatic recognition implemented in v2.499.406 and corrected in v2.499.407, off until enrollment and household checks. The user clarified that recognition is the useful independent outcome, so implementation proceeds alongside device checks. Real satellite correlation, host performance and household accuracy acceptance remain pending; F0/F1/F2 device acceptance is not claimed.
 **Builds on:** [Voice identity](2026-10-12-voice-identity-design.md). **Related:** [Payment gate](2026-10-12-payment-gate-design.md). A fingerprint never independently authorizes money. Per the user's payment policy, a fresh enrolled-parent match plus explicit transaction-bound approval is sufficient when Always require PIN for purchases is off; when on, even a recognized parent must supply a fresh PIN.
 
 ## Outcome and sequence
 
 ### Implementation decision, 2026-10-12
 
-The bridge wraps `PipelineRun.async_execute` on **HA 2026.10.0**, the installed
+The bridge wraps `PipelineRun.async_execute` on **HA 2026.10.x**, with the installed
 household version checked through its API. It sets an explicit `ContextVar`
 with controller run ID, HA context ID, device, satellite and utterance nonce,
 calls the original controller, then resets/cancels in `finally`. STT reads
 that explicit context; conversation checks the same HA context/device/satellite.
 This is not correlation by task identity, time or text. Unsupported versions
-or replacement of the installed wrapper disable recognition.
+or replacement of the installed wrapper disable recognition. Version and signature checks precede installation; missing imports are optional feature failures. Unload uses its saved owner even after delegate removal. HA 2026.10.0 and .1 controller source was checked; live acceptance on .1 is not claimed. Bridge failures are exposed in satellite Config status.
 
-Component **1.4.0** tees audio unchanged to an existing STT entity; the household
+Component **1.4.1** tees audio unchanged to an existing STT entity; the household
 Argyle pipeline currently uses `stt.home_assistant_cloud`. Local upload starts
 when the audio iterator ends, overlapping the delegate's final transcription.
 Chauffeur immediately returns an opaque reference to a bounded single-worker
-job. Ordinary turns split the 500ms extra-wait budget: 100ms for HA to receive
-the reference, 400ms server-side for inference. Explicit setup phrases may wait
+job. HA waits at most one second for the upload reference, then the server
+waits at most 400ms for ordinary inference. Explicit setup phrases may wait
 three seconds. References bind installation, satellite, device, run, utterance,
 service-token revision and the active server-owned enrollment ID. They are
 one-use with 60s expiry; a late result cannot attach to another turn.
@@ -37,10 +37,14 @@ identify Apache-2.0. Model preparation explicitly downloads/verifies the pinned
 asset. Native inference releases the GIL; HA has no model/runtime dependency.
 
 The initial decode slice accepts HA's raw mono 16-bit PCM at 16/24/48 kHz.
-Duration, energy, clipping and inconsistent half-sample embeddings reject
+Duration, energy and clipping reject
 unusable observations. These are heuristics, not reliable diarization or proof
 of speech-only audio. Provisional cosine thresholds: naming 0.70 with 0.12
-margin, PIN-anchor continuity 0.65. They are not household-calibrated claims.
+margin, enrollment consistency 0.65 and different-speaker distance below 0.40.
+These are provisional, not household-calibrated claims. Extraction accepts
+0.3s of voiced speech; naming or a speaker-change decision still needs 1.2s.
+Ordinary turns run one model pass; only explicit enrollment runs two additional
+half-sample checks when the sample lasts at least five seconds.
 
 Parent-owned personal-device enrollment requires consent, three varied phrases
 and two held-out checks. A new similar template invalidates affected checks.
@@ -56,7 +60,7 @@ automatic naming, PIN anchors, speaker-change downgrade and deletion. A served
 phone check exercises all five enrollment phrases, activation, automatic
 naming and deletion with fixture inference. Synthetic workstation medians:
 125ms for two seconds, 716ms for seven seconds, 1496ms for fourteen seconds
-(long samples include half-sample checks). These are not host or accuracy
+(long samples in that build included half-sample checks). These are historical, not host or accuracy
 results. `tools/voice_probe.py` supports the pending host probe. Real microphone
 correlation, host memory/latency, room/noise/impostor checks and one-word approval
 quality remain acceptance work. Naming/continuity need no payment target.
@@ -104,15 +108,15 @@ Initial F0 candidate: a [WeSpeaker ResNet34 ONNX model](https://github.com/wenet
 
 Prefer an isolated worker in the Chauffeur add-on for the model/runtime; the HA component only tees audio and correlates requests. This keeps a large ML dependency out of HA Core. Use authenticated local streaming to that worker, bounded in-memory buffers and no audio persistence. Document that the existing STT delegate may still be cloud-hosted; fingerprinting adds no cloud audio recipient. The wrapper advertises only formats accepted by its delegate; recognition decodes/resamples its own copy, never the forwarded stream.
 
-Proposed readiness targets: at most 500 ms added p95 response latency waiting for an observation, at most 750 MB additional resident memory, and no event-loop blocking. These are budgets to measure, not claims about the model. If no result is ready within the wait budget, the identity service gets `unavailable`; a late result cannot retroactively authorize an already handled utterance.
+Revised wait ceiling: one second for the HA upload reference plus 400ms ordinary inference (three seconds for enrollment). Measure actual p95 added latency; target at most 750 MB additional resident memory, and no event-loop blocking. These are budgets to measure, not claims about the model. If no result is ready within the wait budget, the identity service gets `unavailable`; a late result cannot retroactively authorize an already handled utterance.
 
-Require usable voiced speech, not merely a long audio packet. Calibrate quality thresholds against the selected model; include the user's one-word “approved” as a first-class test, not only long commands. A recognized short approval must not acquire an extra PIN/phrase prompt when the purchase setting is off. If a short sample cannot support a confident match, use the PIN fallback and record that limitation rather than guessing identity; do not claim the one-word experience is device-verified until it passes. Clipped audio, overlap, low quality, silence, unsupported encoding and timeout return `inconclusive`. Mixed speakers are not reliably solved by one embedding, so uncertain/mixed samples cannot preserve approval authority.
+Require usable voiced speech, not merely a long audio packet. Calibrate quality thresholds against the selected model; include the user's one-word “approved” as a first-class test, not only long commands. A recognized short approval must not acquire an extra PIN/phrase prompt when the purchase setting is off. If a short sample cannot support a confident match, use the PIN fallback and record that limitation rather than guessing identity; do not claim the one-word experience is device-verified until it passes. Clipped audio, overlap, low quality, silence, unsupported encoding and timeout return `inconclusive`. Mixed speakers are not reliably solved by one embedding, so uncertain/mixed samples preserve bounded PIN-based room identity but supply no fresh payment recognition proof.
 
 F0/F2 must evaluate the short-approval case separately; success on five-second enrollment samples does not pass it. A longer optional phrase may improve evidence but is not a new mandatory purchase step. Evaluate continuity across the current readback exchange too: the request and approval each retain their exact-run observation, must support the same enrolled parent, and must fall within that readback's lifetime with no intervening identity change. Never concatenate different speakers into one embedding or let a strong earlier request substitute for unusable speaker evidence on the approval itself. Until this passes on a satellite, no-new-PIN voice payment is unavailable there and the spoken-PIN path remains usable.
 
 ## Phase 1 — continuity of a PIN session
 
-When PIN verification succeeds, bind the exact PIN utterance's usable embedding as the session anchor. If it is unusable, the satellite gets the named lens but no continuity-backed verified authority; ask for a longer verification utterance including the PIN or offer the phone. Do not anchor on the next arbitrary speaker. The anchor stays in RAM and expires with the identity session.
+When PIN verification succeeds, bind the exact PIN utterance's usable embedding as the session anchor. If it is unavailable, establish the normal ten-minute verified room session, clear the request-rate counter and explicitly say voice matching is unavailable. The audit records the actual verified state. Clear any prior anchor. Do not anchor on the next arbitrary speaker. The anchor stays in RAM and expires with the identity session.
 
 For every later Chauffeur utterance while fingerprint continuity is enabled:
 
@@ -120,7 +124,7 @@ For every later Chauffeur utterance while fingerprint continuity is enabled:
 |---|---|
 | Same speaker above the calibrated acceptance threshold | Retain verified level until the original expiry; never extend the ten minutes. |
 | Confident different speaker | Clear verification, anchor, pending readback and person-specific history/focus; treat the current utterance as unknown unless it explicitly names someone. |
-| Inconclusive, missing, late or uncorrelated observation | Suspend privileged execution for this turn and clear pending approval; require PIN verification again or phone approval. Never silently fall back to PIN-only approval while this mode is enabled. |
+| Inconclusive, missing, late, short or uncorrelated observation | Keep identity, generation, anchor and readback until their original expiry. No greeting replay, sliding extension or fresh payment recognition proof. |
 
 After a downgrade, an enrolled identity can at most supply a named lens; it cannot rescue the old verified session. A fresh PIN is needed for the new speaker. Identity evaluation precedes intent parsing so a new speaker's “approve booking” cannot consume the prior speaker's readback.
 
@@ -132,7 +136,7 @@ In the personal phone settings, a member or authorized parent starts enrollment 
 
 Store only normalized reference vectors, model revision, quality summary, consent actor and timestamps in protected local storage. Exclude embeddings from normal member JSON, HA state, model context, exports intended for general diagnostics and logs. Raw audio is deleted as soon as features are computed. Member deletion, enrollment deletion and model incompatibility revoke the templates and associated session anchors. Document backup retention: deletion cannot erase offline backups already made.
 
-Recognition requires a score above a separately calibrated named-identity threshold and a clear margin over the second candidate. Close candidates produce unknown. A confident match sets level `named`, never `verified`; an explicit spoken name still does not prove identity. Greet once when a named session begins, not on every response. “That's not me” clears the named session without changing enrollment automatically.
+Recognition requires a score above a separately calibrated named-identity threshold and a clear margin over the second candidate. Close candidates leave a new session unknown and preserve an existing lens. A confident match sets level `named`, never `verified`; an explicit spoken name still does not prove identity. Greet once when a named session begins, not on every response. “That's not me” clears the named session without changing enrollment automatically.
 
 For payment with Always require PIN for purchases off, expose a distinct server-owned `recognized_parent` proof for this exact utterance: observation ID, matched member, model revision and threshold decision. Use an approval threshold at least as strict as naming, calibrated separately in F2; recheck that the member is currently a parent. The payment controller consumes that proof with the pending readback and explicit approval. It does not turn the entire session into verified, does not enable release/submit approval without their PIN, and cannot be reused on a later utterance. If this payment-grade match is unavailable, the payment controller requests a PIN. With the setting on, the proof never bypasses the PIN prompt.
 
@@ -142,7 +146,7 @@ F0 first tests two simultaneous satellites speaking the same sentence, repeated 
 
 Calibrate continuity and naming separately using consented samples from every household participant, each target room, near/far speech, noise and short confirmation phrases. Hold out recordings from calibration. Proposed pilot gate: no wrong-speaker retention or wrong-name assignment in the held-out household matrix, at least 95% acceptance of adequately long same-speaker samples in supported conditions, and the latency/memory budgets above. Record sample counts and errors; zero observed errors is not a guarantee of zero false accepts. If this gate fails, leave recognition disabled and keep the phone/PIN route usable rather than relaxing a threshold to improve a demo.
 
-Builds: F0 correlation/model feasibility; F1 continuity plus opt-in switch on one satellite; F2 enrollment and names. The setting is per enrolled satellite, off until its calibration/device check passes. Missing models or worker failure preserve normal transcription and downgrade authority. Model upgrades invalidate incompatible templates and require evaluation before re-enabling; never compare vectors from different revisions.
+Builds: F0 correlation/model feasibility; F1 continuity plus opt-in switch on one satellite; F2 enrollment and names. The setting is per enrolled satellite, off until its calibration/device check passes. Missing models or worker failure preserve normal transcription and the current bounded identity. Model upgrades make incompatible templates inert without deleting them and require evaluation before re-enabling; never compare vectors from different revisions.
 
 Measure inconclusive turns, forced re-verifications and successful completion in real kitchen noise, not just false matches. Keep continuity off by default on each satellite until the parent enables it after calibration; it may reasonably stay off. Turning it off revokes current anchors/readbacks and returns subsequent PIN sessions to the identity spec's explicitly weaker room-based behavior. It also disables recognized-parent payment proof on that satellite; do not silently relax matching when the room gets noisy.
 
@@ -153,3 +157,11 @@ Acceptance: Jeff verifies; Jeff's next adequate utterance retains his session; a
 ## Non-goals
 
 No passive room monitoring, background recording, emotion/age inference, biometric certainty claims, automatic payment from recognition, automatic biometric enrollment or model training on household audio. The fingerprint can corroborate a PIN-backed turn and, under the user's optional no-new-PIN purchase policy, identify a parent explicitly approving the current payment. It never overrides Always require PIN for purchases when that setting is on.
+
+## Review corrections and app follow-up, 2026-10-12
+
+The user explicitly chose missing-evidence continuity: only usable, confident contradiction ends an established identity. This is best-effort speaker continuity, not proof of who spoke an inconclusive approval. The future no-new-PIN purchase path still requires fresh payment-grade evidence. Session/readback expiry and role/PIN/token/device revocation remain enforced.
+
+Disabled/archived members are excluded from matching but their stored templates remain intact. Enrollment or deletion of another member preserves those rows. Explicit voice/member deletion removes them. Enrollment tolerates bounded transcript slips while retaining exact observation/enrollment correlation and audio/held-out checks. Speech during active enrollment gets deterministic setup guidance or cancellation and never falls through to the chat model. A missing STT delegate presents an unavailable engine with safe empty capability lists.
+
+The guided phone replacement is specified in [App voice](2026-10-12-app-voice-design.md). Phone microphone capture and portable profiles are design only in this revision.

@@ -47,7 +47,7 @@ not verify a member or authorize a voice approval.
 ## Voice identity and approval
 
 PIN identity was introduced in v2.499.402. Automatic recognition adds component
-**1.4.0**. Copy the updated
+**1.4.1**. Copy the updated
 custom component and restart HA. Keep voice approvals off until the submit-gate
 and satellite device checks pass; local automated tests have not exercised the
 household's microphone/STT pipeline.
@@ -98,8 +98,8 @@ Recognition works independently of booking or purchase approval. An enrolled
 voice can get its name and personal lens without saying a name or PIN. It
 supplies a **named** lens, never the **verified** authority required for approvals.
 
-1. Install component **1.4.0** and restart HA. Its exact-run bridge currently
-   supports **HA 2026.10.0**. Other versions retain STT but have no recognition
+1. Install component **1.4.1** and restart HA. Its exact-run bridge currently
+   supports **HA 2026.10.x**, guarded by the controller signature. Other versions retain STT but have no recognition
    until their bridge is checked.
 2. In the Chauffeur integration's **Configure** form, set **Existing STT entity**
    to your existing provider. The household's Argyle pipeline, checked
@@ -122,8 +122,13 @@ supplies a **named** lens, never the **verified** authority required for approva
 
 Argyle greets a newly recognized person once and resolves “my” in supported
 shared-schedule requests to that person. **“That's not me”** clears the lens and
-suppresses automatic naming for that session. A different or unusable sample
-clears a prior verified session/readback before processing the request.
+suppresses automatic naming for that session. A usable, confident different-speaker sample
+clears the prior session/readback before processing. Missing, late, short or
+inconclusive evidence keeps identity until its original expiry. A correct PIN
+with unavailable evidence still establishes the ten-minute room session and says
+voice matching is unavailable. No later speaker is silently used as its anchor.
+Continuity is best effort, not proof of who spoke every approval. Disabled
+members retain their templates for reactivation.
 Recognition has no replay/voice-cloning protection and is not authentication.
 
 Only templates persist in `/data/voice_private/templates.json`; audio and
@@ -133,7 +138,8 @@ and general database downloads; full add-on backups can retain them. The five
 samples check consistency, not household-wide accuracy. Short, quiet, clipped
 or mixed speech may remain unknown. The model is downloaded only when prepared.
 
-Refresh voice status shows missing-model/quality errors and compute time.
+Refresh voice status shows bridge/version incompatibility, missing-model/quality
+errors and compute time. Missing evidence is not a fresh purchase match.
 `python tools/voice_probe.py` runs a synthetic CPU/memory probe inside the add-on
 after model preparation; it does not assess accuracy. Real satellite
 correlation, host performance and family recognition acceptance remain device

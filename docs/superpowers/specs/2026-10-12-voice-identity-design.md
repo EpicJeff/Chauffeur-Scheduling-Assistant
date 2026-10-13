@@ -6,7 +6,7 @@
 
 **Updated authorization, 2026-10-12:** the user authorized implementation while device checks run, then selected voice identity as the active slice because it is useful independently of payment. Payment P0's target is left to the user. This supersedes the earlier implementation-order gate for V1/V2; approval activation and device acceptance remain required.
 
-**Scope clarification, 2026-10-12:** the intended independent value includes automatic speaker recognition, not just spoken name/PIN identity. The fingerprint follow-up now implements enrollment, named recognition and PIN-session continuity through component 1.4.0, pinned to HA 2026.10.0. It is off until enrollment and real family/device checks. Recognition does not provide approval authority or a payment-grade proof; see the fingerprint spec's implementation decision and remaining acceptance.
+**Scope clarification, 2026-10-12:** the intended independent value includes automatic speaker recognition, not just spoken name/PIN identity. The fingerprint follow-up now implements enrollment, named recognition and PIN-session continuity through component 1.4.1 for HA 2026.10.x, guarded by the controller signature. It is off until enrollment and real family/device checks. Recognition does not provide approval authority or a payment-grade proof; see the fingerprint spec's implementation decision and remaining acceptance.
 
 ## Local implementation and remaining acceptance
 
@@ -158,3 +158,7 @@ Also prove the unknown household message, drive assignment and shared-list paths
 ## References and limits
 
 The [HA conversation entity interface](https://developers.home-assistant.io/docs/core/entity/conversation/) is the integration entry point. Inspect and pin the installed HA version in V1; upstream development source is not a promise about the household's installation. No new speaker model, payment permission, general private-data voice mode or voice resolution of uncertain transactions ships here.
+
+## Recognition review policy, 2026-10-12
+
+Missing, late, short or uncertain evidence preserves identity and readback until their original expiry; only usable, confident contradictory evidence clears them. Correct PIN success without an embedding still establishes the bounded verified room session, clears the request-rate counter, and explicitly reports unavailable matching. Never anchor on a later arbitrary speaker. These are best-effort room semantics, not a fresh purchase fingerprint proof. Guided phone enrollment and app voice conversations are specified in [App voice](2026-10-12-app-voice-design.md).

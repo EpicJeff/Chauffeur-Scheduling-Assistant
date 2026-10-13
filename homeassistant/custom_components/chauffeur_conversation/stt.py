@@ -43,23 +43,29 @@ class ChauffeurSpeech(stt.SpeechToTextEntity):
     def available(self):
         try:
             return self.delegate.available
-        except ValueError:
+        except (ValueError, AttributeError):
             return False
 
+    def _supported(self, attribute, default=None):
+        try:
+            return getattr(self.delegate, attribute)
+        except (ValueError, AttributeError):
+            return [] if default is None else default
+
     @property
-    def supported_languages(self): return self.delegate.supported_languages
+    def supported_languages(self): return self._supported('supported_languages')
     @property
-    def supported_formats(self): return self.delegate.supported_formats
+    def supported_formats(self): return self._supported('supported_formats')
     @property
-    def supported_codecs(self): return self.delegate.supported_codecs
+    def supported_codecs(self): return self._supported('supported_codecs')
     @property
-    def supported_bit_rates(self): return self.delegate.supported_bit_rates
+    def supported_bit_rates(self): return self._supported('supported_bit_rates')
     @property
-    def supported_sample_rates(self): return self.delegate.supported_sample_rates
+    def supported_sample_rates(self): return self._supported('supported_sample_rates')
     @property
-    def supported_channels(self): return self.delegate.supported_channels
+    def supported_channels(self): return self._supported('supported_channels')
     @property
-    def audio_processing(self): return self.delegate.audio_processing
+    def audio_processing(self): return self._supported('audio_processing', stt.DEFAULT_AUDIO_PROCESSING)
 
     async def async_process_audio_stream(self, metadata, stream):
         run = pipeline_bridge.current(self.hass)
