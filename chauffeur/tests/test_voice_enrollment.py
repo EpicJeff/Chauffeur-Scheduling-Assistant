@@ -291,5 +291,14 @@ class ConsentAndSwitchTests(CoreTests):
         self.assertFalse(voice.set_recognition('ha', KEY[1], False)['recognition_enabled'])
 
 
+class ConfigWordsTests(unittest.TestCase):
+    def test_config_reads_questions_and_check_states(self):
+        src = open(Path(__file__).resolve().parents[1] / 'templates' / 'config.html', encoding='utf-8').read()
+        self.assertNotIn('pending.prompt', src)
+        self.assertIn('pending.question', src)
+        self.assertIn('profile.checks', src)
+        self.assertIn('does not match', src.lower())
+
+
 if __name__ == '__main__':
     unittest.main()

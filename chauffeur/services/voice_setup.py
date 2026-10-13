@@ -130,6 +130,17 @@ def intercept(text, ctx, evidence, conversation_id=None):
             if d['expires_at'] <= time.time():
                 _dialogs.pop(k, None)
         d = _dialogs.get(key)
+        if d is None and low != 'cancel voice setup':
+            pending = fp._enrollments.get(key)
+            if pending and pending.get('door') == 'satellite' and pending.get('phase') == 'questions':
+                # Started from Config: adopt it, and the wake-up utterance earns question 1.
+                d = _dialogs[key] = {'phase': 'questions', 'member_id': pending['member_id'],
+                                     'expires_at': time.time() + EXPIRY}
+                consenter = storage.get_member(pending.get('consent_actor') or '') or {}
+                if consenter.get('role') == 'parent':
+                    d['parent_id'] = consenter['id']
+                if not pending.get('awaiting'):
+                    return _next_question(key, conversation_id, 'Voice setup is ready.')
         if low == 'cancel voice setup':
             _dialogs.pop(key, None)
             return _reply(fp.cancel(key)['message'])

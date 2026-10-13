@@ -73,17 +73,22 @@ def main():
                 check(response.ok, f'Conversation failed: {response.status}')
                 return response.json()['response']['speech']['plain']['speech']
 
-            for index, phrase in enumerate(fp.PROMPTS):
-                check(section.get_by_text(phrase, exact=True).is_visible(), 'Show the current setup phrase.')
-                reply = speak(phrase)
-                check('accepted' in reply or 'saved' in reply, 'Accept a correlated setup sample.')
+            check(section.get_by_text(fp.QUESTIONS[0], exact=True).is_visible(), 'Show the first question.')
+            reply = speak("I'm ready")
+            check(fp.QUESTIONS[0] in reply, 'The wake-up utterance earns question 1: ' + reply)
+            for index in range(5):
+                reply = speak('today I did a few things around the house and then rested for a while')
+                check(('Got it' in reply) or ('saved' in reply.lower()), 'Accept a correlated answer: ' + reply)
                 section.get_by_role('button', name='Refresh voice status', exact=True).click()
                 page.wait_for_function("step => {const e=Alpine.$data(document.body).voiceRecognition.enrollments; return step === 6 ? e.length === 0 : e[0]?.step === step}", arg=index + 2)
                 if index == 0:
                     for name, viewport in [('desktop', {'width': 1400, 'height': 1000}), ('phone', {'width': 390, 'height': 844})]:
                         page.set_viewport_size(viewport)
-                        section.get_by_text(fp.PROMPTS[1], exact=True).scroll_into_view_if_needed()
+                        section.get_by_text(fp.QUESTIONS[1], exact=True).scroll_into_view_if_needed()
                         page.screenshot(path=os.path.join(shots, name + '.png'))
+            # The fifth answer ends with the consenting parent's activation question (spec, Activation).
+            reply = speak('yes')
+            check('on here' in reply, 'A parent turns recognition on by voice: ' + reply)
             check(not section.get_by_label('Allow PIN-verified release and booking approvals').is_checked(), 'Recognition does not enable approvals.')
             section.get_by_label('Recognize enrolled voices here and check for speaker changes').check()
             page.wait_for_function("() => Alpine.$data(document.body).voiceState.satellites[0].recognition_enabled")

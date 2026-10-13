@@ -132,6 +132,39 @@ class SatelliteDialogTests(unittest.TestCase):
         self.assertIn(fp.QUESTIONS[1], speech, 'the check answer was not kept as sample 1')
         self.assertEqual(len(fp._enrollments[KEY]['samples']), 1)
 
+    def test_an_enrollment_started_from_config_is_adopted_by_the_first_utterance(self):
+        """The Config page's Enroll button opens an enrollment with no dialog
+        and no question. The first thing said to that satellite earns question
+        1, and the flow continues by voice from there."""
+        fp.begin(voice.context({'ha_instance_id': 'ha', 'satellite_id': KEY[1], 'device_id': 'device',
+                                'request_id': 'r', 'observed_at': time.time()}, True), 'jeff', 'jeff')
+        speech, cont = self.say("I'm ready")
+        self.assertIn(fp.QUESTIONS[0], speech); self.assertTrue(cont)
+        for q in fp.QUESTIONS[1:]:
+            speech, cont = self.say('today I did a few things around the house and then rested')
+            self.assertIn(q, speech)
+        speech, cont = self.say('I am looking forward to the weekend quite a lot')
+        self.assertIn('saved here', speech.lower())
+        self.assertIn('Turn on voice recognition', speech, 'the consenting parent was not offered the switch')
+
+    def test_an_open_dialog_admits_satellite_audio_before_any_enrollment_exists(self):
+        """The PIN turn's fingerprint is the enrollment's anchor and the
+        check's answer is scored against the phone template: both arrive
+        before an enrollment exists and while recognition is off, so the
+        observation gate must admit them while a dialog is open."""
+        import asyncio
+        self.say('check my voice')
+        ctx = voice.context({'ha_instance_id': 'ha', 'satellite_id': KEY[1], 'device_id': 'device',
+                             'request_id': 'r-open', 'observed_at': time.time()}, True)
+        with patch.object(fp, 'extract', return_value=(vector(0), 6.0)):
+            result = asyncio.run(fp.observe(b'audio', {'run_id': 'run', 'utterance_id': 'r-open', 'device_id': 'device'}, ctx))
+        self.assertIn('observation_id', result)
+        voice_setup._dialogs.clear()
+        with self.assertRaises(ValueError):
+            asyncio.run(fp.observe(b'audio', {'run_id': 'run2', 'utterance_id': 'r-closed', 'device_id': 'device'},
+                                   voice.context({'ha_instance_id': 'ha', 'satellite_id': KEY[1], 'device_id': 'device',
+                                                  'request_id': 'r-closed', 'observed_at': time.time()}, True)))
+
     def test_turn_on_recognition_by_name_is_a_parent_act(self):
         fp.begin(voice.context({'ha_instance_id': 'ha', 'satellite_id': KEY[1], 'device_id': 'device',
                                 'request_id': 'r', 'observed_at': time.time()}, True), 'lily', 'jeff', exclude=vector(0))

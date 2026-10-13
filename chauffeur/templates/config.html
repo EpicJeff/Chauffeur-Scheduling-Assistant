@@ -1197,10 +1197,11 @@
                                     </div>
                                     <template x-for="pending in voiceRecognition.enrollments.filter(e => e.key[0] === s.ha_instance_id && e.key[1] === s.satellite_id)" :key="pending.member_id">
                                         <div class="bg-gray-800 rounded p-3 space-y-2">
-                                            <p class="text-sm" x-text="'Voice setup: phrase ' + pending.step + ' of 5'"></p>
-                                            <p class="text-sm text-blue-200" x-text="pending.prompt"></p>
-                                            <p class="text-xs text-gray-400">Wake Argyle, read this phrase clearly, then refresh voice status for the next phrase.
-                                                Keep other people quiet during the sample. Say &ldquo;cancel voice setup&rdquo; to stop.</p>
+                                            <p class="text-sm" x-text="'Voice setup: question ' + pending.step + ' of 5'"></p>
+                                            <p class="text-sm text-blue-200" x-text="pending.question"></p>
+                                            <p class="text-xs text-gray-400">Wake Argyle once; it asks each question and keeps listening
+                                                between them. Answer out loud for about ten seconds. Or skip this page entirely and say
+                                                &ldquo;Hey Argyle, set up my voice&rdquo;. Say &ldquo;cancel voice setup&rdquo; to stop.</p>
                                         </div>
                                     </template>
                                     <template x-for="diagnostic in voiceRecognition.satellites.filter(e => e.key[0] === s.ha_instance_id && e.key[1] === s.satellite_id)" :key="diagnostic.key.join(':')">
@@ -1224,12 +1225,18 @@
                                 Configure the service token in Home Assistant's Chauffeur integration,
                                 then speak to Argyle from each satellite and refresh.</p>
                             <div class="pt-3 border-t border-gray-700 space-y-3">
-                                <p class="text-xs text-gray-400">After the three enrollment phrases and two checks,
+                                <p class="text-xs text-gray-400">After the three training answers and two checks,
                                     try ordinary requests with each family member and an unenrolled speaker.
-                                    Leave recognition off if it assigns a wrong name. Short or noisy speech may remain unknown.</p>
+                                    A parent turns recognition on per speaker, here or by saying &ldquo;turn on voice recognition for Jeff here&rdquo;.
+                                    Leave it off if it assigns a wrong name. Short or noisy speech may remain unknown.</p>
                                 <template x-for="profile in voiceRecognition.profiles" :key="profile.member_id + ':' + profile.key.join(':')">
                                     <div class="flex gap-2 items-center flex-wrap">
-                                        <span class="text-xs" x-text="(members.find(m => m.id === profile.member_id)?.name || 'Family member') + ' · ' + (profile.calibrated ? 'five samples checked' : 'voices too similar — recognition unavailable')"></span>
+                                        <span class="text-xs" x-text="(members.find(m => m.id === profile.member_id)?.name || 'Family member') + ' · ' + (profile.provenance === 'phone' ? 'made on a phone' : 'made on this speaker') + ' · ' + (profile.calibrated ? 'five samples checked' : 'voices too similar — recognition unavailable')"></span>
+                                        <template x-for="[where, state] in Object.entries(profile.checks || {})" :key="where">
+                                            <span class="text-xs text-gray-400"
+                                                  x-text="(voiceState.satellites.find(s => s.ha_instance_id + ':' + s.satellite_id === where)?.label || where) + ': '
+                                                          + (state === 'checked' ? 'checked here' : 'your phone voice does not match this microphone; say \'Hey Argyle, set up my voice\' there')"></span>
+                                        </template>
                                         <button type="button" @click="deleteVoiceEnrollment(profile.member_id)"
                                                 class="bg-red-900/60 px-3 py-2 rounded text-xs">Delete voice samples</button>
                                     </div>

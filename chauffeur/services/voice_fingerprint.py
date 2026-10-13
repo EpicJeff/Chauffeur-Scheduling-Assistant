@@ -197,7 +197,16 @@ async def observe(audio, metadata, ctx):
         raise ValueError('Utterance does not match the request.')
     with _lock:
         _prune()
-        if not enabled(ctx) and (ctx.ha_instance_id, ctx.satellite_id) not in _enrollments:
+        key = (ctx.ha_instance_id, ctx.satellite_id)
+        # A setup dialog (voice_setup) needs the PIN turn's fingerprint as its
+        # anchor and the check's answer before any enrollment or recognition
+        # exists on the satellite, so an open dialog admits audio too.
+        try:
+            from services import voice_setup
+            dialog_open = key in voice_setup._dialogs
+        except Exception:
+            dialog_open = False
+        if not enabled(ctx) and key not in _enrollments and not dialog_open:
             raise ValueError('Start voice enrollment or enable recognition on this satellite first.')
     if not _slot.acquire(blocking=False):
         raise ValueError('Voice worker is busy; try again.')
