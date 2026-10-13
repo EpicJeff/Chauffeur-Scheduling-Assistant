@@ -20,8 +20,23 @@ logger = logging.getLogger(__name__)
 _dialogs = {}
 _lock = threading.RLock()
 EXPIRY = 600
-YES = ('yes', 'yes please', 'yep', 'yeah', 'sure', 'ok', 'okay', 'do it', 'yes it was', 'correct')
-NO = ('no', 'nope', 'no thanks', 'not now', 'leave it', 'no it was not', "no it wasn't")
+YES_WORDS = {'yes', 'yeah', 'yep', 'yup', 'ya', 'yah', 'sure', 'ok', 'okay', 'please', 'absolutely', 'definitely',
+             'certainly', 'correct', 'right', 'affirmative', 'indeed', 'totally', 'fine', 'go', 'do', 'turn', 'enable', 'confirm'}
+NO_WORDS = {'no', 'nope', 'nah', 'not', "don't", 'dont', 'never', 'leave', 'skip', 'cancel', 'stop', 'negative', 'later', 'wrong'}
+
+
+def _answer_kind(low):
+    """'yes', 'no' or None for an informal spoken answer ("yeah sure", "yes,
+    please", "no thanks", "not now", "turn it on"). People talk informally;
+    the device run (2026-10-13) showed "say yes" refusing "yeah"."""
+    words = re.findall(r"[a-z']+", (low or '').lower())
+    if not words:
+        return None
+    if any(w in NO_WORDS for w in words):
+        return 'no'
+    if words[0] in YES_WORDS or (len(words) >= 2 and words[0] in ('that', 'it', "that's", "it's") and words[1] in YES_WORDS | {'was', 'is'}):
+        return 'yes'
+    return None
 START = ('set up my voice', 'setup my voice', 'set my voice up', 'enroll my voice', 'enrol my voice')
 NAME_LEAD = r"^(for|it's|it is|this is|i am|i'm|its)\s+"
 
@@ -264,20 +279,25 @@ def intercept(text, ctx, evidence, conversation_id=None):
             return _reply(out['message'])
 
         if phase == 'confirm':
-            if low in YES:
+            kind = _answer_kind(low)
+            if kind == 'yes':
                 out = fp.confirm(key, True)
                 if out['status'] == 'done':
                     return _finish_or_activate(key, d, out['message'])
                 _dialogs.pop(key, None)
                 return _reply(out['message'])
-            if low in NO:
+            if kind == 'no':
                 _dialogs.pop(key, None)
                 return _reply(fp.confirm(key, False)['message'])
-            return _reply('Say yes or no.', True)
+            return _reply('Was that them? Yes or no.', True)
 
         if phase == 'activate':
+            kind = _answer_kind(low)
+            if kind is None and not d.get('reasked'):
+                d['reasked'] = True
+                return _reply(_activation_question(d).replace('Say yes.', 'Yes or no?'), True)
             _dialogs.pop(key, None)
-            if low in YES:
+            if kind == 'yes':
                 try:
                     identity.set_recognition(key[0], key[1], True)
                     return _reply('Voice recognition is on here.')
@@ -307,7 +327,11 @@ def intercept(text, ctx, evidence, conversation_id=None):
             return _reply(out['message'] + ' Shall I set up your voice here now? Say yes.', True)
 
         if phase == 'check_offer':
-            if low not in YES:
+            kind = _answer_kind(low)
+            if kind is None and not d.get('reasked'):
+                d['reasked'] = True
+                return _reply('Shall I set up your voice here now? Yes or no?', True)
+            if kind != 'yes':
                 _dialogs.pop(key, None)
                 return _reply('Alright. Your phone voice stays off here.')
             reply = _begin(key, ctx, d, anchor=d.get('anchor'), exclude=None)

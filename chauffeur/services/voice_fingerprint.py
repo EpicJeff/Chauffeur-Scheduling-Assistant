@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import hashlib
 import logging
+import re
 import json
 import math
 from pathlib import Path
@@ -518,10 +519,11 @@ def enrollment_turn(text, ctx, evidence, conversation_id=None):
     if low == 'cancel voice setup':
         return cancel(key)
     if phase == 'confirm':
-        if low in ('yes', 'yes it was', 'yep', 'correct'):
-            return confirm(key, True)
-        if low in ('no', 'nope', 'no it was not', "no it wasn't"):
+        words = set(re.findall(r"[a-z']+", low))
+        if words & {'no', 'nope', 'nah', 'not', 'wrong'}:
             return confirm(key, False)
+        if words & {'yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay', 'correct', 'right'}:
+            return confirm(key, True)
         return {'message': 'Say yes or no.', 'status': 'retry'}
     if awaiting:
         return answer(key, evidence, token=awaiting['token'], conversation_id=conversation_id)

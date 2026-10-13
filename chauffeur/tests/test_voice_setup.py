@@ -178,6 +178,26 @@ class SatelliteDialogTests(unittest.TestCase):
         speech, _ = self.say('one two three four')
         self.assertIn(fp.CHECK_QUESTION, speech, speech)
 
+    def test_informal_yes_and_no_are_understood(self):
+        """Device, 2026-10-13: "Say yes" refused "yeah". Any informal
+        affirmative turns recognition on; a negative leaves it off; a
+        non-answer is asked once more rather than read as no."""
+        from services.voice_setup import _answer_kind
+        for yes in ('yes', 'Yeah.', 'yep', 'yes, please', 'sure thing', 'okay', 'ok go ahead', 'turn it on', 'yes it was', "that's right"):
+            self.assertEqual(_answer_kind(yes.lower().rstrip('.!?')), 'yes', yes)
+        for no in ('no', 'nope', 'no thanks', 'not now', "don't", 'leave it off', 'never mind'):
+            self.assertEqual(_answer_kind(no.lower().rstrip('.!?')), 'no', no)
+        self.assertIsNone(_answer_kind('what time is it'))
+        self.say('set up my voice'); self.say("it's Jeff"); self.say('my PIN is one two three four')
+        for _ in range(5):
+            speech, cont = self.say('well today I did some things and then some more things')
+        self.assertIn('Turn on voice recognition', speech)
+        speech, cont = self.say('hmm what')
+        self.assertIn('Yes or no', speech); self.assertTrue(cont, 'a non-answer was taken as no')
+        speech, cont = self.say('yeah sure')
+        self.assertIn('on here', speech.lower()); self.assertFalse(cont)
+        self.assertTrue(next(r for r in voice.configuration()['satellites'] if r['satellite_id'] == KEY[1])['recognition_enabled'])
+
     def test_bare_digits_after_the_name_are_the_pin(self):
         """Device, 2026-10-13: it took several tries to get past the name and
         PIN. After a name, a reply of digits alone is the PIN."""
