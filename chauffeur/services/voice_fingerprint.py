@@ -37,6 +37,32 @@ QUESTIONS = (
     'Tell me something you are looking forward to.',
 )
 CHECK_QUESTION = 'Tell me what you did this morning, for about ten seconds.'
+# Short answers fill the same five samples, with follow-ups after the fixed list.
+KID_QUESTIONS = (
+    ("What's your favorite color, and why?", 'your favorite color'),
+    ("What's your favorite food?", 'your favorite food'),
+    ('What do you like to do at the park?', 'the park'),
+    ("What's your favorite animal?", 'your favorite animal'),
+    ('What did you have for breakfast today?', 'breakfast'),
+    ('Who is your best friend, and what do you play together?', 'your best friend'),
+    ('What do you want to be when you grow up?', 'growing up'),
+    ("What's the best part of school?", 'school'),
+    ("What's a game you like to play?", 'that game'),
+    ("Do you have a pet or a stuffed animal? What's its name?", 'your pet or stuffed animal'),
+    ("What's your favorite thing to do on the weekend?", 'the weekend'),
+    ('If you could go anywhere, where would you go?', 'where you would go'),
+    ('What makes you laugh?', 'what makes you laugh'),
+    ("What's your favorite song or show?", 'your favorite song or show'),
+    ('What do you like to eat for dinner?', 'dinner'),
+)
+FOLLOW_UPS = ('Tell me more about {topic}.', 'What else about {topic}?')
+SHORT_FOLLOW_UPS = ('Tell me more about that.', 'Why is that?')
+INTERJECTIONS = ('Nice.', 'Cool.', 'Good one.')
+POOL_SECONDS = 4
+POOLED_ANSWER_SECONDS = 1
+MAX_POOLED_TURNS = 40
+MAX_DROPS = 3
+MAX_POOL_RESTARTS = 2
 PROMPTS = QUESTIONS   # the Config page and old tests read this name
 MIN_SAMPLE_SECONDS = 4
 MAX_RETRIES = 3
@@ -48,6 +74,23 @@ _extractor = None
 _observations = {}
 _enrollments = {}
 _last = {}
+
+
+def kid_question(index):
+    n = len(KID_QUESTIONS)
+    if index < n:
+        return KID_QUESTIONS[index][0]
+    lap, topic = divmod(index - n, n)
+    return FOLLOW_UPS[lap % len(FOLLOW_UPS)].format(topic=KID_QUESTIONS[topic][1])
+
+
+def current_question(pending):
+    """The next question, or a same-topic follow-up after a short answer."""
+    if not pending.get('pooled'):
+        return QUESTIONS[pending['step']] if pending['step'] < len(QUESTIONS) else ''
+    if pending.get('short'):
+        return SHORT_FOLLOW_UPS[(pending['short'] - 1) % len(SHORT_FOLLOW_UPS)]
+    return kid_question(pending['question_index'])
 
 
 def root():
@@ -304,7 +347,7 @@ def _busy(member_id):
     return any(p['member_id'] == member_id for p in _enrollments.values())
 
 
-def begin(ctx, member_id, consent_actor, *, door='satellite', anchor=None, exclude=None):
+def begin(ctx, member_id, consent_actor, *, door='satellite', anchor=None, exclude=None, pooled=False):
     """Open an enrollment. `anchor` is the enrollee's own credential fingerprint
     (self-enrollment binds every sample to it); `exclude` is the consenting
     parent's (a child's samples must not match it). Both live only here."""
@@ -329,6 +372,8 @@ def begin(ctx, member_id, consent_actor, *, door='satellite', anchor=None, exclu
             'device_id': satellite(ctx).get('device_id') if door == 'satellite' else 'phone',
             'service_revision': ctx.service_revision if door == 'satellite' else identity._revision(),
             'samples': [], 'step': 0, 'retries': 0, 'awaiting': None, 'phase': 'questions',
+            'pooled': bool(pooled), 'pool': [], 'pool_seconds': 0.0, 'question_index': 0,
+            'turns': 0, 'short': 0, 'drops': 0, 'restarts': 0,
             'anchor': anchor, 'exclude': exclude, 'bound': anchor is not None or exclude is not None,
             'reference': None, 'expires_at': time.time() + 600}
     if door == 'satellite':
@@ -346,7 +391,7 @@ def ask(key):
         token = uuid.uuid4().hex
         pending['awaiting'] = {'step': pending['step'], 'token': token, 'conversation_id': None, 'asked_at': time.time()}
         return {'enrollment_id': pending['id'], 'step': pending['step'] + 1,
-                'question': QUESTIONS[pending['step']], 'token': token}
+                'question': current_question(pending), 'token': token}
 
 
 def expect_conversation(key, conversation_id):
@@ -384,6 +429,8 @@ def answer(key, evidence, token=None, conversation_id=None):
             return {'status': 'retry', 'step': step + 1,
                     'message': 'Voice setup is in progress. Answer the question, or say cancel voice setup.'}
         pending['awaiting'] = None   # one use, spent whatever happens next
+        if pending.get('pooled'):
+            return _pooled_answer(key, pending, evidence, step)
         if not evidence or evidence.get('enrollment_id') not in (None, pending['id']) \
                 or evidence.get('seconds', 0) < MIN_SAMPLE_SECONDS or not evidence.get('vector'):
             pending['retries'] += 1
@@ -411,11 +458,94 @@ def answer(key, evidence, token=None, conversation_id=None):
         pending['step'] += 1
         if pending['step'] < len(QUESTIONS):
             return {'status': 'accepted', 'step': pending['step'] + 1, 'message': 'Got it.'}
-        if pending['exclude'] is not None:
-            pending['phase'] = 'confirm'
+        return _closing(key, pending)
+
+
+def _closing(key, pending):
+    """The dialog verifies the parent's closing PIN for someone else's voice."""
+    if pending['door'] == 'satellite' and pending['consent_actor'] != pending['member_id']:
+        pending['phase'] = 'confirm'
+        name = (storage.get_member(pending['member_id']) or {}).get('name', 'them')
+        lead = 'All done! ' if pending.get('pooled') else ''
+        return {'status': 'confirm', 'step': 5, 'message': f'{lead}If that was {name}, say your PIN.'}
+    return _finish(key, pending)
+
+
+def _pooled_answer(key, pending, evidence, step):
+    """Admit a short answer into this step only; check answers are scored alone."""
+    name = (storage.get_member(pending['member_id']) or {}).get('name', 'them')
+    pending['turns'] += 1
+    if pending['turns'] > MAX_POOLED_TURNS:
+        return _end(key, f"That's enough for today. I couldn't get all of {name}'s voice; try again another time.")
+    usable = bool(evidence) and evidence.get('enrollment_id') in (None, pending['id']) \
+        and bool(evidence.get('vector')) and evidence.get('seconds', 0) >= POOLED_ANSWER_SECONDS
+    if not usable:
+        pending['short'] += 1
+        if pending['short'] >= MAX_RETRIES:
+            return _end(key, f"I couldn't get enough of {name}'s voice. Try again another time.")
+        return {'status': 'retry', 'step': step + 1, 'message': ''}
+    vector, seconds = evidence['vector'], float(evidence['seconds'])
+    pending['short'] = 0
+    if pending['exclude'] is not None and score(vector, pending['exclude']) >= CONTINUITY:
+        return _end(key, 'That sounded like the parent who gave consent, not the person being set up. Voice setup stopped.')
+    if pending['anchor'] is None:
+        # Until the parent names pool 1, no answer may seed a different voice.
+        if any(score(vector, other) < CONTINUITY for other in pending['pool']):
+            pending['restarts'] += 1
+            if pending['restarts'] >= MAX_POOL_RESTARTS:
+                return _end(key, 'The voices kept changing. Voice setup stopped.')
+            pending['pool'], pending['pool_seconds'], pending['question_index'] = [], 0.0, 0
+            return {'status': 'restart', 'step': step + 1, 'message': "Let's start over."}
+    elif score(vector, pending['anchor']) < CONTINUITY:
+        pending['drops'] += 1
+        pending['question_index'] += 1
+        if pending['drops'] >= MAX_DROPS:
+            return _end(key, 'The voices kept changing. Voice setup stopped.')
+        return {'status': 'dropped', 'step': step + 1, 'message': "Let's try another one."}
+    pending['drops'] = 0
+    pending['question_index'] += 1
+    pending['pool'].append(vector)
+    pending['pool_seconds'] += seconds
+    interjection = INTERJECTIONS[(pending['turns'] - 1) % len(INTERJECTIONS)]
+    if pending['pool_seconds'] < POOL_SECONDS:
+        return {'status': 'accepted', 'step': step + 1, 'message': interjection}
+    pool = pending['pool']
+    if step < 3:
+        mean = normalized([sum(v[i] for v in pool) for i in range(256)])
+        pending['samples'].append(mean)
+        pending['reference'] = normalized([sum(v[i] for v in pending['samples']) for i in range(256)])
+    else:
+        # A mean can pass when live recognition of its individual answers fails.
+        rivals = [r for r in profiles() if r['member_id'] != pending['member_id']]
+        for v in pool:
+            competing = max((score(v, r['vector']) for r in rivals), default=-1)
+            own = score(v, pending['reference'])
+            if own < THRESHOLD or own - competing < MARGIN:
+                return _end(key, 'I could not tell this voice apart reliably. Voice setup stopped; recognition stays off.')
+    pending['pool'], pending['pool_seconds'] = [], 0.0
+    pending['step'] += 1
+    if pending['step'] == 1 and pending['anchor'] is None:
+        pending['phase'] = 'name_voice'
+        return {'status': 'name_voice', 'step': 2, 'message': f'Is that {name} talking? Say yes.'}
+    if pending['step'] == 4:
+        return {'status': 'accepted', 'step': 5, 'message': 'Almost done!'}
+    if pending['step'] < 5:
+        return {'status': 'accepted', 'step': pending['step'] + 1, 'message': interjection}
+    return _closing(key, pending)
+
+
+def name_voice(key, yes):
+    """The parent's yes makes pool 1 the anchor for every later answer."""
+    with _lock:
+        pending = _enrollments.get(key)
+        if not pending or pending['phase'] != 'name_voice':
+            return {'status': 'retry', 'message': 'Nothing is waiting for a yes.', 'step': 0}
+        if not yes:
             name = (storage.get_member(pending['member_id']) or {}).get('name', 'them')
-            return {'status': 'confirm', 'step': 5, 'message': f'Was that {name}? Say yes.'}
-        return _finish(key, pending)
+            return _end(key, f"Not saved. Try again when it's just {name}.")
+        pending['anchor'] = pending['samples'][0]
+        pending['phase'] = 'questions'
+        return {'status': 'accepted', 'step': 2, 'message': 'Great.'}
 
 
 def confirm(key, yes):
@@ -439,7 +569,8 @@ def _finish(key, pending):
     rows.append({'member_id': member['id'], 'key': list(key) if pending['door'] == 'satellite' else ['phone', member['id']],
                  'vector': reference, 'revision': REVISION, 'consent_actor': pending['consent_actor'],
                  'created_at': time.time(), 'checks': checks, 'calibrated': True,
-                 'provenance': pending['door'], 'device_id': pending['device_id']})
+                  'provenance': pending['door'], 'device_id': pending['device_id'],
+                  'pooled': bool(pending.get('pooled'))})
     active = [r for r in rows if r.get('revision') == REVISION and identity._active(storage.get_member(r['member_id']))]
     for row in active:
         if any(r['member_id'] != row['member_id'] and score(r['vector'], row['vector']) >= THRESHOLD - MARGIN for r in active):
@@ -528,12 +659,7 @@ def enrollment_turn(text, ctx, evidence, conversation_id=None):
     if low == 'cancel voice setup':
         return cancel(key)
     if phase == 'confirm':
-        words = set(re.findall(r"[a-z']+", low))
-        if words & {'no', 'nope', 'nah', 'not', 'wrong'}:
-            return confirm(key, False)
-        if words & {'yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay', 'correct', 'right'}:
-            return confirm(key, True)
-        return {'message': 'Say yes or no.', 'status': 'retry'}
+        return {'message': "Say the parent's PIN.", 'status': 'retry'}
     if awaiting:
         return answer(key, evidence, token=awaiting['token'], conversation_id=conversation_id)
     return {'message': 'Voice setup is in progress. Answer the question, or say cancel voice setup.', 'status': 'retry'}
@@ -596,8 +722,9 @@ def status():
         return {'model_ready': model_ready(),
                 'profiles': [{**{k: r[k] for k in ('member_id', 'key', 'created_at', 'calibrated')},
                               'provenance': r.get('provenance', 'satellite'),
+                              'pooled': bool(r.get('pooled')),
                               'checks': r.get('checks') if isinstance(r.get('checks'), dict) else {}} for r in rows],
                 'enrollments': [{'key': list(key), 'enrollment_id': p['id'], 'member_id': p['member_id'], 'step': p['step'] + 1,
-                                 'question': QUESTIONS[p['step']] if p['step'] < len(QUESTIONS) else '',
+                                 'question': current_question(p),
                                  'door': p['door'], 'phase': p['phase'], 'expires_at': p['expires_at']} for key, p in _enrollments.items()],
                 'satellites': [{'key': list(key), **state} for key, state in _last.items()]}
