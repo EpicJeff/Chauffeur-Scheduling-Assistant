@@ -1070,6 +1070,15 @@
                                 Each release or booking is read back before approval.
                                 Private content and payments use your phone.</p>
                             <p x-show="voiceError" x-text="voiceError" class="text-xs text-amber-300"></p>
+                            <details class="text-xs text-gray-400">
+                                <summary class="cursor-pointer py-2">Phone voice comparison</summary>
+                                <p class="pb-2">Open either test in your installed app. Household speech is the current default;
+                                    browser speech is a temporary comparison. Both use Argyle's household reply voice.</p>
+                                <div class="flex gap-2 flex-wrap pb-2">
+                                    <a :href="apiBase + 'app'" class="rounded bg-gray-700 px-3 py-3">Household speech</a>
+                                    <a :href="apiBase + 'app?voice_probe=browser'" class="rounded bg-gray-700 px-3 py-3">Browser speech test</a>
+                                </div>
+                            </details>
                             <label class="flex items-start gap-2">
                                 <input type="checkbox" x-model="voiceState.enabled" @change="saveVoiceIdentity()">
                                 <span>Enable voice identity on the selected satellites</span>

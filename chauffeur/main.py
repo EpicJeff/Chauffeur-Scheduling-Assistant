@@ -4039,6 +4039,113 @@ def voice_recognition_delete(member_id: str, request: Request):
     from services import voice_fingerprint
     return voice_fingerprint.delete(member_id)
 
+def _phone_voice_actor(request):
+    from services import app_voice, auth
+    if auth.arrived_via_ingress(request.headers):
+        raise HTTPException(status_code=403, detail='Open the secure Chauffeur app outside Home Assistant ingress for voice.')
+    try:
+        return app_voice.personal(request.headers)
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from None
+
+
+def _phone_voice_turn(request, request_id, active=True):
+    from services import app_voice
+    member, token = _phone_voice_actor(request)
+    try:
+        return app_voice.get(member, token, request_id, active=active)
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from None
+    except app_voice.Stopped as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+
+
+@app.post('/api/app-voice/start')
+def phone_voice_start(payload: Dict[str, Any], request: Request):
+    from services import app_voice
+    member, token = _phone_voice_actor(request)
+    try:
+        turn = app_voice.begin(member, token, payload.get('request_id'), payload.get('channel_id'))
+        return {'request_id': turn.id, 'channel': turn.channel}
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from None
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+
+
+@app.post('/api/app-voice/{request_id}/text')
+def phone_voice_text(request_id: str, payload: Dict[str, Any], request: Request):
+    from services import app_voice
+    turn = _phone_voice_turn(request, request_id)
+    try:
+        return turn.text(payload.get('text'))
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from None
+    except app_voice.Stopped as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+
+
+@app.post('/api/app-voice/{request_id}/audio')
+async def phone_voice_audio(request_id: str, request: Request):
+    from services import app_voice, app_voice_audio
+    from starlette.concurrency import run_in_threadpool
+    turn = _phone_voice_turn(request, request_id)
+    if turn.stage != 'capture':
+        raise HTTPException(status_code=409, detail='This voice turn already has a transcript.')
+    chunks, size = [], 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > app_voice_audio.MAX_UPLOAD:
+            raise HTTPException(status_code=413, detail='The recording exceeded its size limit.')
+        chunks.append(chunk)
+    try:
+        turn.check()
+        text = await run_in_threadpool(app_voice_audio.transcribe, b''.join(chunks),
+                                      request.headers.get('content-type', ''))
+        return turn.text(text)
+    except app_voice.Stopped as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from None
+
+
+@app.post('/api/app-voice/{request_id}/run')
+def phone_voice_run(request_id: str, request: Request):
+    from services import app_voice
+    turn = _phone_voice_turn(request, request_id)
+    try:
+        result = app_voice.run(turn, _run_argyle_mention)
+        turn.check()
+        return result
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+    except app_voice.Stopped as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+
+
+@app.post('/api/app-voice/{request_id}/speech')
+def phone_voice_speech(request_id: str, request: Request):
+    from services import app_voice, app_voice_audio
+    turn = _phone_voice_turn(request, request_id)
+    if not turn.response:
+        raise HTTPException(status_code=409, detail='There is no completed reply to play.')
+    try:
+        audio, kind = app_voice_audio.speak(turn.response['speech'])
+        turn.check()
+        return Response(content=audio, media_type=kind, headers={'Cache-Control': 'no-store'})
+    except ValueError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from None
+    except app_voice.Stopped as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+
+
+@app.post('/api/app-voice/{request_id}/cancel')
+def phone_voice_cancel(request_id: str, request: Request):
+    turn = _phone_voice_turn(request, request_id, active=False)
+    turn.stopped = True
+    return {'status': 'stopped'}
+
+
 @app.get("/api/v2/chat/stream")
 async def stream_agent_chat():
     """
@@ -16178,28 +16285,45 @@ def _run_argyle_mention(channel: dict, sender: dict, body: str):
     Runs off-request because an agent turn can take tens of seconds."""
     from services.agent_router import process_agent_request
     from services.agent_tools_v2 import _post_chat_message
+    from services import app_voice
+    phone_turn = app_voice.current.get()
     query = _ARGYLE_MENTION.sub('', body).strip()
     if not query:
         query = ("The user mentioned you in the family chat without asking anything. "
                  "Greet them briefly by name and ask how you can help.")
     card = None
+    res = {}
     try:
+        history = None
+        if phone_turn is not None:
+            phone_turn.check()
+            rows = storage.get_channel_messages(channel['id'], limit=6)
+            used = [m for m in rows if m.get('phone_request_id') != phone_turn.id
+                    and m.get('phone_speech_safe') is True and not m.get('edited_ts')]
+            history = [{'role': 'assistant' if m.get('sender_member_id') == 'argyle' else 'user',
+                        'content': m.get('body') or ''} for m in used]
         res = process_agent_request(query, source="family", acting_member=sender,
+                                    **({'history': history} if phone_turn is not None else {}),
                                     focus_key=f"channel:{channel.get('id')}" if channel.get('id') else None)
         reply = (res or {}).get("message") or "Sorry — I couldn't work that out."
         card = res.get("card")
         if res.get("schedule_dirty"):
             trigger_background_refresh()
+    except app_voice.Stopped as e:
+        reply = str(e) + ' Any actions already completed remain in this conversation.'
+        res = {'status': 'stopped', 'message': reply}
     except Exception as e:
         logger.error(f"Argyle mention handling failed: {e}")
         reply = "Sorry — I hit an error handling that."
+        res = {'status': 'error', 'message': reply}
     # Bind any proposed action to this channel so its Approve/Dismiss follow-up
     # posts back here.
     if card and card.get("proposal_id"):
         storage.update_action_proposal(card["proposal_id"], {"channel_id": channel["id"]})
     try:
         argyle = storage.ensure_argyle_member()
-        _post_chat_message(channel, argyle, reply, card=card)
+        metadata = {'phone_speech_safe': phone_turn.audible(res)} if phone_turn is not None else {}
+        _post_chat_message(channel, argyle, reply, card=card, **metadata)
         # K3 (kid-as-sensor): a child's proposal card created in a private DM
         # is invisible to the people who can approve it — mirror the card into
         # the family channel (normal fan-out notifies the parents) and re-bind
@@ -16219,6 +16343,7 @@ def _run_argyle_mention(channel: dict, sender: dict, body: str):
                 logger.error(f"Kid proposal mirror failed: {me}")
     except Exception as e:
         logger.error(f"Argyle reply post failed: {e}")
+    return res
 
 
 @app.post("/api/channels/{channel_id}/messages")

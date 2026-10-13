@@ -286,6 +286,9 @@ def models_for(tier: str, settings: dict = None) -> list:
     if settings is None:
         from services.storage import get_settings
         settings = get_settings()
+    from services.app_voice import current as phone_voice
+    if phone_voice.get() is not None:
+        return [m for m in _pool('lite', settings) if 'flash-lite' in m]
     chain = []
     for pool_name in TIER_CHAINS[tier]:
         for m in _pool(pool_name, settings):

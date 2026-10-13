@@ -5,7 +5,7 @@
 
 ## Capture comparison
 
-Required surface: installed PWA on the current iPhone generation and previous two, across compatible Apple-supported stable iOS releases. Record the exact matrix from Apple when testing. Start with the available household phone and state its model/OS; expand before claiming full support. Browser-tab voice is incidental and requires no extra fallback effort.
+Required shipping gate: installed PWA on the household's actual phones, recording model/OS. The current generation and previous two are the intended wider compatibility target; the matrix records combinations actually tested rather than gating shipping on every release. Browser-tab voice is incidental with no extra fallback effort.
 
 Compare `SpeechRecognition` with `getUserMedia`/`MediaRecorder → server decode → configured HA STT`. Both use the same requests, authenticated dispatch and HA TTS voice. Do not assume Web Speech runs locally or works because its constructor exists. Spike only capture/STT/playback and necessary temporary adapters; no profile store, enrollment UI or generic audio protocol.
 
@@ -15,13 +15,21 @@ Time speech-end to final transcript, text answer and first audible reply. Record
 
 Choose browser recognition if reliability, household transcription and latency pass; otherwise choose HA if it passes. If neither passes, retain text and record the actual blocker before considering a DSP/native rewrite. Enter measured device/OS, provider, counts, timings, failures and selected capture in the chat spec.
 
+Candidate B ends on Done/15 seconds, with at most a cheap borrowed RMS check. Test **Tap to reply** as the designed follow-up fallback. Use the bounded interactive lite foreground path for agent-inclusive timings. Record the ten-sample results in the spec before rollout planning; building alongside the household checks was authorized on 2026-10-13.
+
 **Pending:** physical-device execution. An emulated iPhone viewport is not the experiment.
+
+The initial build exposes the comparison from Config → People → Voice identity → Phone voice comparison, with links that navigate the same installed app. Household speech opens `/app`; browser speech opens `/app?voice_probe=browser`. Use the mic in the personal Argyle DM (or the Argyle popup's mic entry), speak, then Done under the recorder path. Tap-to-reply and Play-reply are designed fallbacks. Returning to `/app` removes the comparison entry mode.
+
+`ChauffeurPhoneVoice.timings` keeps at most twenty transcript/text/first-audio observations in memory without their text. Its anchor is capture completion, not independently observed speech-end; use actual speech-end observation for the acceptance targets. No real-phone measurements have been entered yet. No rollout plan is written until those ten-sample results are recorded in the spec.
 
 ## Cross-microphone experiment
 
 Question: can a phone-enrolled reference name Jeff on the kitchen satellite at current **0.70 score / 0.12 rival margin**? Login already names him on the phone.
 
 Use the pinned model and Jeff's existing calibrated kitchen template. With consent, capture five different phone utterances of roughly 5–8 seconds and two fresh kitchen-satellite utterances at normal distance/noise. No PINs, payment text or other members' new recordings. Kitchen audio must come from that satellite's actual audio path in a temporary consented diagnostic run; a nearby phone is not a substitute.
+
+**Prerequisite not yet implemented:** a temporary diagnostic flag on the bounded satellite audio tee, scoped to one installation/satellite and exactly N explicitly consented runs, writes WAVs under `/share` plus non-sensitive format/run metadata. It defaults off, expires after a short diagnostic window, stops after N runs, and never captures credential/PIN experiments. Delete the diagnostic files after the probe and remove/disable the flag. The current bridge only retains audio in memory; the probe cannot manufacture these recordings. This diagnostic prerequisite is independent of phone-chat shipping.
 
 Use `chauffeur/tools/voice_cross_mic_probe.py` against the private template file. It computes temporary evidence without saving profiles, vectors or decoded audio. Source recordings are explicit temporary experiment artifacts: delete them after comparison and retain scores/timings only. Normal recognition gains no ambient recording or audio persistence.
 

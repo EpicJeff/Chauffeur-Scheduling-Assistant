@@ -59,6 +59,8 @@ def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Di
 
     last_err = "no models available"
     transient = False
+    from services.app_voice import current as phone_voice
+    phone_turn = phone_voice.get()
     # Cap at 4 candidates: lite models fail a 429 in ~1s, so a fully-exhausted
     # lite pool still reaches gemma well inside HA Assist's 120s budget.
     for model in model_pools.models_for('interactive', settings)[:4]:
@@ -67,7 +69,10 @@ def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Di
         # the last resort, so give it what remains of the budget.
         timeout_s = 90 if model_pools.is_gemma(model) else 60
         try:
-            res = _call_llm_json(provider, url, api_key, model, system_prompt, prompt, tools=None, timeout_s=timeout_s)
+            options = {'transient_retries': 0} if phone_turn is not None else {}
+            if phone_turn is not None:
+                timeout_s = min(4, phone_turn.remaining())
+            res = _call_llm_json(provider, url, api_key, model, system_prompt, prompt, tools=None, timeout_s=timeout_s, **options)
         except Exception as e:
             last_err = str(e)
             model_pools.note_failure(model, last_err)
@@ -231,6 +236,9 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
             _row = _sit.load(_f['kind'], _f['id']) if _f else None
             _viewer = acting_member or _sit.parent_of_record()
             if _f and _row and _sit.can_see(_f['kind'], _row, _viewer):
+                from services.app_voice import current as phone_voice
+                if phone_voice.get() is not None:
+                    phone_voice.get().speech_safe = False
                 _s = _sit.view(_f['kind'], _f['id'], _viewer)
                 _nxt = ((_s or {}).get('next_step') or {}).get('label') or '-'
                 system_prompt += (f"\nFOCUS: {_f['kind']} \"{_f.get('title')}\" — next step: {_nxt}. "
@@ -591,6 +599,15 @@ sending or claiming, and never pass from_member/member_name for them.
         for tool_call in tool_calls:
             func_name = tool_call.get("name")
             args = tool_call.get("arguments", {})
+            from services.app_voice import current as phone_voice
+            phone_turn = phone_voice.get()
+            if phone_turn is not None:
+                phone_turn.before_tool(func_name, args)
+                if func_name not in {t.get('name') for t in tools}:
+                    res = {'status': 'refused', 'message': 'That action is not available to this account.'}
+                    agent_scratchpad += f"\nTool Result: {json.dumps(res)}\n"
+                    round_all_terminal = False
+                    continue
             agent_scratchpad += f"\nTool Call: {func_name}({json.dumps(args)})"
 
             sig = f"{func_name}:{json.dumps(args, sort_keys=True, default=str)}"
@@ -1307,6 +1324,8 @@ sending or claiming, and never pass from_member/member_name for them.
                 res = {"error": str(e)}
 
             tool_status = res.get("status", "ok") if isinstance(res, dict) else "?"
+            if phone_turn is not None:
+                phone_turn.tool_result(res)
             if isinstance(res, dict) and (res.get("error") or res.get("status") == "error"):
                 logger.warning(f"[agent] tool {func_name} error: {res.get('message') or res.get('error')}")
             logger.info(f"[agent-timing] tool {func_name} took {_time.time() - tool_start:.1f}s (status={tool_status})")

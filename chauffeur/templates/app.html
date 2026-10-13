@@ -115,6 +115,7 @@
     <link rel="stylesheet" href="{{ 'static/pwa_child_shell.css'|ver }}">
     <script defer src="{{ 'static/pwa_child_shell.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_school.js'|ver }}"></script>
+    <script defer src="{{ 'static/app_voice.js'|ver }}"></script>
     <!-- Alpine, for the avatar editor overlay (avatar arc A3). app.html is
          otherwise vanilla JS on purpose; Alpine here only animates that one
          component, and `defer` keeps it out of the critical path. -->
@@ -384,9 +385,26 @@
                         class="w-10 h-10 rounded-full bg-gray-800 border border-gray-600 text-lg flex items-center justify-center shrink-0 active:bg-gray-700">📷</button>
                     <input id="thread-input" type="text" autocomplete="off" placeholder="Message..."
                         class="flex-1 min-w-0 bg-gray-800 border border-gray-600 rounded-full px-4 py-2.5 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500">
+                    <button type="button" id="phone-voice-mic" onclick="ChauffeurPhoneVoice.start()" aria-label="Talk to Argyle"
+                            style="display:none;min-width:44px;min-height:44px"
+                            class="rounded-full bg-indigo-700 text-white px-2 shrink-0">🎙️</button>
                     <button type="submit"
                         class="bg-blue-600 active:bg-blue-700 text-white font-bold px-5 py-2.5 rounded-full shrink-0">Send</button>
                 </form>
+                <div id="phone-voice-panel" class="hidden bg-gray-900 px-3 pb-3 text-sm text-gray-200">
+                    <p id="phone-voice-status" role="status" aria-live="polite"></p>
+                    <p id="phone-voice-transcript" class="text-xs text-gray-400 mt-1"></p>
+                    <div class="flex gap-2 mt-2">
+                        <button type="button" id="phone-voice-done" onclick="ChauffeurPhoneVoice.done()"
+                                class="hidden rounded-lg bg-blue-700 text-white px-3 py-3">Done</button>
+                        <button type="button" id="phone-voice-stop" onclick="ChauffeurPhoneVoice.stop()"
+                                class="hidden rounded-lg bg-gray-700 px-3 py-3">Stop</button>
+                        <button type="button" id="phone-voice-play" onclick="ChauffeurPhoneVoice.play()"
+                                class="hidden rounded-lg bg-indigo-700 text-white px-3 py-3">Play reply</button>
+                        <button type="button" id="phone-voice-reply" onclick="ChauffeurPhoneVoice.start()"
+                                class="hidden rounded-lg bg-blue-700 text-white px-3 py-3">Tap to reply</button>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -814,6 +832,7 @@
         updateThemeButton();
 
         function setView(view, focusMemberId = null) {
+            if (view !== 'messages') window.ChauffeurPhoneVoice?.stop(false);
             if (pwaChildStage()) {
                 if (view === 'family') {
                     if (kidHorizonDays() > 0) { pwaChildOpenPlan(); return; }
@@ -4403,6 +4422,7 @@
                 && (!c || c.kind === 'event')
                 && !(c && (c.member_ids || []).includes(selectedMemberId));
             threadChannel = c || { id: channelId, kind: null, member_ids: [] };
+            window.ChauffeurPhoneVoice?.visibility();
             const guestsBtn = document.getElementById('thread-guests-btn');
             if (guestsBtn) guestsBtn.style.display =
                 (!helperShareMode && currentMemberRole() === 'parent'
@@ -5755,6 +5775,7 @@
         }
 
         function closeThread() {
+            window.ChauffeurPhoneVoice?.stop(false);
             activeChannelId = null;
             helperShareMode = false;
             threadChannel = null;
@@ -9984,6 +10005,8 @@
                 <div class="p-3 bg-gray-800 border-t border-gray-700 shrink-0">
                     <form id="chat-form" onsubmit="submitChat(event)" class="flex gap-2">
                         <input type="text" id="chat-input" autocomplete="off" placeholder="Message Argyle..." class="flex-1 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-[16px] text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                        <button type="button" onclick="ChauffeurPhoneVoice.start()" aria-label="Talk to Argyle"
+                                class="rounded-lg bg-indigo-700 text-white px-2" style="min-width:44px;min-height:44px">🎙️</button>
                         <button type="submit" id="chat-submit-btn" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg font-bold text-sm transition-colors">Send</button>
                     </form>
                 </div>

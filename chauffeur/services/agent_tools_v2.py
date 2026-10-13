@@ -749,7 +749,8 @@ def _resolve_actor(sender_driver_id: str = None, member_name: str = None):
 
 
 def _post_chat_message(channel: dict, sender: dict, body: str, card: dict = None,
-                       context: dict = None) -> dict:
+                       context: dict = None, phone_request_id: str = None,
+                       phone_speech_safe: bool = None) -> dict:
     """Store a chat message and fire the same SSE + push fan-out as the
     /api/channels POST endpoint. main is lazily imported (it is the running
     app module); in tests it is absent and fan-out is skipped silently.
@@ -758,6 +759,11 @@ def _post_chat_message(channel: dict, sender: dict, body: str, card: dict = None
     from services import storage
     message = ChatMessage(channel_id=channel['id'], sender_member_id=sender['id'],
                           body=body, card=card, context=context).model_dump()
+    # Internal fields are separate from client-authored message context.
+    if phone_request_id is not None:
+        message['phone_request_id'] = phone_request_id
+    if phone_speech_safe is not None:
+        message['phone_speech_safe'] = phone_speech_safe
     storage.add_chat_message(message)
     storage.set_last_read(channel['id'], sender['id'], message['ts'])
     try:

@@ -267,6 +267,7 @@ RULES = [
     # drawn on member surfaces (the PWA's FAB) and on wall panels, and each of
     # those callers POSTs /api/chat as itself. Anonymous is the only refusal.
     (ANY, '/api/chat/*', WALL_OR_SERVICE, 'chat.agent'),
+    (ANY, '/api/app-voice/*', SIGNED_IN, 'chat.agent'),
     # The bar's read side is an EventSource, which can set no headers — the
     # token rides the query string. /api/v2/converse below stays robots-only:
     # it is the HA Assist webhook, and no browser surface posts it.
