@@ -344,6 +344,27 @@ def for_run(sched: dict, driver_id: str, event_id: str,
     return out
 
 
+def stamp_departure(event: dict, sched: dict, driver_id: str,
+                    start: datetime.datetime) -> dict:
+    """Add the schedule's own departure to a row a reader will act on:
+    `leave_at`, `leave_label`, `travel_mins`, `from_home` and, today only,
+    `traffic_delay_mins`. Nothing is added when the schedule cannot support
+    the claim (no edge, a ghost driver): absent keys, never a guess. The
+    agent's schedule tools and the drive digest read it from here so Argyle
+    says the same departure the hero card does (2026-10-13: it had none and
+    said "leave in time to get there")."""
+    if not start:
+        return event
+    now = datetime.datetime.now()
+    live = _naive(start).date() == now.date()
+    departure = for_run(sched, driver_id, event.get('id'), start, live=live, now=now)
+    if departure:
+        for key in ('leave_at', 'leave_label', 'travel_mins', 'from_home', 'traffic_delay_mins'):
+            if departure.get(key) is not None:
+                event[key] = departure[key]
+    return event
+
+
 DEFAULT_READY_BUFFER_MINS = 10
 
 

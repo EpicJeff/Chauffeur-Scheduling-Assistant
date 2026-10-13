@@ -1,8 +1,58 @@
 import json
 import uuid
 import datetime
+import time
+from collections import deque
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
+
+CHAT_LOOKUPS_PER_HOUR = 20
+_chat_lookups = deque()
+
+
+def _stamp_departure(event: dict, sched: dict, driver_id: str,
+                     start: datetime.datetime) -> dict:
+    """The schedule's own departure on a tool row (services/leave_by owns it)."""
+    from services import leave_by
+    return leave_by.stamp_departure(event, sched, driver_id, start)
+
+
+def get_travel_time(origin: str = '', destination: str = '') -> Dict[str, Any]:
+    """Look up a typical drive without traffic, within the chat prime budget."""
+    from services import maps, storage
+    origin = (origin or '').strip()
+    destination = (destination or '').strip()
+    if not destination:
+        return {"status": "error", "message": "Please name a destination."}
+    from_home = not origin
+    if from_home:
+        origin = maps.get_home_location()
+        if not origin:
+            return {"status": "error",
+                    "message": "Your home location isn't set. Please set it in Config."}
+
+    now = time.time()
+    while _chat_lookups and _chat_lookups[0] < now - 3600:
+        _chat_lookups.popleft()
+    if len(_chat_lookups) >= CHAT_LOOKUPS_PER_HOUR:
+        with maps.travel_cache_only():
+            mins = maps.lookup_travel_minutes(origin, destination)
+    else:
+        # Only a genuine cache miss spends a prime. Same-place, unroutable,
+        # cached and already cache-only reads never consume the allowance.
+        if origin.lower() != destination.lower() and not maps.travel_cache_only_active():
+            cached = storage.get_cached_travel_time(
+                origin.lower(), destination.lower(),
+                max_age_mins=maps.get_cache_duration(), ignore_age=True)
+            if cached is None:
+                _chat_lookups.append(now)
+        mins = maps.lookup_travel_minutes(origin, destination)
+    if mins is None:
+        return {"status": "error",
+                "message": f"I couldn't look up the drive from {origin} to {destination} right now."}
+    return {"status": "success", "origin": origin, "destination": destination,
+            "travel_mins": mins,
+            "message": f"About {mins} min from {'home' if from_home else origin} to {destination}, without traffic."}
 
 def _get_target_element_id(entity_type: str, entity_id: str) -> str:
     """Helper to generate consistent DOM element IDs for UI anchoring."""
@@ -50,17 +100,19 @@ def get_calendar_events(start_date: str, end_date: str, spoken: bool = False) ->
         ev_start = ev.get("start", "")
         if len(ev_start) >= 10:
             try:
-                ev_dt = datetime.datetime.fromisoformat(ev_start.replace('Z', '+00:00')).date()
+                start = datetime.datetime.fromisoformat(ev_start.replace('Z', '+00:00'))
+                ev_dt = start.date()
                 if sd <= ev_dt <= ed:
                     drv_id = assignments.get(ev.get("id"))
-                    slim_events.append({
+                    row = _stamp_departure({
                         "id": ev.get("id"),
                         "title": ev.get("title"),
                         "location": ev.get("location"),
                         "start": ev.get("start"),
                         "end": ev.get("end"),
-                        "assigned_driver": driver_names.get(drv_id, drv_id)
-                    })
+                    }, sched, drv_id, start)
+                    row["assigned_driver"] = driver_names.get(drv_id, drv_id)
+                    slim_events.append(row)
             except ValueError:
                 pass
         
@@ -2667,7 +2719,8 @@ def get_drive_digest(target_date: str = "today", member_name: str = "",
         if not target.get("driver_id"):
             return {"status": "success",
                     "message": f"{target.get('name')} isn't a driver, so there's no"
-                               f" drive digest for them. Try their My Day view instead."}
+                               f" drive digest for them. Try their My Day view instead.",
+                    "events": []}
         driver_id = target["driver_id"]
 
     if driver_id:
@@ -2675,22 +2728,24 @@ def get_drive_digest(target_date: str = "today", member_name: str = "",
         d = drivers.get(driver_id)
         if not d:
             return {"status": "success",
-                    "message": f"{name} has no drives scheduled {when}."}
+                    "message": f"{name} has no drives scheduled {when}.", "events": []}
         parts = [f"🚗 {label} for {name} ({d['count']}):"]
         if weather:
             parts.append(weather)
         parts.extend(d["lines"])
-        return {"status": "success", "message": "\n".join(parts)}
+        return {"status": "success", "message": "\n".join(parts),
+                "events": d.get("events", [])}
 
     if not drivers:
-        return {"status": "success", "message": f"No drives are scheduled {when}."}
+        return {"status": "success", "message": f"No drives are scheduled {when}.", "events": []}
     parts = [f"🚗 Drives {when}:"]
     if weather:
         parts.append(weather)
     for d_id, d in drivers.items():
         parts.append(f"\n{family_digest._driver_name(d_id)} ({d['count']}):")
         parts.extend(d["lines"])
-    return {"status": "success", "message": "\n".join(parts)}
+    return {"status": "success", "message": "\n".join(parts),
+            "events": [ev for d in drivers.values() for ev in d.get("events", [])]}
 
 
 # --- Kid tasks (school/deadline list, kid-support arc K4a) ---
@@ -4047,11 +4102,20 @@ def propose_family_action(action_type: str, summary: str, payload: dict = None,
                                                created_by_member_id=created_by_member_id)
 
 
+def _flat_tool(name: str) -> Dict:
+    """One registry tool in the router's flat {name, description, parameters}
+    shape, scrubbed the way get_admin_tools gets every admin tool."""
+    fn = next(t["function"] for t in get_openai_tools() if t["function"]["name"] == name)
+    return {"name": name, "description": fn.get("description", ""),
+            "parameters": fn.get("parameters", {"type": "object", "properties": {}})}
+
+
 def get_available_tools() -> List[Dict]:
     """
     Returns the JSON schemas for the tools available to the Gemma router.
     """
     return [
+        _flat_tool("get_travel_time"),
         {
             "name": "get_calendar_events",
             "description": "Retrieves calendar events for a date range, each with its assigned_driver (null = unassigned). This is the CORRECT tool for questions about a specific driver's schedule or drives: fetch the range, then filter by assigned_driver.",
@@ -5421,7 +5485,8 @@ def _driver_events_for_date(driver_id: str, target_date) -> List[Dict[str, Any]]
             continue
         ev_start = ev.get("start", "")
         try:
-            if datetime.datetime.fromisoformat(ev_start.replace('Z', '+00:00')).date() != target_date:
+            start = datetime.datetime.fromisoformat(ev_start.replace('Z', '+00:00'))
+            if start.date() != target_date:
                 continue
         except (ValueError, AttributeError):
             continue
@@ -5431,14 +5496,14 @@ def _driver_events_for_date(driver_id: str, target_date) -> List[Dict[str, Any]]
             status = "driving now"
         if variants & completed:
             status = "completed"
-        result.append({
+        result.append(_stamp_departure({
             "id": ev.get("id"),
             "title": ev.get("title"),
             "location": ev.get("location"),
             "start": ev.get("start"),
             "end": ev.get("end"),
             "drive_status": status,
-        })
+        }, sched, driver_id, start))
     result.sort(key=lambda e: e.get("start") or "")
     return result
 
@@ -6456,6 +6521,15 @@ class GetHouseholdStatusTool(BaseModel):
     """
     target_date: Optional[str] = Field(None, description="Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD.")
 
+class GetTravelTimeTool(BaseModel):
+    """Looks up a typical drive without live traffic, for places not on the
+    schedule. A scheduled drive's departure is the leave_label returned by
+    the schedule tools; never work out a departure from this lookup.
+    """
+    origin: str = Field('', description="Starting place; omit to use home.")
+    destination: str = Field('', description="Destination place or address.")
+
+
 class GetDriveDigestTool(BaseModel):
     """
     Shows the drive digest for one day as a read-only answer (drives per driver sorted by time, prep-kit items, weather) — 'today's digest', 'the tomorrow digest', 'Friday's drives'. Never posts to any channel.
@@ -6528,6 +6602,7 @@ class CreateThreadTool(BaseModel):
 
 # A unified schema registry
 TOOL_SCHEMAS = {
+    "get_travel_time": GetTravelTimeTool.model_json_schema(),
     "start_drive": StartDriveTool.model_json_schema(),
     "update_drive_status": UpdateDriveStatusTool.model_json_schema(),
     "get_current_state": GetCurrentStateTool.model_json_schema(),
@@ -8086,7 +8161,13 @@ def handle_create_thread(args: dict) -> dict:
     return {"status": "success", "id": thread_id,
             "message": f"Opened a thread: {title}."}
 
+def handle_get_travel_time(args: dict) -> dict:
+    return get_travel_time(origin=args.get("origin") or '',
+                           destination=args.get("destination") or '')
+
+
 TOOL_HANDLERS = {
+    "get_travel_time": handle_get_travel_time,
     "start_drive": handle_start_drive,
     "update_drive_status": handle_update_drive_status,
     "get_current_state": handle_get_current_state,

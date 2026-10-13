@@ -482,10 +482,12 @@ def build_drive_digests(target_date: datetime.date = None) -> dict:
     cache (assigned events + scheduled errands, prep-kit items appended,
     sorted by time, capped at 6 lines). Defaults to TOMORROW (the evening DM's
     day). Returns {'date', 'label', 'weather', 'drivers': {driver_id:
-    {'title', 'lines', 'count'}}}. ONE implementation shared by the evening
+    {'title', 'lines', 'count', 'events'}}}. Structured events are uncapped.
+    ONE implementation shared by the evening
     push-loop delivery (main._send_tomorrow_digests) and the read-only
     get_drive_digest agent tool — the builder never delivers."""
     from services import prep_kits
+    from services.leave_by import stamp_departure as _stamp_departure
     tomorrow = target_date or (datetime.date.today() + datetime.timedelta(days=1))
     cache = storage.get_cached_schedule() or {}
     events = {e.get("id"): e for e in cache.get("events", [])}
@@ -505,6 +507,11 @@ def build_drive_digests(target_date: datetime.date = None) -> dict:
             continue
         if start.date() != tomorrow:
             continue
+        row = _stamp_departure({
+            "id": ev_id, "driver_id": d_id, "title": ev.get("title") or "Event",
+            "start": ev.get("start"), "end": ev.get("end"),
+            "location": ev.get("location"),
+        }, cache, d_id, start)
         title = ev.get("title") or "Event"
         prep = prep_kits.items_for_event(ev, kits, pax)
         if prep:
@@ -517,7 +524,9 @@ def build_drive_digests(target_date: datetime.date = None) -> dict:
         ab = ev.get("arrive_by") or {}
         if ab.get("label"):
             title += f" [{ab['label']}]"
-        per_driver.setdefault(d_id, []).append((start, title))
+        if row.get("leave_label"):
+            title += f" [leave by {row['leave_label']}]"
+        per_driver.setdefault(d_id, []).append((start, title, row))
 
     for er in cache.get("scheduled_errands", []):
         d_id = (er.get("driver") or {}).get("id")
@@ -529,7 +538,15 @@ def build_drive_digests(target_date: datetime.date = None) -> dict:
             continue
         if start.date() != tomorrow:
             continue
-        per_driver.setdefault(d_id, []).append((start, f"Errand: {er.get('title') or 'Errand'}"))
+        row = _stamp_departure({
+            "id": er.get("id"), "driver_id": d_id,
+            "title": er.get("title") or "Errand", "start": er.get("start_time"),
+            "end": er.get("end_time"), "location": er.get("location"),
+        }, cache, d_id, start)
+        title = f"Errand: {row['title']}"
+        if row.get("leave_label"):
+            title += f" [leave by {row['leave_label']}]"
+        per_driver.setdefault(d_id, []).append((start, title, row))
 
     label = day_label(tomorrow)
     # Car readiness notes (C3): "⛽ Minivan at 15% — see the fuel-stop
@@ -557,7 +574,7 @@ def build_drive_digests(target_date: datetime.date = None) -> dict:
     for d_id, items in per_driver.items():
         items.sort(key=lambda x: x[0])
         lines = [f"{start.strftime('%I:%M %p').lstrip('0')} - {title}"
-                 for start, title in items[:6]]
+                 for start, title, _ in items[:6]]
         if len(items) > 6:
             lines.append(f"...and {len(items) - 6} more")
         if fuel_notes.get(d_id):
@@ -565,7 +582,8 @@ def build_drive_digests(target_date: datetime.date = None) -> dict:
         lines.extend(meal_lines)
         n = len(items)
         drivers[d_id] = {"title": f"{label}: {n} drive{'s' if n != 1 else ''}",
-                         "lines": lines, "count": n}
+                         "lines": lines, "count": n,
+                         "events": [row for _, _, row in items]}
     return {"date": tomorrow.isoformat(), "label": label,
             "weather": weather_line(tomorrow),
             "meal_lines": meal_lines,

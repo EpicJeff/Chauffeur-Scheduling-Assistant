@@ -2,7 +2,7 @@
 from services import storage, scope
 from services.voice_identity import VoiceContext, _revision, voice_names
 
-TOOLS = frozenset({'get_calendar_events', 'assign_driver_to_event_fuzzy',
+TOOLS = frozenset({'get_calendar_events', 'get_travel_time', 'assign_driver_to_event_fuzzy',
                    'remove_override_for_event_fuzzy', 'get_shopping_list_items',
                    'add_shopping_items', 'check_off_shopping_item', 'send_family_message', 'send_direct_message',
                    'start_mission_for', 'prepare_voice_approval'})
@@ -60,6 +60,9 @@ def dispatch(name, args, ctx: VoiceContext, focus_key=None):
         return prepare(ctx, args.get('mission_ref') or '', args.get('kind') or 'submit')
     if name == 'get_calendar_events':
         result = tools.get_calendar_events(args.get('start_date'), args.get('end_date'), spoken=True)
+    elif name == 'get_travel_time':
+        result = tools.get_travel_time(origin=args.get('origin') or '',
+                                       destination=args.get('destination') or '')
     elif name == 'get_shopping_list_items':
         result = tools.get_shopping_list_items(args.get('list_name') or '', acting_member=None)
     elif name in ('send_family_message', 'send_direct_message'):

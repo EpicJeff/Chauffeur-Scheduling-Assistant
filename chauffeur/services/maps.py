@@ -171,6 +171,24 @@ def get_cache_duration() -> int:
     return 1440
 
 
+def lookup_travel_minutes(origin: str, destination: str) -> Optional[int]:
+    """A typical cached drive, or unknown; never the solver's fallback."""
+    if not origin or not destination:
+        return None
+    if origin.lower() == destination.lower():
+        return 0
+    cache_duration = get_cache_duration()
+    cached = storage.get_cached_travel_time(
+        origin.lower(), destination.lower(), max_age_mins=cache_duration, ignore_age=True)
+    if cached is None:
+        if travel_cache_only_active():
+            return None
+        prime_matrix_cache([origin, destination])
+        cached = storage.get_cached_travel_time(
+            origin.lower(), destination.lower(), max_age_mins=cache_duration, ignore_age=True)
+    return None if cached is None or cached == storage.UNROUTABLE else cached
+
+
 def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], departure_time: Optional[int] = None, return_traffic: bool = False):
     if not origin or not destination:
         return (0, 0) if return_traffic else 0

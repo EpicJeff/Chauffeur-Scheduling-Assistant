@@ -215,6 +215,18 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                       "Resolve relative dates ('today', 'tonight', 'tomorrow', weekday names) against this "
                       "before calling tools, and pass tool dates as YYYY-MM-DD. "
                       "If the user already said today or supplied a date, use it without asking which date.\n")
+    # WHEN TO LEAVE. The household's departure is worked out in one place
+    # (services/leave_by: the drive, the arrive-early buffer, the leave
+    # margin, a layover at home, live traffic today) and every surface reads
+    # it from there. The schedule tools now carry it as leave_label, so the
+    # model must never do the arithmetic itself: a guessed departure is worse
+    # than none (2026-10-13: "I need to leave in time to get there").
+    system_prompt += ("\nWHEN SOMEONE ASKS WHAT TIME TO LEAVE: answer with the leave_label the schedule "
+                      "tools return for that drive (it already includes travel, buffers and the family's "
+                      "leave margin). If a drive has no leave_label, say the drive time is unknown for it. "
+                      "A guessed departure is worse than none, so never work out a departure yourself from a "
+                      "start time and a guess at the drive. get_travel_time is only for places "
+                      "that are not on the schedule.\n")
 
     # WHO IS IN THIS HOUSE. Without the roster the model has no way to know
     # that a name it was handed is wrong: a voice request arrives via
@@ -375,9 +387,13 @@ sending or claiming, and never pass from_member/member_name for them.
             if evs:
                 system_prompt += "\nYOUR DRIVES TODAY:\n"
                 for ev in evs:
+                    # The departure rides on the line the model is told is
+                    # authoritative; a drive without one says so, so the
+                    # model answers "unknown" instead of inventing it.
+                    leave = (f"leave by {ev['leave_label']}" if ev.get('leave_label') else 'leave time unknown')
                     system_prompt += (f"- {ev.get('title')} at {ev.get('location') or 'no location'} "
                                       f"({ev.get('start', '')[11:16]}-{ev.get('end', '')[11:16]}) "
-                                      f"[{ev.get('drive_status')}]\n")
+                                      f"[{ev.get('drive_status')}] {leave}\n")
             else:
                 system_prompt += "\nYOUR DRIVES TODAY: none assigned.\n"
         except Exception as e:
