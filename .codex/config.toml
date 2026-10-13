@@ -1,0 +1,3 @@
+# Project-level Codex settings. Loads only because this repo is trusted in ~/.codex/config.toml.
+# The model is inherited from the user config; effort is pinned so reviews are consistent.
+model_reasoning_effort = "high"
