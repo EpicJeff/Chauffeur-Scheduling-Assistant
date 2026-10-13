@@ -260,7 +260,7 @@ def note_failure(model: str, err_str: str):
         logger.error(f"[model-pools] {model} looks unknown to the API (404) — cooling "
                      f"6h. If this persists, fix the model id via the model_pool_* "
                      f"settings keys. Error: {err[:200]}")
-    elif re.search(r"\b(?:500|502|503|504)\b", err):
+    elif re.search(r"\b(?:500|502|503|504)\b", err) or 'timed out' in low or 'timeout' in low:
         until = time.time() + 120
         logger.info(f"[model-pools] {model} server unavailable - 120s cooldown")
     else:
@@ -288,12 +288,13 @@ def models_for(tier: str, settings: dict = None) -> list:
         settings = get_settings()
     from services.app_voice import current as phone_voice
     if phone_voice.get() is not None:
-        return [m for m in _pool('lite', settings) if 'flash-lite' in m]
-    chain = []
-    for pool_name in TIER_CHAINS[tier]:
-        for m in _pool(pool_name, settings):
-            if m not in chain:
-                chain.append(m)
+        chain = list(dict.fromkeys(m for m in _pool('lite', settings) if 'flash-lite' in m))
+    else:
+        chain = []
+        for pool_name in TIER_CHAINS[tier]:
+            for m in _pool(pool_name, settings):
+                if m not in chain:
+                    chain.append(m)
     now = time.time()
     with _lock:
         ready = [m for m in chain if _cooldowns.get(m, 0) <= now]

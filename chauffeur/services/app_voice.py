@@ -11,6 +11,10 @@ current = ContextVar('chauffeur_phone_voice', default=None)
 _lock = threading.RLock()
 _turns = {}
 DISPLAY_ONLY = 'I put that on your screen.'
+# Six seconds is a latency target, not a cutoff for a two-round tool lookup.
+# Reserve room for lite siblings when a provider stalls, without slow escalation.
+MODEL_ATTEMPT_TIMEOUT = 10
+RESPONSE_TIMEOUT = 30
 
 
 class Stopped(Exception):
@@ -167,7 +171,7 @@ def run(turn, worker):
         if turn.stage != 'ready':
             raise ValueError('This voice request has already run or has no transcript.')
         turn.stage = 'running'
-        turn.deadline = time.monotonic() + 6
+        turn.deadline = time.monotonic() + RESPONSE_TIMEOUT
         history = [m for m in storage.get_channel_messages(turn.channel['id'], limit=5)
                    if m.get('phone_speech_safe') is True and not m.get('edited_ts')]
         # Typed Argyle DMs currently inject focus, not message history. Phone

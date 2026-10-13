@@ -25,6 +25,8 @@ class PhoneTests(unittest.TestCase):
                       storage.shopping_items_table):
             table.truncate()
         voice._turns.clear()
+        model_pools.reset_cooldowns()
+        self.addCleanup(model_pools.reset_cooldowns)
         storage.get_settings = lambda: {'auth_enforce': False, 'calendar_ids': [], 'missions_enabled': False,
                                        'llm_gemini_api_key': 'fake', 'model_pool_lite': 'gemini-test-flash-lite',
                                        'model_pool_gemma': 'gemma-slow', 'ha_base_url': ''}
@@ -91,6 +93,49 @@ class PhoneTests(unittest.TestCase):
         self.assertTrue(result['speech_safe'])
         self.assertEqual(result['speech'], 'Soccer is at four.')
         self.assertEqual(storage.get_channel_messages(row.channel['id'])[0]['sender_member_id'], 'parent')
+
+    def test_timeout_recovery_leaves_time_for_lookup_and_answer(self):
+        row = self.turn('Calendar please')
+        clock = [0]
+        calls = []
+        settings = dict(storage.get_settings(), model_pool_lite='gemini-a-flash-lite,gemini-b-flash-lite')
+        def provider(*args, **kwargs):
+            calls.append(args[3])
+            if len(calls) == 1:
+                clock[0] += kwargs['timeout_s']
+                raise RuntimeError('Gemini request failed: The read operation timed out')
+            clock[0] += 5
+            if len(calls) == 2:
+                return {'tool_calls': [{'name': 'get_calendar_events', 'arguments': {}}]}
+            return {'message': 'Soccer is at four.'}
+        with patch.object(storage, 'get_settings', return_value=settings), \
+                patch.object(agent_router, '_call_llm_json', provider), \
+                patch.object(agent_router, 'get_calendar_events', return_value={'status': 'success', 'events': []}), \
+                patch.object(voice.time, 'monotonic', lambda: clock[0]):
+            result = main.phone_voice_run(row.id, self.request())
+        self.assertEqual(result['reply'], 'Soccer is at four.')
+        self.assertTrue(result['speech_safe'])
+        self.assertEqual(calls, ['gemini-a-flash-lite', 'gemini-b-flash-lite', 'gemini-b-flash-lite'])
+        self.assertEqual(clock[0], 20)
+
+    def test_timeout_recovery_never_exceeds_phone_turn_budget(self):
+        row = self.turn()
+        clock = [0]
+        attempts = []
+        settings = dict(storage.get_settings(),
+                        model_pool_lite=','.join(f'gemini-{n}-flash-lite' for n in range(4)))
+        def provider(*args, **kwargs):
+            attempts.append(kwargs['timeout_s'])
+            clock[0] += kwargs['timeout_s']
+            raise RuntimeError('The read operation timed out')
+        with patch.object(storage, 'get_settings', return_value=settings), \
+                patch.object(agent_router, '_call_llm_json', provider), \
+                patch.object(voice.time, 'monotonic', lambda: clock[0]):
+            result = main.phone_voice_run(row.id, self.request())
+        self.assertEqual(attempts, [10, 10, 10])
+        self.assertEqual(clock[0], 30)
+        self.assertFalse(result['speech_safe'])
+        self.assertIn('too long', result['reply'])
 
     def test_whitelisted_typed_calendar_with_private_rows_is_display_only(self):
         storage.set_cached_schedule({'events': [{'id': 'private', 'title': 'Secret', 'visibility': 'private'}]})
@@ -178,13 +223,13 @@ class PhoneTests(unittest.TestCase):
         with self.assertRaises(voice.Stopped): active.check()
 
     def test_phone_models_are_lite_only_and_bounded_without_changing_text(self):
-        row = self.turn(); row.deadline = time.monotonic() + 6
+        row = self.turn(); row.deadline = time.monotonic() + 30
         marker = voice.current.set(row)
         try:
             self.assertEqual(model_pools.models_for('heavy'), ['gemini-test-flash-lite'])
             with patch.object(agent_router, '_call_llm_json', return_value={'message': 'Hello'}) as provider:
                 agent_router.call_gemma_with_fallback('Hello', [], 'System')
-            self.assertLessEqual(provider.call_args.kwargs['timeout_s'], 4)
+            self.assertLessEqual(provider.call_args.kwargs['timeout_s'], 10)
             self.assertEqual(provider.call_args.kwargs['transient_retries'], 0)
             from services import llm
             self.assertIn('error', llm._call_llm_json('gemini', '', '', 'gemma-slow', '', ''))

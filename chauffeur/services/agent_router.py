@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from typing import Dict, Any, Optional, List
 
 from services.agent_tools_v2 import (
@@ -55,40 +56,49 @@ def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Di
     system_prompt += "\n\nIf you do not need to call a tool, return an empty list for tool_calls."
     
     def _is_transient(err_str: str) -> bool:
-        return any(code in err_str for code in ("429", "500", "502", "503", "504"))
+        return any(code in err_str.lower() for code in
+                   ("429", "500", "502", "503", "504", "timed out", "timeout"))
 
     last_err = "no models available"
     transient = False
-    from services.app_voice import current as phone_voice
+    from services.app_voice import current as phone_voice, Stopped, MODEL_ATTEMPT_TIMEOUT
     phone_turn = phone_voice.get()
-    # Cap at 4 candidates: lite models fail a 429 in ~1s, so a fully-exhausted
-    # lite pool still reaches gemma well inside HA Assist's 120s budget.
+    deadline = time.monotonic() + 100
+    # Bound fallback to four candidates and 100s per LLM round. Phone turns
+    # have their own shorter shared deadline, including later tool rounds.
     for model in model_pools.models_for('interactive', settings)[:4]:
-        # 60s cap on the fast models: slower than that is already useless to
-        # the 120s HA pipeline. Gemma gets 90s — it measured 44-180s and is
-        # the last resort, so give it what remains of the budget.
+        # Preserve ordinary per-model caps, clipped to the remaining budget.
         timeout_s = 90 if model_pools.is_gemma(model) else 60
         try:
-            options = {'transient_retries': 0} if phone_turn is not None else {}
+            # Rotate once per candidate instead of spending the foreground
+            # budget retrying an overloaded endpoint before reaching siblings.
+            options = {'transient_retries': 0}
             if phone_turn is not None:
-                timeout_s = min(4, phone_turn.remaining())
+                timeout_s = min(MODEL_ATTEMPT_TIMEOUT, phone_turn.remaining())
+            else:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return {'error': 'Model pool time budget exhausted; last error: ' + last_err,
+                            'transient': True}
+                timeout_s = min(timeout_s, remaining)
             res = _call_llm_json(provider, url, api_key, model, system_prompt, prompt, tools=None, timeout_s=timeout_s, **options)
+        except Stopped:
+            raise
         except Exception as e:
             last_err = str(e)
             model_pools.note_failure(model, last_err)
-            # 5xx = overloaded right now (the call layer already retried with
-            # backoff) — the next pool model may still work.
+            # A temporary provider failure may leave a sibling model healthy.
             if not _is_transient(last_err):
                 logger.error(f"Error calling agent LLM ({model}): {e}")
                 return {"error": last_err}
             transient = True
             logger.warning(f"{model} unavailable ({e}), trying next pool model...")
             continue
-        if res.get("error") and "429" in str(res.get("error")):
+        if res.get("error") and _is_transient(str(res["error"])):
             last_err = str(res["error"])
             model_pools.note_failure(model, last_err)
             transient = True
-            logger.warning(f"{model} rate limited, trying next pool model...")
+            logger.warning(f"{model} unavailable, trying next pool model...")
             continue
         res["_model"] = model
         return res
@@ -550,7 +560,7 @@ sending or claiming, and never pass from_member/member_name for them.
         if llm_response.get("error"):
             err = str(llm_response["error"])
             transient = llm_response.get("transient") or any(
-                code in err for code in ("429", "500", "502", "503", "504"))
+                code in err.lower() for code in ("429", "500", "502", "503", "504", "timed out", "timeout"))
             logger.error(f"Agent LLM call failed (iteration {iteration + 1}): {err}")
             if transient:
                 agent_message = ("The AI service is overloaded right now, so I couldn't "

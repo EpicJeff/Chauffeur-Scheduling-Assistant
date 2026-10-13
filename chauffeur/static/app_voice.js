@@ -11,7 +11,7 @@
         visibility() {
             const channel = typeof threadChannel === 'undefined' ? null : threadChannel;
             if (el('mic')) el('mic').style.display = channel?.kind === 'dm'
-                && channel.member_ids?.includes('argyle') ? 'block' : 'none';
+                && channel.member_ids?.includes('argyle') ? 'inline-flex' : 'none';
         },
         status(label, state = 'idle') {
             this.state = state;

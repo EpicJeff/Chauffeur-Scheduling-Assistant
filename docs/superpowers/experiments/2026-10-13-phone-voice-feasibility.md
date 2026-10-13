@@ -23,6 +23,14 @@ The initial build exposes the comparison from Config → People → Voice identi
 
 `ChauffeurPhoneVoice.timings` keeps at most twenty transcript/text/first-audio observations in memory without their text. Its anchor is capture completion, not independently observed speech-end; use actual speech-end observation for the acceptance targets. No real-phone measurements have been entered yet. No rollout plan is written until those ten-sample results are recorded in the spec.
 
+## Provider incident, 2026-10-13
+
+The first household report supplied a correctly transcribed phone request but an agent error. Add-on logs showed a 4.2-second phone model timeout and a 60.3-second satellite timeout; the user also reported typed-chat failure. Subsequent provider responses included HTTP 503 high demand. This isolates a shared agent/provider failure, not a missing conversation-component update. The phone speech endpoint returned 200 in 1.24 seconds while the UI showed the Play reply fallback; its exact iOS playback cause is unmeasured.
+
+The recovery fix treats timeouts as temporary model failures, rotates to siblings, cools the stalled model for two minutes, and respects that cooldown on phone turns. Phone model work gets 30 seconds total and ten seconds per attempt; six seconds remains the latency target. Shared chat/satellite fallback makes one attempt per candidate within a 100-second LLM-round budget, preserving the existing ordinary per-model caps.
+
+A developer-side real-provider check with the full agent tool catalog recovered from a first-model timeout and second-model 503: the third lite model returned `get_calendar_events` in 11.9 seconds total. No tool was executed in that check. This demonstrates fallback under the incident, not a finished schedule answer or iPhone latency acceptance. The household ten-sample capture/playback comparison remains pending.
+
 ## Cross-microphone experiment
 
 Question: can a phone-enrolled reference name Jeff on the kitchen satellite at current **0.70 score / 0.12 rival margin**? Login already names him on the phone.

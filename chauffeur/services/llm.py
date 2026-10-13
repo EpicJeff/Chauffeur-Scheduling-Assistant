@@ -65,12 +65,12 @@ def test_llm_connection(provider: str, url: str = None, api_key: str = None, mod
     return False, "Invalid provider selected."
 
 def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.1, tools: list = None, timeout_s: int = 180, images: list = None, metrics: dict = None, max_output_tokens: int = None, transient_retries: int = 2, thinking_level: str = None, strict_json: bool = False, response_schema: dict = None) -> dict:
-    from services.app_voice import current as phone_voice
+    from services.app_voice import current as phone_voice, MODEL_ATTEMPT_TIMEOUT
     phone_turn = phone_voice.get()
     if phone_turn is not None:
         if provider != 'gemini' or 'flash-lite' not in model:
             return {'error': 'That work needs the text/background path; voice uses the interactive lite tier.'}
-        timeout_s = min(timeout_s, phone_turn.remaining(), 4)
+        timeout_s = min(timeout_s, phone_turn.remaining(), MODEL_ATTEMPT_TIMEOUT)
         transient_retries = 0
     # images: [{'mime': 'image/jpeg', 'b64': '<base64>'}] — Gemini only
     # (attached as inline_data parts); the ollama branch ignores them.

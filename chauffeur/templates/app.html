@@ -381,13 +381,21 @@
                     <input id="thread-photo-input" type="file" accept="image/*,video/*" multiple class="hidden"
                         onchange="handlePhotoPick(this)">
                     <button type="button" id="thread-attach-btn" onclick="document.getElementById('thread-photo-input').click()"
-                        title="Add a photo"
-                        class="w-10 h-10 rounded-full bg-gray-800 border border-gray-600 text-lg flex items-center justify-center shrink-0 active:bg-gray-700">📷</button>
+                        title="Add a photo" aria-label="Add a photo"
+                        class="w-10 h-10 rounded-full bg-gray-800 border border-gray-600 flex items-center justify-center shrink-0 active:bg-gray-700">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/>
+                        </svg>
+                    </button>
                     <input id="thread-input" type="text" autocomplete="off" placeholder="Message..."
                         class="flex-1 min-w-0 bg-gray-800 border border-gray-600 rounded-full px-4 py-2.5 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500">
                     <button type="button" id="phone-voice-mic" onclick="ChauffeurPhoneVoice.start()" aria-label="Talk to Argyle"
                             style="display:none;min-width:44px;min-height:44px"
-                            class="rounded-full bg-indigo-700 text-white px-2 shrink-0">🎙️</button>
+                            class="rounded-full bg-indigo-700 text-white px-2 shrink-0 items-center justify-center">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true">
+                            <rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/>
+                        </svg>
+                    </button>
                     <button type="submit"
                         class="bg-blue-600 active:bg-blue-700 text-white font-bold px-5 py-2.5 rounded-full shrink-0">Send</button>
                 </form>
@@ -10006,7 +10014,11 @@
                     <form id="chat-form" onsubmit="submitChat(event)" class="flex gap-2">
                         <input type="text" id="chat-input" autocomplete="off" placeholder="Message Argyle..." class="flex-1 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-[16px] text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
                         <button type="button" onclick="ChauffeurPhoneVoice.start()" aria-label="Talk to Argyle"
-                                class="rounded-lg bg-indigo-700 text-white px-2" style="min-width:44px;min-height:44px">🎙️</button>
+                                class="rounded-lg bg-indigo-700 text-white px-2 inline-flex items-center justify-center" style="min-width:44px;min-height:44px">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true">
+                                <rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/>
+                            </svg>
+                        </button>
                         <button type="submit" id="chat-submit-btn" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg font-bold text-sm transition-colors">Send</button>
                     </form>
                 </div>
