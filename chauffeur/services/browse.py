@@ -1,15 +1,18 @@
-"""Browse — a mission's browser, driven by Gemini Computer Use over Playwright.
+"""Browse — a mission's browser, driven by provider computer use over Playwright.
 Spec: docs/superpowers/specs/2026-10-10-browse-missions-design.md §1–2.
 
 This module never pays; it books or submits only one approved press at a time (spec 2026-10-11). The guards below are code,
 not prompt: a test holds each one. The paid key is read only through
 model_pools.api_key_for_pool (pool 'cu').
 """
+import base64
 import hashlib
+import json
 import logging
 import os
 import re
 import time
+import urllib.request
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -75,6 +78,8 @@ CONTACT_LABELS = {
 EMAIL_SHAPE = re.compile(r'[^@\s]+@[^@\s]+\.[a-z]{2,}', re.I)
 PHONE_SHAPE = re.compile(r'(\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}')
 
+TYPE_AT_SENTENCE = "type_text_at clicks the box itself: no separate click first. "
+
 RUNNER_SYSTEM = (
     "You are driving a browser for one family on ONE site (and the booking service its own links lead to) to "
     "learn something. A site's Book/Schedule link often leads to its booking service at another address: follow "
@@ -90,7 +95,9 @@ RUNNER_SYSTEM = (
     "state, zip, preferred). When you were given a ZIP or city, type it and press Enter or the Find/Go "
     "button; never use a 'use my location' button, and never pick a suggested nearby place that is not the "
     "ZIP's own town. A result about 'the location detected' is not about the ZIP you were given: search by "
-    "the ZIP before you report it. type_text_at clicks the box itself: no separate click first. If a "
+    "the ZIP before you report it. "
+    + TYPE_AT_SENTENCE
+    + "If a "
     "human-verification check (a CAPTCHA, 'I'm not a robot') blocks you and you may not or cannot pass it, "
     "end your report with one more line: WALL: captcha."
 )
@@ -458,7 +465,264 @@ def _model_step_live(contents, settings):
     return {'calls': calls, 'text': text, 'content': cand.content if cand else None, 'tokens': tokens}
 
 
-_model_step = _model_step_live
+ADAPTER_TYPING_TEXT = (" Type into the focused box: click it first, then type; there is no type-at-coordinates here."
+                       " Before you click a verification widget (reCAPTCHA, 'I am not a robot', a puzzle), write a line"
+                       " starting CHALLENGE: that says what it is; the click is then counted as a challenge attempt."
+                       " Right, middle and triple clicks, held keys and the cursor position are not available.")
+CHALLENGE_LINE = re.compile(r'^CHALLENGE:[ \t]*(.*)$', re.I | re.M)
+FUNCTION_TOOLS = [
+    {'name': 'navigate', 'description': 'Open a URL in this browser tab.', 'input_schema': {'type': 'object', 'properties': {'url': {'type': 'string'}}, 'required': ['url']}},
+    {'name': 'go_back', 'description': 'Go back one page.', 'input_schema': {'type': 'object', 'properties': {}}},
+]
+FUNCTION_TOOLS_OPENAI = [
+    {'type': 'function', 'name': t['name'], 'description': t['description'],
+     'parameters': t['input_schema']} for t in FUNCTION_TOOLS
+]
+UNSUPPORTED = ('right_click', 'middle_click', 'triple_click', 'hold_key', 'left_mouse_down', 'left_mouse_up', 'cursor_position', 'zoom')
+
+
+def _permille(x, y):
+    return (max(0, min(1000, int(round(float(x) * 1000 / W)))),
+            max(0, min(1000, int(round(float(y) * 1000 / H)))))
+
+
+def to_runner_call(provider: str, name: str, inp: dict) -> dict:
+    inp = inp or {}
+    if name in ('navigate', 'go_back'):
+        return {'name': name, 'args': ({'url': inp.get('url', '')} if name == 'navigate' else {})}
+    if name == 'screenshot':
+        return {'name': 'look', 'args': {}}
+    if name == 'wait':
+        return {'name': 'wait', 'args': {}}
+    if provider == 'anthropic':
+        if name in UNSUPPORTED:
+            return {'name': 'refuse', 'args': {'reason': f'{name} is not available here'}}
+        c = inp.get('coordinate') or [0, 0]
+        x, y = _permille(c[0], c[1])
+        if name == 'left_click':
+            return {'name': 'click_at', 'args': {'x': x, 'y': y}}
+        if name == 'double_click':
+            return {'name': 'double_click_at', 'args': {'x': x, 'y': y}}
+        if name == 'type':
+            return {'name': 'type', 'args': {'text': str(inp.get('text') or '')}}
+        if name == 'key':
+            return {'name': 'key_combination', 'args': {'keys': [k.strip().lower() for k in str(inp.get('text') or '').split('+') if k.strip()]}}
+        if name == 'scroll':
+            return {'name': 'scroll_at', 'args': {'x': x, 'y': y, 'direction': inp.get('scroll_direction', 'down'), 'magnitude': int(inp.get('scroll_amount') or 3) * 100}}
+        if name == 'mouse_move':
+            return {'name': 'hover_at', 'args': {'x': x, 'y': y}}
+        if name == 'left_click_drag':
+            s = inp.get('start_coordinate') or [0, 0]
+            sx, sy = _permille(s[0], s[1])
+            return {'name': 'drag_and_drop', 'args': {'x': sx, 'y': sy, 'destination_x': x, 'destination_y': y}}
+        return {'name': 'refuse', 'args': {'reason': f'{name} is not available here'}}
+    # openai
+    if name == 'click':
+        if (inp.get('button') or 'left') != 'left':
+            return {'name': 'refuse', 'args': {'reason': f"{inp.get('button')} click is not available here"}}
+        x, y = _permille(inp.get('x', 0), inp.get('y', 0))
+        return {'name': 'click_at', 'args': {'x': x, 'y': y}}
+    if name == 'double_click':
+        x, y = _permille(inp.get('x', 0), inp.get('y', 0))
+        return {'name': 'double_click_at', 'args': {'x': x, 'y': y}}
+    if name == 'type':
+        return {'name': 'type', 'args': {'text': str(inp.get('text') or '')}}
+    if name == 'keypress':
+        return {'name': 'key_combination', 'args': {'keys': [str(k).lower() for k in (inp.get('keys') or [])]}}
+    if name == 'scroll':
+        x, y = _permille(inp.get('x', 0), inp.get('y', 0))
+        dx, dy = int(inp.get('scroll_x') or 0), int(inp.get('scroll_y') or 0)
+        direction = ('down' if dy > 0 else 'up') if abs(dy) >= abs(dx) else ('right' if dx > 0 else 'left')
+        return {'name': 'scroll_at', 'args': {'x': x, 'y': y, 'direction': direction, 'magnitude': max(abs(dx), abs(dy)) or 600}}
+    if name == 'move':
+        x, y = _permille(inp.get('x', 0), inp.get('y', 0))
+        return {'name': 'hover_at', 'args': {'x': x, 'y': y}}
+    if name == 'drag':
+        path = inp.get('path') or [{'x': 0, 'y': 0}]
+        sx, sy = _permille(path[0]['x'], path[0]['y'])
+        ex, ey = _permille(path[-1]['x'], path[-1]['y'])
+        return {'name': 'drag_and_drop', 'args': {'x': sx, 'y': sy, 'destination_x': ex, 'destination_y': ey}}
+    return {'name': 'refuse', 'args': {'reason': f'{name} is not available here'}}
+
+
+def _model_step_anthropic(contents, settings):
+    """Replay Claude's full assistant turns and answer each tool by id."""
+    from services import model_pools, llm_budget, llm as _llm
+    key = model_pools.api_key_for_pool('cu', settings)
+    model = model_pools.split_model(model_pools.models_for('browse', settings)[0])[1]
+    messages, pending_ids, toolsets = [], [], {}
+    for c in contents:
+        if isinstance(c, dict) and c.get('_provider') == 'anthropic':
+            messages.append({'role': 'assistant', 'content': c['content']})
+            pending_ids = c['ids']
+            toolsets = {b['id']: b.get('toolset_name', 'computer')
+                        for b in c['content'] if b.get('type') == 'tool_use'
+                        and b.get('name') not in ('navigate', 'go_back')}
+        elif isinstance(c, dict) and 'function_responses' in c:
+            blocks = []
+            for tid, (name, resp, shot) in zip(pending_ids or [], c['function_responses']):
+                note = json.dumps(resp)
+                content = [{'type': 'text', 'text': note}]
+                if shot:
+                    content.append({'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/png', 'data': base64.b64encode(shot).decode()}})
+                result = {'type': 'tool_result', 'tool_use_id': tid, 'content': content}
+                if tid in toolsets:
+                    result['toolset_name'] = toolsets[tid]
+                if resp.get('error'):
+                    result['is_error'] = True
+                blocks.append(result)
+            messages.append({'role': 'user', 'content': blocks})
+        elif isinstance(c, dict) and 'parts' in c:
+            content = []
+            for p in c['parts']:
+                if 'text' in p:
+                    content.append({'type': 'text', 'text': p['text']})
+                elif 'image' in p:
+                    content.append({'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/png', 'data': base64.b64encode(p['image']).decode()}})
+            messages.append({'role': c.get('role', 'user'), 'content': content})
+    if messages and messages[0]['content'] and messages[0]['content'][0].get('type') == 'text':
+        messages[0]['content'][0]['text'] = messages[0]['content'][0]['text'].replace(TYPE_AT_SENTENCE, '', 1)
+    payload = {'model': model, 'max_tokens': 4096, 'system': ADAPTER_TYPING_TEXT, 'messages': messages,
+               'output_config': {'effort': 'low'},
+               'tools': [{'type': 'computer_toolset_20260801', 'configs': {'zoom': {'enabled': False}}}, *FUNCTION_TOOLS]}
+    req = urllib.request.Request(_llm.ANTHROPIC_URL, data=json.dumps(payload).encode('utf-8'), method='POST',
+                                 headers={'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01'})
+    with llm_budget.urlopen(req, timeout=120) as resp:
+        data = json.loads(resp.read().decode('utf-8'))
+    blocks = data.get('content') or []
+    text = '\n'.join(b.get('text', '') for b in blocks if b.get('type') == 'text')
+    m = CHALLENGE_LINE.search(text)
+    calls, ids = [], []
+    for b in blocks:
+        if b.get('type') != 'tool_use':
+            continue
+        call = to_runner_call('anthropic', b.get('name'), b.get('input'))
+        if m and call['name'] in ('click_at', 'double_click_at'):
+            call['args']['safety_decision'] = {'decision': 'require_confirmation', 'explanation': 'CAPTCHA: ' + m.group(1).strip()}
+        calls.append(call)
+        ids.append(b['id'])
+    usage = data.get('usage') or {}
+    return {'calls': calls, 'text': CHALLENGE_LINE.sub('', text).strip(), 'tokens': (usage.get('input_tokens', 0), usage.get('output_tokens', 0)),
+            'content': {'_provider': 'anthropic', 'content': blocks, 'ids': ids}}
+
+
+class _OpenAITurn(dict):
+    """Opaque runner entry, with safety checks kept off its public mapping.
+
+    The runner holds this object as-is. Checks belong to this response only;
+    an attribute preserves them without changing the neutral content shape.
+    """
+
+    def __init__(self, response_id, ids, safety_checks):
+        super().__init__(_provider='openai', response_id=response_id, ids=ids)
+        self.safety_checks = safety_checks
+
+
+def _model_step_openai(contents, settings):
+    """Continue a Responses computer turn with only its new input items."""
+    from services import model_pools, llm_budget, llm as _llm
+    key = model_pools.api_key_for_pool('cu', settings)
+    model = model_pools.split_model(model_pools.models_for('browse', settings)[0])[1]
+    prior, start = None, 0
+    for i, c in enumerate(contents):
+        if isinstance(c, dict) and c.get('_provider') == 'openai':
+            prior, start = c, i + 1
+    items = []
+    pending_ids = iter(prior['ids'] if prior is not None else [])
+    safety_checks = getattr(prior, 'safety_checks', {})
+    for c in contents[start:]:
+        if not isinstance(c, dict):
+            continue
+        if 'function_responses' in c:
+            # One runner answer per action, but one wire output per call id.
+            # Keep the last screen and all errors, including an earlier refusal.
+            grouped = {}
+            for (call_id, kind), (name, resp, shot) in zip(pending_ids, c['function_responses']):
+                group = grouped.setdefault((call_id, kind), {'errors': []})
+                group.update(response=resp, shot=shot)
+                if resp.get('error'):
+                    group['errors'].append({'name': name, **resp})
+            for (call_id, kind), group in grouped.items():
+                resp, shot = group['response'], group['shot']
+                if kind == 'function':
+                    items.append({'type': 'function_call_output', 'call_id': call_id,
+                                  'output': json.dumps(resp)})
+                    continue
+                result = {'type': 'computer_call_output', 'call_id': call_id,
+                          'output': {'type': 'computer_screenshot', 'image_url':
+                                     'data:image/png;base64,' + base64.b64encode(shot).decode(),
+                                     'detail': 'original'}}
+                checks = safety_checks.get(call_id)
+                if checks and not group['errors']:
+                    result['acknowledged_safety_checks'] = checks
+                items.append(result)
+                if group['errors']:
+                    # A screenshot alone cannot explain a guard's refusal.
+                    items.append({'role': 'user', 'content': [{'type': 'input_text',
+                                  'text': f"Call {call_id}: " + json.dumps(group['errors'])}]})
+        elif 'parts' in c:
+            content = []
+            for p in c['parts']:
+                if 'text' in p:
+                    text = p['text']
+                    if prior is None and not items and not content:
+                        text = text.replace(TYPE_AT_SENTENCE, '', 1)
+                    content.append({'type': 'input_text', 'text': text})
+                elif 'image' in p:
+                    content.append({'type': 'input_image', 'image_url':
+                                    'data:image/png;base64,' + base64.b64encode(p['image']).decode(),
+                                    'detail': 'original'})
+            items.append({'role': c.get('role', 'user'), 'content': content})
+    payload = {'model': model, 'instructions': ADAPTER_TYPING_TEXT, 'input': items,
+               'tools': [{'type': 'computer'}, *FUNCTION_TOOLS_OPENAI],
+               'reasoning': {'effort': 'low'}, 'truncation': 'auto', 'max_output_tokens': 4096}
+    if prior is not None:
+        payload['previous_response_id'] = prior['response_id']
+    req = urllib.request.Request(_llm.OPENAI_URL, data=json.dumps(payload).encode('utf-8'), method='POST',
+                                 headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {key}'})
+    with llm_budget.urlopen(req, timeout=120) as resp:
+        data = json.loads(resp.read().decode('utf-8'))
+    output = data.get('output') or []
+    text = '\n'.join(b.get('text', '') for item in output if item.get('type') == 'message'
+                     for b in item.get('content') or [] if b.get('type') == 'output_text')
+    challenge = CHALLENGE_LINE.search(text)
+    calls, ids, checks = [], [], {}
+    for item in output:
+        kind = item.get('type')
+        if kind == 'computer_call':
+            call_id = item['call_id']
+            pending = item.get('pending_safety_checks') or []
+            if pending:
+                checks[call_id] = pending
+            # Even an empty action batch needs a screenshot reply, not completion.
+            for action in item.get('actions') or [{'type': 'screenshot'}]:
+                call = to_runner_call('openai', action['type'], action)
+                if challenge and call['name'] in ('click_at', 'double_click_at'):
+                    call['args']['safety_decision'] = {
+                        'decision': 'require_confirmation',
+                        'explanation': 'CAPTCHA: ' + challenge.group(1).strip()}
+                elif pending:
+                    call['args']['safety_decision'] = {
+                        'decision': 'require_confirmation',
+                        'explanation': '\n'.join(str(p.get('message') or p.get('code') or '') for p in pending)}
+                calls.append(call)
+                ids.append((call_id, 'computer'))
+        elif kind == 'function_call':
+            calls.append(to_runner_call('openai', item.get('name'), json.loads(item.get('arguments') or '{}')))
+            ids.append((item['call_id'], 'function'))
+    usage = data.get('usage') or {}
+    return {'calls': calls, 'text': CHALLENGE_LINE.sub('', text).strip(),
+            'tokens': (usage.get('input_tokens', 0), usage.get('output_tokens', 0)),
+            'content': _OpenAITurn(data['id'], ids, checks)}
+
+
+def _model_step_dispatch(contents, settings):
+    from services import model_pools
+    prov = model_pools.split_model(model_pools.models_for('browse', settings)[0])[0]
+    return {'anthropic': _model_step_anthropic, 'openai': _model_step_openai}.get(prov, _model_step_live)(contents, settings)
+
+
+_model_step = _model_step_dispatch
 
 
 def _goto(page, url: str):
