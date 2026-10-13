@@ -174,9 +174,9 @@ def run(turn, worker):
         turn.deadline = time.monotonic() + RESPONSE_TIMEOUT
         history = [m for m in storage.get_channel_messages(turn.channel['id'], limit=5)
                    if m.get('phone_speech_safe') is True and not m.get('edited_ts')]
-        # Typed Argyle DMs currently inject focus, not message history. Phone
-        # follow-ups add shared voice history only, without importing private
-        # displayed answers or making every later turn permanently inaudible.
+        # Ordinary phone turns use shared voice history. The worker can also
+        # resume a pending DM clarification, withholding speech if its context
+        # was typed or private. Independent shared queries remain audible.
         turn.speech_safe = not turn.credential and not triage.get_focus('channel:' + turn.channel['id'])
         turn.had_safe_history = bool(history) and turn.speech_safe
         if not turn.credential:

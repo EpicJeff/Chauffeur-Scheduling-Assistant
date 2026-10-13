@@ -31,7 +31,7 @@ def seed():
     def model(prompt, tools, system):
         if 'PRIVATE' in prompt:
             return {'tool_calls': [{'name': 'get_point_balances', 'arguments': {}}]}
-        if 'TOOL EXECUTION SCRATCHPAD' in system:
+        if 'ALREADY EXECUTED TOOL CALLS AND RESULTS' in prompt:
             return {'message': 'Soccer is at four. Anything else?'}
         return {'tool_calls': [{'name': 'get_calendar_events', 'arguments': {'start_date': '2026-10-13', 'end_date': '2026-10-13'}}]}
     agent_router.call_gemma_with_fallback = model

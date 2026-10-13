@@ -94,6 +94,80 @@ class PhoneTests(unittest.TestCase):
         self.assertEqual(result['speech'], 'Soccer is at four.')
         self.assertEqual(storage.get_channel_messages(row.channel['id'])[0]['sender_member_id'], 'parent')
 
+    def test_typed_dm_followup_keeps_question_and_excludes_later_messages(self):
+        from services.agent_tools_v2 import _post_chat_message
+        row = self.turn()
+        _post_chat_message(row.channel, row.member, "What's my schedule like?")
+        _post_chat_message(row.channel, storage.ensure_argyle_member(), 'What date are you interested in?',
+                           argyle_pending_question=True)
+        request = _post_chat_message(row.channel, row.member, 'Today.')
+        _post_chat_message(row.channel, row.member, 'FUTURE message not part of this turn')
+        seen = []
+        def model(prompt, tools, system):
+            seen.append(system + "\n" + prompt)
+            return {'message': 'Soccer is at four.'}
+        with patch.object(agent_router, 'call_gemma_with_fallback', side_effect=model):
+            result = main._run_argyle_mention(row.channel, row.member, 'Today.', request['id'])
+        self.assertIn("What's my schedule like?", seen[0])
+        self.assertIn('What date are you interested in?', seen[0])
+        self.assertNotIn('FUTURE', seen[0])
+        self.assertEqual(result['message'], 'Soccer is at four.')
+
+    def test_phone_can_answer_typed_clarification_without_speaking_private_context(self):
+        from services.agent_tools_v2 import _post_chat_message
+        row = self.turn('Today.')
+        _post_chat_message(row.channel, row.member, 'PRIVATE prior request: what is on my schedule?')
+        _post_chat_message(row.channel, storage.ensure_argyle_member(), 'What date are you interested in?',
+                           argyle_pending_question=True)
+        seen = []
+        def model(prompt, tools, system):
+            seen.append(system + "\n" + prompt)
+            if len(seen) == 1:
+                return {'tool_calls': [{'name': 'get_calendar_events', 'arguments': {}}]}
+            return {'message': 'Soccer is at four. Anything else?'}
+        with patch.object(agent_router, 'call_gemma_with_fallback', side_effect=model), \
+                patch.object(agent_router, 'get_calendar_events', return_value={'status': 'success', 'events': []}):
+            result = main.phone_voice_run(row.id, self.request())
+        self.assertIn('PRIVATE prior request', seen[0])
+        self.assertEqual(result['reply'], 'Soccer is at four. Anything else?')
+        self.assertEqual(result['speech'], voice.DISPLAY_ONLY)
+        row = self.turn('Calendar please')
+        seen.clear()
+        with patch.object(agent_router, 'call_gemma_with_fallback', side_effect=model), \
+                patch.object(agent_router, 'get_calendar_events', return_value={'status': 'success', 'events': []}):
+            result = main.phone_voice_run(row.id, self.request())
+        self.assertNotIn('PRIVATE prior request', seen[0])
+        self.assertTrue(result['speech_safe'])
+
+    def test_group_mentions_do_not_load_personal_dm_history(self):
+        from services.agent_tools_v2 import _post_chat_message
+        group = {'id': 'group', 'kind': 'group', 'member_ids': ['parent', 'kid', 'argyle'], 'name': 'Family'}
+        storage.chat_channels_table.insert(group)
+        _post_chat_message(group, storage.get_member('parent'), 'OLDER group text')
+        request = _post_chat_message(group, storage.get_member('parent'), 'Today.')
+        seen = []
+        def model(prompt, tools, system):
+            seen.append(system + "\n" + prompt)
+            return {'message': 'What would you like to know?'}
+        with patch.object(agent_router, 'call_gemma_with_fallback', side_effect=model):
+            main._run_argyle_mention(group, storage.get_member('parent'), 'Today.', request['id'])
+        self.assertNotIn('OLDER group text', seen[0])
+
+    def test_pending_typed_credential_is_withheld_from_phone_followup(self):
+        from services.agent_tools_v2 import _post_chat_message
+        row = self.turn('Today.')
+        _post_chat_message(row.channel, row.member, 'My PIN is 1234')
+        _post_chat_message(row.channel, storage.ensure_argyle_member(), 'What date?', argyle_pending_question=True)
+        seen = []
+        def model(prompt, tools, system):
+            seen.append(system + '\n' + prompt)
+            return {'message': 'Use the PIN control on screen.'}
+        with patch.object(agent_router, 'call_gemma_with_fallback', side_effect=model):
+            result = main.phone_voice_run(row.id, self.request())
+        self.assertNotIn('1234', seen[0])
+        self.assertIn('[Credential withheld]', seen[0])
+        self.assertFalse(result['speech_safe'])
+
     def test_timeout_recovery_leaves_time_for_lookup_and_answer(self):
         row = self.turn('Calendar please')
         clock = [0]
@@ -160,7 +234,7 @@ class PhoneTests(unittest.TestCase):
         _post_chat_message(row.channel, storage.ensure_argyle_member(), 'PRIVATE old answer', phone_speech_safe=False)
         seen = []
         def model(prompt, tools, system):
-            seen.append(system)
+            seen.append(system + "\n" + prompt)
             if len(seen) == 1:
                 return {'tool_calls': [{'name': 'get_calendar_events', 'arguments': {}}]}
             return {'message': 'Shared soccer schedule.'}

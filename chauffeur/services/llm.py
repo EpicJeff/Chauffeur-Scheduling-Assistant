@@ -64,7 +64,7 @@ def test_llm_connection(provider: str, url: str = None, api_key: str = None, mod
             
     return False, "Invalid provider selected."
 
-def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.1, tools: list = None, timeout_s: int = 180, images: list = None, metrics: dict = None, max_output_tokens: int = None, transient_retries: int = 2, thinking_level: str = None, strict_json: bool = False, response_schema: dict = None) -> dict:
+def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.1, tools: list = None, timeout_s: int = 180, images: list = None, metrics: dict = None, max_output_tokens: int = None, transient_retries: int = 2, thinking_level: str = None, strict_json: bool = False, response_schema: dict = None, use_system_instruction: bool = False) -> dict:
     from services.app_voice import current as phone_voice, MODEL_ATTEMPT_TIMEOUT
     phone_turn = phone_voice.get()
     if phone_turn is not None:
@@ -124,7 +124,9 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
             if gemini_model.startswith('models/'):
                 gemini_model = gemini_model[7:]
             req_url = f"https://generativelanguage.googleapis.com/v1beta/models/{gemini_model}:generateContent?key={api_key}"
-            user_parts = [{"text": f"{system_prompt}\n\nUser Request: {user_prompt}"}]
+            separate_system = use_system_instruction and not gemini_model.startswith('gemma')
+            user_parts = [{"text": user_prompt if separate_system
+                           else f"{system_prompt}\n\nUser Request: {user_prompt}"}]
             for img in (images or []):
                 user_parts.append({"inline_data": {
                     "mime_type": img.get('mime') or 'image/jpeg',
@@ -144,6 +146,8 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
             
             if tools:
                 payload["tools"] = [{"functionDeclarations": tools}]
+            if separate_system:
+                payload['systemInstruction'] = {'parts': [{'text': system_prompt}]}
             if max_output_tokens is not None:
                 payload['generationConfig']['maxOutputTokens'] = max_output_tokens
             if thinking_level is not None:

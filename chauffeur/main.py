@@ -16277,7 +16277,7 @@ def _mentions_argyle(body: str) -> bool:
     return bool(body) and bool(_ARGYLE_MENTION.search(body))
 
 
-def _run_argyle_mention(channel: dict, sender: dict, body: str):
+def _run_argyle_mention(channel: dict, sender: dict, body: str, message_id: str = None):
     """Background worker: a chat message @mentioned Argyle (or landed in an
     Argyle DM, where every message is implicitly for the assistant). Route the
     question to the agent as the sending member (known identity + role scope)
@@ -16297,13 +16297,39 @@ def _run_argyle_mention(channel: dict, sender: dict, body: str):
         history = None
         if phone_turn is not None:
             phone_turn.check()
-            rows = storage.get_channel_messages(channel['id'], limit=6)
-            used = [m for m in rows if m.get('phone_request_id') != phone_turn.id
-                    and m.get('phone_speech_safe') is True and not m.get('edited_ts')]
+        personal_dm = (channel.get('kind') == 'dm'
+                       and set(channel.get('member_ids') or []) == {sender.get('id'), 'argyle'})
+        if personal_dm:
+            rows = storage.get_channel_messages(channel['id'], limit=8)
+            # Anchor history to this request, so a queued typed turn cannot
+            # accidentally read newer messages as its prior conversation.
+            anchor = next((i for i, m in enumerate(rows)
+                           if (phone_turn is not None and m.get('phone_request_id') == phone_turn.id)
+                           or (message_id is not None and m.get('id') == message_id)), None)
+            if phone_turn is not None or message_id is not None:
+                rows = rows[:anchor] if anchor is not None else []
+            rows = [m for m in rows if m.get('sender_member_id') in {sender.get('id'), 'argyle'}
+                    and not m.get('edited_ts')][-6:]
+            used = rows
+            if phone_turn is not None:
+                pending_question = (len(rows) >= 2 and rows[-1].get('sender_member_id') == 'argyle'
+                                    and rows[-2].get('sender_member_id') == sender.get('id')
+                                    and rows[-1].get('argyle_pending_question',
+                                        (rows[-1].get('body') or '').rstrip().endswith('?')))
+                if pending_question:
+                    # Answer the assistant's last clarification even across
+                    # typed/voice input. Unclassified context stays on screen.
+                    used = rows[-2:]
+                    if not all(m.get('phone_speech_safe') is True for m in used):
+                        phone_turn.speech_safe = False
+                else:
+                    used = [m for m in rows if m.get('phone_speech_safe') is True]
             history = [{'role': 'assistant' if m.get('sender_member_id') == 'argyle' else 'user',
-                        'content': m.get('body') or ''} for m in used]
+                        'content': ('[Credential withheld]' if phone_turn is not None
+                                    and app_voice._credential(m.get('body') or '')
+                                    else m.get('body') or '')} for m in used]
         res = process_agent_request(query, source="family", acting_member=sender,
-                                    **({'history': history} if phone_turn is not None else {}),
+                                    **({'history': history} if history is not None else {}),
                                     focus_key=f"channel:{channel.get('id')}" if channel.get('id') else None)
         reply = (res or {}).get("message") or "Sorry — I couldn't work that out."
         card = res.get("card")
@@ -16322,7 +16348,9 @@ def _run_argyle_mention(channel: dict, sender: dict, body: str):
         storage.update_action_proposal(card["proposal_id"], {"channel_id": channel["id"]})
     try:
         argyle = storage.ensure_argyle_member()
-        metadata = {'phone_speech_safe': phone_turn.audible(res)} if phone_turn is not None else {}
+        metadata = {'argyle_pending_question': bool(res.get('needs_clarification'))}
+        if phone_turn is not None:
+            metadata['phone_speech_safe'] = phone_turn.audible(res)
         _post_chat_message(channel, argyle, reply, card=card, **metadata)
         # K3 (kid-as-sensor): a child's proposal card created in a private DM
         # is invisible to the people who can approve it — mirror the card into
@@ -16437,7 +16465,7 @@ def send_message(channel_id: str, req: SendMessageRequest, background_tasks: Bac
         and storage.ARGYLE_MEMBER_ID in (channel.get('member_ids') or [])
     if req.sender_member_id != storage.ARGYLE_MEMBER_ID \
             and (is_argyle_dm or _mentions_argyle(body)):
-        background_tasks.add_task(_run_argyle_mention, channel, sender, body)
+        background_tasks.add_task(_run_argyle_mention, channel, sender, body, message['id'])
     elif req.sender_member_id != storage.ARGYLE_MEMBER_ID:
         # Implicit detection (opt-in): Tier 1 keyword pre-filter gates the
         # expensive funnel so ordinary chatter never reaches the agent.

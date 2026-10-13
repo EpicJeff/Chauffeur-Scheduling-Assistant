@@ -31,6 +31,14 @@ The recovery fix treats timeouts as temporary model failures, rotates to sibling
 
 A developer-side real-provider check with the full agent tool catalog recovered from a first-model timeout and second-model 503: the third lite model returned `get_calendar_events` in 11.9 seconds total. No tool was executed in that check. This demonstrates fallback under the incident, not a finished schedule answer or iPhone latency acceptance. The household ten-sample capture/playback comparison remains pending.
 
+## Answer completion incident, 2026-10-13
+
+The next household report mixed typed and phone turns: date clarification lost the original question, and two calendar requests ended with the generic processed-request placeholder. Logs showed one calendar fetch followed by identical repeated calls until the three-round limit. A real-provider replay against an isolated fixture confirmed that the model could return a correct schedule sentence alongside a repeated tool call, while the router discarded the sentence and reported generic success.
+
+The completion fix retains an answer accompanying only previously successful calls, still executes genuinely new calls, and reports missing answers as errors. Gemini agent instructions use the dedicated system field; tool results and bounded history travel as conversation data. Gemma and other existing call sites retain their prior transport unless they opt in. Personal typed DMs now include their own anchored history. Phone turns can resume the last unresolved clarification across input modes; private/unclassified context makes that answer display-only, credentials are withheld, and subsequent independent shared queries can speak again.
+
+A real Gemini 2.5 lite replay through the personal-DM worker and actual calendar tool returned the fixture's event, location and times in 1.6 seconds. Later live verification hit that model's daily quota; diagnostic runs consumed some of its allowance and further live requests stopped. The final phone-history revision has offline regression and served-UI proof, not a completed real-iPhone replay. These findings do not close household latency/capture acceptance.
+
 ## Cross-microphone experiment
 
 Question: can a phone-enrolled reference name Jeff on the kitchen satellite at current **0.70 score / 0.12 rival margin**? Login already names him on the phone.
