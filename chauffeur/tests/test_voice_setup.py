@@ -68,20 +68,23 @@ class SatelliteDialogTests(unittest.TestCase):
         self.assertEqual([r['member_id'] for r in fp.profiles()], ['jeff'])
         self.assertFalse(voice_setup._dialogs)
 
-    def test_a_child_is_enrolled_with_a_parents_pin_and_yes(self):
+    def test_a_child_is_enrolled_with_a_parents_pin_twice(self):
         self.say('set up my voice')
         speech, _ = self.say('for Lily')
         self.assertIn("parent's PIN", speech)
         speech, cont = self.say('my PIN is one two three four', vector(0))     # Jeff speaks
-        self.assertIn(fp.QUESTIONS[0], speech); self.assertTrue(cont)
-        for _ in range(5):
-            speech, cont = self.say('I had cereal and then I went to school and played', vector(3))  # Lily speaks
-        self.assertIn('Was that Lily', speech); self.assertTrue(cont)
-        speech, cont = self.say('yes', vector(0))
+        self.assertIn('Hi Lily', speech); self.assertIn(fp.kid_question(0), speech); self.assertTrue(cont)
+        speech, cont = self.say('I had cereal and then I went to school and played', vector(3))  # Lily, 8 s fills pool 1
+        self.assertEqual(speech, 'Is that Lily talking? Say yes.')
+        self.say('yes', vector(0))
+        for _ in range(4):
+            speech, cont = self.say('I had cereal and then I went to school and played', vector(3))
+        self.assertEqual(speech, 'All done! If that was Lily, say your PIN.'); self.assertTrue(cont)
+        speech, cont = self.say('my PIN is one two three four', vector(0))
         self.assertIn('Turn on voice recognition for Lily', speech)
         self.say('yes', vector(0))
         row = fp.profiles()[0]
-        self.assertEqual((row['member_id'], row['consent_actor']), ('lily', 'jeff'))
+        self.assertEqual((row['member_id'], row['consent_actor'], row['pooled']), ('lily', 'jeff', True))
         self.assertIsNone(voice._sessions.get(KEY, {}).get('member_id') if voice._sessions.get(KEY, {}).get('level') == 'verified' else None,
                           'the parent consent left a verified parent session')
 

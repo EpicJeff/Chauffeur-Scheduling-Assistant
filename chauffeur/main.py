@@ -4032,7 +4032,10 @@ def voice_recognition_enroll(payload: Dict[str, Any], request: Request):
                          if r['ha_instance_id'] == installation and r['satellite_id'] == satellite), {})
         ctx = voice_identity.VoiceContext(installation, satellite, '', '', service_revision=voice_identity._revision(),
                          paired=voice_identity._paired(installation, satellite, selected.get('device_id')))
-        return voice_fingerprint.begin(ctx, str(payload.get('member_id') or ''), parent['id'])
+        member_id = str(payload.get('member_id') or '')
+        # A child's enrollment pools short answers (kid spec); the dialog adopts it.
+        return voice_fingerprint.begin(ctx, member_id, parent['id'],
+                                       pooled=(storage.get_member(member_id) or {}).get('role') == 'child')
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from None
 

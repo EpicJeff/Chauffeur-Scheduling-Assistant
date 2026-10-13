@@ -41,6 +41,17 @@ START = ('set up my voice', 'setup my voice', 'set my voice up', 'enroll my voic
 NAME_LEAD = r"^(for|it's|it is|this is|i am|i'm|its)\s+"
 
 
+def _start(low):
+    """A start phrase: 'set up my voice', 'set up Lily's voice', either with
+    'with the short questions' (kid spec) → (spoken name or '', pooled) or None."""
+    pooled = bool(re.search(r"\bthe (?:short|kid) questions$", low))
+    base = re.sub(r",?\s*(?:with |using )?the (?:short|kid) questions$", '', low).strip()
+    if base in START:
+        return '', pooled
+    m = re.fullmatch(r"(?:set ?up|enroll|enrol) (.+?)'s voice", base)
+    return (m.group(1), pooled) if m else None
+
+
 def _key(ctx):
     return (ctx.ha_instance_id, ctx.satellite_id)
 
@@ -67,28 +78,72 @@ def _activation_question(d):
     return f'Turn on voice recognition for {who}? Say yes.'
 
 
-def _finish_or_activate(key, d, lead):
+def _name(d):
+    return (storage.get_member(d.get('member_id') or '') or {}).get('name', 'them')
+
+
+def _finish_or_activate(key, d, lead, conversation_id=None):
     """After a save or a successful check: a parent present may switch it on
-    (spec, Activation). Nobody else can, and the dialog says so."""
+    (spec, Activation). Nobody else can, and the dialog says so. The yes must
+    answer in the conversation that asked (kid spec, finding 4)."""
     if identity.recognition_on_everywhere():
         _dialogs.pop(key, None)
         return _reply(f'{lead} Recognition is already on.')
     if d.get('parent_id'):
         d['phase'] = 'activate'
+        d['activate_conversation'] = conversation_id
         return _reply(f'{lead} {_activation_question(d)}', True)
     _dialogs.pop(key, None)
     return _reply(f'{lead} A parent can turn on recognition for you.')
 
 
+def _confirm_strike(key, d, message):
+    """A wrong PIN or the wrong voice at the closing PIN: one more try."""
+    d['confirm_tries'] = d.get('confirm_tries', 0) + 1
+    if d['confirm_tries'] >= 2:
+        _dialogs.pop(key, None); fp.cancel(key)
+        return _reply('Not saved. Say set up my voice to start again.')
+    return _reply(message, True)
+
+
 def _begin(key, ctx, d, anchor, exclude):
     try:
-        fp.begin(ctx, d['member_id'], d.get('parent_id') or d['member_id'], anchor=anchor, exclude=exclude)
+        fp.begin(ctx, d['member_id'], d.get('parent_id') or d['member_id'], anchor=anchor, exclude=exclude,
+                 pooled=bool(d.get('pooled')))
     except ValueError as error:
         _dialogs.pop(key, None)
         return _reply(str(error))
     d['phase'] = 'questions'
     asked = fp.ask(key)
+    if d.get('pooled') and (d.get('parent_id') or d['member_id']) != d['member_id']:
+        # The parent gave consent; now Argyle talks to the child (kid spec, item 2).
+        return _reply(f"Thanks. Hi {_name(d)}. I'm going to ask you some questions. Just answer out loud. {asked['question']}", True)
     return _reply(f"Thanks. {asked['question']}", True)
+
+
+def _who(key, ctx, d, text):
+    """Who the setup is for. A child's setup pools short answers and needs a
+    parent's PIN; anyone else says their own PIN next."""
+    matches = _members_named(text)
+    if len(matches) != 1:
+        return _reply('Which family member? Say the full name.', True)
+    member = matches[0]
+    d['member_id'] = member['id']
+    if member.get('role') == 'child':
+        d['pooled'] = True
+        parents = identity.parents_named('')
+        if len(parents) == 1:
+            d['parent_id'] = parents[0]['id']
+            d['phase'] = 'consent_pin'
+            return _reply(f"{parents[0]['name']}, a parent's PIN, please.", True)
+        d['phase'] = 'consent_parent'
+        return _reply("Which parent is giving consent? Say your name, then I'll ask for your PIN.", True)
+    d['phase'] = 'pin'
+    if member.get('role') == 'parent':
+        d['parent_id'] = member['id']
+    identity.intercept(f"it's {member['name']}", ctx)   # names the session so the PIN verifies this member
+    identity.expect_pin(*key)                             # and bare digits count as the PIN
+    return _reply('Say your PIN.', True)
 
 
 def _next_question(key, conversation_id, lead):
@@ -185,7 +240,7 @@ def intercept(text, ctx, evidence, conversation_id=None):
             if d['expires_at'] <= time.time():
                 _dialogs.pop(k, None)
         d = _dialogs.get(key)
-        if d is not None and low in ('cancel', 'stop', 'never mind', 'nevermind', 'quit', 'cancel voice setup', 'stop voice setup'):
+        if d is not None and low in ('cancel', 'stop', 'never mind', 'nevermind', 'quit', "we're done", 'cancel voice setup', 'stop voice setup'):
             low = 'cancel voice setup'
         if d is None and low != 'cancel voice setup':
             pending = fp._enrollments.get(key)
@@ -202,9 +257,11 @@ def intercept(text, ctx, evidence, conversation_id=None):
             _dialogs.pop(key, None)
             return _reply(fp.cancel(key)['message'])
         if d is None:
-            if low in START:
-                _dialogs[key] = {'phase': 'who', 'expires_at': time.time() + EXPIRY}
-                return _reply('Who is this for?', True)
+            started = _start(low)
+            if started is not None:
+                who, pooled = started
+                d = _dialogs[key] = {'phase': 'who', 'pooled': pooled, 'expires_at': time.time() + EXPIRY}
+                return _who(key, ctx, d, who) if who else _reply('Who is this for?', True)
             if low == 'check my voice':
                 _dialogs[key] = {'phase': 'check_pin', 'expires_at': time.time() + EXPIRY}
                 return _reply('Say your PIN.' if ctx.member_id else 'Who is this? Say your name.', True)
@@ -217,25 +274,7 @@ def intercept(text, ctx, evidence, conversation_id=None):
         phase = d['phase']
 
         if phase == 'who':
-            matches = _members_named(text)
-            if len(matches) != 1:
-                return _reply('Which family member? Say the full name.', True)
-            member = matches[0]
-            d['member_id'] = member['id']
-            if member.get('role') == 'child':
-                parents = identity.parents_named('')
-                if len(parents) == 1:
-                    d['parent_id'] = parents[0]['id']
-                    d['phase'] = 'consent_pin'
-                    return _reply(f"{parents[0]['name']}, a parent's PIN, please.", True)
-                d['phase'] = 'consent_parent'
-                return _reply("Which parent is giving consent? Say your name, then I'll ask for your PIN.", True)
-            d['phase'] = 'pin'
-            if member.get('role') == 'parent':
-                d['parent_id'] = member['id']
-            identity.intercept(f"it's {member['name']}", ctx)   # names the session so the PIN verifies this member
-            identity.expect_pin(*key)                             # and bare digits count as the PIN
-            return _reply('Say your PIN.', True)
+            return _who(key, ctx, d, text)
 
         if phase == 'consent_parent':
             parents = [m for m in _members_named(text) if m.get('role') == 'parent']
@@ -252,7 +291,21 @@ def intercept(text, ctx, evidence, conversation_id=None):
                     _dialogs.pop(key, None)
                     return _reply(out['message'])
                 return _reply(out['message'] + ' Try once more, or say cancel voice setup.', True)
+            if vector is None:
+                # No fingerprint from the PIN turn: a child's enrollment must not
+                # start without the parent's voice to exclude (Codex review, finding 3).
+                d['phase'] = 'consent_voice'; d['consent_tries'] = 0
+                return _reply(f"I need to hear your voice first. Say: I'm giving consent for {_name(d)} to set up a voice.", True)
             return _begin(key, ctx, d, anchor=None, exclude=vector)
+
+        if phase == 'consent_voice':
+            if vector is not None:
+                return _begin(key, ctx, d, anchor=None, exclude=vector)
+            d['consent_tries'] = d.get('consent_tries', 0) + 1
+            if d['consent_tries'] >= 3:
+                _dialogs.pop(key, None)
+                return _reply("I couldn't hear you well enough to go on. Voice setup stopped.")
+            return _reply(f"A little longer, please. Say: I'm giving consent for {_name(d)} to set up a voice.", True)
 
         if phase == 'pin':
             out = identity.intercept(text, ctx)
@@ -270,34 +323,79 @@ def intercept(text, ctx, evidence, conversation_id=None):
                 _dialogs.pop(key, None)
                 return _reply('Voice setup stopped.')
             status = out.get('status')
-            if status in ('accepted', 'retry') and key in fp._enrollments:
+            if status in ('accepted', 'retry', 'restart', 'dropped') and key in fp._enrollments:
                 pending = fp._enrollments[key]
                 if pending.get('awaiting'):
                     # A stale or unrelated turn: the open question stands; ask it again.
-                    return _reply(f"{out['message']} {pending['awaiting'] and fp.QUESTIONS[pending['step']]}", True)
+                    return _reply(f"{out['message']} {fp.current_question(pending)}".strip(), True)
                 return _next_question(key, conversation_id, out['message'])
+            if status == 'name_voice':
+                d['phase'] = 'name_voice'; d['name_reasks'] = 0
+                return _reply(out['message'], True)
             if status == 'confirm':
-                d['phase'] = 'confirm'
+                d['phase'] = 'confirm'; d['confirm_conversation'] = conversation_id; d['confirm_tries'] = 0
                 return _reply(out['message'], True)
             if status == 'done':
-                return _finish_or_activate(key, d, out['message'])
+                return _finish_or_activate(key, d, out['message'], conversation_id)
+            _dialogs.pop(key, None)
+            return _reply(out['message'])
+
+        if phase == 'name_voice':
+            # "Is that Lily talking?" after pool 1 (kid spec): the parent's yes
+            # makes pool 1 the anchor; chatter re-asks twice, then counts as no.
+            kind = _answer_kind(low)
+            if kind is None:
+                d['name_reasks'] = d.get('name_reasks', 0) + 1
+                if d['name_reasks'] <= 2:
+                    return _reply(f'Is that {_name(d)} talking? Yes or no?', True)
+                kind = 'no'
+            out = fp.name_voice(key, kind == 'yes')
+            if out['status'] == 'accepted':
+                d['phase'] = 'questions'
+                return _next_question(key, conversation_id, out['message'])
             _dialogs.pop(key, None)
             return _reply(out['message'])
 
         if phase == 'confirm':
-            kind = _answer_kind(low)
-            if kind == 'yes':
-                out = fp.confirm(key, True)
-                if out['status'] == 'done':
-                    return _finish_or_activate(key, d, out['message'])
-                _dialogs.pop(key, None)
-                return _reply(out['message'])
+            # Someone else's voice is saved on the consenting parent's PIN, said
+            # again, in the conversation that asked, in the parent's own voice
+            # (kid spec, finding 4; the user chose the second PIN over a yes).
+            again = f'If that was {_name(d)}, say your PIN.'
+            if conversation_id and d.get('confirm_conversation') and conversation_id != d['confirm_conversation']:
+                d['confirm_conversation'] = conversation_id
+                return _reply(again, True)
+            if not d.get('parent_id'):
+                _dialogs.pop(key, None); fp.cancel(key)
+                return _reply('Not saved. A parent has to give consent.')
+            kind = _answer_kind(low) if 'pin' not in low and not re.search(r'\d', low) else None
             if kind == 'no':
+                # A parent's "no" still discards (Codex review of this diff).
                 _dialogs.pop(key, None)
                 return _reply(fp.confirm(key, False)['message'])
-            return _reply('Was that them? Yes or no.', True)
+            if kind == 'yes':
+                return _reply('Say your PIN.', True)
+            out = identity.verify_parent_consent(ctx, d['parent_id'], text)
+            if not out['ok']:
+                if _locked_out(out['message']):
+                    _dialogs.pop(key, None); fp.cancel(key)
+                    return _reply(out['message'] + ' Not saved.')
+                if 'did not match' not in out['message']:
+                    return _reply(out['message'] + ' ' + again, True)   # not a PIN at all: the question stands
+                return _confirm_strike(key, d, out['message'] + ' ' + again)
+            pending = fp._enrollments.get(key) or {}
+            exclude = pending.get('exclude')
+            if exclude is not None and (vector is None or fp.score(vector, exclude) < fp.CONTINUITY):
+                return _confirm_strike(key, d, 'That did not sound like the parent who gave consent. ' + again)
+            out = fp.confirm(key, True)
+            if out['status'] == 'done':
+                return _finish_or_activate(key, d, out['message'], conversation_id)
+            _dialogs.pop(key, None)
+            return _reply(out['message'])
 
         if phase == 'activate':
+            if conversation_id and d.get('activate_conversation') and conversation_id != d['activate_conversation']:
+                d['activate_conversation'] = conversation_id
+                return _reply(_activation_question(d), True)
             kind = _answer_kind(low)
             if kind is None and not d.get('reasked'):
                 d['reasked'] = True
@@ -328,7 +426,7 @@ def intercept(text, ctx, evidence, conversation_id=None):
             if out['status'] == 'retry':
                 return _reply(out['message'] + ' ' + fp.CHECK_QUESTION, True)
             if out['status'] == 'checked':
-                return _finish_or_activate(key, d, out['message'])
+                return _finish_or_activate(key, d, out['message'], conversation_id)
             d.update(phase='check_offer', last_evidence=evidence)
             return _reply(out['message'] + ' Shall I set up your voice here now? Say yes.', True)
 
