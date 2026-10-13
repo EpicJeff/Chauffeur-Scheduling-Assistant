@@ -3849,9 +3849,13 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
             return _voice_response('The satellite token or request metadata is no longer valid. Please try again.', req.language)
         from services import voice_fingerprint
         evidence = voice_fingerprint.consume(ctx, req.voice or {}, req.text)
-        enrollment = voice_fingerprint.enrollment_turn(req.text, ctx, evidence)
-        if enrollment:
-            return _voice_response(enrollment['message'], req.language)
+        # Voice setup by talking (spec 2026-10-13): while a dialog is open on
+        # this satellite every utterance is a sample, a yes/no, guidance or a
+        # cancellation, and never reaches the identity intercepts or the model.
+        from services import voice_setup
+        setup = voice_setup.intercept(req.text, ctx, evidence, req.conversation_id)
+        if setup is not None:
+            return _voice_response(setup['message'], req.language, setup['continue'])
         ctx = voice_fingerprint.apply(ctx, evidence)
         # This executes before title creation, persistence, SSE and any model.
         control = voice_identity.intercept(req.text, ctx, req.language)
@@ -4121,6 +4125,80 @@ def phone_voice_run(request_id: str, request: Request):
         raise HTTPException(status_code=409, detail=str(error)) from None
     except app_voice.Stopped as error:
         raise HTTPException(status_code=409, detail=str(error)) from None
+
+
+def _phone_enroll_member(request):
+    from services import app_voice, auth
+    if auth.arrived_via_ingress(request.headers):
+        raise HTTPException(status_code=403, detail='Open the secure Chauffeur app outside Home Assistant ingress for voice.')
+    try:
+        member, _token = app_voice.personal(request.headers)
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from None
+    return member
+
+
+@app.post('/api/app-voice/enroll')
+def phone_enroll_start(payload: Dict[str, Any], request: Request):
+    """Set up my voice on the phone (spec 2026-10-13, Phone flow): five
+    answers through the shipped recorder. A child's screen sends a parent's
+    PIN, verified by the enrollment-scoped consent verifier."""
+    from services import voice_setup
+    member = _phone_enroll_member(request)
+    try:
+        return voice_setup.phone_begin(member, payload.get('parent_id'), payload.get('parent_pin'))
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from None
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+
+
+@app.get('/api/app-voice/enroll')
+def phone_enroll_state(request: Request):
+    from services import voice_setup
+    return voice_setup.phone_state(_phone_enroll_member(request))
+
+
+@app.delete('/api/app-voice/enroll')
+def phone_enroll_cancel(request: Request):
+    from services import voice_setup
+    return voice_setup.phone_cancel(_phone_enroll_member(request))
+
+
+@app.post('/api/app-voice/enroll/{enrollment_id}/audio')
+async def phone_enroll_audio(enrollment_id: str, request: Request):
+    """One recorded answer. Decoded and embedded, never transcribed, never
+    dispatched to the agent; the step token rides a header."""
+    from services import voice_setup, app_voice_audio
+    from starlette.concurrency import run_in_threadpool
+    member = _phone_enroll_member(request)
+    token = request.headers.get('x-voice-step-token', '') or request.query_params.get('token', '')
+    chunks, size = [], 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > app_voice_audio.MAX_UPLOAD:
+            raise HTTPException(status_code=413, detail='The recording exceeded its size limit.')
+        chunks.append(chunk)
+    try:
+        return await run_in_threadpool(voice_setup.phone_answer, member, enrollment_id, token,
+                                       b''.join(chunks), request.headers.get('content-type', ''))
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+
+
+@app.get('/api/app-voice/enroll/{enrollment_id}/speech')
+def phone_enroll_speech(enrollment_id: str, request: Request):
+    """The current question, spoken by the household's Argyle voice."""
+    from services import voice_fingerprint, app_voice_audio
+    member = _phone_enroll_member(request)
+    pending = voice_fingerprint._enrollments.get(('phone', member['id']))
+    if not pending or pending['id'] != enrollment_id:
+        raise HTTPException(status_code=409, detail='That voice setup has ended.')
+    try:
+        audio, kind = app_voice_audio.speak(voice_fingerprint.QUESTIONS[pending['step']])
+        return Response(content=audio, media_type=kind, headers={'Cache-Control': 'no-store'})
+    except ValueError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from None
 
 
 @app.post('/api/app-voice/{request_id}/speech')
