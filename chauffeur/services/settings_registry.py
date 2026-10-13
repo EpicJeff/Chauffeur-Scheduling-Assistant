@@ -497,8 +497,9 @@ ENTRIES: List[dict] = [
        'Lets Argyle look things up on the web and answer with sources. Off '
        'means it never reaches outside the house.'),
     _e('web_research_via', 'ai', 'Research searches with',
-       'Your main AI model (Gemini searches Google itself) unless you pick '
-       'Brave or SerpApi. Research only ever uses the one chosen.'),
+       'Your main AI model searches the web itself (Gemini, Claude and OpenAI '
+       'all can) unless you pick Brave or SerpApi. Research only ever uses '
+       'the one chosen.'),
     _e('web_search_api_key', 'ai', 'Web search key',
        'Brave Search key, used only when research is set to search with '
        'Brave.'),

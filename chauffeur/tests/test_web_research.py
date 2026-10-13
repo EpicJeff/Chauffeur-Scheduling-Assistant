@@ -10,6 +10,8 @@ from services import storage, web
 
 
 CALLS = {'search': [], 'fetch': [], 'llm': []}
+# The real grounded calls, caught before _reset() stubs them (None until they exist).
+_REAL_GROUNDED = {'anthropic': getattr(web, '_anthropic_grounded', None), 'openai': getattr(web, '_openai_grounded', None)}
 
 
 def _reset():
@@ -26,6 +28,8 @@ def _reset():
     web._serpapi_key = lambda: 'serp-key'
     web._brave_key = lambda: ''
     web._gemini_grounded = lambda q, key, model=None: {'error': 'not stubbed'}
+    web._anthropic_grounded = lambda q, key, model=None: {'error': 'not stubbed'}
+    web._openai_grounded = lambda q, key, model=None: {'error': 'not stubbed'}
     web._resolve_url = lambda u: u
 
 
@@ -322,6 +326,71 @@ def scenario_only_http_urls_are_fetched():
           "nor things that are not pages")
 
 
+
+CLAUDE_GROUNDED = {'content': [
+    {'type': 'server_tool_use', 'name': 'web_search'},
+    {'type': 'web_search_tool_result', 'content': [{'type': 'web_search_result', 'url': 'https://justinguitar.com/g1', 'title': 'Justin Guitar'}]},
+    {'type': 'text', 'text': 'Justin Guitar has a free beginner course.', 'citations': [{'url': 'https://justinguitar.com/g1', 'title': 'Justin Guitar', 'cited_text': 'free'}]},
+    {'type': 'text', 'text': ' Start there.'}], 'stop_reason': 'end_turn', 'usage': {}}
+OPENAI_GROUNDED = {'status': 'completed', 'output': [
+    {'type': 'web_search_call', 'status': 'completed', 'action': {'type': 'search', 'sources': [{'url': 'https://blog.example/guitar'}]}},
+    {'type': 'message', 'content': [{'type': 'output_text', 'text': 'Justin Guitar has a free course.',
+                                     'annotations': [{'type': 'url_citation', 'url': 'https://justinguitar.com/g1', 'title': 'Justin Guitar', 'start_index': 0, 'end_index': 5}]}]}], 'usage': {}}
+
+
+def _canned(body):
+    import io
+    def f(request, timeout=60):
+        _canned.sent.append(json.loads(request.data.decode('utf-8')))
+        return io.BytesIO(json.dumps(body).encode('utf-8'))
+    _canned.sent = []
+    return f
+
+
+def scenario_claude_grounding_parses_citations_and_results():
+    from unittest.mock import patch
+    from services import llm_budget
+    with patch.object(llm_budget, 'urlopen', _canned(CLAUDE_GROUNDED)):
+        out = _REAL_GROUNDED['anthropic']('guitar course?', 'A', model='claude-sonnet-5-5')
+    body = _canned.sent[0]
+    check(body['tools'] == [{'type': 'web_search_20260209', 'name': 'web_search', 'max_uses': 3}], body['tools'])
+    check(body['model'] == 'claude-sonnet-5-5' and 'temperature' not in body, 'bare id, no temperature')
+    check(out['answer'] == 'Justin Guitar has a free beginner course. Start there.', out)
+    check(out['sources'] == [{'title': 'Justin Guitar', 'url': 'https://justinguitar.com/g1'}], out['sources'])
+    check(out['suggestions_html'] == '', 'no Google chip off Gemini')
+    with patch.object(llm_budget, 'urlopen', _canned({'content': [{'type': 'web_search_tool_result', 'content': {'type': 'web_search_tool_result_error', 'error_code': 'max_uses_exceeded'}}], 'stop_reason': 'end_turn'})):
+        out = _REAL_GROUNDED['anthropic']('q', 'A', model='claude-sonnet-5-5')
+    check(out.get('error') == 'max_uses_exceeded', f'a server-tool error object is the error: {out}')
+
+
+def scenario_openai_grounding_parses_annotations_and_sources():
+    from unittest.mock import patch
+    from services import llm_budget
+    with patch.object(llm_budget, 'urlopen', _canned(OPENAI_GROUNDED)):
+        out = _REAL_GROUNDED['openai']('guitar course?', 'O', model='gpt-6.1-sol')
+    body = _canned.sent[0]
+    check(body['tools'] == [{'type': 'web_search', 'search_context_size': 'low'}], body['tools'])
+    check(body['include'] == ['web_search_call.action.sources'], body.get('include'))
+    check(out['answer'] == 'Justin Guitar has a free course.', out)
+    check([s['url'] for s in out['sources']] == ['https://justinguitar.com/g1', 'https://blog.example/guitar'], out['sources'])
+
+
+def scenario_research_dispatches_on_the_provider():
+    _reset()
+    storage.get_settings = lambda: {'llm_provider': 'anthropic', 'llm_anthropic_api_key': 'A', 'web_research_enabled': True, 'web_research_via': 'model'}
+    calls = []
+    web._anthropic_grounded = lambda q, key, model=None: (calls.append(('anthropic', key, model)) or {'answer': 'A.', 'sources': [{'title': 't', 'url': 'https://x.example/'}], 'suggestions_html': ''})
+    res = web.research('q?')
+    check(res['status'] == 'ok' and res['via'] == 'grounding' and calls == [('anthropic', 'A', None)], f'{res} {calls}')
+    storage.get_settings = lambda: {'llm_provider': 'openai', 'llm_openai_api_key': 'O', 'web_research_enabled': True, 'web_research_via': 'model'}
+    web._openai_grounded = lambda q, key, model=None: {'answer': 'B.', 'sources': [], 'suggestions_html': ''}
+    storage.set_app_state('web_search_cache', {})
+    res = web.research('q2?')
+    check(res['status'] == 'ok' and res['answer'] == 'B.', res)
+    storage.get_settings = lambda: {'llm_provider': 'ollama', 'web_research_enabled': True, 'web_research_via': 'model'}
+    res = web.research('q3?')
+    check(res['status'] == 'error' and "can't search" in res['message'], res)
+
 if __name__ == '__main__':
     scenario_grounding_is_preferred_and_costs_no_extra_key()
     scenario_both_grounding_response_shapes_are_read()
@@ -338,4 +407,7 @@ if __name__ == '__main__':
     scenario_choosing_brave_never_touches_the_shared_allowance()
     scenario_nothing_found_is_an_honest_answer()
     scenario_only_http_urls_are_fetched()
+    scenario_claude_grounding_parses_citations_and_results()
+    scenario_openai_grounding_parses_annotations_and_sources()
+    scenario_research_dispatches_on_the_provider()
     print("test_web_research OK")

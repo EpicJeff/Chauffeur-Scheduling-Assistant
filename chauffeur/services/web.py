@@ -332,6 +332,131 @@ def _gemini_grounded(question: str, api_key: str, model: str = None) -> dict:
     return {'error': 'no Gemini model in the pool can search the web'}
 
 
+def _anthropic_grounded(question: str, api_key: str, model: str = None) -> dict:
+    """Claude's web search, with citations and server-tool errors preserved."""
+    import urllib.request
+    import urllib.error
+    from services import model_pools, llm_budget, llm as _llm
+    settings = storage.get_settings() or {}
+    candidates = [model] if model else [
+        bare for prov, bare in (model_pools.split_model(m)
+                               for m in model_pools.models_for('heavy', settings)[:2])
+        if prov == 'anthropic' and 'haiku' not in bare]
+    last_err = None
+    for m in candidates:
+        payload = {
+            'model': m, 'max_tokens': 2048,
+            'system': GROUND_SYSTEM.replace('Google Search', 'web search'),
+            'messages': [{'role': 'user', 'content': [
+                {'type': 'text', 'text': f"QUESTION: {question}"}]}],
+            'tools': [{'type': 'web_search_20260209', 'name': 'web_search',
+                       'max_uses': 3}],
+            'output_config': {'effort': 'low'},
+        }
+        req = urllib.request.Request(
+            _llm.ANTHROPIC_URL, data=json.dumps(payload).encode('utf-8'),
+            headers={'Content-Type': 'application/json', 'x-api-key': api_key,
+                     'anthropic-version': '2023-06-01'}, method='POST')
+        try:
+            with llm_budget.urlopen(req, timeout=SEARCH_TIMEOUT + 40) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+        except urllib.error.HTTPError as e:
+            last_err = f"{e.code} {e.read().decode('utf-8', errors='replace')[:300]}"
+            model_pools.note_failure('anthropic:' + m, last_err)
+            continue
+        except Exception as e:
+            last_err = str(e)
+            continue
+
+        answer, sources, seen = '', [], set()
+
+        def _add(url, title):
+            url = (url or '').strip()
+            if url and url not in seen:
+                seen.add(url)
+                sources.append({'title': (title or '').strip() or url, 'url': url})
+
+        for block in data.get('content') or []:
+            if block.get('type') == 'text':
+                answer += block.get('text') or ''
+                for citation in block.get('citations') or []:
+                    _add(citation.get('url'), citation.get('title'))
+            elif block.get('type') == 'web_search_tool_result':
+                content = block.get('content')
+                if isinstance(content, dict):
+                    return {'error': content.get('error_code') or 'web_search_error'}
+                for result in content or []:
+                    _add(result.get('url'), result.get('title'))
+        if answer.strip():
+            return {'answer': answer.strip(), 'sources': sources,
+                    'suggestions_html': '', 'model': 'anthropic:' + m}
+        last_err = 'empty answer'
+    return {'error': last_err or 'no Claude model in the pool can search the web'}
+
+
+def _openai_grounded(question: str, api_key: str, model: str = None) -> dict:
+    """OpenAI's web search: cited pages first, then other consulted sources."""
+    import urllib.request
+    import urllib.error
+    from services import model_pools, llm_budget, llm as _llm
+    settings = storage.get_settings() or {}
+    candidates = [model] if model else [
+        bare for prov, bare in (model_pools.split_model(m)
+                               for m in model_pools.models_for('heavy', settings))
+        if prov == 'openai']
+    last_err = None
+    for m in candidates:
+        payload = {
+            'model': m,
+            'instructions': GROUND_SYSTEM.replace('Google Search', 'web search'),
+            'input': f"QUESTION: {question}",
+            'tools': [{'type': 'web_search', 'search_context_size': 'low'}],
+            'include': ['web_search_call.action.sources'],
+            'reasoning': {'effort': 'low'},
+        }
+        req = urllib.request.Request(
+            _llm.OPENAI_URL, data=json.dumps(payload).encode('utf-8'),
+            headers={'Content-Type': 'application/json',
+                     'Authorization': 'Bearer ' + api_key}, method='POST')
+        try:
+            with llm_budget.urlopen(req, timeout=SEARCH_TIMEOUT + 40) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+        except urllib.error.HTTPError as e:
+            last_err = f"{e.code} {e.read().decode('utf-8', errors='replace')[:300]}"
+            model_pools.note_failure('openai:' + m, last_err)
+            continue
+        except Exception as e:
+            last_err = str(e)
+            continue
+
+        answer, sources, seen = '', [], set()
+
+        def _add(url, title):
+            url = (url or '').strip()
+            if url and url not in seen:
+                seen.add(url)
+                sources.append({'title': (title or '').strip() or url, 'url': url})
+
+        output = data.get('output') or []
+        for item in output:
+            if item.get('type') == 'message':
+                for content in item.get('content') or []:
+                    if content.get('type') == 'output_text':
+                        answer += content.get('text') or ''
+                        for annotation in content.get('annotations') or []:
+                            if annotation.get('type') == 'url_citation':
+                                _add(annotation.get('url'), annotation.get('title'))
+        for item in output:
+            if item.get('type') == 'web_search_call':
+                for source in (item.get('action') or {}).get('sources') or []:
+                    _add(source.get('url'), source.get('url'))
+        if answer.strip():
+            return {'answer': answer.strip(), 'sources': sources,
+                    'suggestions_html': '', 'model': 'openai:' + m}
+        last_err = 'empty answer'
+    return {'error': last_err or 'no OpenAI model in the pool can search the web'}
+
+
 def _resolve_url(url: str) -> str:
     """Follow a grounding redirect to the page it actually points at.
 
@@ -437,11 +562,18 @@ def research(question: str, read_pages: int = PAGES_READ, api_key: str = None) -
     paid project has its own quotas, so the free key's per-minute cap and
     the model cooldowns it caused do not apply). Default: the free key.
     """
+    from services import model_pools
     settings = storage.get_settings() or {}
     if not settings.get('web_research_enabled', False):
         return {'status': 'disabled'}
+    via = settings.get('web_research_via') or 'model'
+    prov = model_pools.provider(settings)
+    if via == 'model' and prov == 'ollama':
+        return {'status': 'error',
+                'message': "The local model can't search the web. Pick "
+                           "Brave or SerpApi for research in Config."}
     own_key = bool(api_key)
-    api_key = api_key or settings.get('llm_gemini_api_key', '')
+    api_key = api_key or model_pools.credentials('heavy', settings)[1]
     if not api_key:
         return {'status': 'no_key'}
 
@@ -455,17 +587,13 @@ def research(question: str, read_pages: int = PAGES_READ, api_key: str = None) -
         return {'status': 'capped',
                 'message': f"That's {cap} research questions this month."}
 
-    via = settings.get('web_research_via') or 'model'
-
     # Route 1: the main model does the searching. No second key, no separate
     # allowance, and the citations arrive with the answer.
     if via == 'model':
-        if (settings.get('llm_provider') or 'gemini') != 'gemini':
-            return {'status': 'error',
-                    'message': "The local model can't search the web. Pick "
-                               "Brave or SerpApi for research in Config."}
+        grounded_fn = {'gemini': _gemini_grounded, 'anthropic': _anthropic_grounded,
+                       'openai': _openai_grounded}[prov]
         try:
-            if own_key:
+            if own_key and prov == 'gemini':
                 # Flash by name, whatever the free key's cooldowns say.
                 from services import model_pools as _mp
                 grounded = {}
@@ -474,13 +602,14 @@ def research(question: str, read_pages: int = PAGES_READ, api_key: str = None) -
                     if grounded.get('answer'):
                         break
             else:
-                grounded = _gemini_grounded(question, api_key) or {}
+                grounded = grounded_fn(question, api_key) or {}
         except Exception as e:
             logger.warning(f"[web] grounding failed: {e}")
             grounded = {'error': str(e)}
         if not grounded.get('answer'):
+            provider_name = {'gemini': 'Gemini', 'anthropic': 'Claude', 'openai': 'OpenAI'}[prov]
             return {'status': 'error',
-                    'message': "Gemini couldn't search the web: " + _plain_error(grounded.get('error'))}
+                    'message': f"{provider_name} couldn't search the web: " + _plain_error(grounded.get('error'))}
         _month_count(bump=True)
         sources = _resolve_sources(grounded.get('sources') or [])
         out = {'status': 'ok', 'answer': grounded['answer'],
