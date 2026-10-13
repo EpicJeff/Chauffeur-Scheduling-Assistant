@@ -465,7 +465,21 @@ ENTRIES: List[dict] = [
        page='map', anchor='announce', ui_marker='announce-pin-select'),
 
     # --- AI
-    _e('llm_provider', 'ai', 'Model provider', 'Gemini or a local Ollama.'),
+    _e('llm_provider', 'ai', 'Model provider',
+       'Gemini, Claude, OpenAI, or a local Ollama. Everything Argyle does runs on the one chosen.'),
+    _e('llm_anthropic_api_key', 'ai', 'Claude API key', 'Every call runs on this key when Claude is the provider.'),
+    _e('llm_openai_api_key', 'ai', 'OpenAI API key', 'Every call runs on this key when OpenAI is the provider.'),
+    _e('llm_anthropic_daily_cap', 'ai', 'Claude requests per day',
+       'Billed requests per day before the app stops calling until midnight. Default 500; 0 for no cap.'),
+    _e('llm_openai_daily_cap', 'ai', 'OpenAI requests per day',
+       'Billed requests per day before the app stops calling until midnight. Default 500; 0 for no cap.'),
+    _e('model_pool_lite', 'ai', 'Lite model pool',
+       'Comma-separated ids for chat and background work; an entry may be anthropic:<id> or openai:<id>. '
+       'Blank means the provider default.'),
+    _e('model_pool_flash', 'ai', 'Flash model pool',
+       'Comma-separated ids for heavy, Mind and vision work; prefixes as above.'),
+    _e('model_pool_gemma', 'ai', 'Gemma model pool',
+       'Comma-separated Gemma ids for free background volume (Gemini only).'),
     _e('llm_gemini_api_key', 'ai', 'Gemini API key',
        'The key every extraction, suggestion and chat turn runs on.'),
     _e('llm_paid_fallback_mode', 'ai', 'Paid fallback mode',

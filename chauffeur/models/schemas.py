@@ -1213,6 +1213,13 @@ class Settings(BaseModel):
     routing_avoid_tolls: bool = False
     llm_provider: str = ""
     llm_gemini_api_key: Optional[str] = None
+    # One key per paid provider; which one a call bills follows the model
+    # id's prefix (services/model_pools.py: api_key_for).
+    llm_anthropic_api_key: Optional[str] = None
+    llm_openai_api_key: Optional[str] = None
+    # Billed requests per local day per provider; 0 = no cap (llm_budget).
+    llm_anthropic_daily_cap: int = 500
+    llm_openai_daily_cap: int = 500
     llm_paid_fallback_mode: Literal['off', 'ask', 'auto'] = 'ask'
     llm_paid_fallback_failures: int = 3
     llm_paid_fallback_daily_cap: int = 300
@@ -1588,9 +1595,13 @@ class Settings(BaseModel):
     # Billed key used ONLY by the pro pool (services/model_pools.py:
     # api_key_for_pool). Regular Chauffeur traffic never touches this key.
     llm_gemini_paid_api_key: Optional[str] = None
-    # Comma-separated pro model override, same idiom as the unregistered
-    # model_pool_lite/flash/gemma escape hatches (services/model_pools.py:_pool).
+    # Comma-separated pool overrides (services/model_pools.py:_pool). An entry
+    # may carry a provider prefix (anthropic:claude-haiku-5-5); blank = the
+    # selected provider's default.
     model_pool_pro: Optional[str] = ''
+    model_pool_lite: Optional[str] = ''
+    model_pool_flash: Optional[str] = ''
+    model_pool_gemma: Optional[str] = ''
     # Missions that may be launched per day.
     mission_cap_launch: Optional[int] = 3
     # LLM calls one mission may spend before it must stop.

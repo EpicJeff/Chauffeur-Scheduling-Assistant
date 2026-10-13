@@ -495,17 +495,43 @@
                                 <select id="llmProvider" x-model="llmProvider" @change="saveSettings()"
                                     class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white">
                                     <option value="gemini">Gemini (Google)</option>
+                                    <option value="anthropic">Claude (Anthropic)</option>
+                                    <option value="openai">OpenAI</option>
                                     <option value="ollama">Ollama (a local model server)</option>
                                 </select>
                             </div>
-                            <div>
+                            <div x-show="llmProvider === 'gemini'">
                                 <label
                                     class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Gemini API Key</label>
                                 <input type="password" x-model="llmGeminiApiKey" @change="saveSettings()"
                                     placeholder="Enter Gemini API Key"
                                     class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
                             </div>
-                            <div x-show="llmProvider !== 'ollama'">
+                            <div x-show="llmProvider === 'anthropic'">
+                                <label for="llmAnthropicApiKey" class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Claude API key</label>
+                                <input type="password" id="llmAnthropicApiKey" x-model="llmAnthropicApiKey" @change="saveSettings()"
+                                    placeholder="sk-ant-..."
+                                    class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
+                            </div>
+                            <div x-show="llmProvider === 'anthropic'">
+                                <label for="llmAnthropicDailyCap" class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Claude requests per day</label>
+                                <input type="number" min="0" id="llmAnthropicDailyCap" x-model.number="llmAnthropicDailyCap" @change="saveSettings()"
+                                    class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white">
+                                <p class="text-gray-600 text-xs mt-1">Every call is billed. The app stops at this many a day until midnight; 0 for no cap.</p>
+                            </div>
+                            <div x-show="llmProvider === 'openai'">
+                                <label for="llmOpenaiApiKey" class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">OpenAI API key</label>
+                                <input type="password" id="llmOpenaiApiKey" x-model="llmOpenaiApiKey" @change="saveSettings()"
+                                    placeholder="sk-..."
+                                    class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
+                            </div>
+                            <div x-show="llmProvider === 'openai'">
+                                <label for="llmOpenaiDailyCap" class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">OpenAI requests per day</label>
+                                <input type="number" min="0" id="llmOpenaiDailyCap" x-model.number="llmOpenaiDailyCap" @change="saveSettings()"
+                                    class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white">
+                                <p class="text-gray-600 text-xs mt-1">Every call is billed. The app stops at this many a day until midnight; 0 for no cap.</p>
+                            </div>
+                            <div x-show="llmProvider === 'gemini'">
                                 <label for="llmGeminiModel"
                                     class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Gemini model</label>
                                 <select id="llmGeminiModel" x-model="llmGeminiModel" @change="saveSettings()"
@@ -533,13 +559,44 @@
                             </div>
                         </div>
 
+                        <!-- Advanced: the pool overrides (services/model_pools.py:_pool). A
+                             comma list; an entry may carry a provider prefix, so chat can run
+                             on Claude while free background work stays on Gemini. -->
+                        <details class="mb-6" id="model-pools">
+                            <summary class="text-gray-300 text-sm font-semibold cursor-pointer select-none">Advanced: model pools</summary>
+                            <p class="text-gray-500 text-xs mt-2 mb-4">Comma-separated model ids. An entry may be <span class="font-mono">anthropic:&lt;id&gt;</span> or <span class="font-mono">openai:&lt;id&gt;</span>; a bare id is a Gemini model. Blank means the chosen provider's default.</p>
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div>
+                                <label for="modelPoolLite" class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Lite model pool</label>
+                                <input type="text" id="modelPoolLite" x-model="modelPoolLite" @change="saveSettings()"
+                                    placeholder="provider default"
+                                    class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
+                                <p class="text-gray-600 text-xs mt-1">Chat and background work.</p>
+                            </div>
+                            <div>
+                                <label for="modelPoolFlash" class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Flash model pool</label>
+                                <input type="text" id="modelPoolFlash" x-model="modelPoolFlash" @change="saveSettings()"
+                                    placeholder="provider default"
+                                    class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
+                                <p class="text-gray-600 text-xs mt-1">Heavy, Mind and vision work.</p>
+                            </div>
+                            <div>
+                                <label for="modelPoolGemma" class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Gemma model pool</label>
+                                <input type="text" id="modelPoolGemma" x-model="modelPoolGemma" @change="saveSettings()"
+                                    placeholder="provider default"
+                                    class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
+                                <p class="text-gray-600 text-xs mt-1">Free background volume (Gemini only).</p>
+                            </div>
+                            </div>
+                        </details>
+
                         <!-- The paid-key fallback (v2.499.412). When Google sheds
                              free-tier load, chat answers "overloaded"; the paid key
                              (set in the Missions drawer) can run the same models with
                              priority. A standing policy with a daily cap, or a one-time
                              switch a parent flips here after the free tier has failed
                              a set number of times. services/paid_fallback.py. -->
-                        <div class="mt-2 mb-6 pt-6 border-t border-gray-700" id="paid-fallback">
+                        <div class="mt-2 mb-6 pt-6 border-t border-gray-700" id="paid-fallback" x-show="llmProvider === 'gemini'">
                             <h3 class="text-gray-200 font-semibold mb-1">When the free tier is throttled</h3>
                             <p class="text-gray-500 text-sm mb-4">
                                 Google sheds free-tier load on busy mornings and Argyle answers "overloaded".
@@ -2212,6 +2269,13 @@
                 // AI assistant LLM settings
                 llmProvider: '',
                 llmGeminiApiKey: '',
+                llmAnthropicApiKey: '',
+                llmOpenaiApiKey: '',
+                llmAnthropicDailyCap: 500,
+                llmOpenaiDailyCap: 500,
+                modelPoolLite: '',
+                modelPoolFlash: '',
+                modelPoolGemma: '',
                 // The paid-key fallback for a throttled free tier (v2.499.412).
                 llmPaidFallbackMode: 'ask',
                 llmPaidFallbackFailures: 3,
@@ -2511,6 +2575,13 @@
                     // (`settings.get('llm_provider') or 'gemini'`).
                     this.llmProvider = data.llm_provider || 'gemini';
                     this.llmGeminiApiKey = data.llm_gemini_api_key || '';
+                    this.llmAnthropicApiKey = data.llm_anthropic_api_key || '';
+                    this.llmOpenaiApiKey = data.llm_openai_api_key || '';
+                    this.llmAnthropicDailyCap = data.llm_anthropic_daily_cap ?? 500;
+                    this.llmOpenaiDailyCap = data.llm_openai_daily_cap ?? 500;
+                    this.modelPoolLite = data.model_pool_lite || '';
+                    this.modelPoolFlash = data.model_pool_flash || '';
+                    this.modelPoolGemma = data.model_pool_gemma || '';
                     this.llmPaidFallbackMode = data.llm_paid_fallback_mode || 'ask';
                     this.llmPaidFallbackFailures = data.llm_paid_fallback_failures ?? 3;
                     this.llmPaidFallbackDailyCap = data.llm_paid_fallback_daily_cap ?? 300;
@@ -2652,6 +2723,13 @@
                             ma_token: this.maToken || '',
                             llm_provider: this.llmProvider,
                             llm_gemini_api_key: this.llmGeminiApiKey,
+                            llm_anthropic_api_key: this.llmAnthropicApiKey,
+                            llm_openai_api_key: this.llmOpenaiApiKey,
+                            llm_anthropic_daily_cap: Math.max(0, parseInt(this.llmAnthropicDailyCap, 10) || 0),
+                            llm_openai_daily_cap: Math.max(0, parseInt(this.llmOpenaiDailyCap, 10) || 0),
+                            model_pool_lite: this.modelPoolLite || '',
+                            model_pool_flash: this.modelPoolFlash || '',
+                            model_pool_gemma: this.modelPoolGemma || '',
                             llm_paid_fallback_mode: this.llmPaidFallbackMode,
                             llm_paid_fallback_failures: Math.max(1, parseInt(this.llmPaidFallbackFailures, 10) || 3),
                             llm_paid_fallback_daily_cap: Math.max(0, parseInt(this.llmPaidFallbackDailyCap, 10) || 0),
@@ -4212,8 +4290,8 @@
                             body: JSON.stringify({
                                 provider: this.llmProvider,
                                 url: this.llmOllamaUrl,
-                                api_key: this.llmGeminiApiKey,
-                                model: this.llmProvider === 'gemini' ? this.llmGeminiModel : this.llmOllamaModel
+                                api_key: ({ gemini: this.llmGeminiApiKey, anthropic: this.llmAnthropicApiKey, openai: this.llmOpenaiApiKey })[this.llmProvider] || '',
+                                model: ({ gemini: this.llmGeminiModel, ollama: this.llmOllamaModel })[this.llmProvider] || null
                             })
                         });
                         const data = await res.json();

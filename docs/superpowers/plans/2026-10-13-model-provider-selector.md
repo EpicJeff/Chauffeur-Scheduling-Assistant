@@ -1018,7 +1018,8 @@ def scenario_every_new_field_round_trips():
     c = _client()
     r = c.post('/api/settings', json=NEW, headers=_parent_headers())
     check(r.status_code == 200, r.text)
-    got = storage.get_settings()
+    # harness.py stubs storage.get_settings; read what the table really holds
+    got = dict(storage.settings_table.all()[0]) if storage.settings_table.all() else {}
     for k, v in NEW.items():
         check(got.get(k) == v, f'{k} did not persist: {got.get(k)!r}')
 
