@@ -12,6 +12,34 @@
     <h2 id="pwa-profile-title">Your profile</h2>
     <div id="pwa-profile-actions"></div>
 </dialog>
+<dialog id="pwa-voice-setup" class="pwa-profile pwa-sheet" aria-labelledby="pwa-voice-setup-title">
+    <form method="dialog"><button class="pwa-close" aria-label="Close voice setup" onclick="ChauffeurVoiceSetup.cancel()">Close</button></form>
+    <h2 id="pwa-voice-setup-title">Set up my voice</h2>
+    <div id="pwa-voice-setup-intro" class="space-y-3 text-sm">
+        <p>Argyle will ask you five short questions. Answer out loud for about ten seconds each.
+           Only a local voice template is saved; the recordings are discarded. Your household's
+           speech provider hears the answers. This is optional, and you can delete your voice at any time.</p>
+        <p class="text-gray-400 text-xs">Your speakers each check a phone-made voice the first time: say
+           "Hey Argyle, check my voice" in the room.</p>
+        <div class="flex gap-2">
+            <button type="button" id="pwa-voice-setup-start" class="pwa-feature" onclick="pwaStartVoiceSetup()">Start</button>
+            <button type="button" class="pwa-feature" onclick="ChauffeurVoiceSetup.cancel()">Cancel</button>
+        </div>
+    </div>
+    <div id="pwa-voice-setup-stage" class="space-y-3 text-sm" hidden>
+        <p id="pwa-voice-setup-step" class="text-gray-400 text-xs"></p>
+        <p id="pwa-voice-setup-question" class="text-lg font-semibold"></p>
+        <div class="flex gap-2">
+            <button type="button" id="pwa-voice-setup-record" class="pwa-feature" onclick="ChauffeurVoiceSetup.record()" disabled>Record</button>
+            <button type="button" id="pwa-voice-setup-done" class="pwa-feature" onclick="ChauffeurVoiceSetup.done()" hidden>Done</button>
+        </div>
+    </div>
+    <p id="pwa-voice-setup-status" class="text-sm text-gray-300" aria-live="polite"></p>
+    <div id="pwa-voice-setup-finish" class="flex gap-2" hidden>
+        <button type="button" id="pwa-voice-setup-try" class="pwa-feature" onclick="ChauffeurVoiceSetup.cancel(); ChauffeurPhoneVoice.start()">Try talking to Argyle</button>
+        <button type="button" class="pwa-feature" onclick="ChauffeurVoiceSetup.cancel()">Done</button>
+    </div>
+</dialog>
 <dialog id="pwa-child-detail" class="pwa-sheet child-detail" aria-labelledby="pwa-child-detail-title">
     <form method="dialog"><span>Your day</span><button aria-label="Close details">Close</button></form>
     <h2 id="pwa-child-detail-title"></h2>

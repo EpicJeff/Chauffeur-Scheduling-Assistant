@@ -4186,6 +4186,16 @@ async def phone_enroll_audio(enrollment_id: str, request: Request):
         raise HTTPException(status_code=409, detail=str(error)) from None
 
 
+@app.delete('/api/app-voice/profile')
+def phone_voice_profile_delete(request: Request):
+    """Delete my voice: the member's own act for their own templates, every
+    speaker included, plus any pending enrollment (spec, Storage)."""
+    from services import voice_fingerprint
+    member = _phone_enroll_member(request)
+    voice_fingerprint.delete(member['id'])
+    return {'status': 'deleted'}
+
+
 @app.get('/api/app-voice/enroll/{enrollment_id}/speech')
 def phone_enroll_speech(enrollment_id: str, request: Request):
     """The current question, spoken by the household's Argyle voice."""

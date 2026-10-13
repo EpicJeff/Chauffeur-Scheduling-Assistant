@@ -94,6 +94,16 @@ class PhoneEnrollmentTests(unittest.TestCase):
         self.assertEqual(main.phone_enroll_cancel(self.request(self.jeff))['status'], 'ended')
         self.assertNotIn(('phone', 'jeff'), fp._enrollments)
 
+    def test_a_member_deletes_their_own_voice(self):
+        start = main.phone_enroll_start({}, self.request(self.jeff))
+        for _ in range(5):
+            out = voice_setup.phone_answer(storage.get_member('jeff'), start['enrollment_id'], start['token'] if _ == 0 else out['token'], wav(), 'audio/wav')
+        self.assertEqual(len(fp.profiles()), 1)
+        self.assertEqual(main.phone_voice_profile_delete(self.request(self.jeff))['status'], 'deleted')
+        self.assertEqual(fp.profiles(), [])
+        with self.assertRaises(HTTPException):
+            main.phone_voice_profile_delete(self.request(storage.create_member_token('jeff', house_session=True)))
+
     def test_only_a_personal_session_may_enroll(self):
         house = storage.create_member_token('jeff', house_session=True)
         with self.assertRaises(HTTPException):

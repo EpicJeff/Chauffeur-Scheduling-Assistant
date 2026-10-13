@@ -183,9 +183,31 @@ function pwaOpenProfile() {
     ];
     if (!document.getElementById('btn-push').classList.contains('hidden'))
         items.push(action('push', 'Enable notifications', 'Receive family updates on this device', enableNotifications));
+    if (window.ChauffeurVoiceSetup) {
+        // Set up my voice (spec 2026-10-13). Enrollment, re-enrollment and
+        // deletion are the member's own acts here; turning recognition on
+        // is a parent's, per speaker, by voice or in Config.
+        items.push(action('voice', 'Set up my voice', 'Answer five short questions so your speakers can recognise you', () => ChauffeurVoiceSetup.open()));
+        items.push(action('voice-delete', 'Delete my voice', 'Remove your voice template from every speaker', () => ChauffeurVoiceSetup.deleteVoice()));
+    }
     items.push(action('switch', 'Switch person / sign out', 'Return to the family member picker', clearDriver));
     document.getElementById('pwa-profile-actions').replaceChildren(...items.map(pwaFeatureButton));
     if (!dialog.open) dialog.showModal();
+}
+
+async function pwaStartVoiceSetup() {
+    // A child's screen asks for a parent's PIN once; it goes to the server and
+    // never onto the screen. The server resolves which parent by id.
+    const me = typeof members !== 'undefined' ? members.find(m => m.id === selectedMemberId) : null;
+    if (me && me.role === 'child') {
+        const parents = members.filter(m => m.role === 'parent');
+        if (!parents.length) { showGlobalAlert('A parent needs to set up their account first.'); return; }
+        const parent = parents[0];
+        const entry = await promptForPin(`${parent.name}, enter your PIN`, `To set up ${me.name}'s voice`);
+        if (entry.action !== 'ok' || !entry.value) return;
+        return ChauffeurVoiceSetup.start(parent.id, entry.value);
+    }
+    return ChauffeurVoiceSetup.start();
 }
 
 function pwaRefreshOverview() {

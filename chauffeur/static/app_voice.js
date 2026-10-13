@@ -284,6 +284,168 @@
         }
     };
     window.ChauffeurPhoneVoice = voice;
+
+    // ── Set up my voice (spec 2026-10-13, Phone flow). Five answers through the
+    // same recorder, each uploaded with the step token the server issued;
+    // never transcribed, never the agent. The question is read aloud by the
+    // household's Argyle voice before Record is enabled, so playback is never
+    // in a sample. A child's screen sends a parent's PIN once, at Start.
+    const setupEl = id => document.getElementById('pwa-voice-setup' + (id ? '-' + id : ''));
+    const setup = {
+        state: {enrollmentId: null, token: '', step: 0, total: 5, question: '', phase: 'idle', message: ''},
+        token: '', stream: null, recorder: null, audio: null, audioUrl: null, timer: null, chunks: [], submit: false,
+        url(suffix) { return (typeof apiBase === 'undefined' ? '' : apiBase) + 'api/app-voice/' + suffix; },
+        headers(extra) { return Object.assign({'X-Member-Token': this.token}, extra || {}); },
+        text(id, value) { const node = setupEl(id); if (node) node.textContent = value; },
+        show(id, on) { const node = setupEl(id); if (node) node.hidden = !on; },
+        render() {
+            const s = this.state;
+            this.show('intro', s.phase === 'intro');
+            this.show('stage', s.phase === 'question' || s.phase === 'recording' || s.phase === 'sending');
+            this.show('finish', s.phase === 'finished');
+            this.text('step', s.step ? `${s.step} of ${s.total}` : '');
+            this.text('question', s.question || '');
+            this.text('status', s.message || '');
+            const record = setupEl('record');
+            if (record) record.disabled = s.phase !== 'question';
+            this.show('done', s.phase === 'recording');
+        },
+        async open() {
+            this.token = typeof memberToken === 'function' ? memberToken() : '';
+            this.state = {enrollmentId: null, token: '', step: 0, total: 5, question: '', phase: 'intro', message: ''};
+            this.render();
+            const dialog = setupEl('');
+            if (dialog && !dialog.open && dialog.showModal) dialog.showModal();
+        },
+        async start(parentId, parentPin) {
+            if (!this.token) { showGlobalAlert('Sign in on your personal device first.'); return; }
+            if (typeof isSecureContext !== 'undefined' && !isSecureContext) {
+                showGlobalAlert('Open the secure Chauffeur app for voice setup.'); return;
+            }
+            this.state.message = 'Starting…'; this.render();
+            try {
+                const res = await fetch(this.url('enroll'), {method: 'POST',
+                    headers: this.headers({'Content-Type': 'application/json'}),
+                    body: JSON.stringify(parentId ? {parent_id: parentId, parent_pin: parentPin} : {})});
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.detail || 'Voice setup could not start.');
+                this.take(data);
+            } catch (error) {
+                this.state.phase = 'intro'; this.state.message = error.message; this.render();
+                return;
+            }
+            this.state.phase = 'question'; this.render();
+            await this.speak();
+        },
+        take(data) {
+            const s = this.state;
+            if (data.enrollment_id) s.enrollmentId = data.enrollment_id;
+            if (data.token) s.token = data.token;
+            if (data.step) s.step = data.step;
+            if (data.total) s.total = data.total;
+            if (data.question) s.question = data.question;
+            s.message = data.message || '';
+        },
+        async speak() {
+            this.releaseAudio();
+            const record = setupEl('record');
+            if (record) record.disabled = true;
+            const finish = () => { this.releaseAudio(); if (this.state.phase === 'question') this.render(); };
+            try {
+                const res = await fetch(this.url('enroll/' + this.state.enrollmentId + '/speech'), {headers: this.headers()});
+                if (!res.ok) throw new Error('no speech');
+                const blob = await res.blob();
+                this.audioUrl = URL.createObjectURL(blob);
+                this.audio = new Audio(this.audioUrl);
+                this.audio.onended = finish; this.audio.onerror = finish;
+                await this.audio.play();
+            } catch (_) { finish(); }   // the question is on screen either way
+        },
+        releaseAudio() {
+            if (this.audio) { try { this.audio.pause(); } catch (_) {} this.audio.onended = null; this.audio.onerror = null; }
+            this.audio = null;
+            if (this.audioUrl) URL.revokeObjectURL(this.audioUrl);
+            this.audioUrl = null;
+        },
+        releaseCapture() {
+            clearTimeout(this.timer); this.timer = null;
+            const r = this.recorder; this.recorder = null;
+            if (r && r.state !== 'inactive') { try { r.stop(); } catch (_) {} }
+            if (this.stream) this.stream.getTracks().forEach(t => t.stop());
+            this.stream = null;
+        },
+        async record() {
+            if (this.state.phase !== 'question') return;
+            if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) {
+                this.state.message = 'Voice recording is unavailable on this browser.'; this.render(); return;
+            }
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+                this.stream = stream;
+                const format = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']
+                    .find(type => MediaRecorder.isTypeSupported(type));
+                if (!format) throw new Error('This recording format is unavailable.');
+                const recorder = new MediaRecorder(stream, {mimeType: format});
+                this.recorder = recorder; this.chunks = []; this.submit = false;
+                recorder.ondataavailable = event => { if (event.data && event.data.size) this.chunks.push(event.data); };
+                recorder.onerror = () => { this.releaseCapture(); this.state.phase = 'question'; this.state.message = 'Recording failed. Try again.'; this.render(); };
+                recorder.onstop = () => {
+                    const send = this.submit; this.submit = false;
+                    const blob = new Blob(this.chunks, {type: recorder.mimeType || format});
+                    this.chunks = [];
+                    this.recorder = null; this.releaseCapture();
+                    if (send) this.upload(blob); else { this.state.phase = 'question'; this.render(); }
+                };
+                recorder.start(250);
+                this.state.phase = 'recording'; this.state.message = 'Listening — press Done when you finish.'; this.render();
+                this.timer = setTimeout(() => this.done(), 14500);
+            } catch (error) {
+                this.releaseCapture();
+                this.state.message = error.name === 'NotAllowedError' ? 'Microphone access was denied. Allow it in Settings.'
+                    : (error.message || 'Microphone unavailable.');
+                this.state.phase = 'question'; this.render();
+            }
+        },
+        async done() {
+            if (!this.recorder) return;
+            this.submit = true;
+            this.state.phase = 'sending'; this.state.message = 'Checking that sample…'; this.render();
+            this.recorder.stop();
+        },
+        async upload(blob) {
+            try {
+                const res = await fetch(this.url('enroll/' + this.state.enrollmentId + '/audio'), {method: 'POST',
+                    headers: this.headers({'Content-Type': blob.type, 'X-Voice-Step-Token': this.state.token}), body: blob});
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.detail || 'That sample could not be checked.');
+                this.take(data);
+                if (data.status === 'done') { this.state.phase = 'finished'; this.render(); return; }
+                if (data.status === 'ended') { this.state.phase = 'intro'; this.render(); return; }
+                this.state.phase = 'question'; this.render();
+                await this.speak();
+            } catch (error) {
+                this.state.phase = 'question'; this.state.message = error.message; this.render();
+            }
+        },
+        async cancel() {
+            this.releaseCapture(); this.releaseAudio();
+            if (this.state.enrollmentId && this.state.phase !== 'finished' && this.state.phase !== 'intro') {
+                fetch(this.url('enroll'), {method: 'DELETE', headers: this.headers(), keepalive: true}).catch(() => {});
+            }
+            this.state.phase = 'idle'; this.render();
+            const dialog = setupEl('');
+            if (dialog && dialog.open && dialog.close) dialog.close();
+        },
+        async deleteVoice() {
+            const ok = typeof promptConfirm === 'function'
+                ? await promptConfirm('Delete my voice?', 'Removes your voice from every speaker. You can set it up again later.', 'Delete', 'Keep')
+                : false;
+            if (!ok) return;
+            const res = await fetch(this.url('profile'), {method: 'DELETE', headers: this.headers()});
+            showGlobalAlert(res.ok ? 'Your voice was deleted.' : 'Could not delete your voice.');
+        },
+    };
+    window.ChauffeurVoiceSetup = setup;
     document.addEventListener('visibilitychange', () => { if (document.hidden) voice.stop(false); });
     window.addEventListener('pagehide', () => voice.stop(false));
     window.addEventListener('storage', event => { if ((event.key || '').includes('member_token')) voice.stop(false); });
