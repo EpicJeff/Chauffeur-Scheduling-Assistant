@@ -996,6 +996,29 @@ def _field_at(page, x, y):
     return None
 
 
+def _focused_field(page):
+    """`_field_at` for the box that has focus: a coordinate-free type (Claude
+    and OpenAI type into the focused box) meets the same release rule as a
+    type-at-point, by the box's own label (spec 2026-10-13 §7, change 1)."""
+    try:
+        label = page.evaluate("""() => {
+            const i = document.activeElement; if (!i) return '';
+            if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(i.tagName)) return '';
+            if (i.type && ['hidden', 'submit', 'button', 'checkbox', 'radio'].includes(i.type)) return '';
+            const parts = [];
+            if (i.id) { const l = document.querySelector(`label[for="${i.id}"]`); if (l) parts.push(l.innerText); }
+            const p = i.closest('label'); if (p) parts.push(p.innerText);
+            parts.push(i.name || '', i.placeholder || '', i.getAttribute('aria-label') || '', i.getAttribute('autocomplete') || '');
+            return parts.join(' ');
+        }""") or ''
+    except Exception:
+        return None
+    for name, rx in CONTACT_LABELS.items():
+        if rx.search(label):
+            return name
+    return None
+
+
 def _coarse(v):
     try:
         return int(float(v) // 20)
@@ -1100,6 +1123,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
     captcha_attempts = 0
     strikes = 0
     last_sig, repeats = None, 0
+    idle_turns = 0            # turns made only of look/refuse calls, in a row (three cap the run)
 
     def learn_redirect(r):
         # A server redirect FROM an allowed domain teaches its target
@@ -1256,6 +1280,12 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                   + ("You may attempt a human-verification check, at most the allowed attempts.\n" if consent.get('captcha') else
                      "Do NOT attempt any human-verification check; stop and report instead.\n"))
         contents = [{'role': 'user', 'parts': [{'text': _system_text(settings, approved=approved) + '\n\n' + prompt}, {'image': shot}]}]
+        def _answer(name, args, res):
+            """One answer per call: the page's url and the screen right after
+            it ride with the response, so two calls in one turn never share
+            one picture (spec 2026-10-13 §7, change 3)."""
+            results.append((name, args, {'url': page.url, **res}, page.screenshot(type='png')))
+
         for turn in range(1, caps['turns'] + 1):
             if time.time() - t0 > caps['seconds']:
                 return finish('capped', f"stopped after {caps['seconds']} s")
@@ -1388,6 +1418,15 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                 name, args = call.get('name') or '', dict(call.get('args') or {})
                 intent = str(args.get('intent') or '')
                 sd = args.get('safety_decision') or {}
+                if name in ('look', 'refuse'):
+                    # An observation, or a provider member the adapter declined: nothing
+                    # happens on the page, the model gets its answer and a fresh screen
+                    # (spec 2026-10-13 §7, change 2). Never an action, never completion.
+                    reason = str(args.get('reason') or 'not available here')
+                    report['turns_log'].append({'turn': turn, 'action': name + (': ' + reason[:60] if name == 'refuse' else ''),
+                                                'url': page.url, 'model_ms': model_ms if i_call == 0 else 0, 'act_ms': 0})
+                    _answer(name, args, {'error': reason} if name == 'refuse' else {})
+                    continue
                 is_click = name.startswith('click') or name.startswith('double')
                 is_type = name in TYPE_ACTIONS
                 is_key = name in KEY_ACTIONS
@@ -1404,12 +1443,12 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                 words = _action_words(page, name, args)
                 line = {'turn': turn, 'action': words, 'url': page.url, 'model_ms': model_ms if i_call == 0 else 0, 'act_ms': 0}
                 report['turns_log'].append(line)
-                if pressed and name not in ('scroll_document', 'scroll_at', 'scroll', 'wait_5_seconds', 'wait', 'go_back'):
+                if pressed and name not in ('scroll_document', 'scroll_at', 'scroll', 'wait_5_seconds', 'wait', 'go_back', 'look', 'refuse'):
                     after_press_refusals += 1
                     line['action'] += ' (refused: the press is done)'
                     if after_press_refusals >= 2:
                         return finish_attempt('unknown', 'the model kept acting after the press')
-                    results.append((name, args, {'error': 'the press is done; report what the page says'}))
+                    _answer(name, args, {'error': 'the press is done; report what the page says'})
                     continue
                 # The same action on the same unchanged page, a third time, is
                 # a loop: refuse it and tell the model, instead of burning the turn.
@@ -1422,8 +1461,8 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                 if repeats >= 2 and name not in ('wait_5_seconds', 'wait') and sd.get('decision') != 'require_confirmation':
                     # (A repeated CAPTCHA click is an attempt; its own cap counts it.)
                     line['action'] += ' (repeat, refused)'
-                    results.append((name, args, {'error': 'you already did exactly that twice and the page did not change; '
-                                                          'try something else: another element, a scroll, or report what you see'}))
+                    _answer(name, args, {'error': 'you already did exactly that twice and the page did not change; '
+                                                  'try something else: another element, a scroll, or report what you see'})
                     continue
                 if sd.get('decision') == 'require_confirmation':
                     if CAPTCHA_MARKERS.search(str(sd.get('explanation') or '')):
@@ -1456,14 +1495,13 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                         refusal = TYPE_NOT_A_BOX
                 if refusal:
                     line['action'] += ' (refused)'
-                    results.append((name, args, {'error': refusal}))
+                    _answer(name, args, {'error': refusal})
                     continue
                 if is_type and not press_now:
-                    if 'x' in args:
-                        field = _field_at(page, *_px(args['x'], args['y']))
-                        if field and field not in released:
-                            report['wanted_fields'] = [field]
-                            return finish('needs_release', f"the page's {field} box wants the family's {field}; nothing was typed")
+                    field = _field_at(page, *_px(args['x'], args['y'])) if 'x' in args else _focused_field(page)
+                    if field and field not in released:
+                        report['wanted_fields'] = [field]
+                        return finish('needs_release', f"the page's {field} box wants the family's {field}; nothing was typed")
                     bad = _personal_violation(args.get('text'), released, card)
                     if bad:
                         report['wanted_fields'] = [bad]
@@ -1475,7 +1513,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                     strikes += 1
                     if strikes > 1:
                         return finish('blocked', f'left the site: {args["url"]}')
-                    results.append((name, args, {'error': 'that is another site; stay on ' + site}))
+                    _answer(name, args, {'error': 'that is another site; stay on ' + site})
                     continue
                 if name in ('navigate', 'open_web_browser', 'go_back', 'go_forward'):
                     last_press = None      # the model moved on: a confirmation after this is not the press's
@@ -1541,7 +1579,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                             return stop
                     if refusal:
                         line['action'] += ' (refused)'
-                        results.append((name, args, {'error': refusal}))
+                        _answer(name, args, {'error': refusal})
                         continue
                     try:
                         if press_now:
@@ -1585,12 +1623,18 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                         return stop
                     before_conf = _is_confirmation(scan)
                 shot = page.screenshot(type='png')
-                p = os.path.join(out_dir, f'turn_{turn:02d}.png')
+                p = os.path.join(out_dir, f'turn_{turn:02d}_{i_call}.png')
                 with open(p, 'wb') as f:
                     f.write(shot)
                 report['screenshots'].append(p)
-                results.append((name, args, res))
-            contents.append({'role': 'user', 'function_responses': [(n, {'url': page.url, **r}, shot) for n, a, r in results]})
+                results.append((name, args, {'url': page.url, **res}, shot))
+            if calls and all((c.get('name') or '') in ('look', 'refuse') for c in calls):
+                idle_turns += 1
+                if idle_turns >= 3:
+                    return finish('capped', 'the model kept looking without acting')
+            else:
+                idle_turns = 0
+            contents.append({'role': 'user', 'function_responses': [(n, r, sh) for n, a, r, sh in results]})
         return finish('capped', f"stopped after {caps['turns']} turns")
     except Exception as e:
         logger.warning(f"[browse] run failed: {e}")

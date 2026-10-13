@@ -1112,6 +1112,175 @@ def scenario_a_page_that_moves_under_the_read_is_read_again():
         pass
 
 
+
+def scenario_coordinate_free_typing_meets_the_release_gate():
+    """A click on the ZIP box, then a bare `type` with nothing released: the focused box's
+    label is the field, and a guess is a release question (spec §7 change 1)."""
+    _reset()
+    storage.get_settings = lambda: {'missions_submit_enabled': True, 'llm_gemini_paid_api_key': 'paid'}   # empty card
+    zx, zy = _xy(f'{URL}/tiles', 'input[name=zip]')   # an OPTIONAL zip box: no required-field pause on arrival
+    browse._model_step = _script([_click((zx, zy))], [{'name': 'type', 'args': {'text': '35203'}}], 'DONE.')
+    r = browse.run('fill the form', SITE, {}, {}, start_url=f'{URL}/tiles', out_dir=OUT)
+    check(r['outcome'] == 'needs_release' and 'zip' in (r.get('wanted_fields') or []), r)
+    from browse_pages import H
+    check(not any('35203' in str(p) for p in H.posts), 'nothing was typed')
+
+
+def scenario_look_and_refuse_turns_continue_then_cap():
+    _reset()
+    fake, seen = _recording([{'name': 'look', 'args': {}}], [{'name': 'refuse', 'args': {'reason': 'right_click is not available here'}}],
+                            [{'name': 'look', 'args': {}}], [{'name': 'look', 'args': {}}], 'DONE.')
+    browse._model_step = fake
+    r = browse.run('read the page', SITE, {}, {}, start_url=URL, out_dir=OUT)
+    check(r['outcome'] == 'capped' and 'looking' in r['text'], f'three idle turns in a row cap the run: {r}')
+    frs = [c['function_responses'] for c in seen if isinstance(c, dict) and 'function_responses' in c]
+    check(len(frs) >= 2 and frs[0][0][0] == 'look' and frs[0][0][2][:4] == b'\x89PNG', 'a look is answered with a screenshot')
+    check(frs[1][0][1].get('error') == 'right_click is not available here', 'a refuse is answered with its reason')
+    check(r['actions'] == 0, 'neither counts as an action')
+
+
+def scenario_each_result_carries_its_own_screenshot_and_url():
+    _reset()
+    other = f'{URL}/other'
+    fake, seen = _recording([{'name': 'navigate', 'args': {'url': other}}, {'name': 'go_back', 'args': {}}], 'DONE.')
+    browse._model_step = fake
+    own = tempfile.mkdtemp(prefix='browse_shots_')   # its own folder: the file count below must not see earlier scenarios' shots
+    browse.run('go there and back', SITE, {}, {}, start_url=URL, out_dir=own)
+    fr = [c['function_responses'] for c in seen if isinstance(c, dict) and 'function_responses' in c][0]
+    check(fr[0][1]['url'].rstrip('/') == other and fr[1][1]['url'].rstrip('/') == URL, f'each url is the page right after that action: {[x[1] for x in fr]}')
+    check(fr[0][2] != fr[1][2], 'two screens, two different screenshots')
+    import glob
+    check(len(glob.glob(os.path.join(own, 'turn_01_*.png'))) == 2, 'one file per action, none overwritten')
+
+
+def scenario_a_refusal_reaches_the_next_turn():
+    _reset()
+    blank = {'name': 'click_at', 'args': {'x': 5, 'y': 5}}
+    fake, seen = _recording([blank], [blank], [blank], 'DONE.')
+    browse._model_step = fake
+    browse.run('click', SITE, {}, {}, start_url=URL, out_dir=OUT)
+    errs = _errors(seen)
+    check(any('already did exactly that' in e for e in errs), f'the repeated-action refusal is in the responses the model saw: {errs}')
+    # (that scenario holds today through the shared `results` list; it pins that the per-action rewrite keeps it)
+
+
+def scenario_claude_members_become_runner_calls_in_permille():
+    W, H = browse.W, browse.H
+    f = browse.to_runner_call
+    check(f('anthropic', 'left_click', {'coordinate': [720, 450]}) == {'name': 'click_at', 'args': {'x': 500, 'y': 500}}, f('anthropic', 'left_click', {'coordinate': [720, 450]}))
+    check(f('anthropic', 'double_click', {'coordinate': [144, 90]})['name'] == 'double_click_at', 'double')
+    check(f('anthropic', 'type', {'text': 'hi'}) == {'name': 'type', 'args': {'text': 'hi'}}, 'coordinate-free type')
+    check(f('anthropic', 'key', {'text': 'ctrl+a'}) == {'name': 'key_combination', 'args': {'keys': ['ctrl', 'a']}}, 'keys split')
+    check(f('anthropic', 'scroll', {'coordinate': [720, 450], 'scroll_direction': 'down', 'scroll_amount': 3}) == {'name': 'scroll_at', 'args': {'x': 500, 'y': 500, 'direction': 'down', 'magnitude': 300}}, 'scroll')
+    check(f('anthropic', 'mouse_move', {'coordinate': [0, 0]})['name'] == 'hover_at', 'hover')
+    d = f('anthropic', 'left_click_drag', {'start_coordinate': [0, 0], 'coordinate': [1440, 900]})
+    check(d == {'name': 'drag_and_drop', 'args': {'x': 0, 'y': 0, 'destination_x': 1000, 'destination_y': 1000}}, d)
+    check(f('anthropic', 'wait', {'duration': 1}) == {'name': 'wait', 'args': {}}, 'wait')
+    check(f('anthropic', 'screenshot', {}) == {'name': 'look', 'args': {}}, 'screenshot is a look')
+    r = f('anthropic', 'right_click', {'coordinate': [1, 1]})
+    check(r['name'] == 'refuse' and 'right_click' in r['args']['reason'], r)
+    check(f('anthropic', 'navigate', {'url': 'https://a.example/'}) == {'name': 'navigate', 'args': {'url': 'https://a.example/'}}, 'function tool')
+    check(f('anthropic', 'go_back', {}) == {'name': 'go_back', 'args': {}}, 'go_back')
+
+
+def scenario_openai_actions_become_runner_calls():
+    f = browse.to_runner_call
+    check(f('openai', 'click', {'button': 'left', 'x': 720, 'y': 450}) == {'name': 'click_at', 'args': {'x': 500, 'y': 500}}, 'click')
+    check(f('openai', 'click', {'button': 'right', 'x': 1, 'y': 1})['name'] == 'refuse', 'right button refused')
+    check(f('openai', 'keypress', {'keys': ['CTRL', 'A']}) == {'name': 'key_combination', 'args': {'keys': ['ctrl', 'a']}}, 'keypress')
+    check(f('openai', 'scroll', {'x': 720, 'y': 450, 'scroll_x': 0, 'scroll_y': -600}) == {'name': 'scroll_at', 'args': {'x': 500, 'y': 500, 'direction': 'up', 'magnitude': 600}}, 'scroll up')
+    check(f('openai', 'drag', {'path': [{'x': 0, 'y': 0}, {'x': 720, 'y': 450}, {'x': 1440, 'y': 900}]})['args']['destination_x'] == 1000, 'drag last point')
+    check(f('openai', 'screenshot', {}) == {'name': 'look', 'args': {}} and f('openai', 'wait', {}) == {'name': 'wait', 'args': {}}, 'look/wait')
+
+
+def scenario_claude_step_builds_the_request_and_reads_the_turn():
+    from unittest.mock import patch
+    from services import llm_budget
+    import base64, io, json as _json
+    sent = []
+    turn = {'content': [{'type': 'thinking', 'thinking': ''},
+                        {'type': 'text', 'text': 'CHALLENGE: the box says I am not a robot'},
+                        {'type': 'tool_use', 'id': 'tu_1', 'name': 'left_click', 'input': {'coordinate': [720, 450]}, 'toolset_name': 'computer'},
+                        {'type': 'tool_use', 'id': 'tu_2', 'name': 'screenshot', 'input': {}, 'toolset_name': 'computer'}],
+            'stop_reason': 'tool_use', 'usage': {'input_tokens': 100, 'output_tokens': 20}}
+    def fake(request, timeout=60):
+        sent.append(_json.loads(request.data.decode('utf-8')))
+        return io.BytesIO(_json.dumps(turn).encode('utf-8'))
+    settings = {'llm_provider': 'anthropic', 'llm_anthropic_api_key': 'A', 'missions_captcha_attempts': True}
+    contents = [{'role': 'user', 'parts': [{'text': browse.RUNNER_SYSTEM + '\n\nGOAL'}, {'image': b'\x89PNG1'}]}]
+    with patch.object(llm_budget, 'urlopen', fake):
+        step = browse._model_step_anthropic(contents, settings)
+    body = sent[0]
+    check(body['model'] == 'claude-sonnet-5-5' and body['output_config']['effort'] == 'low' and 'temperature' not in body, body.keys())
+    types = [t.get('type') or t.get('name') for t in body['tools']]
+    check(types[0] == 'computer_toolset_20260801' and body['tools'][0]['configs'] == {'zoom': {'enabled': False}}, body['tools'][0])
+    check({'navigate', 'go_back'} <= set(types), 'navigate and go_back are function tools')
+    check(body['messages'][0]['content'][1]['source']['data'] == base64.b64encode(b'\x89PNG1').decode(), 'the image went as base64')
+    check('CHALLENGE:' in body['system'] and 'focused box' in body['system'], 'the adapter system text')
+    check('type_text_at clicks the box itself' not in body['messages'][0]['content'][0]['text'], 'the Gemini-only sentence is stripped from the runner text')
+    check(step['calls'][0] == {'name': 'click_at', 'args': {'x': 500, 'y': 500, 'safety_decision': {'decision': 'require_confirmation', 'explanation': 'CAPTCHA: the box says I am not a robot'}}}, step['calls'][0])
+    check(step['calls'][1] == {'name': 'look', 'args': {}}, step['calls'][1])
+    check(step['content']['_provider'] == 'anthropic' and step['content']['ids'] == ['tu_1', 'tu_2'], step['content'])
+    check(step['tokens'] == (100, 20), step['tokens'])
+    # the next turn: the runner's answers go back as tool_results, in order, with toolset_name on each
+    contents += [step['content'], {'role': 'user', 'function_responses': [('click_at', {'url': 'u1', 'safety_acknowledgement': 'true'}, b'\x89PNG2'), ('look', {'url': 'u1'}, b'\x89PNG3')]}]
+    with patch.object(llm_budget, 'urlopen', fake):
+        browse._model_step_anthropic(contents, settings)
+    msgs = sent[1]['messages']
+    check(msgs[1]['role'] == 'assistant' and msgs[1]['content'] == turn['content'], 'the assistant turn is replayed unchanged, thinking included')
+    results = msgs[2]['content']
+    check([r['tool_use_id'] for r in results] == ['tu_1', 'tu_2'] and all(r.get('toolset_name') == 'computer' for r in results), results)
+    check(results[0]['content'][0]['type'] == 'text' and 'u1' in results[0]['content'][0]['text'], 'the response text rides along')
+    check(results[0]['content'][1]['type'] == 'image', 'every result carries its screenshot')
+
+
+def scenario_openai_step_uses_previous_response_id_and_call_outputs():
+    from unittest.mock import patch
+    from services import llm_budget
+    import io, json as _json
+    sent = []
+    turn = {'id': 'resp_1', 'status': 'completed', 'output': [
+        {'type': 'computer_call', 'call_id': 'cc_1', 'actions': [{'type': 'click', 'button': 'left', 'x': 720, 'y': 450}], 'status': 'completed'},
+        {'type': 'function_call', 'call_id': 'fc_1', 'name': 'navigate', 'arguments': '{"url": "https://a.example/"}'}],
+        'usage': {'input_tokens': 50, 'output_tokens': 9}}
+    def fake(request, timeout=60):
+        sent.append(_json.loads(request.data.decode('utf-8')))
+        return io.BytesIO(_json.dumps(turn).encode('utf-8'))
+    settings = {'llm_provider': 'openai', 'llm_openai_api_key': 'O'}
+    contents = [{'role': 'user', 'parts': [{'text': 'GOAL'}, {'image': b'\x89PNG1'}]}]
+    with patch.object(llm_budget, 'urlopen', fake):
+        step = browse._model_step_openai(contents, settings)
+    body = sent[0]
+    check(body['model'] == 'gpt-6.1-sol' and body['reasoning'] == {'effort': 'low'} and body['truncation'] == 'auto', body.keys())
+    check(body['tools'][0] == {'type': 'computer'} and {t.get('name') for t in body['tools'][1:]} == {'navigate', 'go_back'}, body['tools'])
+    check(step['calls'] == [{'name': 'click_at', 'args': {'x': 500, 'y': 500}}, {'name': 'navigate', 'args': {'url': 'https://a.example/'}}], step['calls'])
+    check(step['content'] == {'_provider': 'openai', 'response_id': 'resp_1', 'ids': [('cc_1', 'computer'), ('fc_1', 'function')]}, step['content'])
+    contents += [step['content'], {'role': 'user', 'function_responses': [('click_at', {'url': 'u1'}, b'\x89PNG2'), ('navigate', {'url': 'https://a.example/'}, b'\x89PNG3')]}]
+    with patch.object(llm_budget, 'urlopen', fake):
+        browse._model_step_openai(contents, settings)
+    body = sent[1]
+    check(body['previous_response_id'] == 'resp_1', 'continues the server-side thread')
+    items = body['input']
+    check(items[0]['type'] == 'computer_call_output' and items[0]['call_id'] == 'cc_1' and items[0]['output']['type'] == 'computer_screenshot' and items[0]['output']['image_url'].startswith('data:image/png;base64,'), items[0])
+    check(items[1]['type'] == 'function_call_output' and items[1]['call_id'] == 'fc_1' and 'a.example' in items[1]['output'], items[1])
+    check(len(items) == 2, 'only the new items go; the history is on the server')
+
+
+def scenario_model_step_dispatches_on_the_cu_pool():
+    seen = []
+    reals = browse._model_step_live, browse._model_step_anthropic, browse._model_step_openai
+    browse._model_step_live = lambda c, s: seen.append('gemini') or {}
+    browse._model_step_anthropic = lambda c, s: seen.append('anthropic') or {}
+    browse._model_step_openai = lambda c, s: seen.append('openai') or {}
+    try:
+        browse._model_step_dispatch([], {'llm_provider': 'anthropic'})
+        browse._model_step_dispatch([], {'llm_provider': 'openai'})
+        browse._model_step_dispatch([], {})
+        browse._model_step_dispatch([], {'model_pool_cu': 'gemini-3.8-flash', 'llm_provider': 'anthropic'})
+    finally:
+        browse._model_step_live, browse._model_step_anthropic, browse._model_step_openai = reals
+    check(seen == ['anthropic', 'openai', 'gemini', 'gemini'], f'dispatch follows the cu pool first model: {seen}')
+
 SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
              scenario_payment_field_stops_before_typing, scenario_required_contact_fields_pause_for_release,
              scenario_typing_guard_refuses_any_unreleased_personal_shape, scenario_captcha_consent_off_stops_untouched,
@@ -1138,7 +1307,9 @@ SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_typ
              scenario_every_press_path_goes_through_the_gate, scenario_an_in_page_confirmation_is_caught_by_the_backstop,
              scenario_the_device_sequence_runs_ungated_until_book, scenario_the_re_review_holes_are_closed,
              scenario_a_link_to_somewhere_else_is_a_door_not_a_commitment, scenario_a_link_that_opens_a_new_tab_is_followed_there,
-             scenario_a_page_that_moves_under_the_read_is_read_again]
+             scenario_a_page_that_moves_under_the_read_is_read_again,
+             scenario_coordinate_free_typing_meets_the_release_gate, scenario_look_and_refuse_turns_continue_then_cap, scenario_each_result_carries_its_own_screenshot_and_url, scenario_a_refusal_reaches_the_next_turn,
+             scenario_claude_members_become_runner_calls_in_permille, scenario_openai_actions_become_runner_calls, scenario_claude_step_builds_the_request_and_reads_the_turn, scenario_openai_step_uses_previous_response_id_and_call_outputs, scenario_model_step_dispatches_on_the_cu_pool]
 
 if __name__ == "__main__":
     import traceback

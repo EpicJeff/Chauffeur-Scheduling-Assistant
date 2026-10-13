@@ -1206,7 +1206,7 @@ def scenario_email_extract_and_mind_handle_reach_the_pool():
     res = mind.deep_think(force=True)
     check(res.get('status') != 'no_key', f'the Mind sees a configured household: {res}')
     st = email_ingest.wait_status(CLAUDE_ONLY)
-    check('used' in st, f'intake status computes on the Claude account: {st}')
+    check('used_today' in st, f'intake status computes on the Claude account: {st}')
 
 
 def scenario_auto_name_stores_a_plain_title():
@@ -1226,7 +1226,7 @@ def scenario_switching_back_to_gemini_without_a_key_is_honest():
     storage.get_settings = lambda: {'llm_provider': 'gemini', 'llm_anthropic_api_key': 'A'}
     from services import email_ingest
     st = email_ingest.wait_status({'llm_provider': 'gemini', 'llm_anthropic_api_key': 'A'})
-    check(st.get('used', 0) == 0, 'no key = nothing counted, no crash')
+    check(st.get('used_today', 0) == 0, 'no key = nothing counted, no crash')
     check(not model_pools.has_credentials({'llm_provider': 'gemini', 'llm_anthropic_api_key': 'A'}), 'has_credentials says no')
 
 
@@ -1366,7 +1366,7 @@ def scenario_research_dispatches_on_the_provider():
     check(res['status'] == 'error' and "can't search" in res['message'], res)
 ```
 
-Add the three calls to `__main__`; `_reset` must also stub the two new functions (`web._anthropic_grounded = web._openai_grounded = lambda q, key, model=None: {'error': 'not stubbed'}`) so existing scenarios stay isolated.
+Add the three calls to `__main__`. The two parse scenarios call the real functions through a module-level `_REAL_GROUNDED = {'anthropic': getattr(web, '_anthropic_grounded', None), ...}` captured at import, because `_reset` must also stub the two new functions (`web._anthropic_grounded = web._openai_grounded = lambda q, key, model=None: {'error': 'not stubbed'}`) so existing scenarios stay isolated.
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -1422,7 +1422,7 @@ def _anthropic_grounded(question: str, api_key: str, model: str = None) -> dict:
 
 `_openai_grounded` is the same loop over `[split_model(m)[1] for m in models_for('heavy') if provider openai]` with payload `{'model': m, 'instructions': ..., 'input': f"QUESTION: {question}", 'tools': [{'type': 'web_search', 'search_context_size': 'low'}], 'include': ['web_search_call.action.sources'], 'reasoning': {'effort': 'low'}}` to `_llm.OPENAI_URL` with the bearer header; answer = the `message` item's `output_text` texts; sources = each `url_citation` annotation first, then every `web_search_call.action.sources[].url` (title = url) not already seen.
 
-In `research`, the `via == 'model'` branch:
+In `research`, the Ollama refusal moves ABOVE the key check (an Ollama household has no key, and the keyless scenario expects the "can't search" message, not `no_key`); then the `via == 'model'` branch:
 
 ```python
     if via == 'model':
@@ -1475,9 +1475,9 @@ def scenario_coordinate_free_typing_meets_the_release_gate():
     label is the field, and a guess is a release question (spec §7 change 1)."""
     _reset()
     storage.get_settings = lambda: {'missions_submit_enabled': True, 'llm_gemini_paid_api_key': 'paid'}   # empty card
-    zx, zy = _xy(f'{URL}/form', 'input[name=zip]')
+    zx, zy = _xy(f'{URL}/tiles', 'input[name=zip]')   # an OPTIONAL zip box: no required-field pause on arrival
     browse._model_step = _script([_click((zx, zy))], [{'name': 'type', 'args': {'text': '35203'}}], 'DONE.')
-    r = browse.run('fill the form', SITE, {}, {}, start_url=f'{URL}/form', out_dir=OUT)
+    r = browse.run('fill the form', SITE, {}, {}, start_url=f'{URL}/tiles', out_dir=OUT)
     check(r['outcome'] == 'needs_release' and 'zip' in (r.get('wanted_fields') or []), r)
     from browse_pages import H
     check(not any('35203' in str(p) for p in H.posts), 'nothing was typed')
@@ -1501,12 +1501,13 @@ def scenario_each_result_carries_its_own_screenshot_and_url():
     other = f'{URL}/other'
     fake, seen = _recording([{'name': 'navigate', 'args': {'url': other}}, {'name': 'go_back', 'args': {}}], 'DONE.')
     browse._model_step = fake
-    browse.run('go there and back', SITE, {}, {}, start_url=URL, out_dir=OUT)
+    own = tempfile.mkdtemp(prefix='browse_shots_')   # its own folder: the file count below must not see earlier scenarios' shots
+    browse.run('go there and back', SITE, {}, {}, start_url=URL, out_dir=own)
     fr = [c['function_responses'] for c in seen if isinstance(c, dict) and 'function_responses' in c][0]
     check(fr[0][1]['url'].rstrip('/') == other and fr[1][1]['url'].rstrip('/') == URL, f'each url is the page right after that action: {[x[1] for x in fr]}')
     check(fr[0][2] != fr[1][2], 'two screens, two different screenshots')
     import glob
-    check(len(glob.glob(os.path.join(OUT, 'turn_01_*.png'))) == 2, 'one file per action, none overwritten')
+    check(len(glob.glob(os.path.join(own, 'turn_01_*.png'))) == 2, 'one file per action, none overwritten')
 
 
 def scenario_a_refusal_reaches_the_next_turn():
@@ -1516,7 +1517,8 @@ def scenario_a_refusal_reaches_the_next_turn():
     browse._model_step = fake
     browse.run('click', SITE, {}, {}, start_url=URL, out_dir=OUT)
     errs = _errors(seen)
-    check(any('same' in e or 'third' in e or 'loop' in e for e in errs), f'the repeated-action refusal is in the responses the model saw: {errs}')
+    check(any('already did exactly that' in e for e in errs), f'the repeated-action refusal is in the responses the model saw: {errs}')
+    # (that scenario holds today through the shared `results` list; it pins that the per-action rewrite keeps it)
 ```
 
 - [ ] **Step 2: Run to verify it fails**
