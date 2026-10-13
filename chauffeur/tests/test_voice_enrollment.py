@@ -144,16 +144,19 @@ class CoreTests(unittest.TestCase):
 
     # --- finishing, provenance, checks -------------------------------------
 
-    def test_a_satellite_enrollment_is_checked_on_its_own_key(self):
+    def test_a_voice_set_up_anywhere_is_usable_everywhere(self):
+        """Device evidence 2026-10-13: a phone-made voice passed the kitchen
+        check twice, so one setup works on every speaker; a speaker that
+        proves otherwise is the exception, recorded per speaker."""
         fp.begin(self.ctx(), 'jeff', 'jeff', anchor=vector(0))
         out = self.run_five([vector(0)] * 5)
         self.assertEqual(out['status'], 'done')
-        self.assertIn('saved here', out['message'].lower())
+        self.assertIn('saved', out['message'].lower())
         row = fp.profiles()[0]
         self.assertEqual(row['provenance'], 'satellite')
         self.assertEqual(row['device_id'], 'device')
-        self.assertTrue(fp.checked_on(row, KEY))
-        self.assertFalse(fp.checked_on(row, ('ha', 'assist_satellite.den')))
+        self.assertTrue(fp.usable_on(row, KEY))
+        self.assertTrue(fp.usable_on(row, ('ha', 'assist_satellite.den')))
 
     def test_finishing_does_not_turn_recognition_on(self):
         fp.begin(self.ctx(), 'jeff', 'jeff', anchor=vector(0))
@@ -166,17 +169,19 @@ class CoreTests(unittest.TestCase):
                    'consent_actor': 'jeff', 'created_at': time.time(), 'checks': 2, 'calibrated': True}])
         row = fp.profiles()[0]
         self.assertEqual(row.get('provenance', 'satellite'), 'satellite')
-        self.assertTrue(fp.checked_on(row, KEY))
+        self.assertTrue(fp.usable_on(row, KEY))
+        self.assertTrue(fp.usable_on(row, ('ha', 'assist_satellite.den')))
 
-    def test_a_phone_template_is_unchecked_until_checked(self):
+    def test_a_phone_template_is_usable_everywhere_and_a_check_records_it(self):
         fp.begin(self.ctx(), 'jeff', 'jeff', door='phone', anchor=None)
-        self.run_five([vector(0)] * 5, key=PHONE)
+        out = self.run_five([vector(0)] * 5, key=PHONE)
+        self.assertIn('every speaker', out['message'].lower())
         row = fp.profiles()[0]
         self.assertEqual(row['provenance'], 'phone')
-        self.assertFalse(fp.checked_on(row, KEY))
+        self.assertTrue(fp.usable_on(row, KEY), 'a phone voice was held back from a speaker nobody has disputed')
         out = fp.check(KEY, 'jeff', {'vector': vector(0, lean=1, weight=0.95), 'seconds': 8}, anchor=vector(0, lean=1, weight=0.95))
         self.assertEqual(out['status'], 'checked', out)
-        self.assertTrue(fp.checked_on(fp.profiles()[0], KEY))
+        self.assertEqual(fp.profiles()[0]['checks'][f'{KEY[0]}:{KEY[1]}'], 'checked')
 
     def test_a_check_that_misses_marks_does_not_transfer(self):
         fp.begin(self.ctx(), 'jeff', 'jeff', door='phone', anchor=None)
@@ -184,14 +189,15 @@ class CoreTests(unittest.TestCase):
         out = fp.check(KEY, 'jeff', {'vector': vector(5), 'seconds': 8}, anchor=vector(5))
         self.assertEqual(out['status'], 'does_not_transfer')
         self.assertEqual(fp.profiles()[0]['checks'][f'{KEY[0]}:{KEY[1]}'], 'does_not_transfer')
-        self.assertFalse(fp.checked_on(fp.profiles()[0], KEY))
+        self.assertFalse(fp.usable_on(fp.profiles()[0], KEY), 'a speaker that disagreed still uses the voice')
+        self.assertTrue(fp.usable_on(fp.profiles()[0], ('ha', 'assist_satellite.den')), "one speaker's miss spread to another")
 
     def test_a_check_answer_must_match_its_own_credential(self):
         fp.begin(self.ctx(), 'jeff', 'jeff', door='phone', anchor=None)
         self.run_five([vector(0)] * 5, key=PHONE)
         out = fp.check(KEY, 'jeff', {'vector': vector(0), 'seconds': 8}, anchor=vector(6))
         self.assertEqual(out['status'], 'retry')
-        self.assertFalse(fp.checked_on(fp.profiles()[0], KEY))
+        self.assertEqual(fp.profiles()[0]['checks'], {}, 'a refused check wrote a state')
 
     # --- busy, cancel, archival --------------------------------------------
 
@@ -280,15 +286,19 @@ class ConsentAndSwitchTests(CoreTests):
         self.assertEqual(sorted(p['id'] for p in voice.parents_named('')), ['jeff', 'pat'])
         self.assertEqual(voice.parents_named('lily'), [])
 
-    def test_recognition_switch_requires_a_checked_template(self):
+    def test_the_household_switch_needs_a_usable_voice_and_covers_every_speaker(self):
+        den = {'ha_instance_id': 'ha', 'satellite_id': 'assist_satellite.den', 'device_id': 'device2', 'enabled': True}
+        voice.configure(True, [self.satellite, den])
         with self.assertRaises(ValueError):
-            voice.set_recognition('ha', KEY[1], True)
+            voice.set_recognition_everywhere(True)
         fp.begin(self.ctx(), 'jeff', 'jeff', anchor=vector(0))
         self.run_five([vector(0)] * 5)
-        row = voice.set_recognition('ha', KEY[1], True)
-        self.assertTrue(row['recognition_enabled'])
+        rows = voice.set_recognition_everywhere(True)
+        self.assertEqual([r['recognition_enabled'] for r in rows], [True, True])
+        self.assertTrue(all(r['recognition_enabled'] for r in voice.configuration()['satellites']))
+        self.assertFalse(voice.set_recognition('ha', 'assist_satellite.den', False)['recognition_enabled'], 'one speaker can still be switched off by hand')
         self.assertTrue(next(r for r in voice.configuration()['satellites'] if r['satellite_id'] == KEY[1])['recognition_enabled'])
-        self.assertFalse(voice.set_recognition('ha', KEY[1], False)['recognition_enabled'])
+        self.assertEqual([r['recognition_enabled'] for r in voice.set_recognition_everywhere(False)], [False, False])
 
 
 class ConfigWordsTests(unittest.TestCase):

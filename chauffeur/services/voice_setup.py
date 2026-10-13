@@ -64,17 +64,20 @@ def _locked_out(message):
 def _activation_question(d):
     member = storage.get_member(d['member_id']) or {}
     who = 'you' if d.get('parent_id') == d['member_id'] else member.get('name', 'them')
-    return f'Turn on voice recognition for {who} here? Say yes.'
+    return f'Turn on voice recognition for {who}? Say yes.'
 
 
 def _finish_or_activate(key, d, lead):
     """After a save or a successful check: a parent present may switch it on
     (spec, Activation). Nobody else can, and the dialog says so."""
+    if identity.recognition_on_everywhere():
+        _dialogs.pop(key, None)
+        return _reply(f'{lead} Recognition is already on.')
     if d.get('parent_id'):
         d['phase'] = 'activate'
         return _reply(f'{lead} {_activation_question(d)}', True)
     _dialogs.pop(key, None)
-    return _reply(f'{lead} A parent can turn on recognition for you here.')
+    return _reply(f'{lead} A parent can turn on recognition for you.')
 
 
 def _begin(key, ctx, d, anchor, exclude):
@@ -97,8 +100,8 @@ def _next_question(key, conversation_id, lead):
 def _apply_switch(key, on):
     _dialogs.pop(key, None)
     try:
-        identity.set_recognition(key[0], key[1], on)
-        return _reply('Voice recognition is on here.' if on else 'Voice recognition is off here.')
+        identity.set_recognition_everywhere(on)
+        return _reply('Voice recognition is on.' if on else 'Voice recognition is off.')
     except ValueError as error:
         return _reply(str(error))
 
@@ -131,9 +134,12 @@ def _verify_turn(ctx, text, want_parent):
     """One credential turn through the ordinary intercept: the name when the
     room is unnamed, then the PIN. Returns (refreshed_context, reply) where a
     non-None reply means keep talking."""
+    if not ctx.member_id and re.search(r"(?i)\bpin\b", text or '') and not _members_named(text):
+        return _refresh(ctx), _reply('Your name first, please. Then the PIN.', True)
     out = identity.intercept(text, ctx)
-    if out is None and not ctx.member_id:
-        # Not a PIN and not a lead-in name: resolve the name ourselves.
+    if out is None:
+        # Not a PIN and not a lead-in name: resolve the name ourselves, even
+        # when the room already carries a name (a person re-stating theirs).
         named = _members_named(text)
         if len(named) == 1:
             out = identity.intercept(f"it's {named[0]['name']}", ctx)
@@ -146,7 +152,7 @@ def _verify_turn(ctx, text, want_parent):
     if refreshed.level == 'verified' and member and (not want_parent or member.get('role') == 'parent'):
         return refreshed, None
     if out is None:
-        return refreshed, _reply('Tell me your name, then your PIN. Or say cancel voice setup.', True)
+        return refreshed, _reply('Who is this? Say your name. Or say cancel voice setup.', True)
     if _locked_out(out.get('message')):
         return refreshed, _reply(out['message'])
     if refreshed.level == 'verified' and want_parent:
@@ -164,7 +170,7 @@ def _switch(key, ctx, on, name):
     if ctx.level == 'verified' and member and member.get('role') == 'parent':
         return _apply_switch(key, on)
     _dialogs[key] = {'phase': 'switch_pin', 'on': on, 'name': name, 'expires_at': time.time() + EXPIRY}
-    return _reply("A parent's PIN, please. " + ('Say your PIN.' if ctx.member_id else 'Tell me your name, then your PIN.'), True)
+    return _reply("A parent's PIN, please. " + ('Say your PIN.' if ctx.member_id else 'Who is this? Say your name.'), True)
 
 
 def intercept(text, ctx, evidence, conversation_id=None):
@@ -201,7 +207,7 @@ def intercept(text, ctx, evidence, conversation_id=None):
                 return _reply('Who is this for?', True)
             if low == 'check my voice':
                 _dialogs[key] = {'phase': 'check_pin', 'expires_at': time.time() + EXPIRY}
-                return _reply('Say your PIN.' if ctx.member_id else 'Tell me your name, then your PIN.', True)
+                return _reply('Say your PIN.' if ctx.member_id else 'Who is this? Say your name.', True)
             m = re.fullmatch(r'turn (on|off) voice recognition(?: for (.+?))?(?: here)?', low)
             if m:
                 return _switch(key, ctx, m.group(1) == 'on', m.group(2) or '')
@@ -299,8 +305,8 @@ def intercept(text, ctx, evidence, conversation_id=None):
             _dialogs.pop(key, None)
             if kind == 'yes':
                 try:
-                    identity.set_recognition(key[0], key[1], True)
-                    return _reply('Voice recognition is on here.')
+                    identity.set_recognition_everywhere(True)
+                    return _reply('Voice recognition is on.')
                 except ValueError as error:
                     return _reply(str(error))
             return _reply('Left off. A parent can turn it on later.')

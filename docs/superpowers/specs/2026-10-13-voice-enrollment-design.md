@@ -134,3 +134,15 @@ Deletion: Delete my voice removes every template for that member and cancels pen
 Order: the shared core (questions, admission rule, consent verifier, provenance and check fields) with its tests; the satellite flow with the continuation test; the check and activation; the phone flow; the Config and PWA surfaces. Each ships behind nothing: the current manual flow keeps working throughout.
 
 Under the standing coordination rule: Claude writes this spec and the tests; Codex adversarial-reviews the spec before the plan (done once; the revised spec goes back for a second pass); Codex builds the enrollment core, the admission rule and the consent verifier against the tests; Claude builds the satellite dialog, the check and activation dialog, the phone flow and the surfaces, reviews Codex's diff, runs the gate, documents, bumps and commits.
+
+## Revision 2026-10-13, evening: one setup works everywhere (user decision on device evidence)
+
+A phone-made voice passed "check my voice" on the kitchen satellite twice on the real device, so the per-speaker caution has done its job and is retired:
+
+- A voice set up anywhere, phone or satellite, names its person on every speaker (`voice_fingerprint.usable_on`). The per-speaker record now only marks a speaker where a check proved the voice does not transfer; that speaker gets "set up your voice here" once. A template whose two checks failed, or that a similar new voice invalidated, is never used for naming anywhere (`calibrated`).
+- "Check my voice" is optional: something to say on a speaker that gets you wrong, not a setup step.
+- Activation is one household switch, still a parent's act: `set_recognition_everywhere`. The spoken "yes" after an enrollment or a check turns recognition on for every enabled speaker; once on, later setups just save. Config keeps the per-speaker checkboxes as the hand path for switching one speaker off by itself.
+- This amends the fingerprint spec's per-satellite activation rule for this household, on measured evidence.
+
+Also from the first device runs: a setup dialog's PIN anchor and check answer get the 3 s embedding wait; bare "cancel" cancels; names resolve by first or full name with or without a lead-in, and a PIN said before the name is answered with "your name first"; informal yes and no are understood everywhere in the dialog, and a non-answer is asked once more.
+

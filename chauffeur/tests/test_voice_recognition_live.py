@@ -88,7 +88,7 @@ def main():
                         page.screenshot(path=os.path.join(shots, name + '.png'))
             # The fifth answer ends with the consenting parent's activation question (spec, Activation).
             reply = speak('yes')
-            check('on here' in reply, 'A parent turns recognition on by voice: ' + reply)
+            check('recognition is on' in reply.lower(), 'A parent turns recognition on by voice: ' + reply)
             check(not section.get_by_label('Allow PIN-verified release and booking approvals').is_checked(), 'Recognition does not enable approvals.')
             section.get_by_label('Recognize enrolled voices here and check for speaker changes').check()
             page.wait_for_function("() => Alpine.$data(document.body).voiceState.satellites[0].recognition_enabled")

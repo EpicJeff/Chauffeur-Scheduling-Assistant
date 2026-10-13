@@ -61,7 +61,7 @@ class SatelliteDialogTests(unittest.TestCase):
             speech, cont = self.say('well today I did some things and then some more things')
             self.assertIn(q, speech); self.assertTrue(cont)
         speech, cont = self.say('and finally I am looking forward to the weekend')
-        self.assertIn('saved here', speech.lower()); self.assertIn('Turn on voice recognition', speech); self.assertTrue(cont)
+        self.assertIn('saved', speech.lower()); self.assertIn('Turn on voice recognition', speech); self.assertTrue(cont)
         speech, cont = self.say('yes')
         self.assertIn('on', speech.lower()); self.assertFalse(cont)
         self.assertTrue(next(r for r in voice.configuration()['satellites'] if r['satellite_id'] == KEY[1])['recognition_enabled'])
@@ -119,7 +119,7 @@ class SatelliteDialogTests(unittest.TestCase):
         self.assertIn(fp.CHECK_QUESTION, speech); self.assertTrue(cont)
         speech, cont = self.say('this morning I made coffee and read the news for a while')
         self.assertIn('works here', speech.lower()); self.assertIn('Turn on voice recognition', speech)
-        self.assertTrue(fp.checked_on(fp.profiles()[0], KEY))
+        self.assertEqual(fp.profiles()[0]['checks'][f'{KEY[0]}:{KEY[1]}'], 'checked')
 
     def test_check_my_voice_that_misses_offers_setup_here_keeping_the_answer(self):
         fp._save([{'member_id': 'jeff', 'key': ['phone', 'jeff'], 'vector': vector(9), 'revision': fp.REVISION,
@@ -144,7 +144,7 @@ class SatelliteDialogTests(unittest.TestCase):
             speech, cont = self.say('today I did a few things around the house and then rested')
             self.assertIn(q, speech)
         speech, cont = self.say('I am looking forward to the weekend quite a lot')
-        self.assertIn('saved here', speech.lower())
+        self.assertIn('saved', speech.lower())
         self.assertIn('Turn on voice recognition', speech, 'the consenting parent was not offered the switch')
 
     def test_an_open_dialog_admits_satellite_audio_before_any_enrollment_exists(self):
@@ -195,8 +195,25 @@ class SatelliteDialogTests(unittest.TestCase):
         speech, cont = self.say('hmm what')
         self.assertIn('Yes or no', speech); self.assertTrue(cont, 'a non-answer was taken as no')
         speech, cont = self.say('yeah sure')
-        self.assertIn('on here', speech.lower()); self.assertFalse(cont)
+        self.assertIn('recognition is on', speech.lower()); self.assertFalse(cont)
         self.assertTrue(next(r for r in voice.configuration()['satellites'] if r['satellite_id'] == KEY[1])['recognition_enabled'])
+
+    def test_recognition_already_on_means_no_activation_question(self):
+        """One household switch: once on, a later setup or check just saves."""
+        self.say('set up my voice'); self.say("it's Jeff"); self.say('my PIN is one two three four')
+        for _ in range(5):
+            speech, cont = self.say('well today I did some things and then some more things')
+        self.say('yes')
+        fp._save([r for r in fp._load()] + [{'member_id': 'jeff', 'key': ['phone', 'jeff'], 'vector': vector(0), 'revision': fp.REVISION,
+                   'consent_actor': 'jeff', 'created_at': time.time(), 'checks': {}, 'calibrated': False,
+                   'provenance': 'phone', 'device_id': 'phone'}])
+        speech, _ = self.say('check my voice')
+        self.assertIn('Who is this', speech)
+        speech, _ = self.say('my PIN is one two three four')      # PIN before the name, as happened on the device
+        self.assertIn('name first', speech.lower())
+        self.say('Jeff'); self.say('one two three four')
+        speech, cont = self.say('this morning I made coffee and read the news for a while')
+        self.assertIn('works here', speech.lower()); self.assertNotIn('Turn on', speech); self.assertFalse(cont)
 
     def test_bare_digits_after_the_name_are_the_pin(self):
         """Device, 2026-10-13: it took several tries to get past the name and

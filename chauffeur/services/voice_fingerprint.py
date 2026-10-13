@@ -438,7 +438,7 @@ def _finish(key, pending):
     checks = {_key_str(key): 'checked'} if pending['door'] == 'satellite' else {}
     rows.append({'member_id': member['id'], 'key': list(key) if pending['door'] == 'satellite' else ['phone', member['id']],
                  'vector': reference, 'revision': REVISION, 'consent_actor': pending['consent_actor'],
-                 'created_at': time.time(), 'checks': checks, 'calibrated': pending['door'] == 'satellite',
+                 'created_at': time.time(), 'checks': checks, 'calibrated': True,
                  'provenance': pending['door'], 'device_id': pending['device_id']})
     active = [r for r in rows if r.get('revision') == REVISION and identity._active(storage.get_member(r['member_id']))]
     for row in active:
@@ -450,17 +450,26 @@ def _finish(key, pending):
     _enrollments.pop(key, None)
     note = '' if pending['bound'] else ' Voice matching was unavailable during setup, so this relied on the samples matching each other.'
     if pending['door'] == 'phone':
-        return {'status': 'done', 'step': 5, 'message': 'Saved. Your speakers will each check it the first time: say "Hey Argyle, check my voice" in the room.' + note}
-    return {'status': 'done', 'step': 5, 'message': 'Your voice is saved here.' + note}
+        return {'status': 'done', 'step': 5, 'message': 'Saved. Every speaker will use it. If one ever gets you wrong, say "Hey Argyle, check my voice" there.' + note}
+    return {'status': 'done', 'step': 5, 'message': 'Your voice is saved, for every speaker.' + note}
+
+
+def usable_on(row, key):
+    """A voice set up anywhere names its person on every speaker, except a
+    speaker where a check proved it does not transfer (device evidence
+    2026-10-13: a phone-made voice passed the kitchen check twice). A legacy
+    row has no check map and is usable everywhere."""
+    if not row.get('calibrated', True):
+        return False   # its two checks failed or a similar voice arrived: never used for naming
+    checks = row.get('checks')
+    if isinstance(checks, dict):
+        return checks.get(_key_str(key)) != 'does_not_transfer'
+    return True
 
 
 def checked_on(row, key):
-    """A template names people on a satellite only once checked there. A
-    legacy row (no provenance) was made on its own key and counts as checked."""
-    checks = row.get('checks')
-    if isinstance(checks, dict):
-        return checks.get(_key_str(key)) == 'checked'
-    return row.get('provenance', 'satellite') == 'satellite' and row.get('key') == list(key) and bool(row.get('calibrated'))
+    """Compatibility name: whether the voice may be used on that speaker."""
+    return usable_on(row, key)
 
 
 def check(key, member_id, evidence, anchor):
@@ -478,7 +487,7 @@ def check(key, member_id, evidence, anchor):
             return {'status': 'retry', 'message': 'There is no phone voice to check. Set up your voice on your phone first.'}
         row = mine[-1]
         rivals = [r for r in rows if r['member_id'] != member_id and r.get('revision') == REVISION
-                  and identity._active(storage.get_member(r['member_id'])) and checked_on(r, key)]
+                  and identity._active(storage.get_member(r['member_id'])) and usable_on(r, key)]
         competing = max((score(vector, r['vector']) for r in rivals), default=-1)
         own = score(vector, row['vector'])
         ok = own >= THRESHOLD and own - competing >= MARGIN
@@ -536,7 +545,7 @@ def apply(ctx, evidence):
         return ctx
     vector = evidence['vector'] if evidence else None
     with _lock:
-        rows = [r for r in profiles() if checked_on(r, (ctx.ha_instance_id, ctx.satellite_id))]
+        rows = [r for r in profiles() if usable_on(r, (ctx.ha_instance_id, ctx.satellite_id))]
     usable = bool(vector and evidence.get('seconds', 0) >= IDENTIFY_SECONDS)
     candidates = sorted(((score(vector, r['vector']), r['member_id']) for r in rows), reverse=True) if usable else []
     matched = candidates[0][1] if candidates and candidates[0][0] >= THRESHOLD \

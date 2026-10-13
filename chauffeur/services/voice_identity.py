@@ -54,9 +54,9 @@ def configure(enabled: bool, satellites: list, approvals_enabled: bool = False) 
         recognition = item.get('recognition_enabled') is True
         if recognition:
             from services import voice_fingerprint
-            if not any(voice_fingerprint.checked_on(p, (installation, satellite))
+            if not any(voice_fingerprint.usable_on(p, (installation, satellite))
                        for p in voice_fingerprint.profiles()):
-                raise ValueError('Enroll and check a voice before enabling recognition.')
+                raise ValueError('Set up a voice before enabling recognition.')
         rows.append({'ha_instance_id': installation, 'satellite_id': satellite,
                      'device_id': item.get('device_id') or None,
                      'label': str(item.get('label') or satellite.split('.')[-1].replace('_', ' ').title())[:100],
@@ -321,7 +321,8 @@ def verify_parent_consent(ctx, parent_id, text, language='en'):
 
 
 def set_recognition(installation, satellite, on):
-    """The per-satellite recognition switch, a parent's act (spec, Activation)."""
+    """One speaker's recognition switch, a parent's act: the hand path in
+    Config for turning a single speaker off (or on) by itself."""
     config = configuration()
     rows = list(config.get('satellites', []))
     row = next((r for r in rows if r['ha_instance_id'] == installation and r['satellite_id'] == satellite), None)
@@ -329,12 +330,35 @@ def set_recognition(installation, satellite, on):
         raise ValueError('That satellite is not set up for voice identity.')
     if on:
         from services import voice_fingerprint
-        if not any(voice_fingerprint.checked_on(p, (installation, satellite)) for p in voice_fingerprint.profiles()):
-            raise ValueError('Enroll and check a voice before enabling recognition.')
+        if not any(voice_fingerprint.usable_on(p, (installation, satellite)) for p in voice_fingerprint.profiles()):
+            raise ValueError('Set up a voice before enabling recognition.')
     row['recognition_enabled'] = bool(on)
     with _lock:
         storage.set_app_state('voice_identity_config', {**config, 'satellites': rows})
     return row
+
+
+def set_recognition_everywhere(on):
+    """The household switch, a parent's act once (the user's call on device
+    evidence, 2026-10-13: one setup, every speaker). Covers every enabled
+    satellite; a single speaker can still be switched off by hand."""
+    config = configuration()
+    rows = list(config.get('satellites', []))
+    if on:
+        from services import voice_fingerprint
+        if not voice_fingerprint.profiles():
+            raise ValueError('Set up a voice before enabling recognition.')
+    for row in rows:
+        if row.get('enabled'):
+            row['recognition_enabled'] = bool(on)
+    with _lock:
+        storage.set_app_state('voice_identity_config', {**config, 'satellites': rows})
+    return rows
+
+
+def recognition_on_everywhere():
+    rows = [r for r in configuration().get('satellites', []) if r.get('enabled')]
+    return bool(rows) and all(r.get('recognition_enabled') for r in rows)
 
 
 def intercept(text: str, ctx: VoiceContext, language='en') -> dict | None:
