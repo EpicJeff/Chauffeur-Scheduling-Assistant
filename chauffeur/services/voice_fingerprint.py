@@ -7,12 +7,10 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from difflib import SequenceMatcher
 import hashlib
 import json
 import math
 from pathlib import Path
-import re
 import threading
 import time
 import uuid
@@ -27,13 +25,19 @@ THRESHOLD, MARGIN, CONTINUITY = .70, .12, .65
 DIFFERENT = .40  # uncertain similarities are neutral, not speaker changes
 IDENTIFY_SECONDS = 1.2
 MAX_AUDIO = 1_000_000
-PROMPTS = (
-    'For my voice setup, our family has many things to do today and I want help keeping track of them.',
-    'For my voice setup, please tell me what is on the calendar and which errands I can handle this afternoon.',
-    'For my voice setup, I would like a reminder before I leave so I remember everything I need to bring.',
-    'For my voice check, tomorrow morning I will review our plans before everyone heads out for the day.',
-    'For my voice check, help me find a little time this evening to prepare for the rest of the week.',
+# Answers, not phrases: the speaker model is text-independent, and every
+# sample is bound to its run and admitted by a one-use token (spec, core).
+QUESTIONS = (
+    'Tell me about your day so far, for about ten seconds.',
+    'What is coming up for the family this week?',
+    'Describe the room you are in.',
+    'What would you like help with most mornings?',
+    'Tell me something you are looking forward to.',
 )
+CHECK_QUESTION = 'Tell me what you did this morning, for about ten seconds.'
+PROMPTS = QUESTIONS   # the Config page and old tests read this name
+MIN_SAMPLE_SECONDS = 4
+MAX_RETRIES = 3
 _lock = threading.RLock()
 _pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='voice-fingerprint')
 _slot = threading.BoundedSemaphore(1)
@@ -256,11 +260,11 @@ def consume(ctx, metadata, text=''):
             return None
         row = _observations.pop(oid)
         pending = _enrollments.get((ctx.ha_instance_id, ctx.satellite_id))
-        setup_phrase = pending and _matches_prompt(text, PROMPTS[pending['step']])
+        setup_phrase = bool(pending and pending.get('awaiting'))
     if 'future' in row:
         try:
             # Evidence is best effort; a timeout never clears the current identity.
-            # Explicit setup phrases may wait 3s for the longer enrollment checks.
+            # Answers to setup questions may wait 3s for the longer enrollment checks.
             vector, seconds = row['future'].result(timeout=3 if setup_phrase else .4)
         except Exception:
             return None
@@ -271,34 +275,211 @@ def consume(ctx, metadata, text=''):
     return row
 
 
-def _clean_phrase(text):
-    return ' '.join(re.findall(r'[a-z]+', text.lower()))
+def _key_str(key):
+    return f'{key[0]}:{key[1]}'
 
 
-def _matches_prompt(text, prompt):
-    actual, expected = _clean_phrase(text).split(), _clean_phrase(prompt).split()
-    return len(actual) >= 8 and .65 <= len(actual) / len(expected) <= 1.35 \
-        and SequenceMatcher(None, actual, expected, autojunk=False).ratio() >= .82
+def _busy(member_id):
+    return any(p['member_id'] == member_id for p in _enrollments.values())
 
 
-def begin(ctx, member_id, consent_actor):
-    if not ctx.paired or not identity._active(storage.get_member(member_id)):
+def begin(ctx, member_id, consent_actor, *, door='satellite', anchor=None, exclude=None):
+    """Open an enrollment. `anchor` is the enrollee's own credential fingerprint
+    (self-enrollment binds every sample to it); `exclude` is the consenting
+    parent's (a child's samples must not match it). Both live only here."""
+    member = storage.get_member(member_id)
+    if door == 'satellite' and (not ctx.paired or not identity._active(member)):
         raise ValueError('Choose an enabled satellite and active family member.')
+    if door == 'phone' and not identity._active(member):
+        raise ValueError('That family member is not active.')
     if not model_ready():
         raise ValueError('Prepare the voice model first.')
+    key = ('phone', member_id) if door == 'phone' else (ctx.ha_instance_id, ctx.satellite_id)
     with _lock:
         _prune()
+        if key in _enrollments:
+            raise ValueError('Voice setup is already in progress here.')
+        if _busy(member_id):
+            raise ValueError('That person is already setting up a voice.')
         if len(_enrollments) >= 16:
             raise ValueError('Too many pending enrollments.')
-        _enrollments[(ctx.ha_instance_id, ctx.satellite_id)] = {
-            'id': uuid.uuid4().hex, 'member_id': member_id, 'consent_actor': consent_actor,
-            'device_id': satellite(ctx).get('device_id'), 'service_revision': ctx.service_revision,
-            'samples': [], 'step': 0, 'expires_at': time.time() + 600}
-    identity.recover(ctx.ha_instance_id, ctx.satellite_id)
+        _enrollments[key] = {
+            'id': uuid.uuid4().hex, 'member_id': member_id, 'consent_actor': consent_actor, 'door': door,
+            'device_id': satellite(ctx).get('device_id') if door == 'satellite' else 'phone',
+            'service_revision': ctx.service_revision if door == 'satellite' else identity._revision(),
+            'samples': [], 'step': 0, 'retries': 0, 'awaiting': None, 'phase': 'questions',
+            'anchor': anchor, 'exclude': exclude, 'bound': anchor is not None or exclude is not None,
+            'reference': None, 'expires_at': time.time() + 600}
+    if door == 'satellite':
+        identity.recover(ctx.ha_instance_id, ctx.satellite_id)
     return status()
 
 
-def enrollment_turn(text, ctx, evidence):
+def ask(key):
+    """The current step's question with a fresh one-use token."""
+    with _lock:
+        _prune()
+        pending = _enrollments.get(key)
+        if not pending or pending['phase'] != 'questions':
+            raise ValueError('No voice setup is waiting for an answer here.')
+        token = uuid.uuid4().hex
+        pending['awaiting'] = {'step': pending['step'], 'token': token, 'conversation_id': None, 'asked_at': time.time()}
+        return {'enrollment_id': pending['id'], 'step': pending['step'] + 1,
+                'question': QUESTIONS[pending['step']], 'token': token}
+
+
+def expect_conversation(key, conversation_id):
+    """The satellite door records the question's conversation id once it is known."""
+    with _lock:
+        pending = _enrollments.get(key)
+        if pending and pending.get('awaiting') and conversation_id:
+            pending['awaiting']['conversation_id'] = conversation_id
+
+
+def cancel(key):
+    with _lock:
+        _enrollments.pop(key, None)
+    return {'status': 'ended', 'message': 'Voice setup cancelled.'}
+
+
+def _end(key, message):
+    _enrollments.pop(key, None)
+    return {'status': 'ended', 'message': message, 'step': 0}
+
+
+def answer(key, evidence, token=None, conversation_id=None):
+    """Admit one answer: the token must be the current one (one use), the
+    conversation id must match when both are known, the sample must be long
+    enough, and the speaker must be the credential's (or not the parent's)."""
+    with _lock:
+        _prune()
+        pending = _enrollments.get(key)
+        if not pending or pending['phase'] != 'questions':
+            return {'status': 'retry', 'message': 'No voice setup is waiting for an answer here.', 'step': 0}
+        awaiting = pending.get('awaiting')
+        step = pending['step']
+        if not awaiting or awaiting['token'] != token or awaiting['step'] != step \
+                or (conversation_id and awaiting['conversation_id'] and awaiting['conversation_id'] != conversation_id):
+            return {'status': 'retry', 'step': step + 1,
+                    'message': 'Voice setup is in progress. Answer the question, or say cancel voice setup.'}
+        pending['awaiting'] = None   # one use, spent whatever happens next
+        if not evidence or evidence.get('enrollment_id') not in (None, pending['id']) \
+                or evidence.get('seconds', 0) < MIN_SAMPLE_SECONDS or not evidence.get('vector'):
+            pending['retries'] += 1
+            if pending['retries'] >= MAX_RETRIES:
+                return _end(key, 'I could not get a clear sample three times. Voice setup stopped; try again somewhere quieter.')
+            return {'status': 'retry', 'step': step + 1, 'message': 'A little longer, please.'}
+        vector = evidence['vector']
+        if pending['anchor'] is not None and score(vector, pending['anchor']) < CONTINUITY:
+            return _end(key, 'That did not sound like the voice that said the PIN. Voice setup stopped.')
+        if pending['exclude'] is not None and score(vector, pending['exclude']) >= CONTINUITY:
+            return _end(key, 'That sounded like the parent who gave consent, not the person being set up. Voice setup stopped.')
+        samples = pending['samples']
+        if samples and any(score(vector, other) < CONTINUITY for other in samples):
+            return _end(key, 'The samples did not sound consistent. Voice setup stopped.')
+        pending['retries'] = 0
+        if step < 3:
+            samples.append(vector)
+        reference = normalized([sum(v[i] for v in samples) for i in range(256)])
+        pending['reference'] = reference
+        if step >= 3:
+            rivals = [r for r in profiles() if r['member_id'] != pending['member_id']]
+            competing = max((score(vector, r['vector']) for r in rivals), default=-1)
+            if score(vector, reference) < THRESHOLD or score(vector, reference) - competing < MARGIN:
+                return _end(key, 'I could not tell this voice apart reliably. Voice setup stopped; recognition stays off.')
+        pending['step'] += 1
+        if pending['step'] < len(QUESTIONS):
+            return {'status': 'accepted', 'step': pending['step'] + 1, 'message': 'Got it.'}
+        if pending['exclude'] is not None:
+            pending['phase'] = 'confirm'
+            name = (storage.get_member(pending['member_id']) or {}).get('name', 'them')
+            return {'status': 'confirm', 'step': 5, 'message': f'Was that {name}? Say yes.'}
+        return _finish(key, pending)
+
+
+def confirm(key, yes):
+    with _lock:
+        pending = _enrollments.get(key)
+        if not pending or pending['phase'] != 'confirm':
+            return {'status': 'retry', 'message': 'Nothing is waiting for a yes.', 'step': 0}
+        if not yes:
+            return _end(key, 'Not saved. Say set up my voice to start again.')
+        return _finish(key, pending)
+
+
+def _finish(key, pending):
+    member = storage.get_member(pending['member_id'])
+    if not identity._active(member):
+        return _end(key, 'That member is no longer active.')
+    reference = pending['reference']
+    rows = [r for r in _load() if not (r['member_id'] == member['id'] and r.get('provenance', 'satellite') == pending['door']
+                                      and (pending['door'] == 'phone' or r['key'] == list(key)))]
+    checks = {_key_str(key): 'checked'} if pending['door'] == 'satellite' else {}
+    rows.append({'member_id': member['id'], 'key': list(key) if pending['door'] == 'satellite' else ['phone', member['id']],
+                 'vector': reference, 'revision': REVISION, 'consent_actor': pending['consent_actor'],
+                 'created_at': time.time(), 'checks': checks, 'calibrated': pending['door'] == 'satellite',
+                 'provenance': pending['door'], 'device_id': pending['device_id']})
+    active = [r for r in rows if r.get('revision') == REVISION and identity._active(storage.get_member(r['member_id']))]
+    for row in active:
+        if any(r['member_id'] != row['member_id'] and score(r['vector'], row['vector']) >= THRESHOLD - MARGIN for r in active):
+            row['calibrated'] = False
+            if isinstance(row.get('checks'), dict):
+                row['checks'] = {k: 'does_not_transfer' if v == 'checked' else v for k, v in row['checks'].items()}
+    _save(rows)
+    _enrollments.pop(key, None)
+    note = '' if pending['bound'] else ' Voice matching was unavailable during setup, so this relied on the samples matching each other.'
+    if pending['door'] == 'phone':
+        return {'status': 'done', 'step': 5, 'message': 'Saved. Your speakers will each check it the first time: say "Hey Argyle, check my voice" in the room.' + note}
+    return {'status': 'done', 'step': 5, 'message': 'Your voice is saved here.' + note}
+
+
+def checked_on(row, key):
+    """A template names people on a satellite only once checked there. A
+    legacy row (no provenance) was made on its own key and counts as checked."""
+    checks = row.get('checks')
+    if isinstance(checks, dict):
+        return checks.get(_key_str(key)) == 'checked'
+    return row.get('provenance', 'satellite') == 'satellite' and row.get('key') == list(key) and bool(row.get('calibrated'))
+
+
+def check(key, member_id, evidence, anchor):
+    """One explicit spoken check of a phone template on a satellite: the answer
+    must be the credential's voice, then it is scored like a held-out check."""
+    if not evidence or evidence.get('seconds', 0) < MIN_SAMPLE_SECONDS or not evidence.get('vector'):
+        return {'status': 'retry', 'message': 'A little longer, please.'}
+    vector = evidence['vector']
+    if anchor is not None and score(vector, anchor) < CONTINUITY:
+        return {'status': 'retry', 'message': 'That did not sound like the voice that said the PIN. Try once more.'}
+    with _lock:
+        rows = _load()
+        mine = [r for r in rows if r['member_id'] == member_id and r.get('provenance') == 'phone' and r.get('revision') == REVISION]
+        if not mine:
+            return {'status': 'retry', 'message': 'There is no phone voice to check. Set up your voice on your phone first.'}
+        row = mine[-1]
+        rivals = [r for r in rows if r['member_id'] != member_id and r.get('revision') == REVISION
+                  and identity._active(storage.get_member(r['member_id'])) and checked_on(r, key)]
+        competing = max((score(vector, r['vector']) for r in rivals), default=-1)
+        own = score(vector, row['vector'])
+        ok = own >= THRESHOLD and own - competing >= MARGIN
+        row.setdefault('checks', {})[_key_str(key)] = 'checked' if ok else 'does_not_transfer'
+        _save(rows)
+    if ok:
+        return {'status': 'checked', 'message': 'Your phone voice works here.'}
+    return {'status': 'does_not_transfer', 'message': 'Your phone voice does not match this microphone.'}
+
+
+def on_member_status(member_id):
+    """Archiving or disabling stops matching (profiles() already filters) and
+    cancels a pending enrollment; it never deletes a template."""
+    with _lock:
+        for key in list(_enrollments):
+            if _enrollments[key]['member_id'] == member_id and not identity._active(storage.get_member(member_id)):
+                _enrollments.pop(key, None)
+
+
+def enrollment_turn(text, ctx, evidence, conversation_id=None):
+    """The satellite door's per-turn gate: during an enrollment every utterance
+    is a cancellation, an answer, or guidance; it never reaches the model."""
     key = (ctx.ha_instance_id, ctx.satellite_id)
     with _lock:
         _prune()
@@ -309,48 +490,20 @@ def enrollment_turn(text, ctx, evidence):
                 or pending['device_id'] != satellite(ctx).get('device_id'):
             _enrollments.pop(key, None)
             return None
-        if text.strip().lower().rstrip('.!?') == 'cancel voice setup':
-            _enrollments.pop(key, None)
-            return {'message': 'Voice setup cancelled.'}
-        step = pending['step']
-        if not _matches_prompt(text, PROMPTS[step]):
-            return {'message': 'Voice setup is in progress. Repeat the phrase shown on your phone, or say cancel voice setup.'}
-        if not evidence or evidence.get('enrollment_id') != pending['id'] or evidence['seconds'] < 4:
-            return {'message': 'That sample was not usable. Speak the setup phrase clearly again, or check voice status on your phone.'}
-        vector = evidence['vector']
-        samples = pending['samples']
-        if samples and any(score(vector, other) < CONTINUITY for other in samples):
-            _enrollments.pop(key, None)
-            return {'message': 'The samples did not sound consistent. Start voice setup again on your phone.'}
-        if step < 3:
-            samples.append(vector)
-        reference = normalized([sum(v[i] for v in samples) for i in range(256)])
-        if step >= 3:
-            rivals = [r for r in profiles() if r['member_id'] != pending['member_id']]
-            competing = max((score(vector, r['vector']) for r in rivals), default=-1)
-            if score(vector, reference) < THRESHOLD or score(vector, reference) - competing < MARGIN:
-                _enrollments.pop(key, None)
-                return {'message': 'Voice recognition could not distinguish this check reliably. Leave recognition off and retry setup.'}
-        pending['step'] += 1
-        if pending['step'] < len(PROMPTS):
-            return {'message': 'Sample accepted. Read the next phrase shown on your phone.'}
-        member = storage.get_member(pending['member_id'])
-        if not identity._active(member):
-            _enrollments.pop(key, None)
-            return {'message': 'That member is no longer active.'}
-        rows = [r for r in _load() if not (r['member_id'] == member['id'] and r['key'] == list(key))]
-        rows.append({'member_id': member['id'], 'key': list(key), 'vector': reference,
-                     'revision': REVISION, 'consent_actor': pending['consent_actor'], 'created_at': time.time(),
-                     'checks': 2, 'calibrated': True})
-        # A new rival can invalidate an older calibration; never silently retain it.
-        active = [r for r in rows if r.get('revision') == REVISION
-                  and identity._active(storage.get_member(r['member_id']))]
-        for row in active:
-            if any(r['member_id'] != row['member_id'] and score(r['vector'], row['vector']) >= THRESHOLD - MARGIN for r in active):
-                row['calibrated'] = False
-        _save(rows)
-        _enrollments.pop(key, None)
-        return {'message': 'Voice samples saved. Check recognition with your family, then enable it for this satellite on your phone.'}
+        awaiting = pending.get('awaiting')
+        phase = pending['phase']
+    low = text.strip().lower().rstrip('.!?')
+    if low == 'cancel voice setup':
+        return cancel(key)
+    if phase == 'confirm':
+        if low in ('yes', 'yes it was', 'yep', 'correct'):
+            return confirm(key, True)
+        if low in ('no', 'nope', 'no it was not', "no it wasn't"):
+            return confirm(key, False)
+        return {'message': 'Say yes or no.', 'status': 'retry'}
+    if awaiting:
+        return answer(key, evidence, token=awaiting['token'], conversation_id=conversation_id)
+    return {'message': 'Voice setup is in progress. Answer the question, or say cancel voice setup.', 'status': 'retry'}
 
 
 def apply(ctx, evidence):
@@ -359,7 +512,7 @@ def apply(ctx, evidence):
         return ctx
     vector = evidence['vector'] if evidence else None
     with _lock:
-        rows = [r for r in profiles() if r['key'] == [ctx.ha_instance_id, ctx.satellite_id] and r['calibrated']]
+        rows = [r for r in profiles() if checked_on(r, (ctx.ha_instance_id, ctx.satellite_id))]
     usable = bool(vector and evidence.get('seconds', 0) >= IDENTIFY_SECONDS)
     candidates = sorted(((score(vector, r['vector']), r['member_id']) for r in rows), reverse=True) if usable else []
     matched = candidates[0][1] if candidates and candidates[0][0] >= THRESHOLD \
@@ -408,7 +561,10 @@ def status():
         _prune()
         rows = profiles()
         return {'model_ready': model_ready(),
-                'profiles': [{k: r[k] for k in ('member_id', 'key', 'created_at', 'checks', 'calibrated')} for r in rows],
+                'profiles': [{**{k: r[k] for k in ('member_id', 'key', 'created_at', 'calibrated')},
+                              'provenance': r.get('provenance', 'satellite'),
+                              'checks': r.get('checks') if isinstance(r.get('checks'), dict) else {}} for r in rows],
                 'enrollments': [{'key': list(key), 'enrollment_id': p['id'], 'member_id': p['member_id'], 'step': p['step'] + 1,
-                                 'prompt': PROMPTS[p['step']], 'expires_at': p['expires_at']} for key, p in _enrollments.items()],
+                                 'question': QUESTIONS[p['step']] if p['step'] < len(QUESTIONS) else '',
+                                 'door': p['door'], 'phase': p['phase'], 'expires_at': p['expires_at']} for key, p in _enrollments.items()],
                 'satellites': [{'key': list(key), **state} for key, state in _last.items()]}

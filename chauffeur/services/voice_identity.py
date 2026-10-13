@@ -54,7 +54,8 @@ def configure(enabled: bool, satellites: list, approvals_enabled: bool = False) 
         recognition = item.get('recognition_enabled') is True
         if recognition:
             from services import voice_fingerprint
-            if not any(p['key'] == [installation, satellite] and p['calibrated'] for p in voice_fingerprint.profiles()):
+            if not any(voice_fingerprint.checked_on(p, (installation, satellite))
+                       for p in voice_fingerprint.profiles()):
                 raise ValueError('Enroll and check a voice before enabling recognition.')
         rows.append({'ha_instance_id': installation, 'satellite_id': satellite,
                      'device_id': item.get('device_id') or None,
@@ -279,6 +280,61 @@ def _audit(installation, satellite, member_id, outcome, by_member=None):
     rows.append({'at': time.time(), 'ha_instance_id': installation, 'satellite_id': satellite,
                  'member_id': member_id, 'outcome': outcome, 'by_member': by_member})
     storage.set_app_state('voice_auth_history', rows[-100:])
+
+
+def parents_named(name):
+    want = ' '.join((name or '').split()).casefold()
+    parents = [m for m in storage.get_all_members() if _active(m) and m.get('role') == 'parent']
+    if not want:
+        return parents
+    return [m for m in parents if want in voice_names(m)]
+
+
+def verify_parent_consent(ctx, parent_id, text, language='en'):
+    """A parent's PIN spoken (or typed) to consent to a child's enrollment.
+    Verifies THAT parent's record with that parent's limits; creates no
+    session, anchor or readback. The credential turn is consumed here."""
+    parent = storage.get_member(parent_id)
+    if not _active(parent) or parent.get('role') != 'parent':
+        return {'ok': False, 'message': 'Only a parent can give consent for voice setup.'}
+    if not parent.get('pin_hash'):
+        return {'ok': False, 'message': f"{parent.get('name')} has no PIN yet. Set one on your phone first."}
+    if _locked(ctx, parent['id']) or storage.rate_locked(f"member:{parent['id']}"):
+        return {'ok': False, 'message': 'Voice verification is locked for that parent. Clear the voice lock on your phone.'}
+    request_key = f'voice:format:{ctx.ha_instance_id}:{ctx.satellite_id}'
+    if storage.rate_locked(request_key):
+        return {'ok': False, 'message': 'Too many attempts. Try again in a moment.'}
+    storage.rate_record(request_key, False)
+    match = re.search(r'(?i)\b(?:my\s+)?pin\s+is\b\s*(.*)$', text or '')
+    pin = normalize_pin(match.group(1) if match else (text or '')) if language.startswith('en') else None
+    if pin is None or not 4 <= len(pin) <= 8 or parent.get('pin_length') and len(pin) != parent['pin_length']:
+        return {'ok': False, 'message': 'Say the PIN one digit at a time.'}
+    ok = storage.verify_member_pin(parent['id'], pin)
+    _record(ctx, parent['id'], ok)
+    storage.rate_record(f"member:{parent['id']}", ok)
+    if ok:
+        storage.rate_clear(request_key)
+        _audit(ctx.ha_instance_id, ctx.satellite_id, parent['id'], 'consent')
+        return {'ok': True, 'message': 'Thanks.'}
+    return {'ok': False, 'message': 'That PIN did not match.' if not _locked(ctx, parent['id'])
+            else 'Voice verification is locked for that parent.'}
+
+
+def set_recognition(installation, satellite, on):
+    """The per-satellite recognition switch, a parent's act (spec, Activation)."""
+    config = configuration()
+    rows = list(config.get('satellites', []))
+    row = next((r for r in rows if r['ha_instance_id'] == installation and r['satellite_id'] == satellite), None)
+    if not row:
+        raise ValueError('That satellite is not set up for voice identity.')
+    if on:
+        from services import voice_fingerprint
+        if not any(voice_fingerprint.checked_on(p, (installation, satellite)) for p in voice_fingerprint.profiles()):
+            raise ValueError('Enroll and check a voice before enabling recognition.')
+    row['recognition_enabled'] = bool(on)
+    with _lock:
+        storage.set_app_state('voice_identity_config', {**config, 'satellites': rows})
+    return row
 
 
 def intercept(text: str, ctx: VoiceContext, language='en') -> dict | None:

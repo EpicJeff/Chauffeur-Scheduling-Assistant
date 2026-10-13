@@ -16,6 +16,8 @@ os.environ['CHAUFFEUR_DATA_DIR'] = tempfile.mkdtemp(prefix='chauffeur_fingerprin
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from services import storage, voice_identity as voice, voice_fingerprint as fp
 
+KEY = ('ha', 'assist_satellite.kitchen')
+
 
 def vector(index=0):
     return [float(i == index) for i in range(256)]
@@ -245,31 +247,36 @@ class FingerprintTests(unittest.TestCase):
         with patch.object(fp, 'model_ready', return_value=True):
             fp.begin(self.ctx(), 'jeff', 'jeff')
         self.assertIn('Voice setup', fp.enrollment_turn('ordinary request', self.ctx(), self.evidence())['message'])
-        for index, prompt in enumerate(fp.PROMPTS):
-            result = fp.enrollment_turn(prompt, self.ctx(), self.evidence())
+        for index in range(5):
+            fp.ask(KEY)
+            result = fp.enrollment_turn('an answer about my day that runs on for a while', self.ctx(), self.evidence())
             if index < 4:
                 self.assertEqual(fp.status()['enrollments'][0]['step'], index + 2)
         self.assertIn('saved', result['message'])
         public = fp.status()
         self.assertTrue(public['profiles'][0]['calibrated'])
-        self.assertEqual(public['profiles'][0]['checks'], 2)
+        self.assertEqual(public['profiles'][0]['checks'], {'ha:assist_satellite.kitchen': 'checked'})
         self.assertNotIn('vector', json.dumps(public))
         self.assertNotIn('For my voice', (fp.root() / 'templates.json').read_text())
         self.assertEqual(len(fp.profiles()), 1)
 
     def test_inconsistent_or_uncorrelated_enrollment_fails(self):
         with patch.object(fp, 'model_ready', return_value=True): fp.begin(self.ctx(), 'jeff', 'jeff')
-        self.assertIn('not usable', fp.enrollment_turn(fp.PROMPTS[0], self.ctx(),
+        fp.ask(KEY)
+        self.assertIn('longer', fp.enrollment_turn('an answer', self.ctx(),
                       {'vector': vector(), 'seconds': 6, 'enrollment_id': 'previous-setup'})['message'])
-        self.assertIn('not usable', fp.enrollment_turn(fp.PROMPTS[0], self.ctx(), None)['message'])
-        fp.enrollment_turn(fp.PROMPTS[0], self.ctx(), self.evidence())
-        self.assertIn('not sound consistent', fp.enrollment_turn(fp.PROMPTS[1], self.ctx(), self.evidence(1))['message'])
+        fp.ask(KEY)
+        self.assertIn('longer', fp.enrollment_turn('an answer', self.ctx(), None)['message'])
+        fp.ask(KEY)
+        fp.enrollment_turn('an answer', self.ctx(), self.evidence())
+        fp.ask(KEY)
+        self.assertIn('not sound consistent', fp.enrollment_turn('an answer', self.ctx(), self.evidence(1))['message'])
         self.assertFalse(fp.profiles())
 
-    def test_enrollment_accepts_stt_slip_and_unrelated_speech_gets_feedback(self):
+    def test_enrollment_accepts_any_words_and_unasked_speech_gets_feedback(self):
         with patch.object(fp, 'model_ready', return_value=True): fp.begin(self.ctx(), 'jeff', 'jeff')
-        changed = fp.PROMPTS[0].replace('many things', 'many plans')
-        self.assertIn('accepted', fp.enrollment_turn(changed, self.ctx(), self.evidence())['message'])
+        fp.ask(KEY)
+        self.assertEqual(fp.enrollment_turn('today I walked the dog and made breakfast', self.ctx(), self.evidence())['status'], 'accepted')
         result = fp.enrollment_turn('What time is practice?', self.ctx(), self.evidence())
         self.assertIn('voice setup', result['message'].lower())
         self.assertEqual(fp.status()['enrollments'][0]['step'], 2)
@@ -277,9 +284,11 @@ class FingerprintTests(unittest.TestCase):
     def test_rival_blocks_calibration(self):
         fp._save([self.profile('alex')])
         with patch.object(fp, 'model_ready', return_value=True): fp.begin(self.ctx(), 'jeff', 'jeff')
-        for prompt in fp.PROMPTS[:3]: fp.enrollment_turn(prompt, self.ctx(), self.evidence())
-        result = fp.enrollment_turn(fp.PROMPTS[3], self.ctx(), self.evidence())
-        self.assertIn('could not distinguish', result['message'])
+        for _ in range(3):
+            fp.ask(KEY); fp.enrollment_turn('an answer', self.ctx(), self.evidence())
+        fp.ask(KEY)
+        result = fp.enrollment_turn('an answer', self.ctx(), self.evidence())
+        self.assertIn('could not tell this voice apart', result['message'])
         self.assertEqual(len(fp.profiles()), 1)
 
     def test_delete_and_disabled_member_remove_templates_and_authority(self):
@@ -301,7 +310,8 @@ class FingerprintTests(unittest.TestCase):
         fp.delete('jeff')
         self.assertEqual([r['member_id'] for r in fp._load()], ['alex'])
         with patch.object(fp, 'model_ready', return_value=True): fp.begin(self.ctx(), 'jeff', 'jeff')
-        for prompt in fp.PROMPTS: fp.enrollment_turn(prompt, self.ctx(), self.evidence())
+        for _ in range(5):
+            fp.ask(KEY); fp.enrollment_turn('an answer', self.ctx(), self.evidence())
         self.assertEqual({r['member_id'] for r in fp._load()}, {'jeff', 'alex'})
 
     def test_endpoint_recognition_precedes_model_and_uses_named_history(self):
