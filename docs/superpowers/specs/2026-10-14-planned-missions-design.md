@@ -1,6 +1,6 @@
 # Planned missions — an interview, a plan you can see, and stages you approve
 
-**Date:** 2026-10-14. **Status:** DRAFT for the user's review. Codex adversarial review done (twelve findings, each verified against the code, all folded in below and named F1–F12 where they land). Slice 2 of three (slice 1: subjects, BUILT v2.499.459–.472; slice 3: wake conditions).
+**Date:** 2026-10-14. **Status:** APPROVED by the user 2026-10-14 (every ASSUMED decision accepted as written). Codex adversarial review done (twelve findings, each verified against the code, all folded in below and named F1–F12 where they land). Slice 2 of three (slice 1: subjects, BUILT v2.499.459–.472; slice 3: wake conditions).
 **Builds on:** `2026-10-14-mission-subject-resolver-design.md` (subjects, `subject_rev`, `subject_history`, ABOUT, audience inheritance, guarded retarget), `2026-09-04-mission-engine-design.md` (the planner loop, READ/PROPOSE, the proposal rail), `2026-09-02-mind-plans-design.md` (plans with per-step approval on a propose-only rail), `docs/occasion_design.md` O2 (template interview, cascades, stamping, gap report), the mid-mission steer (v2.499.458), mission chat cards (v2.499.453).
 
 ## Problem
