@@ -1050,6 +1050,8 @@ def _classify(control, intent: str) -> str:
         has_state = bool(st.get('fields') or st.get('selected'))
         if (st.get('prices') or COMMIT_CONTEXT.search(st.get('text') or '')) and final_pos:
             return 'submit'
+        if _search_control(control):
+            return 'run'   # a search/find/filter button over a scope with no price and no terms looks something up
         if not STEP_WORDS.search(label) and (control.get('sole_submit') or control.get('only_button')) and has_state:
             return 'submit'
         return 'run'

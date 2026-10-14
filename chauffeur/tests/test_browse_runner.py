@@ -1071,6 +1071,12 @@ def scenario_submit_naming_a_search_button_is_a_door():
     r = browse.run('find the nearest location', SITE, {}, {}, start_url=f'{URL}/finder', out_dir=OUT)
     check(r['outcome'] == 'done' and '/found' in r['stopped_at'], f"SUBMIT: SEARCH asked instead of searching: {r['outcome']} {r['stopped_at']} {r['text']}")
     check(any('not a commitment' in (l.get('action') or '') for l in r['turns_log']), r['turns_log'])
+    # Clicked, not named (the second device run): the classifier's "sole submit button with
+    # state" fallback used to call the store finder's SEARCH a commitment.
+    check(browse._classify(_control('/finder', '#search'), '') == 'run', 'a clicked search button is a lookup, not a commitment')
+    browse._model_step = _script([_click(_xy(f'{URL}/finder', '#search'))], 'DONE. Fenton/Cary found.')
+    r = browse.run('find the nearest location', SITE, {}, {}, start_url=f'{URL}/finder', out_dir=OUT)
+    check(r['outcome'] == 'done' and '/found' in r['stopped_at'], f"clicking SEARCH asked a parent: {r['outcome']} {r['stopped_at']} {r['text']}")
     # The word rule is untouched: an unfamiliar label the model names over a price is still asked about.
     browse._model_step = _script('SUBMIT: Lock it in', 'DONE.')
     r = browse.run('lock a slot', SITE, {}, {}, start_url=f'{URL}/lockin', out_dir=OUT)
