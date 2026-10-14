@@ -38,6 +38,8 @@ BROWSE_LOST_S = 900
 BROWSE_CAP_DEFAULT = 400
 _browse_async = True                     # tests run the runner inline
 RETENTION_DAYS = 120
+# Full subject lookups reach the next planner call once, never storage.
+_last_lookups = {}
 
 # Default-deny read classification: a registry tool NOT named here is offered
 # only in propose-wrapped form. Adding a tool to the registry later leaves it
@@ -51,7 +53,7 @@ READ_TOOLS = frozenset({
     'get_tonights_plate', 'get_meal_rules', 'get_occasion',
     'get_occasion_insights', 'get_occasion_gaps', 'get_run_sheet',
     'get_prep_ahead', 'search_places', 'suggest_gift_ideas',
-    'search_mail', 'read_mail',
+    'search_mail', 'read_mail', 'find_in_chauffeur',
 })
 
 # Never offered, not even propose-wrapped. DMs are private space (mind law).
@@ -126,10 +128,10 @@ def _family_context(settings: dict) -> str:
     return ('\n'.join(lines) + '\n') if lines else ''
 
 
-def _system_prompt(now: datetime.datetime, settings: dict = None) -> str:
+def _system_prompt(now: datetime.datetime, settings: dict = None, mission: dict = None) -> str:
     return (
         f"Today is {now.strftime('%A %Y-%m-%d')}. "
-        + _family_context(settings) +
+        + _family_context(settings) + about_block(mission) +
         "You are Argyle working a "
         "MISSION for the family: a multi-step goal you advance one action at "
         "a time. You cannot execute changes yourself — every change you want "
@@ -138,8 +140,10 @@ def _system_prompt(now: datetime.datetime, settings: dict = None) -> str:
         "something was sent, booked, or paid that the transcript does not "
         "show (a `submitted` note).\n\n"
         "A user_steer note is the person correcting course and outranks the goal's earlier reading.\n"
+        "When the goal names something the family already has and no ABOUT block is above, call find_in_chauffeur first and bind it with the subject action; when ABOUT is above, it is the truth, not the transcript's older reading; a subject_changed note means re-read before acting.\n"
         "Respond with EXACTLY ONE JSON object, one of:\n"
         '{"action":"tool","tool":"<READ tool>","args":{...}}\n'
+        '{"action":"subject","kind":"<kind>","id":"<id from find_in_chauffeur>"}\n'
         '{"action":"propose","tool":"<PROPOSE tool>","args":{...},'
         '"summary":"<one line a parent reads>","why":"<reason>"}\n'
         '{"action":"research","question":"<web question>"}\n'
@@ -230,6 +234,10 @@ def _user_prompt(mission: dict) -> str:
                      f"result={_compact(rj)}")
     if not steps:
         lines.append("(none yet — plan your first move)")
+    lookup = _last_lookups.pop(mission['id'], None)
+    if lookup is not None:
+        lines.append("LAST LOOKUP (shown once, not kept):")
+        lines.append(json.dumps(lookup, ensure_ascii=False))
     lines.append("Reply with your ONE next action as JSON.")
     return '\n'.join(lines)
 
@@ -344,6 +352,32 @@ def subject_of(mission: dict) -> tuple:
     if not row.get('subject_kind'):
         return (None, None, 0)
     return (row['subject_kind'], row.get('subject_id'), int(row.get('subject_rev') or 0))
+
+
+def _finder(mission: dict) -> dict | None:
+    """Read as the creator who still has access, else the parent of record."""
+    from services import situations
+    member = storage.get_member((mission or {}).get('created_by') or '')
+    return member if member and storage.member_has_access(member) else situations.parent_of_record()
+
+
+def about_block(mission: dict) -> str:
+    """Fresh subject context for this call only, authorised as the finder."""
+    from services import subjects
+    kind, sid, _ = subject_of(mission)
+    if not kind:
+        return ''
+    ctx = subjects.context(kind, sid, _finder(mission))
+    if ctx is None:
+        return "ABOUT: the subject is not readable here; do not guess its contents.\n"
+    row = subjects.load(kind, sid)
+    if row is None:
+        return "ABOUT: the subject is not readable here; do not guess its contents.\n"
+    title = subjects.title_of(kind, row)
+    facets = ', '.join(subjects.facets(kind)) or 'none'
+    return (f'ABOUT: {kind} "{title}"\n{ctx}\n'
+            f'(This is the record as it stands now; it outranks anything older in the transcript. '
+            f'Facets you can read with find_in_chauffeur: {facets}.)\n')
 
 
 def _dm_person(mission: dict, text: str) -> None:
@@ -1178,7 +1212,7 @@ def step(mission: dict) -> dict:
         return storage.get_mission(mid)
 
     now = datetime.datetime.now()
-    res = _llm(mission, _system_prompt(now, settings), _user_prompt(mission),
+    res = _llm(mission, _system_prompt(now, settings, mission), _user_prompt(mission),
                settings)
     storage.update_mission(mid, {'step_count': int(mission.get('step_count') or 0) + 1})
 
@@ -1207,10 +1241,57 @@ def step(mission: dict) -> dict:
                                         f"propose for changes"}})
             return storage.get_mission(mid)
         from services import agent_tools_v2
-        out = agent_tools_v2.execute_tool(name, res.get('args') or {})
+        args = res.get('args') or {}
+        if name == 'find_in_chauffeur':
+            from services import subjects
+            out = agent_tools_v2.find_in_chauffeur(
+                args.get('query') or '', args.get('kind') or '', args.get('facet') or '',
+                acting_member=_finder(mission))
+            _last_lookups[mid] = out
+            candidates = out.get('candidates') or []
+            kept = [c for c in candidates if subjects.visible(
+                c['kind'], subjects.load(c['kind'], c['id']), agent_tools_v2._REGISTRY_READER)]
+            withheld = len(candidates) - len(kept)
+            # The stored words name only what any adult may read: the tool's own
+            # message can name the withheld record ("Found Disney World.").
+            said = out.get('message') if not withheld else (
+                f"{withheld} record(s) only some of the family may see; shown to the planner once, not kept."
+                + (" Also: " + '; '.join(c['title'] for c in kept) if kept else ''))
+            out = {'status': out.get('status'), 'message': said, 'candidates': kept, 'withheld': withheld}
+        else:
+            out = agent_tools_v2.execute_tool(name, args)
         storage.add_mission_step(mid, {'kind': 'tool', 'name': name,
                                        'args_json': res.get('args') or {},
                                        'result_json': out})
+        return storage.get_mission(mid)
+
+    if action == 'subject':
+        from services import subjects
+        kind = (res.get('kind') or '').strip()
+        sid = str(res.get('id') or '').strip()
+        row = subjects.load(kind, sid) if kind in subjects.KINDS else None
+        if row is None or not subjects.visible(kind, row, _finder(mission)):
+            storage.add_mission_step(mid, {'kind': 'note', 'name': 'refused',
+                                           'result_json': {'note': 'no readable record to bind'}})
+            return storage.get_mission(mid)
+        with storage.db_lock:
+            if mission.get('origin_kind') == 'thread' and mission.get('origin_ref'):
+                thread = storage.get_thread(mission['origin_ref'])
+                if not thread:
+                    storage.add_mission_step(mid, {'kind': 'note', 'name': 'refused',
+                                                   'result_json': {'note': 'no thread to bind'}})
+                    return storage.get_mission(mid)
+                if thread.get('subject_kind'):
+                    storage.add_mission_step(mid, {'kind': 'note', 'name': 'refused',
+                        'result_json': {'note': f"already about {thread['subject_kind']} {thread.get('subject_id')}; a person unlinks it"}})
+                    return storage.get_mission(mid)
+                storage.update_thread(thread['id'], {'subject_kind': kind, 'subject_id': sid,
+                    'subject_rev': int(thread.get('subject_rev') or 0) + 1})
+            else:
+                storage.update_mission(mid, {'subject_kind': kind, 'subject_id': sid,
+                    'subject_rev': int(mission.get('subject_rev') or 0) + 1})
+            storage.add_mission_step(mid, {'kind': 'note', 'name': 'subject',
+                'result_json': {'kind': kind, 'id': sid, 'title': subjects.title_of(kind, row)}})
         return storage.get_mission(mid)
 
     if action == 'propose':

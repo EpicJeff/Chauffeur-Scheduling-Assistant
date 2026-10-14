@@ -3462,6 +3462,27 @@ def add_occasion(title: str, anchor_date: str, kind: str = "gathering",
             "message": f"Got it — {o['title']} on {day.strftime('%A %d %B')}{span}.{prior}"}
 
 
+def find_in_chauffeur(query: str = '', kind: str = '', facet: str = '',
+                      acting_member: dict = None, spoken: bool = False) -> Dict[str, Any]:
+    """Find an existing family record and read it only on a clear match."""
+    from services import subjects
+    q = (query or '').strip()
+    if not q:
+        return {'status': 'error', 'candidates': [], 'context': None,
+                'message': 'Say what to look for.'}
+    kinds = [kind] if kind in subjects.KINDS else None
+    winner, candidates = subjects.resolve(q, acting_member, kinds=kinds, spoken=spoken)
+    # A clear match offers that record; alternatives are for an unresolved tie.
+    if winner:
+        candidates = [winner]
+    ctx = subjects.context(winner['kind'], winner['id'], acting_member,
+                           spoken=spoken, facet=facet or None) if winner else None
+    message = (f"Found {winner['title']}." if winner else
+               ('Nothing by that name.' if not candidates else
+                'More than one: ' + '; '.join(c['title'] for c in candidates)))
+    return {'status': 'success', 'candidates': candidates, 'context': ctx, 'message': message}
+
+
 def get_occasion(occasion_name: str = "", acting_member: dict = None) -> Dict[str, Any]:
     """READ: "what's the state of Thanksgiving?", "who's coming to the party?"."""
     from services import occasions as _occ
@@ -4125,6 +4146,7 @@ def get_available_tools() -> List[Dict]:
     """
     return [
         _flat_tool("get_travel_time"),
+        _flat_tool("find_in_chauffeur"),
         {
             "name": "get_calendar_events",
             "description": "Retrieves calendar events for a date range, each with its assigned_driver (null = unassigned). This is the CORRECT tool for questions about a specific driver's schedule or drives: fetch the range, then filter by assigned_driver.",
@@ -6337,6 +6359,13 @@ class AddOccasionTool(BaseModel):
     window_end: Optional[str] = Field("", description="YYYY-MM-DD when it ends. Optional.")
     dish_tags: Optional[str] = Field("", description="Comma separated repertoire tags this brings out.")
 
+class FindInChauffeurTool(BaseModel):
+    """Finds something the family already has in Chauffeur (a trip, a party or holiday, a calendar event, a person, an outside contact, a thread, a program, a list) from a few words, and reads its current state when the match is clear."""
+    query: str = Field(..., description="Words naming it: 'the Disney trip', 'Kate's birthday', 'Grandma'.")
+    kind: Optional[str] = Field("", description="One of trip, occasion, event, member, contact, thread, program, list; omit to search everything.")
+    facet: Optional[str] = Field("", description="A part to read in full: trip flights|accommodations|dining|attractions; occasion guests|menu|lists|errands; program sessions; thread history.")
+
+
 class GetOccasionTool(BaseModel):
     """
     Reads the state of a holiday or party - guests, headcount, lists and outstanding errands.
@@ -6711,6 +6740,7 @@ TOOL_SCHEMAS = {
     "set_hosting": SetHostingTool.model_json_schema(),
     "get_run_sheet": GetRunSheetTool.model_json_schema(),
     "add_occasion": AddOccasionTool.model_json_schema(),
+    "find_in_chauffeur": FindInChauffeurTool.model_json_schema(),
     "get_occasion": GetOccasionTool.model_json_schema(),
     "get_occasion_gaps": GetOccasionGapsTool.model_json_schema(),
     "get_occasion_insights": GetOccasionInsightsTool.model_json_schema(),
@@ -7976,6 +8006,11 @@ def handle_add_occasion(args: dict) -> dict:
                         args.get("window_start") or "", args.get("window_end") or "",
                         args.get("dish_tags") or "")
 
+def handle_find_in_chauffeur(args: dict) -> dict:
+    return find_in_chauffeur(args.get('query') or '', args.get('kind') or '',
+                             args.get('facet') or '', acting_member=_REGISTRY_READER)
+
+
 def handle_get_occasion(args: dict) -> dict:
     return get_occasion(args.get("occasion_name") or "")
 
@@ -8276,6 +8311,7 @@ TOOL_HANDLERS = {
     "set_hosting": handle_set_hosting,
     "get_run_sheet": handle_get_run_sheet,
     "add_occasion": handle_add_occasion,
+    "find_in_chauffeur": handle_find_in_chauffeur,
     "get_occasion": handle_get_occasion,
     "get_occasion_gaps": handle_get_occasion_gaps,
     "get_occasion_insights": handle_get_occasion_insights,
