@@ -456,12 +456,17 @@ def _subject_of(kind: str, row: dict) -> tuple:
     return (None, None, 0)
 
 
-def _subject_visible(kind: str, record: dict, viewer: Optional[dict]) -> bool:
-    # subjects.visible delegates threads back to can_see. Use only the base
-    # rule for a subject thread so cycles and self-reference cannot recurse.
-    if kind == 'thread':
-        return _can_see_base('thread', record, viewer)
+def _subject_visible(kind: str, record: dict, viewer: Optional[dict], visited=None) -> bool:
     from services import subjects
+    if kind == 'thread':
+        visited = set(visited or ())
+        key = record.get('id')
+        if key in visited or not _can_see_base('thread', record, viewer):
+            return False
+        visited.add(key)
+        # Ownership keeps only the top-level row, never a subject's contents.
+        return all(_subject_visible(k, r, viewer, visited)
+                   for k, r in subjects.subject_records('thread', record))
     return subjects.visible(kind, record, viewer)
 
 
@@ -469,17 +474,13 @@ def can_see(kind: str, row: dict, viewer: Optional[dict]) -> bool:
     ok = _can_see_base(kind, row, viewer)
     if not ok or kind not in ('thread', 'mission'):
         return ok
-    k, sid, _ = _subject_of(kind, row)
-    if not k:
-        return ok
     from services import subjects
-    record = subjects.load(k, sid)
-    if record is None:
-        return ok
     owner_key = 'owner_member_id' if kind == 'thread' else 'created_by'
     if viewer and row.get(owner_key) == viewer.get('id'):
         return True
-    return _subject_visible(k, record, viewer)
+    visited = {row.get('id')} if kind == 'thread' else set()
+    return all(_subject_visible(k, record, viewer, visited)
+               for k, record in subjects.subject_records(kind, row))
 
 
 def subject_view(kind: str, row: dict, viewer: Optional[dict]) -> Optional[dict]:

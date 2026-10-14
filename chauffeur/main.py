@@ -5293,6 +5293,10 @@ def list_action_proposals(status: str = "proposed", request: Request = None):
     rows = storage.get_action_proposals(status=status or None)
     actor_id = _acting_id(request, None)
     actor = storage.get_member(actor_id) if actor_id else None
+    if actor:
+        from services import situations
+        rows = [r for r in rows if r.get('origin_kind') != 'mission'
+                or situations.can_see('mission', storage.get_mission(r.get('origin_id')) or {}, actor)]
     if actor and actor.get('role') in ('parent', 'adult'):
         return rows
     if not actor and _is_admin_surface(request):
@@ -5319,6 +5323,11 @@ def act_on_action_proposal(proposal_id: str, req: ActionProposalAct, background_
     from services.agent_tools_v2 import _post_chat_message
     req.member_id = _acting_id(request, req.member_id)
     approver = storage.get_member(req.member_id) if req.member_id else None
+    prop = storage.get_action_proposal(proposal_id)
+    if prop and prop.get('origin_kind') == 'mission':
+        from services import situations
+        if not situations.can_see('mission', storage.get_mission(prop.get('origin_id')) or {}, approver):
+            raise HTTPException(status_code=403, detail="That mission is not visible to you")
     res = chat_actions.act_on_proposal(proposal_id, (req.act or '').strip().lower(), approver)
 
     prop = storage.get_action_proposal(proposal_id)
@@ -6794,7 +6803,7 @@ def list_threads(owner: Optional[str] = None, include_closed: bool = False,
     viewer = storage.get_member(viewer_id) if viewer_id else None
     if viewer is not None:
         from services import situations
-        rows = [row for row in rows if not row.get('subject_kind')
+        rows = [row for row in rows if not (row.get('subject_kind') or row.get('subject_history'))
                 or situations.can_see('thread', row, viewer)]
     for row in rows:
         row['stall_reason'] = _threads.is_stalled(row)
@@ -6862,6 +6871,7 @@ def patch_thread(thread_id: str, body: dict = Body(default={}), request: Request
     clean = {k: v for k, v in (body or {}).items()
              if k in Thread.model_fields and k not in (
                  'id', 'created_at', 'history', 'state', 'closed_at',
+                 'subject_kind', 'subject_id', 'subject_rev', 'subject_history',
                  'next_action', 'next_action_at')}
     ok = storage.update_thread(thread_id, clean)
     if not ok:

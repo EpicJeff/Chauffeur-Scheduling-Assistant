@@ -1212,8 +1212,13 @@ def step(mission: dict) -> dict:
         return storage.get_mission(mid)
 
     now = datetime.datetime.now()
+    before = subject_of(mission)
     res = _llm(mission, _system_prompt(now, settings, mission), _user_prompt(mission),
                settings)
+    if subject_of(storage.get_mission(mid)) != before:
+        storage.add_mission_step(mid, {'kind': 'note', 'name': 'stale_plan',
+            'result_json': {'note': 'the subject changed while planning; planning again'}})
+        return _close(mid, 'running')
     storage.update_mission(mid, {'step_count': int(mission.get('step_count') or 0) + 1})
 
     if not isinstance(res, dict) or res.get('error'):
@@ -1242,16 +1247,29 @@ def step(mission: dict) -> dict:
             return storage.get_mission(mid)
         from services import agent_tools_v2
         args = res.get('args') or {}
+        stored_args = args
         if name == 'find_in_chauffeur':
             from services import subjects
             out = agent_tools_v2.find_in_chauffeur(
                 args.get('query') or '', args.get('kind') or '', args.get('facet') or '',
                 acting_member=_finder(mission))
-            _last_lookups[mid] = out
             candidates = out.get('candidates') or []
             kept = [c for c in candidates if subjects.visible(
                 c['kind'], subjects.load(c['kind'], c['id']), agent_tools_v2._REGISTRY_READER)]
             withheld = len(candidates) - len(kept)
+            if withheld:
+                # The generated query can itself be the withheld title.
+                stored_args = {k: v for k, v in args.items() if k != 'query'}
+            if subject_of(mission)[0]:
+                _last_lookups[mid] = out
+            else:
+                safe_candidates = [c if c in kept else {'kind': c['kind'], 'id': c['id'], 'withheld': True}
+                                   for c in candidates]
+                # A clear winner is returned alone; a tie has no context.
+                _last_lookups[mid] = {
+                    'status': out.get('status'), 'candidates': safe_candidates,
+                    'context': out.get('context') if safe_candidates and not safe_candidates[0].get('withheld') else None,
+                }
             # The stored words name only what any adult may read: the tool's own
             # message can name the withheld record ("Found Disney World.").
             said = out.get('message') if not withheld else (
@@ -1261,7 +1279,7 @@ def step(mission: dict) -> dict:
         else:
             out = agent_tools_v2.execute_tool(name, args)
         storage.add_mission_step(mid, {'kind': 'tool', 'name': name,
-                                       'args_json': res.get('args') or {},
+                                       'args_json': stored_args,
                                        'result_json': out})
         return storage.get_mission(mid)
 
@@ -1286,10 +1304,12 @@ def step(mission: dict) -> dict:
                         'result_json': {'note': f"already about {thread['subject_kind']} {thread.get('subject_id')}; a person unlinks it"}})
                     return storage.get_mission(mid)
                 storage.update_thread(thread['id'], {'subject_kind': kind, 'subject_id': sid,
-                    'subject_rev': int(thread.get('subject_rev') or 0) + 1})
+                    'subject_rev': int(thread.get('subject_rev') or 0) + 1,
+                    'subject_history': subjects.history_after_binding(thread, kind, sid)})
             else:
                 storage.update_mission(mid, {'subject_kind': kind, 'subject_id': sid,
-                    'subject_rev': int(mission.get('subject_rev') or 0) + 1})
+                    'subject_rev': int(mission.get('subject_rev') or 0) + 1,
+                    'subject_history': subjects.history_after_binding(mission, kind, sid)})
             storage.add_mission_step(mid, {'kind': 'note', 'name': 'subject',
                 'result_json': {'kind': kind, 'id': sid, 'title': subjects.title_of(kind, row)}})
         return storage.get_mission(mid)
@@ -1306,6 +1326,8 @@ def step(mission: dict) -> dict:
             name, summary, res.get('args') or {},
             created_by_member_id=mission.get('created_by'),
             extra_allowed=proposable_tools())
+        if made.get('proposal_id'):
+            storage.update_action_proposal(made['proposal_id'], {'origin_kind': 'mission', 'origin_id': mid})
         storage.add_mission_step(mid, {'kind': 'proposal', 'name': name,
                                        'args_json': res.get('args') or {},
                                        'result_json': {**made,

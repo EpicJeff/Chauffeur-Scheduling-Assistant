@@ -1785,7 +1785,7 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
     thread about the same thing is named, not doubled."""
     from services.voice_identity import VoiceContext
     spoken = isinstance(voice_context, VoiceContext)
-    from services import subjects
+    from services import subjects, situations
     viewer = voice_context.verified_member() if spoken else acting_member
     subject = subjects.load(subject_kind, subject_id) if subject_kind in subjects.KINDS and subject_id else None
     if subject is None or not subjects.visible(subject_kind, subject, viewer, spoken):
@@ -1816,6 +1816,8 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
         if m.get('origin_kind') != 'thread':
             continue
         t = storage.get_thread(m.get('origin_ref') or '')
+        if not t or not situations.can_see('thread', t, viewer):
+            continue
         if spoken:
             from services.voice_tools import speech_safe
             if not (t or {}).get('voice_shared') or not speech_safe(t) or not speech_safe(m):
@@ -1843,7 +1845,9 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
             from services.voice_tools import speech_safe
         compatible = (not subject_kind or ((t or {}).get('subject_kind') in (None, subject_kind)
                                           and (t or {}).get('subject_id') in (None, subject_id)))
-        if t and t.get('state') not in ('done', 'dropped') and not live and compatible and (not spoken or t.get('voice_shared') and speech_safe(t)):
+        if (t and situations.can_see('thread', t, viewer)
+                and t.get('state') not in ('done', 'dropped') and not live and compatible
+                and (not spoken or t.get('voice_shared') and speech_safe(t))):
             tid = t['id']
     if not tid:
         tid = _threads.create(title=(title or goal)[:80], owner_member_id=(acting_member or {}).get('id'), goal=goal, kind='vendor',
@@ -1854,7 +1858,8 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
         t = storage.get_thread(tid) or {}
         if not t.get('subject_kind') and not t.get('subject_id'):
             storage.update_thread(tid, {'subject_kind': subject_kind, 'subject_id': subject_id,
-                                        'subject_rev': (t.get('subject_rev') or 0) + 1})
+                                        'subject_rev': (t.get('subject_rev') or 0) + 1,
+                                        'subject_history': subjects.history_after_binding(t, subject_kind, subject_id)})
     res = _missions.launch(goal, origin_kind='thread', origin_ref=tid, created_by=(acting_member or {}).get('id'), tier='mission')
     if spoken and res.get('mission_id'):
         storage.update_mission(res['mission_id'], {'requester_provenance': voice_context.provenance()})
@@ -1930,6 +1935,9 @@ def list_threads(state: str = None, owner_name: str = None,
                     "message": f"I couldn't find '{owner_name}'. Family members: {_member_names()}."}
         owner_id = m['id']
     rows = _storage.get_threads(state=state, owner=owner_id, include_closed=include_closed)
+    from services import situations
+    rows = [r for r in rows if not (r.get('subject_kind') or r.get('subject_history'))
+            or situations.can_see('thread', r, acting_member)]
     if not rows:
         return {"status": "success", "message": "No open threads right now."}
     names = {m['id']: m.get('name') for m in _storage.get_all_members(include_archived=True)}

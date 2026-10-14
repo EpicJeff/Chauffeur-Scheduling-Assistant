@@ -107,7 +107,37 @@ def visible(kind, row, viewer, spoken=False):
     return bool(allowed) and (not spoken or spoken_safe(kind, row))
 
 
-def spoken_safe(kind, row):
+def subject_records(kind, row):
+    """Existing current and historical records; thread missions inherit both."""
+    if kind == 'mission' and row.get('origin_kind') == 'thread' and row.get('origin_ref'):
+        row = storage.get_thread(row['origin_ref']) or {}
+    entries = list(row.get('subject_history') or [])
+    if row.get('subject_kind'):
+        entries.append({'kind': row['subject_kind'], 'id': row.get('subject_id')})
+    seen, records = set(), []
+    for entry in entries:
+        key = (entry.get('kind'), entry.get('id'))
+        if key in seen:
+            continue
+        seen.add(key)
+        record = load(*key) if key[0] and key[1] else None
+        if record is not None:
+            records.append((key[0], record))
+    return records
+
+
+def history_after_binding(row, kind=None, sid=None):
+    """Preserve legacy current subjects too, before a change can erase them."""
+    history = list(row.get('subject_history') or [])
+    current = {'kind': row.get('subject_kind'), 'id': row.get('subject_id')}
+    if current['kind'] and current['id'] and current not in history:
+        history.append(current)
+    if kind and sid:
+        history.append({'kind': kind, 'id': sid})
+    return history
+
+
+def spoken_safe(kind, row, visited=None):
     obj_type = {
         'list': 'shopping_list', 'event': 'calendar_event',
         'trip': 'trip', 'occasion': 'occasion',
@@ -116,6 +146,14 @@ def spoken_safe(kind, row):
     # rail's own rule: start_mission_for and dispatch read voice_shared too).
     if kind == 'thread' and not (row or {}).get('voice_shared'):
         return False
+    if kind == 'thread':
+        visited = set(visited or ())
+        key = row.get('id')
+        if key in visited:
+            return False
+        visited.add(key)
+        if any(not spoken_safe(k, record, visited) for k, record in subject_records('thread', row)):
+            return False
     return (
         row is not None
         and bool(scope.audience_allows(row, obj_type, None))
@@ -240,7 +278,8 @@ def retarget(sit_kind, sid, new_kind, new_id, actor):
     old_title = title_of(old_kind, old_row) if old_row else None
     new_title = title_of(new_kind, new_row) if new_row else None
     rev = int(row.get('subject_rev') or 0) + 1
-    fields = {'subject_kind': new_kind or None, 'subject_id': new_id or None, 'subject_rev': rev}
+    fields = {'subject_kind': new_kind or None, 'subject_id': new_id or None, 'subject_rev': rev,
+              'subject_history': history_after_binding(row, new_kind, new_id)}
     update = storage.update_thread if sit_kind == 'thread' else storage.update_mission
     update(sid, fields)
     for m in live:
@@ -401,7 +440,7 @@ def _occasion_context(row, viewer, spoken, facet):
     guests = [f"- {guest.get('name')}: {guest.get('headcount') or 1}"
               for guest in contents.get('guests') or []] or ['- no guests on file']
     lists = [f"- {linked.get('name')}" for linked in contents.get('lists') or []
-             if scope.audience_allows(linked, 'shopping_list', viewer)] or ['- none on file']
+             if scope.audience_allows(linked, 'shopping_list', None if spoken else viewer)] or ['- none on file']
     errands = contents.get('errands') or []
     pending = [errand for errand in errands if not errand.get('is_completed')]
     errand_lines = [f'Errands left: {len(pending)} open / {len(errands)} total.']

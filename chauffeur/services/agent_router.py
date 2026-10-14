@@ -281,8 +281,19 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                                   "situation tools with NO ref for it.\n")
                 sv = (_s or {}).get('subject')
                 if sv:
-                    from services import subjects
-                    ctx = subjects.context(sv['kind'], sv['id'], _viewer)
+                    from services import subjects, storage
+                    channel = storage.get_channel(focus_key[len('channel:'):]) if focus_key.startswith('channel:') else None
+                    shared_ok = True
+                    if channel and channel.get('kind') in ('group', 'dm') and channel.get('member_ids'):
+                        record = subjects.load(sv['kind'], sv['id'])
+                        for member_id in channel['member_ids']:
+                            member = storage.get_member(member_id)
+                            if member and (member.get('system') or member.get('id') == 'argyle'):
+                                continue
+                            if not subjects.visible(sv['kind'], record, member):
+                                shared_ok = False
+                                break
+                    ctx = subjects.context(sv['kind'], sv['id'], _viewer) if shared_ok else None
                     if ctx:
                         system_prompt += f'\nABOUT: {sv["kind"]} "{sv["title"]}"\n{ctx}\n'
         except Exception as e:
@@ -292,7 +303,7 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
             from services import triage, subjects, voice_tools, storage
             f = triage.get_focus(focus_key)
             thread = storage.get_thread(f['id']) if f and f['kind'] == 'thread' else None
-            if thread and thread.get('voice_shared') and voice_tools.speech_safe(thread):
+            if thread and subjects.spoken_safe('thread', thread) and voice_tools.speech_safe(thread):
                 kind, sid = thread.get('subject_kind'), thread.get('subject_id')
                 record = subjects.load(kind, sid) if kind and sid else None
                 if record and subjects.spoken_safe(kind, record):
@@ -989,7 +1000,7 @@ sending or claiming, and never pass from_member/member_name for them.
                     if res.get("message"): agent_message = res["message"]
                 elif func_name in ("list_situations", "next_situation", "explain_situation", "act_on_situation",
                                    "start_ask", "mark_ask_sent", "answer_ask", "search_mail", "read_mail",
-                                   "start_mission_for"):
+                                   "start_mission_for", "find_in_chauffeur"):
                     from services import agent_tools_v2 as _atv2, situations as _sit
                     # Same actor resolution as the thread tools below: resolved
                     # HERE at dispatch, never taken from the model. A caller with

@@ -262,12 +262,15 @@ def snapshot(now: datetime.datetime = None) -> str:
 
     def _threads():
         from services import threads as _th
+        from services import subjects
         rows = _th.stalled(today=now.date()) or []
         # Open-but-not-stalled threads still matter (a stalled one is the
         # loudest signal, not the only one worth showing).
         stalled_ids = {r['id'] for r in rows}
         rows = rows + [t for t in storage.get_threads(include_closed=False)
                        if t['id'] not in stalled_ids]
+        rows = [t for t in rows if all(subjects.visible(k, record, None)
+                                      for k, record in subjects.subject_records('thread', t))]
         lines = []
         for t in rows[:40]:
             owner = storage.get_member(t.get('owner_member_id') or '') or {}

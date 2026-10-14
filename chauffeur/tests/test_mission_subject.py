@@ -108,12 +108,15 @@ def scenario_the_planner_reads_once_and_stores_only_what_any_adult_could_see():
           f"the parents-only trip is not named on a transcript adults can read, only counted: {stored}")
     check('Disney' not in repr(stored), f"not in the stored message either: {stored}")
     _step(mid)
-    check("Chef Mickey's" in PROMPTS[1]['user'] and 'ev_disney' in PROMPTS[1]['user'],
-          f"the model got the full result (context and id) in the very next prompt:\n{PROMPTS[1]['user'][-800:]}")
+    check('ev_disney' in PROMPTS[1]['user'] and "Chef Mickey's" not in PROMPTS[1]['user'],
+          f"the model gets the id to bind in the very next prompt, never a withheld record's words while unbound "
+          f"(review F10):\n{PROMPTS[1]['user'][-800:]}")
     stored2 = _steps(mid, 'find_in_chauffeur')[1]['result_json']
     check([c['id'] for c in stored2.get('candidates') or []] == ['ev_hawaii'], f"a household trip is stored by name: {stored2}")
     _step(mid)
-    check("Chef Mickey's" not in PROMPTS[2]['user'], "and only once: the step after does not carry it")
+    check('TRIP: Hawaii' in PROMPTS[2]['user'], "a household record's lookup reads in full, once")
+    check('ev_disney' not in PROMPTS[2]['user'].split('TRANSCRIPT')[0] and "LAST LOOKUP" in PROMPTS[2]['user']
+          and PROMPTS[2]['user'].count('LAST LOOKUP') == 1, "and the earlier lookup is not repeated")
     _plan({'action': 'tool', 'tool': 'find_in_chauffeur', 'args': {'query': ''}})
     row = _step(mid)
     last = _steps(mid)[-1]
