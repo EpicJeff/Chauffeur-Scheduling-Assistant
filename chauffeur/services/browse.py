@@ -545,6 +545,26 @@ def to_runner_call(provider: str, name: str, inp: dict) -> dict:
     return {'name': 'refuse', 'args': {'reason': f'{name} is not available here'}}
 
 
+
+def _provider_turn(req, label):
+    """One model turn on the wire. An HTTP error carries the provider's own
+    body into the run's error text: a bare "HTTP Error 400" told a parent the
+    salon's site was broken (device, 2026-10-13) when it was our request."""
+    from services import llm_budget
+    import urllib.error
+    try:
+        with llm_budget.urlopen(req, timeout=120) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        try:
+            msg = json.loads(body).get('error', {}).get('message') or body
+        except Exception:
+            msg = body
+        logger.warning(f"[browse] {label} API {e.code}: {msg[:600]}")
+        raise RuntimeError(f"{label} API {e.code}: {msg[:300]}") from None
+
+
 def _model_step_anthropic(contents, settings):
     """Replay Claude's full assistant turns and answer each tool by id."""
     from services import model_pools, llm_budget, llm as _llm
@@ -565,11 +585,13 @@ def _model_step_anthropic(contents, settings):
                 content = [{'type': 'text', 'text': note}]
                 if shot:
                     content.append({'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/png', 'data': base64.b64encode(shot).decode()}})
+                # Never `is_error`: the API then allows text only, and the screen
+                # would have to go (device, 2026-10-13: every runner refusal 400'd
+                # the turn and the salon mission died three times). A refusal is an
+                # instruction to the model, not a tool failure; it rides in the text.
                 result = {'type': 'tool_result', 'tool_use_id': tid, 'content': content}
                 if tid in toolsets:
                     result['toolset_name'] = toolsets[tid]
-                if resp.get('error'):
-                    result['is_error'] = True
                 blocks.append(result)
             messages.append({'role': 'user', 'content': blocks})
         elif isinstance(c, dict) and 'parts' in c:
@@ -587,8 +609,7 @@ def _model_step_anthropic(contents, settings):
                'tools': [{'type': 'computer_toolset_20260801', 'configs': {'zoom': {'enabled': False}}}, *FUNCTION_TOOLS]}
     req = urllib.request.Request(_llm.ANTHROPIC_URL, data=json.dumps(payload).encode('utf-8'), method='POST',
                                  headers={'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01'})
-    with llm_budget.urlopen(req, timeout=120) as resp:
-        data = json.loads(resp.read().decode('utf-8'))
+    data = _provider_turn(req, 'Claude' if 'anthropic' in req.full_url else 'OpenAI')
     blocks = data.get('content') or []
     text = '\n'.join(b.get('text', '') for b in blocks if b.get('type') == 'text')
     m = CHALLENGE_LINE.search(text)
@@ -680,8 +701,7 @@ def _model_step_openai(contents, settings):
         payload['previous_response_id'] = prior['response_id']
     req = urllib.request.Request(_llm.OPENAI_URL, data=json.dumps(payload).encode('utf-8'), method='POST',
                                  headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {key}'})
-    with llm_budget.urlopen(req, timeout=120) as resp:
-        data = json.loads(resp.read().decode('utf-8'))
+    data = _provider_turn(req, 'Claude' if 'anthropic' in req.full_url else 'OpenAI')
     output = data.get('output') or []
     text = '\n'.join(b.get('text', '') for item in output if item.get('type') == 'message'
                      for b in item.get('content') or [] if b.get('type') == 'output_text')

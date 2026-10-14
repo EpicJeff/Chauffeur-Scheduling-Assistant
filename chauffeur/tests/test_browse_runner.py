@@ -1223,7 +1223,7 @@ def scenario_claude_step_builds_the_request_and_reads_the_turn():
     check(step['content']['_provider'] == 'anthropic' and step['content']['ids'] == ['tu_1', 'tu_2'], step['content'])
     check(step['tokens'] == (100, 20), step['tokens'])
     # the next turn: the runner's answers go back as tool_results, in order, with toolset_name on each
-    contents += [step['content'], {'role': 'user', 'function_responses': [('click_at', {'url': 'u1', 'safety_acknowledgement': 'true'}, b'\x89PNG2'), ('look', {'url': 'u1'}, b'\x89PNG3')]}]
+    contents += [step['content'], {'role': 'user', 'function_responses': [('click_at', {'url': 'u1', 'safety_acknowledgement': 'true', 'error': 'the press is done; report what the page says'}, b'\x89PNG2'), ('look', {'url': 'u1'}, b'\x89PNG3')]}]
     with patch.object(llm_budget, 'urlopen', fake):
         browse._model_step_anthropic(contents, settings)
     msgs = sent[1]['messages']
@@ -1232,6 +1232,8 @@ def scenario_claude_step_builds_the_request_and_reads_the_turn():
     check([r['tool_use_id'] for r in results] == ['tu_1', 'tu_2'] and all(r.get('toolset_name') == 'computer' for r in results), results)
     check(results[0]['content'][0]['type'] == 'text' and 'u1' in results[0]['content'][0]['text'], 'the response text rides along')
     check(results[0]['content'][1]['type'] == 'image', 'every result carries its screenshot')
+    check('is_error' not in results[0] and 'the press is done' in results[0]['content'][0]['text'],
+          'a refusal rides in the text beside the screen, never as is_error (the API allows text only with is_error; device 400, 2026-10-13)')
 
 
 def scenario_openai_step_uses_previous_response_id_and_call_outputs():
@@ -1264,6 +1266,25 @@ def scenario_openai_step_uses_previous_response_id_and_call_outputs():
     check(items[0]['type'] == 'computer_call_output' and items[0]['call_id'] == 'cc_1' and items[0]['output']['type'] == 'computer_screenshot' and items[0]['output']['image_url'].startswith('data:image/png;base64,'), items[0])
     check(items[1]['type'] == 'function_call_output' and items[1]['call_id'] == 'fc_1' and 'a.example' in items[1]['output'], items[1])
     check(len(items) == 2, 'only the new items go; the history is on the server')
+
+
+def scenario_a_provider_400_names_the_rejected_field():
+    """The API's own error text reaches the run report and the log, not a bare status code."""
+    from unittest.mock import patch
+    from services import llm_budget
+    import io as _io, json as _json, urllib.error
+    def bad(request, timeout=60):
+        body = _json.dumps({'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'tools.0.configs: Extra inputs are not permitted'}}).encode()
+        raise urllib.error.HTTPError(request.full_url, 400, 'Bad Request', {}, _io.BytesIO(body))
+    contents = [{'role': 'user', 'parts': [{'text': browse.RUNNER_SYSTEM + '\n\nGOAL'}, {'image': b'\x89PNG1'}]}]
+    for step, settings in ((browse._model_step_anthropic, {'llm_provider': 'anthropic', 'llm_anthropic_api_key': 'A'}),
+                           (browse._model_step_openai, {'llm_provider': 'openai', 'llm_openai_api_key': 'O'})):
+        with patch.object(llm_budget, 'urlopen', bad):
+            try:
+                step(contents, settings)
+                check(False, 'a 400 must raise')
+            except RuntimeError as e:
+                check('400' in str(e) and 'Extra inputs are not permitted' in str(e), f'the body rides along: {e}')
 
 
 def scenario_model_step_dispatches_on_the_cu_pool():
@@ -1309,7 +1330,7 @@ SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_typ
              scenario_a_link_to_somewhere_else_is_a_door_not_a_commitment, scenario_a_link_that_opens_a_new_tab_is_followed_there,
              scenario_a_page_that_moves_under_the_read_is_read_again,
              scenario_coordinate_free_typing_meets_the_release_gate, scenario_look_and_refuse_turns_continue_then_cap, scenario_each_result_carries_its_own_screenshot_and_url, scenario_a_refusal_reaches_the_next_turn,
-             scenario_claude_members_become_runner_calls_in_permille, scenario_openai_actions_become_runner_calls, scenario_claude_step_builds_the_request_and_reads_the_turn, scenario_openai_step_uses_previous_response_id_and_call_outputs, scenario_model_step_dispatches_on_the_cu_pool]
+             scenario_claude_members_become_runner_calls_in_permille, scenario_openai_actions_become_runner_calls, scenario_claude_step_builds_the_request_and_reads_the_turn, scenario_openai_step_uses_previous_response_id_and_call_outputs, scenario_model_step_dispatches_on_the_cu_pool, scenario_a_provider_400_names_the_rejected_field]
 
 if __name__ == "__main__":
     import traceback
