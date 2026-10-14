@@ -8472,16 +8472,16 @@
             }
         }
 
-        // One button for a parent or adult: Assign driver (Change driver when
+        // One button for a PARENT: Assign driver (Change driver when
         // somebody holds it) opens a picker with Me first, then the family's
         // other drivers on the rota. Picking yourself is still a self-claim
         // (source 'pwa', so you are not pushed about a drive you just took);
         // anybody else is a parent's assignment (source 'pwa_parent', they are).
-        // A driver who is not a parent or adult keeps the self-claim buttons.
+        // Adults and teens assign themselves only: the self-claim buttons.
         function renderAssignButtons(ev, wrap) {
             if (!wrap) return;
             wrap.innerHTML = '';
-            const canAssignOthers = !ev.isErrand && !ev.suppressed && ['parent', 'adult'].includes(currentMemberRole());
+            const canAssignOthers = !ev.isErrand && !ev.suppressed && currentMemberRole() === 'parent';
             const mkBtn = (label, onclick, tag) => {
                 const b = document.createElement('button');
                 b.className = 'w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-blue-500/50 hover:bg-blue-900/20 active:bg-blue-600 text-blue-400 font-bold shadow-md';

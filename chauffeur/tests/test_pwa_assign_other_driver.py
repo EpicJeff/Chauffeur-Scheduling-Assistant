@@ -2,11 +2,12 @@
 sheet (the hand path behind Argyle's reassign_driver), run in a real DOM.
 
 Pinned shapes:
-  * `renderAssignButtons(ev, wrap)` draws, for a parent or adult on a
-    non-errand, ONE tagged button (`data-assign-other`) reading "Assign
+  * `renderAssignButtons(ev, wrap)` draws, for a PARENT on a non-errand,
+    ONE tagged button (`data-assign-other`) reading "Assign
     driver", or "Change driver" when somebody already holds the drive, and
-    nothing else (the user's call 2026-10-14: two buttons is clutter); a
-    child driver keeps the self-claim buttons and gets no picker; an errand
+    nothing else (the user's call 2026-10-14: two buttons is clutter); an
+    adult or a teen driver keeps the self-claim buttons and gets no picker
+    (the user's call, same day: only a parent assigns others); an errand
     gets neither;
   * `assignDriver(ev)` asks who with promptChoice: Me first, then the
     family's other drivers (never the one already on it), asks which leg when
@@ -137,6 +138,7 @@ def _run_once():
             'assign_me': {'ev': EV_OPEN, 'drivers': DRIVERS, 'tap': True, 'answers': ['jeff']},
             'parent_held': {'ev': EV_HELD, 'drivers': DRIVERS},
             'child': {'ev': EV_OPEN, 'drivers': DRIVERS, 'role': 'child'},
+            'adult': {'ev': EV_OPEN, 'drivers': DRIVERS, 'role': 'adult'},
             'errand': {'ev': EV_ERRAND, 'drivers': DRIVERS},
             'assign_gran': {'ev': EV_OPEN, 'drivers': DRIVERS, 'tap': True, 'answers': ['gran']},
             'assign_both_legs': {'ev': EV_LEGS, 'drivers': DRIVERS, 'tap': True, 'answers': ['gran', '__both__']},
@@ -161,7 +163,7 @@ def _case(name):
     return r
 
 
-def scenario_a_parent_gets_the_button_a_child_and_an_errand_do_not():
+def scenario_only_a_parent_gets_the_button():
     r = _case('parent_open')
     if r is None:
         return
@@ -172,6 +174,9 @@ def scenario_a_parent_gets_the_button_a_child_and_an_errand_do_not():
     child = _case('child')
     check(child['button'] is None, f"a child never assigns the family's drives: {child}")
     check(child['buttons'] == ['Assign to Me'], f"a child driver keeps the self-claim: {child['buttons']}")
+    adult = _case('adult')
+    check(adult['button'] is None and adult['buttons'] == ['Assign to Me'],
+          f"an adult assigns only themselves: {adult}")
     errand = _case('errand')
     check(errand['button'] is None, f"an errand is the household's own job: {errand}")
 
@@ -228,7 +233,7 @@ def scenario_the_holder_is_not_offered_again():
 
 
 SCENARIOS = [
-    scenario_a_parent_gets_the_button_a_child_and_an_errand_do_not,
+    scenario_only_a_parent_gets_the_button,
     scenario_picking_grandma_posts_one_override_with_the_parent_source,
     scenario_me_leads_the_picker_and_stays_a_self_claim,
     scenario_two_legs_ask_which_and_both_posts_two,
