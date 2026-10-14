@@ -1179,6 +1179,8 @@ def scenario_claude_members_become_runner_calls_in_permille():
     check(f('anthropic', 'screenshot', {}) == {'name': 'look', 'args': {}}, 'screenshot is a look')
     r = f('anthropic', 'right_click', {'coordinate': [1, 1]})
     check(r['name'] == 'refuse' and 'right_click' in r['args']['reason'], r)
+    check(f('anthropic', 'zoom', {'region': [0, 0, 720, 450]}) == {'name': 'look', 'args': {'clip': [0, 0, 500, 500]}},
+          'a zoom is a clipped look, the region in permille (live shape 2026-10-13: input.region = [x1, y1, x2, y2] pixels)')
     check(f('anthropic', 'navigate', {'url': 'https://a.example/'}) == {'name': 'navigate', 'args': {'url': 'https://a.example/'}}, 'function tool')
     check(f('anthropic', 'go_back', {}) == {'name': 'go_back', 'args': {}}, 'go_back')
 
@@ -1213,7 +1215,9 @@ def scenario_claude_step_builds_the_request_and_reads_the_turn():
     body = sent[0]
     check(body['model'] == 'claude-sonnet-5-5' and body['output_config']['effort'] == 'low' and 'temperature' not in body, body.keys())
     types = [t.get('type') or t.get('name') for t in body['tools']]
-    check(types[0] == 'computer_toolset_20260801' and body['tools'][0]['configs'] == {'zoom': {'enabled': False}}, body['tools'][0])
+    check(body['tools'][0] == {'type': 'computer_toolset_20260801'}, f'zoom is on (served as a clipped look): {body["tools"][0]}')
+    check(body['cache_control'] == {'type': 'ephemeral'}, 'the replayed history reads from cache')
+    check('never call screenshot' in body['system'] and 'zoom on a region' in body['system'], 'no looks, no waits, zoom instead')
     check({'navigate', 'go_back'} <= set(types), 'navigate and go_back are function tools')
     check(body['messages'][0]['content'][1]['source']['data'] == base64.b64encode(b'\x89PNG1').decode(), 'the image went as base64')
     check('CHALLENGE:' in body['system'] and 'focused box' in body['system'], 'the adapter system text')
@@ -1266,6 +1270,34 @@ def scenario_openai_step_uses_previous_response_id_and_call_outputs():
     check(items[0]['type'] == 'computer_call_output' and items[0]['call_id'] == 'cc_1' and items[0]['output']['type'] == 'computer_screenshot' and items[0]['output']['image_url'].startswith('data:image/png;base64,'), items[0])
     check(items[1]['type'] == 'function_call_output' and items[1]['call_id'] == 'fc_1' and 'a.example' in items[1]['output'], items[1])
     check(len(items) == 2, 'only the new items go; the history is on the server')
+
+
+def scenario_a_zoom_is_a_clipped_screenshot():
+    """A look with a clip answers with the region only: the model reads small text in one step."""
+    import struct
+    _reset()
+    fake, seen = _recording([{'name': 'look', 'args': {'clip': [0, 0, 500, 500]}}], 'DONE.')
+    browse._model_step = fake
+    r = browse.run('read the top left', SITE, {}, {}, start_url=URL, out_dir=OUT)
+    fr = [c['function_responses'] for c in seen if isinstance(c, dict) and 'function_responses' in c][0]
+    shot = fr[0][2]
+    w, h = struct.unpack('>II', shot[16:24])
+    check((w, h) == (720, 450), f'the clip is the top-left quarter of 1440x900: {(w, h)}')
+    check(r['actions'] == 0 and 'zoom' in r['turns_log'][0]['action'], f'a zoom is not an action and is logged as one: {r["turns_log"][0]}')
+
+
+def scenario_openai_instructions_say_no_looks():
+    from unittest.mock import patch
+    from services import llm_budget
+    import io as _io, json as _json
+    sent = []
+    turn = {'id': 'resp_9', 'status': 'completed', 'output': [], 'usage': {}}
+    def fake(request, timeout=60):
+        sent.append(_json.loads(request.data.decode('utf-8')))
+        return _io.BytesIO(_json.dumps(turn).encode('utf-8'))
+    with patch.object(llm_budget, 'urlopen', fake):
+        browse._model_step_openai([{'role': 'user', 'parts': [{'text': 'GOAL'}, {'image': b'\x89PNG1'}]}], {'llm_provider': 'openai', 'llm_openai_api_key': 'O'})
+    check('never call screenshot' in sent[0]['instructions'] and 'zoom' not in sent[0]['instructions'], 'no looks on OpenAI either; zoom only where it exists')
 
 
 def scenario_a_provider_400_names_the_rejected_field():
@@ -1330,7 +1362,7 @@ SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_typ
              scenario_a_link_to_somewhere_else_is_a_door_not_a_commitment, scenario_a_link_that_opens_a_new_tab_is_followed_there,
              scenario_a_page_that_moves_under_the_read_is_read_again,
              scenario_coordinate_free_typing_meets_the_release_gate, scenario_look_and_refuse_turns_continue_then_cap, scenario_each_result_carries_its_own_screenshot_and_url, scenario_a_refusal_reaches_the_next_turn,
-             scenario_claude_members_become_runner_calls_in_permille, scenario_openai_actions_become_runner_calls, scenario_claude_step_builds_the_request_and_reads_the_turn, scenario_openai_step_uses_previous_response_id_and_call_outputs, scenario_model_step_dispatches_on_the_cu_pool, scenario_a_provider_400_names_the_rejected_field]
+             scenario_claude_members_become_runner_calls_in_permille, scenario_openai_actions_become_runner_calls, scenario_claude_step_builds_the_request_and_reads_the_turn, scenario_openai_step_uses_previous_response_id_and_call_outputs, scenario_model_step_dispatches_on_the_cu_pool, scenario_a_provider_400_names_the_rejected_field, scenario_a_zoom_is_a_clipped_screenshot, scenario_openai_instructions_say_no_looks]
 
 if __name__ == "__main__":
     import traceback

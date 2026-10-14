@@ -478,7 +478,13 @@ FUNCTION_TOOLS_OPENAI = [
     {'type': 'function', 'name': t['name'], 'description': t['description'],
      'parameters': t['input_schema']} for t in FUNCTION_TOOLS
 ]
-UNSUPPORTED = ('right_click', 'middle_click', 'triple_click', 'hold_key', 'left_mouse_down', 'left_mouse_up', 'cursor_position', 'zoom')
+UNSUPPORTED = ('right_click', 'middle_click', 'triple_click', 'hold_key', 'left_mouse_down', 'left_mouse_up', 'cursor_position')
+# Every result already carries the screen (runner change 3) and the runner waits
+# for the page after each act, so a screenshot or wait call only doubles the
+# images the next round replays (device, 2026-10-13: 19 of 49 actions were looks).
+NO_LOOK_TEXT = (" Every action's result already includes a fresh screenshot taken after the page settled:"
+                " never call screenshot and never call wait.")
+ZOOM_TEXT = " To read small text, zoom on a region instead of scrolling back and forth." 
 
 
 def _permille(x, y):
@@ -495,6 +501,11 @@ def to_runner_call(provider: str, name: str, inp: dict) -> dict:
     if name == 'wait':
         return {'name': 'wait', 'args': {}}
     if provider == 'anthropic':
+        if name == 'zoom':
+            r = list(inp.get('region') or [0, 0, W, H])[:4]
+            x1, y1 = _permille(r[0], r[1])
+            x2, y2 = _permille(r[2], r[3])
+            return {'name': 'look', 'args': {'clip': [x1, y1, x2, y2]}}
         if name in UNSUPPORTED:
             return {'name': 'refuse', 'args': {'reason': f'{name} is not available here'}}
         c = inp.get('coordinate') or [0, 0]
@@ -604,9 +615,12 @@ def _model_step_anthropic(contents, settings):
             messages.append({'role': c.get('role', 'user'), 'content': content})
     if messages and messages[0]['content'] and messages[0]['content'][0].get('type') == 'text':
         messages[0]['content'][0]['text'] = messages[0]['content'][0]['text'].replace(TYPE_AT_SENTENCE, '', 1)
-    payload = {'model': model, 'max_tokens': 4096, 'system': ADAPTER_TYPING_TEXT, 'messages': messages,
-               'output_config': {'effort': 'low'},
-               'tools': [{'type': 'computer_toolset_20260801', 'configs': {'zoom': {'enabled': False}}}, *FUNCTION_TOOLS]}
+    # The history is a strict prefix each round, so the replayed screenshots read
+    # from cache at a tenth of the price (two runs cost $2.50 before this; the
+    # adapter logs the cache counters so the saving can be read on the device).
+    payload = {'model': model, 'max_tokens': 4096, 'system': ADAPTER_TYPING_TEXT + NO_LOOK_TEXT + ZOOM_TEXT, 'messages': messages,
+               'output_config': {'effort': 'low'}, 'cache_control': {'type': 'ephemeral'},
+               'tools': [{'type': 'computer_toolset_20260801'}, *FUNCTION_TOOLS]}
     req = urllib.request.Request(_llm.ANTHROPIC_URL, data=json.dumps(payload).encode('utf-8'), method='POST',
                                  headers={'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01'})
     data = _provider_turn(req, 'Claude' if 'anthropic' in req.full_url else 'OpenAI')
@@ -623,7 +637,10 @@ def _model_step_anthropic(contents, settings):
         calls.append(call)
         ids.append(b['id'])
     usage = data.get('usage') or {}
-    return {'calls': calls, 'text': CHALLENGE_LINE.sub('', text).strip(), 'tokens': (usage.get('input_tokens', 0), usage.get('output_tokens', 0)),
+    logger.info(f"[browse] claude turn: in={usage.get('input_tokens', 0)} cached={usage.get('cache_read_input_tokens', 0)} "
+                f"cache_write={usage.get('cache_creation_input_tokens', 0)} out={usage.get('output_tokens', 0)} calls={len(calls)}")
+    tokens_in = usage.get('input_tokens', 0) + usage.get('cache_read_input_tokens', 0) + usage.get('cache_creation_input_tokens', 0)
+    return {'calls': calls, 'text': CHALLENGE_LINE.sub('', text).strip(), 'tokens': (tokens_in, usage.get('output_tokens', 0)),
             'content': {'_provider': 'anthropic', 'content': blocks, 'ids': ids}}
 
 
@@ -694,7 +711,7 @@ def _model_step_openai(contents, settings):
                                     'data:image/png;base64,' + base64.b64encode(p['image']).decode(),
                                     'detail': 'original'})
             items.append({'role': c.get('role', 'user'), 'content': content})
-    payload = {'model': model, 'instructions': ADAPTER_TYPING_TEXT, 'input': items,
+    payload = {'model': model, 'instructions': ADAPTER_TYPING_TEXT + NO_LOOK_TEXT, 'input': items,
                'tools': [{'type': 'computer'}, *FUNCTION_TOOLS_OPENAI],
                'reasoning': {'effort': 'low'}, 'truncation': 'auto', 'max_output_tokens': 4096}
     if prior is not None:
@@ -1564,11 +1581,12 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                   + ("You may attempt a human-verification check, at most the allowed attempts.\n" if consent.get('captcha') else
                      "Do NOT attempt any human-verification check; stop and report instead.\n"))
         contents = [{'role': 'user', 'parts': [{'text': _system_text(settings, approved=approved) + '\n\n' + prompt}, {'image': shot}]}]
-        def _answer(name, args, res):
+        def _answer(name, args, res, shot=None):
             """One answer per call: the page's url and the screen right after
             it ride with the response, so two calls in one turn never share
-            one picture (spec 2026-10-13 §7, change 3)."""
-            results.append((name, args, {'url': page.url, **res}, page.screenshot(type='png')))
+            one picture (spec 2026-10-13 §7, change 3). A clipped shot (a zoom)
+            is passed in; otherwise the full screen is taken here."""
+            results.append((name, args, {'url': page.url, **res}, shot if shot is not None else page.screenshot(type='png')))
 
         for turn in range(1, caps['turns'] + 1):
             if time.time() - t0 > caps['seconds']:
@@ -1707,9 +1725,20 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                     # happens on the page, the model gets its answer and a fresh screen
                     # (spec 2026-10-13 §7, change 2). Never an action, never completion.
                     reason = str(args.get('reason') or 'not available here')
-                    report['turns_log'].append({'turn': turn, 'action': name + (': ' + reason[:60] if name == 'refuse' else ''),
+                    clip_shot = None
+                    if name == 'look' and args.get('clip'):
+                        # A zoom: the region, in the runner's permille space, as its own picture.
+                        try:
+                            c = [int(v) for v in args['clip']][:4]
+                            x1, y1 = _px(c[0], c[1])
+                            x2, y2 = _px(c[2], c[3])
+                            clip_shot = page.screenshot(type='png', clip={'x': x1, 'y': y1, 'width': max(1, x2 - x1), 'height': max(1, y2 - y1)})
+                        except Exception as e:
+                            logger.warning(f"[browse] zoom clip failed: {e}")
+                    label = name + (': ' + reason[:60] if name == 'refuse' else (' (zoom)' if clip_shot is not None else ''))
+                    report['turns_log'].append({'turn': turn, 'action': label,
                                                 'url': page.url, 'model_ms': model_ms if i_call == 0 else 0, 'act_ms': 0})
-                    _answer(name, args, {'error': reason} if name == 'refuse' else {})
+                    _answer(name, args, {'error': reason} if name == 'refuse' else {}, clip_shot)
                     continue
                 is_click = name.startswith('click') or name.startswith('double')
                 is_type = name in TYPE_ACTIONS
