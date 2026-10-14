@@ -118,6 +118,26 @@ def scenario_router_injects_driver_context():
     check("start_route" not in captured["tools"], "admin chat has no driver tools")
 
 
+def scenario_assign_refuses_a_driver_off_the_rota():
+    """Approve on a 'Assign Grandma' card runs this tool. A driver whose profile
+    is switched off is not in the solver, so the override would assign nobody;
+    the tool says so and names who can drive."""
+    from services.agent_tools_v2 import assign_driver_to_event_fuzzy
+    seed({"mom": [("Soccer Practice", 9)]})
+    storage.add_driver({"id": "gran", "name": "Grandma", "color_code": "#fff", "is_disabled": True})
+    today = datetime.date.today()
+    start = datetime.datetime.combine(today, datetime.time(9, 0))
+    storage.set_cached_schedule({"events": [{"id": "mom_ev0", "title": "Soccer Practice", "location": "Soccer Practice Field",
+                                            "start": start.isoformat(), "end": (start + datetime.timedelta(hours=1)).isoformat()}],
+                                 "assignments": {}, "ghost_assignments": {}})
+    res = assign_driver_to_event_fuzzy("Soccer Practice", "Grandma", today.isoformat())
+    check(res["status"] == "error" and "switched off" in res["message"] and "Mom" in res["message"],
+          f"an off-rota driver is refused by name with the real roster: {res}")
+    check(not storage.get_all_overrides() or all(o.get('driver_id') != 'gran' for o in storage.get_all_overrides()), "no dead override landed")
+    ok = assign_driver_to_event_fuzzy("Soccer Practice", "Mom", today.isoformat())
+    check(ok["status"] == "success", f"a driver on the rota still assigns: {ok}")
+
+
 def scenario_misheard_names_still_find_the_person():
     """Speech-to-text has never met this family. It renders Celma as "Selma"
     and Vovo as "Volvo", and the old matcher was substring-only — "selma" is
@@ -184,6 +204,7 @@ SCENARIOS = [
     scenario_no_match_errors,
     scenario_router_injects_driver_context,
     scenario_misheard_names_still_find_the_person,
+    scenario_assign_refuses_a_driver_off_the_rota,
     scenario_router_injects_the_family_roster,
 ]
 

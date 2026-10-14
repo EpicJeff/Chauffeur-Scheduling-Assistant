@@ -214,7 +214,16 @@ def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date:
     # a "hashtag" key that does not exist on a Driver (the field is `hashtags`,
     # a list), so it was substring-only in practice — and a substring never
     # finds Celma from "Selma".
-    target_driver, known = _match_person(driver_name, get_all_drivers())
+    # The rota only: a driver whose profile is switched off (or whose person
+    # was archived, which switches it off) is not in the solver, so an override
+    # naming them assigns nobody. Say so instead of landing a dead override.
+    rota = [d for d in get_all_drivers() if not d.get('is_disabled')]
+    off, _ = _match_person(driver_name, [d for d in get_all_drivers() if d.get('is_disabled')])
+    target_driver, known = _match_person(driver_name, rota)
+    if not target_driver and off:
+        return {"status": "error",
+                "message": f"{off.get('name')} is not driving right now (their driving profile is switched off). "
+                           f"The drivers are: {', '.join(known)}."}
     if not target_driver:
         # Name the roster. Without it the model has nothing to correct against
         # and simply retries the same misheard name.

@@ -65,6 +65,27 @@ def scenario_tier1_names_the_free_driver():
           f"the tap is a real assignment, got {act}")
 
 
+def scenario_a_driver_off_the_rota_is_never_offered():
+    """The solver reads one field on a driver, `is_disabled`; the ladder must
+    read the same one. A driving profile switched off, or an archived person
+    (archiving flips is_disabled and drops them from get_all_members, so the
+    member-status check alone never sees them) is neither free nor blocked:
+    not a driver any more. The screenshot of 2026-10-14 offered Grandma."""
+    _reset()
+    _driver("d1", "Jeff", member_id="jeff")
+    with storage.db_lock:
+        storage.drivers_table.insert({"id": "d2", "name": "Grandma", "hashtags": [], "is_disabled": True})
+        storage.drivers_table.insert({"id": "d3", "name": "Sarah", "hashtags": [], "is_disabled": True})
+    storage.add_member({"id": "gran", "name": "Grandma", "role": "adult", "driver_id": "d2"})
+    storage.add_member({"id": "sarah", "name": "Sarah", "role": "adult", "driver_id": "d3", "status": "archived"})
+    ev = _event()
+    free, blocked = cov.driver_options(ev, _cache([ev]))
+    names = [d['name'] for d in free] + [d['name'] for d in blocked]
+    check(names == ["Jeff"], f"off the rota means absent, not free and not blocked: {names}")
+    rung = cov.ladder(ev, _cache([ev]), NOON)
+    check("Grandma" not in rung['line'] and "Sarah" not in rung['line'], f"nobody off the rota is named: {rung['line']}")
+
+
 def scenario_a_busy_driver_is_not_offered_and_says_why():
     _reset()
     _driver("d1", "Jeff", member_id="jeff")
@@ -218,6 +239,7 @@ def scenario_skipping_works_on_a_mandatory_event():
 
 SCENARIOS = [
     scenario_tier1_names_the_free_driver,
+    scenario_a_driver_off_the_rota_is_never_offered,
     scenario_a_busy_driver_is_not_offered_and_says_why,
     scenario_protected_time_is_a_reason_not_a_gap,
     scenario_tier2_only_ever_comes_from_history,

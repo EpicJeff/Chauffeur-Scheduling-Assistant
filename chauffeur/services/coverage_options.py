@@ -123,6 +123,13 @@ def driver_options(ev, cache):
         name = d.get('name') or 'Somebody'
         if not d_id:
             continue
+        # Off the rota is off the rota: `is_disabled` is the one field the solver
+        # reads (main.py builds its drivers from it; archiving flips it too), and
+        # an archived member is already gone from get_all_members, so this is
+        # the check that sees them. Offering somebody the solver will never
+        # pick is a tap into nothing.
+        if d.get('is_disabled'):
+            continue
         member = members_by_driver.get(d_id) or {}
         # A disabled or archived member is not a driver any more (member status
         # ladder) — offering them would be offering somebody who cannot answer.
