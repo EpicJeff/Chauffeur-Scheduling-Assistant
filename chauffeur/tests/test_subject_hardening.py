@@ -226,6 +226,116 @@ def scenario_f11_chat_dispatches_find_in_chauffeur_as_the_speaker():
     check('Unknown tool' not in repr(res), f"not an unknown tool: {res}")
 
 
+
+# --- Residuals from the scoped re-review of the fix wave ----------------------
+
+def _router_capture(replies):
+    from services import agent_router
+    seen = []
+    orig = agent_router.call_gemma_with_fallback
+
+    def fake(prompt, tools_, system_prompt):
+        seen.append((prompt or '') + '\n' + (system_prompt or ''))
+        return replies.pop(0) if replies else {'message': 'ok', 'tool_calls': []}
+    agent_router.call_gemma_with_fallback = fake
+    return seen, lambda: setattr(agent_router, 'call_gemma_with_fallback', orig)
+
+
+def scenario_r1_a_chat_lookup_in_a_group_channel_answers_for_everyone_in_it():
+    _fresh()
+    from services import agent_router
+    mixed = storage.get_or_create_group(['mom', 'aunt'], 'Mom and Jo')
+    parents = storage.get_or_create_group(['mom', 'dad'], 'Parents')
+    call = {'name': 'find_in_chauffeur', 'arguments': {'query': "Kate's 10th birthday"}}
+    seen, undo = _router_capture([{'message': '', 'tool_calls': [call]}, {'message': 'done', 'tool_calls': []}])
+    try:
+        agent_router.process_agent_request('what about the party?', source='family', acting_member=MOM, focus_key=f"channel:{mixed['id']}")
+    finally:
+        undo()
+    check(len(seen) >= 2 and "OCCASION: Kate's 10th birthday" not in seen[1],
+          "a lookup in a channel with an adult the party excludes reads nothing of it (the answer is posted there)")
+    seen, undo = _router_capture([{'message': '', 'tool_calls': [call]}, {'message': 'done', 'tool_calls': []}])
+    try:
+        agent_router.process_agent_request('what about the party?', source='family', acting_member=MOM, focus_key=f"channel:{parents['id']}")
+    finally:
+        undo()
+    check(len(seen) >= 2 and "OCCASION: Kate's 10th birthday" in seen[1], "a parents-only channel reads it")
+
+
+def scenario_r2_a_phone_voice_lookup_is_display_only():
+    from services import app_voice
+
+    class _Turn(app_voice.Turn):
+        def check(self):
+            return None
+    turn = _Turn(id='t1', member={'id': 'mom', 'role': 'parent'}, token='x', channel={'id': 'c1'})
+    turn.before_tool('find_in_chauffeur', {'query': 'Kate gifts'})
+    check(turn.speech_safe is False, "a lookup's words stay on the screen, never read aloud on the phone")
+
+
+def scenario_r3_household_voice_still_names_the_mission_already_under_way():
+    _fresh()
+    from services import voice_tools
+    from services import voice_identity as voice
+    ctx = voice.VoiceContext('ha', 'assist_satellite.kitchen', 'r1', 'g1', service_revision=voice._revision(), paired=True)
+    first = voice_tools.dispatch('start_mission_for', {'goal': 'fix the dishwasher'}, ctx, focus_key='voice:hh1')
+    check(first.get('status') == 'success', f"household voice starts it: {first}")
+    again = voice_tools.dispatch('start_mission_for', {'goal': 'fix the dishwasher please'}, ctx, focus_key='voice:hh2')
+    check(again.get('mission_id') == first.get('mission_id') and 'already' in (again.get('message') or '').lower(),
+          f"the second ask names the first instead of paying for it twice: {again}")
+
+
+def scenario_r4_a_retarget_between_the_check_and_the_browse_stops_the_browse():
+    _fresh()
+    tid = _bound_thread('Disney dining', 'trip', 'ev_disney')
+    mid = _mission(created_by='mom', origin=tid)
+    calls = []
+    missions._browse = lambda **kw: calls.append(kw) or {'outcome': 'done', 'text': 'ok', 'learned': {}, 'stopped_at': '', 'wanted_fields': [],
+                                                        'turns': 1, 'tokens_in': 1, 'tokens_out': 1, 'seconds': 1, 'screenshots': [], 'filled': {}}
+    _plan({'action': 'browse', 'goal': 'book Be Our Guest', 'site': 'disneyworld.disney.go.com'})
+    orig_add = storage.add_mission_step
+
+    def add_and_race(mission_id, data):
+        if data.get('kind') == 'browse':
+            subjects.retarget('thread', tid, 'trip', 'ev_hawaii', MOM)    # lands after the post-plan check
+        return orig_add(mission_id, data)
+    storage.add_mission_step = add_and_race
+    try:
+        _step(mid)
+    finally:
+        storage.add_mission_step = orig_add
+    check(not calls, "the runner never starts a Disney browse once the thread is about Hawaii")
+    check(storage.get_mission(mid)['status'] != 'browsing', f"not left browsing: {storage.get_mission(mid)['status']}")
+    check(_steps(mid, 'stale_plan'), "and the note says why")
+
+
+def scenario_r5_a_proposal_is_born_with_its_origin():
+    _fresh()
+    mid = _mission(created_by='mom', subject_kind='list', subject_id='l2', subject_rev=1)
+    inserted = []
+    orig = storage.add_action_proposal
+    storage.add_action_proposal = lambda proposal: inserted.append(dict(proposal)) or orig(proposal)
+    try:
+        _plan({'action': 'propose', 'tool': 'add_shopping_items', 'args': {'items': ['engraved ring']}, 'summary': 'Add the ring', 'why': 'gift'})
+        _step(mid)
+    finally:
+        storage.add_action_proposal = orig
+    check(inserted and inserted[0].get('origin_kind') == 'mission' and inserted[0].get('origin_id') == mid,
+          f"the row is never stored, even for an instant, without its mission: {inserted}")
+
+
+def scenario_r6_an_unbound_lookup_of_a_household_record_reads_as_any_adult():
+    _fresh()
+    storage.add_shopping_list({'id': 'l3', 'name': 'Pie secret', 'audience': 'private', 'shared_with': ['mom'], 'occasion_id': 'o2'})
+    mid = _mission(created_by='mom')
+    _plan({'action': 'tool', 'tool': 'find_in_chauffeur', 'args': {'query': 'Thanksgiving'}}, {'action': 'ask_user', 'question': 'ok?'})
+    _step(mid)
+    _step(mid)
+    nxt = PROMPTS[-1]['user']
+    check('Thanksgiving' in nxt and 'Pie secret' not in nxt,
+          f"the household occasion reads in full, as any adult would see it; mom's private list is not in it:\n{nxt[-700:]}")
+
+
 SCENARIOS = [
     scenario_f1_patch_cannot_touch_subject_fields,
     scenario_f2_retarget_never_widens_the_audience,
@@ -238,6 +348,12 @@ SCENARIOS = [
     scenario_f9_the_minds_snapshot_leaves_out_threads_not_for_the_wall,
     scenario_f10_an_unbound_mission_sees_withheld_records_as_ids_only,
     scenario_f11_chat_dispatches_find_in_chauffeur_as_the_speaker,
+    scenario_r1_a_chat_lookup_in_a_group_channel_answers_for_everyone_in_it,
+    scenario_r2_a_phone_voice_lookup_is_display_only,
+    scenario_r3_household_voice_still_names_the_mission_already_under_way,
+    scenario_r4_a_retarget_between_the_check_and_the_browse_stops_the_browse,
+    scenario_r5_a_proposal_is_born_with_its_origin,
+    scenario_r6_an_unbound_lookup_of_a_household_record_reads_as_any_adult,
 ]
 
 if __name__ == "__main__":

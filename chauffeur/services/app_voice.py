@@ -94,7 +94,7 @@ class Turn:
             if error or not row or not scope.audience_allows(row, 'shopping_list', None) \
                     or row.get('private') or row.get('sensitivity') == 'sensitive':
                 self.speech_safe = False
-        elif name == 'start_mission_for':
+        elif name in ('start_mission_for', 'find_in_chauffeur'):
             self.speech_safe = False  # goal/focus/mission results can contain private details
 
     def tool_result(self, result):

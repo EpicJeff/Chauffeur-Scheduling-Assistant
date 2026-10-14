@@ -1816,11 +1816,12 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
         if m.get('origin_kind') != 'thread':
             continue
         t = storage.get_thread(m.get('origin_ref') or '')
-        if not t or not situations.can_see('thread', t, viewer):
+        if not t or (not (spoken and viewer is None) and not situations.can_see('thread', t, viewer)):
             continue
         if spoken:
             from services.voice_tools import speech_safe
-            if not (t or {}).get('voice_shared') or not speech_safe(t) or not speech_safe(m):
+            if not (t or {}).get('voice_shared') or not speech_safe(t) or not speech_safe(m) \
+                    or not subjects.spoken_safe('thread', t):
                 continue
         hay = ((t or {}).get('title', '') + ' ' + (t or {}).get('goal', '') + ' ' + m.get('goal', '')).lower()
         if subject_kind:
@@ -1845,9 +1846,9 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
             from services.voice_tools import speech_safe
         compatible = (not subject_kind or ((t or {}).get('subject_kind') in (None, subject_kind)
                                           and (t or {}).get('subject_id') in (None, subject_id)))
-        if (t and situations.can_see('thread', t, viewer)
+        if (t and (spoken and viewer is None or situations.can_see('thread', t, viewer))
                 and t.get('state') not in ('done', 'dropped') and not live and compatible
-                and (not spoken or t.get('voice_shared') and speech_safe(t))):
+                and (not spoken or t.get('voice_shared') and speech_safe(t) and subjects.spoken_safe('thread', t))):
             tid = t['id']
     if not tid:
         tid = _threads.create(title=(title or goal)[:80], owner_member_id=(acting_member or {}).get('id'), goal=goal, kind='vendor',

@@ -40,6 +40,8 @@ _browse_async = True                     # tests run the runner inline
 RETENTION_DAYS = 120
 # Full subject lookups reach the next planner call once, never storage.
 _last_lookups = {}
+# A browse must still be about the record the planner read.
+_plan_subject = {}
 
 # Default-deny read classification: a registry tool NOT named here is offered
 # only in propose-wrapped form. Adding a tool to the registry later leaves it
@@ -877,6 +879,12 @@ def start_browse(mission: dict, goal: str, site: str, start_url: str = None, rel
             **({'approved_ask_id': approved.get('ask_id'), 'approval_spent': False} if approved else {})}
     sid = storage.add_mission_step(mid, {'kind': 'browse', 'name': site, 'args_json': args, 'result_json': None})
     with storage.db_lock:
+        if mid in _plan_subject and subject_of(storage.get_mission(mid)) != _plan_subject.get(mid):
+            text = 'the subject changed before the browse started'
+            storage.update_mission_step(sid, {'result_json': {'outcome': 'stale', 'text': text}})
+            storage.add_mission_step(mid, {'kind': 'note', 'name': 'stale_plan', 'result_json': {'note': text}})
+            storage.update_mission(mid, {'status': 'running'})
+            return sid
         storage.set_app_state(f'mission_steer:{mid}', {})
         storage.update_mission(mid, {'status': 'browsing'})
     kw = dict(goal=goal, site=site, released=released if released is not None else _released_for(mission, site),
@@ -1198,6 +1206,13 @@ def _land_finish(mission: dict, res: dict) -> None:
 def step(mission: dict) -> dict:
     """Advance ONE step. Returns the fresh mission row. All state transitions
     live here so tick() stays a scheduler and tests drive this directly."""
+    try:
+        return _step_once(mission)
+    finally:
+        _plan_subject.pop(mission['id'], None)
+
+
+def _step_once(mission: dict) -> dict:
     mid = mission['id']
     settings = storage.get_settings() or {}
     caps = {'steps': int(settings.get('mission_step_cap', CAPS_DEFAULT['steps'])),
@@ -1213,6 +1228,7 @@ def step(mission: dict) -> dict:
 
     now = datetime.datetime.now()
     before = subject_of(mission)
+    _plan_subject[mid] = before
     res = _llm(mission, _system_prompt(now, settings, mission), _user_prompt(mission),
                settings)
     if subject_of(storage.get_mission(mid)) != before:
@@ -1268,7 +1284,9 @@ def step(mission: dict) -> dict:
                 # A clear winner is returned alone; a tie has no context.
                 _last_lookups[mid] = {
                     'status': out.get('status'), 'candidates': safe_candidates,
-                    'context': out.get('context') if safe_candidates and not safe_candidates[0].get('withheld') else None,
+                    'context': subjects.context(safe_candidates[0]['kind'], safe_candidates[0]['id'],
+                                               agent_tools_v2._REGISTRY_READER, facet=args.get('facet') or None)
+                               if out.get('context') and safe_candidates and not safe_candidates[0].get('withheld') else None,
                 }
             # The stored words name only what any adult may read: the tool's own
             # message can name the withheld record ("Found Disney World.").
@@ -1325,9 +1343,7 @@ def step(mission: dict) -> dict:
         made = chat_actions.create_action_proposal(
             name, summary, res.get('args') or {},
             created_by_member_id=mission.get('created_by'),
-            extra_allowed=proposable_tools())
-        if made.get('proposal_id'):
-            storage.update_action_proposal(made['proposal_id'], {'origin_kind': 'mission', 'origin_id': mid})
+            extra_allowed=proposable_tools(), extra={'origin_kind': 'mission', 'origin_id': mid})
         storage.add_mission_step(mid, {'kind': 'proposal', 'name': name,
                                        'args_json': res.get('args') or {},
                                        'result_json': {**made,

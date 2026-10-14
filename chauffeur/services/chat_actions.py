@@ -377,7 +377,8 @@ def build_card(proposal_id: str, action_type: str, summary: str, status: str) ->
 
 def create_action_proposal(action_type: str, summary: str, payload: dict,
                            created_by_member_id: str = None,
-                           extra_allowed: frozenset = frozenset()) -> Dict[str, Any]:
+                           extra_allowed: frozenset = frozenset(),
+                           extra: dict = None) -> Dict[str, Any]:
     """Store a proposed action; return {status, message, proposal_id, card}.
     extra_allowed widens the proposable set for the mission engine ONLY —
     chat's own funnel never passes it, so chat behavior is unchanged."""
@@ -392,6 +393,7 @@ def create_action_proposal(action_type: str, summary: str, payload: dict,
         "created_by_member_id": created_by_member_id,
         "channel_id": None,
         "requires_admin": True,
+        **(extra or {}),
     })
     return {"status": "success", "proposal_id": pid,
             "message": summary,

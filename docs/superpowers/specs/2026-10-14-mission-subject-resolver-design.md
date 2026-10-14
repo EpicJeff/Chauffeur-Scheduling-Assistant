@@ -1,6 +1,6 @@
 # Subjects — a thread or mission stands inside a Chauffeur record
 
-**Date:** 2026-10-14. **Status:** DRAFT for the user's review. Codex adversarial review done (nine findings, every one verified against the code, all folded in below; the review's text is in the v2.499.459→.460 commit message trail). Slice 1 of three (resolver + subject; then staged plans with one approval per stage; then wake conditions).
+**Date:** 2026-10-14. **Status:** BUILT v2.499.463–.472 (2026-10-14), NOT device-verified. Codex adversarial review of this spec: nine findings folded in. Whole-branch review: eleven findings fixed in v2.499.471, six residuals in v2.499.472. Rulings and their costs are in the plan's ledger and the capabilities entry. Slice 1 of three (resolver + subject; then staged plans with one approval per stage; then wake conditions).
 **Builds on:** `2026-10-10-browse-missions-design.md` (missions, threads, the planner's READ/PROPOSE catalog), the mid-mission steer (v2.499.458), the Programs arc (a goal is a plan that claims the week), family-network S4 (audiences: `services/scope.py`).
 
 ## Problem

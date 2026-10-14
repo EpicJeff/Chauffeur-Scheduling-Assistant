@@ -1026,7 +1026,29 @@ sending or claiming, and never pass from_member/member_name for them.
                         kwargs['focus_key'] = focus_key
                     if 'spoken' in allowed:
                         kwargs['spoken'] = substituted
+                    channel_members = None
+                    if func_name == 'find_in_chauffeur' and focus_key and focus_key.startswith('channel:'):
+                        from services import storage, subjects
+                        channel = storage.get_channel(focus_key[len('channel:'):])
+                        if channel:
+                            if channel.get('kind') in ('dm', 'group'):
+                                channel_members = [storage.get_member(member_id) for member_id in channel.get('member_ids') or []]
+                            else:
+                                channel_members = [m for m in storage.get_all_members()
+                                                   if (m.get('status') or 'active') == 'active']
+                            channel_members = [m for m in channel_members
+                                               if not m or not (m.get('system') or m.get('id') == 'argyle')]
                     res = fn(**kwargs, acting_member=actor)
+                    if channel_members is not None:
+                        candidates = res.get('candidates') or []
+                        kept = [c for c in candidates if all(subjects.visible(
+                            c['kind'], subjects.load(c['kind'], c['id']), member) for member in channel_members)]
+                        res['candidates'] = kept
+                        if len(candidates) != 1 or candidates[0] not in kept:
+                            res['context'] = None
+                        if len(kept) != len(candidates):
+                            res['message'] = ('Nothing by that name.' if not kept else
+                                              'More than one: ' + '; '.join(c['title'] for c in kept))
                     if isinstance(res, dict) and res.get("schedule_dirty"):
                         schedule_dirty = True
                     if res.get("message"): agent_message = res["message"]
