@@ -137,6 +137,7 @@ def _system_prompt(now: datetime.datetime, settings: dict = None) -> str:
         "never sent by you (a person reviews and sends). Never claim "
         "something was sent, booked, or paid that the transcript does not "
         "show (a `submitted` note).\n\n"
+        "A user_steer note is the person correcting course and outranks the goal's earlier reading.\n"
         "Respond with EXACTLY ONE JSON object, one of:\n"
         '{"action":"tool","tool":"<READ tool>","args":{...}}\n'
         '{"action":"propose","tool":"<PROPOSE tool>","args":{...},'
@@ -207,6 +208,13 @@ def _user_prompt(mission: dict) -> str:
     lines = [f"GOAL: {mission.get('goal')}"]
     if mission.get('origin_kind') == 'thread':
         lines.append(f"(Opened from thread {mission.get('origin_ref')})")
+    last_real = max((i for i, s in enumerate(steps)
+                     if s.get('kind') in ('browse', 'tool', 'proposal', 'ask', 'draft')), default=-1)
+    steers = [s for s in steps[last_real + 1:]
+              if s.get('kind') == 'note' and s.get('name') == 'user_steer']
+    if steers:
+        lines.append("THE PERSON SAID, MID-MISSION (act on this before anything else):")
+        lines.extend(f"- {(s.get('result_json') or {}).get('text') or ''}" for s in steers)
     lines.append("TRANSCRIPT SO FAR (oldest first):")
     for s in steps[-25:]:
         rj = s.get('result_json')
@@ -280,7 +288,7 @@ def ask_card(mission: dict) -> dict | None:
     """Draw the current ask with the mission's own situation options."""
     from services import situations
     row = situations.load('mission', mission['id'])
-    if not row:
+    if not row or not (row.get('status') == 'waiting_user' or verify_open(row)):
         return None
     opts = [o for o in situations._options_mission(row)
             if o['verb'] in ('answer', 'release', 'submit', 'verify')]
@@ -603,6 +611,51 @@ def tap_only_ask_pending(mission_id: str) -> bool:
     return mission.get('status') == 'waiting_user' or verify_open({**mission, 'id': mission_id})
 
 
+def answer(mission_id: str, text: str, actor: dict) -> dict:
+    """The one free-text door: answer a question or steer a live mission."""
+    if (actor or {}).get('role') not in ('parent', 'adult'):
+        return {'status': 'refused', 'message': 'Only a parent or adult can handle these.'}
+    with storage.db_lock:
+        mission = storage.get_mission(mission_id)
+        if not mission:
+            return {'status': 'error', 'message': 'No such mission'}
+        text = (text or '').strip()
+        if not text:
+            return {'status': 'error', 'message': 'Say something to send.'}
+        if tap_only_ask_pending(mission_id):
+            return {'status': 'error', 'message': 'Answer that one with its buttons.'}
+        status = mission.get('status')
+        if status in TERMINAL:
+            return {'status': 'error', 'message': 'That mission has ended.'}
+        if status == 'waiting_user':
+            storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'user_answer', 'result_json': {'text': text}})
+            storage.update_mission(mission_id, {'status': 'running'})
+            message = 'Answered.'
+        elif status in ('running', 'browsing', 'waiting_retry'):
+            storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'user_steer', 'result_json': {'text': text}})
+            if status == 'browsing':
+                storage.set_app_state(f'mission_steer:{mission_id}', {'text': text, 'ts': time.time()})
+            message = 'Told it; it picks that up at its next step.'
+        else:
+            return {'status': 'error', 'message': 'That mission cannot take an answer right now.'}
+    from services import situations
+    situations.touched('mission', mission_id)
+    return {'status': 'success', 'message': message}
+
+
+def _steer_check(mission_id: str):
+    """Consume a person's stop flag once, between browse turns."""
+    def check():
+        with storage.db_lock:
+            key = f'mission_steer:{mission_id}'
+            steer = storage.get_app_state(key)
+            if steer:
+                storage.set_app_state(key, {})
+                return steer.get('text')
+        return None
+    return check
+
+
 def _late_verify(mission_id: str) -> None:
     """A late report that left an attempt at `unknown` with no verify ask on
     it (an unasked press the backstop caught after the mission moved on):
@@ -776,10 +829,12 @@ def start_browse(mission: dict, goal: str, site: str, start_url: str = None, rel
     args = {'goal': goal, 'site': site, 'start_url': start_url,
             **({'approved_ask_id': approved.get('ask_id'), 'approval_spent': False} if approved else {})}
     sid = storage.add_mission_step(mid, {'kind': 'browse', 'name': site, 'args_json': args, 'result_json': None})
-    storage.update_mission(mid, {'status': 'browsing'})
+    with storage.db_lock:
+        storage.set_app_state(f'mission_steer:{mid}', {})
+        storage.update_mission(mid, {'status': 'browsing'})
     kw = dict(goal=goal, site=site, released=released if released is not None else _released_for(mission, site),
               consent={'captcha': bool(settings.get('missions_captcha_attempts'))}, start_url=start_url, out_dir=browse_dir(mid),
-              approved=approved, on_attempt=_on_attempt_for(mid, sid))
+              approved=approved, on_attempt=_on_attempt_for(mid, sid), should_stop=_steer_check(mid))
 
     def work():
         try:

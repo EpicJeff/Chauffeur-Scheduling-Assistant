@@ -296,6 +296,9 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                       "browse the web or fill out forms: for 'get times and pricing', 'enter my information', "
                       "'get a quote', 'get X fixed' call start_mission_for (on the thread we are talking about "
                       "when there is one). A plain web question with no site to act on is research. "
+                      'A correction or new preference about a mission already running on the thread we are talking about '
+                      '("use the manufacturer instead", "not that company", "only mornings") is act_on_situation with verb answer '
+                      'on that thread, never a new mission. '
                       + release_instruction)
 
     if source == 'voice':

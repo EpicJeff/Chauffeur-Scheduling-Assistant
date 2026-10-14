@@ -1424,7 +1424,7 @@ def _learned(text: str) -> dict:
 
 
 def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, start_url: str = None,
-        out_dir: str = None, approved: dict = None, on_attempt=None) -> dict:
+        out_dir: str = None, approved: dict = None, on_attempt=None, should_stop=None) -> dict:
     """Drive one goal on one site. Returns the report (spec §2). Never raises."""
     caps = {**DEFAULT_CAPS, **(caps or {})}
     settings = storage.get_settings() or {}
@@ -1648,6 +1648,11 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
             results.append((name, args, {'url': page.url, 'page': _inventory(page), **res}, shot if shot is not None else page.screenshot(type='png')))
 
         for turn in range(1, caps['turns'] + 1):
+            if should_stop:
+                why = should_stop()
+                if why:
+                    report['stopped_at'] = page.url
+                    return finish('steered', f"stopped by the person: {why}")
             if time.time() - t0 > caps['seconds']:
                 return finish('capped', f"stopped after {caps['seconds']} s")
             # The page first: what it wants and warns about, before the model acts on it.

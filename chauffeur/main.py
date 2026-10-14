@@ -6218,24 +6218,18 @@ def missions_verify(mission_id: str, body: dict = Body(default={}), request: Req
 @app.post("/api/missions/{mission_id}/answer")
 def missions_answer(mission_id: str, body: dict = Body(default={}),
                     request: Request = None):
-    _mind_actor(request, body.get('member_id'))
-    row = storage.get_mission(mission_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="No such mission")
+    """Delegate free text to missions.answer, including tap_only_ask_pending:
+    a pending release, submit or verify returns 'Answer that one with its buttons.'
+    """
+    actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
     text = (body.get('text') or '').strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="Say something to send")
     from services import missions as _missions
-    if _missions.tap_only_ask_pending(mission_id):
-        # A release, a booking or a verify is answered by its buttons only
-        # (spec 2026-10-11 §2); free text would bury it under the next ask.
-        raise HTTPException(status_code=400, detail="Answer that one with its buttons.")
-    storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'user_answer',
-                                          'result_json': {'text': text}})
-    if row.get('status') == 'waiting_user':
-        storage.update_mission(mission_id, {'status': 'running'})
-    from services import situations as _sit
-    _sit.touched('mission', mission_id)
+    res = _missions.answer(mission_id, text, actor)
+    if res.get('status') == 'refused':
+        raise HTTPException(status_code=403, detail=res.get('message'))
+    if res.get('status') == 'error':
+        raise HTTPException(status_code=404 if res.get('message') == 'No such mission' else 400,
+                            detail=res.get('message'))
     return {"status": "success"}
 
 

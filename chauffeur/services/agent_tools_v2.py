@@ -4587,7 +4587,7 @@ def get_available_tools() -> List[Dict]:
         },
         {
             "name": "act_on_situation",
-            "description": "Do one of a situation's options: assign a driver, approve a step, set a thread's next step, answer a mission, snooze, dismiss, take it yourself, mark it handled, or say Argyle read a reply wrong (unread). 'Handle it' / 'do that' with no name means the one we are talking about. Use start_ask to ask somebody. NEVER the release verb: sharing the family's contact details is the person's own tap (Share on the Missions page, the thread card or the DM card), not something you do from their words.",
+            "description": "Do one of a situation's options: assign a driver, approve a step, set a thread's next step, answer a mission, snooze, dismiss, take it yourself, mark it handled, or say Argyle read a reply wrong (unread). answer also steers a mission that is still running. 'Handle it' / 'do that' with no name means the one we are talking about. Use start_ask to ask somebody. NEVER the release verb: sharing the family's contact details is the person's own tap (Share on the Missions page, the thread card or the DM card), not something you do from their words.",
             "parameters": {"type": "object",
                            "properties": {"ref": {"type": "string", "description": "Id or title fragment; empty for the one we are talking about."},
                                           "verb": {"type": "string", "enum": ["assign", "plan", "prepare", "do", "done", "skip", "research", "draft", "advance", "answer", "close", "snooze", "dismiss", "own", "unread", "release"]},

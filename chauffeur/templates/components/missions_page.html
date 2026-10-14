@@ -9,7 +9,7 @@
              /api/missions/admin, polled every 15s while the tab is
              visible) with each mission's step transcript, proposal
              Approve/Dismiss (POST .../proposals/{pid}/act), an answer box
-             that appears once a mission is waiting_user (POST
+             for answers and mid-mission steering (POST
              .../answer), Drop (POST .../drop), and history with OK acks
              (POST .../ack). Every model/user string below renders through
              x-text or JSON.stringify into x-text — never x-html/innerHTML
@@ -221,14 +221,14 @@
                                                     </div>
                                                 </template>
 
-                                                <!-- Answer box: only while Argyle is actually waiting on one. -->
+                                                <!-- Free text answers a question or steers a live mission. -->
                                                 <div class="mt-2 bg-gray-800/60 border border-amber-700/40 rounded-xl p-3"
-                                                    x-show="mission.status === 'waiting_user' && !isTapAskPending(mission)" x-cloak>
+                                                    x-show="['running','browsing','waiting_retry'].includes(mission.status) || (mission.status === 'waiting_user' && !isTapAskPending(mission))" x-cloak>
                                                     <div class="text-xs font-semibold text-amber-300 mb-1.5"
-                                                        x-text="lastAskQuestion(mission) || 'Argyle is waiting on an answer.'"></div>
+                                                        x-text="mission.status === 'waiting_user' ? (lastAskQuestion(mission) || 'Argyle is waiting on an answer.') : 'Tell Argyle something; it picks it up at its next step.'"></div>
                                                     <div class="flex gap-2">
                                                         <input type="text" x-model="answerText[mission.id]" :id="'mission-answer-' + mission.id"
-                                                            @keydown.enter="sendAnswer(mission.id)" placeholder="Type your answer"
+                                                            @keydown.enter="sendAnswer(mission.id)" :placeholder="mission.status === 'waiting_user' ? 'Type your answer' : 'e.g. use the manufacturer, not a local company'"
                                                             class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
                                                         <button @click="sendAnswer(mission.id)" :disabled="!!busy[mission.id]"
                                                             class="shrink-0 text-xs font-bold px-3 py-2 rounded-lg bg-blue-600 text-white active:bg-blue-700 disabled:bg-gray-800 disabled:text-gray-500">Send</button>

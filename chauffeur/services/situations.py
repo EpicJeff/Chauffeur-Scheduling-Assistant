@@ -218,16 +218,19 @@ def _thread_mission(row: dict):
 
 def _options_thread(row: dict) -> list:
     from services import threads as _th
-    out = []
-    # The thread carries its mission's ask (browse missions §4): the question
-    # or the release leads, with ids that route to the mission in act().
+    out, steer = [], []
+    # The thread carries its mission's ask or steering option, with ids that
+    # route to the mission in act().
     m = _thread_mission(row)
-    if m and m.get('status') == 'waiting_user':
+    if m:
         mrow = load('mission', m['id'])
         for o in _options_mission(mrow or {}):
             if o['verb'] in ('answer', 'release', 'submit', 'verify'):
                 sub = o['id'].split(':', 1)[1] if ':' in o['id'] else ''
-                out.append(_opt(o['verb'], o['label'], o['payload'], f"mission:{m['id']}" + (f":{sub}" if sub else '')))
+                fwd = _opt(o['verb'], o['label'], o['payload'], f"mission:{m['id']}" + (f":{sub}" if sub else ''))
+                # A steer is offered while the mission works, never owed: it
+                # rides at the back; an ask (question, release, booking) leads.
+                (steer if o['payload'].get('ask') == 'steer' else out).append(fwd)
     lead = _reply_option(row)
     if lead:
         out.append(lead)
@@ -242,6 +245,7 @@ def _options_thread(row: dict) -> list:
     for a in _asks.asks_for('thread', row.get('id'), row):
         if a.get('answered_by') == 'argyle' and a.get('state') in ('yes', 'no'):
             out.append(_opt('unread', 'Argyle got it wrong', {'ask_id': a['id']}, a['id']))
+    out.extend(steer)
     out.append(_opt('close', 'Done with it', {'state': 'done'}, 'done'))
     return out + _tail('thread', row)
 
@@ -281,6 +285,10 @@ def _options_mission(row: dict) -> list:
             # `ask` says what kind it is: the card shows a question to a viewer
             # who cannot act, never a hand-off's filled values.
             out.append(_opt('answer', q, {'ask': (asked or {}).get('name') or 'question'}))
+    if row.get('status') in ('running', 'browsing', 'waiting_retry'):
+        # Its own id: the thread forwards it as answer:mission:<id>:steer, which
+        # triage and the lead rule tell apart from a question waiting on the person.
+        out.append(_opt('answer', 'Tell it something', {'ask': 'steer'}, 'steer'))
     for s in steps:
         if s.get('kind') != 'proposal':
             continue
@@ -311,7 +319,7 @@ def options_for(kind: str, row: dict) -> list:
                 opts.insert(0, extra)
         # The mission's ask leads whatever the cached note suggested: a
         # question or a release waiting on the person outranks a suggestion.
-        asks = [o for o in opts if ':mission:' in (o.get('id') or '')]
+        asks = [o for o in opts if ':mission:' in (o.get('id') or '') and not (o.get('id') or '').endswith(':steer')]
         if asks:
             opts = asks + [o for o in opts if ':mission:' not in (o.get('id') or '')]
     return opts
@@ -388,7 +396,8 @@ def _is_done(kind: str, row: dict) -> bool:
 def needs_attention(kind: str, row: dict, opts: list) -> bool:
     """Independent of engine status: anything with a decision left is live."""
     if kind == 'mission':
-        return any(o['verb'] in ('answer', 'do', 'release', 'submit', 'verify') for o in opts)
+        return any(o['verb'] in ('answer', 'do', 'release', 'submit', 'verify')
+                   and o.get('payload', {}).get('ask') != 'steer' for o in opts)
     if kind == 'thread':
         from services import threads as _th
         return bool(_th.is_stalled(row)) and not _is_done(kind, row)
@@ -704,14 +713,7 @@ def _run(kind, sid, verb, p, actor, row) -> dict:
         if not text:
             return {'status': 'error', 'message': 'Say something to send.'}
         from services import missions as _m
-        if _m.tap_only_ask_pending(sid):
-            # Free text never answers a release, a booking or a verify: it would
-            # move the mission on and bury the ask under the next one.
-            return {'status': 'error', 'message': 'Answer that one with its buttons.'}
-        storage.add_mission_step(sid, {'kind': 'note', 'name': 'user_answer', 'result_json': {'text': text}})
-        if row.get('status') == 'waiting_user':
-            storage.update_mission(sid, {'status': 'running'})
-        return {'status': 'success', 'message': 'Answered.'}
+        return _m.answer(sid, text, actor)
     if verb == 'close':
         state = p.get('state') or 'done'
         if kind == 'thread':

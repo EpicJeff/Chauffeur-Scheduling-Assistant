@@ -164,12 +164,18 @@ def scenario_thread_card_carries_its_missions_release():
     check(out['status'] == 'success' and storage.get_mission(mid)['status'] == 'running' and storage.get_mission(mid)['releases'], f"approve through the thread card: {out}")
 
 
-def scenario_answer_when_not_waiting_is_refused():
+def scenario_answer_when_not_waiting_is_a_steer():
+    """2026-10-14: a mission that is running can be told something ('use the
+    manufacturer instead'); through the thread focus it lands as a user_steer
+    note the planner reads next step, and the mission keeps running (it used
+    to be refused as 'not on the table'; see tests/test_mission_steer.py)."""
     _reset(); _dm_capture()
     res = tools.start_mission_for('get the dishwasher fixed', acting_member=MOM, focus_key='voice:1')
-    out = tools.act_on_situation(verb='answer', text='yes', acting_member=MOM, focus_key='voice:1')
-    check(out['status'] == 'error' and 'not on the table' in out['message'], f"nothing to answer: {out}")
-    check(not [s for s in storage.get_mission_steps(res['mission_id']) if s['name'] == 'user_answer'], "nothing appended")
+    out = tools.act_on_situation(verb='answer', text='use the official manufacturer service', acting_member=MOM, focus_key='voice:1')
+    check(out['status'] == 'success', f"a running mission takes a steer: {out}")
+    steps = storage.get_mission_steps(res['mission_id'])
+    check([s for s in steps if s['name'] == 'user_steer'] and not [s for s in steps if s['name'] == 'user_answer'], "a steer, not an answer")
+    check(storage.get_mission(res['mission_id'])['status'] == 'running', "still running")
 
 
 def scenario_e2e_get_the_dishwasher_fixed():
@@ -431,7 +437,7 @@ SCENARIOS = [scenario_opens_thread_and_mission_and_focus, scenario_a_running_mis
              scenario_ask_user_dms_the_question, scenario_finish_lands_on_the_thread_with_a_prefilled_next_step,
              scenario_finish_without_next_action, scenario_finish_on_a_closed_thread,
              scenario_thread_card_carries_its_missions_question, scenario_thread_card_carries_its_missions_release,
-             scenario_answer_when_not_waiting_is_refused,
+             scenario_answer_when_not_waiting_is_a_steer,
              scenario_cached_argyle_note_never_hides_the_missions_ask, scenario_thread_missions_endpoint_is_parent_only,
              scenario_launch_refused_opens_no_thread_and_launch_mission_defers,
              scenario_release_label_carries_the_values_and_a_handoff_names_its_kind,
