@@ -23,7 +23,7 @@ KINDS = ('finding', 'insight', 'thread', 'mission')
 MISSION_HISTORY_CAP = 60      # the terminal rows /api/missions/admin ships; the lane matches it
 VERBS = frozenset({'assign', 'ask', 'plan', 'prepare', 'do', 'done', 'skip',
                    'research', 'draft', 'advance', 'answer', 'close', 'snooze',
-                   'dismiss', 'own', 'unread', 'release', 'submit', 'verify'})
+                   'dismiss', 'own', 'unread', 'release', 'submit', 'verify', 'subject'})
 WRITE_ROLES = ('parent', 'adult')
 # Situation ownership ("I'll handle it myself") lives in its own fields: a
 # thread row already uses owner_member_id for who CARRIES the thread.
@@ -216,6 +216,19 @@ def _thread_mission(row: dict):
     return rows[-1] if rows else None
 
 
+def _options_subject(row: dict) -> list:
+    from services import subjects
+    kind = row.get('subject_kind')
+    record = subjects.load(kind, row.get('subject_id')) if kind else None
+    if record:
+        # Options are built with no viewer, so the label never names the record:
+        # an owner the subject excludes still sees this button. The chip, filtered
+        # per viewer (subject_view), is where the title shows.
+        return [_opt('subject', 'Change what this is about', {}),
+                _opt('subject', 'Unlink', {'clear': True}, 'clear')]
+    return [_opt('subject', 'Link to something in Chauffeur', {})]
+
+
 def _options_thread(row: dict) -> list:
     from services import threads as _th
     out, steer = [], []
@@ -246,6 +259,7 @@ def _options_thread(row: dict) -> list:
         if a.get('answered_by') == 'argyle' and a.get('state') in ('yes', 'no'):
             out.append(_opt('unread', 'Argyle got it wrong', {'ask_id': a['id']}, a['id']))
     out.extend(steer)
+    out.extend(_options_subject(row))
     out.append(_opt('close', 'Done with it', {'state': 'done'}, 'done'))
     return out + _tail('thread', row)
 
@@ -298,7 +312,10 @@ def _options_mission(row: dict) -> list:
             out.append(_opt('do', prop.get('summary') or 'Approve', {'proposal_id': pid}, pid))
     if _is_done('mission', row):
         return out         # a finished mission keeps only the decisions it left behind
-    return out + _tail('mission', row)
+    tail = _tail('mission', row)
+    if row.get('origin_kind') != 'thread':
+        tail[-1:-1] = _options_subject(row)
+    return out + tail
 
 
 def options_for(kind: str, row: dict) -> list:
@@ -680,6 +697,9 @@ def act(kind: str, sid: str, verb: str, option_id: str = None, payload: dict = N
                   if k in ('text', 'next_action', 'next_action_at', 'note') and v not in (None, '')})
     if verb == 'snooze' and isinstance(free.get('days'), int):
         p['days'] = max(1, min(60, free['days']))
+    if verb == 'subject':
+        p.update({k: v for k, v in free.items() if k in ('query', 'kind', 'id', 'clear')})
+        p.update(opt['payload'])
 
     res = _run(kind, sid, verb, p, actor, row)
     if kind == 'mission' and verb in ('answer', 'release', 'submit', 'verify') \
@@ -692,13 +712,27 @@ def act(kind: str, sid: str, verb: str, option_id: str = None, payload: dict = N
         else:
             ask_id = bits[1] if len(bits) >= 3 else None
         missions.settle_ask_cards(sid, ask_id, 'Answered' if verb == 'answer' else opt['label'])
-    if res.get('status') in ('success', 'proposed', 'planned'):
+    if verb != 'subject' and res.get('status') in ('success', 'proposed', 'planned'):
         bump_rev(kind, sid)
         request_refresh(kind, sid)
     return res
 
 
 def _run(kind, sid, verb, p, actor, row) -> dict:
+    if verb == 'subject':
+        from services import subjects
+        if p.get('clear'):
+            return subjects.retarget(kind, sid, None, None, actor)
+        if p.get('kind') and p.get('id'):
+            return subjects.retarget(kind, sid, p['kind'], p['id'], actor)
+        query = (p.get('query') or '').strip()
+        if not query:
+            return {'status': 'error', 'message': 'Say what it is about.'}
+        winner, candidates = subjects.resolve(query, actor)
+        if winner:
+            return subjects.retarget(kind, sid, winner['kind'], winner['id'], actor)
+        return {'status': 'choose', 'message': 'Which one?' if candidates else 'Nothing by that name.',
+                'candidates': candidates}
     if verb == 'own':
         return own(kind, sid, actor)
     if verb == 'done' and not p.get('step_id'):

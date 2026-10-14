@@ -1599,6 +1599,9 @@ def act_on_situation(ref: str = '', verb: str = '', option_id: str = None, kind:
     if not found:
         return {"status": "error", "message": why}
     k, sid = found
+    if verb == 'subject' and not option_id:
+        # Words change what it is about; Unlink is the card's own button.
+        option_id = 'subject'
     if not option_id:
         all_opts = _sit.options_for(k, _sit.load(k, sid))
         opts = [o for o in all_opts if o['verb'] == verb]
@@ -1613,6 +1616,8 @@ def act_on_situation(ref: str = '', verb: str = '', option_id: str = None, kind:
     # Only what the person SAID goes in; an option built from a reading
     # arrives pre-filled, and an empty text must not blank it.
     payload = {}
+    if verb == 'subject':
+        payload['query'] = text
     if verb in ('answer', 'draft', 'research') and (text or '').strip():
         payload['text'] = text.strip()
     if verb == 'advance':
@@ -4642,10 +4647,10 @@ def get_available_tools() -> List[Dict]:
             "description": "Do one of a situation's options: assign a driver, approve a step, set a thread's next step, answer a mission, snooze, dismiss, take it yourself, mark it handled, or say Argyle read a reply wrong (unread). answer also steers a mission that is still running. 'Handle it' / 'do that' with no name means the one we are talking about. Use start_ask to ask somebody. NEVER the release verb: sharing the family's contact details is the person's own tap (Share on the Missions page, the thread card or the DM card), not something you do from their words.",
             "parameters": {"type": "object",
                            "properties": {"ref": {"type": "string", "description": "Id or title fragment; empty for the one we are talking about."},
-                                          "verb": {"type": "string", "enum": ["assign", "plan", "prepare", "do", "done", "skip", "research", "draft", "advance", "answer", "close", "snooze", "dismiss", "own", "unread", "release"]},
+                                          "verb": {"type": "string", "enum": ["assign", "plan", "prepare", "do", "done", "skip", "research", "draft", "advance", "answer", "close", "snooze", "dismiss", "own", "unread", "release", "subject"]},
                                           "option_id": {"type": "string", "description": "The option id from explain_situation, when the verb has more than one."},
                                           "kind": {"type": "string"},
-                                          "text": {"type": "string", "description": "For answer/draft/research: the text. For advance: the next action."},
+                                          "text": {"type": "string", "description": "For answer/draft/research: the text. For advance: the next action. For subject: what it is about."},
                                           "next_action_at": {"type": "string", "description": "For advance: YYYY-MM-DD."}},
                            "required": ["verb"]}
         },
@@ -6186,10 +6191,10 @@ class ExplainSituationTool(BaseModel):
 class ActOnSituationTool(BaseModel):
     """Do one of a situation's options (not asking somebody: that is start_ask)."""
     ref: Optional[str] = Field('', description="Id or title fragment; empty for the one being talked about.")
-    verb: str = Field(..., description="assign|plan|prepare|do|done|skip|research|draft|advance|answer|close|snooze|dismiss|own")
+    verb: str = Field(..., description="assign|plan|prepare|do|done|skip|research|draft|advance|answer|close|snooze|dismiss|own|subject")
     option_id: Optional[str] = Field(None, description="The option id from explain_situation.")
     kind: Optional[str] = None
-    text: Optional[str] = Field(None, description="For answer/draft/research: the text. For advance: the next action.")
+    text: Optional[str] = Field(None, description="For answer/draft/research: the text. For advance: the next action. For subject: what it is about.")
     next_action_at: Optional[str] = Field(None, description="For advance: YYYY-MM-DD.")
 
 class StartAskTool(BaseModel):

@@ -211,6 +211,49 @@ def link(kind, sid):
     }.get(kind, '/')
 
 
+def retarget(sit_kind, sid, new_kind, new_id, actor):
+    """Change the subject, invalidating live work built about the old record."""
+    from services import missions, situations
+
+    if (actor or {}).get('role') not in WRITE_ROLES:
+        return {'status': 'refused'}
+    row = situations.load(sit_kind, sid) if sit_kind in ('thread', 'mission') else None
+    if not row:
+        return {'status': 'error', 'message': 'That is no longer here.'}
+    live = [m for m in storage.get_missions(status=['running', 'browsing', 'waiting_user', 'waiting_retry'])
+            if (sit_kind == 'mission' and m['id'] == sid)
+            or (sit_kind == 'thread' and m.get('origin_kind') == 'thread' and m.get('origin_ref') == sid)]
+    if any(m.get('status') == 'browsing' or missions.tap_only_ask_pending(m['id']) for m in live):
+        return {'status': 'refused',
+                'message': 'Finish or stop the pending step first; then change what this is about.'}
+    new_row = load(new_kind, new_id) if new_kind else None
+    if new_kind and (not new_row or not visible(new_kind, new_row, actor)):
+        return {'status': 'error', 'message': 'Nothing by that name you can see.'}
+    old_kind = row.get('subject_kind')
+    old_row = load(old_kind, row.get('subject_id')) if old_kind else None
+    old_title = title_of(old_kind, old_row) if old_row else None
+    new_title = title_of(new_kind, new_row) if new_row else None
+    rev = int(row.get('subject_rev') or 0) + 1
+    fields = {'subject_kind': new_kind or None, 'subject_id': new_id or None, 'subject_rev': rev}
+    update = storage.update_thread if sit_kind == 'thread' else storage.update_mission
+    update(sid, fields)
+    for m in live:
+        storage.add_mission_step(m['id'], {
+            'kind': 'note', 'name': 'subject_changed',
+            'result_json': {'from': old_title, 'to': new_title, 'rev': rev,
+                            'note': ('unlinked' if not new_kind else f'now about {new_title}')
+                                    + '; re-read before acting'},
+        })
+        for step in storage.get_mission_steps(m['id']):
+            pid = (step.get('result_json') or {}).get('proposal_id') if step.get('kind') == 'proposal' else None
+            proposal = storage.get_action_proposal(pid) if pid else None
+            if proposal and proposal.get('status') == 'proposed':
+                storage.update_action_proposal(pid, {'status': 'dismissed'})
+    situations.bump_rev(sit_kind, sid)
+    situations.request_refresh(sit_kind, sid)
+    return {'status': 'success', 'message': 'Unlinked.' if not new_kind else f'Now about {new_title}.', 'rev': rev}
+
+
 def trip_dates(event_id):
     """Read destination dates from draft metadata or the calendar snapshot."""
     import time
