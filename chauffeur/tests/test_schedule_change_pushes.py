@@ -102,6 +102,19 @@ def scenario_churn_and_ghosts_stay_silent():
     check(gained == [], f"churn/ghost/self-claim never push a gain, got {pushes}")
 
 
+def scenario_a_parents_assignment_is_not_a_self_claim():
+    """A parent assigning Grandma from the PWA writes source 'pwa_parent'.
+    Only the SELF-claim ('pwa') suppresses the gained push: Grandma did not
+    tap, so she must hear she gained the drive."""
+    import main
+    from types import SimpleNamespace
+    event = {"id": "e1"}
+    mine = [SimpleNamespace(event_id="e1", driver_id="gran", source="pwa")]
+    parents = [SimpleNamespace(event_id="e1", driver_id="gran", source="pwa_parent")]
+    check(main._own_pwa_override(event, "gran", mine), "a self-claim is recognised")
+    check(not main._own_pwa_override(event, "gran", parents), "a parent's assignment of somebody else is not")
+
+
 if __name__ == "__main__":
     import traceback
     scenarios = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

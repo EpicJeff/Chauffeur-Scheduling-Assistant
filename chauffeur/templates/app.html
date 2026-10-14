@@ -8472,6 +8472,110 @@
             }
         }
 
+        function renderAssignButtons(ev, wrap) {
+            if (!wrap) return;
+            wrap.innerHTML = '';
+            if (ev.canClaim && selectedDriverId) {
+                const mkBtn = (label, ids) => {
+                    const b = document.createElement('button');
+                    b.className = 'w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-blue-500/50 hover:bg-blue-900/20 active:bg-blue-600 text-blue-400 font-bold shadow-md';
+                    b.innerHTML = `${CLAIM_ICON} ${label}`;
+                    b.onclick = () => claimEvent(ev, ids, b);
+                    wrap.appendChild(b);
+                };
+                const openLegs = (ev.legs || []).filter(l => !l.mine);
+                if (ev.legs && ev.legs.length > 0) {
+                    openLegs.forEach(l => {
+                        const legName = l.type === 'dropoff' ? 'Dropoff' : 'Pickup';
+                        mkBtn(`Take ${legName} (${l.timeStr})`, [l.id]);
+                    });
+                    if (openLegs.length > 1) mkBtn('Take Both', openLegs.map(l => l.id));
+                } else {
+                    mkBtn('Assign to Me', [ev.id]);
+                }
+            }
+            if (!ev.isErrand && !ev.suppressed && ['parent', 'adult'].includes(currentMemberRole())) {
+                const b = document.createElement('button');
+                b.className = 'w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-blue-500/50 hover:bg-blue-900/20 active:bg-blue-600 text-blue-400 font-bold shadow-md';
+                b.setAttribute('data-assign-other', '');
+                b.textContent = (ev.driverIds || []).length ? 'Change driver' : 'Assign someone else';
+                b.onclick = () => assignOtherDriver(ev);
+                wrap.appendChild(b);
+            }
+            wrap.style.display = wrap.children.length ? 'flex' : 'none';
+        }
+
+        async function assignOtherDriver(ev) {
+            const candidates = driversData.filter(d => !(ev.driverIds || []).includes(d.id));
+            if (!candidates.length) {
+                showGlobalAlert('Nobody else can drive right now.');
+                return;
+            }
+            const driverId = await promptChoice("Who's driving it?",
+                'This overrides the solver, and the person you assign is told about the drive.',
+                candidates.map(d => ({ value: d.id, label: d.name })));
+            if (driverId == null) return;
+            const driver = candidates.find(d => d.id === driverId);
+            if (!driver) return;
+            const name = driver.name;
+            const legs = ev.legs || [];
+            let ids;
+            if (legs.length > 1) {
+                const part = await promptChoice('Which part?', '', [
+                    ...legs.map(l => ({ value: l.id,
+                        label: `${l.type === 'dropoff' ? 'Dropoff' : 'Pickup'} (${l.timeStr})` })),
+                    { value: '__both__', label: 'Both' }
+                ]);
+                if (part == null) return;
+                ids = part === '__both__' ? legs.map(l => l.id) : [part];
+            } else {
+                ids = [legs.length ? legs[0].id : ev.id];
+            }
+
+            try {
+                let conflicts = [];
+                for (const id of ids) {
+                    try {
+                        const chkRes = await fetch(`${apiBase}api/overrides/check`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ event_id: id, driver_id: driverId })
+                        });
+                        const chk = await chkRes.json();
+                        if (chk.conflicts) conflicts.push(...chk.conflicts);
+                    } catch (e) {
+                        console.warn('Override conflict check failed, proceeding without it', e);
+                    }
+                }
+                conflicts = [...new Set(conflicts)];
+                if (conflicts.length && !await promptConfirm(
+                    'Override the solver?',
+                    'The solver would normally not give ' + name + ' this:\n\n• '
+                        + conflicts.join('\n• '),
+                    'Assign anyway')) return;
+
+                for (const id of ids) {
+                    const res = await fetch(`${apiBase}api/overrides`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            event_id: id,
+                            driver_id: driverId,
+                            event_title: ev.title,
+                            date_str: ev.dateStr || null,
+                            source: 'pwa_parent'
+                        })
+                    });
+                    if (!res.ok) throw new Error('Override request failed');
+                }
+                closeEventModal();
+                showGlobalAlert(`Assigned to ${name} — rebuilding the schedule…`);
+            } catch (e) {
+                console.error('Failed to assign event', e);
+                showGlobalAlert('Failed to assign. Check your connection.');
+            }
+        }
+
         // --- Outside hands on a drive (load arc A1) -----------------------
         // The phone opens a specific leg card, so retain `_dropoff`/`_pickup`.
         // Whole-event coverage still resolves server-side as a fallback.
@@ -8611,31 +8715,7 @@
             }
 
             const claimWrap = document.getElementById('em-claim-container');
-            if (claimWrap) {
-                claimWrap.innerHTML = '';
-                if (ev.canClaim && selectedDriverId) {
-                    claimWrap.style.display = 'flex';
-                    const mkBtn = (label, ids) => {
-                        const b = document.createElement('button');
-                        b.className = 'w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-blue-500/50 hover:bg-blue-900/20 active:bg-blue-600 text-blue-400 font-bold shadow-md';
-                        b.innerHTML = `${CLAIM_ICON} ${label}`;
-                        b.onclick = () => claimEvent(ev, ids, b);
-                        claimWrap.appendChild(b);
-                    };
-                    const openLegs = (ev.legs || []).filter(l => !l.mine);
-                    if (ev.legs && ev.legs.length > 0) {
-                        openLegs.forEach(l => {
-                            const legName = l.type === 'dropoff' ? 'Dropoff' : 'Pickup';
-                            mkBtn(`Take ${legName} (${l.timeStr})`, [l.id]);
-                        });
-                        if (openLegs.length > 1) mkBtn('Take Both', openLegs.map(l => l.id));
-                    } else {
-                        mkBtn('Assign to Me', [ev.id]);
-                    }
-                } else {
-                    claimWrap.style.display = 'none';
-                }
-            }
+            renderAssignButtons(ev, claimWrap);
 
             const mapBtn = document.getElementById('em-map-btn');
             if (ev.location) {
@@ -9109,6 +9189,8 @@
                     : ((driverChips || '<span class="text-gray-500 italic text-sm">Not assigned</span>')
                        + conflictNote),
                 isErrand: card.isErrand,
+                driverIds: Array.from(card.driverIds || []),
+                suppressed: !!card.suppressed,
                 dateStr: (card.start || '').split('T')[0],
                 legs: legsData,
                 canClaim: !card.isErrand && !card.suppressed && (legsData.length > 0
