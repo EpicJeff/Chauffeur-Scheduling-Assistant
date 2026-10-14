@@ -624,6 +624,16 @@ def act(kind: str, sid: str, verb: str, option_id: str = None, payload: dict = N
         p['days'] = max(1, min(60, free['days']))
 
     res = _run(kind, sid, verb, p, actor, row)
+    if kind == 'mission' and verb in ('answer', 'release', 'submit', 'verify') \
+            and res.get('status') == 'success' and not res.get('moved') and not res.get('already'):
+        from services import missions
+        bits = opt['id'].split(':')
+        if verb == 'answer':
+            asked = next((s for s in reversed(row.get('steps') or []) if s.get('kind') == 'ask'), None)
+            ask_id = (asked or {}).get('id')
+        else:
+            ask_id = bits[1] if len(bits) >= 3 else None
+        missions.settle_ask_cards(sid, ask_id, 'Answered' if verb == 'answer' else opt['label'])
     if res.get('status') in ('success', 'proposed', 'planned'):
         bump_rev(kind, sid)
         request_refresh(kind, sid)

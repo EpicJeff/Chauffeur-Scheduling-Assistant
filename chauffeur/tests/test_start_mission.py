@@ -409,7 +409,7 @@ def scenario_the_dishwasher_is_booked_on_a_tap():
     row = missions.step(storage.get_mission(mid))
     ask = storage.get_mission_steps(mid)[-1]
     check(row['status'] == 'waiting_user' and ask['name'] == 'submit' and ask['result_json']['question'].startswith('Book at bodewell.com: Tue, Oct 20 8AM-12PM, $114.95'), f"the ask: {ask['result_json']['question']}")
-    check(SENT[-1].endswith("Tap the booking question on the Missions page or the thread card to approve it, or I'll finish it myself / Stop there."), f"the DM: {SENT[-1]}")
+    check(SENT[-1].endswith("Tap the booking question here, on the Missions page or the thread card to approve it, or I'll finish it myself / Stop there."), f"the DM: {SENT[-1]}")
     s = situations.view('thread', tid, MOM)
     check(s['next_step']['label'].startswith('Book at bodewell.com') and s['next_step']['id'] == f"submit:mission:{mid}:{ask['id']}:approve", f"the thread card leads with the whole question, never a blind Book it: {s['next_step']}")
     res = situations.act('thread', tid, 'submit', option_id=s['next_step']['id'], actor=MOM)

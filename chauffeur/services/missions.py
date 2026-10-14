@@ -276,15 +276,83 @@ def _post(dm, argyle, body, card=None):
     return _post_chat_message(dm, argyle, body, card=card)
 
 
+def ask_card(mission: dict) -> dict | None:
+    """Draw the current ask with the mission's own situation options."""
+    from services import situations
+    row = situations.load('mission', mission['id'])
+    if not row:
+        return None
+    opts = [o for o in situations._options_mission(row)
+            if o['verb'] in ('answer', 'release', 'submit', 'verify')]
+    if not opts:
+        return None
+    asked = next((s for s in reversed(row.get('steps') or []) if s.get('kind') == 'ask'), None)
+    if not asked:
+        return None
+    result = asked.get('result_json') or {}
+    card = {'kind': 'mission_ask', 'mission_id': mission['id'], 'ask_id': asked['id'],
+            'ask': asked.get('name'), 'question': result.get('question'),
+            'goal': mission.get('goal'), 'state': 'open', 'options': opts}
+    card.update({k: result[k] for k in ('site', 'url', 'facts', 'button', 'fields', 'values') if k in result})
+    return card
+
+
+def _card_moved(message: dict) -> None:
+    """An open phone redraws a settled card (the same SSE a new message fires);
+    main is the running app module and absent in tests."""
+    try:
+        import main as _main
+        channel = storage.get_channel(message.get('channel_id')) or {}
+        recipients = channel.get('member_ids') if channel.get('kind') in ('dm', 'group') else None
+        _main._push_message_event(message.get('channel_id'), recipients)
+    except Exception:
+        pass
+
+
+def settle_ask_cards(mission_id, ask_id, outcome: str) -> None:
+    """All copies of an ask follow its decision. Safe to repeat; never raises."""
+    try:
+        asked = next((s for s in storage.get_mission_steps(mission_id)
+                      if s.get('kind') == 'ask' and s['id'] == ask_id), None)
+        for message_id in (asked or {}).get('chat_message_ids') or []:
+            try:
+                with storage.db_lock:
+                    card = (storage.get_chat_message(message_id) or {}).get('card')
+                    if card and card.get('kind') == 'mission_ask' and card.get('ask_id') == ask_id:
+                        storage.update_chat_message_card(message_id, {
+                            **card, 'state': 'answered', 'outcome': outcome, 'options': []})
+                        _card_moved(storage.get_chat_message(message_id) or {})
+            except Exception as e:
+                logger.warning(f"[missions] card settlement failed: {e}")
+    except Exception as e:
+        logger.warning(f"[missions] card settlement failed: {e}")
+
+
 def _dm_person(mission: dict, text: str) -> None:
     """One message to whoever started the mission (the parents when nobody
     did), in their Argyle DM. Never raises."""
     try:
+        steps = storage.get_mission_steps(mission['id'])
+        newest = next((s for s in reversed(steps) if s.get('kind') == 'ask'), None)
+        for step in steps:
+            if step.get('kind') != 'ask' or step['id'] == (newest or {}).get('id'):
+                continue
+            if any(((storage.get_chat_message(i) or {}).get('card') or {}).get('state') == 'open'
+                   for i in step.get('chat_message_ids') or []):
+                settle_ask_cards(mission['id'], step['id'], 'Moved on')
+        card = ask_card(mission)
         argyle = storage.ensure_argyle_member()
         who = storage.get_member(mission.get('created_by') or '') if mission.get('created_by') else None
         people = [who] if who else [m for m in storage.get_all_members() if m.get('role') == 'parent' and not m.get('system')]
         for m in people:
-            _post(storage.get_or_create_dm(argyle['id'], m['id']), argyle, text)
+            message = _post(storage.get_or_create_dm(argyle['id'], m['id']), argyle, text, card=card)
+            if card and message and message.get('id'):
+                with storage.db_lock:
+                    asked = next(s for s in storage.get_mission_steps(mission['id']) if s['id'] == card['ask_id'])
+                    ids = list(asked.get('chat_message_ids') or [])
+                    ids.append(message['id'])
+                    # Keep delivery metadata out of the result hashed by voice approval.
+                    storage.update_mission_step(asked['id'], {'chat_message_ids': ids})
     except Exception as e:
         logger.warning(f"[missions] DM failed: {e}")
 
@@ -448,11 +516,11 @@ def _submit_ask(mission: dict, args: dict, report: dict) -> None:
     _close(mission['id'], 'waiting_user')
     # The approve button reads the question itself (never a blind "Book it"), so the DM points at the question.
     what = 'booking question' if verb == 'book' else 'question'
-    _dm_person(mission, f"{q} (mission: {mission.get('goal')}). Tap the {what} on the Missions page or the thread card to approve it, "
+    _dm_person(mission, f"{q} (mission: {mission.get('goal')}). Tap the {what} here, on the Missions page or the thread card to approve it, "
                         f"or I'll finish it myself / Stop there.")
 
 
-VERIFY_TAIL = " (Tap It went through / It did not go through on the Missions page or the thread card.)"
+VERIFY_TAIL = " (Tap It went through / It did not go through here, on the Missions page or the thread card.)"
 
 
 def _add_verify_ask(mission_id: str, attempt: dict, payment: bool = False) -> str:
@@ -820,7 +888,7 @@ def finish_browse(mission_id: str, step_id: str, report: dict) -> None:
                                                               'missing': missing,
                                                               'browse': {'goal': args.get('goal'), 'site': site, 'start_url': report.get('stopped_at')}}})
         _close(mission_id, 'waiting_user')
-        _dm_person(mission, f"Argyle needs a yes: {q} (mission: {mission.get('goal')}). Approve on the Missions page or the thread card.")
+        _dm_person(mission, f"Argyle needs a yes: {q} (mission: {mission.get('goal')}). Approve here, on the Missions page or the thread card.")
         return
     if outcome == 'captcha_failed' or (outcome == 'blocked' and 'payment' in text.lower()):
         url = report.get('stopped_at') or ''

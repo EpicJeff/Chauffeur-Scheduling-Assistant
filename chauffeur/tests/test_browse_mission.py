@@ -428,7 +428,7 @@ def scenario_needs_submit_becomes_an_ask_the_person_can_read():
     check(rj['question'] == "Book at bodewell.com: Tue, Oct 20 8AM-12PM, $114.95 (button 'Book appointment')?", f"the question: {rj['question']}")
     check(rj['verb'] == 'book' and rj['button'] == 'Book appointment' and rj['state']['selected'] == ['Tue, Oct 20 8AM-12PM'] and rj['filled'] == {'first_name': 'Jeff'}
           and rj['browse']['start_url'] == 'https://www.bodewell.com/schedule' and rj['browse']['site'] == 'bodewell.com' and rj['changed'] == [], f"the shape: {rj}")
-    check(SENT and rj['question'] in SENT[-1] and SENT[-1].endswith("Tap the booking question on the Missions page or the thread card to approve it, or I'll finish it myself / Stop there."), f"the DM: {SENT}")
+    check(SENT and rj['question'] in SENT[-1] and SENT[-1].endswith("Tap the booking question here, on the Missions page or the thread card to approve it, or I'll finish it myself / Stop there."), f"the DM: {SENT}")
     check(missions.submit_question('x.com', 'submit', {}, 'Send application') == "Submit at x.com with the button 'Send application'?", "no facts: the button alone")
     check(missions._submit_verb({'button': 'Reserve'}, 'get it fixed') == 'book' and missions._submit_verb({'button': 'Send application'}, 'apply for the permit') == 'submit', "the verb")
 

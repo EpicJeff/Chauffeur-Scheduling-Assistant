@@ -161,8 +161,11 @@ def intercept(text, ctx):
         context = ApprovalContext(ctx, readback['id'], readback['ask_id'], readback['kind'], readback['digest'], time.time())
     from services import missions
     # Identity lock is released before the domain service starts a browser job.
-    return getattr(missions, readback['kind'])(readback['mission_id'], 'approve', member,
-                                             ask_id=readback['ask_id'], approval_context=context)
+    res = getattr(missions, readback['kind'])(readback['mission_id'], 'approve', member,
+                                            ask_id=readback['ask_id'], approval_context=context)
+    if res.get('status') == 'success' and not res.get('moved') and not res.get('already'):
+        missions.settle_ask_cards(readback['mission_id'], readback['ask_id'], 'Approved by voice')
+    return res
 
 
 def current_readback(ctx):

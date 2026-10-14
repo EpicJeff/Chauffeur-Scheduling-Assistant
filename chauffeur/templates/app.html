@@ -5216,6 +5216,7 @@
         function renderCard(card) {
             if (!card) return '';
             if (card.kind === 'ask') return renderAskCard(card);
+            if (card.kind === 'mission_ask') return renderMissionAskCard(card);
             if (card.kind !== 'action_proposal') return '';
             let footer;
             if (card.status === 'proposed' && (card.actions || []).length) {
@@ -5257,6 +5258,43 @@
             </div>`;
         }
 
+        // Include the mission in the key: question and handoff options share "answer".
+        const missionAskOptions = new Map();
+
+        function renderMissionAskCard(card) {
+            const options = card.options || [];
+            const canAct = card.state === 'open' && ['parent', 'adult'].includes(myRole());
+            let footer = '';
+            if (canAct) {
+                footer = `<div class="flex flex-wrap gap-2 mt-2">` + options.map((option, i) => {
+                    missionAskOptions.set(`${card.mission_id}:${option.id}`, { option, goal: card.goal });
+                    return `<button data-mission-act="${mfEscape(option.id)}" onclick="missionAskAct('${mfEscape(card.mission_id)}', '${mfEscape(option.id)}')" class="px-3 py-1 rounded-lg text-xs font-semibold ${i === 0 ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'}">${mfEscape(option.label)}</button>`;
+                }).join('') + `</div>`;
+            } else if (card.state === 'answered') {
+                footer = `<div class="text-xs mt-1 text-gray-500">${mfEscape(card.outcome || '')}</div>`;
+            }
+            let details = '';
+            const entries = card.ask === 'submit' ? card.facts : card.ask === 'release' ? card.values : null;
+            if (entries && Object.keys(entries).length) {
+                details += `<ul class="text-xs text-gray-400 mt-1">` + Object.entries(entries).map(([k, v]) =>
+                    `<li>${mfEscape(k)}: ${mfEscape(String(v))}</li>`
+                ).join('') + `</ul>`;
+            }
+            if (card.ask === 'submit') {
+                details += `<div class="text-xs text-gray-400 mt-1">${mfEscape(card.site || '')} &middot; Button: ${mfEscape(card.button || '')}</div>`;
+            }
+            if (card.ask === 'handoff' && /^https?:\/\//i.test(card.url || '')) {
+                details += `<div class="mt-1"><a class="text-xs text-blue-400 underline underline-offset-2" href="${mfEscape(card.url)}" target="_blank" rel="noopener">Open it</a></div>`;
+            }
+            const badge = ['release', 'submit', 'verify'].includes(card.ask) ? 'Needs your yes' : 'Argyle asks';
+            return `<div data-mission-id="${mfEscape(card.mission_id)}" class="mt-1 px-3 py-2 rounded-xl bg-gray-900 border border-gray-700">
+                <div class="inline-block text-xs uppercase tracking-wide font-bold text-violet-300 bg-violet-900/40 px-2 py-0.5 rounded mb-1">${badge}</div>
+                <div class="text-xs text-gray-200 font-medium">${mfEscape(card.question || '')}</div>
+                ${details}
+                ${footer}
+            </div>`;
+        }
+
         async function answerAsk(askId, act) {
             if (!selectedMemberId) return;
             try {
@@ -5268,6 +5306,14 @@
                 else if (data.message) showGlobalAlert(data.message);
                 await refreshThread();
             } catch (e) { showGlobalAlert("Couldn't answer that."); }
+        }
+
+        async function missionAskAct(missionId, optionId) {
+            if (!selectedMemberId || !['parent', 'adult'].includes(myRole())) return;
+            const entry = missionAskOptions.get(`${missionId}:${optionId}`);
+            if (!entry) return;
+            await Situations.act({ kind: 'mission', id: missionId, title: entry.goal }, entry.option,
+                { apiBase, memberId: selectedMemberId, onChange: refreshThread });
         }
 
         async function actOnProposal(proposalId, act) {
