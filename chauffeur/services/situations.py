@@ -416,7 +416,8 @@ def _group(kind: str, row: dict, opts: list) -> str:
     return 'moving'
 
 
-def can_see(kind: str, row: dict, viewer: Optional[dict]) -> bool:
+def _can_see_base(kind: str, row: dict, viewer: Optional[dict]) -> bool:
+    """The existing situation rule, without subject audience inheritance."""
     role = (viewer or {}).get('role')
     if kind == 'insight':
         if row.get('sensitivity') == 'sensitive':
@@ -427,6 +428,53 @@ def can_see(kind: str, row: dict, viewer: Optional[dict]) -> bool:
     if kind == 'thread':
         return role in WRITE_ROLES or bool(viewer and row.get('owner_member_id') == viewer.get('id'))
     return role in WRITE_ROLES
+
+
+def _subject_of(kind: str, row: dict) -> tuple:
+    if kind == 'mission':
+        from services import missions
+        return missions.subject_of(row)
+    if kind == 'thread' and row.get('subject_kind'):
+        return (row['subject_kind'], row.get('subject_id'), int(row.get('subject_rev') or 0))
+    return (None, None, 0)
+
+
+def _subject_visible(kind: str, record: dict, viewer: Optional[dict]) -> bool:
+    # subjects.visible delegates threads back to can_see. Use only the base
+    # rule for a subject thread so cycles and self-reference cannot recurse.
+    if kind == 'thread':
+        return _can_see_base('thread', record, viewer)
+    from services import subjects
+    return subjects.visible(kind, record, viewer)
+
+
+def can_see(kind: str, row: dict, viewer: Optional[dict]) -> bool:
+    ok = _can_see_base(kind, row, viewer)
+    if not ok or kind not in ('thread', 'mission'):
+        return ok
+    k, sid, _ = _subject_of(kind, row)
+    if not k:
+        return ok
+    from services import subjects
+    record = subjects.load(k, sid)
+    if record is None:
+        return ok
+    owner_key = 'owner_member_id' if kind == 'thread' else 'created_by'
+    if viewer and row.get(owner_key) == viewer.get('id'):
+        return True
+    return _subject_visible(k, record, viewer)
+
+
+def subject_view(kind: str, row: dict, viewer: Optional[dict]) -> Optional[dict]:
+    k, sid, rev = _subject_of(kind, row)
+    if not k:
+        return None
+    from services import subjects
+    record = subjects.load(k, sid)
+    if record is None or not _subject_visible(k, record, viewer):
+        return None
+    return {'kind': k, 'id': sid, 'title': subjects.title_of(k, record),
+            'link': subjects.link(k, sid), 'rev': rev}
 
 
 def view(kind: str, sid: str, viewer: Optional[dict] = None) -> Optional[dict]:
@@ -445,6 +493,7 @@ def view(kind: str, sid: str, viewer: Optional[dict] = None) -> Optional[dict]:
              'thread': row.get('title'), 'mission': row.get('goal')}[kind] or ''
     return {
         'kind': kind, 'id': sid, 'title': title,
+        'subject': subject_view(kind, row, viewer),
         'state': _state(kind, row), 'since': _since(kind, row),
         'people': _people(kind, row),
         'due': row.get('due_at') if kind == 'finding' else (

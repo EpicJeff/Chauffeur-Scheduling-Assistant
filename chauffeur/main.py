@@ -6088,12 +6088,16 @@ def missions_admin(request: Request = None):
     surface via `_mind_actor`, refusing a child/helper/guest with 403. The
     route rule is a bare SIGNED_IN wildcard (`/api/missions/*`), same as
     `/api/mind/*`, so the role decision has to live here."""
-    _mind_actor(request, None)
+    actor = _mind_actor(request, None)
     active = storage.get_missions(status=['running', 'waiting_user', 'waiting_retry'])
+    history = storage.get_missions(status=['done', 'blocked', 'dropped'])[:60]
+    if actor is not None:
+        from services import situations
+        active = [m for m in active if situations.can_see('mission', m, actor)]
+        history = [m for m in history if situations.can_see('mission', m, actor)]
     for m in active:
         m['steps'] = storage.get_mission_steps(m['id'])
-    return {"active": active,
-            "history": storage.get_missions(status=['done', 'blocked', 'dropped'])[:60]}
+    return {"active": active, "history": history}
 
 
 @app.get("/api/missions/{mission_id}")
@@ -6103,10 +6107,14 @@ def missions_detail(mission_id: str, request: Request = None):
     only, so sixty finished transcripts don't ride every 15s poll). Same
     person-gate as the list; registered after /api/missions/admin so the
     literal segment wins the route match."""
-    _mind_actor(request, None)
+    actor = _mind_actor(request, None)
     row = storage.get_mission(mission_id)
     if not row:
         raise HTTPException(status_code=404, detail="No such mission")
+    if actor is not None:
+        from services import situations
+        if not situations.can_see('mission', row, actor):
+            raise HTTPException(status_code=403, detail="You cannot see this mission")
     row['steps'] = storage.get_mission_steps(mission_id)
     return row
 
@@ -6160,9 +6168,16 @@ async def browse_netcheck(request: Request = None):
 def mission_shot(mission_id: str, name: str, request: Request = None):
     """A browse step's screenshot (parent-gated like the transcript). Lives
     under the data dir, never under the moments media root."""
-    _mind_actor(request, request.query_params.get('member_id') if request else None)
+    actor = _mind_actor(request, request.query_params.get('member_id') if request else None)
     from services import missions as _missions
     import re as _re
+    # The screenshots are the transcript's pictures: a mission about a record
+    # this person may not see is not theirs to look at (subjects, spec §3).
+    _row = storage.get_mission(mission_id) if actor is not None else None
+    if _row is not None:
+        from services import situations as _sit
+        if not _sit.can_see('mission', _row, actor):
+            raise HTTPException(status_code=403, detail="You cannot see this mission")
     if not _re.fullmatch(r'[a-z0-9_]+\.png', name or '') or not _re.fullmatch(r'[a-z0-9]+', mission_id or ''):
         raise HTTPException(status_code=404, detail="No such image")
     path = os.path.join(_missions.browse_dir(mission_id), name)
@@ -6751,6 +6766,12 @@ def list_threads(owner: Optional[str] = None, include_closed: bool = False,
     is additive-only on the response and the page reads the field instead."""
     from services import threads as _threads
     rows = storage.get_threads(owner=owner, include_closed=include_closed)
+    viewer_id = _acting_id(request, None)
+    viewer = storage.get_member(viewer_id) if viewer_id else None
+    if viewer is not None:
+        from services import situations
+        rows = [row for row in rows if not row.get('subject_kind')
+                or situations.can_see('thread', row, viewer)]
     for row in rows:
         row['stall_reason'] = _threads.is_stalled(row)
     return {"threads": rows}

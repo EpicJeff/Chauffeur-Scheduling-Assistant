@@ -934,6 +934,9 @@ class Thread(BaseModel):
     goal: Optional[str] = ""
     kind: str = 'project'                   # vendor | project
     state: str = 'open'                     # open | waiting | done | dropped
+    subject_kind: Optional[str] = None
+    subject_id: Optional[str] = None
+    subject_rev: int = 0
     owner_member_id: Optional[str] = None
     contact_id: Optional[str] = None        # an assist contact, when there is one
     counterparty_name: Optional[str] = ""    # a loose name when there is not

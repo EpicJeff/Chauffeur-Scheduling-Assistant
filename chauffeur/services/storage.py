@@ -2979,6 +2979,7 @@ def add_mission(data: dict) -> str:
     row = {'id': _uuid.uuid4().hex, 'created_at': time.time(),
            'updated_at': time.time(), 'status': 'running', 'goal': '',
            'origin_kind': 'manual', 'origin_ref': None, 'created_by': None,
+           'subject_kind': None, 'subject_id': None, 'subject_rev': 0,
            'tier': 'mission', 'summary': '', 'error': '', 'step_count': 0,
            'consec_errors': 0, 'retry_at': None, 'acknowledged_at': None,
            'finished_at': None,

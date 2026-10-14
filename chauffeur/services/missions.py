@@ -336,6 +336,16 @@ def settle_ask_cards(mission_id, ask_id, outcome: str) -> None:
         logger.warning(f"[missions] card settlement failed: {e}")
 
 
+def subject_of(mission: dict) -> tuple:
+    """A thread-origin mission always reads its subject from the thread."""
+    row = mission or {}
+    if row.get('origin_kind') == 'thread' and row.get('origin_ref'):
+        row = storage.get_thread(row['origin_ref']) or {}
+    if not row.get('subject_kind'):
+        return (None, None, 0)
+    return (row['subject_kind'], row.get('subject_id'), int(row.get('subject_rev') or 0))
+
+
 def _dm_person(mission: dict, text: str) -> None:
     """One message to whoever started the mission (the parents when nobody
     did), in their Argyle DM. Never raises."""
@@ -352,6 +362,9 @@ def _dm_person(mission: dict, text: str) -> None:
         argyle = storage.ensure_argyle_member()
         who = storage.get_member(mission.get('created_by') or '') if mission.get('created_by') else None
         people = [who] if who else [m for m in storage.get_all_members() if m.get('role') == 'parent' and not m.get('system')]
+        if not who:
+            from services import situations
+            people = [m for m in people if situations.can_see('mission', mission, m)]
         for m in people:
             message = _post(storage.get_or_create_dm(argyle['id'], m['id']), argyle, text, card=card)
             if card and message and message.get('id'):
