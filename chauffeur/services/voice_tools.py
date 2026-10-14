@@ -5,7 +5,7 @@ from services.voice_identity import VoiceContext, _revision, voice_names
 TOOLS = frozenset({'get_calendar_events', 'get_travel_time', 'assign_driver_to_event_fuzzy',
                    'remove_override_for_event_fuzzy', 'get_shopping_list_items',
                    'add_shopping_items', 'check_off_shopping_item', 'send_family_message', 'send_direct_message',
-                   'start_mission_for', 'prepare_voice_approval'})
+                   'find_in_chauffeur', 'start_mission_for', 'prepare_voice_approval'})
 MUTATIONS = frozenset({'assign_driver_to_event_fuzzy', 'remove_override_for_event_fuzzy',
                        'add_shopping_items', 'check_off_shopping_item'})
 
@@ -95,10 +95,15 @@ def dispatch(name, args, ctx: VoiceContext, focus_key=None):
             return {'status': 'error', 'message': 'The family channel needs to be set up on your phone.'}
         tools._post_chat_message(channel, sender, body if member else f'Household voice: {body}', context=provenance)
         result = {'status': 'success', 'message': f'Sent to {destination}.'}
+    elif name == 'find_in_chauffeur':
+        return tools.find_in_chauffeur(args.get('query') or '', args.get('kind') or '',
+                                       args.get('facet') or '', acting_member=ctx.verified_member(),
+                                       spoken=True)
     else:
         result = tools.start_mission_for(args.get('goal') or '', args.get('title'),
                                          acting_member=ctx.verified_member(), focus_key=focus_key,
-                                         voice_context=ctx)
+                                         voice_context=ctx, subject_kind=args.get('subject_kind'),
+                                         subject_id=args.get('subject_id'))
     return result
 
 

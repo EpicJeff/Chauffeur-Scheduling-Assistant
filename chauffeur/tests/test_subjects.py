@@ -150,6 +150,9 @@ def scenario_spoken_requires_the_kinds_own_audience():
                         'created_by': 'mom'})
     storage.update_thread('th9', {'sensitivity': 'sensitive'})
     check(s.spoken_safe('thread', storage.get_thread('th9')) is False, "a sensitive thread is never spoken")
+    check(s.spoken_safe('thread', storage.get_thread('th1')) is False, "a thread never shared with the speakers is not spoken")
+    storage.update_thread('th1', {'voice_shared': True})
+    check(s.spoken_safe('thread', storage.get_thread('th1')) is True, "once voice-shared, it may be")
 
 
 def scenario_find_caps_and_find_all_merges():

@@ -287,6 +287,21 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                         system_prompt += f'\nABOUT: {sv["kind"]} "{sv["title"]}"\n{ctx}\n'
         except Exception as e:
             logger.warning(f"Could not inject focus: {e}")
+    if focus_key and source == 'voice':
+        try:
+            from services import triage, subjects, voice_tools, storage
+            f = triage.get_focus(focus_key)
+            thread = storage.get_thread(f['id']) if f and f['kind'] == 'thread' else None
+            if thread and thread.get('voice_shared') and voice_tools.speech_safe(thread):
+                kind, sid = thread.get('subject_kind'), thread.get('subject_id')
+                record = subjects.load(kind, sid) if kind and sid else None
+                if record and subjects.spoken_safe(kind, record):
+                    ctx = subjects.context(kind, sid, voice_context.verified_member(), spoken=True)
+                    if ctx:
+                        title = subjects.title_of(kind, record)
+                        system_prompt += f'\nABOUT: {kind} "{title}"\n{ctx}\n'
+        except Exception as e:
+            logger.warning(f"Could not inject spoken focus: {e}")
     # Browse missions §4: what Argyle can do in the world, so the model never
     # answers "I can't browse or fill forms" (it said exactly that, 2026-10-11).
     release_instruction = (

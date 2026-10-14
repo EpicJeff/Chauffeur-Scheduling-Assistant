@@ -112,6 +112,10 @@ def spoken_safe(kind, row):
         'list': 'shopping_list', 'event': 'calendar_event',
         'trip': 'trip', 'occasion': 'occasion',
     }.get(kind, 'calendar_event')
+    # A thread is said aloud only once it was shared with the speakers (the voice
+    # rail's own rule: start_mission_for and dispatch read voice_shared too).
+    if kind == 'thread' and not (row or {}).get('voice_shared'):
+        return False
     return (
         row is not None
         and bool(scope.audience_allows(row, obj_type, None))
