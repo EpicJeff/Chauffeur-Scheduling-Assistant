@@ -74,6 +74,10 @@ PAGES = {
                          for i, a in enumerate(['Refrigerator', 'Dishwasher', 'Range', 'Oven', 'Washer', 'Dryer', 'Microwave', 'Other']))
                + '</div></form>'),
     '/slots': '<h1>Slots</h1><a id="tobook" href="/booking">Choose a slot</a>',
+    # The salon's store finder (2026-10-13): a SEARCH submit button over a form with no price and no terms.
+    '/finder': ('<h1>Find a Boardroom near you</h1><form action="/found" method="get"><label>City<input name="city" value="Cary, NC"></label>'
+                '<select name="r"><option>5 miles</option><option selected>15 miles</option></select><button type="submit" id="search">SEARCH</button></form>'),
+    '/found': '<h1>NC - Fenton/Cary</h1><p>350 Fenton Gateway Dr, Cary NC</p><a id="bn" href="/vendor">BOOK NOW</a>',
     # A long form whose price line sits past 1,500 characters of text.
     '/longform': ('<h1>Review</h1><form action="/booked" method="post"><p>' + 'Lots of copy about the visit. ' * 70
                   + '</p><p>Total due at visit: $114.95</p><label><input type="radio" name="slot" value="tue" checked> Tue</label>'

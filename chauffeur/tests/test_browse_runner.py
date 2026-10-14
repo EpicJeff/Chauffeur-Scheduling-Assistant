@@ -135,10 +135,16 @@ def scenario_payment_field_stops_before_typing():
 
 
 def scenario_required_contact_fields_pause_for_release():
+    """A form's contact boxes ask for release when the model TYPES into one, by the
+    box's own label, not on arrival: the salon home page's newsletter form asked for
+    name, email and phone the booking vendor never needed (device, 2026-10-13)."""
     _reset()
     browse._model_step = _script([{'name': 'navigate', 'args': {'url': f'{URL}/form'}}], 'DONE.')
     r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/start', out_dir=OUT)
-    check(r['outcome'] == 'needs_release' and set(r['wanted_fields']) == {'first_name', 'email', 'zip'}, f"the form's contact fields are named: {r}")
+    check(r['outcome'] == 'done' and not r['wanted_fields'], f"arriving at a form asked before anything was typed: {r}")
+    browse._model_step = _script([{'name': 'type_text_at', 'args': {'x': 300, 'y': 160, 'text': 'Jeff'}}], 'DONE.')
+    r = browse.run('x', SITE, {}, {}, start_url=f'{URL}/form', out_dir=OUT)
+    check(r['outcome'] == 'needs_release' and r['wanted_fields'] == ['first_name'], f"typing into the first-name box asks for that field: {r}")
     check(not r['filled'], "nothing typed")
     # Released: the same page proceeds; the model may type the released values.
     browse._model_step = _script([{'name': 'type_text_at', 'args': {'x': 300, 'y': 160, 'text': 'Jeff'}}], 'DONE.')
@@ -1056,6 +1062,21 @@ def scenario_a_link_to_somewhere_else_is_a_door_not_a_commitment():
     check(r['outcome'] == 'done' and r['stopped_at'].endswith('/vendor2'), f"SUBMIT: naming a door asked instead of walking through: {r['outcome']} {r['stopped_at']} {r['text']}")
 
 
+def scenario_submit_naming_a_search_button_is_a_door():
+    """Boardroom Salon, 2026-10-13 (Claude): the model wrote SUBMIT: SEARCH on the
+    store finder and a parent was asked to approve a search. A form button whose
+    words are navigation words, over a page with no price and no terms, is a door."""
+    _reset()
+    browse._model_step = _script('SUBMIT: SEARCH', 'DONE. Fenton/Cary found.')
+    r = browse.run('find the nearest location', SITE, {}, {}, start_url=f'{URL}/finder', out_dir=OUT)
+    check(r['outcome'] == 'done' and '/found' in r['stopped_at'], f"SUBMIT: SEARCH asked instead of searching: {r['outcome']} {r['stopped_at']} {r['text']}")
+    check(any('not a commitment' in (l.get('action') or '') for l in r['turns_log']), r['turns_log'])
+    # The word rule is untouched: an unfamiliar label the model names over a price is still asked about.
+    browse._model_step = _script('SUBMIT: Lock it in', 'DONE.')
+    r = browse.run('lock a slot', SITE, {}, {}, start_url=f'{URL}/lockin', out_dir=OUT)
+    check(r['outcome'] == 'needs_submit', f"a named unfamiliar control over a price stopped asking: {r['outcome']} {r['text']}")
+
+
 def scenario_a_link_that_opens_a_new_tab_is_followed_there():
     """target=_blank: the vendor opened beside the page the runner was
     reading, which never changed; the model saw the same home page and
@@ -1362,7 +1383,7 @@ SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_typ
              scenario_a_link_to_somewhere_else_is_a_door_not_a_commitment, scenario_a_link_that_opens_a_new_tab_is_followed_there,
              scenario_a_page_that_moves_under_the_read_is_read_again,
              scenario_coordinate_free_typing_meets_the_release_gate, scenario_look_and_refuse_turns_continue_then_cap, scenario_each_result_carries_its_own_screenshot_and_url, scenario_a_refusal_reaches_the_next_turn,
-             scenario_claude_members_become_runner_calls_in_permille, scenario_openai_actions_become_runner_calls, scenario_claude_step_builds_the_request_and_reads_the_turn, scenario_openai_step_uses_previous_response_id_and_call_outputs, scenario_model_step_dispatches_on_the_cu_pool, scenario_a_provider_400_names_the_rejected_field, scenario_a_zoom_is_a_clipped_screenshot, scenario_openai_instructions_say_no_looks]
+             scenario_claude_members_become_runner_calls_in_permille, scenario_openai_actions_become_runner_calls, scenario_claude_step_builds_the_request_and_reads_the_turn, scenario_openai_step_uses_previous_response_id_and_call_outputs, scenario_model_step_dispatches_on_the_cu_pool, scenario_a_provider_400_names_the_rejected_field, scenario_a_zoom_is_a_clipped_screenshot, scenario_openai_instructions_say_no_looks, scenario_submit_naming_a_search_button_is_a_door]
 
 if __name__ == "__main__":
     import traceback

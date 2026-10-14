@@ -824,17 +824,6 @@ def _scan_now(page) -> dict:
     }""")
 
 
-def _wanted(scan: dict, released: dict, card: dict) -> list:
-    out = []
-    for f in scan.get('fields') or []:
-        if not f.get('required'):
-            continue
-        for name, rx in CONTACT_LABELS.items():
-            if rx.search(f.get('label') or '') and name not in released and name not in out:
-                out.append(name)
-    return out
-
-
 def _is_payment(scan: dict) -> bool:
     return any(PAYMENT_PATTERNS.search(f.get('label') or '') for f in scan.get('fields') or [])
 
@@ -1068,6 +1057,22 @@ def _classify(control, intent: str) -> str:
     if SUBMIT_WORDS.search(intent):
         return 'submit'
     return 'run'
+
+
+def _search_control(control) -> bool:
+    """A form button whose words are navigation words (search, find, filter,
+    sort, show, view, select, choose) with no booking or payment word, over a
+    scope that shows no price and no terms line: pressing it looks something
+    up. A SUBMIT: naming it is a cautious model, not evidence (Claude wrote
+    SUBMIT: SEARCH on the salon's store finder and a parent was asked to
+    approve a search; device, 2026-10-13)."""
+    if not control or control.get('iframe') or control.get('disabled') or control.get('error'):
+        return False
+    words = ' '.join([control.get('text') or ''] + list(control.get('labels') or []))
+    if SUBMIT_WORDS.search(words) or PAY_WORDS.search(words) or not NAVIGATION_WORDS.search(words):
+        return False
+    st = control.get('state') or {}
+    return not st.get('prices') and not COMMIT_CONTEXT.search(st.get('text') or '')
 
 
 def _submit_record(page, control, intent: str, learned: dict) -> dict:
@@ -1441,17 +1446,17 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
             pass
 
     def page_checks(scan):
-        """Payment, access denied, a form wanting unreleased fields, a check
-        with consent off: each ends the run. None when the page is fine."""
+        """Payment, access denied, a check with consent off: each ends the
+        run. None when the page is fine."""
         report['stopped_at'] = page.url
         if _is_payment(scan):
             return finish('blocked', f'payment (card field): this part needs a payment card; do it yourself here: {page.url}')
         if _is_denied(scan):
             return finish('captcha_failed', f'the site answered access denied at {page.url}')
-        wanted = _wanted(scan, released, card)
-        if wanted:
-            report['wanted_fields'] = wanted
-            return finish('needs_release', f"the form at {page.url} wants: {', '.join(wanted)}")
+        # No release ask on arrival: a page with a contact form (the salon home
+        # page's newsletter box, device 2026-10-13) asked for name, email and
+        # phone the vendor never needed. The typing gate asks, by the box's own
+        # label, the moment the model types into one.
         if _has_captcha(scan) and not consent.get('captcha'):
             return finish('captcha_failed', f'a human-verification check at {page.url}; not attempted (consent is off)')
         return None
@@ -1651,7 +1656,9 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                             return finish('blocked', f"could not find the control '{want}' at {page.url}")
                         contents.append({'role': 'user', 'parts': [{'text': f"no control reads '{want}'; click it, or name its text exactly as the page shows it"}]})
                         continue
-                    if ctl.get('navigation'):
+                    door = ('a link, not a commitment' if ctl.get('navigation')
+                            else 'a search control, not a commitment' if _search_control(ctl) else None)
+                    if door:
                         # The model read the word on a door: walk through it and carry on.
                         before = page.url
                         t_act = time.time()
@@ -1661,7 +1668,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                         except Exception as e:
                             logger.warning(f"[browse] link click failed: {e}")
                         report['actions'] += 1
-                        line = {'turn': turn, 'action': f"click '{ctl.get('text')}' (a link, not a commitment) via SUBMIT:",
+                        line = {'turn': turn, 'action': f"click '{ctl.get('text')}' ({door}) via SUBMIT:",
                                 'url': page.url, 'model_ms': 0, 'act_ms': _ms(t_act)}
                         report['turns_log'].append(line)
                         follow(line, before)
@@ -1674,7 +1681,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                         with open(p, 'wb') as f:
                             f.write(shot)
                         report['screenshots'].append(p)
-                        contents.append({'role': 'user', 'parts': [{'text': f"'{want}' is a link, not a commitment: followed it to {page.url}. Carry on with the goal."}, {'image': shot}]})
+                        contents.append({'role': 'user', 'parts': [{'text': f"'{want}' is {door}: pressed it, now at {page.url}. SUBMIT: is only for a control that books, submits, confirms, reserves, sends or applies. Carry on with the goal."}, {'image': shot}]})
                         continue
                     stop = gate(ctl, '', 'SUBMIT', force_submit=True)
                     if isinstance(stop, tuple):        # (unreachable: a SUBMIT: control always resolved)
