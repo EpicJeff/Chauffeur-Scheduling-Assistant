@@ -279,6 +279,12 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                                   "\"Handle it\", \"do that\", \"ask X by Y\", \"she said yes\", \"sent it\", "
                                   "\"next\", \"skip it\" refer to this one unless another is named: call the "
                                   "situation tools with NO ref for it.\n")
+                sv = (_s or {}).get('subject')
+                if sv:
+                    from services import subjects
+                    ctx = subjects.context(sv['kind'], sv['id'], _viewer)
+                    if ctx:
+                        system_prompt += f'\nABOUT: {sv["kind"]} "{sv["title"]}"\n{ctx}\n'
         except Exception as e:
             logger.warning(f"Could not inject focus: {e}")
     # Browse missions §4: what Argyle can do in the world, so the model never
@@ -296,6 +302,9 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                       "browse the web or fill out forms: for 'get times and pricing', 'enter my information', "
                       "'get a quote', 'get X fixed' call start_mission_for (on the thread we are talking about "
                       "when there is one). A plain web question with no site to act on is research. "
+                      "Before start_mission_for for a goal that names something the family already has "
+                      "(a trip, a party, an event, a person, a list), call find_in_chauffeur and pass the winner "
+                      "as subject_kind and subject_id; if it returns more than one, ask which. "
                       'A correction or new preference about a mission already running on the thread we are talking about '
                       '("use the manufacturer instead", "not that company", "only mornings") is act_on_situation with verb answer '
                       'on that thread, never a new mission. '

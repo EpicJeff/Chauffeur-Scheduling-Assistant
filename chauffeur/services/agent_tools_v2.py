@@ -1761,14 +1761,30 @@ def read_mail(uid: int, acting_member: dict = None, spoken: bool = False) -> Dic
     return {"status": "success", "message": f"{res['subject']} — from {res['from']} {res['date'][:10]}\n\n{res['text']}", **res}
 
 
+def _intent_words(goal, subject_title):
+    """Compare work on a subject without counting the subject's own name."""
+    import re
+
+    def words(text):
+        return [re.sub(r'[\W_]', '', word) for word in (text or '').lower().split()]
+
+    title_words = set(words(subject_title))
+    return [word for word in words(goal) if len(word) > 3 and word not in title_words][:2]
+
+
 def start_mission_for(goal: str, title: str = None, acting_member: dict = None, focus_key: str = None,
-                      voice_context=None) -> Dict[str, Any]:
+                      voice_context=None, subject_kind: str = None, subject_id: str = None) -> Dict[str, Any]:
     """'Get the dishwasher fixed': open a thread and a mission on it, and
     make the thread the thing we are talking about. Parents and adults
     (voice as the parent of record). One of each: a live mission on an open
     thread about the same thing is named, not doubled."""
     from services.voice_identity import VoiceContext
     spoken = isinstance(voice_context, VoiceContext)
+    from services import subjects
+    viewer = voice_context.verified_member() if spoken else acting_member
+    subject = subjects.load(subject_kind, subject_id) if subject_kind in subjects.KINDS and subject_id else None
+    if subject is None or not subjects.visible(subject_kind, subject, viewer, spoken):
+        subject_kind = subject_id = None
     if not spoken and (not acting_member or acting_member.get('role') not in ('parent', 'adult')):
         return {"status": "error", "message": "Only a parent or adult can start that."}
     from services import storage, threads as _threads, missions as _missions, triage as _tri
@@ -1789,6 +1805,8 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
     if used >= cap:
         return {"status": "error", "message": f"That's {cap} missions today — the cap resets tomorrow."}
     words = [w for w in goal.lower().split() if len(w) > 2][:3]
+    subject_title = subjects.title_of(subject_kind, subject) if subject_kind else None
+    intent = _intent_words(goal, subject_title) if subject_kind else None
     for m in storage.get_missions(status=['running', 'browsing', 'waiting_user', 'waiting_retry']):
         if m.get('origin_kind') != 'thread':
             continue
@@ -1798,7 +1816,12 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
             if not (t or {}).get('voice_shared') or not speech_safe(t) or not speech_safe(m):
                 continue
         hay = ((t or {}).get('title', '') + ' ' + (t or {}).get('goal', '') + ' ' + m.get('goal', '')).lower()
-        if t and t.get('state') not in ('done', 'dropped') and words and all(w in hay for w in words):
+        if subject_kind:
+            matches = (_missions.subject_of(m)[:2] == (subject_kind, subject_id)
+                       and _intent_words(m.get('goal'), subject_title) == intent)
+        else:
+            matches = words and all(w in hay for w in words)
+        if t and t.get('state') not in ('done', 'dropped') and matches:
             _tri.set_focus(focus_key, 'thread', t['id'], t.get('title') or '')
             return {"status": "success", "thread_id": t['id'], "mission_id": m['id'],
                     "message": f"That's already under way: \"{t.get('title')}\". I'll come back when I have something or need you."}
@@ -1813,13 +1836,20 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
                 if m.get('origin_kind') == 'thread' and m.get('origin_ref') == f['id']]
         if spoken:
             from services.voice_tools import speech_safe
-        if t and t.get('state') not in ('done', 'dropped') and not live and (not spoken or t.get('voice_shared') and speech_safe(t)):
+        compatible = (not subject_kind or ((t or {}).get('subject_kind') in (None, subject_kind)
+                                          and (t or {}).get('subject_id') in (None, subject_id)))
+        if t and t.get('state') not in ('done', 'dropped') and not live and compatible and (not spoken or t.get('voice_shared') and speech_safe(t)):
             tid = t['id']
     if not tid:
         tid = _threads.create(title=(title or goal)[:80], owner_member_id=(acting_member or {}).get('id'), goal=goal, kind='vendor',
                               created_by=(acting_member or {}).get('id'))
         if spoken:
             storage.update_thread(tid, {'voice_shared': True, 'requester_provenance': voice_context.provenance()})
+    if subject_kind:
+        t = storage.get_thread(tid) or {}
+        if not t.get('subject_kind') and not t.get('subject_id'):
+            storage.update_thread(tid, {'subject_kind': subject_kind, 'subject_id': subject_id,
+                                        'subject_rev': (t.get('subject_rev') or 0) + 1})
     res = _missions.launch(goal, origin_kind='thread', origin_ref=tid, created_by=(acting_member or {}).get('id'), tier='mission')
     if spoken and res.get('mission_id'):
         storage.update_mission(res['mission_id'], {'requester_provenance': voice_context.provenance()})
@@ -4660,7 +4690,9 @@ def get_available_tools() -> List[Dict]:
             "description": "Start getting something done that takes several steps with people or companies outside the family: 'get the dishwasher fixed', 'find someone to clean the gutters', 'sort out the permit', 'go on their website and enter our details to get appointment times and pricing', 'get a quote from X'. Argyle CAN browse a company's website and fill its forms with the family's details (released by a parent first) to reach prices, slots and quotes; it stops short of booking or paying. Opens a thread (or works on the thread we are talking about) and puts Argyle to work; Argyle comes back with questions and results. Parent/adult only.",
             "parameters": {"type": "object",
                            "properties": {"goal": {"type": "string", "description": "What to get done, in the person's words."},
-                                          "title": {"type": "string", "description": "A short name for the thread, if the person gave one."}},
+                                          "title": {"type": "string", "description": "A short name for the thread, if the person gave one."},
+                                          "subject_kind": {"type": "string", "description": "The subject kind from find_in_chauffeur."},
+                                          "subject_id": {"type": "string", "description": "The subject id from find_in_chauffeur."}},
                            "required": ["goal"]}
         },
         {
@@ -6191,6 +6223,8 @@ class StartMissionForTool(BaseModel):
     """Start getting something done with people or companies outside the family: opens a thread and a mission on it."""
     goal: str = Field(..., description="What to get done, in the person's words.")
     title: Optional[str] = Field(None, description="A short name for the thread, if given.")
+    subject_kind: Optional[str] = Field(None, description="The subject kind from find_in_chauffeur.")
+    subject_id: Optional[str] = Field(None, description="The subject id from find_in_chauffeur.")
 
 class ListProgramsTool(BaseModel):
     """
@@ -7896,7 +7930,8 @@ def handle_read_mail(args: dict) -> dict:
     return read_mail(int(args.get('uid') or 0), acting_member=_registry_parent())
 
 def handle_start_mission_for(args: dict) -> dict:
-    return start_mission_for(args.get('goal') or '', title=args.get('title'), acting_member=_registry_parent())
+    return start_mission_for(args.get('goal') or '', title=args.get('title'), acting_member=_registry_parent(),
+                             subject_kind=args.get('subject_kind'), subject_id=args.get('subject_id'))
 
 def handle_list_programs(args: dict) -> dict:
     # The v1 loop resolves no member and can produce no actor -- unlike
