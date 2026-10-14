@@ -1245,6 +1245,7 @@ def scenario_claude_step_builds_the_request_and_reads_the_turn():
     check(body['tools'][0] == {'type': 'computer_toolset_20260801'}, f'zoom is on (served as a clipped look): {body["tools"][0]}')
     check(body['cache_control'] == {'type': 'ephemeral'}, 'the replayed history reads from cache')
     check('never call screenshot' in body['system'] and 'zoom on a region' in body['system'], 'no looks, no waits, zoom instead')
+    check('pointer over the box' in body['system'] and 'instead of scrolling to find it' in body['system'], 'the inventory text')
     check({'navigate', 'go_back'} <= set(types), 'navigate and go_back are function tools')
     check(body['messages'][0]['content'][1]['source']['data'] == base64.b64encode(b'\x89PNG1').decode(), 'the image went as base64')
     check('CHALLENGE:' in body['system'] and 'focused box' in body['system'], 'the adapter system text')
@@ -1313,6 +1314,24 @@ def scenario_a_zoom_is_a_clipped_screenshot():
     check(r['actions'] == 0 and 'zoom' in r['turns_log'][0]['action'], f'a zoom is not an action and is logged as one: {r["turns_log"][0]}')
 
 
+def scenario_every_result_names_what_the_page_holds():
+    """The model sees only the viewport and scrolled eight times to find the
+    calendar: each result now lists headings and controls (below-the-fold marked)
+    and whether more lies below; a zoom over a scrolling box says so."""
+    _reset()
+    fake, seen = _recording([{'name': 'look', 'args': {'clip': [0, 100, 300, 250]}}, {'name': 'look', 'args': {'clip': [0, 0, 300, 60]}}], 'DONE.')
+    browse._model_step = fake
+    browse.run('read the times', SITE, {}, {}, start_url=f'{URL}/boxed', out_dir=OUT)
+    fr = [c['function_responses'] for c in seen if isinstance(c, dict) and 'function_responses' in c][0]
+    box, head = fr[0][1], fr[1][1]
+    check(box.get('scroll_box') is True and 'pointer over it' in box.get('hint', ''), f'a zoom over the time box says it scrolls: {box}')
+    check('scroll_box' not in head, f'a zoom over the heading does not: {head}')
+    inv = box.get('page') or {}
+    check(inv.get('headings', [])[:2] == ['Select date and time', 'Thu, Oct 15'], f'headings listed: {inv}')
+    check(any(c.startswith('Next') and '\u2193' in c for c in inv.get('controls', [])), f'a control below the fold is marked: {inv.get("controls")}')
+    check(inv.get('more_below') is True, f'more below is said: {inv}')
+
+
 def scenario_openai_instructions_say_no_looks():
     from unittest.mock import patch
     from services import llm_budget
@@ -1324,7 +1343,8 @@ def scenario_openai_instructions_say_no_looks():
         return _io.BytesIO(_json.dumps(turn).encode('utf-8'))
     with patch.object(llm_budget, 'urlopen', fake):
         browse._model_step_openai([{'role': 'user', 'parts': [{'text': 'GOAL'}, {'image': b'\x89PNG1'}]}], {'llm_provider': 'openai', 'llm_openai_api_key': 'O'})
-    check('never call screenshot' in sent[0]['instructions'] and 'zoom' not in sent[0]['instructions'], 'no looks on OpenAI either; zoom only where it exists')
+    check('never call screenshot' in sent[0]['instructions'] and 'zoom on a region' not in sent[0]['instructions'], 'no looks on OpenAI either; zoom only where it exists')
+    check('pointer over the box' in sent[0]['instructions'], 'the inventory text reaches OpenAI too')
 
 
 def scenario_a_provider_400_names_the_rejected_field():
@@ -1389,7 +1409,7 @@ SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_typ
              scenario_a_link_to_somewhere_else_is_a_door_not_a_commitment, scenario_a_link_that_opens_a_new_tab_is_followed_there,
              scenario_a_page_that_moves_under_the_read_is_read_again,
              scenario_coordinate_free_typing_meets_the_release_gate, scenario_look_and_refuse_turns_continue_then_cap, scenario_each_result_carries_its_own_screenshot_and_url, scenario_a_refusal_reaches_the_next_turn,
-             scenario_claude_members_become_runner_calls_in_permille, scenario_openai_actions_become_runner_calls, scenario_claude_step_builds_the_request_and_reads_the_turn, scenario_openai_step_uses_previous_response_id_and_call_outputs, scenario_model_step_dispatches_on_the_cu_pool, scenario_a_provider_400_names_the_rejected_field, scenario_a_zoom_is_a_clipped_screenshot, scenario_openai_instructions_say_no_looks, scenario_submit_naming_a_search_button_is_a_door]
+             scenario_claude_members_become_runner_calls_in_permille, scenario_openai_actions_become_runner_calls, scenario_claude_step_builds_the_request_and_reads_the_turn, scenario_openai_step_uses_previous_response_id_and_call_outputs, scenario_model_step_dispatches_on_the_cu_pool, scenario_a_provider_400_names_the_rejected_field, scenario_a_zoom_is_a_clipped_screenshot, scenario_openai_instructions_say_no_looks, scenario_submit_naming_a_search_button_is_a_door, scenario_every_result_names_what_the_page_holds]
 
 if __name__ == "__main__":
     import traceback

@@ -484,7 +484,13 @@ UNSUPPORTED = ('right_click', 'middle_click', 'triple_click', 'hold_key', 'left_
 # images the next round replays (device, 2026-10-13: 19 of 49 actions were looks).
 NO_LOOK_TEXT = (" Every action's result already includes a fresh screenshot taken after the page settled:"
                 " never call screenshot and never call wait.")
-ZOOM_TEXT = " To read small text, zoom on a region instead of scrolling back and forth." 
+ZOOM_TEXT = " To read small text, zoom on a region instead of scrolling back and forth."
+# The model sees only the viewport, so it scrolled eight times on the salon's
+# booking page to find the calendar (device, 2026-10-13). Each result now
+# names what the page holds, below the fold included.
+INVENTORY_TEXT = (" Each result also lists the page's headings and its buttons and links (those below the fold are"
+                  " marked) and says whether more lies below: click what you see named instead of scrolling to find it."
+                  " A list inside a box scrolls when you scroll with the pointer over the box; the page scrolls otherwise.")
 
 
 def _permille(x, y):
@@ -618,7 +624,7 @@ def _model_step_anthropic(contents, settings):
     # The history is a strict prefix each round, so the replayed screenshots read
     # from cache at a tenth of the price (two runs cost $2.50 before this; the
     # adapter logs the cache counters so the saving can be read on the device).
-    payload = {'model': model, 'max_tokens': 4096, 'system': ADAPTER_TYPING_TEXT + NO_LOOK_TEXT + ZOOM_TEXT, 'messages': messages,
+    payload = {'model': model, 'max_tokens': 4096, 'system': ADAPTER_TYPING_TEXT + NO_LOOK_TEXT + INVENTORY_TEXT + ZOOM_TEXT, 'messages': messages,
                'output_config': {'effort': 'low'}, 'cache_control': {'type': 'ephemeral'},
                'tools': [{'type': 'computer_toolset_20260801'}, *FUNCTION_TOOLS]}
     req = urllib.request.Request(_llm.ANTHROPIC_URL, data=json.dumps(payload).encode('utf-8'), method='POST',
@@ -711,7 +717,7 @@ def _model_step_openai(contents, settings):
                                     'data:image/png;base64,' + base64.b64encode(p['image']).decode(),
                                     'detail': 'original'})
             items.append({'role': c.get('role', 'user'), 'content': content})
-    payload = {'model': model, 'instructions': ADAPTER_TYPING_TEXT + NO_LOOK_TEXT, 'input': items,
+    payload = {'model': model, 'instructions': ADAPTER_TYPING_TEXT + NO_LOOK_TEXT + INVENTORY_TEXT, 'input': items,
                'tools': [{'type': 'computer'}, *FUNCTION_TOOLS_OPENAI],
                'reasoning': {'effort': 'low'}, 'truncation': 'auto', 'max_output_tokens': 4096}
     if prior is not None:
@@ -822,6 +828,52 @@ def _scan_now(page) -> dict:
         const frames = [...document.querySelectorAll('iframe')].map(f => (f.src || '') + ' ' + (f.title || ''));
         return { fields, text, frames };
     }""")
+
+
+def _inventory(page) -> dict:
+    """What the page holds, for the model: visible headings, the buttons and
+    links by their words (those below the viewport marked with a down arrow),
+    and whether more lies below. Cheap text that saves blind scrolls."""
+    try:
+        return page.evaluate("""() => {
+            const vh = window.innerHeight, top = window.scrollY;
+            const seen = new Set(), controls = [], headings = [];
+            const words = (el) => (el.innerText || el.value || el.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim().slice(0, 40);
+            const visible = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+            for (const h of document.querySelectorAll('h1, h2, h3')) {
+                const w = words(h); if (w && visible(h) && headings.length < 8) headings.push(w);
+            }
+            for (const el of document.querySelectorAll('button, a[href], input[type=submit], [role=button]')) {
+                if (!visible(el)) continue;
+                const w = words(el); if (!w) continue;
+                const r = el.getBoundingClientRect();
+                const tag = r.top >= vh ? w + ' \u2193' : (r.bottom <= 0 ? w + ' \u2191' : w);
+                if (seen.has(tag)) continue;
+                seen.add(tag); controls.push(tag);
+                if (controls.length >= 30) break;
+            }
+            const more = (document.documentElement.scrollHeight - (top + vh)) > 40;
+            return { headings, controls, more_below: more };
+        }""") or {}
+    except Exception:
+        return {}
+
+
+def _in_scroll_box(page, x, y) -> bool:
+    """The point sits inside an element that scrolls on its own (a time list
+    in a box): a scroll with the pointer over it moves the list, not the page."""
+    try:
+        return bool(page.evaluate("""([x, y]) => {
+            let el = document.elementFromPoint(x, y);
+            while (el && el !== document.body) {
+                const cs = getComputedStyle(el);
+                if (/(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 4) return true;
+                el = el.parentElement;
+            }
+            return false;
+        }""", [x, y]))
+    except Exception:
+        return False
 
 
 def _is_payment(scan: dict) -> bool:
@@ -1593,7 +1645,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
             it ride with the response, so two calls in one turn never share
             one picture (spec 2026-10-13 §7, change 3). A clipped shot (a zoom)
             is passed in; otherwise the full screen is taken here."""
-            results.append((name, args, {'url': page.url, **res}, shot if shot is not None else page.screenshot(type='png')))
+            results.append((name, args, {'url': page.url, 'page': _inventory(page), **res}, shot if shot is not None else page.screenshot(type='png')))
 
         for turn in range(1, caps['turns'] + 1):
             if time.time() - t0 > caps['seconds']:
@@ -1734,7 +1786,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                     # happens on the page, the model gets its answer and a fresh screen
                     # (spec 2026-10-13 §7, change 2). Never an action, never completion.
                     reason = str(args.get('reason') or 'not available here')
-                    clip_shot = None
+                    clip_shot, box_note = None, {}
                     if name == 'look' and args.get('clip'):
                         # A zoom: the region, in the runner's permille space, as its own picture.
                         try:
@@ -1742,12 +1794,14 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                             x1, y1 = _px(c[0], c[1])
                             x2, y2 = _px(c[2], c[3])
                             clip_shot = page.screenshot(type='png', clip={'x': x1, 'y': y1, 'width': max(1, x2 - x1), 'height': max(1, y2 - y1)})
+                            if _in_scroll_box(page, (x1 + x2) / 2, (y1 + y2) / 2):
+                                box_note = {'scroll_box': True, 'hint': 'this region is inside a scrolling box: scroll with the pointer over it to see more'}
                         except Exception as e:
                             logger.warning(f"[browse] zoom clip failed: {e}")
                     label = name + (': ' + reason[:60] if name == 'refuse' else (' (zoom)' if clip_shot is not None else ''))
                     report['turns_log'].append({'turn': turn, 'action': label,
                                                 'url': page.url, 'model_ms': model_ms if i_call == 0 else 0, 'act_ms': 0})
-                    _answer(name, args, {'error': reason} if name == 'refuse' else {}, clip_shot)
+                    _answer(name, args, {'error': reason} if name == 'refuse' else box_note, clip_shot)
                     continue
                 is_click = name.startswith('click') or name.startswith('double')
                 is_type = name in TYPE_ACTIONS
@@ -1949,7 +2003,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                 with open(p, 'wb') as f:
                     f.write(shot)
                 report['screenshots'].append(p)
-                results.append((name, args, {'url': page.url, **res}, shot))
+                results.append((name, args, {'url': page.url, 'page': _inventory(page), **res}, shot))
             if calls and all((c.get('name') or '') in ('look', 'refuse') for c in calls):
                 idle_turns += 1
                 if idle_turns >= 3:

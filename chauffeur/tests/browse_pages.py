@@ -78,6 +78,10 @@ PAGES = {
     '/finder': ('<h1>Find a Boardroom near you</h1><form action="/found" method="get"><label>City<input name="city" value="Cary, NC"></label>'
                 '<select name="r"><option>5 miles</option><option selected>15 miles</option></select><button type="submit" id="search">SEARCH</button></form>'),
     '/found': '<h1>NC - Fenton/Cary</h1><p>350 Fenton Gateway Dr, Cary NC</p><a id="bn" href="/vendor">BOOK NOW</a>',
+    # A time list in a small scrolling box (Zenoti's slot picker, 2026-10-13) under a long page.
+    '/boxed': ('<h1>Select date and time</h1><h2>Thu, Oct 15</h2><div id="box" style="height:120px;overflow-y:auto;width:300px">'
+               + ''.join(f'<div style="height:30px">{h}:{m:02d} {ap}</div>' for h, m, ap in [(10, 0, 'AM'), (10, 45, 'AM'), (12, 15, 'PM'), (12, 30, 'PM'), (1, 0, 'PM'), (3, 45, 'PM'), (4, 0, 'PM'), (5, 15, 'PM')])
+               + '</div><p style="height:1200px">long page</p><button id="next" type="button">Next</button>'),
     # A long form whose price line sits past 1,500 characters of text.
     '/longform': ('<h1>Review</h1><form action="/booked" method="post"><p>' + 'Lots of copy about the visit. ' * 70
                   + '</p><p>Total due at visit: $114.95</p><label><input type="radio" name="slot" value="tue" checked> Tue</label>'
