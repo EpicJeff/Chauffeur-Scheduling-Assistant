@@ -209,3 +209,252 @@ def link(kind, sid):
         'contact': '/drives?settings=outside-hands', 'thread': '/threads',
         'program': f'/programs#{sid}', 'list': f'/shopping#{sid}',
     }.get(kind, '/')
+
+
+def trip_dates(event_id):
+    """Read destination dates from draft metadata or the calendar snapshot."""
+    import time
+
+    metadata = storage.get_trip_metadata(event_id) or {}
+    if metadata.get('is_draft') and metadata.get('mock_start_date') is not None:
+        start = datetime.date.fromtimestamp(float(metadata['mock_start_date'])).isoformat()
+        end_ts = metadata.get('mock_end_date')
+        end = datetime.date.fromtimestamp(float(end_ts)).isoformat() if end_ts is not None else None
+        return {'start': start, 'end': end, 'source': 'draft', 'age_s': 0}
+    snapshot = storage.get_cached_trips() or {}
+    row = next((t for t in snapshot.get('trips') or [] if t.get('id') == event_id), None)
+    if row and row.get('start'):
+        now = time.time()
+        return {'start': row['start'], 'end': row.get('end'), 'source': 'calendar',
+                'age_s': max(0, now - float(snapshot.get('at') or now))}
+    return {'start': None, 'end': None, 'source': 'unknown', 'age_s': None}
+
+
+def _age_words(age_s):
+    if age_s is None or age_s < 3600:
+        return ''
+    hours = int(age_s // 3600)
+    age = f'{hours} hours' if hours < 48 else f'{hours // 24} days'
+    return f' (as the calendar had them {age} ago)'
+
+
+def _clip(lines, budget=BUDGET):
+    """Keep whole lines within the character budget, including separators."""
+    out, used = [], 0
+    for line in lines:
+        size = len(line) + bool(out)
+        if used + size > budget:
+            break
+        out.append(line)
+        used += size
+    return '\n'.join(out)
+
+
+def _fmt_window(poi):
+    if not poi.get('is_scheduled') or not poi.get('scheduled_start'):
+        return 'not scheduled'
+    start = datetime.datetime.fromtimestamp(float(poi['scheduled_start']))
+    end_ts = poi.get('scheduled_end')
+    end = datetime.datetime.fromtimestamp(float(end_ts)) if end_ts else None
+    return (start.strftime('%a %b %d %I:%M %p').replace(' 0', ' ')
+            + (end.strftime(' to %I:%M %p').replace(' 0', ' ') if end else ''))
+
+
+def _poi_line(poi):
+    meal = f" ({poi['meal_type']})" if poi.get('meal_type') else ''
+    return (f"- {poi.get('name')}{meal}, {poi.get('category') or 'other'}: {_fmt_window(poi)}"
+            + (f", {poi['location']}" if poi.get('location') else ''))
+
+
+def _clip_pois(prefix, pois):
+    """Reserve the omission count even when the header exhausts the budget."""
+    total = len(pois)
+    if not total:
+        return _clip(prefix + ['- none on file'])
+    reserve = len(f'- and {total} more') + 1
+    text = _clip(prefix, BUDGET - reserve)
+    shown = 0
+    for poi in pois[:30]:
+        candidate = '\n'.join(filter(None, (text, _poi_line(poi))))
+        remaining = total - shown - 1
+        tail = f'\n- and {remaining} more' if remaining else ''
+        if len(candidate) + len(tail) > BUDGET:
+            break
+        text = candidate
+        shown += 1
+    if shown < total:
+        text = '\n'.join(filter(None, (text, f'- and {total - shown} more')))
+    return text
+
+
+def _accommodation_lines(row):
+    lines = []
+    for accommodation in row.get('accommodations') or []:
+        start = accommodation.get('check_in_date')
+        end = accommodation.get('check_out_date')
+        nights = ''
+        try:
+            count = (datetime.date.fromisoformat(end) - datetime.date.fromisoformat(start)).days
+            nights = f', {count} nights'
+        except (TypeError, ValueError):
+            pass
+        lines.append(f"- {accommodation.get('name')}, {accommodation.get('location') or ''}: "
+                     f"{start or '?'} to {end or '?'}{nights}")
+    return lines or ['- none on file']
+
+
+def _flight_lines(row):
+    return [f"- {flight.get('airline') or ''} {flight.get('flight_number') or ''} "
+            f"{flight.get('origin') or '?'} to {flight.get('destination') or '?'} "
+            f"{flight.get('departure_time') or ''}".strip()
+            for flight in row.get('flights') or []] or ['- none on file']
+
+
+def _trip_context(row, viewer, spoken, facet):
+    dates = trip_dates(row['event_id'])
+    head = [f"TRIP: {title_of('trip', row)}"
+            + (f", {row['location']}" if row.get('location') else '')]
+    if dates['source'] == 'unknown':
+        head.append('Dates unknown; confirm them before booking anything.')
+    else:
+        head.append(f"Dates: {dates['start']} to {dates['end'] or '?'}"
+                    + _age_words(dates['age_s'])
+                    + (' (draft)' if dates['source'] == 'draft' else ''))
+    if row.get('travelers') is not None:
+        head.append(f"{row['travelers']} travellers.")
+    head.append('facets: ' + ', '.join(FACETS['trip']))
+    pois = sorted(row.get('pois') or [], key=lambda p: (
+        not p.get('is_scheduled'),
+        (p.get('scheduled_start') or 0) if p.get('is_scheduled') else 0,
+    ))
+    if facet in ('dining', 'attractions'):
+        selected = [p for p in pois if (p.get('category') == 'food') == (facet == 'dining')]
+        return _clip_pois(head + [facet.upper() + ':'], selected)
+    if facet == 'flights':
+        return _clip(head + ['FLIGHTS:'] + _flight_lines(row))
+    if facet == 'accommodations':
+        return _clip(head + ['ACCOMMODATIONS:'] + _accommodation_lines(row))
+    if row.get('_calendar_only') and not pois:
+        return _clip(head + ['No itinerary on file for this trip.'])
+    return _clip_pois(head + ['ACCOMMODATIONS:'] + _accommodation_lines(row)
+                      + ['FLIGHTS:'] + _flight_lines(row)
+                      + ['STOPS (dining is category food):'], pois)
+
+
+def _occasion_context(row, viewer, spoken, facet):
+    from services import occasions
+
+    contents = occasions.contents(row['id'])
+    head = [f"OCCASION: {title_of('occasion', row)}", f"Date: {row.get('anchor_date') or '?'}"]
+    if contents.get('days_away') is not None:
+        head.append(f"{contents['days_away']} days away.")
+    head.append(f"Headcount: {contents.get('headcount', 0)}.")
+    guests = [f"- {guest.get('name')}: {guest.get('headcount') or 1}"
+              for guest in contents.get('guests') or []] or ['- no guests on file']
+    lists = [f"- {linked.get('name')}" for linked in contents.get('lists') or []
+             if scope.audience_allows(linked, 'shopping_list', viewer)] or ['- none on file']
+    errands = contents.get('errands') or []
+    pending = [errand for errand in errands if not errand.get('is_completed')]
+    errand_lines = [f'Errands left: {len(pending)} open / {len(errands)} total.']
+    if facet == 'guests':
+        return _clip(head + ['GUESTS:'] + guests)
+    if facet == 'menu':
+        dishes = (occasions.menu(row['id']) or {}).get('dishes') or []
+        return _clip(head + ['MENU:'] + ([f"- {dish.get('name')}" for dish in dishes]
+                                      or ['- no menu yet']))
+    if facet == 'lists':
+        return _clip(head + ['LISTS:'] + lists)
+    if facet == 'errands':
+        return _clip(head + errand_lines)
+    return _clip(head + ['GUESTS:'] + guests + ['LISTS:'] + lists + errand_lines)
+
+
+def _event_context(row, viewer, spoken, facet):
+    assignments = (storage.get_cached_schedule() or {}).get('assignments') or {}
+    driver_id = assignments.get(row['id'])
+    driver_name = next((driver.get('name') for driver in storage.get_all_drivers()
+                        if driver.get('id') == driver_id), None)
+    lines = [f"EVENT: {title_of('event', row)}",
+             f"When: {str(row.get('start') or '?').replace('T', ' ')}",
+             f"Location: {row.get('location') or 'not on file'}",
+             f"Driver: {driver_name or 'no driver yet'}"]
+    passengers = row.get('passenger_names') or row.get('passengers') or []
+    if passengers:
+        names = [str(p.get('name') or p.get('id') or '') if isinstance(p, dict) else str(p)
+                 for p in passengers]
+        lines.append('Passengers: ' + ', '.join(names))
+    return _clip(lines)
+
+
+def _member_context(row, viewer, spoken, facet):
+    return _clip([f"{title_of('member', row)} ({row.get('role') or 'unknown role'})",
+                  'Drives.' if row.get('driver_id') else 'Does not drive.'])
+
+
+def _contact_context(row, viewer, spoken, facet):
+    lines = [f"CONTACT: {title_of('contact', row)}"]
+    if row.get('relation_label'):
+        lines.append(f"Relation: {row['relation_label']}")
+    if row.get('helps_with'):
+        lines.append('Helps with: ' + ', '.join(row['helps_with']))
+    for channel in ('phone', 'email'):
+        if row.get(channel):
+            lines.append(f'{channel} on file' if spoken else f"{channel}: {row[channel]}")
+    return _clip(lines)
+
+
+def _thread_context(row, viewer, spoken, facet):
+    lines = [f"THREAD: {title_of('thread', row)}"]
+    history = [f"- {entry['text']}" for entry in (row.get('history') or [])[-3:]
+               if entry.get('text')]
+    if facet != 'history':
+        lines.extend([f"Goal: {row.get('goal') or 'not on file'}",
+                      f"State: {row.get('state') or '?'}"])
+        counterparty = row.get('counterparty_name') or row.get('counterparty_email')
+        if not counterparty and row.get('contact_id'):
+            contact = storage.get_assist_contact(row['contact_id'])
+            counterparty = title_of('contact', contact) if contact else None
+        lines.append(f"Counterparty: {counterparty or 'not on file'}")
+        lines.append(f"Next action: {row.get('next_action') or 'not on file'}"
+                     + (f" (by {row['next_action_at']})" if row.get('next_action_at') else ''))
+    return _clip(lines + ['HISTORY:'] + (history or ['- none on file']))
+
+
+def _program_context(row, viewer, spoken, facet):
+    from services import programs
+
+    member = storage.get_member(row.get('member_id')) or {}
+    today = datetime.date.today()
+    monday = today - datetime.timedelta(days=today.weekday())
+    sessions = programs.sessions_between(row, monday, today)
+    lines = [f"PROGRAM: {title_of('program', row)}",
+             f"For: {member.get('name') or 'unknown member'}",
+             f"State: {row.get('state') or '?'}",
+             f'{len(sessions)} sessions logged this week ({monday.isoformat()} to {today.isoformat()}).']
+    if facet == 'sessions':
+        for session in sessions:
+            date = datetime.date.fromtimestamp(float(session['ts'])).isoformat()
+            lines.append(f"- {date}: {session.get('minutes') or 0} minutes"
+                         + (f", {session['note']}" if session.get('note') else ''))
+    return _clip(lines)
+
+
+def _list_context(row, viewer, spoken, facet):
+    items = storage.get_shopping_items(row['id'])
+    return _clip([f"LIST: {title_of('list', row)}", f'{len(items)} items.']
+                 + [f"- {item.get('name')}" for item in items[:10]])
+
+
+def context(kind, sid, viewer, spoken=False, facet=None) -> str | None:
+    """Read fresh subject context only after authorising this viewer/surface."""
+    row = load(kind, sid)
+    if not visible(kind, row, viewer, spoken):
+        return None
+    if facet not in FACETS.get(kind, []):
+        facet = None
+    reader = {
+        'trip': _trip_context, 'occasion': _occasion_context, 'event': _event_context,
+        'member': _member_context, 'contact': _contact_context, 'thread': _thread_context,
+        'program': _program_context, 'list': _list_context,
+    }[kind]
+    return reader(row, viewer, spoken, facet)

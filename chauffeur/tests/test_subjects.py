@@ -203,6 +203,122 @@ def scenario_a_calendar_only_trip_is_found_from_the_snapshot():
     check(s.load('trip', 'nope') is None and s.load('occasion', 'nope') is None, "a missing id loads None")
 
 
+
+# --- Task 2: context() --------------------------------------------------------
+
+import datetime as _dt
+import re as _re
+
+
+def scenario_context_is_none_for_missing_and_excluded_alike():
+    s = _fresh()
+    check(s.context('occasion', 'nope', MOM) is None, "a missing record reads None")
+    check(s.context('occasion', 'o1', KID) is None, "a record the viewer may not see reads the same None")
+    text = s.context('occasion', 'o1', MOM)
+    check(text and "Kate's 10th birthday" in text and '2027-02-14' in text, f"a visible occasion reads in words: {text}")
+    check(s.context('trip', 'ev_disney', MOM, spoken=True) is None, "a parents-default trip has no spoken context")
+
+
+def scenario_trip_context_general_view():
+    s = _fresh()
+    text = s.context('trip', 'ev_disney', MOM)
+    for want in ('Disney World', 'Orlando', '4 travel', 'Pop Century', 'DL123', 'Magic Kingdom', "Chef Mickey's",
+                 'facets: flights, accommodations, dining, attractions'):
+        check(want in text, f"general view names {want!r}:\n{text}")
+    check(len(text) <= 1500, f"within the budget: {len(text)}")
+
+
+def scenario_trip_facets_read_one_part_in_full():
+    s = _fresh()
+    dining = s.context('trip', 'ev_disney', MOM, facet='dining')
+    check("Chef Mickey's" in dining and 'breakfast' in dining and 'Be Our Guest' in dining and 'not scheduled' in dining,
+          f"dining = the food POIs, meal type and window, unscheduled named:\n{dining}")
+    check('Magic Kingdom' not in dining, "dining leaves the attractions out")
+    attractions = s.context('trip', 'ev_disney', MOM, facet='attractions')
+    check('Magic Kingdom' in attractions and "Chef Mickey's" not in attractions, f"attractions = every other POI:\n{attractions}")
+    check('DL123' in s.context('trip', 'ev_disney', MOM, facet='flights'), "flights facet")
+    acc = s.context('trip', 'ev_disney', MOM, facet='accommodations')
+    check('Pop Century' in acc and '5 nights' in acc, f"accommodations with nights:\n{acc}")
+    check(s.context('trip', 'ev_disney', MOM, facet='bogus') == s.context('trip', 'ev_disney', MOM),
+          "an unknown facet is the general view")
+
+
+def scenario_trip_context_caps_pois_and_says_how_many_more():
+    s = _fresh()
+    pois = [{'id': f'q{i}', 'name': f'Stop number {i:02d} with a longish name', 'location': 'Somewhere', 'category': 'sightseeing',
+             'is_scheduled': False, 'duration_mins': 60} for i in range(40)]
+    with storage.db_lock:
+        storage.trip_metadata_table.insert({'id': 't5', 'event_id': 'ev_big', 'title': 'Big trip', 'audience': 'household',
+                                            'pois': pois, 'accommodations': [], 'flights': []})
+    text = s.context('trip', 'ev_big', MOM)
+    check(len(text) <= 1500, f"within the budget: {len(text)}")
+    shown = len(_re.findall(r'Stop number \d\d', text))
+    more = _re.search(r'and (\d+) more', text)
+    check(more and shown + int(more.group(1)) == 40 and shown <= 30,
+          f"names what fits (at most 30) and says how many more, always: shown {shown}, tail {more and more.group(0)}")
+
+
+def scenario_trip_dates_say_their_source_and_age():
+    s = _fresh()
+    d = s.trip_dates('ev_disney')
+    check(d['source'] == 'calendar' and d['start'] == '2027-01-15', f"a real trip's dates are the calendar snapshot's: {d}")
+    check('hours ago' not in s.context('trip', 'ev_disney', MOM), "a fresh snapshot says no age")
+    with storage.db_lock:
+        storage.trips_cache_table.update({'at': time.time() - 9 * 3600})
+    check('9 hours ago' in s.context('trip', 'ev_disney', MOM), "an old snapshot says how old")
+    noon = lambda y, m, dd: _dt.datetime(y, m, dd, 12).timestamp()
+    with storage.db_lock:
+        storage.trip_metadata_table.insert({'id': 't6', 'event_id': 'ev_draft', 'title': 'Draft getaway', 'is_draft': True,
+                                            'audience': 'household', 'mock_start_date': noon(2027, 5, 1),
+                                            'mock_end_date': noon(2027, 5, 4), 'pois': [], 'accommodations': [], 'flights': []})
+        storage.trip_metadata_table.insert({'id': 't7', 'event_id': 'ev_ghost', 'title': 'Ghost trip', 'audience': 'household',
+                                            'pois': [], 'accommodations': [], 'flights': []})
+    draft = s.trip_dates('ev_draft')
+    check(draft['source'] == 'draft' and draft['start'] == '2027-05-01' and draft['end'] == '2027-05-04', f"a draft's mock dates: {draft}")
+    dtext = s.context('trip', 'ev_draft', MOM)
+    check('2027-05-01' in dtext and 'draft' in dtext.lower(), f"said as a draft:\n{dtext}")
+    ghost = s.trip_dates('ev_ghost')
+    check(ghost['source'] == 'unknown' and ghost['start'] is None, f"no snapshot, no draft: unknown: {ghost}")
+    check('dates unknown' in s.context('trip', 'ev_ghost', MOM).lower(), "and the context says so")
+
+
+def scenario_occasion_context_filters_linked_lists_by_viewer():
+    s = _fresh()
+    storage.save_occasion_guest({'id': 'g1', 'occasion_id': 'o1', 'name': 'The Wilsons', 'headcount': 4})
+    mom = s.context('occasion', 'o1', MOM)
+    check('Kate gifts' in mom, f"the list's own audience allows mom:\n{mom}")
+    dad = s.context('occasion', 'o1', DAD)
+    check(dad and 'Kate gifts' not in dad, f"a parent the private list excludes never reads its name:\n{dad}")
+    guests = s.context('occasion', 'o1', MOM, facet='guests')
+    check('The Wilsons' in guests and '4' in guests, f"guests facet with headcount:\n{guests}")
+    for f in ('menu', 'lists', 'errands'):
+        check(isinstance(s.context('occasion', 'o1', MOM, facet=f), str), f"{f} facet reads")
+    check('Kate gifts' not in s.context('occasion', 'o1', DAD, facet='lists'), "the lists facet filters too")
+
+
+def scenario_other_kinds_read_in_words():
+    s = _fresh()
+    ev = s.context('event', 'e1', MOM)
+    check('Team Pictures' in ev and 'no driver yet' in ev.lower() and 'Field 3' in ev, f"event:\n{ev}")
+    me = s.context('member', 'mom', MOM)
+    check('Mom' in me and 'parent' in me, f"member:\n{me}")
+    gran = s.context('contact', 'c1', MOM)
+    check('Grandma' in gran and 'driving' in gran and '555-0101' in gran, f"contact, by hand:\n{gran}")
+    aloud = s.context('contact', 'c1', MOM, spoken=True)
+    check(aloud and '555-0101' not in aloud and 'phone' in aloud.lower(), f"aloud: the channel, never the number:\n{aloud}")
+    th = s.context('thread', 'th1', MOM)
+    check('Disney dining' in th and 'open' in th and 'book the restaurants' in th, f"thread:\n{th}")
+    pr = s.context('program', 'pr1', MOM)
+    check('Piano' in pr and 'Kate' in pr and 'active' in pr, f"program:\n{pr}")
+    li = s.context('list', 'l1', MOM)
+    check('Groceries' in li, f"list:\n{li}")
+    beach = s.context('trip', 'ev_beach', MOM)
+    check('no itinerary on file' in beach.lower(), f"a calendar-only trip says it has no itinerary:\n{beach}")
+    for kind, sid in (('event', 'e1'), ('member', 'mom'), ('contact', 'c1'), ('thread', 'th1'), ('program', 'pr1'),
+                      ('list', 'l1'), ('occasion', 'o2')):
+        check(len(s.context(kind, sid, MOM)) <= 1500, f"{kind} within the budget")
+
+
 SCENARIOS = [
     scenario_find_ranks_exact_over_substring_over_sound_fold,
     scenario_find_prefers_upcoming_and_open_at_a_tie,
@@ -213,6 +329,13 @@ SCENARIOS = [
     scenario_resolve_never_calls_a_cross_kind_tie_a_winner,
     scenario_link_and_facets,
     scenario_a_calendar_only_trip_is_found_from_the_snapshot,
+    scenario_context_is_none_for_missing_and_excluded_alike,
+    scenario_trip_context_general_view,
+    scenario_trip_facets_read_one_part_in_full,
+    scenario_trip_context_caps_pois_and_says_how_many_more,
+    scenario_trip_dates_say_their_source_and_age,
+    scenario_occasion_context_filters_linked_lists_by_viewer,
+    scenario_other_kinds_read_in_words,
 ]
 
 if __name__ == "__main__":
