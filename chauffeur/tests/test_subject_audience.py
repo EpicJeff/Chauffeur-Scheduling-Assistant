@@ -109,7 +109,7 @@ def scenario_the_owner_and_the_creator_keep_their_row_but_not_the_subjects_words
     check(situations.can_see('mission', m, DAD), "the creator keeps the mission he started")
     check(situations.view('mission', mid, DAD).get('subject') is None, "without the private list's name")
     check(situations.view('mission', mid, MOM).get('subject') == {'kind': 'list', 'id': 'l2', 'title': 'Kate gifts',
-                                                                  'link': '/shopping#l2', 'rev': 1}, "mom reads it")
+                                                                  'link': 'shopping', 'rev': 1}, "mom reads it")
 
 
 def scenario_missing_subjects_fall_back_and_threads_never_recurse():

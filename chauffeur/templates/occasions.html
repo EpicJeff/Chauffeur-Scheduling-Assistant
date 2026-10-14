@@ -126,6 +126,13 @@
                     <button @click="removeOccasion(o)" class="text-gray-600 hover:text-red-400 shrink-0">✕</button>
                 </div>
 
+                <div class="text-xs text-indigo-300 mt-1" x-show="(o._argyle || []).length" x-cloak>
+                    <template x-for="row in (o._argyle || [])" :key="row.kind + ':' + row.id">
+                        <div><a :href="apiBase + 'threads'" class="underline underline-offset-2"
+                            x-text="'Argyle: ' + row.title + (row.next_step && row.next_step.label ? ' — ' + row.next_step.label : '')"></a></div>
+                    </template>
+                </div>
+
                 <div x-show="detail[o.id]" x-cloak class="mt-4 border-t border-gray-700 pt-4">
 
                     <!-- The interview. Each answer GENERATES logistics rather
@@ -569,6 +576,7 @@
                 try {
                     const r = await fetch(this.apiBase + 'api/occasions');
                     this.occasions = r.ok ? await r.json() : [];
+                    this.occasions.forEach(o => this.loadSituations(o));
                 } catch (e) { this.occasions = []; }
                 try {
                     const s = await fetch(this.apiBase + 'api/settings');
@@ -579,6 +587,14 @@
                     }
                 } catch (e) { /* the default is a fine answer */ }
                 this.loading = false;
+            },
+
+            async loadSituations(o) {
+                o._argyle = [];
+                try {
+                    const r = await fetch(this.apiBase + 'api/subjects/occasion/' + encodeURIComponent(o.id) + '/situations');
+                    if (r.ok) o._argyle = await r.json();
+                } catch (e) { /* no visible work about this occasion */ }
             },
 
             whenLine(o) {

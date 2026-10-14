@@ -5945,6 +5945,30 @@ def situation_get(kind: str, sid: str, request: Request = None):
     return _sit.view(kind, sid, viewer)
 
 
+@app.get("/api/subjects/{kind}/{sid}/situations")
+def subject_situations(kind: str, sid: str, request: Request = None):
+    from services import situations as _sit
+    actor = _mind_actor(request, None)
+    if actor is not None and actor.get('role') not in ('parent', 'adult'):
+        raise HTTPException(status_code=403, detail="Parents and adults only")
+    viewer = actor if actor is not None else _sit.parent_of_record()
+    out = []
+    for t in storage.get_threads():
+        if ((t.get('subject_kind'), t.get('subject_id')) == (kind, sid)
+                and _sit.can_see('thread', t, viewer)):
+            v = _sit.view('thread', t['id'], viewer)
+            out.append({'kind': 'thread', 'id': t['id'], 'title': t.get('title'),
+                        'next_step': (v or {}).get('next_step')})
+    for m in storage.get_missions(status=['running', 'browsing', 'waiting_user', 'waiting_retry']):
+        if (m.get('origin_kind') != 'thread'
+                and (m.get('subject_kind'), m.get('subject_id')) == (kind, sid)
+                and _sit.can_see('mission', m, viewer)):
+            v = _sit.view('mission', m['id'], viewer)
+            out.append({'kind': 'mission', 'id': m['id'], 'title': m.get('goal'),
+                        'next_step': (v or {}).get('next_step')})
+    return out
+
+
 @app.post("/api/situations/{kind}/{sid}/act")
 def situations_act(kind: str, sid: str, body: dict = Body(default={}),
                    request: Request = None, background_tasks: BackgroundTasks = None):

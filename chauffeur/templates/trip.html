@@ -95,10 +95,13 @@
                 </a>
                 <h1 id="trip-title" class="panel-page-title">Loading Trip...</h1>
                 <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
-                    <p id="trip-location" class="text-base font-medium flex items-center" style="color: var(--panel-accent)">
-                        <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                        Location
-                    </p>
+                    <div>
+                        <p id="trip-location" class="text-base font-medium flex items-center" style="color: var(--panel-accent)">
+                            <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                            Location
+                        </p>
+                        <div id="trip-argyle" class="text-xs text-indigo-300 mt-1" style="display:none"></div>
+                    </div>
                     <div class="bg-blue-600/30 text-blue-100 px-3 py-1.5 rounded-xl text-sm font-bold border border-blue-500/30">
                         <span id="trip-dates">Dates</span>
                     </div>
@@ -1081,6 +1084,7 @@
         
         async function fetchTripData() {
             const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+            loadTripSituations(apiBase);
             const [tripRes, driversRes, paxRes] = await Promise.all([
                 fetch(`api/trip/${encodeURIComponent(EVENT_ID)}`),
                 fetch(`${apiBase}api/drivers`),
@@ -1095,6 +1099,28 @@
             if(paxRes.ok) sysPassengers = await paxRes.json();
             
             if (tripRes.ok) renderTrip();
+        }
+
+        async function loadTripSituations(apiBase) {
+            const el = document.getElementById('trip-argyle');
+            el.style.display = 'none';
+            el.replaceChildren();
+            try {
+                const r = await fetch(apiBase + 'api/subjects/trip/' + encodeURIComponent(EVENT_ID) + '/situations');
+                if (!r.ok) return;
+                const rows = await r.json();
+                if (!rows.length) return;
+                rows.forEach(row => {
+                    const line = document.createElement('div');
+                    const link = document.createElement('a');
+                    link.className = 'underline underline-offset-2';
+                    link.href = apiBase + 'threads';
+                    link.textContent = 'Argyle: ' + row.title + (row.next_step && row.next_step.label ? ' — ' + row.next_step.label : '');
+                    line.appendChild(link);
+                    el.appendChild(line);
+                });
+                el.style.display = 'block';
+            } catch (e) { /* no visible work about this trip */ }
         }
 
 

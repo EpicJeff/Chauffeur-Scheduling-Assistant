@@ -203,12 +203,14 @@ def resolve(query, viewer, kinds=None, spoken=False):
 
 
 def link(kind, sid):
+    # Relative, like every page link in the app: under Home Assistant ingress an
+    # absolute path escapes the add-on's prefix. Only pages that exist.
     return {
-        'trip': f'/trip?event_id={sid}', 'occasion': f'/occasions#{sid}',
-        'event': f'/app?event={sid}', 'member': f'/app?member={sid}',
-        'contact': '/drives?settings=outside-hands', 'thread': '/threads',
-        'program': f'/programs#{sid}', 'list': f'/shopping#{sid}',
-    }.get(kind, '/')
+        'trip': f'trip?event_id={sid}', 'occasion': 'occasions',
+        'event': 'app', 'member': 'app',
+        'contact': 'drive_setup', 'thread': 'threads',
+        'program': 'programs', 'list': 'shopping',
+    }.get(kind, 'app')
 
 
 def retarget(sit_kind, sid, new_kind, new_id, actor):

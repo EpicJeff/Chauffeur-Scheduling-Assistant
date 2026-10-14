@@ -404,6 +404,7 @@ RULES = [
     # by viewer, writes gate inside; the recipient of an ask may answer it.
     (ANY, '/api/situations', SIGNED_IN, None),
     (ANY, '/api/situations/*', SIGNED_IN, None),
+    (ANY, '/api/subjects/*', SIGNED_IN, None),
     (ANY, '/api/asks', SIGNED_IN, None),
     (ANY, '/api/asks/*', SIGNED_IN, None),
     # Missions: reads for any signed-in member; launching/approving/answering

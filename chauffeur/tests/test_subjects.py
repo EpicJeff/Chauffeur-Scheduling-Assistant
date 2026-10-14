@@ -184,9 +184,15 @@ def scenario_resolve_never_calls_a_cross_kind_tie_a_winner():
 
 def scenario_link_and_facets():
     s = _fresh()
-    check(s.link('trip', 'ev_disney') == '/trip?event_id=ev_disney', s.link('trip', 'ev_disney'))
-    check(s.link('occasion', 'o1').startswith('/occasions'), s.link('occasion', 'o1'))
-    check(s.link('thread', 'th1') == '/threads', s.link('thread', 'th1'))
+    # Relative paths to pages that exist: absolute ones escape the ingress prefix.
+    check(s.link('trip', 'ev_disney') == 'trip?event_id=ev_disney', s.link('trip', 'ev_disney'))
+    check(s.link('occasion', 'o1') == 'occasions', s.link('occasion', 'o1'))
+    check(s.link('thread', 'th1') == 'threads', s.link('thread', 'th1'))
+    check(s.link('contact', 'c1') == 'drive_setup' and s.link('list', 'l1') == 'shopping', "contacts and lists")
+    import main
+    pages = {r.path for r in main.app.routes}
+    for kind in s.KINDS:
+        check('/' + s.link(kind, 'x').split('?')[0] in pages, f"{kind} links to a page that exists: {s.link(kind, 'x')}")
     check(s.facets('trip') == ['flights', 'accommodations', 'dining', 'attractions'], s.facets('trip'))
     check(s.facets('occasion') == ['guests', 'menu', 'lists', 'errands'], s.facets('occasion'))
     check(s.facets('program') == ['sessions'] and s.facets('thread') == ['history'] and s.facets('member') == [], "facets per kind")

@@ -100,6 +100,9 @@ window.Situations = (function () {
       : askOnly) + handLink;
     const since = when(s.since);
     const meta = [s.state, since ? `since ${since}` : '', s.due ? `due ${dueLabel(s.due)}` : '', (s.people || []).join(', ')].filter(Boolean).join(' · ');
+    const subj = s.subject
+      ? `<div class="sit-subject text-[11px] text-indigo-300 mt-0.5" data-sit-subject="${esc(s.subject.kind)}:${esc(s.subject.id)}">About: <a class="underline underline-offset-2" href="${esc((ctx.apiBase || '') + s.subject.link)}">${esc(s.subject.title)}</a></div>`
+      : '';
     const note = s.note_source === 'argyle'
       ? `<div class="sit-note text-xs text-gray-400 italic mt-0.5" data-source="argyle">${esc(s.status_note)}</div>`
       : `<div class="sit-note text-xs text-gray-500 mt-0.5" data-source="fallback">${esc(s.status_note)}</div>`;
@@ -109,6 +112,7 @@ window.Situations = (function () {
         ${s.sensitivity === 'sensitive' ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 shrink-0">sensitive</span>' : ''}
       </div>
       <div class="text-[11px] text-gray-600 mt-0.5">${esc(meta)}</div>
+      ${subj}
       ${note}
       ${buttons}
       <div class="sit-ask-flow mt-2" style="display:none"></div>
@@ -127,6 +131,33 @@ window.Situations = (function () {
   }
 
   async function act(s, option, ctx) {
+    if (option.verb === 'subject') {
+      let payload;
+      if (option.payload && option.payload.clear) {
+        if (!window.promptConfirm || !await promptConfirm('Unlink it?', s.title, 'Unlink', 'Keep')) return;
+        payload = { clear: true };
+      } else {
+        const query = window.promptInput ? await promptInput('What is this about?', 'A trip, a party, an event, a person, a list…') : null;
+        if (!query) return;
+        payload = { query };
+      }
+      try {
+        let data = await post(ctx, `api/situations/${s.kind}/${s.id}/act`, { verb: 'subject', option_id: option.id, payload });
+        if (data.status === 'choose' && (data.candidates || []).length) {
+          const pick = window.promptChoice ? await promptChoice('Which one?', '', data.candidates.map(c => ({
+            value: `${c.kind}:${c.id}`, label: `${c.title} (${c.kind})`
+          }))) : null;
+          if (!pick) return;
+          const colon = pick.indexOf(':');
+          data = await post(ctx, `api/situations/${s.kind}/${s.id}/act`, {
+            verb: 'subject', option_id: option.id, payload: { kind: pick.slice(0, colon), id: pick.slice(colon + 1) }
+          });
+        }
+        if (data.message) alert_(data.message);
+      } catch (e) { alert_(e.message); }
+      if (ctx.onChange) ctx.onChange();
+      return;
+    }
     const payload = {};
     // Closing is the one verb with no way back (a closed thread cannot be
     // reopened), so it asks first wherever the card is drawn.
