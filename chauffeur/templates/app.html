@@ -8472,51 +8472,64 @@
             }
         }
 
+        // One button for a parent or adult: Assign driver (Change driver when
+        // somebody holds it) opens a picker with Me first, then the family's
+        // other drivers on the rota. Picking yourself is still a self-claim
+        // (source 'pwa', so you are not pushed about a drive you just took);
+        // anybody else is a parent's assignment (source 'pwa_parent', they are).
+        // A driver who is not a parent or adult keeps the self-claim buttons.
         function renderAssignButtons(ev, wrap) {
             if (!wrap) return;
             wrap.innerHTML = '';
-            if (ev.canClaim && selectedDriverId) {
-                const mkBtn = (label, ids) => {
-                    const b = document.createElement('button');
-                    b.className = 'w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-blue-500/50 hover:bg-blue-900/20 active:bg-blue-600 text-blue-400 font-bold shadow-md';
-                    b.innerHTML = `${CLAIM_ICON} ${label}`;
-                    b.onclick = () => claimEvent(ev, ids, b);
-                    wrap.appendChild(b);
-                };
+            const canAssignOthers = !ev.isErrand && !ev.suppressed && ['parent', 'adult'].includes(currentMemberRole());
+            const mkBtn = (label, onclick, tag) => {
+                const b = document.createElement('button');
+                b.className = 'w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-blue-500/50 hover:bg-blue-900/20 active:bg-blue-600 text-blue-400 font-bold shadow-md';
+                b.innerHTML = `${CLAIM_ICON} ${label}`;
+                if (tag) b.setAttribute(tag, '');
+                b.onclick = onclick;
+                wrap.appendChild(b);
+                return b;
+            };
+            if (canAssignOthers) {
+                mkBtn((ev.driverIds || []).length ? 'Change driver' : 'Assign driver', () => assignDriver(ev), 'data-assign-other');
+            } else if (ev.canClaim && selectedDriverId) {
                 const openLegs = (ev.legs || []).filter(l => !l.mine);
                 if (ev.legs && ev.legs.length > 0) {
                     openLegs.forEach(l => {
                         const legName = l.type === 'dropoff' ? 'Dropoff' : 'Pickup';
-                        mkBtn(`Take ${legName} (${l.timeStr})`, [l.id]);
+                        const b = mkBtn(`Take ${legName} (${l.timeStr})`, null);
+                        b.onclick = () => claimEvent(ev, [l.id], b);
                     });
-                    if (openLegs.length > 1) mkBtn('Take Both', openLegs.map(l => l.id));
+                    if (openLegs.length > 1) {
+                        const b = mkBtn('Take Both', null);
+                        b.onclick = () => claimEvent(ev, openLegs.map(l => l.id), b);
+                    }
                 } else {
-                    mkBtn('Assign to Me', [ev.id]);
+                    const b = mkBtn('Assign to Me', null);
+                    b.onclick = () => claimEvent(ev, [ev.id], b);
                 }
-            }
-            if (!ev.isErrand && !ev.suppressed && ['parent', 'adult'].includes(currentMemberRole())) {
-                const b = document.createElement('button');
-                b.className = 'w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-blue-500/50 hover:bg-blue-900/20 active:bg-blue-600 text-blue-400 font-bold shadow-md';
-                b.setAttribute('data-assign-other', '');
-                b.textContent = (ev.driverIds || []).length ? 'Change driver' : 'Assign someone else';
-                b.onclick = () => assignOtherDriver(ev);
-                wrap.appendChild(b);
             }
             wrap.style.display = wrap.children.length ? 'flex' : 'none';
         }
 
-        async function assignOtherDriver(ev) {
-            const candidates = driversData.filter(d => !(ev.driverIds || []).includes(d.id));
+        async function assignDriver(ev) {
+            const held = ev.driverIds || [];
+            const others = driversData.filter(d => !held.includes(d.id) && d.id !== selectedDriverId);
+            const me = selectedDriverId && !held.includes(selectedDriverId)
+                ? driversData.find(d => d.id === selectedDriverId) : null;
+            const candidates = (me ? [{ ...me, _me: true }] : []).concat(others);
             if (!candidates.length) {
                 showGlobalAlert('Nobody else can drive right now.');
                 return;
             }
             const driverId = await promptChoice("Who's driving it?",
-                'This overrides the solver, and the person you assign is told about the drive.',
-                candidates.map(d => ({ value: d.id, label: d.name })));
+                'This overrides the solver. Somebody else you assign is told about the drive.',
+                candidates.map(d => ({ value: d.id, label: d._me ? 'Me' : d.name })));
             if (driverId == null) return;
             const driver = candidates.find(d => d.id === driverId);
             if (!driver) return;
+            const isMe = !!driver._me;
             const name = driver.name;
             const legs = ev.legs || [];
             let ids;
@@ -8550,7 +8563,7 @@
                 conflicts = [...new Set(conflicts)];
                 if (conflicts.length && !await promptConfirm(
                     'Override the solver?',
-                    'The solver would normally not give ' + name + ' this:\n\n• '
+                    'The solver would normally not give ' + (isMe ? 'you' : name) + ' this:\n\n• '
                         + conflicts.join('\n• '),
                     'Assign anyway')) return;
 
@@ -8563,13 +8576,13 @@
                             driver_id: driverId,
                             event_title: ev.title,
                             date_str: ev.dateStr || null,
-                            source: 'pwa_parent'
+                            source: isMe ? 'pwa' : 'pwa_parent'
                         })
                     });
                     if (!res.ok) throw new Error('Override request failed');
                 }
                 closeEventModal();
-                showGlobalAlert(`Assigned to ${name} — rebuilding the schedule…`);
+                showGlobalAlert(isMe ? 'Assigned to you — rebuilding the schedule…' : `Assigned to ${name} — rebuilding the schedule…`);
             } catch (e) {
                 console.error('Failed to assign event', e);
                 showGlobalAlert('Failed to assign. Check your connection.');

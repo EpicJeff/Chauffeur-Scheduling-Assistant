@@ -2,17 +2,19 @@
 sheet (the hand path behind Argyle's reassign_driver), run in a real DOM.
 
 Pinned shapes:
-  * `renderAssignButtons(ev, wrap)` draws the self-claim buttons as before and,
-    for a parent or adult on a non-errand, a tagged button
-    (`data-assign-other`) reading "Assign someone else", or "Change driver"
-    when somebody already holds the drive; a child gets no such button; an
-    errand gets none;
-  * `assignOtherDriver(ev)` asks who with promptChoice over the family's
-    drivers (never the one already on it), asks which leg when the event has
-    two (values: the leg ids, plus '__both__'), dry-runs the solver check,
-    then POSTs one override per leg with `source: 'pwa_parent'` (so the
-    person assigned still gets the "you gained this" push that a self-claim
-    suppresses); cancel at either question posts nothing;
+  * `renderAssignButtons(ev, wrap)` draws, for a parent or adult on a
+    non-errand, ONE tagged button (`data-assign-other`) reading "Assign
+    driver", or "Change driver" when somebody already holds the drive, and
+    nothing else (the user's call 2026-10-14: two buttons is clutter); a
+    child driver keeps the self-claim buttons and gets no picker; an errand
+    gets neither;
+  * `assignDriver(ev)` asks who with promptChoice: Me first, then the
+    family's other drivers (never the one already on it), asks which leg when
+    the event has two (values: the leg ids, plus '__both__'), dry-runs the
+    solver check, then POSTs one override per leg: `source: 'pwa'` when Me
+    (a self-claim, no push about yourself) and `source: 'pwa_parent'` for
+    anybody else (so the person assigned still gets the "you gained this"
+    push); cancel at either question posts nothing;
   * no browser dialogs: promptChoice/promptConfirm/showGlobalAlert only.
 
 Run from chauffeur/:  python tests/test_pwa_assign_other_driver.py
@@ -55,7 +57,7 @@ const dom = new JSDOM('<!doctype html><body><div id="em-claim-container"></div><
 global.window = dom.window; global.document = dom.window.document;
 let role = 'parent', selectedDriverId = 'jeff', driversData = [], answers = [], posts = [], checks = [], alerts = [], closed = 0, offered = [];
 const apiBase = '';
-const CLAIM_ICON = '<i>icon</i>', CLAIM_SPINNER = '<i>spin</i>';
+const CLAIM_ICON = '', CLAIM_SPINNER = '';
 function currentMemberRole() { return role; }
 function mfEscape(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 async function claimEvent() {}
@@ -80,7 +82,7 @@ eval(fs.readFileSync(chunkPath, 'utf8'));
       renderAssignButtons(c.ev, wrap);
       const btn = wrap.querySelector('[data-assign-other]');
       const r = { button: btn ? btn.textContent.trim() : null, buttons: Array.from(wrap.querySelectorAll('button')).map(b => b.textContent.trim()) };
-      if (c.tap && btn) { await assignOtherDriver(c.ev); }
+      if (c.tap && btn) { await assignDriver(c.ev); }
       r.posts = posts; r.checks = checks; r.alerts = alerts; r.closed = closed; r.offered = offered;
       out[name] = r;
     } catch (e) { out[name] = { error: String(e && e.stack || e) }; }
@@ -132,6 +134,7 @@ def _run_once():
     with open(cases, 'w', encoding='utf-8') as f:
         json.dump({
             'parent_open': {'ev': EV_OPEN, 'drivers': DRIVERS},
+            'assign_me': {'ev': EV_OPEN, 'drivers': DRIVERS, 'tap': True, 'answers': ['jeff']},
             'parent_held': {'ev': EV_HELD, 'drivers': DRIVERS},
             'child': {'ev': EV_OPEN, 'drivers': DRIVERS, 'role': 'child'},
             'errand': {'ev': EV_ERRAND, 'drivers': DRIVERS},
@@ -162,12 +165,13 @@ def scenario_a_parent_gets_the_button_a_child_and_an_errand_do_not():
     r = _case('parent_open')
     if r is None:
         return
-    check(r['button'] == 'Assign someone else', f"an open drive offers the picker: {r}")
-    check(any('Assign to Me' in b for b in r['buttons']), f"the self-claim button is still there: {r['buttons']}")
+    check(r['button'] == 'Assign driver', f"an open drive offers the picker: {r}")
+    check(r['buttons'] == ['Assign driver'], f"one button, not a self-claim row beside it: {r['buttons']}")
     held = _case('parent_held')
     check(held['button'] == 'Change driver', f"a held drive reads Change driver: {held}")
     child = _case('child')
     check(child['button'] is None, f"a child never assigns the family's drives: {child}")
+    check(child['buttons'] == ['Assign to Me'], f"a child driver keeps the self-claim: {child['buttons']}")
     errand = _case('errand')
     check(errand['button'] is None, f"an errand is the household's own job: {errand}")
 
@@ -181,6 +185,16 @@ def scenario_picking_grandma_posts_one_override_with_the_parent_source():
           f"one override for Grandma, tagged as a parent's assignment: {r['posts']}")
     check(r['checks'] and r['checks'][0] == {'event_id': 'ev1', 'driver_id': 'gran'}, f"the solver dry-run ran first: {r['checks']}")
     check(r['closed'] == 1 and any('Grandma' in a for a in r['alerts']), f"the sheet closes and the toast names her: {r}")
+
+
+def scenario_me_leads_the_picker_and_stays_a_self_claim():
+    r = _case('assign_me')
+    if r is None:
+        return
+    check(r['offered'] and r['offered'][0][0] == 'jeff', f"Me is the first choice: {r['offered']}")
+    check(len(r['posts']) == 1 and r['posts'][0]['driver_id'] == 'jeff' and r['posts'][0]['source'] == 'pwa',
+          f"picking Me is the self-claim the push logic already knows: {r['posts']}")
+    check(any('you' in a for a in r['alerts']), f"the toast says you: {r['alerts']}")
 
 
 def scenario_two_legs_ask_which_and_both_posts_two():
@@ -216,6 +230,7 @@ def scenario_the_holder_is_not_offered_again():
 SCENARIOS = [
     scenario_a_parent_gets_the_button_a_child_and_an_errand_do_not,
     scenario_picking_grandma_posts_one_override_with_the_parent_source,
+    scenario_me_leads_the_picker_and_stays_a_self_claim,
     scenario_two_legs_ask_which_and_both_posts_two,
     scenario_cancel_at_either_question_posts_nothing,
     scenario_the_holder_is_not_offered_again,
