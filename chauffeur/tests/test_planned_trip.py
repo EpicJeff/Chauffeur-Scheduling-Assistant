@@ -92,9 +92,8 @@ def scenario_the_whole_trip():
     check(len(storage.get_trip_metadata('ev_disney')['pois']) == old_pois, "the trip of the same name already on file is untouched")
     check(missions.subject_of(storage.get_mission(mid))[:2] == ('trip', tid), "the trip is the subject")
 
-    _step(mid)                      # the engine proposes the work stage itself
-    check(_stage(mid, 's2')['state'] == 'proposed', "the dining stage waits for Go")
-    _approve(mid, 's2')
+    _step(mid)                      # the engine starts the work stage itself (Projects Decision 5)
+    check(_stage(mid, 's2')['state'] == 'running', "the dining stage starts itself")
     calls = []
     missions._browse = lambda **kw: calls.append(kw) or {
         'outcome': 'blocked', 'text': 'The dining page needs a My Disney Experience sign-in.', 'learned': {},

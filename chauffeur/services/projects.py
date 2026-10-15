@@ -135,8 +135,50 @@ def update(project_id, fields, actor):
         return {'status': 'success', 'project': storage.get_project(project_id)}
 
 
+def _work_missions(project):
+    from services import missions
+    linked = {s.get('mission_id') for s in project.get('steps', [])}
+    return [m for m in storage.get_missions()
+            if m['id'] in linked or missions.subject_of(m)[:2] == ('project', project['id'])]
+
+
 def stop_work(project_id):
-    """Task 6 will cancel this project's running Argyle work here."""
+    """Park paused work; end the sessions of a completed or dropped project."""
+    from services import missions, planned, situations
+    with storage.db_lock:
+        project = storage.get_project(project_id)
+        if not project:
+            return
+        actor = storage.get_member(project.get('owner_member_id')) or {}
+        if actor.get('role') not in ('parent', 'adult'):
+            actor = situations.parent_of_record() or {}
+        for mission in _work_missions(project):
+            if mission.get('status') not in missions.LIVE:
+                continue
+            if project['state'] == 'paused':
+                if mission.get('paused_by_project'):
+                    continue
+                plan = mission.get('plan')
+                for stage in (plan or {}).get('stages', []):
+                    if stage['kind'] == 'work' and stage['state'] == 'running':
+                        stage.update(state='pending', steps_used=0)
+                        stage.pop('budget_ask_pending', None)
+                # Changing the generation also invalidates results arriving
+                # after a quick pause/resume has started the same stage again.
+                missions._close(mission['id'], 'waiting_step', paused_by_project=True,
+                                project_pause_rev=int(mission.get('project_pause_rev') or 0) + 1,
+                                **({'plan': plan} if plan else {}))
+                if mission['status'] == 'browsing':
+                    storage.set_app_state(f"mission_steer:{mission['id']}", {'text': 'Paused', 'ts': time.time()})
+                continue
+            if (mission.get('plan') or {}).get('state') not in (None, 'done', 'stopped'):
+                planned.stop_plan(mission['id'], actor)
+            else:
+                storage.set_app_state(f"mission_steer:{mission['id']}", {'text': 'Stopped', 'ts': time.time()})
+                for ask in storage.get_mission_steps(mission['id']):
+                    if ask.get('kind') == 'ask':
+                        missions.settle_ask_cards(mission['id'], ask['id'], 'Stopped')
+                missions._close(mission['id'], 'dropped')
 
 
 def set_state(project_id, state, actor):
@@ -149,6 +191,13 @@ def set_state(project_id, state, actor):
         storage.update_project(project_id, {'state': state})
         if state in ('paused', 'done', 'dropped'):
             stop_work(project_id)
+        elif state == 'active':
+            from services import missions
+            for mission in _work_missions(storage.get_project(project_id)):
+                if mission.get('paused_by_project') and mission.get('status') in missions.LIVE:
+                    missions._close(mission['id'], 'running', paused_by_project=False)
+            resume_waiting(project_id)
+            advance(project_id)
         return {'status': 'success', 'project': storage.get_project(project_id)}
 
 
@@ -179,10 +228,12 @@ def resume_waiting(project_id):
 
     with storage.db_lock:
         project = storage.get_project(project_id)
-        if not project:
+        if not project or project.get('state') != 'active':
             return []
         resumed = []
         for mission in storage.get_missions(status='waiting_step'):
+            if mission.get('paused_by_project'):
+                continue
             if missions.subject_of(mission)[:2] != ('project', project_id):
                 continue
             plan = mission.get('plan') or {}
@@ -268,7 +319,9 @@ def add_step(project_id, step, actor):
         if message:
             return _error(message)
         storage.update_project(project_id, {'steps': steps})
-        return {'status': 'success', 'step': deepcopy(row)}
+        advance(project_id)
+        return {'status': 'success', 'step': next(
+            s for s in storage.get_project(project_id)['steps'] if s['id'] == row['id'])}
 
 
 def edit_step(project_id, step_id, fields, actor):
@@ -295,7 +348,9 @@ def edit_step(project_id, step_id, fields, actor):
             return _error(message)
         storage.update_project(project_id, {'steps': steps})
         resume_waiting(project_id)
-        return {'status': 'success', 'step': deepcopy(step)}
+        advance(project_id)
+        return {'status': 'success', 'step': next(
+            s for s in storage.get_project(project_id)['steps'] if s['id'] == step_id)}
 
 
 def remove_step(project_id, step_id, actor):
@@ -332,24 +387,121 @@ def set_step_state(project_id, step_id, state, actor):
             return {'status': 'success', 'step': step, 'advanced': []}
         if not _parent(actor) and not _needs_satisfied(step, steps):
             return _error('Finish or skip this step\'s needs first')
-        step.update(state=state,
-                    done_by=actor['id'] if state in ('done', 'skipped') else None,
-                    done_at=time.time() if state in ('done', 'skipped') else None)
+        _stamp_step(step, state, actor['id'])
         # Readiness is derived from needs, so reopening immediately blocks todo
         # dependents again without changing work already doing or done.
         storage.update_project(project_id, {'steps': steps})
         resume_waiting(project_id)
-        return {'status': 'success', 'step': deepcopy(step), 'advanced': advance(project_id)}
+        # The tap response has always reported readiness, including when the
+        # mission service is disabled. advance itself reports actual starts.
+        ready = [item['id'] for item in sorted(steps, key=lambda item: item['order'])
+                 if item.get('owner') == 'argyle' and item.get('state') == 'todo'
+                 and _needs_satisfied(item, steps)]
+        advance(project_id)
+        return {'status': 'success', 'step': deepcopy(step), 'advanced': ready}
 
 
 def advance(project_id):
-    """Find ready Argyle steps; Task 6 will start their work here."""
+    """Start ready Argyle work once; refused launches remain eligible to retry."""
+    from services import missions, situations, subjects
     with storage.db_lock:
         project = storage.get_project(project_id)
+        if not project or project.get('state') != 'active':
+            return []
+        resumed = resume_waiting(project_id)
         steps = (project or {}).get('steps') or []
-        return [step['id'] for step in sorted(steps, key=lambda item: item['order'])
-                if step.get('owner') == 'argyle' and step.get('state') == 'todo'
-                and _needs_satisfied(step, steps)]
+        started = []
+        for step in sorted(steps, key=lambda item: item['order']):
+            if (step.get('owner') != 'argyle' or step.get('state') != 'todo'
+                    or not _needs_satisfied(step, steps)):
+                continue
+            if step.get('mission_id'):
+                if step['mission_id'] in resumed:
+                    started.append(step['id'])
+                continue  # Stage-backed work is started by prepare_next/run_stage.
+            owner = storage.get_member(project.get('owner_member_id'))
+            creator = owner if _active(owner) else situations.parent_of_record()
+            if not creator:
+                continue
+            result = missions.launch(step['goal'], created_by=creator['id'])
+            if result.get('status') != 'launched':
+                continue
+            mid = result['mission_id']
+            storage.update_mission(mid, {'subject_kind': 'project', 'subject_id': project_id,
+                                        'subject_rev': 1, 'subject_history':
+                                        subjects.history_after_binding({}, 'project', project_id)})
+            step['mission_id'] = mid
+            _stamp_step(step, 'doing', 'argyle')
+            storage.update_project(project_id, {'steps': steps})
+            started.append(step['id'])
+        return started
+
+
+def _stamp_step(step, state, actor):
+    """Shared state stamp for person actions and trusted engine transitions."""
+    step.update(state=state, done_by=actor if state in ('done', 'skipped') else None,
+                done_at=time.time() if state in ('done', 'skipped') else None)
+
+
+def _work_step(mission_id, stage_id, state=None, **fields):
+    from services import missions
+    with storage.db_lock:
+        mission = storage.get_mission(mission_id) or {}
+        kind, pid, _ = missions.subject_of(mission)
+        if kind != 'project':
+            return
+        project = storage.get_project(pid) or {}
+        step = next((s for s in project.get('steps', []) if s.get('owner') == 'argyle'
+                     and s.get('mission_id') == mission_id and s.get('stage_id') == stage_id), None)
+        if not step or step.get('state') in ('done', 'skipped'):
+            return
+        if state:
+            _stamp_step(step, state, 'argyle')
+        step.update(fields)
+        storage.update_project(pid, {'steps': project['steps']})
+        if state in ('done', 'skipped'):
+            resume_waiting(pid)
+            advance(pid)
+
+
+def on_stage_started(mission_id, stage_id):
+    _work_step(mission_id, stage_id, 'doing', question=None)
+
+
+def on_stage_done(mission_id, stage_id, found):
+    _work_step(mission_id, stage_id, 'done', found=found, question=None)
+
+
+def on_stage_blocked(mission_id, stage_id, reason):
+    _work_step(mission_id, stage_id, 'blocked', question=reason)
+
+
+def on_stage_cancelled(mission_id, stage_id, outcome):
+    _work_step(mission_id, stage_id, 'skipped' if outcome == 'skip' else 'blocked',
+               question=None if outcome == 'skip' else 'Stopped')
+
+
+def on_question(mission_id, question):
+    mission = storage.get_mission(mission_id) or {}
+    stage = next((s for s in (mission.get('plan') or {}).get('stages', [])
+                  if s.get('state') == 'running'), None)
+    _work_step(mission_id, stage['id'] if stage else None, question=question)
+
+
+def on_mission_closed(mission_id, status, reason=''):
+    """Only standalone steps finish with a mission; stage steps finish earlier."""
+    mission = storage.get_mission(mission_id) or {}
+    if status == 'done':
+        _work_step(mission_id, None, 'done', found={'summary': mission.get('summary') or ''}, question=None)
+    elif status in ('blocked', 'dropped'):
+        from services import missions
+        kind, pid, _ = missions.subject_of(mission)
+        if kind == 'project':
+            for step in (storage.get_project(pid) or {}).get('steps', []):
+                if (step.get('mission_id') == mission_id
+                        and step.get('state') not in ('done', 'skipped')):
+                    _work_step(mission_id, step.get('stage_id'), 'blocked',
+                               question=reason or 'Stopped')
 
 
 def view(project, viewer):

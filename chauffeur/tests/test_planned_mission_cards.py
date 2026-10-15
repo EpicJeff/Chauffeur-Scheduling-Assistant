@@ -129,7 +129,7 @@ CARDS = {
                           {'id': 'run_stage:s1:abc:exclude:r2', 'verb': 'run_stage', 'label': 'Leave out: Add the Wilsons', 'payload': {}}]},
     'work': {'kind': 'mission_ask', 'mission_id': 'm1', 'ask_id': 'a4', 'ask': 'stage', 'state': 'open', 'goal': 'party', 'question': '',
              'stage_kind': 'work', 'work_goal': 'find two bakeries', 'found': {'bakeries': ['Publix']},
-             'options': [{'id': 'run_stage:s2:def:approve', 'verb': 'run_stage', 'label': 'Go do this part', 'payload': {}}]},
+             'options': [{'id': 'run_stage:s2:def:resume', 'verb': 'run_stage', 'label': 'Carry on', 'payload': {}}]},
     'done': {'kind': 'mission_done', 'mission_id': 'm1', 'summary': 'Planned.', 'open': ['Order the cake'],
              'drafts': [{'to': 'Grandma', 'words': 'Party at 2 <sharp>!'}]},
 }
@@ -211,8 +211,8 @@ def scenario_n2_plan_and_stage_cards_list_their_parts():
     check('Make the party' in s and 'Made it.' in s and 'Add the Wilsons' in s, f"rows and a result:\n{s}")
     check('data-mission-act="run_stage:s1:abc:approve"' in s, "Do this")
     w = out['work']
-    check('find two bakeries' in w and 'Publix' in w and 'Go do this part' in w, f"a work stage's goal and what it found:\n{w}")
-    check('bakeries: Publix' in w and '{' not in w.split('find two bakeries')[1].split('Go do this part')[0],
+    check('find two bakeries' in w and 'Publix' in w and 'Carry on' in w, f"a work stage's goal and what it found:\n{w}")
+    check('bakeries: Publix' in w and '{' not in w.split('find two bakeries')[1].split('Carry on')[0],
           f"what it found reads as a line, never a JSON dump:\n{w}")
 
 

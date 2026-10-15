@@ -282,6 +282,9 @@ def _close(mission_id: str, status: str, **fields) -> dict:
     if status in ('done', 'blocked', 'dropped'):
         fields.setdefault('finished_at', time.time())
     storage.update_mission(mission_id, fields)
+    if status in TERMINAL:
+        from services import projects
+        projects.on_mission_closed(mission_id, status, fields.get('error') or '')
     from services import situations as _sit
     _sit.touched('mission', mission_id)
     # The thread carries its mission's ask (browse missions §4): when the
@@ -787,10 +790,16 @@ def answer(mission_id: str, text: str, actor: dict) -> dict:
     return {'status': 'success', 'message': message}
 
 
-def _steer_check(mission_id: str):
+def _steer_check(mission_id: str, pause_rev=None):
     """Consume a person's stop flag once, between browse turns."""
+    if pause_rev is None:
+        pause_rev = int((storage.get_mission(mission_id) or {}).get('project_pause_rev') or 0)
     def check():
         with storage.db_lock:
+            mission = storage.get_mission(mission_id) or {}
+            if (mission.get('paused_by_project')
+                    or int(mission.get('project_pause_rev') or 0) != pause_rev):
+                return 'Paused'
             key = f'mission_steer:{mission_id}'
             steer = storage.get_app_state(key)
             if steer:
@@ -970,10 +979,17 @@ def start_browse(mission: dict, goal: str, site: str, start_url: str = None, rel
         # The planner named no page: start where a past browse of this site
         # got furthest (its form, its scheduling page), not the front door.
         start_url = _site_page(site)
+    from services import planned
+    work_stage = planned.running_work(mission)
     args = {'goal': goal, 'site': site, 'start_url': start_url,
+            'project_pause_rev': int(mission.get('project_pause_rev') or 0),
+            **({'stage_id': work_stage['id']} if work_stage else {}),
             **({'approved_ask_id': approved.get('ask_id'), 'approval_spent': False} if approved else {})}
     sid = storage.add_mission_step(mid, {'kind': 'browse', 'name': site, 'args_json': args, 'result_json': None})
     with storage.db_lock:
+        if not planned.work_is_current(mid, args.get('stage_id'), args['project_pause_rev']):
+            storage.update_mission_step(sid, {'result_json': {'outcome': 'cancelled', 'text': 'Stopped'}})
+            return sid
         if mid in _plan_subject and subject_of(storage.get_mission(mid)) != _plan_subject.get(mid):
             text = 'the subject changed before the browse started'
             storage.update_mission_step(sid, {'result_json': {'outcome': 'stale', 'text': text}})
@@ -984,7 +1000,8 @@ def start_browse(mission: dict, goal: str, site: str, start_url: str = None, rel
         storage.update_mission(mid, {'status': 'browsing'})
     kw = dict(goal=goal, site=site, released=released if released is not None else _released_for(mission, site),
               consent={'captcha': bool(settings.get('missions_captcha_attempts'))}, start_url=start_url, out_dir=browse_dir(mid),
-              approved=approved, on_attempt=_on_attempt_for(mid, sid), should_stop=_steer_check(mid))
+              approved=approved, on_attempt=_on_attempt_for(mid, sid),
+              should_stop=_steer_check(mid, args['project_pause_rev']))
 
     def work():
         try:
@@ -1003,6 +1020,13 @@ def start_browse(mission: dict, goal: str, site: str, start_url: str = None, rel
 
 
 def finish_browse(mission_id: str, step_id: str, report: dict) -> None:
+    # Applying a report and cancelling its stage share the same lock, so a
+    # cancellation cannot land between the live check and a new ask/DM.
+    with storage.db_lock:
+        _finish_browse_locked(mission_id, step_id, report)
+
+
+def _finish_browse_locked(mission_id: str, step_id: str, report: dict) -> None:
     """The report becomes the step's result. Only the mission's LIVE browse
     (status browsing, newest browse step == this step) may move the mission;
     a late report is evidence on its own step. Attempts are resolved first,
@@ -1016,14 +1040,26 @@ def finish_browse(mission_id: str, step_id: str, report: dict) -> None:
         return
     step_row = next((s for s in storage.get_mission_steps(mission_id) if s['id'] == step_id), None)
     args = (step_row or {}).get('args_json') or {}
+    # Cancelled work still spent these turns; dropping its answer must not
+    # refund the daily browse allowance.
+    day = datetime.date.today().isoformat()
+    counts = dict(storage.get_app_state(f'mission_calls:{day}') or {})
+    counts['browse_turns'] = int(counts.get('browse_turns', 0)) + int(report.get('turns') or 0)
+    storage.set_app_state(f'mission_calls:{day}', counts)
+    from services import planned
+    if (mission.get('paused_by_project')
+            or int(mission.get('project_pause_rev') or 0) != int(args.get('project_pause_rev') or 0)):
+        storage.update_mission_step(step_id, {'result_json': {'outcome': 'cancelled', 'text': 'Paused'}})
+        return
+    if args.get('stage_id') and not planned.work_is_current(mission_id, args['stage_id']):
+        storage.update_mission_step(step_id, {'result_json': {'outcome': 'cancelled', 'text': 'Stopped'}})
+        return
+    if (mission.get('plan') or {}).get('state') == 'stopped':
+        storage.update_mission_step(step_id, {'result_json': {'outcome': 'cancelled', 'text': 'Stopped'}})
+        return
     site = args.get('site') or ''
     _remember_site_page(site, report)
-    # Count the day's turns, whatever the outcome.
-    day = datetime.date.today().isoformat()
     with storage.db_lock:
-        counts = dict(storage.get_app_state(f'mission_calls:{day}') or {})
-        counts['browse_turns'] = int(counts.get('browse_turns', 0)) + int(report.get('turns') or 0)
-        storage.set_app_state(f'mission_calls:{day}', counts)
         # The thread may return after the mission moved on (dropped by a
         # parent, reclaimed by the tick, a newer browse started): the report
         # stays on its step as evidence, nothing else moves.
@@ -1304,6 +1340,8 @@ def step(mission: dict) -> dict:
     from services import planned
     try:
         mission = storage.get_mission(mission['id'])
+        if mission.get('status') not in RUNNABLE:
+            return mission
         if planned.check_work_budget(mission['id']) or planned.prepare_next(mission['id']):
             return storage.get_mission(mission['id'])
         _step_once(mission)
@@ -1329,12 +1367,16 @@ def _step_once(mission: dict) -> dict:
 
     now = datetime.datetime.now()
     before = subject_of(mission)
+    from services import planned
+    stage = planned.running_work(mission)
+    stage_id = stage['id'] if stage else None
     _plan_subject[mid] = before
     res = _llm(mission, _system_prompt(now, settings, mission), _user_prompt(mission),
                settings)
-    from services import planned
     with storage.db_lock:
         current = storage.get_mission(mid)
+        if not planned.work_is_current(mid, stage_id, int(mission.get('project_pause_rev') or 0)):
+            return current
         work = planned.running_work(current)
         if work:
             work['steps_used'] = int(work.get('steps_used') or 0) + 1
@@ -1369,11 +1411,28 @@ def _step_once(mission: dict) -> dict:
         with budget_guard.guard() if work and action in ('tool', 'research') else nullcontext():
             return _run_planner_action(mission, res, settings, action)
     except budget_guard.BudgetExhausted:
-        planned.check_work_budget(mid, exhausted=True)
+        with storage.db_lock:
+            if planned.work_is_current(mid, stage_id, int(mission.get('project_pause_rev') or 0)):
+                planned.check_work_budget(mid, exhausted=True)
         return storage.get_mission(mid)
 
 
 def _run_planner_action(mission, res, settings, action):
+    from services import planned
+    stage = planned.running_work(mission)
+    stage_id = stage['id'] if stage else None
+    with storage.db_lock:
+        if not planned.work_is_current(mission['id'], stage_id, int(mission.get('project_pause_rev') or 0)):
+            return storage.get_mission(mission['id'])
+        if action not in ('research', 'browse', 'tool'):
+            # These transitions can emit asks or write proposals. Apply them
+            # atomically with the cancellation check; never hold the lock over
+            # an external research/browser/read call.
+            return _apply_planner_action(mission, res, settings, action, stage_id)
+    return _apply_planner_action(mission, res, settings, action, stage_id)
+
+
+def _apply_planner_action(mission, res, settings, action, stage_id):
     from services import planned
     mid = mission['id']
     if action in ('interview', 'answers', 'plan', 'stage', 'stage_done'):
@@ -1503,17 +1562,19 @@ def _run_planner_action(mission, res, settings, action):
         # the notes and the vision reads all share. No paid key: the free one.
         paid = model_pools.api_key_for_pool('pro', settings)
         out = web.research(question, api_key=paid or None)
-        msg = str(out.get('message') or '') if isinstance(out, dict) else ''
-        if out.get('status') == 'error' and '429' in msg and not any(w in msg.lower() for w in ('per day', 'perday', 'daily')):
-            # A per-minute cap is a two-minute matter, not a failed step: park
-            # the mission (the tick promotes waiting_retry) and ask again.
-            storage.add_mission_step(mid, {'kind': 'note', 'name': 'research_retry',
-                                           'result_json': {'note': f"rate limited while searching for '{question}'; trying again in 2 minutes"}})
-            storage.update_mission(mid, {'status': 'waiting_retry', 'retry_at': time.time() + 120})
-            return storage.get_mission(mid)
-        storage.add_mission_step(mid, {'kind': 'tool', 'name': 'research',
-                                       'args_json': {'question': res.get('question')},
-                                       'result_json': out})
+        with storage.db_lock:
+            if not planned.work_is_current(mid, stage_id, int(mission.get('project_pause_rev') or 0)):
+                return storage.get_mission(mid)
+            msg = str(out.get('message') or '') if isinstance(out, dict) else ''
+            if out.get('status') == 'error' and '429' in msg and not any(w in msg.lower() for w in ('per day', 'perday', 'daily')):
+                # A per-minute cap is a two-minute matter, not a failed step.
+                storage.add_mission_step(mid, {'kind': 'note', 'name': 'research_retry',
+                                               'result_json': {'note': f"rate limited while searching for '{question}'; trying again in 2 minutes"}})
+                storage.update_mission(mid, {'status': 'waiting_retry', 'retry_at': time.time() + 120})
+                return storage.get_mission(mid)
+            storage.add_mission_step(mid, {'kind': 'tool', 'name': 'research',
+                                           'args_json': {'question': res.get('question')},
+                                           'result_json': out})
         return storage.get_mission(mid)
 
     if action == 'browse':
@@ -1527,7 +1588,7 @@ def _run_planner_action(mission, res, settings, action):
         start_url = (res.get('start_url') or '').strip() or None
         if start_url and _b._domain(start_url) != _b._domain(f'https://{site}'):
             start_url = None            # resume only where the site itself stopped
-        start_browse(storage.get_mission(mid), goal, site, start_url=start_url)
+        start_browse(mission, goal, site, start_url=start_url)
         return storage.get_mission(mid)
 
     if action == 'draft':
@@ -1557,6 +1618,8 @@ def _run_planner_action(mission, res, settings, action):
 
     if action == 'ask_user':
         q = (res.get('question') or '').strip()
+        from services import projects
+        projects.on_question(mid, q)
         storage.add_mission_step(mid, {'kind': 'ask', 'name': 'question', 'result_json': {'question': q}})
         row = _close(mid, 'waiting_user')
         # Coming back (browse missions §4): the question reaches the person

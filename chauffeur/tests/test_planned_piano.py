@@ -78,9 +78,9 @@ def scenario_learning_piano():
     check(prog['state'] == 'proposed' and prog['member_id'] == 'kid', f"a proposal for Kate on the Programs page: {prog}")
     check(missions.subject_of(storage.get_mission(mid))[:2] == ('program', pid), "the program is the subject")
 
-    # Lessons.
+    # Lessons: the work stage starts itself (Projects Decision 5).
     _step(mid)
-    _approve(mid, 's2')
+    check(_stage(mid, 's2')['state'] == 'running', "lessons start themselves")
     _plan({'action': 'research', 'question': 'piano teachers near home for a beginner child'},
           {'action': 'propose', 'tool': 'create_thread', 'row_id': 't1', 'args': {'title': 'Piano teacher: Ms Rivera', 'kind': 'vendor'},
            'summary': 'A thread for Ms Rivera', 'why': 'nearby'},
@@ -105,7 +105,7 @@ def scenario_learning_piano():
 
     # Instrument and books.
     _step(mid)
-    _approve(mid, 's3')
+    check(_stage(mid, 's3')['state'] == 'running', "the instrument search starts itself")
     _plan({'action': 'research', 'question': 'used digital piano under $300 and beginner books'},
           {'action': 'propose', 'tool': 'create_list', 'row_id': 'l1', 'args': {'name': 'Piano'}, 'summary': 'A Piano list', 'why': 'shopping'},
           {'action': 'propose', 'tool': 'add_shopping_items', 'row_id': 'i1', 'needs': ['l1'],

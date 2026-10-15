@@ -270,6 +270,14 @@ def _options_mission(row: dict) -> list:
     from services import missions as _missions
     out = []
     steps = row.get('steps') or []
+    from services import planned
+    work = planned.running_work(row)
+    if (work and (row.get('plan') or {}).get('state') == 'approved'
+            and row.get('status') in ('running', 'browsing', 'waiting_user')):
+        base = f"{work['id']}:{work['snapshot']}"
+        payload = {'stage_id': work['id'], 'snapshot': work['snapshot']}
+        for decision, label in [('skip', 'Skip'), ('stop', 'Stop')]:
+            out.append(_opt('run_stage', label, {**payload, 'decision': decision}, f'{base}:{decision}'))
     # A verify a late report raised on an ended mission is still answerable (final review I1).
     if row.get('status') in _missions.ATTENTION or (row.get('id') and _missions.verify_open(row)):
         asked = next((s for s in reversed(steps) if s.get('kind') == 'ask'), None)
@@ -340,6 +348,8 @@ def _options_mission(row: dict) -> list:
     if row.get('status') in _missions.LIVE and row.get('status') not in _missions.ATTENTION:
         # Its own id: the thread forwards it as answer:mission:<id>:steer, which
         # triage and the lead rule tell apart from a question waiting on the person.
+        out.append(_opt('answer', 'Tell it something', {'ask': 'steer'}, 'steer'))
+    elif work and row.get('status') in _missions.ATTENTION and not any(o['verb'] == 'answer' and o.get('label') == 'Tell it something' for o in out):
         out.append(_opt('answer', 'Tell it something', {'ask': 'steer'}, 'steer'))
     for s in steps:
         if s.get('kind') != 'proposal':
@@ -808,7 +818,13 @@ def _run(kind, sid, verb, p, actor, row) -> dict:
         if p['decision'] == 'resume':
             return planned.resume_stage(sid, p['stage_id'], p['snapshot'], actor)
         if p['decision'] == 'skip':
-            return planned.skip_stage(sid, p['stage_id'], p['snapshot'], actor)
+            with storage.db_lock:
+                _, _, stage, error = planned._stage_for_change(sid, p['stage_id'], p['snapshot'], actor)
+                if error:
+                    return error
+                if stage['state'] == 'running':
+                    return planned.cancel_stage(sid, p['stage_id'], actor, 'skip')
+                return planned.skip_stage(sid, p['stage_id'], p['snapshot'], actor)
         if p['decision'] == 'exclude':
             return planned.exclude_row(sid, p['stage_id'], p['snapshot'], p['row_id'], actor)
         with storage.db_lock:

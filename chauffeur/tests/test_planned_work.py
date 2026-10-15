@@ -3,11 +3,10 @@
 A work stage is a sub-goal Argyle pursues with its normal loop; approving it
 means "go do this part". Pinned here:
 
-  * when the next stage is a work stage, the engine proposes it itself (no
-    model call): state 'proposed', a snapshot over goal, budget, plan rev and
-    subject, a 'stage' ask whose approve option reads "Go do this part";
-  * approval starts it once (two taps start it once); an old button after the
-    plan moved is stale;
+  * when the next stage is a work stage, the engine STARTS it itself (no model
+    call, no tap; Projects Decision 5, 2026-10-15): state 'running', a snapshot
+    over goal, budget, plan rev and subject, Skip and Stop on it;
+  * it starts once; an approve tap on a running stage changes nothing;
   * while it runs, every planner prompt carries `CURRENT STAGE: <title> — <goal>`
     and each step counts against its `step_budget`;
   * a `propose` during a work stage is not sent on its own: it is checked
@@ -54,39 +53,37 @@ def _work(mid):
 
 
 def _go(mid):
+    """Projects Decision 5: an approved plan's work stage starts itself; there is no Go tap."""
     st = _work(mid)
-    return situations.act('mission', mid, 'run_stage', option_id=f"run_stage:s2:{st['snapshot']}:approve", payload={}, actor=dict(MOM))
+    check(st['state'] == 'running', f"the work stage started itself: {st}")
+    return {'status': 'success'}
 
 
-def scenario_the_engine_proposes_the_next_work_stage_itself():
+def scenario_the_engine_starts_the_next_work_stage_itself():
     mid, calls_before = _work_proposed()
     st = _work(mid)
-    check(len(PROMPTS) == calls_before, "no model call to propose it")
-    check(st['state'] == 'proposed' and st['snapshot'] and _ask_names(mid)[-1] == 'stage', f"proposed: {st}")
+    check(len(PROMPTS) == calls_before, "no model call to start it")
+    check(st['state'] == 'running' and st['snapshot'] and st.get('steps_used') == 0, f"running: {st}")
+    check('stage' not in _ask_names(mid), "no 'Go do this part' ask")
     labels = {o['id']: o['label'] for o in _opts(mid, 'run_stage')}
-    check(labels.get(f"run_stage:s2:{st['snapshot']}:approve") == 'Go do this part', f"the button: {labels}")
-    card = missions.ask_card(storage.get_mission(mid))
-    check(card and card.get('goal') == 'find two bakeries' and card.get('kind') == 'work', f"the card carries the goal: {card}")
+    check(labels.get(f"run_stage:s2:{st['snapshot']}:skip") == 'Skip' and labels.get(f"run_stage:s2:{st['snapshot']}:stop") == 'Stop',
+          f"Skip and Stop on the running stage: {labels}")
 
 
-def scenario_approval_starts_it_once_and_old_buttons_go_stale():
+def scenario_it_starts_once_and_a_tap_on_it_changes_nothing():
     mid, _ = _work_proposed()
     st = _work(mid)
-    out = []
-    ts = [threading.Thread(target=lambda: out.append(_p().run_stage(mid, 's2', st['snapshot'], dict(MOM)))) for _ in range(2)]
+    ts = [threading.Thread(target=lambda: _p().prepare_next(mid)) for _ in range(2)]
     for t in ts:
         t.start()
     for t in ts:
         t.join()
-    check(_work(mid)['state'] == 'running' and sum(1 for r in out if r.get('already')) == 1, f"started once: {out}")
-    check(storage.get_mission(mid)['status'] == 'running', "the planner works on it")
-    mid2, _ = _work_proposed()
-    old = _work(mid2)['snapshot']
-    plan = _plan_of(mid2)
-    plan['rev'] += 1
-    storage.update_mission(mid2, {'plan': plan})
-    res = situations.act('mission', mid2, 'run_stage', option_id=f'run_stage:s2:{old}:approve', payload={}, actor=dict(MOM))
-    check(res['status'] == 'refused' and _work(mid2)['state'] == 'proposed', f"a plan that moved makes the old button stale: {res}")
+    after = _work(mid)
+    check(after['state'] == 'running' and after.get('steps_used') == 0 and after['snapshot'] == st['snapshot'],
+          f"started once: {after}")
+    res = situations.act('mission', mid, 'run_stage', option_id=f"run_stage:s2:{st['snapshot']}:approve", payload={}, actor=dict(MOM))
+    check(res['status'] != 'success' or res.get('already') or res.get('moved'), f"an approve on a running stage does nothing: {res}")
+    check(_work(mid)['state'] == 'running' and storage.get_mission(mid)['status'] == 'running', "the planner works on it")
 
 
 def scenario_the_running_stage_leads_every_prompt_and_counts_steps():
@@ -147,7 +144,9 @@ def scenario_no_subject_change_mid_stage_except_a_first_binding_which_asks():
           f"a first binding is kept and pauses the stage: {st['state']}")
     card = missions.ask_card(storage.get_mission(mid))
     check(card and 'Now about' in (card.get('question') or '') and 'Hawaii' in card.get('question', ''), f"and asks: {card}")
-    _go(mid)
+    st = _work(mid)       # the pause asks "go on?" about the new subject; that tap stays (it is not the Go tap)
+    situations.act('mission', mid, 'run_stage', option_id=f"run_stage:s2:{st['snapshot']}:approve", payload={}, actor=dict(MOM))
+    check(_work(mid)['state'] == 'running', "going on resumes it")
     _plan({'action': 'subject', 'kind': 'trip', 'id': 'ev_disney'})
     _step(mid)
     check(missions.subject_of(storage.get_mission(mid))[:2] == ('trip', 'ev_hawaii') and _steps(mid, 'refused'),
@@ -182,8 +181,8 @@ def scenario_a_follow_up_the_cap_cannot_cover_waits_with_an_ask():
 
 
 SCENARIOS = [
-    scenario_the_engine_proposes_the_next_work_stage_itself,
-    scenario_approval_starts_it_once_and_old_buttons_go_stale,
+    scenario_the_engine_starts_the_next_work_stage_itself,
+    scenario_it_starts_once_and_a_tap_on_it_changes_nothing,
     scenario_the_running_stage_leads_every_prompt_and_counts_steps,
     scenario_writes_are_gathered_into_one_follow_up_build_stage,
     scenario_spending_the_budget_ends_it_partial_with_carry_on,
