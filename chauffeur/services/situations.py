@@ -286,15 +286,19 @@ def _options_mission(row: dict) -> list:
                                     {'rev': rev, 'decision': 'drop', 'stage_id': stage['id']}, f"{rev}:drop:{stage['id']}"))
             out.append(_opt('answer', 'Tell it something', {'ask': 'steer'}, 'steer'))
         elif name == 'stage':
-            stage = next((s for s in plan.get('stages', []) if s['id'] == rj.get('stage_id') and s['state'] == 'proposed'), None)
+            from services import planned
+            stage = next((s for s in plan.get('stages', []) if s['id'] == rj.get('stage_id')
+                          and (s['state'] == 'proposed' or planned.can_resume_stage(s))), None)
             if stage:
                 base = f"{stage['id']}:{stage['snapshot']}"
                 payload = {'stage_id': stage['id'], 'snapshot': stage['snapshot']}
-                for decision, label in [('approve', 'Do this' if stage['kind'] == 'build' else 'Go do this part'),
+                first = ('resume', 'Carry on') if stage['state'] == 'partial' else (
+                    'approve', 'Do this' if stage['kind'] == 'build' else 'Go do this part')
+                for decision, label in [first,
                                         ('skip', 'Not this one'), ('stop', 'Stop')]:
                     out.append(_opt('run_stage', label, {**payload, 'decision': decision}, f'{base}:{decision}'))
                 for r in stage.get('rows', []):
-                    if r['state'] == 'proposed':
+                    if stage['state'] == 'proposed' and r['state'] == 'proposed':
                         out.append(_opt('run_stage', f"Leave out: {r['summary']}",
                                         {**payload, 'decision': 'exclude', 'row_id': r['id']}, f"{base}:exclude:{r['id']}"))
             out.append(_opt('answer', 'Tell it something', {'ask': 'steer'}, 'steer'))
@@ -759,6 +763,8 @@ def _run(kind, sid, verb, p, actor, row) -> dict:
                 return planned.stop_plan(sid, actor)
         if p['decision'] == 'approve':
             return planned.run_stage(sid, p['stage_id'], p['snapshot'], actor)
+        if p['decision'] == 'resume':
+            return planned.resume_stage(sid, p['stage_id'], p['snapshot'], actor)
         if p['decision'] == 'skip':
             return planned.skip_stage(sid, p['stage_id'], p['snapshot'], actor)
         if p['decision'] == 'exclude':

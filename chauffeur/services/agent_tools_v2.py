@@ -8851,6 +8851,7 @@ for _tool in get_available_tools():
 
 
 def execute_tool(name: str, args: dict, actor=None) -> dict:
+    from services import budget_guard
     handler = TOOL_HANDLERS.get(name)
     if not handler:
         return {"status": "error", "message": f"Unknown tool {name}"}
@@ -8861,6 +8862,8 @@ def execute_tool(name: str, args: dict, actor=None) -> dict:
         if 'actor' in inspect.signature(handler).parameters:
             return handler(args, actor=actor)
         return handler(args)
+    except budget_guard.BudgetExhausted:
+        raise
     except Exception as e:
         import traceback
         return {"status": "error", "message": str(e), "traceback": traceback.format_exc()}

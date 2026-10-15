@@ -108,11 +108,109 @@ def scenario_exhaustion_passes_through_the_pool_chain_and_the_curator():
     check(CALLS[:2] == ['research', 'model'] and len(CALLS) == 2, f"research, then one shaping call, then the stop: {CALLS}")
 
 
+
+# --- Task 8 (block B): the guard inside the stage runner, and carrying on ---------
+
+def _budget_stubs(cap, used):
+    """The mission fixture plus the model/research fakes and the day's counter."""
+    from services import llm, web
+    storage.set_app_state(TODAY_KEY, {'pro': used})
+    base = storage.get_settings()
+    storage.get_settings = (lambda s: (lambda: dict(s, mission_cap_pro_calls=cap, web_research_enabled=True, web_research_via='model',
+                                                    llm_gemini_api_key='free')))(base)
+    CALLS.clear()
+    llm._call_llm_json = lambda *a, **k: CALLS.append('model') or {'phases': [], 'text': 'ok'}
+    web._gemini_grounded = lambda question, api_key, model=None: CALLS.append('research') or {
+        'answer': 'Beginner piano.', 'sources': [{'title': 'Piano', 'url': 'https://example.com/p'}],
+        'facts': [{'claim': 'Piano', 'url': 'https://example.com/p'}]}
+    web._cache_get = lambda key: None
+    web._cache_put = lambda *a, **k: None
+    web._month_count = lambda bump=False: 0
+
+
+PIANO_ROWS = [{'id': 'r1', 'tool': 'propose_program',
+               'args': {'title': 'Learn piano', 'for_member_name': 'Kate', 'sessions_per_week': 3, 'minutes': 20},
+               'summary': 'Propose a piano program for Kate'}]
+
+
+def _staged_rows(rows):
+    from test_planned_missions import _fresh, _staged
+    _fresh()
+    return _staged(rows)
+
+
+def _stage(mid):
+    return (storage.get_mission(mid).get('plan') or {})['stages'][0]
+
+
+def scenario_b1_a_model_row_stops_at_the_days_limit_and_carries_on_tomorrow():
+    from services import planned, situations
+    from test_subjects import MOM
+    mid, st = _staged_rows(PIANO_ROWS)
+    programs_before = len(storage.get_programs(include_finished=True))
+    _budget_stubs(cap=1, used=0)
+    planned.run_stage(mid, 's1', st['snapshot'], dict(MOM))
+    st = _stage(mid)
+    row = st['rows'][0]
+    check(row['state'] == 'failed' and "limit" in (row['result'].get('message') or '') and row['result'].get('budget') is True,
+          f"the curator's research was charged, its shaping call refused: {row}")
+    check(st['state'] == 'partial', f"the stage is partial: {st['state']}")
+    check(len(storage.get_programs(include_finished=True)) == programs_before, "no half-made program")
+    opts = [o for o in situations.options_for('mission', situations.load('mission', mid)) if o['verb'] == 'run_stage']
+    resume = [o for o in opts if o['id'].endswith(':resume')]
+    check(resume and resume[0]['label'] == 'Carry on', f"a Carry on button: {[o['id'] for o in opts]}")
+    storage.set_app_state(TODAY_KEY, {'pro': 0})                       # tomorrow: a fresh allowance
+    storage.get_settings = (lambda s: (lambda: dict(s, mission_cap_pro_calls=50)))(storage.get_settings())
+    res = situations.act('mission', mid, 'run_stage', option_id=resume[0]['id'], payload={}, actor=dict(MOM))
+    check(res['status'] == 'success', f"carry on: {res}")
+    st = _stage(mid)
+    check(st['state'] == 'proposed' and st['rows'][0]['state'] == 'proposed', f"the budget-stopped row is offered again: {st}")
+    planned.run_stage(mid, 's1', st['snapshot'], dict(MOM))
+    st = _stage(mid)
+    check(st['rows'][0]['state'] == 'done' and st['state'] == 'done', f"and runs: {st['rows'][0]}")
+
+
+def scenario_b2_a_row_that_calls_no_model_never_charges():
+    from services import planned
+    from test_subjects import MOM
+    rows = [{'id': 'r1', 'tool': 'add_occasion_guests', 'args': {'occasion_id': 'o2', 'who': 'The Lees', 'headcount': 2}, 'summary': 'guests'},
+            {'id': 'r2', 'tool': 'draft_message', 'args': {'to': 'Grandma', 'words': 'Come!'}, 'summary': 'a draft'}]
+    mid, st = _staged_rows(rows)
+    _budget_stubs(cap=5, used=2)
+    planned.run_stage(mid, 's1', st['snapshot'], dict(MOM))
+    check(_stage(mid)['state'] == 'done', "ran")
+    check(_used() == 2 and CALLS == [], f"nothing charged: {_used()} {CALLS}")
+
+
+def scenario_b3_a_stage_stopped_by_the_time_bound_carries_on():
+    from services import planned, situations
+    from test_subjects import MOM
+    rows = [{'id': f'r{i}', 'tool': 'draft_message', 'args': {'to': 'x', 'words': str(i)}, 'summary': f'd{i}'} for i in range(3)]
+    mid, st = _staged_rows(rows)
+    ticks = iter([0.0, 0.0, 500.0, 500.0, 500.0, 500.0])
+    orig = planned._clock
+    planned._clock = lambda: next(ticks, 500.0)
+    try:
+        planned.run_stage(mid, 's1', st['snapshot'], dict(MOM))
+    finally:
+        planned._clock = orig
+    resume = [o for o in situations.options_for('mission', situations.load('mission', mid)) if o['id'].endswith(':resume')]
+    check(resume, "Carry on is offered")
+    situations.act('mission', mid, 'run_stage', option_id=resume[0]['id'], payload={}, actor=dict(MOM))
+    st = _stage(mid)
+    check([r['state'] for r in st['rows']] == ['done', 'proposed', 'proposed'], f"done rows stay done; the rest are offered: {st['rows']}")
+    planned.run_stage(mid, 's1', st['snapshot'], dict(MOM))
+    check([r['state'] for r in _stage(mid)['rows']] == ['done', 'done', 'done'], "and finish")
+
+
 SCENARIOS = [
     scenario_no_guard_charges_nothing,
     scenario_a_guard_charges_each_call_before_it_runs,
     scenario_the_limit_stops_the_call_before_it_runs,
     scenario_exhaustion_passes_through_the_pool_chain_and_the_curator,
+    scenario_b1_a_model_row_stops_at_the_days_limit_and_carries_on_tomorrow,
+    scenario_b2_a_row_that_calls_no_model_never_charges,
+    scenario_b3_a_stage_stopped_by_the_time_bound_carries_on,
 ]
 
 if __name__ == "__main__":

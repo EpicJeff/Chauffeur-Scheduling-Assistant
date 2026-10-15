@@ -3,6 +3,7 @@
 import hashlib
 import json
 import time
+from contextlib import nullcontext
 
 from services import storage, subjects
 
@@ -245,6 +246,38 @@ def _stage_for_change(mid, stage_id, snap, actor):
     return mission, plan, stage, None
 
 
+def can_resume_stage(stage):
+    return (stage.get('kind') == 'build' and stage.get('state') == 'partial'
+            and any(r['state'] == 'proposed' or
+                    (r['state'] == 'failed' and (r.get('result') or {}).get('budget') is True)
+                    for r in stage.get('rows', [])))
+
+
+def resume_stage(mission_id, stage_id, snap, actor):
+    from services import missions
+    with storage.db_lock:
+        mission, plan, stage, error = _stage_for_change(mission_id, stage_id, snap, actor)
+        if error:
+            return error
+        if plan['state'] != 'approved' or not can_resume_stage(stage) or stage_pending(mission):
+            return _refused()
+        for row in stage['rows']:
+            if row['state'] == 'failed' and (row.get('result') or {}).get('budget') is True:
+                row['state'] = 'proposed'
+                row.pop('result', None)
+                if row.get('proposal_id'):
+                    storage.update_action_proposal(row['proposal_id'], {'status': 'proposed', 'result': None})
+        stage['state'] = 'proposed'
+        stage['subject'] = list(missions.subject_of(mission))
+        # Even unchanged inputs need fresh approval after a partial attempt.
+        plan['rev'] += 1
+        stage['snapshot'] = snapshot(stage, stage['subject'], plan['rev'])
+        storage.update_mission(mission_id, {'plan': plan})
+        _settle(mission_id, 'stage', 'Carry on')
+        _ask(mission_id, 'stage', stage['title'], stage_id=stage_id)
+    return {'status': 'success', 'message': 'Stage ready to carry on.'}
+
+
 def exclude_row(mission_id, stage_id, snap, row_id, actor):
     with storage.db_lock:
         mission, plan, stage, error = _stage_for_change(mission_id, stage_id, snap, actor)
@@ -267,7 +300,7 @@ def skip_stage(mission_id, stage_id, snap, actor):
         mission, plan, stage, error = _stage_for_change(mission_id, stage_id, snap, actor)
         if error:
             return error
-        if stage['state'] != 'proposed':
+        if stage['state'] != 'proposed' and not can_resume_stage(stage):
             return _refused()
         stage['state'] = 'skipped'
         _dismiss_rows(stage)
@@ -481,10 +514,14 @@ def run_stage(mission_id, stage_id, snap, actor):
                               'to': args.get('to'), 'words': args.get('words')}
                 else:
                     storage.update_action_proposal(row['proposal_id'], {'payload': args})
-                    with budget_guard.guard():
+                    with budget_guard.guard() if CONTRACT[row['tool']]['model_calls'] else nullcontext():
                         result = chat_actions.run_row(row['proposal_id'], actor, row.get('idem'))
+            except budget_guard.BudgetExhausted:
+                result = {'status': 'error', 'message': "the day's limit", 'created': [], 'budget': True}
             except Exception as exc:
                 result = {'status': 'error', 'message': str(exc), 'created': []}
+            if result.get('budget') is True:
+                result = {'status': 'error', 'message': "the day's limit", 'created': [], 'budget': True}
             with storage.db_lock:
                 plan = storage.get_mission(mission_id)['plan']
                 stage = next(s for s in plan['stages'] if s['id'] == stage_id)
@@ -495,11 +532,17 @@ def run_stage(mission_id, stage_id, snap, actor):
                     _dismiss_rows({'rows': [row]})
                 else:
                     _bind_created(mission_id, result.get('created') or [])
+            if result.get('budget') is True:
+                break
         with storage.db_lock:
             plan = storage.get_mission(mission_id)['plan']
             stage = next(s for s in plan['stages'] if s['id'] == stage_id)
             stage['state'] = 'done' if all(r['state'] in ('done', 'excluded') for r in stage['rows']) else 'partial'
-            missions._close(mission_id, 'running', plan=plan)
+            if can_resume_stage(stage):
+                storage.update_mission(mission_id, {'plan': plan})
+                _ask(mission_id, 'stage', 'Partly done; carry on later.', stage_id=stage_id)
+            else:
+                missions._close(mission_id, 'running', plan=plan)
         return {'status': 'success', 'message': 'Stage done.' if stage['state'] == 'done' else 'Partly done; carry on later.'}
     finally:
         with storage.db_lock:
