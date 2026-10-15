@@ -684,6 +684,14 @@ def planner_action(mid, action):
 
             if any(cycle(sid) for sid in graph):
                 return _refused('Plan dependencies cannot form a cycle.')
+            stage_order = {stage['id']: index for index, stage in enumerate(stages)}
+
+            def needs_later(sid, index):
+                return any(stage_order.get(dep, -1) > index or needs_later(dep, index)
+                           for dep in graph[sid])
+
+            if any(needs_later(stage['id'], index) for index, stage in enumerate(stages)):
+                return _refused('A stage cannot need a later stage, even through a person step. Reorder the plan.')
             actor = missions._finder(mission) or {}
             project, message = _project_for_plan(mission, action.get('project'), actor)
             if message:

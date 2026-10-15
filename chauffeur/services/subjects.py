@@ -142,8 +142,12 @@ def visible(kind, row, viewer, spoken=False):
 
 
 def subject_records(kind, row):
-    """Audience records, including an unbound mission's proposed project."""
+    """Audience records, including a live mission's proposed project."""
     proposed = (row.get('plan') or {}).get('project') if kind == 'mission' else None
+    if kind == 'thread':
+        from services import situations
+        mission = situations._thread_mission(row) or {}
+        proposed = (mission.get('plan') or {}).get('project')
     if kind == 'mission' and row.get('origin_kind') == 'thread' and row.get('origin_ref'):
         row = storage.get_thread(row['origin_ref']) or {}
     entries = list(row.get('subject_history') or [])

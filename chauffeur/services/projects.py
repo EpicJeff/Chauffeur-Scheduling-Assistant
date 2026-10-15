@@ -167,14 +167,18 @@ def stop_work(project_id):
             if project['state'] == 'paused':
                 if mission.get('paused_by_project'):
                     continue
+                prior = {'status': mission['status'], 'retry_at': mission.get('retry_at')}
                 plan = mission.get('plan')
                 for stage in (plan or {}).get('stages', []):
-                    if stage['kind'] == 'work' and stage['state'] == 'running':
+                    if (mission['status'] in missions.RUNNABLE
+                            and stage['kind'] == 'work' and stage['state'] == 'running'):
                         stage.update(state='pending', steps_used=0)
                         stage.pop('budget_ask_pending', None)
                 # Changing the generation also invalidates results arriving
                 # after a quick pause/resume has started the same stage again.
-                missions._close(mission['id'], 'waiting_step', paused_by_project=True,
+                parked = mission['status'] in missions.RUNNABLE + ('browsing', 'waiting_retry')
+                missions._close(mission['id'], 'waiting_step' if parked else mission['status'],
+                                paused_by_project=True, paused_from=prior,
                                 project_pause_rev=int(mission.get('project_pause_rev') or 0) + 1,
                                 **({'plan': plan} if plan else {}))
                 if mission['status'] == 'browsing':
@@ -204,7 +208,9 @@ def set_state(project_id, state, actor):
             from services import missions
             for mission in _work_missions(storage.get_project(project_id)):
                 if mission.get('paused_by_project') and mission.get('status') in missions.LIVE:
-                    missions._close(mission['id'], 'running', paused_by_project=False)
+                    prior = mission.get('paused_from') or {'status': 'running'}
+                    missions._close(mission['id'], prior['status'], retry_at=prior.get('retry_at'),
+                                    paused_by_project=False, paused_from=None)
             resume_waiting(project_id)
             advance(project_id)
         return {'status': 'success', 'project': storage.get_project(project_id)}
@@ -309,6 +315,15 @@ def find_window(member_id, minutes, by_date, now=None):
     return None
 
 
+def _dirty_driver_holds(*steps):
+    """Invalidate derived driving schedules when protected driver time moves."""
+    dirty = any(step.get('hold') and (storage.get_member(step.get('owner')) or {}).get('driver_id')
+                for step in steps)
+    if dirty:
+        storage.mark_all_daily_schedules_dirty()
+    return {'schedule_dirty': True} if dirty else {}
+
+
 def _change_hold(project_id, step_id, hold, actor):
     with storage.db_lock:
         project = storage.get_project(project_id)
@@ -335,9 +350,10 @@ def _change_hold(project_id, step_id, hold, actor):
                 return _error('That time is no longer free')
             hold = {key: hold[key] for key in ('date', 'start', 'end')}
             hold['confirmed_by'] = actor['id']
+        before = deepcopy(step)
         step['hold'] = hold
         storage.update_project(project_id, {'steps': steps})
-        return {'status': 'success', 'step': step}
+        return {'status': 'success', 'step': step, **_dirty_driver_holds(before, step)}
 
 
 def confirm_hold(project_id, step_id, hold, actor):
@@ -368,7 +384,7 @@ def driver_hold_rules(start, end):
         if member.get('driver_id'):
             rules.append(Rule(driver_id=member['driver_id'], constraint_type='unavailable',
                               days_of_week=[datetime.date.fromisoformat(hold['date']).weekday()],
-                              time_start=hold['start'], time_end=hold['end'],
+                              time_start=hold['start'], time_end=hold['end'], match_overlap=True,
                               start_date=hold['date'], end_date=hold['date']))
     return rules
 
@@ -503,6 +519,7 @@ def edit_step(project_id, step_id, fields, actor):
             return _error('No such step')
         if not _can_edit_step(project, step, actor):
             return _error('A child can only edit their own steps')
+        before = deepcopy(step)
         step.update({key: deepcopy(fields[key]) for key in STEP_EDITABLE if key in fields})
         if not _can_edit_step(project, step, actor):
             return _error('A child can only assign steps to themselves')
@@ -515,10 +532,11 @@ def edit_step(project_id, step_id, fields, actor):
         if message:
             return _error(message)
         storage.update_project(project_id, {'steps': steps})
+        dirty = _dirty_driver_holds(before, step) if before.get('owner') != step.get('owner') else {}
         resume_waiting(project_id)
         advance(project_id)
         return {'status': 'success', 'step': next(
-            s for s in storage.get_project(project_id)['steps'] if s['id'] == step_id)}
+            s for s in storage.get_project(project_id)['steps'] if s['id'] == step_id), **dirty}
 
 
 def remove_step(project_id, step_id, actor):
@@ -535,7 +553,7 @@ def remove_step(project_id, step_id, actor):
         if any(step_id in (item.get('needs') or []) for item in steps):
             return _error('Another step needs this step; edit its needs first')
         storage.update_project(project_id, {'steps': [item for item in steps if item['id'] != step_id]})
-        return {'status': 'success', 'step': step}
+        return {'status': 'success', 'step': step, **_dirty_driver_holds(step)}
 
 
 def set_step_state(project_id, step_id, state, actor):
@@ -555,6 +573,13 @@ def set_step_state(project_id, step_id, state, actor):
             return {'status': 'success', 'step': step, 'advanced': []}
         if not _parent(actor) and not _needs_satisfied(step, steps):
             return _error('Finish or skip this step\'s needs first')
+        if step.get('owner') == 'argyle' and step.get('state') in ('done', 'skipped') and state == 'todo':
+            if step.get('stage_id'):
+                return _error('Plan that part again with Argyle to do it again.')
+            step.setdefault('attempts', []).append({
+                'mission_id': step.get('mission_id'), 'state': step['state'],
+                'found': deepcopy(step.get('found')), 'at': time.time()})
+            step.update(mission_id=None, found=None, question=None)
         _stamp_step(step, state, actor['id'])
         # Readiness is derived from needs, so reopening immediately blocks todo
         # dependents again without changing work already doing or done.
@@ -566,7 +591,8 @@ def set_step_state(project_id, step_id, state, actor):
                  if item.get('owner') == 'argyle' and item.get('state') == 'todo'
                  and _needs_satisfied(item, steps)]
         advance(project_id)
-        return {'status': 'success', 'step': deepcopy(step), 'advanced': ready}
+        return {'status': 'success', 'step': next(
+            s for s in storage.get_project(project_id)['steps'] if s['id'] == step_id), 'advanced': ready}
 
 
 def advance(project_id):

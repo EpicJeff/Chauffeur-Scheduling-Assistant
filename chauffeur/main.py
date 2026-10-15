@@ -6088,25 +6088,27 @@ def project_add_step(project_id: str, body: dict, request: Request = None):
 
 
 @app.patch("/api/projects/{project_id}/steps/{step_id}")
-def project_edit_step(project_id: str, step_id: str, body: dict, request: Request = None):
+def project_edit_step(project_id: str, step_id: str, body: dict, request: Request = None,
+                      background_tasks: BackgroundTasks = None):
     from services import projects
     actor = _situation_viewer(request)
     _project_for_actor(project_id, actor, writing=True)
     result = projects.edit_step(project_id, step_id, body, actor)
     if result['status'] == 'error':
         raise HTTPException(status_code=400, detail=result['message'])
-    return result
+    return _program_refresh(result, background_tasks)
 
 
 @app.delete("/api/projects/{project_id}/steps/{step_id}")
-def project_remove_step(project_id: str, step_id: str, request: Request = None):
+def project_remove_step(project_id: str, step_id: str, request: Request = None,
+                        background_tasks: BackgroundTasks = None):
     from services import projects
     actor = _situation_viewer(request)
     _project_for_actor(project_id, actor, writing=True)
     result = projects.remove_step(project_id, step_id, actor)
     if result['status'] == 'error':
         raise HTTPException(status_code=400, detail=result['message'])
-    return result
+    return _program_refresh(result, background_tasks)
 
 
 @app.post("/api/projects/{project_id}/steps/{step_id}/state")
@@ -6160,7 +6162,8 @@ def project_step_cancel(project_id: str, step_id: str, body: dict, request: Requ
 
 
 @app.post("/api/projects/{project_id}/steps/{step_id}/hold")
-def project_step_hold(project_id: str, step_id: str, body: dict, request: Request = None):
+def project_step_hold(project_id: str, step_id: str, body: dict, request: Request = None,
+                      background_tasks: BackgroundTasks = None):
     import datetime as dt
     from services import projects
     actor = _situation_viewer(request)
@@ -6174,7 +6177,7 @@ def project_step_hold(project_id: str, step_id: str, body: dict, request: Reques
         result = projects.confirm_hold(project_id, step_id, body, actor)
         if result['status'] == 'error':
             raise HTTPException(status_code=400, detail=result['message'])
-        return result
+        return _program_refresh(result, background_tasks)
     if step.get('owner') == 'argyle' or not projects._active(storage.get_member(step.get('owner'))):
         raise HTTPException(status_code=400, detail="Choose a person's step")
     by_date = body.get('by_date') or step.get('due_date') or (dt.date.today() + dt.timedelta(days=14)).isoformat()
@@ -6189,7 +6192,8 @@ def project_step_hold(project_id: str, step_id: str, body: dict, request: Reques
 
 
 @app.post("/api/projects/{project_id}/steps/{step_id}/hold/clear")
-def project_step_hold_clear(project_id: str, step_id: str, request: Request = None):
+def project_step_hold_clear(project_id: str, step_id: str, request: Request = None,
+                            background_tasks: BackgroundTasks = None):
     from services import projects
     actor = _situation_viewer(request)
     project = _project_for_actor(project_id, actor, writing=True)
@@ -6201,7 +6205,7 @@ def project_step_hold_clear(project_id: str, step_id: str, request: Request = No
     result = projects.clear_hold(project_id, step_id, actor)
     if result['status'] == 'error':
         raise HTTPException(status_code=400, detail=result['message'])
-    return result
+    return _program_refresh(result, background_tasks)
 
 
 @app.post("/api/projects/{project_id}/pieces")

@@ -784,7 +784,10 @@ def answer(mission_id: str, text: str, actor: dict) -> dict:
                     message = 'Told it; it will propose this stage again.'
         elif status in ATTENTION:
             storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'user_answer', 'result_json': {'text': text, 'answered_by': actor.get('id')}})
-            storage.update_mission(mission_id, {'status': 'running'})
+            fields = {'status': 'running'}
+            if mission.get('paused_by_project'):
+                fields = {'status': 'waiting_step', 'paused_from': {'status': 'running', 'retry_at': None}}
+            storage.update_mission(mission_id, fields)
             message = 'Answered.'
         elif status in LIVE:
             storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'user_steer', 'result_json': {'text': text}})
@@ -1348,7 +1351,7 @@ def step(mission: dict) -> dict:
     from services import planned
     try:
         mission = storage.get_mission(mission['id'])
-        if mission.get('status') not in RUNNABLE:
+        if mission.get('status') not in RUNNABLE or mission.get('paused_by_project'):
             return mission
         if planned.check_work_budget(mission['id']) or planned.prepare_next(mission['id']):
             return storage.get_mission(mission['id'])
@@ -1755,6 +1758,13 @@ def tick(now: datetime.datetime = None) -> dict:
                 continue
             steps = storage.get_mission_steps(row['id'])
             b = next((s for s in reversed(steps) if s.get('kind') == 'browse'), None)
+            # Pause restores the browse status, but its old worker may already
+            # have acknowledged cancellation. Its result is never applied;
+            # the planner can now choose how to continue the same work.
+            if not cur.get('paused_by_project') and (b or {}).get('result_json') == {
+                    'outcome': 'cancelled', 'text': 'Paused'}:
+                _close(row['id'], 'running')
+                continue
             if not (b and b.get('result_json') is None and (b.get('ts') or 0) < ts - BROWSE_LOST_S):
                 continue
             storage.add_mission_step(row['id'], {'kind': 'note', 'name': 'browse',

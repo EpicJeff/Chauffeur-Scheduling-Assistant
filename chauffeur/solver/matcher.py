@@ -378,24 +378,40 @@ def does_event_match_rule(event, rule, passengers=None) -> bool:
                     
         if not match_pax: top_matches = False
         
+    # Dated overlap rules use the hold's day, even if the event spans midnight.
+    overlap = getattr(rule, 'match_overlap', False)
+    window_day = event.start
+    if overlap and getattr(rule, 'start_date', None):
+        try:
+            day = datetime.strptime(rule.start_date, '%Y-%m-%d')
+            window_day = event.start.replace(year=day.year, month=day.month, day=day.day)
+        except ValueError:
+            pass
+
     # 3. Days of Week
     if top_matches and hasattr(rule, 'days_of_week') and rule.days_of_week:
         has_top_criteria = True
-        if event.start.weekday() not in rule.days_of_week: top_matches = False
+        if window_day.weekday() not in rule.days_of_week: top_matches = False
         
     # 4. Time Window
     if top_matches and hasattr(rule, 'time_start') and rule.time_start:
         has_top_criteria = True
         try:
             h, m = map(int, rule.time_start.split(':'))
-            if event.start.hour * 60 + event.start.minute < h * 60 + m: top_matches = False
+            if overlap:
+                boundary = window_day.replace(hour=h, minute=m, second=0, microsecond=0)
+                if event.end <= boundary: top_matches = False
+            elif event.start.hour * 60 + event.start.minute < h * 60 + m: top_matches = False
         except: pass
         
     if top_matches and hasattr(rule, 'time_end') and rule.time_end:
         has_top_criteria = True
         try:
             h, m = map(int, rule.time_end.split(':'))
-            if event.end.hour * 60 + event.end.minute > h * 60 + m: top_matches = False
+            if overlap:
+                boundary = window_day.replace(hour=h, minute=m, second=0, microsecond=0)
+                if event.start >= boundary: top_matches = False
+            elif event.end.hour * 60 + event.end.minute > h * 60 + m: top_matches = False
         except: pass
 
     # 4.5 Date Window
@@ -403,14 +419,14 @@ def does_event_match_rule(event, rule, passengers=None) -> bool:
         has_top_criteria = True
         try:
             start_dt = datetime.strptime(rule.start_date, '%Y-%m-%d').date()
-            if event.start.date() < start_dt: top_matches = False
+            if (event.end.date() < start_dt if overlap else event.start.date() < start_dt): top_matches = False
         except: pass
         
     if top_matches and hasattr(rule, 'end_date') and rule.end_date:
         has_top_criteria = True
         try:
             end_dt = datetime.strptime(rule.end_date, '%Y-%m-%d').date()
-            if event.end.date() > end_dt: top_matches = False
+            if (event.start.date() > end_dt if overlap else event.end.date() > end_dt): top_matches = False
         except: pass
 
     # 5. Location

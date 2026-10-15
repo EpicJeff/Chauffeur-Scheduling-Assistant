@@ -3648,30 +3648,55 @@ def get_project(project_id, acting_member=None, focus_key=None, spoken=False):
     return {'status': 'success', 'message': '\n'.join(lines), 'project': view}
 
 
+def _project_write_refusal(project_id, focus_key):
+    from services import projects, storage, subjects
+    humans = subjects.channel_humans(focus_key)
+    project = storage.get_project(project_id) if humans is not None else None
+    if humans is not None and not all(
+            projects.can_see(project, member) for member in humans):
+        return {'status': 'error', 'message': 'Ask me about that in your own Argyle chat.'}
+    return None
+
+
 def add_project_step(project_id, title, owner=None, needs=None, due_date=None, goal=None,
-                     acting_member=None):
+                     acting_member=None, focus_key=None):
     from services import projects
+    refused = _project_write_refusal(project_id, focus_key)
+    if refused:
+        return refused
     fields = {'title': title, **{key: value for key, value in
               (('owner', owner), ('needs', needs), ('due_date', due_date), ('goal', goal))
               if value is not None}}
     return projects.add_step(project_id, fields, acting_member)
 
 
-def add_to_project(project_id, kind, id, acting_member=None):
+def add_to_project(project_id, kind, id, acting_member=None, focus_key=None):
     from services import projects
+    refused = _project_write_refusal(project_id, focus_key)
+    if refused:
+        return refused
     return projects.add_piece(project_id, kind, id, acting_member)
 
 
-def set_project_state(project_id, state, acting_member=None):
+def set_project_state(project_id, state, acting_member=None, focus_key=None):
     from services import projects
+    refused = _project_write_refusal(project_id, focus_key)
+    if refused:
+        return refused
     result = projects.set_state(project_id, state, acting_member)
     if result.get('status') == 'success':
-        result['project'] = projects.view(result['project'], acting_member)
+        if (focus_key or '').startswith('channel:'):
+            result.pop('project', None)
+        else:
+            result['project'] = projects.view(result['project'], acting_member)
     return result
 
 
-def set_step_state(project_id, step_id, state, acting_member=None):
+def set_step_state(project_id, step_id, state, acting_member=None, focus_key=None):
     from services import projects
+    refused = _project_write_refusal(project_id, focus_key)
+    if refused:
+        return refused
     return projects.set_step_state(project_id, step_id, state, acting_member)
 
 

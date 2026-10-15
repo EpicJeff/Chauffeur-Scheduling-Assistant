@@ -699,6 +699,7 @@ class Rule(BaseModel):
     days_of_week: List[int] = Field(default_factory=list)
     time_start: Optional[str] = None
     time_end: Optional[str] = None
+    match_overlap: bool = False  # Hold windows block any overlap; ordinary rules contain.
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     location: Optional[str] = None
