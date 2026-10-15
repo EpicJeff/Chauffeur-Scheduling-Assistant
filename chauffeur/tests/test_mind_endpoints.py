@@ -68,7 +68,7 @@ def scenario_the_admin_page_can_approve_without_a_member_identity():
     orig_identify, orig_execute = _auth.identify, _ca._execute
     try:
         _auth.identify = lambda h, q: {'tier': _auth.SERVICE, 'member': None}
-        _ca._execute = lambda a, p: {'status': 'success', 'message': 'done'}
+        _ca._execute = lambda a, p, approver=None: {'status': 'success', 'message': 'done'}
         res = main.mind_act(iid, body={}, request=None)
         check(res.get('status') == 'success',
               f"the Mind page's own Approve button must work, got {res}")
@@ -108,7 +108,7 @@ def scenario_a_named_parent_is_not_overwritten_by_the_nomination():
     orig_identify, orig_execute = _auth.identify, _ca._execute
     try:
         _auth.identify = lambda h, q: {'tier': _auth.SERVICE, 'member': None}
-        _ca._execute = lambda a, p: {'status': 'success', 'message': 'done'}
+        _ca._execute = lambda a, p, approver=None: {'status': 'success', 'message': 'done'}
         main.mind_act(iid, body={'member_id': 'dad'}, request=None)
         check(storage.get_action_proposal(pid)['approved_by_member_id'] == 'dad',
               "the person who tapped is the person recorded")
@@ -230,7 +230,7 @@ def scenario_step_approve_rides_the_chat_rail():
     orig_identify, orig_execute = _auth.identify, _ca._execute
     try:
         _auth.identify = lambda h, q: {'tier': _auth.SERVICE, 'member': None}
-        _ca._execute = lambda a, p: {'status': 'success', 'message': 'done'}
+        _ca._execute = lambda a, p, approver=None: {'status': 'success', 'message': 'done'}
         # Call the endpoint to approve the step
         res = main.mind_step_approve(iid, 's1', body={}, request=None)
         check(res['status'] == 'success',
@@ -344,7 +344,7 @@ def scenario_a_schedule_changing_step_approval_asks_for_a_resolve():
     bg = _FakeBackground()
     try:
         _auth.identify = lambda h, q: {'tier': _auth.SERVICE, 'member': None}
-        _ca._execute = lambda a, p: {'status': 'success', 'message': 'done'}
+        _ca._execute = lambda a, p, approver=None: {'status': 'success', 'message': 'done'}
         res = main.mind_step_approve(iid, 's1', body={}, request=None,
                                      background_tasks=bg)
         check(res.get('status') == 'success', f"the step ran, got {res}")
@@ -365,7 +365,7 @@ def scenario_the_row_level_approval_asks_for_one_too():
     bg = _FakeBackground()
     try:
         _auth.identify = lambda h, q: {'tier': _auth.SERVICE, 'member': None}
-        _ca._execute = lambda a, p: {'status': 'success', 'message': 'done'}
+        _ca._execute = lambda a, p, approver=None: {'status': 'success', 'message': 'done'}
         main.mind_act(iid, body={}, request=None, background_tasks=bg)
         check(main.trigger_background_refresh in bg.tasks,
               f"same defect, same visit, got {bg.tasks}")

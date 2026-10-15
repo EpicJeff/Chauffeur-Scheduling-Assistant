@@ -63,7 +63,7 @@ def scenario_read_tool_dispatches_and_transcribes():
     calls = {}
     from services import agent_tools_v2
     orig = agent_tools_v2.execute_tool
-    agent_tools_v2.execute_tool = lambda n, a: calls.setdefault('call', (n, a)) or {'status': 'ok'}
+    agent_tools_v2.execute_tool = lambda n, a, actor=None: calls.setdefault('call', (n, a)) or {'status': 'ok'}
     missions._llm = _script(
         {'action': 'tool', 'tool': 'get_current_state', 'args': {}},
         {'action': 'finish', 'summary': 'looked'})
@@ -85,7 +85,7 @@ def scenario_write_tool_becomes_proposal_never_executes():
     executed = {}
     from services import agent_tools_v2
     orig = agent_tools_v2.execute_tool
-    agent_tools_v2.execute_tool = lambda n, a: executed.setdefault(n, a) or {'status': 'ok'}
+    agent_tools_v2.execute_tool = lambda n, a, actor=None: executed.setdefault(n, a) or {'status': 'ok'}
     missions._llm = _script(
         {'action': 'propose', 'tool': 'add_errand', 'args': {'name': 'pick up cake'},
          'summary': 'Add cake pickup errand', 'why': 'party needs cake'})

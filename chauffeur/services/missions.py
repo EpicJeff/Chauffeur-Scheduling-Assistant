@@ -56,6 +56,8 @@ READ_TOOLS = frozenset({
     'get_occasion_insights', 'get_occasion_gaps', 'get_run_sheet',
     'get_prep_ahead', 'search_places', 'suggest_gift_ideas',
     'search_mail', 'read_mail', 'find_in_chauffeur',
+    'get_calendar_events', 'get_household_tasks', 'get_household_load',
+    'get_requests', 'get_assist_coverage', 'list_threads', 'program_progress',
 })
 
 # Never offered, not even propose-wrapped. DMs are private space (mind law).
@@ -354,6 +356,18 @@ def subject_of(mission: dict) -> tuple:
     if not row.get('subject_kind'):
         return (None, None, 0)
     return (row['subject_kind'], row.get('subject_id'), int(row.get('subject_rev') or 0))
+
+
+def read_viewer(mission: dict) -> dict:
+    """Generic reads may store only what the transcript's audience may see."""
+    from services import subjects
+    adult = {'id': None, 'role': 'adult'}
+    parent = {'id': None, 'role': 'parent'}
+    records = subjects.subject_records('mission', mission or {})
+    if records and all(not subjects.visible(kind, row, adult)
+                       and subjects.visible(kind, row, parent) for kind, row in records):
+        return parent
+    return adult
 
 
 def _finder(mission: dict) -> dict | None:
@@ -1295,7 +1309,7 @@ def _step_once(mission: dict) -> dict:
                 + (" Also: " + '; '.join(c['title'] for c in kept) if kept else ''))
             out = {'status': out.get('status'), 'message': said, 'candidates': kept, 'withheld': withheld}
         else:
-            out = agent_tools_v2.execute_tool(name, args)
+            out = agent_tools_v2.execute_tool(name, args, actor=read_viewer(mission))
         storage.add_mission_step(mid, {'kind': 'tool', 'name': name,
                                        'args_json': stored_args,
                                        'result_json': out})

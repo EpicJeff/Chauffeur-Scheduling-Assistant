@@ -1917,13 +1917,16 @@ def _thread_writer(acting_member: dict, verb: str):
 
 def list_threads(state: str = None, owner_name: str = None,
                  include_closed: bool = False,
-                 acting_member: dict = None) -> Dict[str, Any]:
+                 acting_member: dict = None, *, _registry_read: bool = False) -> Dict[str, Any]:
     """Open loops with somebody outside the family — the pest control
     company, the school waitlist. A read for any RESOLVED member (an
     anonymous wall panel is refused — see `_thread_reader`), same rows as
     GET /api/threads; each is annotated with the same stall reason
     (`services.threads.is_stalled`) that page and the nightly sweep use."""
-    refusal = _thread_reader(acting_member)
+    # Only the trusted registry adapter supplies an id-less audience. Chat
+    # still requires a signed-in member, and rows retain their audience gate.
+    registry_audience = _registry_read and (acting_member or {}).get('role') in ('parent', 'adult')
+    refusal = None if registry_audience else _thread_reader(acting_member)
     if refusal:
         return refusal
     from services import threads as _threads
@@ -2251,13 +2254,16 @@ def list_programs(member_name: str = None, acting_member: dict = None) -> Dict[s
     return {"status": "success", "message": "Programs:\n" + "\n".join(lines)}
 
 
-def program_progress(program_title: str, acting_member: dict = None) -> Dict[str, Any]:
+def program_progress(program_title: str, acting_member: dict = None, *,
+                     _registry_read: bool = False) -> Dict[str, Any]:
     """How one program is going — sessions logged, minutes, the phase ahead
     (wraps `services.programs.progress`, which is deliberately monotonic: no
     streak, no miss count, no percentage). A read for any RESOLVED member
     (see `_program_reader`), but only on your own program or one you parent
     (`_program_owns_or_parent`) — a program is somebody's personal ambition."""
-    refusal = _program_reader(acting_member)
+    # Registry reads carry an audience rather than a signed-in person.
+    registry_audience = _registry_read and (acting_member or {}).get('role') in ('parent', 'adult')
+    refusal = None if registry_audience else _program_reader(acting_member)
     if refusal:
         return refusal
     from services import programs as _prog
@@ -7964,8 +7970,7 @@ def handle_claim_chore(args: dict) -> dict:
 def handle_negotiate_day(args: dict) -> dict:
     # The v1 loop is admin-only, so the caller is a grown-up by construction —
     # but negotiate_day gates on a resolved member, so give it the first parent
-    # rather than None. `ask_deal` is deliberately absent from this registry:
-    # fanning out asks needs an identity this loop cannot produce.
+    # rather than None.
     from services import storage
     parents = [m for m in storage.get_all_members()
                if m.get('role') == 'parent' and not m.get('system')]
@@ -8259,7 +8264,163 @@ def handle_get_travel_time(args: dict) -> dict:
                            destination=args.get("destination") or '')
 
 
+# These chat-only doors intentionally have no mission registry handler.
+REGISTRY_EXCEPTIONS = {
+    'send_direct_message': 'DMs are private space and never run from a mission.',
+    'announce_to_room': 'Room speech never runs from a mission.',
+    'prepare_voice_approval': 'Only the voice controller prepares voice approvals.',
+    'propose_family_action': 'Missions propose directly instead of using the chat wrapper.',
+    'research_question': 'Missions use their research action.',
+    'assign_driver_to_event_fuzzy': 'Missions use the reassign_driver admin action.',
+    'remove_override_for_event_fuzzy': 'Missions use the clear_assignment admin action.',
+    'auto_schedule_trip_itinerary': 'The later schedule_trip_itinerary tool replaces this door.',
+}
+
+
+def handle_get_calendar_events(args: dict, actor=None) -> dict:
+    return get_calendar_events(args.get('start_date'), args.get('end_date'))
+
+
+def handle_get_household_tasks(args: dict, actor=None) -> dict:
+    return get_household_tasks(assigned_to=args.get('assigned_to'),
+                               unassigned_only=bool(args.get('unassigned_only')))
+
+
+def handle_get_household_load(args: dict, actor=None) -> dict:
+    return get_household_load(days=args.get('days', 30) or 30)
+
+
+def handle_get_requests(args: dict, actor=None) -> dict:
+    return get_requests(acting_member=actor if actor is not None else _REGISTRY_READER)
+
+
+def handle_get_assist_coverage(args: dict, actor=None) -> dict:
+    return get_assist_coverage(args.get('target_date'))
+
+
+def handle_list_threads(args: dict, actor=None) -> dict:
+    return list_threads(state=args.get('state'), owner_name=args.get('owner_name'),
+                        include_closed=bool(args.get('include_closed')),
+                        acting_member=actor if actor is not None else _REGISTRY_READER,
+                        _registry_read=True)
+
+
+def handle_program_progress(args: dict, actor=None) -> dict:
+    return program_progress(args.get('program_title') or '',
+                            acting_member=actor if actor is not None else _REGISTRY_READER,
+                            _registry_read=True)
+
+
+def handle_add_household_task(args: dict, actor=None) -> dict:
+    return add_household_task(args.get('title') or '', due=args.get('due'),
+                              assign_to=args.get('assign_to'), notes=args.get('notes'),
+                              recurrence=args.get('recurrence'), category=args.get('category'),
+                              acting_member=actor if actor is not None else _registry_parent())
+
+
+def handle_claim_household_task(args: dict, actor=None) -> dict:
+    return claim_household_task(args.get('title') or '', member_name=args.get('member_name'),
+                                acting_member=actor if actor is not None else _registry_parent())
+
+
+def handle_complete_household_task(args: dict, actor=None) -> dict:
+    return complete_household_task(args.get('title') or '',
+                                   acting_member=actor if actor is not None else _registry_parent())
+
+
+def handle_add_thread_note(args: dict, actor=None) -> dict:
+    return add_thread_note(args.get('thread_title') or '', args.get('text') or '', url=args.get('url'),
+                           acting_member=actor if actor is not None else _registry_parent())
+
+
+def handle_close_thread(args: dict, actor=None) -> dict:
+    return close_thread(args.get('thread_title') or '', state=args.get('state'),
+                         acting_member=actor if actor is not None else _registry_parent())
+
+
+def handle_update_thread_action(args: dict, actor=None) -> dict:
+    return update_thread_action(args.get('thread_title') or '', args.get('next_action') or '',
+                                 next_action_at=args.get('next_action_at'), note=args.get('note'),
+                                 acting_member=actor if actor is not None else _registry_parent())
+
+
+def handle_draft_thread_message(args: dict, actor=None) -> dict:
+    return draft_thread_message(args.get('thread_title') or '', intent=args.get('intent'),
+                                 acting_member=actor if actor is not None else _registry_parent())
+
+
+def handle_answer_request(args: dict, actor=None) -> dict:
+    return answer_request(bool(args.get('accept')), which=args.get('which'), reason=args.get('reason'),
+                           acting_member=actor if actor is not None else _registry_parent())
+
+
+def handle_make_request(args: dict, actor=None) -> dict:
+    return make_request(args.get('body') or '', to_member=args.get('to_member'),
+                         kind=args.get('kind'), about=args.get('about'),
+                         acting_member=actor if actor is not None else _registry_parent())
+
+
+def handle_ask_deal(args: dict, actor=None) -> dict:
+    return ask_deal(args.get('event_title') or '', day=args.get('day'),
+                     acting_member=actor if actor is not None else _registry_parent())
+
+
+def handle_cover_with_assist(args: dict, actor=None) -> dict:
+    return cover_with_assist(args.get('event_name') or '', contact_name=args.get('contact_name'),
+                              target_date=args.get('target_date'), clear=bool(args.get('clear')),
+                              scope=args.get('scope') or 'instance', leg=args.get('leg'))
+
+
+def handle_clear_trip_itinerary(args: dict, actor=None) -> dict:
+    return clear_trip_itinerary(args.get('trip_id'), args.get('action', 'unlink'))
+
+
+def handle_manage_trip_flights(args: dict, actor=None) -> dict:
+    return manage_trip_flights(args.get('trip_id'), args.get('action'),
+                                prompt=args.get('prompt', ''), flight=args.get('flight'))
+
+
+def handle_manage_trip_rules(args: dict, actor=None) -> dict:
+    return manage_trip_rules(args.get('trip_id'), args.get('action'),
+                              rule=args.get('rule'), rule_id=args.get('rule_id'))
+
+
+def handle_log_program_session(args: dict, actor=None) -> dict:
+    return log_program_session(args.get('program_title') or '', minutes=args.get('minutes'),
+                                acting_member=actor if actor is not None else _registry_parent())
+
+
+def handle_propose_program(args: dict, actor=None) -> dict:
+    return propose_program(args.get('title') or '', for_member_name=args.get('for_member_name'),
+                            sessions_per_week=args.get('sessions_per_week'), minutes=args.get('minutes'),
+                            starting_point=args.get('starting_point'),
+                            acting_member=actor if actor is not None else _registry_parent())
+
+
 TOOL_HANDLERS = {
+    "get_calendar_events": handle_get_calendar_events,
+    "get_household_tasks": handle_get_household_tasks,
+    "get_household_load": handle_get_household_load,
+    "get_requests": handle_get_requests,
+    "get_assist_coverage": handle_get_assist_coverage,
+    "list_threads": handle_list_threads,
+    "program_progress": handle_program_progress,
+    "add_household_task": handle_add_household_task,
+    "claim_household_task": handle_claim_household_task,
+    "complete_household_task": handle_complete_household_task,
+    "add_thread_note": handle_add_thread_note,
+    "close_thread": handle_close_thread,
+    "update_thread_action": handle_update_thread_action,
+    "draft_thread_message": handle_draft_thread_message,
+    "answer_request": handle_answer_request,
+    "make_request": handle_make_request,
+    "ask_deal": handle_ask_deal,
+    "cover_with_assist": handle_cover_with_assist,
+    "clear_trip_itinerary": handle_clear_trip_itinerary,
+    "manage_trip_flights": handle_manage_trip_flights,
+    "manage_trip_rules": handle_manage_trip_rules,
+    "log_program_session": handle_log_program_session,
+    "propose_program": handle_propose_program,
     "get_travel_time": handle_get_travel_time,
     "start_drive": handle_start_drive,
     "update_drive_status": handle_update_drive_status,
@@ -8298,7 +8459,6 @@ TOOL_HANDLERS = {
     "contribute_to_family_goal": handle_contribute_to_family_goal,
     "reopen_chore": handle_reopen_chore,
     "send_family_message": handle_send_family_message,
-    "send_direct_message": handle_send_direct_message,
     "get_family_messages": handle_get_family_messages,
     "list_chores": handle_list_chores,
     "list_open_findings": handle_list_open_findings,
@@ -8376,11 +8536,24 @@ TOOL_HANDLERS = {
     "create_thread": handle_create_thread,
 }
 
-def execute_tool(name: str, args: dict) -> dict:
+# Reuse the chat declarations for adapters that do not have a Pydantic model.
+for _tool in get_available_tools():
+    if _tool['name'] in TOOL_HANDLERS and _tool['name'] not in TOOL_SCHEMAS:
+        TOOL_SCHEMAS[_tool['name']] = {
+            **_tool['parameters'], 'description': _tool.get('description', ''),
+        }
+
+
+def execute_tool(name: str, args: dict, actor=None) -> dict:
     handler = TOOL_HANDLERS.get(name)
     if not handler:
         return {"status": "error", "message": f"Unknown tool {name}"}
     try:
+        import inspect
+        # Identity belongs to the caller, never to model-authored arguments.
+        args = {k: v for k, v in args.items() if k != 'acting_member'}
+        if 'actor' in inspect.signature(handler).parameters:
+            return handler(args, actor=actor)
         return handler(args)
     except Exception as e:
         import traceback

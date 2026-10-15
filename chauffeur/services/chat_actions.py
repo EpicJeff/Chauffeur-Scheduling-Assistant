@@ -268,7 +268,7 @@ def _skip_occurrence(payload: dict) -> dict:
                                            decided_by=payload.get('member_id'))
 
 
-def _execute(action_type: str, payload: dict) -> dict:
+def _execute(action_type: str, payload: dict, approver=None) -> dict:
     """Run an approved action through the tested handlers."""
     from services import agent_tools_v2
     if action_type == "add_car_stop":
@@ -303,10 +303,10 @@ def _execute(action_type: str, payload: dict) -> dict:
                               payload.get('contact_name'))
     if action_type == "skip_occurrence":
         return _skip_occurrence(payload)
-    if action_type == "ask_deal":
+    if action_type == "ask_deal" and "deal_id" in payload:
         from services import negotiation as _neg
         return _neg.start_asks(payload.get('deal_id'), payload.get('member_id'))
-    if action_type == "log_program_session":
+    if action_type == "log_program_session" and "program_id" in payload:
         from services import programs as _prog
         return _prog.log_session(payload.get('program_id'), source='asked',
                                  slot_date=payload.get('slot_date'))
@@ -314,7 +314,7 @@ def _execute(action_type: str, payload: dict) -> dict:
         from services import programs as _prog
         return _prog.reshape(payload.get('program_id'))
     if action_type in agent_tools_v2.TOOL_HANDLERS:
-        return agent_tools_v2.execute_tool(action_type, payload)
+        return agent_tools_v2.execute_tool(action_type, payload, actor=approver)
     return {"status": "error", "message": f"Unknown action type '{action_type}'."}
 
 
@@ -433,7 +433,7 @@ def act_on_proposal(proposal_id: str, act: str, approver_member: Optional[dict])
     approver_id = (approver_member or {}).get("id")
     if approver_id and not payload.get("member_id"):
         payload["member_id"] = approver_id
-    res = _execute(a_type, payload)
+    res = _execute(a_type, payload, approver=approver_member)
     if res.get("status") == "error":
         return {"status": "error", "message": res.get("message") or "That action failed.",
                 "card": build_card(proposal_id, a_type, summary, "proposed")}
