@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python / FastAPI / document storage (`storage.db_lock`); `services/subjects.py`, `services/projects.py` (new), `services/body_goal.py` (new), `services/programs_curate.py`, `services/planned.py`, `services/missions.py`, `services/situations.py`, `services/agent_tools_v2.py`, `services/agent_router.py`, `services/mind.py`, `services/voice_tools.py`, `services/auth.py`, `main.py` (`_practice_events`, the protected-commitment rule injection), `templates/app.html`, `static/pwa_shell.js`, `static/pwa_child_shell.js`, `templates/nav.html`, `templates/work.html`; plain-script tests from `chauffeur/` with `HA_BASE_URL` unset; node + jsdom for cards; Playwright for screenshots.
 
+**Status:** EXECUTED 2026-10-15, v2.499.501–.513, all thirteen tasks.
+
 **Spec:** `docs/superpowers/specs/2026-10-15-projects-core-design.md` (APPROVED by the user 2026-10-15 after Codex review P1–P14).
 
 ## Global Constraints

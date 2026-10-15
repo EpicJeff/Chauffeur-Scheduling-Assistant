@@ -573,13 +573,19 @@ def set_step_state(project_id, step_id, state, actor):
             return {'status': 'success', 'step': step, 'advanced': []}
         if not _parent(actor) and not _needs_satisfied(step, steps):
             return _error('Finish or skip this step\'s needs first')
-        if step.get('owner') == 'argyle' and step.get('state') in ('done', 'skipped') and state == 'todo':
+        if (step.get('owner') == 'argyle' and step.get('state') not in ('todo', 'doing')
+                and state in ('todo', 'doing')):
             if step.get('stage_id'):
                 return _error('Plan that part again with Argyle to do it again.')
-            step.setdefault('attempts', []).append({
-                'mission_id': step.get('mission_id'), 'state': step['state'],
-                'found': deepcopy(step.get('found')), 'at': time.time()})
-            step.update(mission_id=None, found=None, question=None)
+            from services import missions
+            mission = storage.get_mission(step['mission_id']) if step.get('mission_id') else None
+            if mission and mission.get('status') in missions.TERMINAL:
+                step.setdefault('attempts', []).append({
+                    'mission_id': step['mission_id'], 'state': step['state'],
+                    'found': deepcopy(step.get('found')), 'at': time.time()})
+                step.update(mission_id=None, found=None, question=None)
+            if not step.get('mission_id'):
+                state = 'todo'  # advance launches it, including a request for doing.
         _stamp_step(step, state, actor['id'])
         # Readiness is derived from needs, so reopening immediately blocks todo
         # dependents again without changing work already doing or done.

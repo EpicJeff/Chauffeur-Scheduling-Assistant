@@ -280,11 +280,18 @@ def _user_prompt(mission: dict) -> str:
 
 
 def _close(mission_id: str, status: str, **fields) -> dict:
-    before = storage.get_mission(mission_id) or {}
-    fields = {'status': status, **fields}
-    if status in ('done', 'blocked', 'dropped'):
-        fields.setdefault('finished_at', time.time())
-    storage.update_mission(mission_id, fields)
+    with storage.db_lock:
+        before = storage.get_mission(mission_id) or {}
+        if fields.get('paused_by_project', before.get('paused_by_project')) and status in LIVE:
+            # Answers and stage changes can prepare work during a project pause,
+            # but only resuming the project may make it runnable again.
+            fields.setdefault('paused_from', {'status': status, 'retry_at': fields.get('retry_at')})
+            if status in RUNNABLE + ('browsing', 'waiting_retry'):
+                status = 'waiting_step'
+        fields = {'status': status, **fields}
+        if status in TERMINAL:
+            fields.setdefault('finished_at', time.time())
+        storage.update_mission(mission_id, fields)
     if status in TERMINAL:
         from services import projects
         projects.on_mission_closed(mission_id, status, fields.get('error') or '')
@@ -784,10 +791,7 @@ def answer(mission_id: str, text: str, actor: dict) -> dict:
                     message = 'Told it; it will propose this stage again.'
         elif status in ATTENTION:
             storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'user_answer', 'result_json': {'text': text, 'answered_by': actor.get('id')}})
-            fields = {'status': 'running'}
-            if mission.get('paused_by_project'):
-                fields = {'status': 'waiting_step', 'paused_from': {'status': 'running', 'retry_at': None}}
-            storage.update_mission(mission_id, fields)
+            _close(mission_id, 'running')
             message = 'Answered.'
         elif status in LIVE:
             storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'user_steer', 'result_json': {'text': text}})
@@ -866,6 +870,8 @@ def submit(mission_id: str, decision: str, actor: dict, ask_id: str = None, appr
             return {'status': 'success', 'already': True, 'message': 'That was already answered.'}
         if not ask_id or ask['id'] != ask_id:
             return moved
+        if decision == 'approve' and row.get('paused_by_project'):
+            return {'status': 'refused', 'message': 'Resume the project first.'}
         rj = ask.get('result_json') or {}
         if approval_context is not None:
             from services import voice_approval
@@ -952,7 +958,7 @@ def verify(mission_id: str, ask_id: str, outcome: str, actor: dict, detail: str 
             if rest:
                 nxt_q = _add_verify_ask(mission_id, rest[-1])
             else:
-                storage.update_mission(mission_id, {'status': 'running'})
+                _close(mission_id, 'running')
     if outcome == 'confirmed':
         storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'submitted',
                                               'result_json': {'verb': _submit_verb({'button': att.get('button')}, mission.get('goal')), 'facts': rj.get('facts') or {},
@@ -1204,6 +1210,8 @@ def release(mission_id: str, decision: str, actor: dict, ask_id: str = None, app
             current = _pending_ask(mission_id, 'release')
             if not current or current['id'] != ask_id:
                 return {'status': 'success', 'moved': True, 'message': 'That question has moved on.'}
+            if row.get('paused_by_project'):
+                return {'status': 'refused', 'message': 'Resume the project first.'}
             if approval_context is not None:
                 from services import voice_approval
                 card = _b.contact_card()

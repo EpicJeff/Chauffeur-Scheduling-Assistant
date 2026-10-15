@@ -195,6 +195,49 @@ def scenario_7_reopening_argyle_work():
     res = _pj().set_step_state(pid, a, 'todo', dict(MOM))
     check(res['status'] == 'error' and 'plan' in res['message'].lower(), f"a stage-backed step is not reopened by a tick: {res}")
 
+def scenario_8_steering_a_stage_while_paused_waits_for_resume():
+    """Scoped re-review: a steer on a waiting stage while the project is paused must not run it or strand it."""
+    _fresh()
+    from test_planned_missions import _approved, ROWS
+    mid = _approved()
+    pid = _pj().create({'title': 'Party', 'goal': 'x', 'done_when': 'x', 'owner_member_id': 'mom', 'audience': 'household'},
+                       dict(MOM))['project']['id']
+    storage.update_mission(mid, {'subject_kind': 'project', 'subject_id': pid, 'subject_rev': 1})
+    _plan({'action': 'stage', 'stage_id': 's1', 'rows': ROWS})
+    _step(mid)
+    check(storage.get_mission(mid)['status'] == 'waiting_user', "the build stage waits for Do this")
+    _pj().set_state(pid, 'paused', dict(MOM))
+    res = missions.answer(mid, 'make it pizza instead', dict(MOM))
+    check(res['status'] == 'success', f"the steer is taken: {res}")
+    row = storage.get_mission(mid)
+    check(row['status'] not in missions.RUNNABLE, f"still parked while paused: {row['status']}")
+    missions.tick()
+    check(storage.get_mission(mid)['status'] not in missions.RUNNABLE, "the tick does not run it")
+    _pj().set_state(pid, 'active', dict(MOM))
+    check(storage.get_mission(mid)['status'] == 'running', f"resume runs the steered stage again: {storage.get_mission(mid)['status']}")
+
+
+def scenario_9_reopening_stopped_argyle_work():
+    """Scoped re-review: a STOPPED (blocked) Argyle step reopens like a finished one."""
+    _fresh()
+    import main
+    p = _pj().create({'title': 'Portuguese', 'goal': 'x', 'done_when': 'x', 'owner_member_id': 'mom', 'audience': 'household'},
+                     dict(MOM))['project']
+    sid = _pj().add_step(p['id'], {'title': 'Find meetups', 'owner': 'argyle', 'goal': 'three meetups'}, dict(MOM))['step']['id']
+    first = next(s for s in storage.get_project(p['id'])['steps'] if s['id'] == sid)['mission_id']
+    main.project_step_cancel(p['id'], sid, {'outcome': 'stop'}, request=_as('mom'))
+    step = next(s for s in storage.get_project(p['id'])['steps'] if s['id'] == sid)
+    check(step['state'] == 'blocked' and storage.get_mission(first)['status'] in missions.TERMINAL, f"stopped: {step}")
+    res = _pj().set_step_state(p['id'], sid, 'todo', dict(MOM))
+    step = next(s for s in storage.get_project(p['id'])['steps'] if s['id'] == sid)
+    check(res['status'] == 'success' and step['mission_id'] and step['mission_id'] != first and step['state'] == 'doing'
+          and first in [h.get('mission_id') for h in step.get('attempts') or []], f"a new attempt with history: {step}")
+    from test_project_argyle import _running_work
+    mid, pid, a, q = _running_work()
+    main.project_step_cancel(pid, a, {'outcome': 'stop'}, request=_as('mom'))
+    res = _pj().set_step_state(pid, a, 'todo', dict(MOM))
+    check(res['status'] == 'error' and 'plan' in res['message'].lower(), f"a stopped stage-backed step is not reopened by a tick: {res}")
+
 
 SCENARIOS = [
     scenario_1_project_writes_in_a_mixed_channel_say_nothing,
@@ -204,6 +247,8 @@ SCENARIOS = [
     scenario_5_pause_and_resume_keep_a_question_waiting,
     scenario_6_a_plan_that_could_only_park_is_refused,
     scenario_7_reopening_argyle_work,
+    scenario_8_steering_a_stage_while_paused_waits_for_resume,
+    scenario_9_reopening_stopped_argyle_work,
 ]
 
 if __name__ == "__main__":
