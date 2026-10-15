@@ -2,20 +2,53 @@
 
 import datetime
 import difflib
+from collections.abc import Callable
+from contextvars import ContextVar
+from dataclasses import dataclass
 
 from services import scope, storage
 
 
-KINDS = ('trip', 'occasion', 'event', 'member', 'contact', 'thread', 'program', 'list')
-FACETS = {
-    'trip': ['flights', 'accommodations', 'dining', 'attractions'],
-    'occasion': ['guests', 'menu', 'lists', 'errands'],
-    'program': ['sessions'],
-    'thread': ['history'],
-    'event': [], 'member': [], 'contact': [], 'list': [],
-}
+@dataclass
+class Adapter:
+    """A record kind's readers and rules; speaking requires an explicit opt-in."""
+
+    rows: Callable[[], list]
+    title: Callable[[dict], str]
+    visible: Callable[[dict, dict | None], bool]
+    closed: Callable[[dict], bool]
+    link: Callable[[str], str]
+    context: Callable[[dict, dict | None, bool, str | None], str | None]
+    facets: list
+    spoken_safe: Callable[[dict], bool] = lambda row: False
+
+
+ADAPTERS: dict[str, Adapter] = {}
+KINDS = ()
+FACETS = {}
+# Keep the legacy visited argument through the one-argument adapter hook,
+# isolated between concurrent readers and reset after every call.
+_spoken_visited = ContextVar('subject_spoken_visited', default=None)
 PER_KIND, OVERALL, BUDGET = 5, 8, 1500
 WRITE_ROLES = ('parent', 'adult')
+
+
+def _rebuild_registry():
+    global KINDS, FACETS
+    KINDS = tuple(ADAPTERS)
+    FACETS = {kind: adapter.facets for kind, adapter in ADAPTERS.items()}
+
+
+def register(kind, adapter):
+    """Add or replace a record kind, preserving registry order on replacement."""
+    ADAPTERS[kind] = adapter
+    _rebuild_registry()
+
+
+def unregister(kind):
+    """Remove a record kind and its discovery metadata, if present."""
+    ADAPTERS.pop(kind, None)
+    _rebuild_registry()
 
 
 def channel_humans(focus_key):
@@ -66,23 +99,8 @@ def _trip_rows():
 
 
 def _rows(kind):
-    if kind == 'trip':
-        return _trip_rows()
-    if kind == 'occasion':
-        return storage.get_occasions(include_done=True)
-    if kind == 'event':
-        return list((storage.get_cached_schedule() or {}).get('events') or [])
-    if kind == 'member':
-        return [row for row in storage.get_all_members() if not row.get('system')]
-    if kind == 'contact':
-        return storage.get_assist_contacts()
-    if kind == 'thread':
-        return storage.get_threads(include_closed=True)
-    if kind == 'program':
-        return storage.get_programs(include_finished=True)
-    if kind == 'list':
-        return storage.get_shopping_lists()
-    return []
+    adapter = ADAPTERS.get(kind)
+    return adapter.rows() if adapter else []
 
 
 def load(kind, sid):
@@ -90,34 +108,37 @@ def load(kind, sid):
     return next((row for row in _rows(kind) if str(row.get('id')) == str(sid)), None)
 
 
-def title_of(kind, row):
-    if kind == 'contact':
-        return row.get('relation_label') or row.get('name') or ''
+def _title(row):
     return row.get('title') or row.get('name') or ''
+
+
+def title_of(kind, row):
+    adapter = ADAPTERS.get(kind)
+    return adapter.title(row) if adapter else _title(row)
+
+
+def _program_visible(row, viewer):
+    from services.agent_tools_v2 import _program_scope_id
+    return viewer is not None and (
+        _program_scope_id(viewer) is None or row.get('member_id') == viewer.get('id')
+    )
+
+
+def _thread_visible(row, viewer):
+    from services import situations
+    return situations.can_see('thread', row, viewer)
+
+
+def _people_visible(row, viewer):
+    return (viewer or {}).get('role') in WRITE_ROLES
 
 
 def visible(kind, row, viewer, spoken=False):
     """Apply the owning kind's visibility before matching any title."""
-    if row is None:
+    adapter = ADAPTERS.get(kind)
+    if row is None or adapter is None:
         return False
-    role = (viewer or {}).get('role')
-    if kind in ('trip', 'occasion'):
-        allowed = scope.audience_allows(row, kind, viewer)
-    elif kind == 'list':
-        allowed = scope.audience_allows(row, 'shopping_list', viewer)
-    elif kind == 'program':
-        from services.agent_tools_v2 import _program_scope_id
-        allowed = viewer is not None and (
-            _program_scope_id(viewer) is None or row.get('member_id') == viewer.get('id')
-        )
-    elif kind == 'thread':
-        from services import situations
-        allowed = situations.can_see('thread', row, viewer)
-    elif kind == 'event':
-        allowed = scope.audience_allows(row, 'calendar_event', viewer)
-    else:
-        allowed = kind in ('member', 'contact') and role in WRITE_ROLES
-    return bool(allowed) and (not spoken or spoken_safe(kind, row))
+    return bool(adapter.visible(row, viewer)) and (not spoken or spoken_safe(kind, row))
 
 
 def subject_records(kind, row):
@@ -150,23 +171,7 @@ def history_after_binding(row, kind=None, sid=None):
     return history
 
 
-def spoken_safe(kind, row, visited=None):
-    obj_type = {
-        'list': 'shopping_list', 'event': 'calendar_event',
-        'trip': 'trip', 'occasion': 'occasion',
-    }.get(kind, 'calendar_event')
-    # A thread is said aloud only once it was shared with the speakers (the voice
-    # rail's own rule: start_mission_for and dispatch read voice_shared too).
-    if kind == 'thread' and not (row or {}).get('voice_shared'):
-        return False
-    if kind == 'thread':
-        visited = set(visited or ())
-        key = row.get('id')
-        if key in visited:
-            return False
-        visited.add(key)
-        if any(not spoken_safe(k, record, visited) for k, record in subject_records('thread', row)):
-            return False
+def _audience_spoken_safe(row, obj_type='calendar_event'):
     return (
         row is not None
         and bool(scope.audience_allows(row, obj_type, None))
@@ -174,6 +179,32 @@ def spoken_safe(kind, row, visited=None):
         and not row.get('private')
         and str(row.get('visibility') or '').lower() not in ('private', 'confidential')
     )
+
+
+def _thread_spoken_safe(row):
+    # A thread is said aloud only once it was shared with the speakers (the voice
+    # rail's own rule: start_mission_for and dispatch read voice_shared too).
+    if not (row or {}).get('voice_shared'):
+        return False
+    visited = set(_spoken_visited.get() or ())
+    key = row.get('id')
+    if key in visited:
+        return False
+    visited.add(key)
+    if any(not spoken_safe(k, record, visited) for k, record in subject_records('thread', row)):
+        return False
+    return _audience_spoken_safe(row)
+
+
+def spoken_safe(kind, row, visited=None):
+    adapter = ADAPTERS.get(kind)
+    if adapter is None or row is None:
+        return False
+    token = _spoken_visited.set(visited)
+    try:
+        return bool(adapter.spoken_safe(row))
+    finally:
+        _spoken_visited.reset(token)
 
 
 def _score(query, title):
@@ -202,13 +233,14 @@ def _when(kind, row):
     return ''
 
 
+def _dated_closed(kind, row):
+    when = _when(kind, row)
+    return bool(when) and when < datetime.date.today().isoformat()
+
+
 def _closed(kind, row):
-    if kind in ('trip', 'occasion', 'event'):
-        when = _when(kind, row)
-        return bool(when) and when < datetime.date.today().isoformat()
-    if kind in ('thread', 'program'):
-        return row.get('state') in ('done', 'dropped')
-    return False
+    adapter = ADAPTERS.get(kind)
+    return adapter.closed(row) if adapter else False
 
 
 def _rank(candidate):
@@ -260,12 +292,8 @@ def resolve(query, viewer, kinds=None, spoken=False):
 def link(kind, sid):
     # Relative, like every page link in the app: under Home Assistant ingress an
     # absolute path escapes the add-on's prefix. Only pages that exist.
-    return {
-        'trip': f'trip?event_id={sid}', 'occasion': 'occasions',
-        'event': 'app', 'member': 'app',
-        'contact': 'drive_setup', 'thread': 'threads',
-        'program': 'programs', 'list': 'shopping',
-    }.get(kind, 'app')
+    adapter = ADAPTERS.get(kind)
+    return adapter.link(sid) if adapter else 'app'
 
 
 def retarget(sit_kind, sid, new_kind, new_id, actor):
@@ -556,9 +584,89 @@ def context(kind, sid, viewer, spoken=False, facet=None) -> str | None:
         return None
     if facet not in FACETS.get(kind, []):
         facet = None
-    reader = {
-        'trip': _trip_context, 'occasion': _occasion_context, 'event': _event_context,
-        'member': _member_context, 'contact': _contact_context, 'thread': _thread_context,
-        'program': _program_context, 'list': _list_context,
-    }[kind]
-    return reader(row, viewer, spoken, facet)
+    return ADAPTERS[kind].context(row, viewer, spoken, facet)
+
+
+ADAPTERS.update({
+    'trip': Adapter(
+        rows=_trip_rows,
+        title=_title,
+        visible=lambda row, viewer: scope.audience_allows(row, 'trip', viewer),
+        closed=lambda row: _dated_closed('trip', row),
+        link=lambda sid: f'trip?event_id={sid}',
+        context=_trip_context,
+        facets=['flights', 'accommodations', 'dining', 'attractions'],
+        spoken_safe=lambda row: _audience_spoken_safe(row, 'trip'),
+    ),
+    'occasion': Adapter(
+        rows=lambda: storage.get_occasions(include_done=True),
+        title=_title,
+        visible=lambda row, viewer: scope.audience_allows(row, 'occasion', viewer),
+        closed=lambda row: _dated_closed('occasion', row),
+        link=lambda sid: 'occasions',
+        context=_occasion_context,
+        facets=['guests', 'menu', 'lists', 'errands'],
+        spoken_safe=lambda row: _audience_spoken_safe(row, 'occasion'),
+    ),
+    'event': Adapter(
+        rows=lambda: list((storage.get_cached_schedule() or {}).get('events') or []),
+        title=_title,
+        visible=lambda row, viewer: scope.audience_allows(row, 'calendar_event', viewer),
+        closed=lambda row: _dated_closed('event', row),
+        link=lambda sid: 'app',
+        context=_event_context,
+        facets=[],
+        spoken_safe=_audience_spoken_safe,
+    ),
+    'member': Adapter(
+        rows=lambda: [row for row in storage.get_all_members() if not row.get('system')],
+        title=_title,
+        visible=_people_visible,
+        closed=lambda row: False,
+        link=lambda sid: 'app',
+        context=_member_context,
+        facets=[],
+        spoken_safe=_audience_spoken_safe,
+    ),
+    'contact': Adapter(
+        rows=lambda: storage.get_assist_contacts(),
+        title=lambda row: row.get('relation_label') or row.get('name') or '',
+        visible=_people_visible,
+        closed=lambda row: False,
+        link=lambda sid: 'drive_setup',
+        context=_contact_context,
+        facets=[],
+        spoken_safe=_audience_spoken_safe,
+    ),
+    'thread': Adapter(
+        rows=lambda: storage.get_threads(include_closed=True),
+        title=_title,
+        visible=_thread_visible,
+        closed=lambda row: row.get('state') in ('done', 'dropped'),
+        link=lambda sid: 'threads',
+        context=_thread_context,
+        facets=['history'],
+        spoken_safe=_thread_spoken_safe,
+    ),
+    'program': Adapter(
+        rows=lambda: storage.get_programs(include_finished=True),
+        title=_title,
+        visible=_program_visible,
+        closed=lambda row: row.get('state') in ('done', 'dropped'),
+        link=lambda sid: 'programs',
+        context=_program_context,
+        facets=['sessions'],
+        spoken_safe=_audience_spoken_safe,
+    ),
+    'list': Adapter(
+        rows=lambda: storage.get_shopping_lists(),
+        title=_title,
+        visible=lambda row, viewer: scope.audience_allows(row, 'shopping_list', viewer),
+        closed=lambda row: False,
+        link=lambda sid: 'shopping',
+        context=_list_context,
+        facets=[],
+        spoken_safe=lambda row: _audience_spoken_safe(row, 'shopping_list'),
+    ),
+})
+_rebuild_registry()
