@@ -758,6 +758,10 @@ def answer(mission_id: str, text: str, actor: dict) -> dict:
             storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'user_steer',
                                                 'result_json': {'text': text, 'answered_by': actor.get('id')}})
             message = 'Told it; the plan still needs its buttons.'
+            if planned_ask.get('name') == 'stage':
+                from services import planned
+                if planned.steer_stage(mission_id, (planned_ask.get('result_json') or {}).get('stage_id')):
+                    message = 'Told it; it will propose this stage again.'
         elif status == 'waiting_user':
             storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'user_answer', 'result_json': {'text': text, 'answered_by': actor.get('id')}})
             storage.update_mission(mission_id, {'status': 'running'})

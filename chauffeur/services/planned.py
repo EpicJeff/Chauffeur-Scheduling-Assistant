@@ -264,12 +264,28 @@ def stop_plan(mission_id, actor):
     return {'status': 'success', 'message': 'Stopped.'}
 
 
-def _dismiss_rows(stage):
+def _dismiss_rows(stage, status='dismissed'):
     for row in stage.get('rows', []):
         pid = row.get('proposal_id')
         prop = storage.get_action_proposal(pid) if pid else None
         if prop and prop.get('status') == 'proposed':
-            storage.update_action_proposal(pid, {'status': 'dismissed'})
+            storage.update_action_proposal(pid, {'status': status})
+
+
+def steer_stage(mission_id, stage_id):
+    """Withdraw an unapproved stage so the next offer needs fresh approval."""
+    from services import missions
+    with storage.db_lock:
+        mission = storage.get_mission(mission_id) or {}
+        plan = mission.get('plan') or {}
+        stage = next((s for s in plan.get('stages', []) if s['id'] == stage_id), None)
+        if mission.get('status') != 'waiting_user' or not stage or stage['state'] != 'proposed':
+            return False
+        _dismiss_rows(stage, status='withdrawn')
+        stage.update(state='pending', rows=[], snapshot=None)
+        _settle(mission_id, 'stage', 'Changed')
+        missions._close(mission_id, 'running', plan=plan)
+    return True
 
 
 def _stage_for_change(mid, stage_id, snap, actor):
@@ -597,11 +613,11 @@ def _resolve_refs(value, completed):
     if isinstance(value, dict):
         if '$ref' in value:
             row = completed.get(value['$ref']) or {}
-            found = next((c['id'] for c in (row.get('result') or {}).get('created', [])
-                          if c.get('kind') == value.get('kind')), None) if row.get('state') == 'done' else None
-            if found is None:
+            found = [c['id'] for c in (row.get('result') or {}).get('created', [])
+                     if c.get('kind') == value.get('kind')] if row.get('state') == 'done' else []
+            if not found:
                 raise ValueError(f"No created {value.get('kind')} from {value['$ref']}.")
-            return found
+            return found if value.get('all') is True else found[0]
         return {k: _resolve_refs(v, completed) for k, v in value.items()}
     if isinstance(value, list):
         return [_resolve_refs(v, completed) for v in value]
