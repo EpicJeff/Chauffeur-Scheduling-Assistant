@@ -1,6 +1,6 @@
 # Wake conditions — missions that sleep until the moment comes
 
-**Date:** 2026-10-15. **Status:** DRAFT, design approved section by section by the user in conversation (2026-10-15); Codex adversarial review of the first draft (nine findings, W1–W9) folded in; awaiting the user's review of this document. Slice 3 of three (slice 1: subjects, v2.499.459–.472; slice 2: planned missions for any goal, v2.499.473–.493).
+**Date:** 2026-10-15. **Status:** FOLDED INTO PROJECTS (2026-10-15): the user reframed long-running goals as Projects (`2026-10-15-projects-core-design.md`); this engine becomes slice B (reviews) and is revised there; not built. Was: DRAFT, design approved section by section by the user in conversation (2026-10-15); Codex adversarial review of the first draft (nine findings, W1–W9) folded in; awaiting the user's review of this document. Slice 3 of three (slice 1: subjects, v2.499.459–.472; slice 2: planned missions for any goal, v2.499.473–.493).
 **Builds on:** `2026-10-14-mission-subject-resolver-design.md` (subjects, `subject_rev`, `subjects.context()`, audience inheritance), `2026-10-14-planned-missions-design.md` (plans, stages, `planned.prepare_next`, the keeper rules, approval by words only in private), `2026-09-04-mission-engine-design.md` (the planner loop and `missions.tick`).
 
 ## Problem

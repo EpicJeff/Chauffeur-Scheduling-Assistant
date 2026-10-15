@@ -1,5 +1,7 @@
 # Wake conditions Implementation Plan
 
+**Status: NOT EXECUTED — folded into Projects slice B (2026-10-15).** The user reframed long-running goals as Projects; this plan is kept as input for slice B (reviews) and will be rewritten there.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A mission (or a plan's stage) can sleep until a date, a reply on its thread, a weekly program check or a change to its linked record, checked by the existing 30-second tick with no model call; on waking it re-reads the record and brings one card, never writing without a tap.
