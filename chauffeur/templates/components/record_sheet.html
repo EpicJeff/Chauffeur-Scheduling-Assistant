@@ -6,8 +6,8 @@
    projects.html); the phone draws its own sheet in app.html. #}
 {% set sheet_mode = true %}
 <div x-data="chfRecordSheet()" x-show="rsOpen" x-cloak data-record-sheet :data-kind="rsKind" :data-open="rsOpen ? 'true' : null"
-     @chf-record-sheet-open.window="show($event.detail)" @keydown.escape.window="rsOpen && close()" @click.self="close()"
-     class="fixed inset-0 z-[80] bg-black/40 flex justify-end items-end md:items-stretch">
+     @chf-record-sheet-open.window="show($event.detail)" @keydown.escape.window.capture="rsEscape()" @click.self="close()"
+     class="fixed inset-0 z-[82] bg-black/40 flex justify-end items-end md:items-stretch">
     <div tabindex="-1" role="dialog" aria-modal="true" :aria-label="rsLabel()"
          :class="rsKind === 'program' ? 'md:w-[48rem]' : 'md:w-[40rem]'"
          class="bg-gray-800 w-full h-[88vh] md:h-full overflow-y-auto border-t md:border-t-0 md:border-l border-gray-700 rounded-t-2xl md:rounded-none flex flex-col outline-none">
@@ -16,7 +16,7 @@
             <button type="button" data-record-sheet-close @click="close()" title="Close" aria-label="Close"
                     class="w-8 h-8 shrink-0 rounded-full bg-gray-900 text-white hover:bg-gray-700 font-bold">✕</button>
         </div>
-        <div class="px-2 pt-2 pb-8">
+        <div class="px-2 pt-2 pb-24">
             <div x-show="rsKind === 'thread'">{% include 'components/threads_page.html' %}</div>
             <div x-show="rsKind === 'mission'">{% include 'components/missions_page.html' %}</div>
             <div x-show="rsKind === 'program'">{% include 'components/programs_page.html' %}</div>
@@ -28,6 +28,16 @@ function chfRecordSheet() {
     return {
         rsOpen: false, rsKind: null, rsId: null, rsTitle: '',
         rsLabel() { return this.rsTitle || ({thread: 'Conversation', mission: 'Argyle’s work', program: 'Program'}[this.rsKind] || ''); },
+        rsEscape() {
+            if (!this.rsOpen) return;
+            // Capture runs before input/choice prompts hide themselves on Escape.
+            const picker = document.getElementById('emoji-picker-root');
+            const promptOpen = typeof window.chfPromptOpen === 'function' ? window.chfPromptOpen() :
+                !!document.querySelector('#cc-confirm-modal:not(.hidden), #cc-alert-modal:not(.hidden),' +
+                    ' #cc-input-modal:not(.hidden), #cc-choice-modal:not(.hidden)') ||
+                (!!picker && picker.style.display !== 'none');
+            if (!promptOpen) this.close();
+        },
         rsAddress(piece) {
             const q = new URLSearchParams(location.search);
             if (piece) q.set('piece', piece); else q.delete('piece');

@@ -33,6 +33,7 @@
                 return !!r && r.style.display !== 'none';
             })();
     }
+    window.chfPromptOpen = promptOpen;
 
     window.chfOpenSettings = function (tab, anchor) {
         window.dispatchEvent(new CustomEvent('chf-settings-open',
@@ -130,7 +131,7 @@
                 if (gear && !gear.classList.contains('hidden')) gear.focus({ preventScroll: true });
             },
             drawerEscape() {
-                if (this.drawerOpen && !promptOpen()) this.drawerClose();
+                if (this.drawerOpen && !window.chfPromptOpen()) this.drawerClose();
             },
             drawerJump(id) {
                 const el = document.getElementById(id);

@@ -28,6 +28,13 @@ def scenario_a_thread_in_the_sheet():
         check('Threads settings' not in page.content() and 'Stalls after' not in text, "no drawer and no page chrome in the sheet")
         check('piece=thread' in page.url, f"the address names the piece: {page.url}")
         shot(page, 'slice2-thread-sheet')
+        sheet.get_by_role('button', name='Delete', exact=True).click()
+        page.locator('#cc-confirm-modal').wait_for(state='visible', timeout=5000)
+        page.keyboard.press('Escape')
+        check(page.locator('[data-record-sheet][data-open="true"]').count() == 1,
+              "Escape in the delete prompt keeps the thread sheet open")
+        page.locator('#cc-confirm-cancel-btn').click()
+        page.locator('#cc-confirm-modal').wait_for(state='hidden', timeout=5000)
         page.keyboard.press('Escape')
         page.wait_for_function("() => !document.querySelector('[data-record-sheet]').hasAttribute('data-open')", timeout=5000)
         check('piece=' not in page.url, f"closing drops the piece: {page.url}")
