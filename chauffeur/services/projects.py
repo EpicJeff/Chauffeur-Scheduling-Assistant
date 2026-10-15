@@ -1,6 +1,8 @@
 """The durable project record, its audience and lifecycle."""
 
 import datetime
+import time
+import uuid
 from copy import deepcopy
 
 from services import body_goal, storage
@@ -9,6 +11,8 @@ from services import body_goal, storage
 AUDIENCES = ('private', 'parents', 'household')
 STATES = ('active', 'paused', 'done', 'dropped')
 EDITABLE = ('title', 'goal', 'done_when', 'owner_member_id', 'audience', 'target_date')
+STEP_STATES = ('todo', 'doing', 'done', 'skipped', 'blocked')
+STEP_EDITABLE = ('title', 'owner', 'needs', 'due_date', 'order', 'goal')
 
 
 def _child(member):
@@ -148,6 +152,166 @@ def set_state(project_id, state, actor):
         return {'status': 'success', 'project': storage.get_project(project_id)}
 
 
+def _can_edit_step(project, step, actor):
+    return can_act(project, actor) and (not _child(actor) or step.get('owner') == actor['id'])
+
+
+def _needs_satisfied(step, steps):
+    states = {item['id']: item.get('state') for item in steps}
+    return all(states.get(sid) in ('done', 'skipped') for sid in step.get('needs') or [])
+
+
+def _validate_step(project, step, steps):
+    if not isinstance(step.get('title'), str) or not step['title'].strip():
+        return 'A step title is required'
+    if body_goal.is_body_goal(step['title']):
+        owner = storage.get_member(project.get('owner_member_id')) or {}
+        if (not project.get('body_goal') or project.get('audience') != 'private'
+                or owner.get('role') not in ('parent', 'adult') or _child(owner)):
+            return 'A body-goal step needs an adult\'s private body-goal project'
+    if step.get('owner') is not None and not isinstance(step['owner'], str):
+        return 'Choose a member or Argyle as the step owner'
+    if type(step.get('order')) is not int:
+        return 'Step order must be an integer'
+    if step.get('owner') == 'argyle' and (
+            not isinstance(step.get('goal'), str) or not step['goal'].strip()):
+        return 'An Argyle step needs a goal'
+    due_date = step.get('due_date')
+    if due_date is not None:
+        try:
+            if (not isinstance(due_date, str)
+                    or datetime.date.fromisoformat(due_date).isoformat() != due_date):
+                return 'Due date must be YYYY-MM-DD'
+        except ValueError:
+            return 'Due date must be YYYY-MM-DD'
+    graph = {item['id']: item.get('needs') for item in steps}
+    for needs in graph.values():
+        if not isinstance(needs, list) or any(
+                not isinstance(sid, str) or sid not in graph for sid in needs):
+            return 'Needs must name existing steps of this project'
+    visiting, visited = set(), set()
+
+    def cycle(sid):
+        if sid in visiting:
+            return True
+        if sid in visited:
+            return False
+        visiting.add(sid)
+        if any(cycle(need) for need in graph[sid]):
+            return True
+        visiting.remove(sid)
+        visited.add(sid)
+        return False
+
+    if any(cycle(sid) for sid in graph):
+        return 'Step dependencies cannot form a cycle'
+    return None
+
+
+def add_step(project_id, step, actor):
+    with storage.db_lock:
+        project = storage.get_project(project_id)
+        if not can_act(project, actor):
+            return _error('You cannot edit this project')
+        steps = deepcopy(project.get('steps') or [])
+        row = {'id': uuid.uuid4().hex, 'order': max(
+                   (item['order'] for item in steps), default=-1) + 1,
+               'title': '', 'owner': actor['id'], 'needs': [], 'due_date': None,
+               **{key: deepcopy(step[key]) for key in STEP_EDITABLE if key in step},
+               'state': 'todo', 'done_by': None, 'done_at': None}
+        if row['owner'] == 'argyle':
+            row.update(mission_id=None, stage_id=None, found=None, question=None)
+        else:
+            row['hold'] = None
+        if not _can_edit_step(project, row, actor):
+            return _error('A child can only add their own steps')
+        steps.append(row)
+        message = _validate_step(project, row, steps)
+        if message:
+            return _error(message)
+        storage.update_project(project_id, {'steps': steps})
+        return {'status': 'success', 'step': deepcopy(row)}
+
+
+def edit_step(project_id, step_id, fields, actor):
+    with storage.db_lock:
+        project = storage.get_project(project_id)
+        if not can_act(project, actor):
+            return _error('You cannot edit this project')
+        steps = deepcopy(project.get('steps') or [])
+        step = next((item for item in steps if item['id'] == step_id), None)
+        if step is None:
+            return _error('No such step')
+        if not _can_edit_step(project, step, actor):
+            return _error('A child can only edit their own steps')
+        step.update({key: deepcopy(fields[key]) for key in STEP_EDITABLE if key in fields})
+        if not _can_edit_step(project, step, actor):
+            return _error('A child can only assign steps to themselves')
+        if step.get('owner') == 'argyle':
+            for key in ('mission_id', 'stage_id', 'found', 'question'):
+                step.setdefault(key, None)
+        else:
+            step.setdefault('hold', None)
+        message = _validate_step(project, step, steps)
+        if message:
+            return _error(message)
+        storage.update_project(project_id, {'steps': steps})
+        return {'status': 'success', 'step': deepcopy(step)}
+
+
+def remove_step(project_id, step_id, actor):
+    with storage.db_lock:
+        project = storage.get_project(project_id)
+        if not can_act(project, actor):
+            return _error('You cannot edit this project')
+        steps = deepcopy(project.get('steps') or [])
+        step = next((item for item in steps if item['id'] == step_id), None)
+        if step is None:
+            return _error('No such step')
+        if not _can_edit_step(project, step, actor):
+            return _error('A child can only remove their own steps')
+        if any(step_id in (item.get('needs') or []) for item in steps):
+            return _error('Another step needs this step; edit its needs first')
+        storage.update_project(project_id, {'steps': [item for item in steps if item['id'] != step_id]})
+        return {'status': 'success', 'step': step}
+
+
+def set_step_state(project_id, step_id, state, actor):
+    with storage.db_lock:
+        project = storage.get_project(project_id)
+        if not can_act(project, actor):
+            return _error('You cannot change this project')
+        steps = deepcopy(project.get('steps') or [])
+        step = next((item for item in steps if item['id'] == step_id), None)
+        if step is None:
+            return _error('No such step')
+        if not _can_edit_step(project, step, actor):
+            return _error('A child can only tick their own steps')
+        if state not in STEP_STATES:
+            return _error('Choose todo, doing, done, skipped or blocked')
+        if step.get('state') == state:
+            return {'status': 'success', 'step': step, 'advanced': []}
+        if not _parent(actor) and not _needs_satisfied(step, steps):
+            return _error('Finish or skip this step\'s needs first')
+        step.update(state=state,
+                    done_by=actor['id'] if state in ('done', 'skipped') else None,
+                    done_at=time.time() if state in ('done', 'skipped') else None)
+        # Readiness is derived from needs, so reopening immediately blocks todo
+        # dependents again without changing work already doing or done.
+        storage.update_project(project_id, {'steps': steps})
+        return {'status': 'success', 'step': deepcopy(step), 'advanced': advance(project_id)}
+
+
+def advance(project_id):
+    """Find ready Argyle steps; Task 6 will start their work here."""
+    with storage.db_lock:
+        project = storage.get_project(project_id)
+        steps = (project or {}).get('steps') or []
+        return [step['id'] for step in sorted(steps, key=lambda item: item['order'])
+                if step.get('owner') == 'argyle' and step.get('state') == 'todo'
+                and _needs_satisfied(step, steps)]
+
+
 def view(project, viewer):
     """Return only this viewer's project and visible piece references."""
     from services import subjects
@@ -157,14 +321,20 @@ def view(project, viewer):
     result = {key: deepcopy(project.get(key)) for key in
               ('id', 'title', 'goal', 'done_when', 'owner_member_id', 'audience', 'state', 'target_date')}
     result['steps'] = deepcopy(project.get('steps') or [])
+    for step in result['steps']:
+        owner = storage.get_member(step.get('owner')) or {}
+        step['owner_label'] = ('Argyle' if step.get('owner') == 'argyle' else
+                               owner.get('name') if _active(owner) else 'Unassigned')
     result['pieces'] = []
     for piece in project.get('pieces') or []:
         kind, sid = piece.get('kind'), piece.get('id')
         row = subjects.load(kind, sid)
         if subjects.visible(kind, row, viewer):
             result['pieces'].append({'kind': kind, 'id': sid})
-    result.update(next_step=None,
-                  steps_done=sum(step.get('state') in ('done', 'skipped') for step in result['steps']),
+    result.update(next_step=next((step for step in sorted(result['steps'], key=lambda item: item['order'])
+                                  if step.get('state') == 'todo'
+                                  and _needs_satisfied(step, result['steps'])), None),
+                  steps_done=sum(step.get('state') == 'done' for step in result['steps']),
                   steps_total=len(result['steps']))
     return result
 

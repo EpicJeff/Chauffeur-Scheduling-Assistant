@@ -6057,6 +6057,50 @@ def project_set_state(project_id: str, body: dict, request: Request = None):
     return result
 
 
+@app.post("/api/projects/{project_id}/steps")
+def project_add_step(project_id: str, body: dict, request: Request = None):
+    from services import projects
+    actor = _situation_viewer(request)
+    _project_for_actor(project_id, actor, writing=True)
+    result = projects.add_step(project_id, body, actor)
+    if result['status'] == 'error':
+        raise HTTPException(status_code=400, detail=result['message'])
+    return result
+
+
+@app.patch("/api/projects/{project_id}/steps/{step_id}")
+def project_edit_step(project_id: str, step_id: str, body: dict, request: Request = None):
+    from services import projects
+    actor = _situation_viewer(request)
+    _project_for_actor(project_id, actor, writing=True)
+    result = projects.edit_step(project_id, step_id, body, actor)
+    if result['status'] == 'error':
+        raise HTTPException(status_code=400, detail=result['message'])
+    return result
+
+
+@app.delete("/api/projects/{project_id}/steps/{step_id}")
+def project_remove_step(project_id: str, step_id: str, request: Request = None):
+    from services import projects
+    actor = _situation_viewer(request)
+    _project_for_actor(project_id, actor, writing=True)
+    result = projects.remove_step(project_id, step_id, actor)
+    if result['status'] == 'error':
+        raise HTTPException(status_code=400, detail=result['message'])
+    return result
+
+
+@app.post("/api/projects/{project_id}/steps/{step_id}/state")
+def project_step_state(project_id: str, step_id: str, body: dict, request: Request = None):
+    from services import projects
+    actor = _situation_viewer(request)
+    _project_for_actor(project_id, actor, writing=True)
+    result = projects.set_step_state(project_id, step_id, body.get('state'), actor)
+    if result['status'] == 'error':
+        raise HTTPException(status_code=400, detail=result['message'])
+    return result
+
+
 # --- Missions (spec: 2026-09-04-mission-engine-design) ---
 
 @app.get("/api/missions/admin")
