@@ -36,6 +36,8 @@ EXPECTED = {
     'create_thread', 'add_thread_note', 'draft_thread_message',
     'add_household_task',
     'draft_message',
+    # Projects core Task 8: a plan's stage can add to and move a project.
+    'add_project_step', 'add_to_project', 'set_project_state', 'set_step_state',
 }
 
 

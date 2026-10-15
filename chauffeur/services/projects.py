@@ -513,6 +513,40 @@ def on_mission_closed(mission_id, status, reason=''):
                                question=reason or 'Stopped')
 
 
+def _change_piece(project_id, kind, sid, actor, removing=False):
+    from services import subjects
+
+    with storage.db_lock:
+        project = storage.get_project(project_id)
+        if not can_act(project, actor):
+            return _error('You cannot edit this project')
+        if not isinstance(kind, str) or kind not in subjects.ADAPTERS:
+            return _error('Choose a registered record kind')
+        if not isinstance(sid, str) or not sid:
+            return _error('Choose a record id')
+        record = subjects.load(kind, sid)
+        if record is None or not subjects.visible(kind, record, actor):
+            return _error('No such visible record')
+        pieces = deepcopy(project.get('pieces') or [])
+        existing = next((p for p in pieces if (p['kind'], p['id']) == (kind, sid)), None)
+        if removing:
+            if existing is not None:
+                pieces = [p for p in pieces if (p['kind'], p['id']) != (kind, sid)]
+                storage.update_project(project_id, {'pieces': pieces})
+        elif existing is None:
+            pieces.append({'kind': kind, 'id': sid, 'added_by': actor['id'], 'added_at': time.time()})
+            storage.update_project(project_id, {'pieces': pieces})
+        return {'status': 'success', 'piece': {'kind': kind, 'id': sid}}
+
+
+def add_piece(project_id, kind, sid, actor):
+    return _change_piece(project_id, kind, sid, actor)
+
+
+def remove_piece(project_id, kind, sid, actor):
+    return _change_piece(project_id, kind, sid, actor, removing=True)
+
+
 def view(project, viewer):
     """Return only this viewer's project and visible piece references."""
     from services import subjects
@@ -530,7 +564,7 @@ def view(project, viewer):
     for piece in project.get('pieces') or []:
         kind, sid = piece.get('kind'), piece.get('id')
         row = subjects.load(kind, sid)
-        if subjects.visible(kind, row, viewer):
+        if row is not None and subjects.visible(kind, row, viewer):
             result['pieces'].append({'kind': kind, 'id': sid})
     result.update(next_step=next((step for step in sorted(result['steps'], key=lambda item: item['order'])
                                   if step.get('state') == 'todo'

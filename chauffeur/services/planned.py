@@ -25,6 +25,10 @@ def _contract(targets=None, creates=None, model_calls=0, idem=False):
 
 
 CONTRACT = {
+    'add_project_step': _contract({'project_id': 'project'}),
+    'add_to_project': _contract({'project_id': 'project'}),
+    'set_project_state': _contract({'project_id': 'project'}),
+    'set_step_state': _contract({'project_id': 'project'}),
     'add_occasion': _contract(creates='occasion', idem=True),
     'add_occasion_guests': _contract({'occasion_id': 'occasion'}),
     'set_occasion_attendance': _contract({'occasion_id': 'occasion'}),

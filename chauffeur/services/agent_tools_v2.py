@@ -3602,6 +3602,79 @@ def add_occasion(title: str, anchor_date: str, kind: str = "gathering",
             "occasion_id": o['id'], "created": [{'kind': 'occasion', 'id': o['id']}]}
 
 
+def _project_readable(project, actor, focus_key=None, spoken=False):
+    from services import projects, subjects
+    humans = subjects.channel_humans(focus_key)
+    return (projects.can_see(project, actor)
+            and (humans is None or all(projects.can_see(project, m) for m in humans))
+            and (not spoken or subjects.spoken_safe('project', project)))
+
+
+def list_projects(acting_member=None, focus_key=None, spoken=False):
+    from services import projects, storage
+    rows = []
+    for project in storage.get_projects():
+        if _project_readable(project, acting_member, focus_key, spoken):
+            view = projects.view(project, acting_member)
+            rows.append({key: view[key] for key in ('id', 'title', 'state', 'next_step')})
+    message = '\n'.join(
+        f"- {p['title']} [{p['state']}] (project {p['id']}) — "
+        + (f"Next: {p['next_step']['title']}" if p['next_step'] else 'No next step') for p in rows)
+    return {'status': 'success', 'message': message or 'No projects to show.', 'projects': rows}
+
+
+def get_project(project_id, acting_member=None, focus_key=None, spoken=False):
+    from services import projects, storage, subjects
+    project = storage.get_project(project_id)
+    if not _project_readable(project, acting_member, focus_key, spoken):
+        return {'status': 'error', 'message': 'No such visible project.'}
+    view = projects.view(project, acting_member)
+    humans = subjects.channel_humans(focus_key)
+    pieces = []
+    for piece in view['pieces']:
+        record = subjects.load(piece['kind'], piece['id'])
+        if (record is not None and (humans is None or all(subjects.visible(
+                piece['kind'], record, m) for m in humans))
+                and (not spoken or subjects.spoken_safe(piece['kind'], record))):
+            pieces.append(piece)
+    view['pieces'] = pieces
+    lines = [f"{view['title']} [{view['state']}]", f"Goal: {view['goal']}",
+             f"Done when: {view['done_when']}"]
+    lines.extend(f"- {s['title']} [{s['state']}] (step {s['id']})"
+                 for s in sorted(view['steps'], key=lambda s: s['order']))
+    lines.append('Pieces:')
+    lines.extend(f"- {subjects.title_of(p['kind'], subjects.load(p['kind'], p['id']))} "
+                 f"({p['kind']} {p['id']})" for p in pieces)
+    return {'status': 'success', 'message': '\n'.join(lines), 'project': view}
+
+
+def add_project_step(project_id, title, owner=None, needs=None, due_date=None, goal=None,
+                     acting_member=None):
+    from services import projects
+    fields = {'title': title, **{key: value for key, value in
+              (('owner', owner), ('needs', needs), ('due_date', due_date), ('goal', goal))
+              if value is not None}}
+    return projects.add_step(project_id, fields, acting_member)
+
+
+def add_to_project(project_id, kind, id, acting_member=None):
+    from services import projects
+    return projects.add_piece(project_id, kind, id, acting_member)
+
+
+def set_project_state(project_id, state, acting_member=None):
+    from services import projects
+    result = projects.set_state(project_id, state, acting_member)
+    if result.get('status') == 'success':
+        result['project'] = projects.view(result['project'], acting_member)
+    return result
+
+
+def set_step_state(project_id, step_id, state, acting_member=None):
+    from services import projects
+    return projects.set_step_state(project_id, step_id, state, acting_member)
+
+
 def find_in_chauffeur(query: str = '', kind: str = '', facet: str = '',
                       acting_member: dict = None, spoken: bool = False) -> Dict[str, Any]:
     """Find an existing family record and read it only on a clear match."""
@@ -4322,6 +4395,12 @@ def get_available_tools() -> List[Dict]:
         },
         _flat_tool("get_travel_time"),
         _flat_tool("find_in_chauffeur"),
+        _flat_tool("list_projects"),
+        _flat_tool("get_project"),
+        _flat_tool("add_project_step"),
+        _flat_tool("add_to_project"),
+        _flat_tool("set_project_state"),
+        _flat_tool("set_step_state"),
         _flat_tool("answer_occasion_question"),
         _flat_tool("stamp_occasion_template"),
         _flat_tool("add_occasion_dishes"),
@@ -6381,6 +6460,45 @@ class ExplainSituationTool(BaseModel):
     ref: Optional[str] = Field('', description="The situation's id or a fragment of its title; empty for the one being talked about.")
     kind: Optional[str] = Field(None, description="Optional: finding|insight|thread|mission.")
 
+class ListProjectsTool(BaseModel):
+    """List visible projects with their state and next step."""
+
+
+class GetProjectTool(BaseModel):
+    """Read a project's goal, done-when, steps with ids and visible pieces."""
+    project_id: str
+
+
+class AddProjectStepTool(BaseModel):
+    """Add a person's or Argyle's step to a project."""
+    project_id: str
+    title: str
+    owner: Optional[str] = Field(None, description="Member id or argyle; defaults to the caller.")
+    needs: Optional[List[str]] = Field(None, description="Prerequisite step ids from this project.")
+    due_date: Optional[str] = Field(None, description="YYYY-MM-DD.")
+    goal: Optional[str] = Field(None, description="Goal for an Argyle step.")
+
+
+class AddToProjectTool(BaseModel):
+    """Attach an existing visible record as a project's piece."""
+    project_id: str
+    kind: str
+    id: str
+
+
+class SetProjectStateTool(BaseModel):
+    """Pause, resume, complete or drop a project."""
+    project_id: str
+    state: str = Field(..., json_schema_extra={'enum': ['active', 'paused', 'done', 'dropped']})
+
+
+class SetStepStateTool(BaseModel):
+    """Tick or reopen a project step with the same checks as the tap."""
+    project_id: str
+    step_id: str
+    state: str = Field(..., json_schema_extra={'enum': ['todo', 'doing', 'done', 'skipped', 'blocked']})
+
+
 class ActOnSituationTool(BaseModel):
     """Do one of a situation's options (not asking somebody: that is start_ask)."""
     ref: Optional[str] = Field('', description="Id or title fragment; empty for the one being talked about.")
@@ -6961,6 +7079,12 @@ TOOL_SCHEMAS = {
     "list_insights": ListInsightsTool.model_json_schema(),
     "dismiss_insight": DismissInsightTool.model_json_schema(),
     "list_situations": ListSituationsTool.model_json_schema(),
+    "list_projects": ListProjectsTool.model_json_schema(),
+    "get_project": GetProjectTool.model_json_schema(),
+    "add_project_step": AddProjectStepTool.model_json_schema(),
+    "add_to_project": AddToProjectTool.model_json_schema(),
+    "set_project_state": SetProjectStateTool.model_json_schema(),
+    "set_step_state": SetStepStateTool.model_json_schema(),
     "next_situation": NextSituationTool.model_json_schema(),
     "explain_situation": ExplainSituationTool.model_json_schema(),
     "act_on_situation": ActOnSituationTool.model_json_schema(),
@@ -8175,6 +8299,32 @@ def _registry_parent() -> dict:
 # readable by adults.
 _REGISTRY_READER = {'id': None, 'role': 'adult'}
 
+def handle_list_projects(args: dict, actor=None) -> dict:
+    return list_projects(acting_member=actor)
+
+
+def handle_get_project(args: dict, actor=None) -> dict:
+    return get_project(args.get('project_id'), acting_member=actor)
+
+
+def handle_add_project_step(args: dict, actor=None) -> dict:
+    return add_project_step(args.get('project_id'), args.get('title'),
+                            owner=args.get('owner'), needs=args.get('needs'),
+                            due_date=args.get('due_date'), goal=args.get('goal'), acting_member=actor)
+
+
+def handle_add_to_project(args: dict, actor=None) -> dict:
+    return add_to_project(args.get('project_id'), args.get('kind'), args.get('id'), acting_member=actor)
+
+
+def handle_set_project_state(args: dict, actor=None) -> dict:
+    return set_project_state(args.get('project_id'), args.get('state'), acting_member=actor)
+
+
+def handle_set_step_state(args: dict, actor=None) -> dict:
+    return set_step_state(args.get('project_id'), args.get('step_id'), args.get('state'), acting_member=actor)
+
+
 def handle_list_situations(args: dict) -> dict:
     return list_situations(kinds=args.get('kinds'), limit=args.get('limit') or 10,
                            acting_member=_REGISTRY_READER)
@@ -8799,6 +8949,12 @@ TOOL_HANDLERS = {
     "list_insights": handle_list_insights,
     "dismiss_insight": handle_dismiss_insight,
     "list_situations": handle_list_situations,
+    "list_projects": handle_list_projects,
+    "get_project": handle_get_project,
+    "add_project_step": handle_add_project_step,
+    "add_to_project": handle_add_to_project,
+    "set_project_state": handle_set_project_state,
+    "set_step_state": handle_set_step_state,
     "next_situation": handle_next_situation,
     "explain_situation": handle_explain_situation,
     "act_on_situation": handle_act_on_situation,

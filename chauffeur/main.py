@@ -6101,6 +6101,41 @@ def project_step_state(project_id: str, step_id: str, body: dict, request: Reque
     return result
 
 
+@app.post("/api/projects/{project_id}/pieces")
+def project_add_piece(project_id: str, body: dict, request: Request = None):
+    from services import projects
+    actor = _situation_viewer(request)
+    _project_for_actor(project_id, actor, writing=True)
+    result = projects.add_piece(project_id, body.get('kind'), body.get('id'), actor)
+    if result['status'] == 'error':
+        raise HTTPException(status_code=400, detail=result['message'])
+    return result
+
+
+@app.post("/api/projects/{project_id}/pieces/remove")
+def project_remove_piece(project_id: str, body: dict, request: Request = None):
+    from services import projects
+    actor = _situation_viewer(request)
+    _project_for_actor(project_id, actor, writing=True)
+    result = projects.remove_piece(project_id, body.get('kind'), body.get('id'), actor)
+    if result['status'] == 'error':
+        raise HTTPException(status_code=400, detail=result['message'])
+    return result
+
+
+@app.get("/api/subjects/{kind}/{sid}/projects")
+def subject_projects(kind: str, sid: str, request: Request = None):
+    from services import projects, subjects
+    actor = _situation_viewer(request)
+    record = subjects.load(kind, sid)
+    if record is None or not subjects.visible(kind, record, actor):
+        raise HTTPException(status_code=404, detail="No such record")
+    return {'projects': [{key: row[key] for key in ('id', 'title', 'state')}
+                         for row in storage.get_projects() if projects.can_see(row, actor)
+                         and any((p.get('kind'), p.get('id')) == (kind, sid)
+                                 for p in row.get('pieces') or [])]}
+
+
 # --- Missions (spec: 2026-09-04-mission-engine-design) ---
 
 @app.get("/api/missions/admin")
