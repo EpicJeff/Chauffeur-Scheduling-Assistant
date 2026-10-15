@@ -5308,7 +5308,9 @@
             }
             const note = card.planning === 'started' ? 'Argyle will ask a couple of questions, then show a plan.' : (card.reason || '');
             const pid = mfEscape(card.project_id);
-            const buttons = card.can_edit && card.state === 'active' ? `<div class="flex flex-wrap gap-2 mt-2">
+            const plan = card.planning === 'needs_plan' && myRole() !== 'child'
+                ? `<button onclick="projectCardPlan('${pid}')" class="px-3 py-1 rounded-lg text-xs font-semibold bg-teal-700 text-white">Plan it with Argyle</button>` : '';
+            const buttons = card.can_edit && card.state === 'active' ? `<div class="flex flex-wrap gap-2 mt-2">${plan}
                 <button onclick="projectCardRename('${pid}')" class="px-3 py-1 rounded-lg text-xs font-semibold bg-gray-700 text-gray-200">Rename</button>
                 ${ladder.map(([a, label]) => `<button onclick="projectCardAudience('${pid}','${a}')" class="px-3 py-1 rounded-lg text-xs font-semibold bg-gray-700 text-gray-200">${label}</button>`).join('')}
                 <button onclick="projectCardDrop('${pid}')" class="px-3 py-1 rounded-lg text-xs font-semibold bg-gray-800 text-gray-400 border border-gray-700">Not a project</button>
@@ -5330,6 +5332,11 @@
             if (title && title.trim()) await projectCardPatch(id, {title: title.trim()});
         }
         async function projectCardAudience(id, audience) { await projectCardPatch(id, {audience}); }
+        async function projectCardPlan(id) {
+            const r = await fetch(`${apiBase}api/projects/${encodeURIComponent(id)}/plan`, {method: 'POST', headers: {'Content-Type': 'application/json'}});
+            if (!r.ok) showGlobalAlert('Could not start planning that project.');
+            else showGlobalAlert('Argyle will ask you a couple of questions here.');
+        }
         async function projectCardDrop(id) {
             if (!await promptConfirm('Not a project? This drops it and stops Argyle’s planning.')) return;
             const r = await fetch(`${apiBase}api/projects/${encodeURIComponent(id)}/state`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({state: 'dropped'})});

@@ -287,7 +287,13 @@ def _project_for_plan(mission, proposed, actor):
         fields['body_goal'] = proposed['body_goal']
     result = projects.prepare_create(fields, actor)
     if home and result.get('project'):
-        return {**result['project'], 'id': home['id'], 'reshape': True}, None
+        shaped = {**result['project'], 'id': home['id'], 'reshape': True}
+        if home.get('body_goal'):
+            # The pin is permanent (core spec §1): the same adult owner, private.
+            if shaped.get('audience') != 'private' or shaped.get('owner_member_id') != home.get('owner_member_id'):
+                return None, 'A body goal stays private to its adult owner'
+            shaped['body_goal'] = True
+        return shaped, None
     return result.get('project'), result.get('message')
 
 

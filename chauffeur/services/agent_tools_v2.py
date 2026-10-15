@@ -1483,6 +1483,8 @@ OWN_CHAT = "Ask me about that in your own Argyle chat."
 
 
 def _sensitive(kind: str, row: dict) -> bool:
+    if kind == 'project':
+        return (row or {}).get('audience') != 'household'
     return kind == 'insight' and (row or {}).get('sensitivity') == 'sensitive'
 
 
@@ -1613,7 +1615,8 @@ def act_on_situation(ref: str = '', verb: str = '', option_id: str = None, kind:
         # its one live mission; two ask which; none is nothing to steer.
         from services import storage as _st, projects as _pj, missions as _ms
         project = _st.get_project(sid) or {}
-        live = [m for m in _pj._work_missions(project) if m.get('status') in _ms.LIVE]
+        live = [m for m in _pj._work_missions(project) if m.get('status') in _ms.LIVE
+                and _sit.can_see('mission', m, acting_member) and _sit.channel_visible('mission', m, focus_key)]
         if len(live) != 1:
             return {"status": "error", "message": ("Nothing is running on that project right now." if not live else
                     "Which one: " + '; '.join((m.get('goal') or '')[:60] for m in live) + "?")}
@@ -1980,6 +1983,17 @@ def _same_goal(goal, project, subject_title=None):
     return bool(new and new <= have_old) or bool(old and old <= _goal_words(goal))
 
 
+def _project_in_reach(project, actor, spoken, focus_key):
+    """May this conversation name this project: the asker sees it, a room hears
+    only a household project, and every person in a channel may see it."""
+    from services import projects, subjects, situations
+    if not projects.can_see(project, actor):
+        return False
+    if spoken and (project.get('audience') != 'household' or not subjects.spoken_safe('project', project)):
+        return False
+    return situations.channel_visible('project', project, focus_key)
+
+
 def start_project(goal: str, title: str = None, for_member_name: str = None, acting_member: dict = None,
                   focus_key: str = None, voice_context=None, subject_kind: str = None, subject_id: str = None,
                   spoken: bool = False) -> Dict[str, Any]:
@@ -2021,10 +2035,17 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
     subject_title = subjects.title_of(subject_kind, subject) if subject_kind else None
     # The continuation rule: a new goal said while a project is the focus and
     # none of its missions is live is new planning INSIDE that project.
+    child_actor = actor.get('role') == 'child' or bool(actor.get('is_child'))
     f = _tri.get_focus(focus_key) if focus_key else None
-    if f and f.get('kind') == 'project':
-        focused = storage.get_project(f['id'])
-        if focused and focused.get('state') == 'active' and projects.can_act(focused, actor) \
+    focused = storage.get_project(f['id']) if f and f.get('kind') == 'project' else None
+    if focused and not _project_in_reach(focused, actor, spoken, focus_key):
+        focused = None
+    if focused and child_actor and focused.get('state') == 'active' and projects.can_act(focused, actor):
+        # A child's follow-up adds no paid work they cannot answer (front door §1).
+        return {"status": "success", "project_id": focused['id'], "mission_id": None,
+                "message": f"A parent will plan \"{focused['title']}\" with Argyle."}
+    if focused:
+        if focused.get('state') == 'active' and projects.can_act(focused, actor) \
                 and not any(m.get('status') in _missions.LIVE for m in projects._work_missions(focused)):
             res = _missions.launch(goal, created_by=actor['id'], project_id=focused['id'], subject=('project', focused['id']))
             if res.get('status') == 'launched':
@@ -2036,9 +2057,7 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
     for p in storage.get_projects():
         if p.get('state') not in ('active', 'paused') or p.get('owner_member_id') != owner['id']:
             continue
-        if not projects.can_see(p, actor):
-            continue
-        if spoken and (p.get('audience') != 'household' or not subjects.spoken_safe('project', p)):
+        if not _project_in_reach(p, actor, spoken, focus_key):
             continue
         if subject_kind and not any(x.get('kind') == subject_kind and x.get('id') == subject_id for x in p.get('pieces') or []):
             continue
@@ -2063,7 +2082,7 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
         storage.update_project(project['id'], {'requester_provenance': ctx.provenance()})
     # Plan inside it: a parent or adult's planning mission, bound before adoption.
     planning, reason, mission_id = 'started', '', None
-    if actor.get('role') == 'child' or actor.get('is_child'):
+    if child_actor:
         planning, reason = 'needs_parent', 'Ask a parent to plan it with Argyle.'
     else:
         res = _missions.launch('Help me plan the next part of this project: ' + project['title'], created_by=actor['id'],
@@ -2084,6 +2103,16 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
         if card:
             _post_chat_message(storage.get_or_create_dm(argyle['id'], member['id']), argyle,
                                f"Started a project: {project['title']}", card=card)
+    if planning == 'needs_parent':
+        who = actor.get('name') or 'Your child'
+        for parent in storage.get_all_members():
+            if parent.get('role') != 'parent' or parent['id'] in (owner['id'], actor['id']):
+                continue
+            card = projects.card(project, parent, planning='needs_plan',
+                                 reason=f"{who} started this project. Plan it with Argyle when you're ready.")
+            if card:
+                _post_chat_message(storage.get_or_create_dm(argyle['id'], parent['id']), argyle,
+                                   f"{who} started a project: {project['title']}", card=card)
     _tri.set_focus(focus_key, 'project', project['id'], project.get('title') or '')
     tail = {'started': "I'll ask a couple of questions, then show you a plan.",
             'needs_parent': 'A parent can plan it with Argyle from the Projects page.',

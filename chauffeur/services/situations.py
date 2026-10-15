@@ -573,6 +573,8 @@ def view(kind: str, sid: str, viewer: Optional[dict] = None) -> Optional[dict]:
     row = load(kind, sid)
     if not row or (viewer is not None and not can_see(kind, row, viewer)):
         return None
+    if kind == 'project':
+        return _project_view(row, viewer)
     keeper = False
     if kind == 'mission':
         from services import planned
@@ -623,6 +625,24 @@ def view(kind: str, sid: str, viewer: Optional[dict] = None) -> Optional[dict]:
         'confidence': row.get('confidence') if kind == 'insight' else None,
         'rev': row.get('rev') or 0,
     }
+
+
+def _project_view(row: dict, viewer: Optional[dict]) -> dict:
+    """A project as a conversation's focus (front door §1): its words, its next
+    step, no situation options (its taps are its own routes)."""
+    from services import projects
+    v = projects.view(row, viewer) if viewer is not None else {}
+    nxt = (v.get('next_step') or {}).get('title')
+    done, total = v.get('steps_done', 0), v.get('steps_total', 0)
+    note = (f"Next: {nxt}" if nxt else 'No next step yet') + (f" ({done} of {total} done)" if total else '')
+    state = row.get('state') or ''
+    return {'kind': 'project', 'id': row['id'], 'title': row.get('title') or '', 'subject': None,
+            'state': state, 'since': row.get('updated_at') or row.get('created_at') or 0,
+            'people': [p for p in [_member_name(row.get('owner_member_id'))] if p], 'due': row.get('target_date'),
+            'status_note': note, 'note_source': 'fallback', 'note_ts': None,
+            'next_step': None, 'options': [], 'asks': [], 'needs_attention': False,
+            'group': 'done' if state in ('done', 'dropped') else 'waiting', 'owner_member_id': None,
+            'sensitivity': None, 'severity': None, 'confidence': None, 'rev': row.get('rev') or 0}
 
 
 # --- listing and ranking ---------------------------------------------------

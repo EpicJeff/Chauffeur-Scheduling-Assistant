@@ -39,7 +39,8 @@ def scenario_project_card_renders():
                       'off': {**CARD, 'planning': 'off', 'reason': 'Missions are off (Projects settings).'},
                       'kid': {**CARD, 'planning': 'needs_parent', 'reason': 'Ask a parent to plan it with Argyle.', 'audience': 'parents'},
                       'body': {**CARD, 'body_goal': True},
-                      'done': {**CARD, 'state': 'dropped'}})
+                      'done': {**CARD, 'state': 'dropped'},
+                      'handoff': {**CARD, 'planning': 'needs_plan', 'reason': 'Kate started this project.', 'audience': 'parents'}})
     if out is None:
         return
     for text in ('Learn Portuguese', 'I want to learn Brazilian Portuguese', 'Private', 'Rename', 'Not a project', 'Share with parents'):
@@ -50,6 +51,8 @@ def scenario_project_card_renders():
     check('Share with' not in out['body'], "a body goal cannot leave private")
     check('Not a project' not in out['done'], "a dropped project offers no buttons")
     check("projectCardDrop('p1')" in out['base'], "Not a project calls the drop handler")
+    check('Plan it with Argyle' in out['handoff'] and "projectCardPlan('p1')" in out['handoff'], "a parent's hand-off card plans it")
+    check('Plan it with Argyle' not in out['base'], "only the hand-off card offers it")
 
 
 def scenario_the_handlers_hit_the_project_routes():
@@ -61,6 +64,8 @@ def scenario_the_handlers_hit_the_project_routes():
     rename = src.split('async function projectCardRename')[1].split('async function')[0] if 'async function projectCardRename' in src else ''
     patch = src.split('async function projectCardPatch')[1].split('async function')[0] if 'async function projectCardPatch' in src else ''
     check('promptInput' in rename and "'PATCH'" in patch, "rename prompts and patches")
+    plan = src.split('async function projectCardPlan')[1].split('async function')[0] if 'async function projectCardPlan' in src else ''
+    check('/plan' in plan and "'POST'" in plan, f"Plan it with Argyle posts to the project's plan route: {plan[:200]}")
     check('confirm(' not in drop.replace('promptConfirm(', '') and 'prompt(' not in rename.replace('promptInput(', ''), "no browser dialogs")
 
 

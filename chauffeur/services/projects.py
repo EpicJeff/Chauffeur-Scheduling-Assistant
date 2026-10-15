@@ -182,7 +182,8 @@ def _work_missions(project):
     from services import missions
     linked = {s.get('mission_id') for s in project.get('steps', [])}
     return [m for m in storage.get_missions()
-            if m['id'] in linked or missions.subject_of(m)[:2] == ('project', project['id'])]
+            if m.get('project_id') == project['id'] or m['id'] in linked
+            or missions.subject_of(m)[:2] == ('project', project['id'])]
 
 
 def stop_work(project_id):
@@ -786,13 +787,13 @@ def _belongs_to(kind, row):
     """The project a record already belongs to by an earlier binding, if any."""
     from services import missions
     if kind == 'mission':
-        skind, sid, _ = missions.subject_of(row)
-        if skind == 'project' and storage.get_project(sid):
-            return sid
         if row.get('origin_kind') == 'thread' and row.get('origin_ref'):
             thread = storage.get_thread(row['origin_ref']) or {}
             if thread.get('project_id') and storage.get_project(thread['project_id']):
                 return thread['project_id']
+        skind, sid, _ = missions.subject_of(row)
+        if skind == 'project' and storage.get_project(sid):
+            return sid
     for project in storage.get_projects():
         if any(p.get('kind') == kind and p.get('id') == row.get('id') for p in project.get('pieces') or []):
             return project['id']
