@@ -39,7 +39,7 @@ import time
 from typing import Optional
 from urllib.parse import urlparse
 
-from services import storage
+from services import budget_guard, storage
 
 logger = logging.getLogger(__name__)
 
@@ -587,6 +587,10 @@ def research(question: str, read_pages: int = PAGES_READ, api_key: str = None) -
         return {'status': 'capped',
                 'message': f"That's {cap} research questions this month."}
 
+    if via != 'model' and not (_brave_key() if via == 'brave' else _serpapi_key()):
+        return {'status': 'no_key'}
+    budget_guard.charge()
+
     # Route 1: the main model does the searching. No second key, no separate
     # allowance, and the citations arrive with the answer.
     if via == 'model':
@@ -622,8 +626,6 @@ def research(question: str, read_pages: int = PAGES_READ, api_key: str = None) -
 
     # Routes 2 and 3: search the chosen backend ourselves, read the pages,
     # extract.
-    if not (_brave_key() if via == 'brave' else _serpapi_key()):
-        return {'status': 'no_key'}
     found = search(question, via=via)
     if found['status'] != 'ok':
         return found

@@ -3,7 +3,7 @@ import urllib.request
 import urllib.error
 from typing import List, Tuple, Dict
 from models.schemas import Rule, PriorityRule
-from services import llm_budget
+from services import budget_guard, llm_budget
 
 ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 ANTHROPIC_MODELS_URL = 'https://api.anthropic.com/v1/models'
@@ -143,6 +143,7 @@ def call_model(model_id: str, api_key: str, system_prompt: str, user_prompt: str
     """Dispatch by the id's provider prefix (model_pools.split_model): the
     bare id goes on the wire. `text=True` asks for prose back ({'text': ...})
     instead of parsed JSON."""
+    budget_guard.charge()
     from services import model_pools
     prov, bare = model_pools.split_model(model_id)
     return _call_llm_json(prov, '', api_key, bare, system_prompt, user_prompt, text=text, **kw)

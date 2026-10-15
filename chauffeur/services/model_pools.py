@@ -46,6 +46,7 @@ import re
 import threading
 import time
 import datetime
+from services import budget_guard
 
 logger = logging.getLogger(__name__)
 
@@ -461,6 +462,8 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
     workflow = workflow or tier
     try:
         _maybe_discover(tier, api_key, settings)
+    except budget_guard.BudgetExhausted:
+        raise
     except Exception as e:
         logger.warning(f"[model-pools] Gemma discovery skipped: {e}")
     if not background:
@@ -548,6 +551,8 @@ def _call_candidates(tier, api_key, system_prompt, user_prompt, temperature, tim
             deferred_until = min(deferred_until or e.retry_at, e.retry_at)
             transient = True
             continue
+        except budget_guard.BudgetExhausted:
+            raise
         except Exception as e:
             launched += 1
             last_err = str(e)

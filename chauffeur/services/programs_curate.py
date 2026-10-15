@@ -37,7 +37,7 @@ and a source dict; services/programs.py never imports it.
 import math
 import re
 
-from services import stages, storage, web
+from services import budget_guard, stages, storage, web
 
 # The screen runs BEFORE any model sees the aim. Deterministic on purpose: a
 # safety line that depends on a model's judgement is a safety line with a bad
@@ -734,6 +734,8 @@ def curate(title: str, shape: dict, member_name: str = '',
     api_key = settings.get('llm_gemini_api_key', '')
     try:
         res = web.research(question, read_pages=pages) or {}
+    except budget_guard.BudgetExhausted:
+        raise
     except Exception as e:
         print(f"[programs] research failed: {e}")
         return {'phases': [], 'source': _source_none('unavailable')}
@@ -1165,6 +1167,8 @@ def _phases_from(title: str, items: list, per_week: int,
         try:
             return _pool_call(TIER, api_key, system, prompt,
                               timeout_s=60, gemma_timeout_s=180)
+        except budget_guard.BudgetExhausted:
+            raise
         except Exception as e:
             print(f"[programs] phase shaping failed: {e}")
             return None
@@ -1321,6 +1325,8 @@ def _generated_phases(title: str, per_week: int, api_key: str,
         try:
             return _pool_call(TIER, api_key, system, prompt,
                               timeout_s=60, gemma_timeout_s=180)
+        except budget_guard.BudgetExhausted:
+            raise
         except Exception as e:
             print(f"[programs] plan generation failed: {e}")
             return None
