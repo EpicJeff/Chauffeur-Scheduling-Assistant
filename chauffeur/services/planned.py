@@ -95,6 +95,32 @@ def check_rows(rows):
     return next((error for row in rows if (error := check_row(row))), None)
 
 
+def _check_row_order(rows):
+    """Require unique ids and dependencies on earlier rows of this stage."""
+    def refs(value):
+        if isinstance(value, dict):
+            if '$ref' in value:
+                yield value['$ref']
+            for child in value.values():
+                yield from refs(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from refs(child)
+
+    seen = set()
+    for row in rows:
+        row_id = row.get('id')
+        if not isinstance(row_id, str) or not row_id or row_id in seen:
+            return 'Rows need unique non-empty string ids.'
+        needs = row.get('needs') or []
+        if not isinstance(needs, list) or any(not isinstance(dep, str) or dep not in seen for dep in needs):
+            return 'Prerequisites must name earlier rows in the same stage.'
+        if any(not isinstance(ref, str) or ref not in seen for ref in refs(row.get('args', {}))):
+            return 'Every $ref must name an earlier row in the same stage.'
+        seen.add(row_id)
+    return None
+
+
 def snapshot(stage, subject, plan_rev):
     payload = {'kind': stage['kind'], 'subject': subject, 'plan_rev': plan_rev}
     if stage['kind'] == 'build':
@@ -463,14 +489,9 @@ def propose_stage(mission_id, stage_id, rows):
             return _refused('Only the next pending build stage can propose rows.')
         if not isinstance(rows, list) or any(not isinstance(r, dict) for r in rows):
             return _refused('A stage needs rows.')
-        error = check_rows(rows)
+        error = check_rows(rows) or _check_row_order(rows)
         if error:
             return _refused(error)
-        seen = set()
-        for row in rows:
-            if not row.get('id') or row['id'] in seen or not set(row.get('needs') or []) <= seen:
-                return _refused('Rows need unique ids and earlier prerequisites.')
-            seen.add(row['id'])
         stage['rows'] = [{k: r.get(k) for k in ('id', 'tool', 'args', 'summary')}
                          | {'state': 'proposed', 'needs': r.get('needs') or [],
                             'resumable': CONTRACT[r['tool']]['idem']} for r in rows]
@@ -549,10 +570,19 @@ def queue_row(mid, action):
             return _refused()
         plan = mission['plan']
         follow = next((s for s in plan['stages'] if s.get('parent') == work['id']), None)
-        row = {'id': f"r{len(follow['rows']) + 1 if follow else 1}",
+        rows = follow['rows'] if follow else []
+        row_id = action.get('row_id')
+        if not isinstance(row_id, str) or not row_id:
+            used = {r['id'] for r in rows}
+            index = len(rows) + 1
+            while f'r{index}' in used:
+                index += 1
+            row_id = f'r{index}'
+        row = {'id': row_id,
                'tool': action.get('tool'), 'args': action.get('args') or {},
-               'summary': action.get('summary') or action.get('why') or action.get('tool'), 'needs': []}
-        error = check_rows([*(follow['rows'] if follow else []), row])
+               'summary': action.get('summary') or action.get('why') or action.get('tool'),
+               'needs': action.get('needs') or []}
+        error = check_rows([*rows, row]) or _check_row_order([*rows, row])
         if error:
             return _refused(error)
         if follow is None:
