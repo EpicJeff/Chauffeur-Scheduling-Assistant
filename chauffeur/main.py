@@ -6005,7 +6005,7 @@ def asks_answer(ask_id: str, body: dict = Body(default={}), request: Request = N
 def projects_list(request: Request = None):
     from services import projects
     actor = _situation_viewer(request)
-    return {'projects': [projects.view(row, actor) for row in storage.get_projects()
+    return {'projects': [projects.overview_row(row, actor) for row in storage.get_projects()
                          if projects.can_see(row, actor)]}
 
 
@@ -6018,6 +6018,17 @@ def projects_create(body: dict, request: Request = None):
     return result
 
 
+def _project_to_join(body, actor):
+    """A record made inside a project goes only into a project the person may change."""
+    pid = (body or {}).get('project_id')
+    if not pid:
+        return None
+    from services import projects
+    if not projects.can_act(storage.get_project(pid), actor):
+        raise HTTPException(status_code=403, detail="You cannot add to this project")
+    return pid
+
+
 def _project_for_actor(project_id, actor, writing=False):
     from services import projects
     row = storage.get_project(project_id)
@@ -6026,6 +6037,28 @@ def _project_for_actor(project_id, actor, writing=False):
     if writing and not projects.can_act(row, actor):
         raise HTTPException(status_code=403, detail="You cannot change this project")
     return row
+
+
+@app.get("/api/projects/elsewhere")
+def projects_elsewhere(request: Request = None):
+    from services import projects
+    return {'situations': projects.elsewhere(_situation_viewer(request))}
+
+
+@app.get("/api/projects/for/{kind}/{record_id}")
+def projects_for_record(kind: str, record_id: str, request: Request = None):
+    """Where an old Threads, Missions or Programs link lands (front door §3)."""
+    from services import projects
+    return projects.locate(kind, record_id, _situation_viewer(request))
+
+
+@app.get("/api/projects/{project_id}/pieces")
+def project_pieces(project_id: str, request: Request = None):
+    from services import projects
+    actor = _situation_viewer(request)
+    return {'pieces': projects.piece_cards(_project_for_actor(project_id, actor), actor)}
+
+
 
 
 @app.get("/api/projects/{project_id}")
@@ -6229,6 +6262,17 @@ def project_remove_piece(project_id: str, body: dict, request: Request = None):
     return result
 
 
+@app.get("/api/subjects/search")
+def subjects_search(q: str = '', request: Request = None):
+    """Something already in Chauffeur, found from a project's Add a piece."""
+    from services import subjects
+    actor = _situation_viewer(request)
+    if not (q or '').strip():
+        return {'candidates': []}
+    return {'candidates': [{'kind': c['kind'], 'id': c['id'], 'title': c['title']}
+                           for c in subjects.find_all(q, actor)]}
+
+
 @app.get("/api/subjects/{kind}/{sid}/projects")
 def subject_projects(kind: str, sid: str, request: Request = None):
     from services import projects, subjects
@@ -6293,11 +6337,13 @@ def missions_detail(mission_id: str, request: Request = None):
 def missions_launch(body: dict = Body(default={}), request: Request = None):
     from services import missions as _missions
     actor = _mind_actor(request, body.get('member_id'))
+    pid = _project_to_join(body, actor)
     res = _missions.launch((body.get('goal') or ''),
                            origin_kind=body.get('origin_kind') or 'manual',
                            origin_ref=body.get('origin_ref'),
                            created_by=(actor or {}).get('id') if actor else body.get('member_id'),
-                           tier=body.get('tier') or 'mission')
+                           tier=body.get('tier') or 'mission',
+                           project_id=pid, subject=('project', pid) if pid else None)
     if res.get('status') not in ('launched',):
         raise HTTPException(status_code=400, detail=res.get('message') or res['status'])
     return res
@@ -6993,6 +7039,7 @@ def create_thread(body: dict = Body(default={}), request: Request = None):
         next_action=body.get('next_action') or '',
         next_action_at=body.get('next_action_at'),
         created_by=(actor or {}).get('id'),
+        project_id=_project_to_join(body, actor),
     )
     return {"status": "success", "id": thread_id}
 
@@ -7394,6 +7441,7 @@ def create_program(body: dict = Body(default={}), request: Request = None):
         return {"status": "error", "message": "Whose program is this?"}
     if for_member_id and for_member_id != actor_id:
         _approver_of_record(_mind_actor(request, claimed))
+    pid = _project_to_join(body, storage.get_member(actor_id) if actor_id else None)
     member = storage.get_member(member_id) or {}
     curated = _cur.curate(title, shape, member_name=member.get('name') or '',
                           member=member, starting_point=starting_point)
@@ -7405,7 +7453,7 @@ def create_program(body: dict = Body(default={}), request: Request = None):
                      'target_date': body.get('target_date'),
                      'target_event_id': None, 'rebaselined_at': None,
                      'rebaselines': 0},
-        'created_by': actor_id})
+        'created_by': actor_id}, project_id=pid)
     return {"status": "success", "id": pid, "program": storage.get_program(pid)}
 
 

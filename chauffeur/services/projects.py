@@ -924,6 +924,113 @@ def card(project, viewer, planning='started', reason=''):
             'can_edit': can_act(project, viewer), 'body_goal': bool(project.get('body_goal'))}
 
 
+SHEET_KINDS = ('thread', 'mission', 'program')
+LANES = ('needs_you', 'moving', 'waiting', 'paused', 'closed')
+
+
+def _record_visible(kind, row, viewer):
+    from services import situations, subjects
+    if kind == 'program':
+        return subjects.visible('program', row, viewer)
+    return situations.can_see(kind, row, viewer)
+
+
+def piece_cards(project, viewer):
+    """One card per piece the viewer may see, drawn by its kind (front door §2)."""
+    from services import situations, programs
+    out = []
+    for piece in view(project, viewer).get('pieces', []):
+        kind, sid = piece['kind'], piece['id']
+        card = {**piece, 'sheet': kind in SHEET_KINDS}
+        if kind in ('thread', 'mission'):
+            card['situation'] = situations.view(kind, sid, viewer)
+            if card['situation'] is None:
+                continue
+        elif kind == 'program':
+            row = storage.get_program(sid) or {}
+            phase = (programs.progress(row) or {}).get('phase') or {}
+            card['program'] = {'state': row.get('state'), 'member_id': row.get('member_id'),
+                               'phase': phase.get('name') or ''}
+        out.append(card)
+    return out
+
+
+def lane(project, viewer, cards=None):
+    """Which overview lane a project sits in for this viewer (front door §2)."""
+    state = project.get('state')
+    if state in ('done', 'dropped'):
+        return 'closed'
+    if state == 'paused':
+        return 'paused'
+    viewer = viewer or {}
+    if needs_plan(project) and _parent(viewer) and viewer.get('id') != project.get('owner_member_id'):
+        return 'needs_you'
+    cards = piece_cards(project, viewer) if cards is None else cards
+    steps = project.get('steps') or []
+    if not _child(viewer) and any(s.get('owner') == 'argyle' and (s.get('question') or s.get('state') == 'blocked')
+                                  for s in steps):
+        return 'needs_you'
+    groups = [(c.get('situation') or {}).get('group') for c in cards]
+    if 'now' in groups:
+        return 'needs_you'
+    if _parent(viewer) and any((c.get('program') or {}).get('state') == 'proposed' for c in cards):
+        return 'needs_you'
+    mine = [s for s in steps if s.get('state') == 'todo' and s.get('owner') == viewer.get('id')
+            and _needs_satisfied(s, steps)]
+    if mine or 'moving' in groups or 'in_hand' in groups or any(s.get('state') == 'doing' for s in steps):
+        return 'moving'
+    return 'waiting'
+
+
+def overview_row(project, viewer):
+    """A project's overview card: its view, its lane and the one line it says next."""
+    row = view(project, viewer)
+    cards = piece_cards(project, viewer)
+    planless = needs_plan(project)
+    nxt = (row.get('next_step') or {}).get('title') or ''
+    if not nxt and planless:
+        nxt = 'Needs a plan'
+    if not nxt:
+        nxt = next(((c['situation'].get('next_step') or {}).get('label') or ''
+                    for c in cards if (c.get('situation') or {}).get('next_step')), '')
+    row.update(lane=lane(project, viewer, cards), card_next=nxt,
+               has_program=any(c['kind'] == 'program' for c in cards), needs_plan=planless)
+    return row
+
+
+def elsewhere(viewer):
+    """Missions this person started whose project they may not see: a keeper's
+    rows, drawn with the keeper projection (front door §2)."""
+    from services import situations
+    if not viewer or not viewer.get('id'):
+        return []
+    out = []
+    for m in storage.get_missions():
+        if m.get('created_by') != viewer['id'] or not m.get('project_id'):
+            continue
+        project = storage.get_project(m['project_id'])
+        if project is None or can_see(project, viewer):
+            continue
+        v = situations.view('mission', m['id'], viewer)
+        if v and v.get('group') != 'done':
+            out.append(v)
+    return out
+
+
+def locate(kind, record_id, viewer):
+    """Where an old link lands (front door §3): the record's project when the
+    viewer may see both, else the record alone when they may see that."""
+    if kind not in _ADOPT_TABLES:
+        return {'project_id': None, 'record_visible': False}
+    row = _ADOPT_TABLES[kind][0](record_id)
+    if not row:
+        return {'project_id': None, 'record_visible': False}
+    visible = _record_visible(kind, row, viewer)
+    project = storage.get_project(row.get('project_id')) if row.get('project_id') else None
+    return {'project_id': project['id'] if project and visible and can_see(project, viewer) else None,
+            'record_visible': bool(visible)}
+
+
 def view(project, viewer):
     """Return only this viewer's project and visible piece references."""
     from services import subjects
@@ -943,6 +1050,15 @@ def view(project, viewer):
     result['pieces'] = []
     for piece in project.get('pieces') or []:
         kind, sid = piece.get('kind'), piece.get('id')
+        if kind == 'mission':
+            # Missions have no subject adapter (they are never what something is
+            # ABOUT), so their piece reads the mission row and its own audience.
+            from services import situations
+            row = storage.get_mission(sid)
+            if row is not None and situations.can_see('mission', row, viewer):
+                result['pieces'].append({'kind': kind, 'id': sid, 'title': (row.get('goal') or '')[:80],
+                                         'link': f'projects?piece=mission:{sid}'})
+            continue
         row = subjects.load(kind, sid)
         if row is not None and subjects.visible(kind, row, viewer):
             result['pieces'].append({'kind': kind, 'id': sid,
