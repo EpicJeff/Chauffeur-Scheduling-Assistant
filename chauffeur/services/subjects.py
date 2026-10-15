@@ -142,7 +142,8 @@ def visible(kind, row, viewer, spoken=False):
 
 
 def subject_records(kind, row):
-    """Existing current and historical records; thread missions inherit both."""
+    """Audience records, including an unbound mission's proposed project."""
+    proposed = (row.get('plan') or {}).get('project') if kind == 'mission' else None
     if kind == 'mission' and row.get('origin_kind') == 'thread' and row.get('origin_ref'):
         row = storage.get_thread(row['origin_ref']) or {}
     entries = list(row.get('subject_history') or [])
@@ -157,6 +158,13 @@ def subject_records(kind, row):
         record = load(*key) if key[0] and key[1] else None
         if record is not None:
             records.append((key[0], record))
+    # A preview has no stored project yet, but its words already have that
+    # audience. Read the current proposal each time so revisions can widen it;
+    # after binding, the real project's current audience takes over.
+    if (proposed and not proposed.get('id') and row.get('subject_kind') != 'project'
+            and proposed.get('audience') != 'household'):
+        records.append(('proposed_project', {
+            **proposed, 'owner_member_id': proposed.get('owner')}))
     return records
 
 

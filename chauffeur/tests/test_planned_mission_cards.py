@@ -120,6 +120,8 @@ CARDS = {
     'plan': {'kind': 'mission_ask', 'mission_id': 'm1', 'ask_id': 'a2', 'ask': 'plan', 'state': 'open', 'goal': 'party', 'question': '',
              'stages': [{'id': 's1', 'kind': 'build', 'title': 'The party', 'makes': ['the occasion', 'guests'], 'state': 'pending'},
                         {'id': 's2', 'kind': 'work', 'title': 'Find a bakery', 'makes': ['two bakeries'], 'state': 'pending'}],
+             'project': {'title': 'Kate turns ten', 'goal': 'a party she remembers', 'done_when': 'the last guest leaves'},
+             'steps': [{'id': 'p1', 'title': 'Pick the theme with Kate', 'owner': 'mom', 'needs': []}],
              'options': [{'id': 'approve_plan:1:approve', 'verb': 'approve_plan', 'label': 'Looks good', 'payload': {}},
                          {'id': 'approve_plan:1:drop:s2', 'verb': 'approve_plan', 'label': 'Leave out: Find a bakery', 'payload': {}}]},
     'stage': {'kind': 'mission_ask', 'mission_id': 'm1', 'ask_id': 'a3', 'ask': 'stage', 'state': 'open', 'goal': 'party', 'question': '',
@@ -207,6 +209,8 @@ def scenario_n2_plan_and_stage_cards_list_their_parts():
     p = out['plan']
     check('The party' in p and 'the occasion' in p and 'Find a bakery' in p, f"the stages and what they make:\n{p}")
     check('data-mission-act="approve_plan:1:approve"' in p and 'data-mission-act="approve_plan:1:drop:s2"' in p, "the options as buttons")
+    check('Kate turns ten' in p and 'the last guest leaves' in p and 'Pick the theme with Kate' in p,
+          f"the project it will become and your steps (Projects core Task 7):\n{p}")
     s = out['stage']
     check('Make the party' in s and 'Made it.' in s and 'Add the Wilsons' in s, f"rows and a result:\n{s}")
     check('data-mission-act="run_stage:s1:abc:approve"' in s, "Do this")

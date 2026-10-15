@@ -506,6 +506,9 @@ def _subject_of(kind: str, row: dict) -> tuple:
 
 def _subject_visible(kind: str, record: dict, viewer: Optional[dict], visited=None) -> bool:
     from services import subjects
+    if kind == 'proposed_project':
+        from services import projects
+        return projects.can_see(record, viewer)
     if kind == 'thread':
         visited = set(visited or ())
         key = record.get('id')
@@ -557,7 +560,7 @@ def view(kind: str, sid: str, viewer: Optional[dict] = None) -> Optional[dict]:
     if kind not in KINDS:
         return None
     row = load(kind, sid)
-    if not row:
+    if not row or (viewer is not None and not can_see(kind, row, viewer)):
         return None
     keeper = False
     if kind == 'mission':
