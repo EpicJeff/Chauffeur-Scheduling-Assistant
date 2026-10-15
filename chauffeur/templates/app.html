@@ -1920,6 +1920,67 @@
                 .sort((a, b) => (a.date + a.time_start).localeCompare(b.date + b.time_start));
         }
 
+        // A project's thread, mission or program on the phone (front door §2):
+        // the Projects tab asks for it; the phone's own builders draw it in the
+        // action sheet. The admin record sheet never loads here.
+        let pieceSheet = null;   // {detail, close, overlay}
+        let pieceSheetRequest = 0;
+        async function pieceSheetBody(kind, id, ctx = pieceSheetCtx(null)) {
+            if (kind === 'program') {
+                const r = await fetch(`${apiBase}api/programs?include_finished=true`);
+                const d = r.ok ? await r.json() : { programs: [] };
+                const p = (d.programs || []).find(x => x.id === id);
+                return p ? renderProgramCard(p, {}) : '';
+            }
+            const r = await fetch(`${apiBase}api/situations/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`);
+            if (!r.ok || !window.Situations) return '';
+            const s = await r.json();
+            // bind() needs the fetched situation to resolve an action's option.
+            ctx.lookup = () => s;
+            const canNote = ['parent', 'adult'].includes(currentMemberRole());
+            return window.Situations.cardHtml(s, ctx) + (kind === 'thread' ? houseThreadExtras(s, canNote) : '');
+        }
+        function pieceSheetCtx(s) {
+            return { apiBase, canWrite: ['parent', 'adult'].includes(currentMemberRole()), readOnly: false,
+                     memberId: selectedMemberId, lookup: () => s, onChange: () => refreshPieceSheet() };
+        }
+        async function openPieceSheet(detail) {
+            if (!detail || !['thread', 'mission', 'program'].includes(detail.kind) || !detail.id) return;
+            if (pieceSheet) pieceSheet.close();
+            const overlay = _pwaModal(`<h2>${mfEscape(detail.title || '')}</h2>
+                <div data-piece-sheet-body class="space-y-2">Loading…</div>`, (overlay, close) => {
+                pieceSheet = { detail, close: () => { pieceSheetRequest++; pieceSheet = null; close(); }, overlay };
+                // The shared header is normally adult-only; children need the
+                // same single close when opening their own program or thread.
+                const head = overlay.querySelector('.pwa-sheet-head');
+                head.classList.remove('pwa-adult-only');
+                head.classList.add('flex');
+            });
+            // _pwaModal installs its default dismiss handler AFTER wire().
+            overlay.querySelector('[data-pwa-dismiss]').onclick = pieceSheet.close;
+            await refreshPieceSheet(false);
+        }
+        async function refreshPieceSheet(notifyProjects = true) {
+            if (!pieceSheet) return;
+            const sheet = pieceSheet;
+            const request = ++pieceSheetRequest;
+            const body = sheet.overlay.querySelector('[data-piece-sheet-body]');
+            const ctx = pieceSheetCtx(null);
+            let html = '';
+            try { html = await pieceSheetBody(sheet.detail.kind, sheet.detail.id, ctx); }
+            catch (e) { showGlobalAlert("Couldn't load that just now."); }
+            if (pieceSheet !== sheet || request !== pieceSheetRequest) return;
+            if (body) {
+                body.innerHTML = html || '<p class="text-xs text-gray-500 italic">That isn’t here, or isn’t yours to see.</p>';
+                body.setAttribute('data-piece-sheet', '');
+                if (sheet.detail.kind !== 'program' && window.Situations) window.Situations.bind(body, ctx);
+                // Reuse the sheet's green primary style for the card's primary.
+                body.querySelector('button.bg-blue-600')?.setAttribute('data-yes', '');
+            }
+            if (notifyProjects) window.dispatchEvent(new CustomEvent('chf-projects-open'));
+        }
+        window.addEventListener('chf-record-sheet-open', (e) => openPieceSheet(e.detail));
+
         // The tap target this arc never had. Everything needed to actually do
         // the session -- which one it is, the lesson to read, the steps, and
         // how tonight beats last time -- plus the one action that matters.
@@ -2364,9 +2425,12 @@
         // that is. `force`, because the write just invalidated the cache.
         function afterProgramWrite() {
             datedTimelineDays.clear(); datedTimelineLoads.clear();
-            if (currentView === 'myday') { renderMyDay(); return; }
-            refreshDatedTimeline(currentDates[activeDateIndex], true);
-            refreshPracticeSection(true);
+            if (currentView === 'myday') renderMyDay();
+            else {
+                refreshDatedTimeline(currentDates[activeDateIndex], true);
+                refreshPracticeSection(true);
+            }
+            refreshPieceSheet();
         }
 
         // The heartbeat this whole surface was missing. A session becomes due
@@ -6536,6 +6600,20 @@
             renderHouseThreads();
         }
 
+        // The House lane's note and photo controls on a thread, one builder for
+        // the lane and for a project's piece sheet (front door §2).
+        function houseThreadExtras(s, canNote) {
+            if (!canNote) return '';
+            return `<form onsubmit="houseAddThreadNote(event, '${mfEscape(s.id)}')" class="flex gap-2 mt-2.5">
+                        <input type="text" id="house-thread-note-${mfEscape(s.id)}" placeholder="A call made, a document received…" autocomplete="off"
+                            class="flex-1 bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-[13px] text-gray-100 placeholder-gray-600">
+                        <button type="submit" class="px-3 rounded-xl bg-gray-800 border border-gray-700 text-gray-300 text-xs font-bold active:bg-gray-700 shrink-0">Add note</button>
+                    </form>
+                    <label class="inline-flex items-center gap-1 text-xs text-gray-400 mt-1.5 cursor-pointer">📷 Add a photo
+                        <input type="file" accept="image/*" capture="environment" class="hidden" data-thread-photo
+                               onchange="houseAddThreadPhoto(event, '${mfEscape(s.id)}')"></label>`;
+        }
+
         function renderHouseThreads() {
             const wrap = document.getElementById('house-threads');
             if (!wrap) return;
@@ -6548,14 +6626,7 @@
                 + '<div id="house-threads-lane" class="space-y-2"></div>';
             window.Situations.render(document.getElementById('house-threads-lane'), houseThreads, {
                 apiBase, canWrite: canNote, readOnly: false, memberId: selectedMemberId, onChange: fetchHouseThreads,
-                extraHtml: (s) => canNote ? `<form onsubmit="houseAddThreadNote(event, '${mfEscape(s.id)}')" class="flex gap-2 mt-2.5">
-                        <input type="text" id="house-thread-note-${mfEscape(s.id)}" placeholder="A call made, a document received…" autocomplete="off"
-                            class="flex-1 bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-[13px] text-gray-100 placeholder-gray-600">
-                        <button type="submit" class="px-3 rounded-xl bg-gray-800 border border-gray-700 text-gray-300 text-xs font-bold active:bg-gray-700 shrink-0">Add note</button>
-                    </form>
-                    <label class="inline-flex items-center gap-1 text-xs text-gray-400 mt-1.5 cursor-pointer">📷 Add a photo
-                        <input type="file" accept="image/*" capture="environment" class="hidden" data-thread-photo
-                               onchange="houseAddThreadPhoto(event, '${mfEscape(s.id)}')"></label>` : '' });
+                extraHtml: (s) => houseThreadExtras(s, canNote) });
         }
 
         // A photo on a thread (browse missions §3): the fetch wrapper adds the
@@ -6572,13 +6643,14 @@
                 if (!r.ok) { showGlobalAlert(d.detail || "Couldn't add that photo."); return; }
                 showGlobalAlert(d.read ? 'Photo added and read.' : 'Photo added (not read).');
                 fetchHouseThreads();
+                refreshPieceSheet();
             } catch (e) { showGlobalAlert("Couldn't add that photo."); }
             finally { ev.target.value = ''; }
         }
 
         async function houseAddThreadNote(ev, id) {
             ev.preventDefault();
-            const input = document.getElementById(`house-thread-note-${id}`);
+            const input = ev.target.querySelector('input[type="text"]');
             const text = (input && input.value || '').trim();
             if (!text) return;
             input.value = '';
@@ -6594,6 +6666,7 @@
                 }
             } catch (e) { showGlobalAlert('Could not add that note'); }
             fetchHouseThreads();
+            refreshPieceSheet();
         }
 
         // --- Status-tier badges + celebration ------------------------------
