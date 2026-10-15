@@ -88,7 +88,8 @@ def _classify(row):
         body_goal.is_body_goal(row.get(key)) for key in ('title', 'goal', 'done_when'))
 
 
-def create(fields, actor):
+def prepare_create(fields, actor):
+    """Validate and normalize a proposed project without writing it."""
     if (not _active(actor) or actor.get('role') not in ('parent', 'adult', 'child')):
         return _error('Sign in as a project owner or parent')
     if 'body_goal' in fields:
@@ -108,7 +109,15 @@ def create(fields, actor):
         if row['owner_member_id'] != actor['id'] and not _parent(actor):
             return _error('Only a parent can assign a project to someone else')
         row.update(created_by=actor['id'], state='active', steps=[], pieces=[])
-        project_id = storage.add_project(row)
+        return {'status': 'success', 'project': row}
+
+
+def create(fields, actor):
+    with storage.db_lock:
+        result = prepare_create(fields, actor)
+        if result['status'] != 'success':
+            return result
+        project_id = storage.add_project(result['project'])
         return {'status': 'success', 'project': storage.get_project(project_id)}
 
 

@@ -117,6 +117,7 @@ def scenario_the_planner_reads_once_and_stores_only_what_any_adult_could_see():
     check('TRIP: Hawaii' in PROMPTS[2]['user'], "a household record's lookup reads in full, once")
     check('ev_disney' not in PROMPTS[2]['user'].split('TRANSCRIPT')[0] and "LAST LOOKUP" in PROMPTS[2]['user']
           and PROMPTS[2]['user'].count('LAST LOOKUP') == 1, "and the earlier lookup is not repeated")
+    missions.answer(mid, 'Friday', dict(MOM))     # the question is answered; only a running mission steps (Projects Task 6)
     _plan({'action': 'tool', 'tool': 'find_in_chauffeur', 'args': {'query': ''}})
     row = _step(mid)
     last = _steps(mid)[-1]

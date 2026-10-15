@@ -3,6 +3,7 @@
 import hashlib
 import json
 import time
+from copy import deepcopy
 from contextlib import nullcontext
 
 from services import storage, subjects, missions
@@ -251,6 +252,82 @@ def _plan_for_change(mid, actor, rev=None):
     return mission, plan, None
 
 
+def _project_for_plan(mission, proposed, actor):
+    """Use the same project rules for the preview and the approval write."""
+    from services import projects
+    kind, pid, _ = missions.subject_of(mission)
+    if kind == 'project':
+        project = storage.get_project(pid)
+        if not projects.can_act(project, actor):
+            return None, 'You cannot edit this project'
+        return project, None
+    if proposed is None:
+        return None, None  # Older plans can still run without a project proposal.
+    if not isinstance(proposed, dict):
+        return None, 'The project must be an object'
+    fields = {k: proposed[k] for k in projects.EDITABLE if k in proposed}
+    if 'owner' in proposed:
+        fields['owner_member_id'] = proposed['owner']
+    if 'body_goal' in proposed:
+        fields['body_goal'] = proposed['body_goal']
+    result = projects.prepare_create(fields, actor)
+    return result.get('project'), result.get('message')
+
+
+def _project_steps(plan, mid):
+    """Translate both kinds of local plan id into one project checklist."""
+    rows = []
+    for source in plan.get('steps', []):
+        rows.append({**deepcopy(source), 'hold': None})
+    for stage in plan['stages']:
+        rows.append({'id': stage['id'], 'title': stage['title'], 'owner': 'argyle',
+                     'goal': stage.get('goal') or stage['title'], 'needs': stage.get('needs') or [],
+                     'mission_id': mid, 'stage_id': stage['id'], 'found': None, 'question': None,
+                     'state': 'skipped' if stage['state'] == 'skipped' else 'todo'})
+    ids = {row['id']: f"{mid}-{plan['rev']}-{row['id']}" for row in rows}
+    return [{**row, 'id': ids[row['id']], 'needs': [ids[n] for n in row.get('needs', [])],
+             'order': i, 'due_date': row.get('due_date'), 'state': row.get('state', 'todo'),
+             'done_by': None, 'done_at': None} for i, row in enumerate(rows)]
+
+
+def _complete_approval(mission, plan):
+    """Replay the persisted write intent under db_lock, including after a crash."""
+    intent = plan.get('approval')
+    mid = mission['id']
+    if intent:
+        pid = intent['project_id']
+        project = storage.get_project(pid)
+        if project is None:
+            storage.add_project({**intent['project'], 'id': pid})
+            project = storage.get_project(pid)
+        steps = list(project.get('steps') or [])
+        ids = {s['id'] for s in steps}
+        order = max((s['order'] for s in steps), default=-1) + 1
+        for step in _project_steps(plan, mid):
+            if step['id'] not in ids:
+                steps.append({**step, 'order': order})
+                ids.add(step['id'])
+                order += 1
+        pieces = list(project.get('pieces') or [])
+        earlier = intent.get('earlier_subject')
+        if earlier and not any((p['kind'], p['id']) == (earlier['kind'], earlier['id']) for p in pieces):
+            pieces.insert(0, {**earlier, 'added_by': plan['approved_by'], 'added_at': plan['approved_at']})
+        patch = {'steps': steps, 'pieces': pieces,
+                 'origin_mission_id': project.get('origin_mission_id') or mid}
+        if any(project.get(k) != v for k, v in patch.items()):
+            storage.update_project(pid, patch)
+        binding = intent.get('binding')
+        if binding:
+            load, update = ((storage.get_thread, storage.update_thread) if binding['kind'] == 'thread'
+                            else (storage.get_mission, storage.update_mission))
+            row = load(binding['id'])
+            if any(row.get(k) != v for k, v in binding['fields'].items()):
+                update(binding['id'], binding['fields'])
+    plan['state'] = 'approved'
+    missions._close(mid, 'running', plan=plan)
+    _settle(mid, 'plan', 'Looks good')
+
+
 def approve_plan(mission_id, rev, actor):
     from services import missions
     with storage.db_lock:
@@ -259,9 +336,33 @@ def approve_plan(mission_id, rev, actor):
             return error
         if plan['state'] != 'proposed' or mission.get('paused_by_project'):
             return _refused()
-        plan.update(state='approved', approved_by=actor.get('id'), approved_at=time.time())
-        missions._close(mission_id, 'running', plan=plan)
-        _settle(mission_id, 'plan', 'Looks good')
+        project, message = _project_for_plan(mission, plan.get('project'), actor)
+        if message:
+            return _refused(message)
+        if project:
+            from services import projects
+            steps = _project_steps(plan, mission_id)
+            for step in steps:
+                message = projects._validate_step(project, step, steps)
+                if message:
+                    return _refused(message)
+            pid = project.get('id') or f'prj-{mission_id}'
+            intent = {'project_id': pid, 'project': project if not project.get('id') else None}
+            kind, sid, _ = missions.subject_of(mission)
+            if kind != 'project':
+                row, binding_kind = mission, 'mission'
+                if mission.get('origin_kind') == 'thread':
+                    row, binding_kind = storage.get_thread(mission.get('origin_ref')), 'thread'
+                if kind and sid:
+                    intent['earlier_subject'] = {'kind': kind, 'id': sid}
+                intent['binding'] = {'kind': binding_kind, 'id': row['id'], 'fields': {
+                    'subject_kind': 'project', 'subject_id': pid,
+                    'subject_rev': int(row.get('subject_rev') or 0) + 1,
+                    'subject_history': subjects.history_after_binding(row, 'project', pid)}}
+            plan['approval'] = intent
+        plan.update(state='approving', approved_by=actor.get('id'), approved_at=time.time())
+        storage.update_mission(mission_id, {'plan': plan})
+        _complete_approval(mission, plan)
     return {'status': 'success', 'message': 'Plan approved.'}
 
 
@@ -536,7 +637,8 @@ def planner_action(mid, action):
                 return _refused('The plan needs one to seven stages.')
             seen, reserve = set(), 2
             for stage in stages:
-                if (not isinstance(stage, dict) or not stage.get('id') or stage['id'] in seen
+                if (not isinstance(stage, dict) or not isinstance(stage.get('id'), str)
+                        or not stage['id'].strip() or stage['id'] in seen
                         or stage.get('kind') not in ('build', 'work') or not stage.get('title')):
                     return _refused('Each stage needs a unique id, kind and title.')
                 seen.add(stage['id'])
@@ -550,9 +652,61 @@ def planner_action(mid, action):
             cap = int(storage.get_settings().get('mission_step_cap', missions.CAPS_DEFAULT['steps']))
             if cap - int(mission.get('step_count') or 0) < reserve:
                 return _refused('The remaining step budget cannot cover this plan.')
-            plan['stages'] = [{k: s.get(k) for k in ('id', 'kind', 'title', 'why', 'makes', 'owner_member_id', 'goal', 'step_budget')}
-                              | {'state': 'pending'} for s in stages]
-            plan.update(state='proposed', rev=plan['rev'] + 1)
+            person_steps = action.get('steps', [])
+            if not isinstance(person_steps, list):
+                return _refused('Steps must be a list.')
+            for step in person_steps:
+                if (not isinstance(step, dict) or not isinstance(step.get('id'), str)
+                        or not step['id'].strip() or step['id'] in seen or step.get('owner') == 'argyle'):
+                    return _refused('Each person step needs a unique id and a person as owner.')
+                seen.add(step['id'])
+            graph = {s['id']: s.get('needs', []) for s in stages + person_steps}
+            if any(not isinstance(needs, list) or any(not isinstance(n, str) or n not in graph for n in needs)
+                   for needs in graph.values()):
+                return _refused('Needs must name steps or stages in this plan.')
+            visiting, visited = set(), set()
+
+            def cycle(sid):
+                if sid in visiting:
+                    return True
+                if sid in visited:
+                    return False
+                visiting.add(sid)
+                if any(cycle(n) for n in graph[sid]):
+                    return True
+                visiting.remove(sid)
+                visited.add(sid)
+                return False
+
+            if any(cycle(sid) for sid in graph):
+                return _refused('Plan dependencies cannot form a cycle.')
+            actor = missions._finder(mission) or {}
+            project, message = _project_for_plan(mission, action.get('project'), actor)
+            if message:
+                return _refused(message)
+            if person_steps and not project:
+                return _refused('Person steps need a proposed or existing project.')
+            candidate = {**plan, 'rev': plan['rev'] + 1,
+                         'stages': [{k: deepcopy(s.get(k)) for k in (
+                             'id', 'kind', 'title', 'why', 'makes', 'owner_member_id', 'goal', 'step_budget')}
+                             | {'needs': list(graph[s['id']]), 'state': 'pending'} for s in stages],
+                         'steps': [{k: deepcopy(s.get(k)) for k in ('id', 'title', 'owner', 'due_date')}
+                                   | {'needs': list(graph[s['id']])} for s in person_steps]}
+            from services import projects
+            translated = _project_steps(candidate, mid)
+            for step in translated:
+                message = projects._validate_step(project or {}, step, translated)
+                if message:
+                    return _refused(message)
+            candidate['project'] = None
+            if project:
+                keys = (('id', 'title', 'goal', 'done_when') if project.get('id') else
+                        ('title', 'goal', 'done_when', 'audience', 'target_date'))
+                candidate['project'] = {k: project.get(k) for k in keys}
+                if not project.get('id'):
+                    candidate['project']['owner'] = project['owner_member_id']
+            plan = candidate
+            plan['state'] = 'proposed'
             storage.update_mission(mid, {'plan': plan})
             _ask(mid, 'plan', 'Does this plan look good?')
         elif name == 'stage':
@@ -771,7 +925,24 @@ def _resolve_refs(value, completed):
 def _bind_created(mid, created):
     from services import missions
     mission = storage.get_mission(mid)
-    if missions.subject_of(mission)[0]:
+    kind, pid, _ = missions.subject_of(mission)
+    if kind == 'project':
+        with storage.db_lock:
+            project = storage.get_project(pid)
+            if not project:
+                return
+            pieces = list(project.get('pieces') or [])
+            seen = {(p['kind'], p['id']) for p in pieces}
+            for record in created:
+                key = (record.get('kind'), record.get('id'))
+                if (key[0] in subjects.KINDS and key[1] and key not in seen
+                        and key != ('project', pid)):
+                    pieces.append({'kind': key[0], 'id': key[1], 'added_by': 'argyle', 'added_at': time.time()})
+                    seen.add(key)
+            if pieces != project.get('pieces'):
+                storage.update_project(pid, {'pieces': pieces})
+        return
+    if kind:
         return
     record = next((c for c in created if c.get('kind') in ('occasion', 'trip', 'list', 'program', 'thread')
                    and subjects.load(c['kind'], c.get('id')) is not None), None)
@@ -900,6 +1071,10 @@ def reconcile():
     """A lost claim is evidence to check, never permission to repeat a write."""
     from services import projects
     with storage.db_lock:
+        for mission in storage.get_missions():
+            plan = mission.get('plan') or {}
+            if plan.get('state') == 'approving':
+                _complete_approval(mission, plan)
         waiting_projects = {missions.subject_of(m)[1] for m in storage.get_missions(status='waiting_step')
                             if missions.subject_of(m)[0] == 'project'}
         for pid in waiting_projects:

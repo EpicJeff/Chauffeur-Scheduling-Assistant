@@ -272,10 +272,34 @@ window.Situations = (function () {
 
   function verbLabel(verb) { return VERB_LABELS[verb] || verb; }
 
+  // The approval preview shares the plan card's existing row treatment.
+  function planPreviewHtml(plan) {
+    const project = plan.project;
+    let html = '';
+    if (project) {
+      const meta = [project.owner, project.audience, project.target_date].filter(Boolean).join(' · ');
+      html += `<div class="text-xs text-gray-300 mt-2">${esc(project.id ? 'Project' : 'New project')}: ${esc(project.title)}
+        <div class="text-gray-400">${esc(project.goal)}</div>
+        <div class="text-gray-400">Done when: ${esc(project.done_when)}</div>
+        ${meta ? `<div class="text-gray-400">${esc(meta)}</div>` : ''}</div>`;
+    }
+    const steps = plan.steps || [];
+    const titles = new Map([...(plan.stages || []), ...steps].map(s => [s.id, s.title]));
+    if (steps.length) {
+      html += `<div class="text-xs text-gray-300 mt-2">Your steps${steps.map(s => {
+        const needs = (s.needs || []).map(id => titles.get(id) || id).join(', ');
+        return `<div class="mt-1">${esc(s.title)} · ${esc(s.owner || 'Unassigned')}
+          ${needs ? `<div class="text-gray-400">After: ${esc(needs)}</div>` : ''}
+          ${s.due_date ? `<div class="text-gray-400">Due: ${esc(s.due_date)}</div>` : ''}</div>`;
+      }).join('')}</div>`;
+    }
+    return html;
+  }
+
   function planStepperHtml(plan) {
     const words = { pending: 'waiting', proposed: 'needs your yes', running: 'running',
       done: 'done', skipped: 'skipped', partial: 'partial', uncertain: 'check these' };
-    return ((plan || {}).stages || []).map(s =>
+    return (plan && plan.state === 'proposed' ? planPreviewHtml(plan) : '') + ((plan || {}).stages || []).map(s =>
       `<div class="text-xs text-gray-400 mt-1" data-stage-state="${esc(s.state)}">${esc(s.title)} · ${esc(words[s.state] || s.state)}</div>`
     ).join('');
   }
@@ -321,5 +345,5 @@ window.Situations = (function () {
     bind(el, ctx);
   }
 
-  return { VERB_LABELS, verbLabel, cardHtml, planStepperHtml, render, bind, act, ask };
+  return { VERB_LABELS, verbLabel, cardHtml, planPreviewHtml, planStepperHtml, render, bind, act, ask };
 })();

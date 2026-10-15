@@ -5306,6 +5306,7 @@
                 if (canAct) details += `<button data-plan-answers="${mfEscape(card.mission_id)}" class="mt-2 px-3 py-1 rounded-lg text-xs font-semibold bg-blue-600 text-white">Send answers</button>`;
             }
             if (card.ask === 'plan') {
+                details += window.Situations.planPreviewHtml(card);
                 details += (card.stages || []).map(s => `<div class="text-xs text-gray-300 mt-2">${mfEscape(s.title)} · ${mfEscape(s.kind)}
                     <ul class="text-gray-400">${(s.makes || []).map(line => `<li>${mfEscape(line)}</li>`).join('')}</ul></div>`).join('');
             }

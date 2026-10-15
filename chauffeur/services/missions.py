@@ -155,7 +155,7 @@ def _system_prompt(now: datetime.datetime, settings: dict = None, mission: dict 
         '{"action":"tool","tool":"<READ tool>","args":{...}}\n'
         '{"action":"interview","template":"<occasion kind or null>","questions":[{"key":"budget","ask":"What is the budget?","kind":"number"}]}\n'
         '{"action":"answers","values":{"<question key>":"<answer or you_decide>"}}\n'
-        '{"action":"plan","stages":[{"id":"s1","kind":"build|work","title":"<title>","why":"<reason>","makes":[],"owner_member_id":null,"goal":"<work goal>","step_budget":4}]}\n'
+        '{"action":"plan","project":{"title":"<title>","goal":"<goal>","done_when":"<done when>","owner":"<member id>","audience":"private|parents|household","target_date":null},"steps":[{"id":"p1","title":"<person step>","owner":"<member id>","needs":["s1"],"due_date":null}],"stages":[{"id":"s1","kind":"build|work","title":"<title>","why":"<reason>","makes":[],"owner_member_id":null,"goal":"<work goal>","step_budget":4,"needs":[]}]}\n'
         '{"action":"stage","stage_id":"<next pending build>","rows":[{"id":"r1","tool":"<stage-ready tool>","args":{},"summary":"<what changes>","needs":[]}]}\n'
         '{"action":"stage_done","stage_id":"<running work stage>","summary":"<what was done>","found":{}}\n'
         '{"action":"subject","kind":"<kind>","id":"<id from find_in_chauffeur>"}\n'
@@ -174,6 +174,8 @@ def _system_prompt(now: datetime.datetime, settings: dict = None, mission: dict 
         "Prefer finishing with a small set of strong proposals over endless "
         "research.\n"
         "For a goal needing a plan, interview first (at most two rounds of five), record answers on the mission, then propose stages for approval. "
+        "Include an optional project proposal and the person's steps; approval creates the project and checklist. Inside an existing project omit the proposal and append steps. "
+        "Step and stage ids must be unique together; needs may name either kind, with no cycles. A body-goal project must belong to an adult and stay private. "
         "Interview answers never change the occasion or kitchen: an approved build stage does that. "
         "Only propose rows for the next pending build stage of an approved plan. Use record ids, or {\"$ref\":\"earlier-row-id\",\"kind\":\"occasion\"} for a newly created record. "
         "Each build is one step; each work stage reserves its step_budget plus one follow-up build, plus two closing steps. Work budgets are at most 12; plans at most seven stages. "
@@ -353,6 +355,11 @@ def ask_card(mission: dict) -> dict | None:
         card['questions'] = planned._remaining(plan)[:planned.CAPS['questions']]
     elif asked['name'] == 'plan':
         card['stages'] = plan.get('stages', [])
+        kind, pid, _ = subject_of(row)
+        project = storage.get_project(pid) if kind == 'project' else None
+        card['project'] = ({k: project.get(k) for k in ('id', 'title', 'goal', 'done_when')}
+                           if project else plan.get('project'))
+        card['steps'] = plan.get('steps', [])
     elif asked['name'] == 'stage':
         stage = next((s for s in plan.get('stages', []) if s['id'] == result.get('stage_id')), {})
         card['rows'] = stage.get('rows', [])
