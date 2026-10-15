@@ -6012,6 +6012,10 @@ def missions_admin(request: Request = None):
         history = [m for m in history if situations.can_see('mission', m, actor)]
     for m in active:
         m['steps'] = storage.get_mission_steps(m['id'])
+    if actor is not None:
+        from services import planned
+        active = [planned.keeper_view(m, actor) for m in active]
+        history = [planned.keeper_view(m, actor) for m in history]
     return {"active": active, "history": history}
 
 
@@ -6031,6 +6035,9 @@ def missions_detail(mission_id: str, request: Request = None):
         if not situations.can_see('mission', row, actor):
             raise HTTPException(status_code=403, detail="You cannot see this mission")
     row['steps'] = storage.get_mission_steps(mission_id)
+    if actor is not None:
+        from services import planned
+        row = planned.keeper_view(row, actor)
     return row
 
 

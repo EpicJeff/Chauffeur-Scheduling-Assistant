@@ -474,8 +474,12 @@ def _dm_person(mission: dict, text: str) -> None:
             from services import situations
             people = [m for m in people if situations.can_see('mission', mission, m)]
         for m in people:
-            message = _post(storage.get_or_create_dm(argyle['id'], m['id']), argyle, text, card=card)
-            if card and card.get('ask_id') and message and message.get('id'):
+            from services import planned
+            keeper = planned.is_keeper(mission, m)
+            recipient_card = None if keeper else card
+            body = 'Argyle needs a parent to look at your mission.' if keeper else text
+            message = _post(storage.get_or_create_dm(argyle['id'], m['id']), argyle, body, card=recipient_card)
+            if recipient_card and card.get('ask_id') and message and message.get('id'):
                 with storage.db_lock:
                     asked = next(s for s in storage.get_mission_steps(mission['id']) if s['id'] == card['ask_id'])
                     ids = list(asked.get('chat_message_ids') or [])

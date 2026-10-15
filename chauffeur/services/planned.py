@@ -114,9 +114,45 @@ def new_plan():
 
 
 def may_approve(mission, actor):
+    from services import situations
     return ((actor or {}).get('role') in ('parent', 'adult')
-            and all(subjects.visible(kind, record, actor)
+            and all(situations._subject_visible(kind, record, actor)
                     for kind, record in subjects.subject_records('mission', mission)))
+
+
+def is_keeper(mission, viewer) -> bool:
+    """Ownership keeps the mission row, never a hidden subject's contents."""
+    from services import situations
+    return (situations.can_see('mission', mission, viewer)
+            and not all(situations._subject_visible(kind, record, viewer)
+                        for kind, record in subjects.subject_records('mission', mission)))
+
+
+def redacted(plan) -> dict:
+    """Progress only: never copy any of the planner's words or work."""
+    plan = plan or {}
+    stages = plan.get('stages') or []
+    out = {'state': plan.get('state'), 'stage_count': len(stages),
+           'current_index': next((i for i, stage in enumerate(stages, 1)
+                                  if stage.get('state') not in ('done', 'skipped')), None)}
+    if (plan.get('state') == 'proposed'
+            or (plan.get('state') == 'interviewing' and _remaining(plan))
+            or any(s.get('state') in ('proposed', 'uncertain') or can_resume_stage(s)
+                   or s.get('budget_ask_pending') for s in stages)):
+        out['waiting_on'] = 'a parent'
+    return out
+
+
+def keeper_view(mission, viewer):
+    """The same keeper projection for active, history and transcript reads."""
+    if not is_keeper(mission, viewer):
+        return mission
+    row = dict(mission)
+    row['plan'] = redacted(row['plan']) if row.get('plan') else None
+    if 'steps' in row:
+        row['steps'] = [{k: s[k] for k in ('id', 'idx', 'ts', 'kind', 'name') if k in s}
+                        for s in row['steps']]
+    return row
 
 
 def stage_pending(mission):

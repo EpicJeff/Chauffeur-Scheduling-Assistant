@@ -274,26 +274,31 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                 if phone_voice.get() is not None:
                     phone_voice.get().speech_safe = False
                 _s = _sit.view(_f['kind'], _f['id'], _viewer)
-                _nxt = ((_s or {}).get('next_step') or {}).get('label') or '-'
-                system_prompt += (f"\nFOCUS: {_f['kind']} \"{_f.get('title')}\" — next step: {_nxt}. "
-                                  "\"Handle it\", \"do that\", \"ask X by Y\", \"she said yes\", \"sent it\", "
-                                  "\"next\", \"skip it\" refer to this one unless another is named: call the "
-                                  "situation tools with NO ref for it.\n")
+                from services import subjects, storage
+                channel = storage.get_channel(focus_key[len('channel:'):]) if focus_key.startswith('channel:') else None
+                shared_ok = True
+                if channel:
+                    members = ([storage.get_member(mid) for mid in channel.get('member_ids') or []]
+                               if channel.get('kind') in ('group', 'dm') else
+                               [m for m in storage.get_all_members() if (m.get('status') or 'active') == 'active'])
+                    records = subjects.subject_records(_f['kind'], _row)
+                    for member in members:
+                        if member and (member.get('system') or member.get('id') == 'argyle'):
+                            continue
+                        if not all(_sit._subject_visible(k, record, member) for k, record in records):
+                            shared_ok = False
+                            break
+                # The next-step label can itself be a stage title or a row's
+                # words. Apply ABOUT's audience gate before injecting FOCUS.
+                if shared_ok:
+                    _nxt = ((_s or {}).get('next_step') or {}).get('label') or '-'
+                    system_prompt += (f"\nFOCUS: {_f['kind']} \"{_f.get('title')}\" — next step: {_nxt}. "
+                                      "\"Handle it\", \"do that\", \"ask X by Y\", \"she said yes\", \"sent it\", "
+                                      "\"next\", \"skip it\" refer to this one unless another is named: call the "
+                                      "situation tools with NO ref for it.\n")
                 sv = (_s or {}).get('subject')
-                if sv:
-                    from services import subjects, storage
-                    channel = storage.get_channel(focus_key[len('channel:'):]) if focus_key.startswith('channel:') else None
-                    shared_ok = True
-                    if channel and channel.get('kind') in ('group', 'dm') and channel.get('member_ids'):
-                        record = subjects.load(sv['kind'], sv['id'])
-                        for member_id in channel['member_ids']:
-                            member = storage.get_member(member_id)
-                            if member and (member.get('system') or member.get('id') == 'argyle'):
-                                continue
-                            if not subjects.visible(sv['kind'], record, member):
-                                shared_ok = False
-                                break
-                    ctx = subjects.context(sv['kind'], sv['id'], _viewer) if shared_ok else None
+                if sv and shared_ok:
+                    ctx = subjects.context(sv['kind'], sv['id'], _viewer)
                     if ctx:
                         system_prompt += f'\nABOUT: {sv["kind"]} "{sv["title"]}"\n{ctx}\n'
         except Exception as e:
@@ -1026,11 +1031,13 @@ sending or claiming, and never pass from_member/member_name for them.
                     fn = getattr(_atv2, func_name)
                     allowed = fn.__code__.co_varnames[:fn.__code__.co_argcount]
                     kwargs = {k: v for k, v in (args or {}).items()
-                              if k in allowed and k not in ('acting_member', 'focus_key', 'spoken')}
+                              if k in allowed and k not in ('acting_member', 'focus_key', 'spoken', 'voice_context')}
                     if 'focus_key' in allowed:
                         kwargs['focus_key'] = focus_key
                     if 'spoken' in allowed:
                         kwargs['spoken'] = substituted
+                    if 'voice_context' in allowed:
+                        kwargs['voice_context'] = voice_context
                     channel_members = None
                     if func_name == 'find_in_chauffeur' and focus_key and focus_key.startswith('channel:'):
                         from services import storage, subjects

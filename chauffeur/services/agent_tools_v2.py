@@ -1578,7 +1578,7 @@ def explain_situation(ref: str = '', kind: str = None, acting_member: dict = Non
 
 def act_on_situation(ref: str = '', verb: str = '', option_id: str = None, kind: str = None, text: str = None,
                      next_action_at: str = None, acting_member: dict = None, focus_key: str = None,
-                     spoken: bool = False) -> Dict[str, Any]:
+                     spoken: bool = False, voice_context=None) -> Dict[str, Any]:
     from services import situations as _sit
     if not acting_member or acting_member.get('role') not in ('parent', 'adult'):
         return {"status": "error", "message": "Only a parent or adult can do that."}
@@ -1599,6 +1599,25 @@ def act_on_situation(ref: str = '', verb: str = '', option_id: str = None, kind:
     if not found:
         return {"status": "error", "message": why}
     k, sid = found
+    if verb in ('approve_plan', 'run_stage'):
+        from services import storage, subjects
+        private = bool(focus_key and focus_key.startswith('conv:'))
+        if focus_key and focus_key.startswith('channel:'):
+            channel = storage.get_channel(focus_key[len('channel:'):]) or {}
+            private = (channel.get('kind') == 'dm'
+                       and set(channel.get('member_ids') or []) == {acting_member.get('id'), 'argyle'})
+        if spoken:
+            from services.voice_identity import VoiceContext
+            verified = voice_context.verified_member() if isinstance(voice_context, VoiceContext) else None
+            # Revalidate voice identity here; a household fallback actor is
+            # not evidence that the person speaking has been verified.
+            row = _sit.load(k, sid)
+            private = (bool(verified) and verified.get('id') == acting_member.get('id')
+                       and k in ('mission', 'thread')
+                       and all(subjects.spoken_safe(sk, record)
+                               for sk, record in subjects.subject_records(k, row)))
+        if not private:
+            return {'status': 'error', 'message': 'Approve this in a private conversation with Argyle.'}
     if verb == 'subject' and not option_id:
         # Words change what it is about; Unlink is the card's own button.
         option_id = 'subject'

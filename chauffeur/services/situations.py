@@ -531,7 +531,18 @@ def view(kind: str, sid: str, viewer: Optional[dict] = None) -> Optional[dict]:
     row = load(kind, sid)
     if not row:
         return None
+    keeper = False
+    if kind == 'mission':
+        from services import planned
+        keeper = planned.is_keeper(row, viewer)
+        if keeper:
+            # Build labels and the fallback only from metadata. In particular,
+            # neither an interview question nor a stage title is a label here.
+            row = {**planned.keeper_view(row, viewer), 'plan': None,
+                   'status_note': '', 'note_source': 'fallback'}
     opts = options_for(kind, row)
+    if keeper:
+        opts = [o for o in opts if o['verb'] not in ('approve_plan', 'run_stage')]
     from services import asks as _asks
     note = row.get('status_note') or ''
     source = row.get('note_source') or 'fallback'
@@ -541,7 +552,7 @@ def view(kind: str, sid: str, viewer: Optional[dict] = None) -> Optional[dict]:
              'thread': row.get('title'), 'mission': row.get('goal')}[kind] or ''
     return {
         'kind': kind, 'id': sid, 'title': title,
-        'subject': subject_view(kind, row, viewer),
+        'subject': None if keeper else subject_view(kind, row, viewer),
         'state': _state(kind, row), 'since': _since(kind, row),
         'people': _people(kind, row),
         'due': row.get('due_at') if kind == 'finding' else (
