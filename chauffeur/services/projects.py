@@ -715,7 +715,10 @@ def view(project, viewer):
     result = {key: deepcopy(project.get(key)) for key in
               ('id', 'title', 'goal', 'done_when', 'owner_member_id', 'audience', 'state', 'target_date')}
     result['steps'] = deepcopy(project.get('steps') or [])
+    result['can_act'] = can_act(project, viewer)
     for step in result['steps']:
+        step['can_edit'] = _can_edit_step(project, step, viewer)
+        step['can_cancel'] = can_act(project, viewer) and not _child(viewer)
         owner = storage.get_member(step.get('owner')) or {}
         step['owner_label'] = ('Argyle' if step.get('owner') == 'argyle' else
                                owner.get('name') if _active(owner) else 'Unassigned')
@@ -724,7 +727,9 @@ def view(project, viewer):
         kind, sid = piece.get('kind'), piece.get('id')
         row = subjects.load(kind, sid)
         if row is not None and subjects.visible(kind, row, viewer):
-            result['pieces'].append({'kind': kind, 'id': sid})
+            result['pieces'].append({'kind': kind, 'id': sid,
+                                     'title': subjects.title_of(kind, row),
+                                     'link': subjects.link(kind, sid)})
     result.update(next_step=next((step for step in sorted(result['steps'], key=lambda item: item['order'])
                                   if step.get('state') == 'todo'
                                   and _needs_satisfied(step, result['steps'])), None),

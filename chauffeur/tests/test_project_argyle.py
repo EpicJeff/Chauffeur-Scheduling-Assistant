@@ -275,6 +275,26 @@ def scenario_c10_pausing_parks_the_work_and_resuming_continues_it():
     _step(mid)
     check(_stage(mid, 's2')['state'] == 'running', f"the work stage runs again: {_stage(mid, 's2')}")
 
+def scenario_c11_skip_and_stop_from_the_project_page():
+    """The project page holds no mission options, so its Skip and Stop go through one route (Task 11)."""
+    import main
+    from test_subject_audience import _as
+    mid, pid, a, p = _running_work()
+    res = main.project_step_cancel(pid, a, {'outcome': 'skip'}, request=_as('mom'))
+    check(res['status'] == 'success' and _stage(mid, 's2')['state'] == 'skipped' and _st(pid, a)['state'] == 'skipped',
+          f"Skip from the project page: {res}")
+    mid, pid, a, p = _running_work()
+    res = main.project_step_cancel(pid, a, {'outcome': 'stop'}, request=_as('mom'))
+    check(res['status'] == 'success' and _plan_of(mid)['state'] == 'stopped' and _st(pid, a)['state'] == 'blocked',
+          f"Stop from the project page: {res}")
+    from fastapi import HTTPException
+    mid, pid, a, p = _running_work()
+    try:
+        main.project_step_cancel(pid, a, {'outcome': 'skip'}, request=_as('kid'))
+        check(False, "a child cannot cancel Argyle's work on a parent's project")
+    except HTTPException as e:
+        check(e.status_code in (403, 404), f"refused: {e.status_code}")
+
 
 SCENARIOS = [
     scenario_c1_a_work_stage_starts_itself,
@@ -287,6 +307,7 @@ SCENARIOS = [
     scenario_c8_dropping_the_project_mid_browse_drops_the_late_result,
     scenario_c9_a_build_stage_stopped_mid_row_runs_no_more_rows,
     scenario_c10_pausing_parks_the_work_and_resuming_continues_it,
+    scenario_c11_skip_and_stop_from_the_project_page,
 ]
 
 if __name__ == "__main__":

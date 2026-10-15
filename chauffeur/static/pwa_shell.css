@@ -169,7 +169,7 @@
 .pwa-feature-icon { color: var(--pwa-accent); }
 .pwa-page-heading { padding: 12px 20px 20px; align-items: start; justify-content: space-between; gap: 8px; flex-shrink: 0; }
 .pwa-page-heading[hidden] { display: none !important; }
-.pwa-page-heading h2, .pwa-directory h2 { font-size: 31px; line-height: 1.15; letter-spacing: -.9px; font-weight: 600; margin: 0 0 7px; }
+.pwa-page-heading h2, .pwa-directory h2, [data-audience="adult"] #projects-container .panel-page-title { font-size: 31px; line-height: 1.15; letter-spacing: -.9px; font-weight: 600; margin: 0 0 7px; }
 .pwa-page-heading p { font-size: 13px; color: rgb(var(--c-gray-400)); }
 .pwa-date-toggle { min-width: 44px; height: 44px; display: grid; place-items: center; color: rgb(var(--c-gray-400)); }
 [data-audience="adult"] #days-container > div { padding: 0 20px 28px; }
@@ -209,7 +209,9 @@
 .pwa-attention > svg { margin-left: auto; }
 [data-audience="adult"] #today-container { border-top: 1px solid rgb(var(--c-gray-800)); padding-top: 18px; margin-top: 24px; font-size: 13px; }
 .pwa-request-details summary, .pwa-balances summary { min-height: 44px; padding: 12px 0; cursor: pointer; color: rgb(var(--c-gray-400)); font-size: 13px; }
-[data-audience="adult"] [data-myday-program] { border: 0; border-bottom: 1px solid rgb(var(--c-gray-800)); border-radius: 0; background: none; opacity: 1; }
+[data-audience="adult"] :is([data-myday-program], [data-project-card]) { border: 0; border-bottom: 1px solid rgb(var(--c-gray-800)); border-radius: 0; background: none; opacity: 1; }
+[data-audience="adult"] [data-project-card] { padding: 14px 0; }
+[data-audience="adult"] [data-project-id] .text-sm { font-size: 15px; font-weight: 600; }
 [data-audience="adult"] [data-myday-program] > button { padding: 14px 0; gap: 13px; align-items: start; }
 [data-audience="adult"] [data-myday-program] > button > span:first-child:not(.flex-1) { width: 64px; font-size: 12px; font-weight: 400; letter-spacing: 0; color: rgb(var(--c-gray-400)); white-space: normal; }
 [data-audience="adult"] [data-myday-program] > button .truncate { white-space: normal; font-size: 15px; font-weight: 600; }

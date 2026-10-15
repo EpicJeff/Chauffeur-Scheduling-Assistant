@@ -6,8 +6,25 @@ function pwaChildStage() {
     const stage = kidCaps().stage;
     return ['sprout', 'explorer', 'navigator', 'copilot'].includes(stage) ? stage : 'explorer';
 }
+function pwaChildProjects(stage) {
+    const slot = document.getElementById('pwa-sprout-projects');
+    const host = document.getElementById('projects-container');
+    if (!slot || !host) return;
+    const component = host.querySelector('section[x-data]') || slot.querySelector('section[x-data]');
+    const sprout = stage === 'sprout';
+    const destination = sprout ? slot : host;
+    // Move the one Alpine island, keeping its cards and actions intact.
+    // Same mounting pattern as house_exterior.js's shared life surface.
+    if (component && component.parentNode !== destination) {
+        const move = () => destination.appendChild(component);
+        if (window.Alpine) Alpine.mutateDom(move); else move();
+    }
+    slot.hidden = !sprout;
+    window.dispatchEvent(new CustomEvent('chf-projects-context', {detail: sprout}));
+}
 function pwaChildSync() {
     const root = document.documentElement, stage = pwaChildStage();
+    pwaChildProjects(stage);
     if (!stage) {
         delete root.dataset.childStage; delete root.dataset.childPlan;
         pwaChildSync.member = null; pwaChildPlan = false; pwaChildDay = null;
@@ -27,7 +44,7 @@ function pwaChildSync() {
         heading.innerHTML = `<div><h2>${currentView === 'drives' ? 'Your drives' : stage === 'sprout' ? 'Your family' : 'Messages'}</h2><p>${currentView === 'drives' ? 'Your driving responsibilities.' : 'Your conversations and family updates.'}</p></div>`;
         delete heading.dataset.signature;
     }
-    const labels = {myday:'Today', chores:stage === 'sprout' ? 'My things' : 'Tasks',
+    const labels = {projects:'Projects', myday:'Today', chores:stage === 'sprout' ? 'My things' : 'Tasks',
         messages:stage === 'sprout' ? 'Family' : 'Messages', more:stage === 'sprout' ? 'My things' : 'More'};
     for (const [id, label] of Object.entries(labels)) document.querySelector(`#tab-${id} > span`).textContent = label;
     let plan = document.getElementById('tab-kidplan');
@@ -39,8 +56,9 @@ function pwaChildSync() {
         document.getElementById('tab-myday').after(plan);
     }
     plan.style.display = ['navigator', 'copilot'].includes(stage) && kidHorizonDays() > 0 ? 'flex' : 'none';
-    const order = stage === 'sprout' ? ['myday','kidplan','chores','more','messages','drives','family','map','music']
-        : ['myday', 'kidplan', 'chores', 'messages', 'more', 'drives', 'family', 'map', 'music'];
+    document.getElementById('tab-projects').style.display = ['navigator', 'copilot'].includes(stage) ? 'flex' : 'none';
+    const order = stage === 'sprout' ? ['myday','kidplan','chores','projects','more','messages','drives','family','map','music']
+        : ['myday', 'kidplan', 'chores', 'projects', 'messages', 'more', 'drives', 'family', 'map', 'music'];
     pwaOrderTabs(order);
     document.getElementById('tab-more').style.display = 'flex';
     document.getElementById('pwa-more-container').hidden = currentView !== 'more';
@@ -48,7 +66,7 @@ function pwaChildSync() {
     for (const id of order) {
         const active = id === 'kidplan' ? currentView === 'myday' && pwaChildPlan
             : id === 'myday' ? currentView === 'myday' && !pwaChildPlan
-            : id === 'more' ? ['more', 'map', 'music', 'drives'].includes(currentView) : id === currentView;
+            : id === 'more' ? ['more', 'map', 'music', 'drives'].includes(currentView) || (stage === 'explorer' && currentView === 'projects') : id === currentView;
         document.getElementById('tab-' + id).toggleAttribute('aria-current', active);
         if (active) document.getElementById('tab-' + id).setAttribute('aria-current', 'page');
     }

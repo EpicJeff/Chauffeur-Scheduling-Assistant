@@ -6057,6 +6057,25 @@ def project_set_state(project_id: str, body: dict, request: Request = None):
     return result
 
 
+@app.post("/api/projects/{project_id}/plan")
+def project_plan(project_id: str, request: Request = None):
+    from services import missions, projects, subjects
+    actor = _situation_viewer(request)
+    with storage.db_lock:
+        project = _project_for_actor(project_id, actor, writing=True)
+        if projects._child(actor):
+            raise HTTPException(status_code=403, detail="Ask a parent or adult to plan with Argyle")
+        if project.get('state') != 'active':
+            raise HTTPException(status_code=400, detail="Resume the project before planning")
+        result = missions.launch('Help me plan the next part of this project: ' + project['title'], created_by=actor['id'])
+        if result.get('status') != 'launched':
+            raise HTTPException(status_code=400, detail=result.get('message') or 'Could not start planning')
+        mid = result['mission_id']
+        storage.update_mission(mid, {'subject_kind': 'project', 'subject_id': project_id,
+                                    'subject_rev': 1, 'subject_history': subjects.history_after_binding({}, 'project', project_id)})
+        return {'status': 'success', 'mission_id': mid}
+
+
 @app.post("/api/projects/{project_id}/steps")
 def project_add_step(project_id: str, body: dict, request: Request = None):
     from services import projects
@@ -6099,6 +6118,45 @@ def project_step_state(project_id: str, step_id: str, body: dict, request: Reque
     if result['status'] == 'error':
         raise HTTPException(status_code=400, detail=result['message'])
     return result
+
+
+@app.post("/api/projects/{project_id}/steps/{step_id}/cancel")
+def project_step_cancel(project_id: str, step_id: str, body: dict, request: Request = None):
+    from services import missions, planned, projects
+    actor = _situation_viewer(request)
+    with storage.db_lock:
+        project = _project_for_actor(project_id, actor, writing=True)
+        step = next((s for s in project.get('steps') or [] if s['id'] == step_id), None)
+        if step is None:
+            raise HTTPException(status_code=404, detail="No such step")
+        if projects._child(actor):
+            raise HTTPException(status_code=403, detail="A child cannot cancel Argyle's work")
+        outcome = body.get('outcome')
+        if outcome not in ('skip', 'stop') or step.get('owner') != 'argyle' or step.get('state') != 'doing':
+            raise HTTPException(status_code=400, detail="Choose skip or stop on running Argyle work")
+        mid, sid = step.get('mission_id'), step.get('stage_id')
+        if sid:
+            result = (planned.cancel_stage(mid, sid, actor, 'skip') if outcome == 'skip'
+                      else planned.stop_plan(mid, actor))
+            if result.get('status') != 'success':
+                raise HTTPException(status_code=400, detail=result.get('message') or 'Could not cancel work')
+            return result
+        if mid and storage.get_mission(mid):
+            storage.set_app_state(f'mission_steer:{mid}', {'text': 'Stopped', 'ts': time.time()})
+            for ask in storage.get_mission_steps(mid):
+                if ask.get('kind') == 'ask':
+                    missions.settle_ask_cards(mid, ask['id'], 'Stopped')
+            missions._close(mid, 'dropped')
+        # Re-read: closing a mission updates its step through the engine hook.
+        project = storage.get_project(project_id)
+        step = next(s for s in project['steps'] if s['id'] == step_id)
+        projects._stamp_step(step, 'skipped' if outcome == 'skip' else 'blocked', actor['id'])
+        step['question'] = None if outcome == 'skip' else 'Stopped'
+        storage.update_project(project_id, {'steps': project['steps']})
+        if outcome == 'skip':
+            projects.resume_waiting(project_id)
+            projects.advance(project_id)
+        return {'status': 'success', 'step': step}
 
 
 @app.post("/api/projects/{project_id}/steps/{step_id}/hold")

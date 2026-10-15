@@ -62,12 +62,12 @@ function pwaSyncShell() {
         document.querySelector('.pwa-conversation-search input').value = '';
     }
     const labels = {drives: adult ? 'Today' : 'My Day', myday: adult ? 'Today' : 'My Day',
-        family: adult ? 'Plan' : 'Family', chores: adult ? 'Household' : 'House', messages:'Messages', more:'More'};
+        family: adult ? 'Plan' : 'Family', chores: adult ? 'Household' : 'House', messages:'Messages', projects:'Projects', more:'More'};
     Object.entries(labels).forEach(([id, label]) => {
         document.querySelector(`#tab-${id} > span`).textContent = label;
     });
     // Keep keyboard/reading order aligned with the visual tab order.
-    if (adult) pwaOrderTabs(['myday','drives','family','chores','messages','map','music','more']);
+    if (adult) pwaOrderTabs(['myday','drives','family','chores','projects','messages','map','music','more']);
     const more = document.getElementById('tab-more');
     more.style.display = adult ? 'flex' : 'none';
     document.getElementById('pwa-identity').setAttribute('aria-label', 'Your profile and preferences');
@@ -101,6 +101,9 @@ function pwaFeatures() {
         if (pwaAllowed(view)) items.push({id, title, description, run: () => setView(view)});
     };
     if (pwaChildStage() && selectedDriverId && kidCan('can_drive')) route('drives', 'My drives', 'Your driving responsibilities', 'drives');
+    // Explorer reaches the same view from More, with no extra tab.
+    if (pwaChildStage() === 'explorer' || (pwaChildStage() !== 'sprout' && pwaAllowed('projects')))
+        items.push({id: 'projects', title: 'Projects', description: 'Your goals, steps and linked records', run: () => setView('projects')});
     route('map', 'Family map', 'Find shared locations and driving progress', 'map');
     route('music', 'Music', 'Favorites and household listening', 'music');
     const rewards = chfFeatureOn('rewards');
@@ -283,6 +286,7 @@ function pwaIcon(name) {
         map: '<path d="m3 5 6-2 6 2 6-2v16l-6 2-6-2-6 2V5Zm6-2v16m6-14v16"/>',
         music: '<path d="M9 18V5l11-2v13M9 8l11-2"/><ellipse cx="6" cy="18" rx="3" ry="2"/><ellipse cx="17" cy="16" rx="3" ry="2"/>',
         critter: '<path d="M5 10V5l5 3h4l5-3v5c4 11-18 11-14 0Z"/><path d="M9 12h.01M15 12h.01M10 16h4"/>',
+        projects: '<path d="M4 5h16v14H4zM8 9h8M8 13h5"/>',
         programs: '<path d="M12 5v16M3 3c4 0 6 0 9 2 3-2 5-2 9-2v16c-4 0-6 0-9 2-3-2-5-2-9-2V3Z"/>',
         profile: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',
         theme: '<path d="M20.5 13a8.5 8.5 0 0 1-9.5-9.5A8.5 8.5 0 1 0 20.5 13Z"/>',

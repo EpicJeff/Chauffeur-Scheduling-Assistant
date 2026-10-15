@@ -1214,6 +1214,8 @@
                     x-text="open.length ? open.length + ' to buy' : 'nothing to buy'"></span>
             </div>
 
+            <div class="text-xs text-gray-400 mb-3" x-effect="window.chfPartOf('list', activeId, $el, !isKiosk)"></div>
+
             <!-- ===== Add row ===== -->
             <div class="flex gap-2 mb-6" x-show="!isKiosk">
                 <input x-model="draft" @keydown.enter="addItem()" type="text"
@@ -1764,6 +1766,7 @@
          the three card wrappers the board mounts. Script-only emission — the
          markup they serve is rendered by the macros above and, on a board, by
          board_tile_body. -->
+    <script src="{{ 'static/project_links.js'|ver }}"></script>
     {% include 'components/shopping_lists.html' %}
 
     <script>

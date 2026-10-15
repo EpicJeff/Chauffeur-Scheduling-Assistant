@@ -438,6 +438,9 @@
         </div>
 
         {% include 'components/pwa_shell.html' %}
+        <div id="projects-container" class="flex-1 flex-col min-h-0 overflow-y-auto" style="display: none">
+            {% include 'components/projects_page.html' %}
+        </div>
         <!-- Bottom Tab Bar -->
         <div id="pwa-tab-bar" role="navigation" aria-label="Main navigation" class="flex bg-gray-900 border-t border-gray-800 shrink-0 z-10 shadow-nav"
             style="padding-bottom: env(safe-area-inset-bottom)">
@@ -506,6 +509,11 @@
                         d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z"></path>
                 </svg>
                 <span class="text-xs font-bold tracking-wide">Music</span>
+            </button>
+            <button id="tab-projects" onclick="setView('projects')" style="display: none"
+                class="flex-1 flex-col items-center gap-0.5 pt-2.5 pb-2 text-gray-500 transition-colors">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"/></svg>
+                <span class="text-xs font-bold tracking-wide">Projects</span>
             </button>
             <button id="tab-more" onclick="setView('more')" style="display: none"
                 class="flex-1 flex-col items-center gap-0.5 pt-2.5 pb-2 text-gray-500 transition-colors">
@@ -773,6 +781,7 @@
 
     <script>
         const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+        window.chfBase = apiBase;
         let driversData = [];
         let membersData = [];
         let scheduleData = null;
@@ -842,6 +851,7 @@
         function setView(view, focusMemberId = null) {
             if (view !== 'messages') window.ChauffeurPhoneVoice?.stop(false);
             if (pwaChildStage()) {
+                if (view === 'projects' && pwaChildStage() === 'sprout') view = 'more';
                 if (view === 'family') {
                     if (kidHorizonDays() > 0) { pwaChildOpenPlan(); return; }
                     view = 'myday';
@@ -857,7 +867,9 @@
             localStorage.setItem('chauffeur_view', view);
             updateTabBar();
             applyViewVisibility();
-            if (view === 'messages') {
+            if (view === 'projects') {
+                window.dispatchEvent(new CustomEvent('chf-projects-open'));
+            } else if (view === 'messages') {
                 fetchChannels();
             } else if (view === 'map') {
                 initFamilyMap(focusMemberId);
@@ -885,8 +897,10 @@
             const isMyDay = currentView === 'myday';
             const isMusic = currentView === 'music';
             const isChores = currentView === 'chores';
-            const isTimeline = !isMessages && !isMap && !isMyDay && !isMusic && !isChores && currentView !== 'more';
+            const isProjects = currentView === 'projects';
+            const isTimeline = !isProjects && !isMessages && !isMap && !isMyDay && !isMusic && !isChores && currentView !== 'more';
             pwaSyncShell();
+            document.getElementById('projects-container').style.display = isProjects ? 'flex' : 'none';
             document.getElementById('chores-container').style.display = isChores ? 'flex' : 'none';
             document.getElementById('days-container').style.display = isTimeline ? 'flex' : 'none';
             const nav = document.getElementById('day-nav');
@@ -947,7 +961,7 @@
         }
 
         function updateTabBar() {
-            ['myday', 'drives', 'family', 'messages', 'chores', 'map', 'music'].forEach(v => {
+            ['myday', 'drives', 'family', 'messages', 'chores', 'map', 'music', 'projects'].forEach(v => {
                 const tab = document.getElementById(`tab-${v}`);
                 if (!tab) return;
                 tab.classList.toggle('text-blue-400', v === currentView);
@@ -992,6 +1006,7 @@
             // empty page about a schedule that is not theirs, and every
             // other door is closed by their scope map anyway.
             const guest = currentMemberRole() === 'guest';
+            document.getElementById('tab-projects').style.display = selectedMemberId && !helper && !guest ? 'flex' : 'none';
             const keepingUp = isKeepingUpAdult();
             document.getElementById('tab-myday').style.display = ((passenger || currentMemberRole() === 'child') && !helper && !guest && !keepingUp) ? 'flex' : 'none';
             document.getElementById('tab-drives').style.display = (passenger || !kidCan('can_drive')) ? 'none' : 'flex';
@@ -1017,9 +1032,9 @@
             // asynchronously, from what the server actually returned.
             if (choresHiddenByRules && !helper) houseMaybeRevealForLists();
             const hiddenNow = helper
-                ? ['family', 'map', 'music', 'myday', 'chores']
+                ? ['family', 'map', 'music', 'myday', 'chores', 'projects']
                 : guest
-                    ? ['drives', 'family', 'map', 'music', 'myday', 'chores']
+                    ? ['drives', 'family', 'map', 'music', 'myday', 'chores', 'projects']
                     : keepingUp
                         ? ['drives', 'myday'].concat(keepingUpSpectator ? ['chores'] : [])
                         : (passenger ? ['drives', 'family'] : ['myday']);
@@ -1032,6 +1047,10 @@
                 if (!hiddenNow.includes('family')) hiddenNow.push('family');
                 if (!kidCan('can_drive')) hiddenNow.push('drives');
             }
+            if (currentView === 'projects' && pwaChildStage() === 'sprout') {
+                currentView = 'more';
+                localStorage.setItem('chauffeur_view', currentView);
+            }
             if (hiddenNow.includes(currentView)) {
                 // The keeping-up adult LANDS on Family — it is what they
                 // opened the app for. A guest lands on Messages, for the
@@ -1041,6 +1060,7 @@
                     : (passenger && !helper ? 'myday' : 'drives');
                 localStorage.setItem('chauffeur_view', currentView);
             }
+            window.dispatchEvent(new CustomEvent('chf-projects-open'));
             updateTabBar();
             applyViewVisibility();
             applyKidShell();
@@ -3860,7 +3880,7 @@
                     // Capture-prompt deeplink: arm the camera affordance.
                     if (params.get('compose') === 'moment') armMomentCapture();
                 });
-            } else if (['messages', 'chores', 'family'].includes(params.get('view')) && selectedMemberId) {
+            } else if (['messages', 'chores', 'family', 'projects'].includes(params.get('view')) && selectedMemberId) {
                 setView(params.get('view'));
             } else if (currentView === 'chores') {
                 fetchChores();  // restored from localStorage: setView early-returns

@@ -20,6 +20,7 @@
     {% include 'nav.html' %}
 
     <div class="flex-1 overflow-y-auto bg-gray-900/50">
+<script src="{{ 'static/project_links.js'|ver }}"></script>
 <div x-data="occasionsPage()" x-init="load()" class="panel-page max-w-5xl mx-auto px-4 py-6">
 
     <div class="flex items-baseline justify-between gap-3 mb-1">
@@ -126,6 +127,7 @@
                     <button @click="removeOccasion(o)" class="text-gray-600 hover:text-red-400 shrink-0">✕</button>
                 </div>
 
+                <div class="text-xs text-gray-400 mt-1" x-init="window.chfPartOf('occasion', o.id, $el)"></div>
                 <div class="text-xs text-indigo-300 mt-1" x-show="(o._argyle || []).length" x-cloak>
                     <template x-for="row in (o._argyle || [])" :key="row.kind + ':' + row.id">
                         <div><a :href="apiBase + 'threads'" class="underline underline-offset-2"

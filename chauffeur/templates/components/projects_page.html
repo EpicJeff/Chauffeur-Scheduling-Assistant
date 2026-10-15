@@ -1,44 +1,269 @@
-{# Shared project list. The host supplies nav, control center and hearth. #}
-<section x-data="projectsPage()" x-init="load()"
-         class="panel-page max-w-2xl mx-auto px-4 py-6" x-cloak>
+{# One builder for /work, /projects and the phone app. Hosts own chrome.
+   Programs supplies the disclosure, card, checklist, form and chip vocabulary. #}
+<section x-data="projectsPage()" x-init="load()" @chf-projects-open.window="load()"
+         @chf-projects-context.window="sproutSection = $event.detail" x-show="!sproutSection || shownProjects.length > 0"
+         @chf-admin-ready.window="load()" class="panel-page w-full max-w-2xl mx-auto px-4 py-6" x-cloak>
     <h2 class="panel-page-title">Projects</h2>
     <p class="text-xs text-gray-500 italic px-1" x-show="loading">Loading projects…</p>
     <p class="text-xs text-gray-500 italic px-1" x-show="error" x-text="error" role="status"></p>
-    <p class="text-xs text-gray-500 italic px-1" x-show="!loading && !error && !projects.length">No projects yet.</p>
-    <div class="space-y-2">
-        <template x-for="project in projects" :key="project.id">
-            <div class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
-                <div class="flex items-start justify-between gap-2">
-                    <div class="text-sm font-bold text-gray-100" x-text="project.title"></div>
-                    <span class="text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 bg-gray-700 text-gray-300"
-                          x-text="project.state"></span>
-                </div>
-            </div>
+    <div class="bg-gray-800 rounded-2xl border border-gray-700 p-4 mb-6">
+        <button type="button" data-new-project @click="creating = !creating" :aria-expanded="creating"
+                class="w-full flex items-center justify-between text-sm font-bold text-gray-200">
+            <span>+ New project</span><span class="text-gray-500 text-xs" x-text="creating ? 'Hide' : 'Show'"></span>
+        </button>
+        <template x-if="creating">
+            <form class="mt-3 space-y-2.5" @submit.prevent="create()">
+                <label class="block text-xs text-gray-400">Title
+                    <input name="title" required x-model="draft.title" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm">
+                </label>
+                <label class="block text-xs text-gray-400">Goal
+                    <textarea name="goal" x-model="draft.goal" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm"></textarea>
+                </label>
+                <label class="block text-xs text-gray-400">Done when
+                    <textarea name="done_when" x-model="draft.done_when" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm"></textarea>
+                </label>
+                <template x-if="isParent()">
+                    <label class="block text-xs text-gray-400">Owner
+                        <select name="owner_member_id" x-model="draft.owner_member_id" @change="defaultAudience()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm">
+                            <template x-for="m in owners()" :key="m.id"><option :value="m.id" x-text="m.name"></option></template>
+                        </select>
+                    </label>
+                </template>
+                <label class="block text-xs text-gray-400">Who can see it
+                    <select name="audience" x-model="draft.audience" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm">
+                        <option value="private">Private</option><option value="parents">Parents</option><option value="household">Household</option>
+                    </select>
+                </label>
+                <label class="block text-xs text-gray-400">Target date (optional)
+                    <input name="target_date" type="date" x-model="draft.target_date" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm">
+                </label>
+                <button data-create-project :disabled="!!busy" class="w-full text-sm font-bold px-3 py-2 rounded-lg bg-teal-700 text-white active:bg-teal-800 disabled:opacity-50">Create project</button>
+            </form>
         </template>
     </div>
-
-    <script>
-        function projectsPage() {
-            return {
-                apiBase: (window.chfBase !== undefined ? window.chfBase : ''),
-                projects: [],
-                loading: true,
-                error: '',
-                async load() {
-                    this.loading = true;
-                    this.error = '';
-                    try {
-                        const response = await fetch(this.apiBase + 'api/projects');
-                        if (!response.ok) throw new Error('Could not load projects.');
-                        this.projects = (await response.json()).projects || [];
-                    } catch (e) {
-                        this.projects = [];
-                        this.error = 'Could not load projects.';
-                    } finally {
-                        this.loading = false;
-                    }
-                }
-            };
-        }
-    </script>
+    <p class="text-xs text-gray-500 italic px-1" x-show="!loading && !error && !shownProjects.length">No projects yet.</p>
+    <div class="space-y-2">
+        <template x-for="project in shownProjects" :key="project.id">
+            <article data-project-card class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
+                <button type="button" :data-project-id="project.id" @click="open(project)" :aria-expanded="opened === project.id" class="w-full text-left">
+                    <span class="flex items-start justify-between gap-2">
+                        <span class="text-sm font-bold text-gray-100" x-text="project.title"></span>
+                        <span class="text-xs font-bold px-1.5 py-0.5 rounded shrink-0" :class="chip(project.state)" x-text="project.state"></span>
+                    </span>
+                    <span class="block text-xs text-gray-400 mt-1" x-text="project.next_step ? project.next_step.title : ''"></span>
+                    <span class="block text-xs text-gray-500 mt-1" x-text="project.steps_done + ' of ' + project.steps_total + ' done'"></span>
+                </button>
+                <template x-if="opened === project.id">
+                    <div class="mt-3 space-y-2.5">
+                        <p class="text-sm text-gray-300"><span class="text-gray-500">Goal: </span><span x-text="project.goal"></span></p>
+                        <p class="text-sm text-gray-300"><span class="text-gray-500">Done when: </span><span x-text="project.done_when"></span></p>
+                        <p class="text-xs text-gray-500" x-show="project.target_date" x-text="project.target_date ? 'Target: ' + project.target_date : ''"></p>
+                        <ol class="space-y-1">
+                            <template x-for="step in ordered(project)" :key="step.id">
+                                <li :data-step-id="step.id" class="text-xs bg-gray-950/60 border border-gray-800 rounded-lg px-2.5 py-1.5 space-y-1">
+                                    <div class="flex items-start justify-between gap-2">
+                                        <div class="min-w-0">
+                                            <div class="font-semibold text-gray-300" x-text="step.title"></div>
+                                            <div class="text-gray-500"><span x-text="step.owner_label"></span><span x-text="step.due_date ? ' · Due ' + step.due_date : ''"></span></div>
+                                        </div>
+                                        <template x-if="step.owner !== 'argyle' && step.can_edit">
+                                            <button type="button" :data-step-tick="step.id" @click="tick(project, step)" :disabled="!!busy"
+                                                    :aria-pressed="step.state === 'done'" :aria-label="(step.state === 'done' ? 'Reopen ' : 'Complete ') + step.title"
+                                                    class="text-xs font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 disabled:opacity-50"
+                                                    x-text="step.state === 'done' ? '✓ Done' : 'Tick'"></button>
+                                        </template>
+                                    </div>
+                                    <div class="text-gray-400" x-text="stepState(step.state)"></div>
+                                    <template x-if="step.owner === 'argyle'">
+                                        <div class="space-y-1">
+                                            <template x-for="(line, i) in foundLines(step.found)" :key="i"><p class="text-gray-300" x-text="line"></p></template>
+                                            <p class="text-gray-300" x-show="step.question" x-text="step.question ? 'Argyle needs you: ' + step.question : ''"></p>
+                                            <template x-if="step.mission_id && !isChild()"><a :href="apiBase + 'missions?id=' + encodeURIComponent(step.mission_id)" class="text-blue-400 underline underline-offset-2">Open Argyle’s work and answer</a></template>
+                                            <template x-if="step.state === 'doing' && step.can_cancel">
+                                                <div class="flex flex-wrap gap-2">
+                                                    <button type="button" :data-step-skip="step.id" @click="cancel(project, step, 'skip')" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Skip</button>
+                                                    <button type="button" :data-step-stop="step.id" @click="cancel(project, step, 'stop')" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Stop</button>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </template>
+                                    <template x-if="step.owner !== 'argyle'">
+                                        <div class="space-y-1">
+                                            <p class="text-gray-400" x-show="step.hold" x-text="step.hold ? 'On the calendar: ' + windowLabel(step.hold) : ''"></p>
+                                            <template x-if="step.can_edit">
+                                                <div class="flex flex-wrap gap-2">
+                                                    <button type="button" :data-step-hold="step.id" @click="suggest(project, step)" :disabled="!!busy" class="text-xs font-semibold text-gray-500 underline underline-offset-2">Put it on the calendar</button>
+                                                    <template x-if="step.hold"><button type="button" @click="writeStep(project, step, 'hold/clear', {})" :disabled="!!busy" class="text-xs font-semibold text-gray-500 underline underline-offset-2">Clear time</button></template>
+                                                </div>
+                                            </template>
+                                            <template x-if="hold && hold.projectId === project.id && hold.stepId === step.id">
+                                                <div class="mt-2 space-y-2">
+                                                    <p class="text-gray-300" x-text="hold ? (hold.window ? windowLabel(hold.window) : hold.message) : ''"></p>
+                                                    <div class="flex flex-wrap gap-2">
+                                                        <template x-if="hold && hold.window"><button type="button" data-hold-confirm @click="keepHold(project, step)" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800">Keep this time</button></template>
+                                                        <button type="button" @click="pickTime()" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Pick another time</button>
+                                                        <button type="button" @click="hold = null" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Cancel</button>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </template>
+                                </li>
+                            </template>
+                        </ol>
+                        <template x-if="project.can_act"><button type="button" @click="addStep(project)" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Add a step</button></template>
+                        <div class="space-y-1">
+                            <div class="text-sm font-bold text-gray-300">Pieces</div>
+                            <p class="text-xs text-gray-500 italic" x-show="!project.pieces.length">No pieces attached yet.</p>
+                            <template x-for="piece in project.pieces" :key="piece.kind + ':' + piece.id"><div><a :href="apiBase + piece.link" class="text-xs text-blue-400 underline underline-offset-2" x-text="piece.title"></a></div></template>
+                        </div>
+                        <div class="space-y-1">
+                            <div class="text-sm font-bold text-gray-300">Conversations</div>
+                            <p class="text-xs text-gray-500 italic" x-show="!(conversations[project.id] || []).length">No conversations here yet.</p>
+                            <template x-for="row in (conversations[project.id] || [])" :key="row.kind + ':' + row.id"><div><a :href="apiBase + (row.kind === 'thread' ? 'threads' : 'missions') + '?id=' + encodeURIComponent(row.id)" class="text-xs text-blue-400 underline underline-offset-2" x-text="row.title"></a></div></template>
+                        </div>
+                        <template x-if="project.can_act">
+                            <div class="flex flex-wrap gap-2 mt-2.5">
+                                <template x-if="!isChild() && project.state === 'active'"><button type="button" @click="plan(project)" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Plan it with Argyle</button></template>
+                                <template x-if="project.state === 'active'"><button type="button" @click="state(project, 'paused', 'Pause')" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Pause</button></template>
+                                <template x-if="project.state === 'paused'"><button type="button" @click="state(project, 'active', 'Resume')" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800">Resume</button></template>
+                                <template x-if="['active', 'paused'].includes(project.state)"><button type="button" @click="state(project, 'done', 'Mark done')" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-700 text-white active:bg-emerald-800">Done</button></template>
+                                <template x-if="['active', 'paused'].includes(project.state)"><button type="button" @click="state(project, 'dropped', 'Drop')" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Drop</button></template>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+            </article>
+        </template>
+    </div>
 </section>
+<script>
+function projectsPage() {
+    return {
+        apiBase: window.chfBase !== undefined ? window.chfBase : '',
+        projects: [], members: [], myId: '', loading: false, busy: false, error: '',
+        creating: false, opened: null, hold: null, conversations: {},
+        sproutSection: document.documentElement.dataset.childStage === 'sprout',
+        get shownProjects() { return this.sproutSection ? this.projects.filter(p => p.owner_member_id === this.myId) : this.projects; },
+        draft: {title: '', goal: '', done_when: '', audience: 'private', owner_member_id: '', target_date: ''},
+        headers() {
+            const token = window.chfPersonToken ? window.chfPersonToken() : localStorage.getItem('chauffeur_member_token');
+            return {'Content-Type': 'application/json', ...(token ? {'X-Member-Token': token} : {})};
+        },
+        async request(path, body, method = 'POST') {
+            const r = await fetch(this.apiBase + path, {method: body === undefined ? 'GET' : method,
+                headers: this.headers(), ...(body === undefined ? {} : {body: JSON.stringify(body)})});
+            const data = await r.json();
+            if (!r.ok || ['error','refused'].includes(data.status)) throw new Error(data.detail || data.message || 'Could not complete that request.');
+            return data;
+        },
+        isChild() { const m = this.members.find(m => m.id === this.myId); return !!m && (m.role === 'child' || !!m.is_child); },
+        isParent() { return !this.isChild() && this.members.some(m => m.id === this.myId && m.role === 'parent'); },
+        owners() { return this.members.filter(m => ['parent','adult','child'].includes(m.role) && (m.status || 'active') === 'active' && !m.system); },
+        defaultAudience() { const m = this.members.find(m => m.id === this.draft.owner_member_id); this.draft.audience = m && (m.role === 'child' || m.is_child) ? 'parents' : 'private'; },
+        async load() {
+            this.loading = true; this.error = '';
+            const who = window.chfPersonId ? window.chfPersonId() : localStorage.getItem('chauffeur_member_id') || '';
+            if (this.myId !== who) {
+                this.projects = []; this.members = []; this.opened = null; this.hold = null; this.conversations = {};
+                this.creating = false;
+                this.draft = {title:'', goal:'', done_when:'', audience:'private', owner_member_id:who, target_date:''};
+            }
+            this.myId = who;
+            try {
+                const [data, members] = await Promise.all([this.request('api/projects'), this.request('api/members')]);
+                if (this.myId !== who) return;
+                this.projects = data.projects || []; this.members = members;
+                if (!this.draft.owner_member_id || !this.creating) { this.draft.owner_member_id = who; this.defaultAudience(); }
+                const id = new URLSearchParams(window.location.search).get('id');
+                if (id && !this.opened) { const p = this.projects.find(p => p.id === id); if (p) await this.open(p); }
+            } catch (e) { this.projects = []; this.error = e.message; }
+            finally { this.loading = false; }
+        },
+        async open(p) {
+            if (this.opened === p.id) { this.opened = null; this.hold = null; return; }
+            try {
+                const data = await this.request('api/projects/' + encodeURIComponent(p.id));
+                this.projects = this.projects.map(row => row.id === p.id ? data.project : row);
+                this.opened = p.id; this.hold = null;
+                if (!this.isChild()) await this.openConversations(p);
+            } catch (e) { this.error = e.message; }
+        },
+        ordered(p) { return [...p.steps].sort((a,b) => a.order - b.order); },
+        chip(state) { return {active:'bg-teal-500/20 text-teal-300', paused:'bg-amber-500/20 text-amber-300'}[state] || 'bg-gray-700 text-gray-300'; },
+        foundLines(value, label = '') {
+            if (value === null || value === undefined || value === '') return [];
+            if (Array.isArray(value)) return value.flatMap(v => this.foundLines(v, label));
+            if (typeof value === 'object') return Object.entries(value).flatMap(([k,v]) => this.foundLines(v, k.replace(/_/g, ' ')));
+            return [(label ? label + ': ' : '') + String(value)];
+        },
+        stepState(state) { return {todo:'To do', doing:'In progress', done:'Done', skipped:'Skipped', blocked:'Needs you'}[state] || state; },
+        windowLabel(w) {
+            const date = new Date(w.date + 'T12:00:00').toLocaleDateString(undefined,
+                {weekday:'short', month:'short', day:'numeric'});
+            const time = value => window.formatClock ? window.formatClock(value)
+                : new Date(w.date + 'T' + value).toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'});
+            return date + ', ' + time(w.start) + '–' + time(w.end);
+        },
+        async mutate(path, body) {
+            if (this.busy) return false;
+            this.busy = true; this.error = '';
+            try { await this.request(path, body); await this.load(); return true; }
+            catch (e) { this.error = e.message; return false; }
+            finally { this.busy = false; }
+        },
+        async create() {
+            if (this.busy) return;
+            this.busy = true; this.error = '';
+            try {
+                const d = await this.request('api/projects', {...this.draft, target_date: this.draft.target_date || null});
+                this.creating = false; this.opened = d.project.id;
+                this.draft = {title:'', goal:'', done_when:'', audience:'private', owner_member_id:this.myId, target_date:''};
+                await this.load();
+            } catch (e) { this.error = e.message; }
+            finally { this.busy = false; }
+        },
+        stepPath(p,s) { return 'api/projects/' + encodeURIComponent(p.id) + '/steps/' + encodeURIComponent(s.id) + '/'; },
+        writeStep(p,s,path,body) { return this.mutate(this.stepPath(p,s) + path, body); },
+        tick(p,s) { return this.writeStep(p,s,'state',{state: s.state === 'done' ? 'todo' : 'done'}); },
+        async cancel(p,s,outcome) {
+            if (await promptConfirm(outcome === 'skip' ? 'Skip this step?' : 'Stop this work?', outcome === 'skip' ? 'This ends this step and lets its dependent steps go on.' : 'This stops the work and leaves this step blocked.', outcome === 'skip' ? 'Skip' : 'Stop', 'Cancel'))
+                await this.writeStep(p,s,'cancel',{outcome});
+        },
+        async suggest(p,s) {
+            this.error = '';
+            try { const d = await this.request(this.stepPath(p,s) + 'hold', {}); this.hold = {projectId:p.id, stepId:s.id, window:d.window, message:d.message || ''}; }
+            catch (e) { this.error = e.message; }
+        },
+        async pickTime() {
+            const hold = this.hold;
+            const text = await promptInput('Pick another time', 'Enter a date and start and end times: YYYY-MM-DD HH:MM HH:MM.', {value:hold.window ? hold.window.date + ' ' + hold.window.start + ' ' + hold.window.end : '', placeholder:'YYYY-MM-DD HH:MM HH:MM', okText:'Use this time'});
+            if (text === null || this.hold !== hold) return;
+            const parts = text.trim().split(/\s+/);
+            if (parts.length !== 3 || !/^\d{4}-\d{2}-\d{2}$/.test(parts[0]) || !parts.slice(1).every(t => /^\d{2}:\d{2}$/.test(t))) { this.error = 'Use YYYY-MM-DD HH:MM HH:MM.'; return; }
+            this.hold.window = {date:parts[0], start:parts[1], end:parts[2]};
+        },
+        async keepHold(p,s) { if (await this.writeStep(p,s,'hold',this.hold.window)) this.hold = null; },
+        async state(p,state,label) {
+            if (await promptConfirm(label + ' this project?', ['done','dropped'].includes(state) ? 'Argyle’s running work ends. Pieces and records stay.' : state === 'paused' ? 'Argyle’s work pauses until you resume.' : 'Argyle’s ready work can continue.', label, 'Cancel'))
+                await this.mutate('api/projects/' + encodeURIComponent(p.id) + '/state', {state});
+        },
+        async addStep(p) {
+            const title = await promptInput('Add a step', 'What needs doing?');
+            if (!title || !title.trim()) return;
+            const options = this.isChild() ? [{value:this.myId,label:'Me'}] : [...this.owners().map(m => ({value:m.id,label:m.name})), {value:'argyle',label:'Argyle'}];
+            const owner = await promptChoice('Who will do it?', '', options);
+            if (!owner) return;
+            let goal = '';
+            if (owner === 'argyle') { goal = await promptInput('Argyle’s goal', 'What should Argyle find or do?'); if (!goal) return; }
+            await this.mutate('api/projects/' + encodeURIComponent(p.id) + '/steps', {title:title.trim(), owner, goal});
+        },
+        async plan(p) {
+            if (await promptConfirm('Plan it with Argyle?', 'Argyle will help plan the next part. You approve the plan before its steps are added.', 'Plan it', 'Cancel')) {
+                if (await this.mutate('api/projects/' + encodeURIComponent(p.id) + '/plan', {})) await this.openConversations(p);
+            }
+        },
+        async openConversations(p) { try { this.conversations[p.id] = await this.request('api/subjects/project/' + encodeURIComponent(p.id) + '/situations'); } catch (e) { this.error = e.message; } }
+    };
+}
+</script>

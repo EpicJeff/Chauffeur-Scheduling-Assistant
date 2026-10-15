@@ -220,7 +220,7 @@ def run():
                     assert not page.locator('#kiosk-chat-fab').is_visible()
                     assert page.locator('header').bounding_box()['height'] <= 72
                     if key == 'parent':
-                        assert len(tabs) == 5, tabs
+                        assert len(tabs) == 6, tabs   # Projects joined the bar (Projects core, 2026-10-15)
                         page.wait_for_selector('.pwa-next')
                         original = page.locator('.pwa-leg-row[data-next="upcoming"]').first
                         time_label = original.get_attribute('data-time-label')

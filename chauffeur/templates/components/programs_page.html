@@ -2,6 +2,7 @@
    lesson player and its done-listener flag, and the Alpine island.
    Included by the standalone /programs wrapper AND by /rhythms —
    nav/control_center/hearth chrome belongs to the HOST page. #}
+<script src="{{ 'static/project_links.js'|ver }}"></script>
 {% from 'components/settings_drawer.html' import settings_drawer, settings_section, settings_off with context %}
     <!-- This page turns a finished session into a write (onLessonDone,
          bound below via @lesson-player:done.window) -- announced here,
@@ -272,6 +273,7 @@
                                 </div>
                                 <div class="text-[11px] text-gray-500 mt-1" x-text="memberName(p.member_id)"></div>
 
+                                <div class="text-xs text-gray-400 mt-1" x-init="window.chfPartOf('program', p.id, $el, false)"></div>
                                 <!-- Where the plan came from. Three tiers, each said plainly:
                                      a real published program, a plan the app wrote itself, or
                                      no plan at all. One label for all three read as "written by

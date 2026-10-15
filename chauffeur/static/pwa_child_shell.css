@@ -29,7 +29,7 @@
 [data-child-stage] #pwa-page-heading h2 { font-size:1.9375rem; }
 [data-child-stage] #myday-content > * { margin-top:0; margin-bottom:20px; }
 .child-greeting { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 0; }
-.child-greeting h1,.child-page-heading h1 { font-size:1.9375rem; line-height:1.15; letter-spacing:-1px; font-weight:650; }
+.child-greeting h1,.child-page-heading h1,[data-child-stage] #projects-container .panel-page-title { font-size:1.9375rem; line-height:1.15; letter-spacing:-1px; font-weight:650; }
 .child-greeting p,.child-page-heading p { margin-top:9px; font-size:0.8125rem; color:rgb(var(--c-gray-400)); }
 .child-companion { width:76px; height:80px; flex-shrink:0; border:0; background:transparent; }
 .child-companion img { height:100%; width:100%; object-fit:contain; }
@@ -72,7 +72,7 @@
 .child-done label > span { text-decoration:line-through; color:rgb(var(--c-gray-400)); }
 .child-all-routine summary { min-height:48px; padding-block:12px; cursor:pointer; font-size:0.875rem; color:var(--pwa-accent); }
 .child-section-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
-.child-section-heading h2,.child-programs > h2 { font-size:1.0625rem; font-weight:600; }
+.child-section-heading h2,.child-programs > h2,[data-child-stage] #pwa-sprout-projects .panel-page-title { font-size:1.0625rem; font-weight:600; }
 .child-section-heading button { min-height:48px; color:var(--pwa-accent); font-size:0.8125rem; }
 .child-agenda-row { display:flex; width:100%; gap:14px; align-items:center; min-height:80px; padding:16px 0; border-bottom:1px solid rgb(var(--c-gray-800)); text-align:left; }
 .child-agenda-row time { width:64px; flex-shrink:0; font-size:0.8125rem; color:rgb(var(--c-gray-400)); }
