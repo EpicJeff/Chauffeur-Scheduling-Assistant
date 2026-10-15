@@ -74,6 +74,7 @@ INDEX_SPEC = {
     # Household tasks (load arc A2). Read by owner ("what's on my plate") and
     # by status on every sweep.
     "household_tasks": [["id"], ["assigned_to"], ["status"]],
+    "projects": [["id"], ["owner_member_id"]],
     # Requests (load arc A3): read by who owes an answer and by who is waiting.
     "requests": [["id"], ["to_member"], ["from_member"], ["status"]],
     "protected_commitments": [["id"], ["member_id"]],

@@ -255,6 +255,8 @@ RULES = [
     # Programs: same admin-page shape as Threads/Mind — a shell anyone can
     # load, the data behind it gated at /api/programs* above.
     (ANY, '/programs', ANYONE, None),
+    # Projects share the public shell; /api/projects* requires a signed-in member.
+    (ANY, '/projects', ANYONE, None),
 
     # FastAPI's generated docs. Found UNCLASSIFIED by the S1 test, which is
     # the first thing it caught and on its own worth the file: `/docs` is a
@@ -405,6 +407,9 @@ RULES = [
     (ANY, '/api/situations', SIGNED_IN, None),
     (ANY, '/api/situations/*', SIGNED_IN, None),
     (ANY, '/api/subjects/*', SIGNED_IN, None),
+    # Projects apply the owner's audience and action permissions in the service.
+    (ANY, '/api/projects', SIGNED_IN, None),
+    (ANY, '/api/projects/*', SIGNED_IN, None),
     (ANY, '/api/asks', SIGNED_IN, None),
     (ANY, '/api/asks/*', SIGNED_IN, None),
     # Missions: reads for any signed-in member; launching/approving/answering

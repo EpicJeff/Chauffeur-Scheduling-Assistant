@@ -1,0 +1,44 @@
+{# Shared project list. The host supplies nav, control center and hearth. #}
+<section x-data="projectsPage()" x-init="load()"
+         class="panel-page max-w-2xl mx-auto px-4 py-6" x-cloak>
+    <h2 class="panel-page-title">Projects</h2>
+    <p class="text-xs text-gray-500 italic px-1" x-show="loading">Loading projects…</p>
+    <p class="text-xs text-gray-500 italic px-1" x-show="error" x-text="error" role="status"></p>
+    <p class="text-xs text-gray-500 italic px-1" x-show="!loading && !error && !projects.length">No projects yet.</p>
+    <div class="space-y-2">
+        <template x-for="project in projects" :key="project.id">
+            <div class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
+                <div class="flex items-start justify-between gap-2">
+                    <div class="text-sm font-bold text-gray-100" x-text="project.title"></div>
+                    <span class="text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 bg-gray-700 text-gray-300"
+                          x-text="project.state"></span>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <script>
+        function projectsPage() {
+            return {
+                apiBase: (window.chfBase !== undefined ? window.chfBase : ''),
+                projects: [],
+                loading: true,
+                error: '',
+                async load() {
+                    this.loading = true;
+                    this.error = '';
+                    try {
+                        const response = await fetch(this.apiBase + 'api/projects');
+                        if (!response.ok) throw new Error('Could not load projects.');
+                        this.projects = (await response.json()).projects || [];
+                    } catch (e) {
+                        this.projects = [];
+                        this.error = 'Could not load projects.';
+                    } finally {
+                        this.loading = false;
+                    }
+                }
+            };
+        }
+    </script>
+</section>

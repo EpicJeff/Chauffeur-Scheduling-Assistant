@@ -670,3 +670,7 @@ ADAPTERS.update({
     ),
 })
 _rebuild_registry()
+
+# Register projects once the registry and built-in adapters are ready. Projects
+# defines its service before importing this registry, so either import order works.
+from services import projects as _projects

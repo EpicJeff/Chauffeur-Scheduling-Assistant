@@ -38,8 +38,52 @@ def scenario_a2_programs_use_it():
     check(programs_curate.screen_aim('lose weight')['ok'] is False, "the old phrases still refuse")
 
 
+# --- Block B: projects (Task 3) ------------------------------------------------
+
+def _projects():
+    from test_projects import _fresh
+    _fresh()
+    from services import projects
+    return projects
+
+
+def scenario_b1_an_adults_private_body_goal_is_allowed_and_pinned():
+    from test_subjects import MOM
+    from services import storage
+    projects = _projects()
+    res = projects.create({'title': 'Get down to 185 lbs', 'goal': 'feel better on hikes', 'done_when': 'the scale says 185',
+                           'owner_member_id': 'mom'}, dict(MOM))
+    check(res['status'] == 'success', f"allowed for an adult: {res}")
+    p = res['project']
+    check(p['body_goal'] is True and p['audience'] == 'private', f"marked and private: {p}")
+    for change in ({'audience': 'parents'}, {'audience': 'household'}, {'owner_member_id': 'kid'}):
+        out = projects.update(p['id'], change, dict(MOM))
+        check(out['status'] == 'error', f"the pin holds against {change}: {out}")
+    check(storage.get_project(p['id'])['audience'] == 'private', "still private")
+    check(projects.update(p['id'], {'body_goal': False}, dict(MOM))['status'] == 'error'
+          or storage.get_project(p['id'])['body_goal'] is True, "a client never clears the mark")
+
+
+def scenario_b2_anything_else_is_refused():
+    from test_subjects import MOM, KID
+    projects = _projects()
+    for fields, actor, why in (
+            ({'title': 'Get down to 185 lbs', 'audience': 'household', 'owner_member_id': 'mom'}, MOM, "a shared adult body goal"),
+            ({'title': 'Get down to 185 lbs', 'audience': 'parents', 'owner_member_id': 'mom'}, MOM, "a parents-audience body goal"),
+            ({'title': 'Lose 10 pounds', 'owner_member_id': 'kid'}, KID, "a child's own body goal"),
+            ({'title': 'Lose 10 pounds', 'owner_member_id': 'kid'}, MOM, "a body goal a parent makes for a child")):
+        res = projects.create({'goal': 'x', 'done_when': 'x', **fields}, dict(actor))
+        check(res['status'] == 'error', f"refused: {why}: {res}")
+    ok = projects.create({'title': 'Garage', 'goal': 'clear it', 'done_when': 'the car fits', 'owner_member_id': 'mom',
+                          'audience': 'household'}, dict(MOM))['project']
+    out = projects.update(ok['id'], {'goal': 'and reach 70 kg'}, dict(MOM))
+    check(out['status'] == 'error', f"an edit that makes a shared project a body goal is refused: {out}")
+    out = projects.update(ok['id'], {'done_when': 'waist to 32 inches'}, dict(MOM))
+    check(out['status'] == 'error', f"the done-when is screened too: {out}")
+
+
 BLOCK_A = [scenario_a1_the_classifier, scenario_a2_programs_use_it]
-BLOCK_B = []          # Task 3 adds the project scenarios here.
+BLOCK_B = [scenario_b1_an_adults_private_body_goal_is_allowed_and_pinned, scenario_b2_anything_else_is_refused]
 SCENARIOS = BLOCK_A + BLOCK_B
 
 if __name__ == "__main__":

@@ -199,7 +199,7 @@ def scenario_link_and_facets():
     check(s.facets('trip') == ['flights', 'accommodations', 'dining', 'attractions'], s.facets('trip'))
     check(s.facets('occasion') == ['guests', 'menu', 'lists', 'errands'], s.facets('occasion'))
     check(s.facets('program') == ['sessions'] and s.facets('thread') == ['history'] and s.facets('member') == [], "facets per kind")
-    check(tuple(s.KINDS) == ('trip', 'occasion', 'event', 'member', 'contact', 'thread', 'program', 'list'), s.KINDS)
+    check(tuple(s.KINDS) == ('trip', 'occasion', 'event', 'member', 'contact', 'thread', 'program', 'list', 'project'), s.KINDS)
     check(s.title_of('contact', s.load('contact', 'c1')) == 'Grandma', "a contact is named by what we call them")
 
 

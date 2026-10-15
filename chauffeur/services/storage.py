@@ -471,6 +471,7 @@ with db_lock:
     assist_assignments_table = db.table('assist_assignments')
     assist_history_table = db.table('assist_history')
     household_tasks_table = db.table('household_tasks')
+    projects_table = db.table('projects')
     threads_table = db.table('threads')
     requests_table = db.table('requests')
     solve_packs_table = db.table('solve_packs')
@@ -3177,6 +3178,45 @@ def expire_stale_requests(now_ts: float = None) -> List[dict]:
 # Work with a deadline and no destination. Task = do something, errand = go
 # somewhere; keeping that line crisp is what keeps "renew the passports" out
 # of the solver's Tuesday.
+
+def add_project(data: dict) -> str:
+    """Persist a new project, assigning its identity and first revision."""
+    import uuid
+    with db_lock:
+        now = time.time()
+        row = {'goal': '', 'done_when': '', 'body_goal': False,
+               'target_date': None, 'state': 'active', 'pieces': [], 'steps': [],
+               'origin_mission_id': None, **data,
+               'created_at': now, 'updated_at': now, 'rev': 1}
+        row.setdefault('id', uuid.uuid4().hex)
+        projects_table.insert(row)
+        return row['id']
+
+
+def get_project(project_id: str) -> Optional[dict]:
+    with db_lock:
+        rows = projects_table.search(Query().id == project_id)
+        return dict(rows[0]) if rows else None
+
+
+def get_projects(owner: str = None) -> List[dict]:
+    with db_lock:
+        rows = (projects_table.search(Query().owner_member_id == owner)
+                if owner is not None else projects_table.all())
+        return [dict(row) for row in rows]
+
+
+def update_project(project_id: str, fields: dict) -> bool:
+    """Every project write advances the revision under the same lock."""
+    with db_lock:
+        row = get_project(project_id)
+        if row is None:
+            return False
+        patch = {k: v for k, v in fields.items()
+                 if k not in ('id', 'created_at', 'created_by', 'rev', 'updated_at')}
+        patch.update(updated_at=time.time(), rev=row.get('rev', 0) + 1)
+        return bool(projects_table.update(patch, Query().id == project_id))
+
 
 def get_household_tasks(assigned_to: str = None, include_done: bool = False,
                         unassigned_only: bool = False) -> List[dict]:

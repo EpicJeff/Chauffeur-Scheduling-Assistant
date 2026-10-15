@@ -1872,6 +1872,10 @@ def threads_page(request: Request):
 def programs_page(request: Request):
     return templates.TemplateResponse(request=request, name="programs.html")
 
+@app.get("/projects")
+def projects_page(request: Request):
+    return templates.TemplateResponse(request=request, name="projects.html")
+
 @app.get("/chores")
 def chores_page(request: Request):
     return _page_or_board(request, "chores", "chores.html")
@@ -5993,6 +5997,64 @@ def asks_answer(ask_id: str, body: dict = Body(default={}), request: Request = N
         raise HTTPException(status_code=400, detail=res.get('message'))
     _mind_refresh_if_dirty(res, background_tasks)
     return res
+
+
+# --- Projects: the record, audience and lifecycle ---
+
+@app.get("/api/projects")
+def projects_list(request: Request = None):
+    from services import projects
+    actor = _situation_viewer(request)
+    return {'projects': [projects.view(row, actor) for row in storage.get_projects()
+                         if projects.can_see(row, actor)]}
+
+
+@app.post("/api/projects")
+def projects_create(body: dict, request: Request = None):
+    from services import projects
+    result = projects.create(body, _situation_viewer(request))
+    if result['status'] == 'error':
+        raise HTTPException(status_code=400, detail=result['message'])
+    return result
+
+
+def _project_for_actor(project_id, actor, writing=False):
+    from services import projects
+    row = storage.get_project(project_id)
+    if not projects.can_see(row, actor):
+        raise HTTPException(status_code=404, detail="No such project")
+    if writing and not projects.can_act(row, actor):
+        raise HTTPException(status_code=403, detail="You cannot change this project")
+    return row
+
+
+@app.get("/api/projects/{project_id}")
+def project_detail(project_id: str, request: Request = None):
+    from services import projects
+    actor = _situation_viewer(request)
+    return {'project': projects.view(_project_for_actor(project_id, actor), actor)}
+
+
+@app.patch("/api/projects/{project_id}")
+def project_update(project_id: str, body: dict, request: Request = None):
+    from services import projects
+    actor = _situation_viewer(request)
+    _project_for_actor(project_id, actor, writing=True)
+    result = projects.update(project_id, body, actor)
+    if result['status'] == 'error':
+        raise HTTPException(status_code=400, detail=result['message'])
+    return result
+
+
+@app.post("/api/projects/{project_id}/state")
+def project_set_state(project_id: str, body: dict, request: Request = None):
+    from services import projects
+    actor = _situation_viewer(request)
+    _project_for_actor(project_id, actor, writing=True)
+    result = projects.set_state(project_id, body.get('state'), actor)
+    if result['status'] == 'error':
+        raise HTTPException(status_code=400, detail=result['message'])
+    return result
 
 
 # --- Missions (spec: 2026-09-04-mission-engine-design) ---
