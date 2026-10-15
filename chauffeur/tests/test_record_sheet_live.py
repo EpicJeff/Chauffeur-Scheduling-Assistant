@@ -109,8 +109,35 @@ def scenario_a_keeper_gets_the_record_alone():
         check('Book the venue' in page.locator('[data-lane="elsewhere"]').inner_text(), "Aunt's work elsewhere lists it")
 
 
+def scenario_a_program_in_the_sheet():
+    served = serve()
+    if served is None:
+        return
+    with served.browser() as page:
+        page.on('dialog', lambda d: d.dismiss())
+        admin(page, served, 'mom')
+        page.goto(served.url('projects?id=' + IDS['bath']), wait_until='load')
+        page.wait_for_selector('[data-piece-open="program:pr-live"]', timeout=15000)
+        sheet = _sheet(page, 'program:pr-live')
+        page.wait_for_function("() => document.querySelector('[data-record-sheet]').innerText.includes('Strength basics')", timeout=15000)
+        # The sheet header has the title before the program's lazy load finishes.
+        sheet.get_by_role('button', name='Log a session', exact=True).wait_for(state='visible', timeout=15000)
+        text = sheet.inner_text()
+        for label in ('Log a session', 'Pause', 'Finished', 'Re-shape the week', 'Drop'):
+            check(label in text, f"the active program sheet has {label}")
+        check('Tiling basics' not in text and 'Programs settings' not in page.content(), "one program, no drawer")
+        page.evaluate("() => window.dispatchEvent(new CustomEvent('chf-record-sheet-open', {detail: {kind: 'program', id: 'pr-prop'}}))")
+        page.wait_for_function("() => document.querySelector('[data-record-sheet]').innerText.includes('Tiling basics')", timeout=10000)
+        text = page.locator('[data-record-sheet]').inner_text()
+        for label in ('Look again', 'Dismiss'):
+            check(label in text, f"the proposed program sheet has {label}")
+        check('Strength basics' not in text, "only the new one")
+        shot(page, 'slice2-program-sheet')
+        check(served.errors() == [], f"no page errors: {served.errors()}")
+
+
 SCENARIOS = [scenario_a_thread_in_the_sheet, scenario_a_closed_thread_opens_in_the_sheet, scenario_switching_records_shows_only_the_new_one,
-             scenario_a_mission_in_the_sheet, scenario_a_keeper_gets_the_record_alone]
+             scenario_a_mission_in_the_sheet, scenario_a_keeper_gets_the_record_alone, scenario_a_program_in_the_sheet]
 
 if __name__ == "__main__":
     import traceback
