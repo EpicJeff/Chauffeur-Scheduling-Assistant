@@ -357,41 +357,32 @@ def ungroup_event(event_name: str, target_date: str = 'today',
 # TRIP TOOLS
 # ==============================================================================
 
-def add_trip_poi(trip_id: str, title: str, start_time: str, duration_mins: int, location: str) -> Dict[str, Any]:
-    """
-    Adds a new Point of Interest (POI) to a trip's itinerary.
-    start_time must be ISO 8601 string.
-    Returns a target_element_id for the UI to anchor a chat bubble.
-    """
-    from services.storage import get_trip_metadata, set_trip_metadata
+def add_trip_poi(trip_id: str, title: str, start_time: str = None,
+                 duration_mins: int = 60, location: str = '', category: str = None,
+                 meal_type: str = None, idem: str = None) -> Dict[str, Any]:
+    """Add a stop; an explicit ISO time places it in the itinerary."""
+    import datetime
+    from services import storage
     from models.schemas import TripPOI
-    
-    meta = get_trip_metadata(trip_id)
-    if not meta:
-        return {"status": "error", "message": f"Trip {trip_id} not found."}
-        
-    new_poi_id = f"poi_{uuid.uuid4().hex[:8]}"
-    new_poi = TripPOI(
-        id=new_poi_id,
-        title=title,
-        location=location,
-        start_time=start_time,
-        duration_mins=duration_mins
-    )
-    
-    if "pois" not in meta:
-        meta["pois"] = []
-        
-    meta["pois"].append(new_poi.model_dump())
-    set_trip_metadata(trip_id, meta)
-    
-    target_dom_id = _get_target_element_id("trip_poi", new_poi_id)
-    
-    return {
-        "status": "success",
-        "message": f"Added POI {title} to trip.",
-        "target_element_id": target_dom_id
-    }
+
+    with storage.db_lock:
+        meta = storage.get_trip_metadata(trip_id)
+        if not meta:
+            return {"status": "error", "message": f"Trip {trip_id} not found."}
+        poi = next((p for p in meta.get('pois', [])
+                    if idem and p.get('idem') == idem), None)
+        if poi is None:
+            start = datetime.datetime.fromisoformat(start_time).timestamp() if start_time else None
+            poi = TripPOI(name=title, location=location, category=category,
+                          meal_type=meal_type, duration_mins=duration_mins,
+                          is_scheduled=bool(start_time), scheduled_start=start,
+                          scheduled_end=start + duration_mins * 60 if start is not None else None,
+                          idem=idem).model_dump()
+            meta.setdefault('pois', []).append(poi)
+            storage.set_trip_metadata(trip_id, meta)
+    return {"status": "success", "message": f"Added POI {poi['name']} to trip.",
+            "target_element_id": _get_target_element_id("trip_poi", poi['id']),
+            "created": [{'kind': 'poi', 'id': poi['id']}]}
 
 def clear_trip_itinerary(trip_id: str, action: str) -> Dict[str, Any]:
     """
@@ -989,7 +980,8 @@ def _task_due_date(when: str):
 
 def add_household_task(title: str, due: str = None, assign_to: str = None,
                        notes: str = None, recurrence: str = None,
-                       category: str = None, acting_member: dict = None) -> Dict[str, Any]:
+                       category: str = None, acting_member: dict = None,
+                       idem: str = None) -> Dict[str, Any]:
     """Work with a deadline and no destination. If it needs a drive it is an
     errand; this is for the permission slip, the phone call, the renewal."""
     from models.schemas import HouseholdTask
@@ -1017,12 +1009,20 @@ def add_household_task(title: str, due: str = None, assign_to: str = None,
         assigned_to=(owner or {}).get('id'), recurrence=rec,
         category=(category or 'general').strip().lower() or 'general',
         created_by=(acting_member or {}).get('id'), source='agent').model_dump()
-    storage.add_household_task(task)
+    task['idem'] = idem
+    with storage.db_lock:
+        existing = next((t for t in storage.get_household_tasks(include_done=True)
+                         if idem and t.get('idem') == idem), None)
+        if existing:
+            return {'status': 'success', 'message': f"Already added '{existing['title']}'.",
+                    'created': [{'kind': 'task', 'id': existing['id']}]}
+        storage.add_household_task(task)
     who = f" for {owner['name']}" if owner else ""
     when = f", due {task['due_date']}" if task['due_date'] else ""
     every = f", every {rec}" if rec != 'none' else ""
     return {"status": "success",
-            "message": f"Added \"{title}\"{who}{when}{every} to the household list."}
+            "message": f"Added \"{title}\"{who}{when}{every} to the household list.",
+            "created": [{'kind': 'task', 'id': task['id']}]}
 
 
 def get_household_tasks(assigned_to: str = None, unassigned_only: bool = False) -> Dict[str, Any]:
@@ -1966,7 +1966,7 @@ def list_threads(state: str = None, owner_name: str = None,
 def create_thread(title: str, goal: str = None, kind: str = None,
                   counterparty_name: str = None, counterparty_email: str = None,
                   next_action: str = None, next_action_at: str = None,
-                  acting_member: dict = None) -> Dict[str, Any]:
+                  acting_member: dict = None, idem: str = None) -> Dict[str, Any]:
     """Open a new thread — a promise somebody outside the family made that
     hasn't closed yet. Parent/adult work, same discipline as dismiss_insight:
     `acting_member` is resolved by the dispatch layer at agent_router.py,
@@ -1979,18 +1979,25 @@ def create_thread(title: str, goal: str = None, kind: str = None,
     title = (title or '').strip()
     if not title:
         return {"status": "error", "message": "What is the thread about?"}
-    from services import threads as _threads
-    thread_id = _threads.create(
-        title=title,
-        owner_member_id=(acting_member or {}).get('id'),
-        goal=(goal or '').strip(),
-        kind=(kind or 'project').strip().lower() or 'project',
-        counterparty_name=(counterparty_name or '').strip(),
-        counterparty_email=(counterparty_email or '').strip(),
-        next_action=(next_action or '').strip(),
-        next_action_at=next_action_at,
-        created_by=(acting_member or {}).get('id'))
+    from services import storage, threads as _threads
+    with storage.db_lock:
+        existing = next((t for t in storage.get_threads(include_closed=True)
+                         if idem and t.get('idem') == idem), None)
+        if existing:
+            thread_id = existing['id']
+        else:
+            thread_id = _threads.create(
+                title=title,
+                owner_member_id=(acting_member or {}).get('id'),
+                goal=(goal or '').strip(),
+                kind=(kind or 'project').strip().lower() or 'project',
+                counterparty_name=(counterparty_name or '').strip(),
+                counterparty_email=(counterparty_email or '').strip(),
+                next_action=(next_action or '').strip(),
+                next_action_at=next_action_at,
+                created_by=(acting_member or {}).get('id'), idem=idem)
     return {"status": "success", "id": thread_id,
+            "created": [{'kind': 'thread', 'id': thread_id}],
             "message": f"Opened a thread: {title}."}
 
 
@@ -2021,8 +2028,8 @@ def update_thread_action(thread_title: str, next_action: str,
     return {"status": "success", "message": msg}
 
 
-def add_thread_note(thread_title: str, text: str, url: str = None,
-                    acting_member: dict = None) -> Dict[str, Any]:
+def add_thread_note(thread_title: str = '', text: str = '', url: str = None,
+                    acting_member: dict = None, thread_id: str = None) -> Dict[str, Any]:
     """Log movement on a thread that isn't a change of plan — a call made, a
     voicemail left (wraps `services.threads.note`). Parent/adult work, same
     gate as `create_thread`; `acting_member` comes from the dispatch layer."""
@@ -2032,7 +2039,13 @@ def add_thread_note(thread_title: str, text: str, url: str = None,
     text = (text or '').strip()
     if not text:
         return {"status": "error", "message": "What happened?"}
-    thread, rows = _match_thread(thread_title)
+    if thread_id is not None:
+        from services import storage, situations
+        thread, rows = storage.get_thread(thread_id), []
+        if not thread or not situations.can_see('thread', thread, acting_member):
+            return {'status': 'error', 'message': 'That thread is not available.'}
+    else:
+        thread, rows = _match_thread(thread_title)
     if not thread:
         open_titles = ', '.join(t.get('title') or '?' for t in rows[:8]) or 'nothing open'
         return {"status": "error",
@@ -2044,8 +2057,8 @@ def add_thread_note(thread_title: str, text: str, url: str = None,
     return {"status": "success", "message": f"Noted on \"{thread['title']}\": {text}"}
 
 
-def draft_thread_message(thread_title: str, intent: str = None,
-                         acting_member: dict = None) -> Dict[str, Any]:
+def draft_thread_message(thread_title: str = '', intent: str = None,
+                         acting_member: dict = None, thread_id: str = None) -> Dict[str, Any]:
     """Ask Argyle to propose a subject/body for a thread and STOP THERE
     (wraps `services.threads.draft_message`, which never imports
     `services.mailer` — it cannot send even by accident, and neither can
@@ -2056,7 +2069,13 @@ def draft_thread_message(thread_title: str, intent: str = None,
     refusal = _thread_writer(acting_member, 'draft a message')
     if refusal:
         return refusal
-    thread, rows = _match_thread(thread_title)
+    if thread_id is not None:
+        from services import storage, situations
+        thread, rows = storage.get_thread(thread_id), []
+        if not thread or not situations.can_see('thread', thread, acting_member):
+            return {'status': 'error', 'message': 'That thread is not available.'}
+    else:
+        thread, rows = _match_thread(thread_title)
     if not thread:
         open_titles = ', '.join(t.get('title') or '?' for t in rows[:8]) or 'nothing open'
         return {"status": "error",
@@ -2374,7 +2393,8 @@ def propose_program(title: str, for_member_name: str = None,
         why = source.get('why_this_one') or 'no plan could be found'
         msg = (f"Proposed \"{title}\" with practice time but no plan — "
                f"{why}. {tail}")
-    return {"status": "success", "id": pid, "message": msg}
+    return {"status": "success", "id": pid, "message": msg,
+            "created": [{'kind': 'program', 'id': pid}]}
 
 
 def log_program_session(program_title: str, minutes: int = None,
@@ -3024,13 +3044,18 @@ def _resolve_shopping_list(list_name: str = "", acting_member: dict = None) -> t
 
 def add_shopping_items(items: str, list_name: str = "",
                        acting_member: dict = None, spoken: bool = False,
-                       actor_provenance: dict = None) -> Dict[str, Any]:
+                       actor_provenance: dict = None, list_id: str = None) -> Dict[str, Any]:
     """Add one or more things to a shopping list. Direct action, never a
     proposal — see module note."""
     import re
     from services import storage
     from models.schemas import ShoppingItem
-    lst, err = _resolve_shopping_list(list_name, None if spoken else acting_member)
+    viewer = None if spoken else acting_member
+    if list_id is not None:
+        lst = next((l for l in _visible_shopping_lists(viewer) if l['id'] == list_id), None)
+        err = None if lst else 'That list is not available.'
+    else:
+        lst, err = _resolve_shopping_list(list_name, viewer)
     if err:
         return {"status": "error", "message": err}
     raw = [p.strip() for p in re.split(r',|\band\b|\n', items or '') if p.strip()]
@@ -4233,6 +4258,11 @@ def get_available_tools() -> List[Dict]:
     """
     return [
         {
+            "name": "add_trip_accommodation",
+            "description": "Add a hotel or other stay to a trip. Parent/adult only.",
+            "parameters": AddTripAccommodationTool.model_json_schema(),
+        },
+        {
             "name": "create_trip",
             "description": "Creates a draft trip on the Trips page. Does not book travel or add a calendar event.",
             "parameters": {
@@ -4388,13 +4418,16 @@ def get_available_tools() -> List[Dict]:
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "category": {"type": "string"},
+                    "meal_type": {"type": "string"},
+                    "idem": {"type": "string"},
                     "trip_id": {"type": "string"},
                     "title": {"type": "string"},
                     "start_time": {"type": "string", "description": "ISO 8601"},
                     "duration_mins": {"type": "integer"},
                     "location": {"type": "string"}
                 },
-                "required": ["trip_id", "title", "start_time", "duration_mins", "location"]
+                "required": ["trip_id", "title"]
             }
         },
         {
@@ -4578,6 +4611,7 @@ def get_available_tools() -> List[Dict]:
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "idem": {"type": "string"},
                     "title": {"type": "string", "description": "The task, in the family's own words."},
                     "due": {"type": "string", "description": "When it's due, as spoken ('Friday', 'the 14th'). Omit if there is no deadline."},
                     "assign_to": {"type": "string", "description": "Who is doing it, if anyone was named. Omit to leave it on the household."},
@@ -4815,6 +4849,7 @@ def get_available_tools() -> List[Dict]:
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "idem": {"type": "string"},
                     "title": {"type": "string", "description": "What the thread is about, e.g. 'Pest control' or 'Deck permit'."},
                     "goal": {"type": "string", "description": "What resolving this thread looks like, if said."},
                     "kind": {"type": "string", "description": "'vendor' or 'project'. Defaults to 'project'."},
@@ -4846,11 +4881,12 @@ def get_available_tools() -> List[Dict]:
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "thread_id": {"type": "string"},
                     "thread_title": {"type": "string", "description": "The thread's title (fuzzy matched)."},
                     "text": {"type": "string", "description": "What happened."},
                     "url": {"type": "string", "description": "A link worth attaching, if any."}
                 },
-                "required": ["thread_title", "text"]
+                "required": ["text"]
             }
         },
         {
@@ -4859,10 +4895,11 @@ def get_available_tools() -> List[Dict]:
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "thread_id": {"type": "string"},
                     "thread_title": {"type": "string", "description": "The thread's title (fuzzy matched)."},
                     "intent": {"type": "string", "description": "What the message should do, if said — e.g. 'ask when they can come back'."}
                 },
-                "required": ["thread_title"]
+                "required": []
             }
         },
         {
@@ -5060,6 +5097,7 @@ def get_available_tools() -> List[Dict]:
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "list_id": {"type": "string"},
                     "items": {"type": "string", "description": "What to add. Multiple things may be comma- or 'and'-separated; they are split into separate items."},
                     "list_name": {"type": "string", "description": "Which list or store (e.g. 'Costco'). Omit for the family's default list."}
                 },
@@ -5939,6 +5977,7 @@ class AddErrandTool(BaseModel):
     """
     Adds a new errand to the queue.
     """
+    idem: Optional[str] = None
     title: str = Field(..., description="The name or title of the errand (e.g. 'Get Groceries').")
     duration_mins: int = Field(..., description="Estimated duration of the errand in minutes.")
     location: str = Field(..., description="The location of the errand.")
@@ -6042,9 +6081,14 @@ class AddTripPoiTool(BaseModel):
     """
     Adds a Point of Interest (POI) to a specific Trip. Use this when a user says they want to visit a location during a trip.
     """
-    event_id: str = Field(..., description="The event ID of the Trip.")
-    name: str = Field(..., description="The name of the POI (e.g. 'Eiffel Tower').")
-    location: str = Field(..., description="The address/location of the POI.")
+    trip_id: Optional[str] = Field(None, description="Exact trip id.")
+    event_id: Optional[str] = Field(None, description="Legacy event ID of the Trip.")
+    idem: Optional[str] = Field(None, description="Retry key; returns the same record.")
+    title: Optional[str] = Field(None, description="The stop title when using trip_id.")
+    start_time: Optional[str] = Field(None, description="ISO time; omit for an unscheduled stop.")
+    meal_type: Optional[str] = Field(None, description="Breakfast, lunch, dinner, etc.")
+    name: str = Field("", description="The name of the POI (e.g. 'Eiffel Tower').")
+    location: str = Field("", description="The address/location of the POI.")
     mapbox_id: Optional[str] = Field(default=None, description="The Mapbox ID if found via search_places.")
     category: Optional[str] = Field(default="sightseeing", description="Category (sightseeing, food, activity, shopping, other).")
     duration_mins: int = Field(default=60, description="Duration in minutes.")
@@ -6065,7 +6109,9 @@ class AddTripAccommodationTool(BaseModel):
     checks out). The scheduler uses each day's accommodation as that day's home base, so POIs cluster to the correct leg
     automatically. If no dates/nights are given, the stay spans the whole trip.
     """
-    event_id: str = Field(..., description="The event ID of the Trip.")
+    trip_id: Optional[str] = Field(None, description="Exact trip id.")
+    event_id: Optional[str] = Field(None, description="Legacy event ID of the Trip.")
+    idem: Optional[str] = Field(None, description="Retry key; returns the same record.")
     name: str = Field(..., description="The name of the Accommodation (e.g. 'Hyatt Place').")
     location: str = Field(..., description="The address/location of the Accommodation.")
     mapbox_id: Optional[str] = Field(default=None, description="The Mapbox ID if found via search_places.")
@@ -6409,6 +6455,7 @@ class AddShoppingItemsTool(BaseModel):
     """
     Adds one or more things to a family shopping list ("we're out of milk", "add eggs and butter", "put paper towels on the Costco list"). Direct action for anyone including children — a list item costs nothing and never needs approval. Not for errands or calendar events.
     """
+    list_id: Optional[str] = None
     items: str = Field(..., description="What to add; comma- or 'and'-separated values are split into separate items.")
     list_name: Optional[str] = Field(None, description="Which list or store; omit for the default list.")
 
@@ -6825,6 +6872,7 @@ class CreateThreadTool(BaseModel):
     """Opens a thread — a tracked open loop with someone OUTSIDE the family
     (a vendor, a company, a coach). Nothing is sent by opening it; messages
     are drafted on the thread later and a person reviews and sends them."""
+    idem: Optional[str] = None
     title: str = Field(description="Short name for the loop (e.g. \"Ana's Cleaning — biweekly service\").")
     goal: str = Field(default="", description="What done looks like.")
     kind: str = Field(default="vendor", description="'vendor' or 'project'.")
@@ -7149,6 +7197,11 @@ def handle_update_memory(args: dict) -> dict:
 def handle_add_errand(args: dict) -> dict:
     from services import maps, storage
     import time
+    if args.get('idem'):
+        existing = next((e for e in storage.get_all_errands() if e.get('idem') == args['idem']), None)
+        if existing:
+            return {'status': 'success', 'message': 'Errand added.',
+                    'created': [{'kind': 'errand', 'id': str(existing['doc_id'])}]}
     starts_on = args.get('starts_on', 0.0)
     if not starts_on: starts_on = time.time()
     errand = {
@@ -7175,8 +7228,13 @@ def handle_add_errand(args: dict) -> dict:
         'group_id': args.get('group_id') or None,
         'window_days': args.get('window_days')
     }
-    storage.add_errand(errand)
-    return {"status": "success", "message": "Errand added."}
+    errand['idem'] = args.get('idem')
+    with storage.db_lock:
+        existing = next((e for e in storage.get_all_errands()
+                         if args.get('idem') and e.get('idem') == args['idem']), None)
+        eid = existing['doc_id'] if existing else storage.add_errand(errand)
+    return {"status": "success", "message": "Errand added.",
+            "created": [{'kind': 'errand', 'id': str(eid)}]}
 
 def handle_update_errand(args: dict) -> dict:
     from services import storage
@@ -7302,6 +7360,11 @@ def handle_generate_trip_plan(args: dict) -> dict:
     return res
 
 def handle_add_trip_poi(args: dict) -> dict:
+    if 'trip_id' in args:
+        return add_trip_poi(args.get('trip_id'), args.get('title') or args.get('name') or '',
+                            start_time=args.get('start_time'), duration_mins=args.get('duration_mins', 60),
+                            location=args.get('location') or '', category=args.get('category'),
+                            meal_type=args.get('meal_type'), idem=args.get('idem'))
     from services import storage
     from services.trip_planner import enrich_poi_data
     event_id = args.get('event_id')
@@ -7510,47 +7573,69 @@ def handle_add_trip_accommodation(args: dict) -> dict:
     from services import storage
     from services.trip_planner import enrich_poi_data
     from services.trip_validation import vet_accommodation
-    event_id = args.get('event_id')
-    metadata = storage.get_trip_metadata(event_id) or {"event_id": event_id, "pois": [], "accommodations": []}
+    event_id = args.get('trip_id') or args.get('event_id')
+    if not event_id:
+        return {'status': 'error', 'message': 'A trip id is required.'}
+    metadata = storage.get_trip_metadata(event_id)
+    if metadata is None and args.get('trip_id'):
+        return {'status': 'error', 'message': f'Trip {event_id} not found.'}
+    metadata = metadata or {"event_id": event_id, "pois": [], "accommodations": []}
+    if args.get('idem'):
+        existing = next((a for a in metadata.get('accommodations', [])
+                         if a.get('idem') == args['idem']), None)
+        if existing:
+            return {'status': 'success', 'message': f"Already added '{existing['name']}'.",
+                    'created': [{'kind': 'accommodation', 'id': existing['id']}]}
     import uuid
 
     name = args.get('name')
     location = args.get('location')
     trip_location = metadata.get('location', '')
 
-    enrichment = enrich_poi_data(name, location, trip_location)
+    enrichment = enrich_poi_data(name, location, trip_location) or {}
     vet_accommodation(enrichment, args)
 
-    check_in_date, check_out_date = _resolve_stay_dates(args, metadata)
-    err = _validate_stay(check_in_date, check_out_date, metadata)
-    if err:
-        return {"status": "error", "message": err}
+    with storage.db_lock:
+        # Enrichment happens outside the lock; re-read before claiming the key
+        # or checking overlapping stays so concurrent additions cannot clobber it.
+        metadata = storage.get_trip_metadata(event_id) or metadata
+        existing = next((a for a in metadata.get('accommodations', [])
+                         if args.get('idem') and a.get('idem') == args['idem']), None)
+        if existing:
+            return {'status': 'success', 'message': f"Already added '{existing['name']}'.",
+                    'created': [{'kind': 'accommodation', 'id': existing['id']}]}
+        check_in_date, check_out_date = _resolve_stay_dates(args, metadata)
+        err = _validate_stay(check_in_date, check_out_date, metadata)
+        if err:
+            return {"status": "error", "message": err}
 
-    acc = {
-        "id": uuid.uuid4().hex,
-        "name": name,
-        "location": enrichment.get('location') or location,
-        "mapbox_id": enrichment.get('mapbox_id') or args.get('mapbox_id'),
-        "lat": enrichment.get('lat'),
-        "lng": enrichment.get('lng'),
-        "check_in_date": check_in_date,
-        "check_out_date": check_out_date,
-        "notes": args.get('notes', '')
-    }
-    
-    if "accommodations" not in metadata:
-        metadata["accommodations"] = []
-    metadata["accommodations"].append(acc)
-    
-    storage.set_trip_metadata(event_id, metadata)
-    
+        acc = {
+            "id": uuid.uuid4().hex,
+            "name": name,
+            "location": enrichment.get('location') or location,
+            "mapbox_id": enrichment.get('mapbox_id') or args.get('mapbox_id'),
+            "lat": enrichment.get('lat'),
+            "lng": enrichment.get('lng'),
+            "check_in_date": check_in_date,
+            "check_out_date": check_out_date,
+            "notes": args.get('notes', ''),
+            "idem": args.get('idem')
+        }
+
+        if "accommodations" not in metadata:
+            metadata["accommodations"] = []
+        metadata["accommodations"].append(acc)
+
+        storage.set_trip_metadata(event_id, metadata)
+
     if acc['check_in_date'] and acc['check_out_date']:
         span = _stay_label(acc['check_in_date'], acc['check_out_date'], metadata)
     else:
         span = "no dates"
     return {
         "status": "success",
-        "message": f"Added Accommodation '{name}' to trip ({span})."
+        "message": f"Added Accommodation '{name}' to trip ({span}).",
+        "created": [{"kind": "accommodation", "id": acc["id"]}]
     }
 
 def handle_edit_trip_accommodation(args: dict) -> dict:
@@ -8136,9 +8221,10 @@ def handle_complete_kid_task(args: dict) -> dict:
     return complete_kid_task(args.get("task_title") or "",
                              member_name=args.get("member_name") or "")
 
-def handle_add_shopping_items(args: dict) -> dict:
+def handle_add_shopping_items(args: dict, actor=None) -> dict:
     return add_shopping_items(args.get("items") or "",
-                              list_name=args.get("list_name") or "")
+                              list_name=args.get("list_name") or "",
+                              list_id=args.get('list_id'), acting_member=actor)
 
 def handle_get_shopping_list_items(args: dict) -> dict:
     return get_shopping_list_items(args.get("list_name") or "")
@@ -8440,26 +8526,15 @@ def handle_launch_mission(args: dict) -> dict:
                            created_by=args.get('_member_id'),
                            tier='mission')
 
-def handle_create_thread(args: dict) -> dict:
-    # Reached only through the approve rail (a parent's tap) or the trusted
-    # v1 contexts — opening a thread sends nothing; the threads page's
-    # human-only Send is still the sole way words leave the house.
-    from services import threads as _threads
-    title = (args.get('title') or '').strip()
-    if not title:
-        return {"status": "error", "message": "The thread needs a title."}
-    kind = (args.get('kind') or 'vendor').strip().lower()
-    thread_id = _threads.create(
-        title=title,
-        owner_member_id=args.get('_member_id'),
-        goal=(args.get('goal') or '').strip(),
-        kind=kind if kind in ('vendor', 'project') else 'vendor',
-        counterparty_name=(args.get('counterparty_name') or '').strip(),
-        counterparty_email=(args.get('counterparty_email') or '').strip(),
-        next_action=(args.get('next_action') or '').strip(),
-        created_by=args.get('_member_id'))
-    return {"status": "success", "id": thread_id,
-            "message": f"Opened a thread: {title}."}
+def handle_create_thread(args: dict, actor=None) -> dict:
+    actor = actor if actor is not None else _registry_parent()
+    return create_thread(args.get('title') or '', goal=args.get('goal'),
+                         kind=args.get('kind') or 'vendor',
+                         counterparty_name=args.get('counterparty_name'),
+                         counterparty_email=args.get('counterparty_email'),
+                         next_action=args.get('next_action'), next_action_at=args.get('next_action_at'),
+                         acting_member=actor, idem=args.get('idem'))
+
 
 def handle_get_travel_time(args: dict) -> dict:
     return get_travel_time(origin=args.get("origin") or '',
@@ -8517,6 +8592,7 @@ def handle_add_household_task(args: dict, actor=None) -> dict:
     return add_household_task(args.get('title') or '', due=args.get('due'),
                               assign_to=args.get('assign_to'), notes=args.get('notes'),
                               recurrence=args.get('recurrence'), category=args.get('category'),
+                              idem=args.get('idem'),
                               acting_member=actor if actor is not None else _registry_parent())
 
 
@@ -8532,6 +8608,7 @@ def handle_complete_household_task(args: dict, actor=None) -> dict:
 
 def handle_add_thread_note(args: dict, actor=None) -> dict:
     return add_thread_note(args.get('thread_title') or '', args.get('text') or '', url=args.get('url'),
+                           thread_id=args.get('thread_id'),
                            acting_member=actor if actor is not None else _registry_parent())
 
 
@@ -8548,7 +8625,8 @@ def handle_update_thread_action(args: dict, actor=None) -> dict:
 
 def handle_draft_thread_message(args: dict, actor=None) -> dict:
     return draft_thread_message(args.get('thread_title') or '', intent=args.get('intent'),
-                                 acting_member=actor if actor is not None else _registry_parent())
+                                 thread_id=args.get('thread_id'),
+                           acting_member=actor if actor is not None else _registry_parent())
 
 
 def handle_answer_request(args: dict, actor=None) -> dict:

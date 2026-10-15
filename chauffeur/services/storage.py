@@ -2983,7 +2983,7 @@ def add_mission(data: dict) -> str:
            'subject_history': [],
            'tier': 'mission', 'summary': '', 'error': '', 'step_count': 0,
            'consec_errors': 0, 'retry_at': None, 'acknowledged_at': None,
-           'finished_at': None,
+           'finished_at': None, 'plan': None,
            **data}
     with db_lock:
         missions_table.insert(row)

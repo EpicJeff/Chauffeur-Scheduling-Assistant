@@ -290,7 +290,7 @@ def create(title: str, owner_member_id: str = None, goal: str = '',
            kind: str = 'project', contact_id: str = None,
            counterparty_name: str = '', counterparty_email: str = '',
            next_action: str = '', next_action_at: str = None,
-           created_by: str = None) -> str:
+           created_by: str = None, idem: str = None) -> str:
     """Open a new thread and log the opening move as its first history entry.
 
     That entry is load-bearing, not decoration: `is_stalled` only trusts a
@@ -310,6 +310,7 @@ def create(title: str, owner_member_id: str = None, goal: str = '',
         'next_action': next_action,
         'next_action_at': _clean_next_action_at(next_action_at),
         'created_by': created_by,
+        'idem': idem,
     })
     storage.append_thread_history(thread_id, {
         'kind': 'opened',

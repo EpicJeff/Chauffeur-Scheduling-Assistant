@@ -928,6 +928,7 @@ class HouseholdTask(BaseModel):
     created_at: float = Field(default_factory=time.time)
 
 class Thread(BaseModel):
+    idem: Optional[str] = None
     """An open loop with somebody outside the family."""
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     title: str
@@ -2338,6 +2339,7 @@ class OccasionGuest(BaseModel):
 
 
 class TripPOI(BaseModel):
+    idem: Optional[str] = None
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     name: str
     location: str
@@ -2409,6 +2411,7 @@ class TripRule(BaseModel):
     is_enabled: bool = True
 
 class TripAccommodation(BaseModel):
+    idem: Optional[str] = None
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     name: str
     location: str

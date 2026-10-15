@@ -499,7 +499,8 @@ sending or claiming, and never pass from_member/member_name for them.
     elif bridge_ok:
         # Full-parity v1 bridge tools (routing/priority rules, errands, solver,
         # memory, places, deep trip planning).
-        tools = tools + get_admin_tools()
+        declared = {tool['name'] for tool in tools}
+        tools = tools + [tool for tool in get_admin_tools() if tool['name'] not in declared]
     if propose_only:
         tools = [t for t in tools if t.get("name") in PROPOSE_ONLY_TOOLS]
         system_prompt += (
@@ -812,7 +813,10 @@ sending or claiming, and never pass from_member/member_name for them.
                     if res.get("message"): agent_message = res["message"]
                     if res.get("ui_action"): ui_action = res["ui_action"]
                 elif func_name == "add_trip_poi":
-                    res = add_trip_poi(args.get("trip_id"), args.get("title"), args.get("start_time"), args.get("duration_mins"), args.get("location"))
+                    res = add_trip_poi(args.get("trip_id"), args.get("title"), args.get("start_time"),
+                                       args.get("duration_mins", 60), args.get("location") or '',
+                                       category=args.get('category'), meal_type=args.get('meal_type'),
+                                       idem=args.get('idem'))
                     if res.get("target_element_id"): target_id = res["target_element_id"]
                     if res.get("message"): agent_message = res["message"]
                     if res.get("status") == "success": ui_action = "sync"
@@ -924,6 +928,7 @@ sending or claiming, and never pass from_member/member_name for them.
                             args.get("title", "") or "", due=args.get("due"),
                             assign_to=args.get("assign_to"), notes=args.get("notes"),
                             recurrence=args.get("recurrence"), category=args.get("category"),
+                            idem=args.get('idem'),
                             acting_member=actor)
                     elif func_name == "get_household_tasks":
                         res = _atv2.get_household_tasks(
@@ -1052,7 +1057,7 @@ sending or claiming, and never pass from_member/member_name for them.
                     if isinstance(res, dict) and res.get("schedule_dirty"):
                         schedule_dirty = True
                     if res.get("message"): agent_message = res["message"]
-                elif func_name in ("create_trip", "create_list",
+                elif func_name in ("create_trip", "create_list", "add_trip_accommodation",
                                    "answer_occasion_question", "stamp_occasion_template",
                                    "add_occasion_dishes", "set_occasion_menu",
                                    "add_occasion_gift_list"):
@@ -1060,7 +1065,10 @@ sending or claiming, and never pass from_member/member_name for them.
                     if actor is None and driver:
                         from services import storage as _st
                         actor = _st.get_member_by_driver_id(driver_id)
-                    res = execute_tool(func_name, args, actor=actor)
+                    if func_name == 'add_trip_accommodation' and (actor or {}).get('role') not in ('parent', 'adult'):
+                        res = {'status': 'refused', 'message': 'A parent or adult can add a stay.'}
+                    else:
+                        res = execute_tool(func_name, args, actor=actor)
                     if res.get("message"): agent_message = res["message"]
                 elif func_name in ("list_threads", "create_thread",
                                    "update_thread_action", "add_thread_note",
@@ -1106,6 +1114,7 @@ sending or claiming, and never pass from_member/member_name for them.
                     elif func_name == "draft_thread_message":
                         res = _atv2.draft_thread_message(args.get("thread_title", "") or "",
                                                          intent=args.get("intent"),
+                                                         thread_id=args.get('thread_id'),
                                                          acting_member=actor)
                     elif func_name == "launch_mission":
                         res = _atv2.launch_mission(args.get("goal", "") or "",
@@ -1123,6 +1132,7 @@ sending or claiming, and never pass from_member/member_name for them.
                                                   counterparty_email=args.get("counterparty_email"),
                                                   next_action=args.get("next_action"),
                                                   next_action_at=args.get("next_action_at"),
+                                                  idem=args.get('idem'),
                                                   acting_member=actor)
                     elif func_name == "update_thread_action":
                         res = _atv2.update_thread_action(args.get("thread_title", "") or "",
@@ -1142,6 +1152,7 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = _atv2.add_thread_note(args.get("thread_title", "") or "",
                                                     args.get("text", "") or "",
                                                     url=args.get("url"),
+                                                    thread_id=args.get('thread_id'),
                                                     acting_member=actor)
                     if res.get("message"): agent_message = res["message"]
                 elif func_name == "claim_chore":
@@ -1418,6 +1429,7 @@ sending or claiming, and never pass from_member/member_name for them.
                     if func_name == "add_shopping_items":
                         res = _atv2.add_shopping_items(args.get("items", "") or "",
                                                        list_name=args.get("list_name", "") or "",
+                                                       list_id=args.get('list_id'),
                                                        acting_member=actor)
                     elif func_name == "get_shopping_list_items":
                         res = _atv2.get_shopping_list_items(args.get("list_name", "") or "",
