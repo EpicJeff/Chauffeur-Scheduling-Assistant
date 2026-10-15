@@ -17,6 +17,7 @@ import os
 import re
 import threading
 import time
+from contextlib import nullcontext
 
 from services import storage, model_pools
 
@@ -438,16 +439,19 @@ def _done_card(mission: dict) -> dict:
     from services import occasions
     kind, sid, _ = subject_of(mission)
     drafts = []
+    checks = []
     for stage in mission['plan'].get('stages', []):
         for row in stage.get('rows', []):
+            if row.get('state') == 'uncertain':
+                checks.append(f"Check: {row.get('summary') or row['id']}")
             if row.get('tool') == 'draft_message' and row.get('state') == 'done':
                 result = row.get('result') or {}
                 drafts.append({'to': result.get('to', (row.get('args') or {}).get('to')),
                                'words': result.get('words', (row.get('args') or {}).get('words'))})
     return {'kind': 'mission_done', 'mission_id': mission['id'],
             'summary': mission.get('summary') or '', 'drafts': drafts,
-            'open': [str(g['label']) for g in occasions.gap_report(sid).get('gaps', [])]
-                    if kind == 'occasion' else []}
+            'open': checks + ([str(g['label']) for g in occasions.gap_report(sid).get('gaps', [])]
+                              if kind == 'occasion' else [])}
 
 
 def _dm_person(mission: dict, text: str) -> None:
@@ -1353,6 +1357,20 @@ def _step_once(mission: dict) -> dict:
     storage.update_mission(mid, {'consec_errors': 0})
     action = (res.get('action') or '').strip()
 
+    from services import budget_guard
+    try:
+        # The planner was charged above. Only its chosen work action is guarded;
+        # browse starts its own thread and retains its independent caps.
+        with budget_guard.guard() if work and action in ('tool', 'research') else nullcontext():
+            return _run_planner_action(mission, res, settings, action)
+    except budget_guard.BudgetExhausted:
+        planned.check_work_budget(mid, exhausted=True)
+        return storage.get_mission(mid)
+
+
+def _run_planner_action(mission, res, settings, action):
+    from services import planned
+    mid = mission['id']
     if action in ('interview', 'answers', 'plan', 'stage', 'stage_done'):
         from services import planned
         result = planned.finish_work(mid, res) if action == 'stage_done' else planned.planner_action(mid, res)
@@ -1508,6 +1526,11 @@ def _step_once(mission: dict) -> dict:
         return storage.get_mission(mid)
 
     if action == 'draft':
+        plan = (storage.get_mission(mid) or {}).get('plan')
+        if plan and plan.get('state') not in ('done', 'stopped'):
+            storage.add_mission_step(mid, {'kind': 'note', 'name': 'refused',
+                'result_json': {'note': 'Propose draft_thread_message with the thread id in a follow-up build.'}})
+            return storage.get_mission(mid)
         thread = None
         if mission.get('origin_kind') == 'thread':
             thread = storage.get_thread(mission.get('origin_ref'))

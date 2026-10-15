@@ -1479,6 +1479,7 @@ NO_FOCUS = "Which one? Ask me what needs your attention first, or name it."
 
 
 NOT_ALOUD = "That one is not for a shared speaker; open it on your phone."
+OWN_CHAT = "Ask me about that in your own Argyle chat."
 
 
 def _sensitive(kind: str, row: dict) -> bool:
@@ -1502,6 +1503,8 @@ def _resolve_situation(ref: str, kind: str = None, viewer: dict = None, focus_ke
             return None, NO_FOCUS
         if spoken and _sensitive(f['kind'], row):
             return None, NOT_ALOUD
+        if not _sit.channel_visible(f['kind'], row, focus_key):
+            return None, OWN_CHAT
         return (f['kind'], f['id']), None
     found = None
     for k in ([kind] if kind in _sit.KINDS else _sit.KINDS):
@@ -1511,11 +1514,15 @@ def _resolve_situation(ref: str, kind: str = None, viewer: dict = None, focus_ke
                 return None, "That one is not yours to see."
             if spoken and _sensitive(k, row):
                 return None, NOT_ALOUD
+            if not _sit.channel_visible(k, row, focus_key):
+                return None, OWN_CHAT
             found = (k, ref)
             break
     if not found:
         rows = _sit.list_situations(viewer, kinds=(kind,) if kind in _sit.KINDS else None, spoken=spoken)
         hits = [s for s in rows if ref.lower() in (s.get('title') or '').lower()]
+        if any(not _sit.channel_visible(s['kind'], _sit.load(s['kind'], s['id']), focus_key) for s in hits):
+            return None, OWN_CHAT
         if len(hits) == 1:
             found = (hits[0]['kind'], hits[0]['id'])
         elif not hits:
@@ -1531,10 +1538,12 @@ def _resolve_situation(ref: str, kind: str = None, viewer: dict = None, focus_ke
 
 
 def list_situations(kinds: str = None, limit: int = 10, acting_member: dict = None,
-                    spoken: bool = False) -> Dict[str, Any]:
+                    spoken: bool = False, focus_key: str = None) -> Dict[str, Any]:
     from services import situations as _sit
     want = tuple(k for k in (kinds or '').split(',') if k in _sit.KINDS) or None
-    rows = _sit.list_situations(acting_member, kinds=want, spoken=spoken)[:max(1, min(int(limit or 10), 30))]
+    rows = [s for s in _sit.list_situations(acting_member, kinds=want, spoken=spoken)
+            if _sit.channel_visible(s['kind'], _sit.load(s['kind'], s['id']), focus_key)]
+    rows = rows[:max(1, min(int(limit or 10), 30))]
     if not rows:
         return {"status": "success", "message": "Nothing needs anyone right now.", "situations": []}
     return {"status": "success", "message": _situation_lines(rows), "situations": rows}
@@ -4233,9 +4242,9 @@ def manage_trip_flights(trip_id: str, action: str, prompt: str = "", flight: Dic
     registry handlers (generation, dedup, trip-day ordinals, draft-safe
     messages) so the router and the action buttons share one implementation."""
     action = (action or "generate").lower()
-    args = {"event_id": trip_id}
-    if isinstance(flight, dict):
-        args.update(flight)
+    args = dict(flight) if isinstance(flight, dict) else {}
+    args.pop('trip_id', None)
+    args['event_id'] = trip_id
 
     if action == "generate":
         res = handle_generate_trip_flights({"event_id": trip_id, "prompt": prompt or ""})

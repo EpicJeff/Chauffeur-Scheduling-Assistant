@@ -73,6 +73,9 @@ def check_row(row):
         return f'{tool}: arguments must contain record ids.'
     if NAME_ARGS.intersection(args):
         return f'{tool}: use the id, not a name.'
+    if (tool == 'manage_trip_flights' and isinstance(args.get('flight'), dict)
+            and {'event_id', 'trip_id'}.intersection(args['flight'])):
+        return 'Use only the outer trip id for flights.'
     for arg, kind in contract['targets'].items():
         value = args.get(arg)
         if isinstance(value, dict):
@@ -173,11 +176,14 @@ def keeper_view(mission, viewer):
     """The same keeper projection for active, history and transcript reads."""
     if not is_keeper(mission, viewer):
         return mission
-    row = dict(mission)
-    row['plan'] = redacted(row['plan']) if row.get('plan') else None
-    if 'steps' in row:
+    row = {k: mission[k] for k in (
+        'id', 'status', 'tier', 'created_by', 'created_at', 'updated_at',
+        'retry_at', 'acknowledged_at', 'finished_at', 'origin_kind', 'origin_ref',
+        'goal', 'step_count', 'rev') if k in mission}
+    row['plan'] = redacted(mission['plan']) if mission.get('plan') else None
+    if 'steps' in mission:
         row['steps'] = [{k: s[k] for k in ('id', 'idx', 'ts', 'kind', 'name') if k in s}
-                        for s in row['steps']]
+                        for s in mission['steps']]
     return row
 
 
@@ -285,6 +291,7 @@ def stop_plan(mission_id, actor):
         storage.update_mission(mission_id, {'plan': plan})
         _settle(mission_id, 'plan', 'Stopped')
         _settle(mission_id, 'stage', 'Stopped')
+        _settle(mission_id, 'stage_check', 'Stopped')
         from services import missions
         missions._close(mission_id, 'dropped')
     return {'status': 'success', 'message': 'Stopped.'}
@@ -325,6 +332,8 @@ def _stage_for_change(mid, stage_id, snap, actor):
 
 
 def can_resume_stage(stage):
+    if stage.get('state') == 'uncertain':
+        return True  # Even an all-uncertain stage needs a way to carry on.
     if stage.get('state') != 'partial':
         return False
     return (stage.get('kind') == 'work'
@@ -341,6 +350,11 @@ def resume_stage(mission_id, stage_id, snap, actor):
             return error
         if plan['state'] != 'approved' or not can_resume_stage(stage) or stage_pending(mission):
             return _refused()
+        if stage['state'] == 'uncertain' and not any(r['state'] == 'proposed' for r in stage.get('rows', [])):
+            stage['state'] = 'done'
+            missions._close(mission_id, 'running', plan=plan)
+            _settle(mission_id, 'stage_check', 'Carry on')
+            return {'status': 'success', 'message': 'Stage done; carrying on.'}
         if stage['kind'] == 'work':
             stage['steps_used'] = 0
             stage.pop('budget_ask_pending', None)
@@ -357,6 +371,7 @@ def resume_stage(mission_id, stage_id, snap, actor):
         stage['snapshot'] = snapshot(stage, stage['subject'], plan['rev'])
         storage.update_mission(mission_id, {'plan': plan})
         _settle(mission_id, 'stage', 'Carry on')
+        _settle(mission_id, 'stage_check', 'Carry on')
         _ask(mission_id, 'stage', stage['title'], stage_id=stage_id)
     return {'status': 'success', 'message': 'Stage ready to carry on.'}
 
@@ -389,6 +404,7 @@ def skip_stage(mission_id, stage_id, snap, actor):
         _dismiss_rows(stage)
         missions._close(mission_id, 'running', plan=plan)
         _settle(mission_id, 'stage', 'Not this one')
+        _settle(mission_id, 'stage_check', 'Not this one')
     return {'status': 'success', 'message': 'Stage skipped.'}
 
 
@@ -620,14 +636,14 @@ def pause_bound_work(mid, title):
             _propose_work(mid, mission, mission['plan'], stage, f'Now about {title} — go on?')
 
 
-def check_work_budget(mid):
+def check_work_budget(mid, exhausted=False):
     """Pause spent work; let an existing browse or question finish before asking."""
     with storage.db_lock:
         mission = storage.get_mission(mid)
         stage = next((s for s in (mission.get('plan') or {}).get('stages', [])
                       if s['kind'] == 'work' and (s['state'] == 'running'
                           or (s['state'] == 'partial' and s.get('budget_ask_pending')))), None)
-        if (not stage or stage.get('steps_used', 0) < stage['step_budget']
+        if (not stage or (not exhausted and stage.get('steps_used', 0) < stage['step_budget'])
                 or mission['status'] in ('done', 'blocked', 'dropped')):
             return False
         stage['state'] = 'partial'
@@ -745,7 +761,7 @@ def run_stage(mission_id, stage_id, snap, actor):
         with storage.db_lock:
             plan = storage.get_mission(mission_id)['plan']
             stage = next(s for s in plan['stages'] if s['id'] == stage_id)
-            stage['state'] = 'done' if all(r['state'] in ('done', 'excluded') for r in stage['rows']) else 'partial'
+            stage['state'] = 'done' if all(r['state'] in ('done', 'excluded', 'skipped', 'uncertain') for r in stage['rows']) else 'partial'
             if can_resume_stage(stage):
                 storage.update_mission(mission_id, {'plan': plan})
                 _ask(mission_id, 'stage', 'Partly done; carry on later.', stage_id=stage_id)
@@ -771,6 +787,8 @@ def reconcile():
                 for row in stage.get('rows', []):
                     if row['state'] == 'running':
                         row['state'] = 'uncertain'
+                        if row.get('proposal_id'):
+                            storage.update_action_proposal(row['proposal_id'], {'status': 'uncertain'})
                         uncertain.append({'stage_id': stage['id'], 'row_id': row['id'], 'summary': row.get('summary')})
                 stage['state'] = 'uncertain'
                 changed = True

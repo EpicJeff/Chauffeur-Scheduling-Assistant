@@ -18,6 +18,19 @@ PER_KIND, OVERALL, BUDGET = 5, 8, 1500
 WRITE_ROLES = ('parent', 'adult')
 
 
+def channel_humans(focus_key):
+    """Human recipients of a channel; None for a private non-channel focus."""
+    if not focus_key or not focus_key.startswith('channel:'):
+        return None
+    channel = storage.get_channel(focus_key[len('channel:'):])
+    if not channel:
+        return [None]  # Unknown recipients cannot authorize sharing.
+    members = ([storage.get_member(mid) for mid in channel.get('member_ids') or []]
+               if channel.get('kind') in ('group', 'dm') else
+               [m for m in storage.get_all_members() if (m.get('status') or 'active') == 'active'])
+    return [m for m in members if not m or not (m.get('system') or m.get('id') == 'argyle')]
+
+
 def facets(kind):
     return list(FACETS.get(kind, []))
 

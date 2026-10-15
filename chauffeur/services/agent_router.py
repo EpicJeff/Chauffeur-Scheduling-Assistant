@@ -275,19 +275,7 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                     phone_voice.get().speech_safe = False
                 _s = _sit.view(_f['kind'], _f['id'], _viewer)
                 from services import subjects, storage
-                channel = storage.get_channel(focus_key[len('channel:'):]) if focus_key.startswith('channel:') else None
-                shared_ok = True
-                if channel:
-                    members = ([storage.get_member(mid) for mid in channel.get('member_ids') or []]
-                               if channel.get('kind') in ('group', 'dm') else
-                               [m for m in storage.get_all_members() if (m.get('status') or 'active') == 'active'])
-                    records = subjects.subject_records(_f['kind'], _row)
-                    for member in members:
-                        if member and (member.get('system') or member.get('id') == 'argyle'):
-                            continue
-                        if not all(_sit._subject_visible(k, record, member) for k, record in records):
-                            shared_ok = False
-                            break
+                shared_ok = _sit.channel_visible(_f['kind'], _row, focus_key)
                 # The next-step label can itself be a stage title or a row's
                 # words. Apply ABOUT's audience gate before injecting FOCUS.
                 if shared_ok:
@@ -1039,17 +1027,9 @@ sending or claiming, and never pass from_member/member_name for them.
                     if 'voice_context' in allowed:
                         kwargs['voice_context'] = voice_context
                     channel_members = None
-                    if func_name == 'find_in_chauffeur' and focus_key and focus_key.startswith('channel:'):
-                        from services import storage, subjects
-                        channel = storage.get_channel(focus_key[len('channel:'):])
-                        if channel:
-                            if channel.get('kind') in ('dm', 'group'):
-                                channel_members = [storage.get_member(member_id) for member_id in channel.get('member_ids') or []]
-                            else:
-                                channel_members = [m for m in storage.get_all_members()
-                                                   if (m.get('status') or 'active') == 'active']
-                            channel_members = [m for m in channel_members
-                                               if not m or not (m.get('system') or m.get('id') == 'argyle')]
+                    if func_name == 'find_in_chauffeur':
+                        from services import subjects
+                        channel_members = subjects.channel_humans(focus_key)
                     res = fn(**kwargs, acting_member=actor)
                     if channel_members is not None:
                         candidates = res.get('candidates') or []

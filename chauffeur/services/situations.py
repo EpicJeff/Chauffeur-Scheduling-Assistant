@@ -303,6 +303,13 @@ def _options_mission(row: dict) -> list:
                                         {**payload, 'decision': 'exclude', 'row_id': r['id']}, f"{base}:exclude:{r['id']}"))
             out.append(_opt('answer', 'Tell it something', {'ask': 'steer'}, 'steer'))
         elif name == 'stage_check':
+            for stage in plan.get('stages', []):
+                if stage['state'] != 'uncertain':
+                    continue
+                base = f"{stage['id']}:{stage['snapshot']}"
+                payload = {'stage_id': stage['id'], 'snapshot': stage['snapshot']}
+                for decision, label in [('resume', 'Carry on'), ('skip', 'Not this one'), ('stop', 'Stop')]:
+                    out.append(_opt('run_stage', label, {**payload, 'decision': decision}, f'{base}:{decision}'))
             out.append(_opt('answer', 'Tell it what happened', {'ask': 'steer'}, 'steer'))
         elif name == 'release':
             # The contact card leaves the house only on this tap (browse missions
@@ -525,6 +532,16 @@ def subject_view(kind: str, row: dict, viewer: Optional[dict]) -> Optional[dict]
             'link': subjects.link(k, sid), 'rev': rev}
 
 
+def channel_visible(kind: str, row: dict, focus_key: str) -> bool:
+    """A channel may hear only rows and subjects every human there may read."""
+    from services import subjects
+    members = subjects.channel_humans(focus_key)
+    return members is None or bool(row) and all(
+        bool(member) and can_see(kind, row, member)
+        and all(_subject_visible(k, record, member) for k, record in subjects.subject_records(kind, row))
+        for member in members)
+
+
 def view(kind: str, sid: str, viewer: Optional[dict] = None) -> Optional[dict]:
     if kind not in KINDS:
         return None
@@ -540,14 +557,27 @@ def view(kind: str, sid: str, viewer: Optional[dict] = None) -> Optional[dict]:
             # neither an interview question nor a stage title is a label here.
             row = {**planned.keeper_view(row, viewer), 'plan': None,
                    'status_note': '', 'note_source': 'fallback'}
+    elif kind == 'thread':
+        from services import subjects
+        keeper = (can_see(kind, row, viewer)
+                  and not all(_subject_visible(k, record, viewer)
+                              for k, record in subjects.subject_records(kind, row)))
+        if keeper:
+            # Cached planner notes and suggestions can quote the hidden plan.
+            row = {**row, 'status_note': '', 'note_source': 'fallback', 'next_steps': [],
+                   'history': [{'kind': 'mission', 'ts': h.get('ts')} if h.get('kind') == 'mission' else h
+                               for h in row.get('history') or []]}
     opts = options_for(kind, row)
     if keeper:
-        opts = [o for o in opts if o['verb'] not in ('approve_plan', 'run_stage')]
+        opts = [o for o in opts if o['verb'] not in ('approve_plan', 'run_stage')
+                and (':mission:' not in o['id'] or o['payload'].get('ask') == 'steer')]
     from services import asks as _asks
     note = row.get('status_note') or ''
     source = row.get('note_source') or 'fallback'
     if not note or source != 'argyle' or (row.get('note_rev') or 0) != (row.get('rev') or 0):
         note, source = fallback_note(kind, row), 'fallback'
+    if keeper and kind == 'thread':
+        note = row.get('state') or ''
     title = {'finding': row.get('line'), 'insight': row.get('line'),
              'thread': row.get('title'), 'mission': row.get('goal')}[kind] or ''
     return {
