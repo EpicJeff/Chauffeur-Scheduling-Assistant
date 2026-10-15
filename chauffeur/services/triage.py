@@ -185,7 +185,9 @@ def next_for(viewer: Optional[dict], key: Optional[str], skip_current: bool = Fa
     """The situation to speak now. The first on the ranked list, or the one
     after the focus when `skip_current`. Sets focus and cursor; clears the
     focus and returns None when the list is exhausted."""
-    ranked = triage_rank(situations.list_situations(viewer, spoken=True))
+    visible = [s for s in situations.list_situations(viewer, spoken=True)
+               if situations.channel_visible(s['kind'], situations.load(s['kind'], s['id']), key)]
+    ranked = triage_rank(visible)
     if not ranked:
         clear_focus(key)
         return None

@@ -19,12 +19,12 @@ WRITE_ROLES = ('parent', 'adult')
 
 
 def channel_humans(focus_key):
-    """Human recipients of a channel; None for a private non-channel focus."""
+    """Human recipients of a channel; None for a non-channel or unknown focus."""
     if not focus_key or not focus_key.startswith('channel:'):
         return None
     channel = storage.get_channel(focus_key[len('channel:'):])
     if not channel:
-        return [None]  # Unknown recipients cannot authorize sharing.
+        return None
     members = ([storage.get_member(mid) for mid in channel.get('member_ids') or []]
                if channel.get('kind') in ('group', 'dm') else
                [m for m in storage.get_all_members() if (m.get('status') or 'active') == 'active'])

@@ -6763,11 +6763,13 @@ def thread_missions(thread_id: str, request: Request = None):
     # child who owns the thread sees the thread, not this.
     if not _sit.can_see('thread', row, viewer) or (viewer or {}).get('role') not in _sit.WRITE_ROLES:
         raise HTTPException(status_code=403, detail="Not yours to see")
-    rows = [m for m in storage.get_missions() if m.get('origin_kind') == 'thread' and m.get('origin_ref') == thread_id]
+    from services import planned
+    rows = [m for m in storage.get_missions() if m.get('origin_kind') == 'thread'
+            and m.get('origin_ref') == thread_id and _sit.can_see('mission', m, viewer)]
     rows.sort(key=lambda m: -(m.get('created_at') or 0))
     for m in rows:
         m['steps'] = storage.get_mission_steps(m['id'])
-    return {"missions": rows[:5]}
+    return {"missions": [planned.keeper_view(m, viewer) for m in rows[:5]]}
 
 
 @app.patch("/api/threads/{thread_id}")

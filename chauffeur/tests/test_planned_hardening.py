@@ -18,7 +18,11 @@ slice 2, 2026-10-14). Task 14. Each scenario pins one finding:
   7. after a restart a person can carry on: the lost row stays uncertain and
      is never re-run, its proposal leaves 'executing', its dependents are
      skipped, untouched rows run on a fresh approval, and the finish names
-     the row to check.
+     the row to check;
+  8. `next_situation` in such a channel never picks or speaks a row someone
+     there may not see (scoped re-review);
+  9. a thread keeper's mission transcript (GET /api/threads/{id}/missions)
+     is the keeper projection (scoped re-review).
 
 Run from chauffeur/:  python tests/test_planned_hardening.py
 """
@@ -194,6 +198,31 @@ def scenario_7_after_a_restart_a_person_can_carry_on():
     check(any("Make Kate's 10th birthday" in o for o in card['open']), f"the finish names the row to check: {card['open']}")
 
 
+def scenario_8_next_situation_in_a_mixed_channel_skips_what_someone_may_not_see():
+    _fresh()
+    tid = _thread('Kate party planning', subject_kind='occasion', subject_id='o1', subject_rev=1)
+    mid = _planned(_mission(created_by='mom', origin=tid))
+    for kind, sid, update in (('thread', tid, storage.update_thread), ('mission', mid, storage.update_mission)):
+        row = situations.load(kind, sid)
+        update(sid, {'status_note': 'Next: Buy the surprise gift', 'note_source': 'argyle', 'note_rev': row.get('rev') or 0})
+    mixed = storage.get_or_create_group(['mom', 'aunt'], 'Mom and Jo')
+    res = tools.next_situation(acting_member=dict(MOM), focus_key=f"channel:{mixed['id']}")
+    check(not _secrets(repr(res)), f"next in a mixed channel: {_secrets(repr(res))}")
+    check(not res.get('situation') or res['situation']['id'] not in (tid, mid), f"and it is never the one chosen: {res.get('situation')}")
+
+
+def scenario_9_a_thread_keepers_mission_transcript_is_the_keeper_projection():
+    _fresh()
+    tid = _thread('Ring errand', owner='aunt', subject_kind='occasion', subject_id='o1', subject_rev=1)
+    mid = _planned(_mission(created_by='aunt', origin=tid))
+    storage.update_mission(mid, {'summary': f'Done: {SECRET_ROW}'})
+    import main
+    out = main.thread_missions(tid, request=_as('aunt'))
+    check(any(m['id'] == mid for m in out['missions']), "the keeper keeps the row")
+    check(not _secrets(repr(out)), f"but the transcript carries no plan words: {_secrets(repr(out))}")
+    check(SECRET_Q in repr(main.thread_missions(tid, request=_as('mom'))), "a parent reads the whole transcript")
+
+
 SCENARIOS = [
     scenario_1_a_work_stage_cannot_draft_on_its_own,
     scenario_2_a_thread_keeper_sees_no_plan_words,
@@ -202,6 +231,8 @@ SCENARIOS = [
     scenario_5_a_work_stage_action_runs_under_the_budget_guard,
     scenario_6_a_flight_row_cannot_point_at_another_trip,
     scenario_7_after_a_restart_a_person_can_carry_on,
+    scenario_8_next_situation_in_a_mixed_channel_skips_what_someone_may_not_see,
+    scenario_9_a_thread_keepers_mission_transcript_is_the_keeper_projection,
 ]
 
 if __name__ == "__main__":

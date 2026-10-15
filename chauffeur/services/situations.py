@@ -533,11 +533,11 @@ def subject_view(kind: str, row: dict, viewer: Optional[dict]) -> Optional[dict]
 
 
 def channel_visible(kind: str, row: dict, focus_key: str) -> bool:
-    """A channel may hear only rows and subjects every human there may read."""
+    """A channel may hear only subjects every human there may read."""
     from services import subjects
     members = subjects.channel_humans(focus_key)
     return members is None or bool(row) and all(
-        bool(member) and can_see(kind, row, member)
+        bool(member)
         and all(_subject_visible(k, record, member) for k, record in subjects.subject_records(kind, row))
         for member in members)
 
