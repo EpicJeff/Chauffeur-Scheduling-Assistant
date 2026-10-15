@@ -59,9 +59,66 @@ def scenario_the_detail_view_and_its_pieces():
         check(sheets and sheets[0]['kind'] == 'thread' and sheets[0]['id'] == IDS['thread'] and sheets[0]['projectId'] == IDS['bath'],
               f"Open asks for the sheet: {sheets}")
         shot(page, 'slice2-detail')
+        # Exercise the delegated card handler itself, not just the sheet's Open.
+        act_url = served.url(f'api/situations/thread/{IDS["thread"]}/act')
+        acts = []
+
+        def is_card_act(request):
+            return request.method == 'POST' and request.url == act_url
+
+        page.on('requestfinished', lambda request: acts.append(request) if is_card_act(request) else None)
+        piece = f'[data-piece="thread:{IDS["thread"]}"]'
+        card = page.locator(piece)
+        with page.expect_event('requestfinished', predicate=is_card_act, timeout=10000):
+            card.locator('button[data-sit-act="own"]').click()
+        check(len(acts) == 1 and acts[0].post_data_json.get('verb') == 'own',
+              f"the Tiler card posted own exactly once: {[r.post_data_json for r in acts]}")
+        response = acts[0].response()
+        check(response.status == 200 and response.json().get('status') == 'success',
+              f"own succeeded: {response.status} {response.text()}")
+        card.locator('button[data-sit-act="own"]').wait_for(state='detached')
+        card.locator('button[data-sit-act="done"]').wait_for(state='visible')
+        check(served.errors() == [], f"no page errors after the card acts and refreshes: {served.errors()}")
+
         page.locator('[data-project-back]').click()
         page.wait_for_selector(f'[data-project-id="{IDS["bath"]}"]', timeout=10000)
         check('id=' not in page.url, f"back drops the project from the address: {page.url}")
+        # Traverse the filter as well, then recreate detail in this same document.
+        programs = page.locator('[data-lane-filter="programs"]')
+        programs.click()
+        page.wait_for_selector('[data-lane-filter="programs"][aria-pressed="true"]', timeout=10000)
+        check(programs.get_attribute('aria-pressed') == 'true', "Programs filter is on")
+        programs.click()
+        page.wait_for_selector('[data-lane-filter="programs"][aria-pressed="false"]', timeout=10000)
+        check(programs.get_attribute('aria-pressed') == 'false', "Programs filter is off")
+        page.locator(f'[data-project-id="{IDS["bath"]}"]').click()
+        page.wait_for_selector('[data-project-detail]', timeout=10000)
+        card.locator('button[data-sit-act="done"]').wait_for(state='visible')
+        # Handled closes a thread. Change its next step instead: a reversible
+        # action through the real shared dialogs, with no outside send/model call.
+        next_step = 'Confirm the tile measurements with Ace'
+        with page.expect_event('requestfinished', predicate=is_card_act, timeout=10000):
+            card.locator('button[data-sit-act="advance"]').click()
+            page.locator('#cc-input-modal').wait_for(state='visible')
+            page.locator('#cc-input-field').fill(next_step)
+            page.locator('#cc-input-ok-btn').click()
+            page.wait_for_function("""() => document.getElementById('cc-input-title').textContent === 'By when? (YYYY-MM-DD, or blank)'
+                && !document.getElementById('cc-input-modal').classList.contains('hidden')""", timeout=10000)
+            page.locator('#cc-input-field').fill('')
+            page.locator('#cc-input-ok-btn').click()
+        check(len(acts) == 2 and acts[1].post_data_json.get('verb') == 'advance',
+              f"the recreated card posted advance exactly once: {[r.post_data_json for r in acts]}")
+        response = acts[1].response()
+        check(response.status == 200 and response.json().get('status') == 'success',
+              f"advance succeeded: {response.status} {response.text()}")
+        page.wait_for_function("""({selector, text}) => {
+            const card = document.querySelector(selector);
+            return card && card.innerText.includes(text);
+        }""", arg={'selector': piece, 'text': next_step}, timeout=10000)
+        check(next_step in card.inner_text(), "the recreated card refreshed its next step after the POST")
+        check(served.errors() == [], f"no page errors after recreation and the second act: {served.errors()}")
+        page.locator('#cc-alert-modal').get_by_role('button', name='OK', exact=True).click()
+
         page.goto(served.url('projects?id=' + IDS['bath']), wait_until='load')
         page.wait_for_selector('[data-project-detail]', timeout=10000)
         check(served.errors() == [], f"no page errors: {served.errors()}")
