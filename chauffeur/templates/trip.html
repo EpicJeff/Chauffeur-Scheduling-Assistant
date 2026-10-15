@@ -1115,7 +1115,7 @@
                     const link = document.createElement('a');
                     link.className = 'underline underline-offset-2';
                     link.href = apiBase + 'threads';
-                    link.textContent = 'Argyle: ' + row.title + (row.next_step && row.next_step.label ? ' — ' + row.next_step.label : '');
+                    link.textContent = 'Argyle: ' + row.title + (row.next_step && row.next_step.label ? ' — ' + row.next_step.label : '') + (row.plan_line ? ' · ' + row.plan_line : '');
                     line.appendChild(link);
                     el.appendChild(line);
                 });

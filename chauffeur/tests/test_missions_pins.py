@@ -61,7 +61,7 @@ def scenario_end_to_end_runthrough_executes_nothing():
         storage.get_settings = lambda: {'missions_enabled': True,
                                         'llm_gemini_api_key': 'F',
                                         'llm_gemini_paid_api_key': 'P'}
-        agent_tools_v2.execute_tool = lambda n, a: executed.append((n, a)) or {'status': 'ok', 'echo': n}
+        agent_tools_v2.execute_tool = lambda n, a, actor=None: executed.append((n, a)) or {'status': 'ok', 'echo': n}
         web.research = lambda q, read_pages=6, api_key=None: {'status': 'ok', 'answer': 'three vendors',
                                                 'facts': [], 'sources': []}
         script = [

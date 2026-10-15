@@ -272,6 +272,14 @@ window.Situations = (function () {
 
   function verbLabel(verb) { return VERB_LABELS[verb] || verb; }
 
+  function planStepperHtml(plan) {
+    const words = { pending: 'waiting', proposed: 'needs your yes', running: 'running',
+      done: 'done', skipped: 'skipped', partial: 'partial', uncertain: 'check these' };
+    return ((plan || {}).stages || []).map(s =>
+      `<div class="text-xs text-gray-400 mt-1" data-stage-state="${esc(s.state)}">${esc(s.title)} · ${esc(words[s.state] || s.state)}</div>`
+    ).join('');
+  }
+
   // One delegated listener per lane element. Pages that draw the cards
   // themselves (Alpine x-html) call bind() with a lookup; render() calls it
   // for its own map. Re-binding only swaps the ctx: never a second listener.
@@ -313,5 +321,5 @@ window.Situations = (function () {
     bind(el, ctx);
   }
 
-  return { VERB_LABELS, verbLabel, cardHtml, render, bind, act, ask };
+  return { VERB_LABELS, verbLabel, cardHtml, planStepperHtml, render, bind, act, ask };
 })();

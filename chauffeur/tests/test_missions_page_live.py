@@ -41,7 +41,7 @@ def seed():
                                     'result_json': {'proposal_id': 'p1', 'status': 'proposed',
                                                     'card': {'title': 'Add: call Ace Pools'}}})
     from services import chat_actions
-    chat_actions._execute = lambda a, p: {'status': 'success', 'message': 'added'}
+    chat_actions._execute = lambda a, p, approver=None: {'status': 'success', 'message': 'added'}
 
 
 def main():

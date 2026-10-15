@@ -348,7 +348,8 @@ def ask_card(mission: dict) -> dict | None:
         stage = next((s for s in plan.get('stages', []) if s['id'] == result.get('stage_id')), {})
         card['rows'] = stage.get('rows', [])
         if stage.get('kind') == 'work':
-            card.update(kind='work', goal=stage.get('goal'))
+            card.update(kind='work', goal=stage.get('goal'), stage_kind='work',
+                        work_goal=stage.get('goal'), found=stage.get('found'))
     elif asked['name'] == 'stage_check':
         card['rows'] = result.get('rows', [])
     return card
@@ -433,6 +434,22 @@ def about_block(mission: dict) -> str:
             f'Facets you can read with find_in_chauffeur: {facets}.)\n')
 
 
+def _done_card(mission: dict) -> dict:
+    from services import occasions
+    kind, sid, _ = subject_of(mission)
+    drafts = []
+    for stage in mission['plan'].get('stages', []):
+        for row in stage.get('rows', []):
+            if row.get('tool') == 'draft_message' and row.get('state') == 'done':
+                result = row.get('result') or {}
+                drafts.append({'to': result.get('to', (row.get('args') or {}).get('to')),
+                               'words': result.get('words', (row.get('args') or {}).get('words'))})
+    return {'kind': 'mission_done', 'mission_id': mission['id'],
+            'summary': mission.get('summary') or '', 'drafts': drafts,
+            'open': [str(g['label']) for g in occasions.gap_report(sid).get('gaps', [])]
+                    if kind == 'occasion' else []}
+
+
 def _dm_person(mission: dict, text: str) -> None:
     """One message to whoever started the mission (the parents when nobody
     did), in their Argyle DM. Never raises."""
@@ -445,7 +462,8 @@ def _dm_person(mission: dict, text: str) -> None:
             if any(((storage.get_chat_message(i) or {}).get('card') or {}).get('state') == 'open'
                    for i in step.get('chat_message_ids') or []):
                 settle_ask_cards(mission['id'], step['id'], 'Moved on')
-        card = ask_card(mission)
+        card = (_done_card(mission) if mission.get('status') == 'done' and mission.get('plan')
+                else ask_card(mission))
         if card and card.get('kind') == 'work':
             # Chat rendering and settlement share the mission-ask envelope.
             card = {**card, 'kind': 'mission_ask', 'stage_kind': 'work'}
@@ -457,7 +475,7 @@ def _dm_person(mission: dict, text: str) -> None:
             people = [m for m in people if situations.can_see('mission', mission, m)]
         for m in people:
             message = _post(storage.get_or_create_dm(argyle['id'], m['id']), argyle, text, card=card)
-            if card and message and message.get('id'):
+            if card and card.get('ask_id') and message and message.get('id'):
                 with storage.db_lock:
                     asked = next(s for s in storage.get_mission_steps(mission['id']) if s['id'] == card['ask_id'])
                     ids = list(asked.get('chat_message_ids') or [])
@@ -1511,16 +1529,28 @@ def _step_once(mission: dict) -> dict:
         return row
 
     if action == 'finish':
-        why = _finish_too_early(mission, res)
-        if why:
-            # Once: a goal about a site's prices, slots or scheduling is not
-            # finished until this mission has browsed the site (2026-10-11: the
-            # planner repeated the thread's old "call them" and finished in one step).
-            storage.add_mission_step(mid, {'kind': 'note', 'name': 'finish_refused', 'result_json': {'note': why}})
-            return storage.get_mission(mid)
-        storage.add_mission_step(mid, {'kind': 'llm', 'name': 'finish',
-                                       'result_json': res})
-        row = _close(mid, 'done', summary=(res.get('summary') or '').strip())
+        with storage.db_lock:
+            mission = storage.get_mission(mid)
+            plan = mission.get('plan')
+            if plan and any(s.get('state') in ('proposed', 'running')
+                            or (s.get('kind') == 'work' and s.get('state') == 'pending')
+                            for s in plan.get('stages', [])):
+                storage.add_mission_step(mid, {'kind': 'note', 'name': 'refused',
+                                               'result_json': {'note': 'Finish the open stages before finishing the plan.'}})
+                return storage.get_mission(mid)
+            why = _finish_too_early(mission, res)
+            if why:
+                # Once: a goal about a site's prices, slots or scheduling is not
+                # finished until this mission has browsed the site (2026-10-11: the
+                # planner repeated the thread's old "call them" and finished in one step).
+                storage.add_mission_step(mid, {'kind': 'note', 'name': 'finish_refused', 'result_json': {'note': why}})
+                return storage.get_mission(mid)
+            storage.add_mission_step(mid, {'kind': 'llm', 'name': 'finish',
+                                           'result_json': res})
+            if plan:
+                plan['state'] = 'done'
+            row = _close(mid, 'done', summary=(res.get('summary') or '').strip(),
+                         **({'plan': plan} if plan else {}))
         _land_finish(storage.get_mission(mid), res)
         return row
 

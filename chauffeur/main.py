@@ -5830,6 +5830,14 @@ def situation_get(kind: str, sid: str, request: Request = None):
 @app.get("/api/subjects/{kind}/{sid}/situations")
 def subject_situations(kind: str, sid: str, request: Request = None):
     from services import situations as _sit
+    def plan_line(mission):
+        stages = ((mission or {}).get('plan') or {}).get('stages') or []
+        if not stages:
+            return {}
+        index = next((i for i, s in enumerate(stages) if s.get('state') not in ('done', 'skipped')),
+                     len(stages) - 1)
+        return {'plan_line': f"Plan: stage {index + 1} of {len(stages)} — {stages[index].get('title') or ''}"}
+
     actor = _mind_actor(request, None)
     if actor is not None and actor.get('role') not in ('parent', 'adult'):
         raise HTTPException(status_code=403, detail="Parents and adults only")
@@ -5840,14 +5848,15 @@ def subject_situations(kind: str, sid: str, request: Request = None):
                 and _sit.can_see('thread', t, viewer)):
             v = _sit.view('thread', t['id'], viewer)
             out.append({'kind': 'thread', 'id': t['id'], 'title': t.get('title'),
-                        'next_step': (v or {}).get('next_step')})
+                        'next_step': (v or {}).get('next_step'),
+                        **plan_line(_sit._thread_mission(t))})
     for m in storage.get_missions(status=['running', 'browsing', 'waiting_user', 'waiting_retry']):
         if (m.get('origin_kind') != 'thread'
                 and (m.get('subject_kind'), m.get('subject_id')) == (kind, sid)
                 and _sit.can_see('mission', m, viewer)):
             v = _sit.view('mission', m['id'], viewer)
             out.append({'kind': 'mission', 'id': m['id'], 'title': m.get('goal'),
-                        'next_step': (v or {}).get('next_step')})
+                        'next_step': (v or {}).get('next_step'), **plan_line(m)})
     return out
 
 

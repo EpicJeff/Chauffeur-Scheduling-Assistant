@@ -5217,6 +5217,7 @@
             if (!card) return '';
             if (card.kind === 'ask') return renderAskCard(card);
             if (card.kind === 'mission_ask') return renderMissionAskCard(card);
+            if (card.kind === 'mission_done') return renderMissionDoneCard(card);
             if (card.kind !== 'action_proposal') return '';
             let footer;
             if (card.status === 'proposed' && (card.actions || []).length) {
@@ -5261,6 +5262,32 @@
         // Include the mission in the key: question and handoff options share "answer".
         const missionAskOptions = new Map();
 
+        function renderMissionDoneCard(card) {
+            const canShare = ['parent', 'adult'].includes(myRole());
+            const drafts = (card.drafts || []).map(d => `<div class="mt-2" data-mission-draft>
+                <div class="text-xs text-gray-200">To ${mfEscape(d.to)}: <span data-draft-words class="whitespace-pre-wrap">${mfEscape(d.words)}</span></div>
+                ${canShare ? '<div class="flex gap-2 mt-1"><button data-copy class="px-3 py-1 rounded-lg text-xs font-semibold bg-gray-700 text-gray-200">Copy</button><button data-share class="px-3 py-1 rounded-lg text-xs font-semibold bg-gray-700 text-gray-200">Share</button></div>' : ''}
+            </div>`).join('');
+            const open = (card.open || []).map(line => `<li>${mfEscape(line)}</li>`).join('');
+            return `<div class="mt-1 px-3 py-2 rounded-xl bg-gray-900 border border-gray-700">
+                <div class="text-xs text-gray-200 font-medium">${mfEscape(card.summary || '')}</div>${drafts}
+                ${open ? `<div class="text-xs text-gray-400 mt-2">Still open<ul>${open}</ul></div>` : ''}</div>`;
+        }
+
+        function renderPlanQuestion(q, canAct) {
+            const attrs = `data-q="${mfEscape(q.key)}" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-sm text-gray-100"${canAct ? '' : ' disabled'}`;
+            let control;
+            if (q.kind === 'choice' || q.kind === 'yesno') {
+                const choices = q.kind === 'yesno' ? ['Yes', 'No'] : (q.choices || []);
+                control = `<select ${attrs} data-q-kind="${mfEscape(q.kind)}"><option value="">Choose…</option>${choices.map(c => `<option value="${mfEscape(c)}">${mfEscape(c)}</option>`).join('')}</select>`;
+            } else {
+                const type = ['number', 'date'].includes(q.kind) ? q.kind : 'text';
+                control = `<input type="${type}" ${attrs}>`;
+            }
+            return `<div class="mt-2" data-plan-question><label class="block text-xs text-gray-300">${mfEscape(q.ask)}${control}</label>
+                ${canAct ? `<label class="text-xs text-gray-400"><input type="checkbox" data-you-decide="${mfEscape(q.key)}"> You decide</label>` : ''}</div>`;
+        }
+
         function renderMissionAskCard(card) {
             const options = card.options || [];
             const canAct = card.state === 'open' && ['parent', 'adult'].includes(myRole());
@@ -5274,6 +5301,33 @@
                 footer = `<div class="text-xs mt-1 text-gray-500">${mfEscape(card.outcome || '')}</div>`;
             }
             let details = '';
+            if (card.ask === 'interview') {
+                details += (card.questions || []).map(q => renderPlanQuestion(q, canAct)).join('');
+                if (canAct) details += `<button data-plan-answers="${mfEscape(card.mission_id)}" class="mt-2 px-3 py-1 rounded-lg text-xs font-semibold bg-blue-600 text-white">Send answers</button>`;
+            }
+            if (card.ask === 'plan') {
+                details += (card.stages || []).map(s => `<div class="text-xs text-gray-300 mt-2">${mfEscape(s.title)} · ${mfEscape(s.kind)}
+                    <ul class="text-gray-400">${(s.makes || []).map(line => `<li>${mfEscape(line)}</li>`).join('')}</ul></div>`).join('');
+            }
+            if (card.ask === 'stage' || card.ask === 'stage_check') {
+                if (card.stage_kind === 'work') {
+                    details += `<div class="text-xs text-gray-300 mt-2">${mfEscape(card.work_goal || '')}</div>`;
+                    // What a work stage found, as lines a person reads ("bakeries: Publix, Edible"),
+                    // never a JSON dump.
+                    const foundText = (v) => Array.isArray(v) ? v.map(foundText).join(', ')
+                        : (v && typeof v === 'object') ? Object.entries(v).map(([k, x]) => `${k}: ${foundText(x)}`).join('; ')
+                        : String(v == null ? '' : v);
+                    if (card.found != null && typeof card.found === 'object' && !Array.isArray(card.found)) {
+                        details += Object.entries(card.found).map(([k, v]) =>
+                            `<div class="text-xs text-gray-400 mt-1">${mfEscape(k)}: ${mfEscape(foundText(v))}</div>`).join('');
+                    } else if (card.found != null) {
+                        details += `<div class="text-xs text-gray-400 mt-1">${mfEscape(foundText(card.found))}</div>`;
+                    }
+                } else {
+                    details += (card.rows || []).map(r => `<div class="text-xs text-gray-300 mt-2">${mfEscape(r.summary)} · ${mfEscape(r.state || '')}
+                        ${r.result && r.result.message ? `<div class="text-gray-400">${mfEscape(r.result.message)}</div>` : ''}</div>`).join('');
+                }
+            }
             const entries = card.ask === 'submit' ? card.facts : card.ask === 'release' ? card.values : null;
             if (entries && Object.keys(entries).length) {
                 details += `<ul class="text-xs text-gray-400 mt-1">` + Object.entries(entries).map(([k, v]) =>
@@ -5307,6 +5361,46 @@
                 await refreshThread();
             } catch (e) { showGlobalAlert("Couldn't answer that."); }
         }
+
+        document.addEventListener('change', (ev) => {
+            if (!ev.target.matches('[data-you-decide]')) return;
+            const input = ev.target.closest('[data-plan-question]').querySelector('[data-q]');
+            if (input) input.disabled = ev.target.checked;
+        });
+
+        document.addEventListener('click', async (ev) => {
+            const button = ev.target.closest('button[data-plan-answers], button[data-copy], button[data-share]');
+            if (!button || button.disabled || !['parent', 'adult'].includes(myRole())) return;
+            button.disabled = true;
+            try {
+                if (button.hasAttribute('data-plan-answers')) {
+                    const answers = {};
+                    button.closest('[data-mission-id]').querySelectorAll('[data-plan-question]').forEach(row => {
+                        const input = row.querySelector('[data-q]');
+                        const decide = row.querySelector('[data-you-decide]');
+                        if (decide && decide.checked) answers[input.dataset.q] = 'you_decide';
+                        else if (input.value !== '') answers[input.dataset.q] = input.type === 'number' ? input.valueAsNumber
+                            : input.dataset.qKind === 'yesno' ? input.value === 'Yes' : input.value;
+                    });
+                    const res = await fetch(`${apiBase}api/missions/${encodeURIComponent(button.dataset.planAnswers)}/plan/answers`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answers }) });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) throw new Error(data.detail || "Couldn't send those answers.");
+                    await refreshThread();
+                } else {
+                    const draft = button.closest('[data-mission-draft]');
+                    if (!draft) return;
+                    const text = draft.querySelector('[data-draft-words]').textContent;
+                    if (button.hasAttribute('data-share') && navigator.share) {
+                        try { await navigator.share({ text }); return; }
+                        catch (e) { if (e.name === 'AbortError') return; }
+                    }
+                    await navigator.clipboard.writeText(text);
+                    showGlobalAlert('Copied.');
+                }
+            } catch (e) { showGlobalAlert(e.message || "Couldn't do that just now."); }
+            finally { button.disabled = false; }
+        });
 
         async function missionAskAct(missionId, optionId) {
             if (!selectedMemberId || !['parent', 'adult'].includes(myRole())) return;

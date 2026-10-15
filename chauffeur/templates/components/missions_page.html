@@ -193,6 +193,8 @@
                             <div class="space-y-2 mb-6">
                                 <template x-for="s in g.items" :key="s.id">
                                     <div>
+                                        <div x-show="missionById(s.id) && missionById(s.id).plan"
+                                            x-html="window.Situations.planStepperHtml((missionById(s.id) || {}).plan)"></div>
                                         <div x-html="window.Situations.cardHtml(s, cardCtx())"></div>
                                         {# A one-row x-for, not a nested x-data: the row is
                                            re-read on every poll, so the transcript and the

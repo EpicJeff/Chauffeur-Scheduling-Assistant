@@ -320,7 +320,7 @@ def scenario_a_skipped_step_cannot_be_approved():
     ran = []
     try:
         _auth.identify = lambda h, q: {'tier': _auth.SERVICE, 'member': None}
-        _ca._execute = lambda a, p: (ran.append(a) or
+        _ca._execute = lambda a, p, approver=None: (ran.append(a) or
                                      {'status': 'success', 'message': 'done'})
         try:
             main.mind_step_approve(iid, 's1', body={}, request=None)
