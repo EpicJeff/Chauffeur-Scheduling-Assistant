@@ -451,9 +451,9 @@ def _mission_states(now: datetime.datetime):
     parent taps OK on /missions (acknowledged_at); waiting hushes when the
     answer arrives (status leaves waiting_user). Steps never page — only
     states a human must resolve."""
-    from services import storage as _st
+    from services import missions, storage as _st
     out = []
-    for m in _st.get_missions(status=['done', 'blocked', 'waiting_user']):
+    for m in _st.get_missions(status=('done', 'blocked') + missions.ATTENTION):
         status = m.get('status')
         if status in ('done', 'blocked') and m.get('acknowledged_at'):
             continue

@@ -1840,7 +1840,7 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
     words = [w for w in goal.lower().split() if len(w) > 2][:3]
     subject_title = subjects.title_of(subject_kind, subject) if subject_kind else None
     intent = _intent_words(goal, subject_title) if subject_kind else None
-    for m in storage.get_missions(status=['running', 'browsing', 'waiting_user', 'waiting_retry']):
+    for m in storage.get_missions(status=_missions.LIVE):
         if m.get('origin_kind') != 'thread':
             continue
         t = storage.get_thread(m.get('origin_ref') or '')
@@ -1868,7 +1868,7 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
     f = _tri.get_focus(focus_key) if (focus_key and not title) else None
     if f and f.get('kind') == 'thread':
         t = storage.get_thread(f['id'])
-        live = [m for m in storage.get_missions(status=['running', 'browsing', 'waiting_user', 'waiting_retry'])
+        live = [m for m in storage.get_missions(status=_missions.LIVE)
                 if m.get('origin_kind') == 'thread' and m.get('origin_ref') == f['id']]
         if spoken:
             from services.voice_tools import speech_safe

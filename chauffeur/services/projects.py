@@ -161,6 +161,44 @@ def _needs_satisfied(step, steps):
     return all(states.get(sid) in ('done', 'skipped') for sid in step.get('needs') or [])
 
 
+def needs_satisfied(project, step):
+    """Done and skipped prerequisites both release a project's step."""
+    return _needs_satisfied(step, (project or {}).get('steps') or [])
+
+
+def step_for_stage(project_id, mission_id, stage_id):
+    """Find the project step linked to this particular mission stage."""
+    project = storage.get_project(project_id) or {}
+    return next((step for step in project.get('steps') or []
+                 if step.get('mission_id') == mission_id and step.get('stage_id') == stage_id), None)
+
+
+def resume_waiting(project_id):
+    """Wake parked work only when its next stage's prerequisites are satisfied."""
+    from services import missions
+
+    with storage.db_lock:
+        project = storage.get_project(project_id)
+        if not project:
+            return []
+        resumed = []
+        for mission in storage.get_missions(status='waiting_step'):
+            if missions.subject_of(mission)[:2] != ('project', project_id):
+                continue
+            plan = mission.get('plan') or {}
+            if plan.get('state') != 'approved':
+                continue
+            stage = next((s for s in plan.get('stages', [])
+                          if s.get('state') not in ('done', 'skipped')), None)
+            if not stage or stage.get('state') != 'pending':
+                continue
+            step = step_for_stage(project_id, mission['id'], stage['id'])
+            if step and needs_satisfied(project, step):
+                missions._close(mission['id'], 'running')
+                resumed.append(mission['id'])
+        return resumed
+
+
 def _validate_step(project, step, steps):
     if not isinstance(step.get('title'), str) or not step['title'].strip():
         return 'A step title is required'
@@ -256,6 +294,7 @@ def edit_step(project_id, step_id, fields, actor):
         if message:
             return _error(message)
         storage.update_project(project_id, {'steps': steps})
+        resume_waiting(project_id)
         return {'status': 'success', 'step': deepcopy(step)}
 
 
@@ -299,6 +338,7 @@ def set_step_state(project_id, step_id, state, actor):
         # Readiness is derived from needs, so reopening immediately blocks todo
         # dependents again without changing work already doing or done.
         storage.update_project(project_id, {'steps': steps})
+        resume_waiting(project_id)
         return {'status': 'success', 'step': deepcopy(step), 'advanced': advance(project_id)}
 
 

@@ -23,6 +23,11 @@ from services import storage, model_pools
 
 logger = logging.getLogger(__name__)
 
+# Shared lifecycle groups: live work, engine work, and questions for a person.
+LIVE = ('running', 'browsing', 'waiting_user', 'waiting_retry', 'waiting_step')
+RUNNABLE = ('running',)
+ATTENTION = ('waiting_user',)
+
 CAPS_DEFAULT = {'launch': 3, 'steps': 40, 'pro_calls': 120}
 # One LLM call per 30s beat, not three: a running mission must never make
 # runway/presence/prep beats wait behind it in the same push-loop tick. A
@@ -283,7 +288,7 @@ def _close(mission_id: str, status: str, **fields) -> dict:
     # mission starts or stops waiting on the person, or ends, the thread
     # moved too, so its note is re-asked for with the ask in its facts.
     if before.get('origin_kind') == 'thread' and before.get('origin_ref') and (
-            status in ('waiting_user', 'done', 'blocked', 'dropped') or before.get('status') == 'waiting_user'):
+            status in ATTENTION + TERMINAL or before.get('status') in ATTENTION):
         _sit.touched('thread', before['origin_ref'])
     return storage.get_mission(mission_id)
 
@@ -325,7 +330,7 @@ def ask_card(mission: dict) -> dict | None:
     """Draw the current ask with the mission's own situation options."""
     from services import situations
     row = situations.load('mission', mission['id'])
-    if not row or not (row.get('status') == 'waiting_user' or verify_open(row)):
+    if not row or not (row.get('status') in ATTENTION or verify_open(row)):
         return None
     opts = [o for o in situations._options_mission(row)
             if o['verb'] in ('answer', 'release', 'submit', 'verify', 'approve_plan', 'run_stage')]
@@ -723,7 +728,7 @@ def verify_open(mission: dict) -> bool:
     ask = next((s for s in reversed(steps or []) if s.get('kind') == 'ask'), None)
     if not ask or ask.get('name') != 'verify':
         return False
-    if mission.get('status') == 'waiting_user':
+    if mission.get('status') in ATTENTION:
         return True
     aid = (ask.get('result_json') or {}).get('attempt_step_id')
     att = next((s for s in (steps or []) if s.get('id') == aid), None)
@@ -737,7 +742,7 @@ def tap_only_ask_pending(mission_id: str) -> bool:
     ask = next((s for s in reversed(storage.get_mission_steps(mission_id)) if s.get('kind') == 'ask'), None)
     if not ask or ask.get('name') not in TAP_ONLY_ASKS:
         return False
-    return mission.get('status') == 'waiting_user' or verify_open({**mission, 'id': mission_id})
+    return mission.get('status') in ATTENTION or verify_open({**mission, 'id': mission_id})
 
 
 def answer(mission_id: str, text: str, actor: dict) -> dict:
@@ -752,7 +757,7 @@ def answer(mission_id: str, text: str, actor: dict) -> dict:
         if not text:
             return {'status': 'error', 'message': 'Say something to send.'}
         planned_ask = next((s for s in reversed(storage.get_mission_steps(mission_id)) if s['kind'] == 'ask'), {})
-        is_plan_steer = mission.get('status') == 'waiting_user' and planned_ask.get('name') in ('plan', 'stage', 'stage_check')
+        is_plan_steer = mission.get('status') in ATTENTION and planned_ask.get('name') in ('plan', 'stage', 'stage_check')
         if tap_only_ask_pending(mission_id) and not is_plan_steer:
             return {'status': 'error', 'message': 'Answer that one with its buttons.'}
         status = mission.get('status')
@@ -766,11 +771,11 @@ def answer(mission_id: str, text: str, actor: dict) -> dict:
                 from services import planned
                 if planned.steer_stage(mission_id, (planned_ask.get('result_json') or {}).get('stage_id')):
                     message = 'Told it; it will propose this stage again.'
-        elif status == 'waiting_user':
+        elif status in ATTENTION:
             storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'user_answer', 'result_json': {'text': text, 'answered_by': actor.get('id')}})
             storage.update_mission(mission_id, {'status': 'running'})
             message = 'Answered.'
-        elif status in ('running', 'browsing', 'waiting_retry'):
+        elif status in LIVE:
             storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'user_steer', 'result_json': {'text': text}})
             if status == 'browsing':
                 storage.set_app_state(f'mission_steer:{mission_id}', {'text': text, 'ts': time.time()})
@@ -837,7 +842,7 @@ def submit(mission_id: str, decision: str, actor: dict, ask_id: str = None, appr
     with storage.db_lock:
         row = storage.get_mission(mission_id) or {}
         ask = _pending_ask(mission_id, 'submit')
-        if not ask or row.get('status') != 'waiting_user':
+        if not ask or row.get('status') not in ATTENTION:
             return {'status': 'success', 'already': True, 'message': 'That was already answered.'}
         if not ask_id or ask['id'] != ask_id:
             return moved
@@ -906,7 +911,7 @@ def verify(mission_id: str, ask_id: str, outcome: str, actor: dict, detail: str 
         status = (storage.get_mission(mission_id) or {}).get('status')
         # An ended mission keeps a verify a late report raised (final review I1): answerable, its status unchanged.
         ended = status in TERMINAL
-        if not ask or not ask_id or ask['id'] != ask_id or not (status == 'waiting_user' or ended):
+        if not ask or not ask_id or ask['id'] != ask_id or not (status in ATTENTION or ended):
             return {'status': 'success', 'moved': True, 'message': 'That question has moved on; look at the card again.'}
         rj = ask.get('result_json') or {}
         att = next((a for a in attempts_for(mission_id) if a['step_id'] == rj.get('attempt_step_id')), None)
@@ -1130,7 +1135,7 @@ def release(mission_id: str, decision: str, actor: dict, ask_id: str = None, app
         return {'status': 'error', 'message': 'No such mission.'}
     steps = storage.get_mission_steps(mission_id)
     ask = next((s for s in reversed(steps) if s.get('kind') == 'ask'), None)
-    if not ask or ask.get('name') != 'release' or mission.get('status') != 'waiting_user':
+    if not ask or ask.get('name') != 'release' or mission.get('status') not in ATTENTION:
         return {'status': 'success', 'already': True, 'message': 'That release was already answered.'}
     if not ask_id or ask['id'] != ask_id:
         return {'status': 'success', 'moved': True, 'message': 'That question has moved on; look at the card again.'}
@@ -1147,7 +1152,7 @@ def release(mission_id: str, decision: str, actor: dict, ask_id: str = None, app
         rel = {'site': rj.get('site'), 'fields': wanted, 'approved_by': actor.get('id'), 'at': time.time()}
         with storage.db_lock:
             row = storage.get_mission(mission_id)
-            if row.get('status') != 'waiting_user':
+            if row.get('status') not in ATTENTION:
                 return {'status': 'success', 'already': True, 'message': 'Already answered.'}
             current = _pending_ask(mission_id, 'release')
             if not current or current['id'] != ask_id:
@@ -1697,7 +1702,7 @@ def tick(now: datetime.datetime = None) -> dict:
             _close(row['id'], 'waiting_user')
             _dm_person(cur, question + VERIFY_TAIL)
 
-    running = sorted(storage.get_missions(status='running'),
+    running = sorted(storage.get_missions(status=RUNNABLE),
                      key=lambda r: r.get('created_at') or 0)
     out = {'status': 'ticked', 'advanced': 0}
     if running:
@@ -1705,7 +1710,7 @@ def tick(now: datetime.datetime = None) -> dict:
         for _ in range(STEPS_PER_TICK):
             mission = step(mission)
             out['advanced'] += 1
-            if mission.get('status') != 'running':
+            if mission.get('status') not in RUNNABLE:
                 break
     else:
         cutoff = ts - RETENTION_DAYS * 86400

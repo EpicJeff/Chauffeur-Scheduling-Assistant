@@ -5,7 +5,7 @@ import json
 import time
 from contextlib import nullcontext
 
-from services import storage, subjects
+from services import storage, subjects, missions
 
 _clock = time.monotonic
 # A tick may run while a foreground approval is executing. Only orphaned
@@ -312,7 +312,7 @@ def steer_stage(mission_id, stage_id):
         mission = storage.get_mission(mission_id) or {}
         plan = mission.get('plan') or {}
         stage = next((s for s in plan.get('stages', []) if s['id'] == stage_id), None)
-        if mission.get('status') != 'waiting_user' or not stage or stage['state'] != 'proposed':
+        if mission.get('status') not in missions.ATTENTION or not stage or stage['state'] != 'proposed':
             return False
         _dismiss_rows(stage, status='withdrawn')
         stage.update(state='pending', rows=[], snapshot=None)
@@ -415,7 +415,7 @@ def planner_action(mid, action):
         mission = storage.get_mission(mid)
         plan = mission.get('plan')
         name = action['action']
-        if mission['status'] != 'running':
+        if mission['status'] not in missions.RUNNABLE:
             return _refused()
         if name == 'interview':
             if plan:
@@ -498,7 +498,7 @@ def propose_stage(mission_id, stage_id, rows):
     with storage.db_lock:
         mission = storage.get_mission(mission_id)
         plan = (mission or {}).get('plan')
-        if not plan or mission['status'] != 'running' or plan['state'] != 'approved' or stage_pending(mission):
+        if not plan or mission['status'] not in missions.RUNNABLE or plan['state'] != 'approved' or stage_pending(mission):
             return _refused()
         stage = next((s for s in plan['stages'] if s['state'] == 'pending'), None)
         if not stage or stage['id'] != stage_id or stage['kind'] != 'build':
@@ -559,11 +559,19 @@ def prepare_next(mid):
     with storage.db_lock:
         mission = storage.get_mission(mid)
         plan = mission.get('plan') or {}
-        if mission['status'] != 'running' or plan.get('state') != 'approved':
+        if mission['status'] not in missions.RUNNABLE or plan.get('state') != 'approved':
             return False
         stage = next((s for s in plan['stages'] if s['state'] not in ('done', 'skipped')), None)
         if not stage:
             return False
+        if stage['state'] == 'pending':
+            from services import projects
+            kind, pid, _ = missions.subject_of(mission)
+            if kind == 'project':
+                step = projects.step_for_stage(pid, mid, stage['id'])
+                if step and not projects.needs_satisfied(storage.get_project(pid), step):
+                    missions._close(mid, 'waiting_step')
+                    return True
         if stage['state'] == 'pending' and stage['kind'] == 'work':
             stage['steps_used'] = 0
             _propose_work(mid, mission, plan, stage)
@@ -647,7 +655,7 @@ def check_work_budget(mid, exhausted=False):
                 or mission['status'] in ('done', 'blocked', 'dropped')):
             return False
         stage['state'] = 'partial'
-        stage['budget_ask_pending'] = mission['status'] != 'running'
+        stage['budget_ask_pending'] = mission['status'] not in missions.RUNNABLE
         storage.update_mission(mid, {'plan': mission['plan']})
         if stage['budget_ask_pending']:
             return False
@@ -775,7 +783,12 @@ def run_stage(mission_id, stage_id, snap, actor):
 
 def reconcile():
     """A lost claim is evidence to check, never permission to repeat a write."""
+    from services import projects
     with storage.db_lock:
+        waiting_projects = {missions.subject_of(m)[1] for m in storage.get_missions(status='waiting_step')
+                            if missions.subject_of(m)[0] == 'project'}
+        for pid in waiting_projects:
+            projects.resume_waiting(pid)
         for mission in storage.get_missions():
             plan = mission.get('plan') or {}
             changed, uncertain = False, []

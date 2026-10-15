@@ -84,7 +84,7 @@ def prepare(ctx, ref, kind):
     if member.get('role') not in ('parent', 'adult'):
         return {'status': 'refused', 'message': 'Only a parent or adult can approve this.'}
     candidates = []
-    for mission in storage.get_missions(status='waiting_user'):
+    for mission in storage.get_missions(status=missions.ATTENTION):
         if not speech_safe(mission) or not situations.can_see('mission', mission, member):
             continue
         thread = storage.get_thread(mission.get('origin_ref')) if mission.get('origin_kind') == 'thread' else None

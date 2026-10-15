@@ -13,7 +13,7 @@ import datetime
 import time
 from typing import Optional
 
-from services import storage, situations
+from services import storage, situations, missions
 
 FOCUS_KEY = 'triage_focus'
 # The option ids situations._reply_option highlights after a counterparty's reply.
@@ -66,7 +66,7 @@ def tier(s: dict, now: float = None) -> int:
             return 1
         return 1 if s.get('needs_attention') else 4
     if kind == 'mission':
-        if state == 'waiting_user':
+        if state in missions.ATTENTION:
             return 0
         return 1 if s.get('needs_attention') else 4
     if kind == 'insight':
@@ -85,7 +85,8 @@ def triage_rank(rows: list, now: float = None) -> list:
         if s.get('kind') == 'thread' and t == 1:
             return (t, 0, s.get('since') or 0)          # stalled longest first (oldest since)
         return (t, due if due is not None else float('inf'), s.get('since') or 0)
-    return sorted(rows, key=key)
+    return sorted((s for s in rows if not (s.get('kind') == 'mission'
+                                         and s.get('state') == 'waiting_step')), key=key)
 
 
 # --- the sentence --------------------------------------------------------------

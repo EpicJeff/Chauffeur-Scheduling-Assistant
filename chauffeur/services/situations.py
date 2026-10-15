@@ -211,8 +211,9 @@ def _reply_option(row: dict):
 
 def _thread_mission(row: dict):
     """The newest live mission opened from this thread, or None."""
-    rows = [m for m in storage.get_missions() if m.get('origin_kind') == 'thread' and m.get('origin_ref') == row.get('id')
-            and m.get('status') in ('running', 'browsing', 'waiting_user', 'waiting_retry')]
+    from services import missions
+    rows = [m for m in storage.get_missions(status=missions.LIVE)
+            if m.get('origin_kind') == 'thread' and m.get('origin_ref') == row.get('id')]
     rows.sort(key=lambda m: m.get('created_at') or 0)
     return rows[-1] if rows else None
 
@@ -270,7 +271,7 @@ def _options_mission(row: dict) -> list:
     out = []
     steps = row.get('steps') or []
     # A verify a late report raised on an ended mission is still answerable (final review I1).
-    if row.get('status') == 'waiting_user' or (row.get('id') and _missions.verify_open(row)):
+    if row.get('status') in _missions.ATTENTION or (row.get('id') and _missions.verify_open(row)):
         asked = next((s for s in reversed(steps) if s.get('kind') == 'ask'), None)
         rj = (asked or {}).get('result_json') or {}
         name = (asked or {}).get('name')
@@ -336,7 +337,7 @@ def _options_mission(row: dict) -> list:
             # `ask` says what kind it is: the card shows a question to a viewer
             # who cannot act, never a hand-off's filled values.
             out.append(_opt('answer', q, {'ask': (asked or {}).get('name') or 'question'}))
-    if row.get('status') in ('running', 'browsing', 'waiting_retry'):
+    if row.get('status') in _missions.LIVE and row.get('status') not in _missions.ATTENTION:
         # Its own id: the thread forwards it as answer:mission:<id>:steer, which
         # triage and the lead rule tell apart from a question waiting on the person.
         out.append(_opt('answer', 'Tell it something', {'ask': 'steer'}, 'steer'))

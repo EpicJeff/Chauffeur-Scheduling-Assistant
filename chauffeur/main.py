@@ -5833,7 +5833,7 @@ def situation_get(kind: str, sid: str, request: Request = None):
 
 @app.get("/api/subjects/{kind}/{sid}/situations")
 def subject_situations(kind: str, sid: str, request: Request = None):
-    from services import situations as _sit
+    from services import missions, situations as _sit
     def plan_line(mission):
         stages = ((mission or {}).get('plan') or {}).get('stages') or []
         if not stages:
@@ -5854,7 +5854,7 @@ def subject_situations(kind: str, sid: str, request: Request = None):
             out.append({'kind': 'thread', 'id': t['id'], 'title': t.get('title'),
                         'next_step': (v or {}).get('next_step'),
                         **plan_line(_sit._thread_mission(t))})
-    for m in storage.get_missions(status=['running', 'browsing', 'waiting_user', 'waiting_retry']):
+    for m in storage.get_missions(status=missions.LIVE):
         if (m.get('origin_kind') != 'thread'
                 and (m.get('subject_kind'), m.get('subject_id')) == (kind, sid)
                 and _sit.can_see('mission', m, viewer)):
@@ -6109,8 +6109,9 @@ def missions_admin(request: Request = None):
     surface via `_mind_actor`, refusing a child/helper/guest with 403. The
     route rule is a bare SIGNED_IN wildcard (`/api/missions/*`), same as
     `/api/mind/*`, so the role decision has to live here."""
+    from services import missions
     actor = _mind_actor(request, None)
-    active = storage.get_missions(status=['running', 'waiting_user', 'waiting_retry'])
+    active = storage.get_missions(status=missions.LIVE)
     history = storage.get_missions(status=['done', 'blocked', 'dropped'])[:60]
     if actor is not None:
         from services import situations
