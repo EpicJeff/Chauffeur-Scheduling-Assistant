@@ -1,6 +1,6 @@
 # Projects, core — a lasting home for a long-running goal
 
-**Date:** 2026-10-15. **Status:** DRAFT, design approved section by section by the user in conversation (2026-10-15); Codex adversarial review of the first draft (fourteen findings, P1–P14) folded in, two of which change the approved design and are named in "Changes after review" below; awaiting the user's review of this document. Slice A of the Projects arc (A core, B reviews, C measures, D templates and build-project depth).
+**Date:** 2026-10-15. **Status:** APPROVED by the user 2026-10-15. Was: DRAFT, design approved section by section by the user in conversation (2026-10-15); Codex adversarial review of the first draft (fourteen findings, P1–P14) folded in, two of which change the approved design and are named in "Changes after review" below; awaiting the user's review of this document. Slice A of the Projects arc (A core, B reviews, C measures, D templates and build-project depth).
 **Builds on:** `2026-10-14-mission-subject-resolver-design.md` (subjects, binding, audience inheritance), `2026-10-14-planned-missions-design.md` (plans, stages, the stage contract and runner, keeper and channel rules). **Supersedes the framing of** `2026-10-15-mission-wake-conditions-design.md`: its engine is kept and becomes slice B (reviews), revised there.
 
 ## Problem
