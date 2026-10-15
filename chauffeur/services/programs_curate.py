@@ -37,42 +37,9 @@ and a source dict; services/programs.py never imports it.
 import math
 import re
 
-from services import budget_guard, stages, storage, web
-
-# The screen runs BEFORE any model sees the aim. Deterministic on purpose: a
-# safety line that depends on a model's judgement is a safety line with a bad
-# night. The house supports behaviour goals and stays out of body goals -- and
-# for a minor a body-composition target should not exist at all.
-#
-# A keyword list has both directions of miss: an aim phrased around body
-# composition without any word here slips through ("shrink down for the
-# wedding"), and a legitimate aim containing one of these words gets caught
-# ("carry 30 lbs of gear on the hike" reads as a weight target). It errs
-# toward the second kind of miss on purpose.
-
-# Phrases long enough that a plain substring match cannot be an accident.
-BODY_PHRASES = (
-    'lose weight', 'lose 5', 'lose 10', 'lose 15', 'lose 20', 'lose 25',
-    'lose 30', 'kg off', 'goal weight', 'target weight', 'body fat',
-    'bodyfat', 'slim down', 'get lean', 'drop a size', 'six pack',
-)
-
-# Short words that must match as WORDS. Matched as substrings, 'thin' refused
-# "learn to build things with wood" and "get everything ready for the science
-# fair", and 'abs' refused "learn abseiling" -- with the target-weights
-# sentence, which is baffling to read and worst of all to a kid, who has no
-# way to tell which of their words the app objected to. False refusals are
-# accepted on purpose in this screen; false refusals of ordinary aims are a
-# different thing, and they cost the arc the ambitions it exists to serve.
-BODY_WORDS = (
-    'pounds', 'lbs', 'kilos', 'bmi', 'calorie', 'calories', 'deficit',
-    'abs', 'skinny', 'thin', 'diet', 'diets', 'dieting', 'weigh', 'weighs',
-)
-
-_BODY_WORD_RE = re.compile(r'\b(?:' + '|'.join(BODY_WORDS) + r')\b')
-
-# The whole screen in one tuple, for anything that wants to read the list.
-BODY_TERMS = BODY_PHRASES + BODY_WORDS
+from services import body_goal, budget_guard, stages, storage, web
+# Keep the existing imports used by lesson screening, with one shared list.
+from services.body_goal import BODY_PHRASES, BODY_WORDS, BODY_TERMS, _BODY_WORD_RE
 
 BEHAVIOUR_ALTERNATIVES = (
     "move four times a week",
@@ -565,7 +532,7 @@ def screen_aim(title: str) -> dict:
     low = (title or '').strip().lower()
     if not low:
         return {'ok': False, 'message': "What's the aim?", 'alternatives': []}
-    if any(term in low for term in BODY_PHRASES) or _BODY_WORD_RE.search(low):
+    if body_goal.is_body_goal(low):
         return {'ok': False,
                 'message': ("I don't do target weights or calorie numbers — "
                             "not for anyone, and never for a kid. I can do the "
@@ -600,7 +567,7 @@ def screen_starting_point(text: str) -> dict:
     low = (text or '').strip().lower()
     if not low:
         return {'ok': True}
-    if any(term in low for term in BODY_PHRASES) or _BODY_WORD_RE.search(low):
+    if body_goal.is_body_goal(low):
         return {'ok': False,
                 'message': ("Same rule for the starting point as for the aim: "
                             "no target weights and no calorie numbers. Say "
