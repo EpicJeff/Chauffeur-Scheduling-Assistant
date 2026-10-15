@@ -5238,6 +5238,7 @@
             if (card.kind === 'ask') return renderAskCard(card);
             if (card.kind === 'mission_ask') return renderMissionAskCard(card);
             if (card.kind === 'mission_done') return renderMissionDoneCard(card);
+            if (card.kind === 'project') return renderProjectCard(card);
             if (card.kind !== 'action_proposal') return '';
             let footer;
             if (card.status === 'proposed' && (card.actions || []).length) {
@@ -5292,6 +5293,47 @@
             return `<div class="mt-1 px-3 py-2 rounded-xl bg-gray-900 border border-gray-700">
                 <div class="text-xs text-gray-200 font-medium">${mfEscape(card.summary || '')}</div>${drafts}
                 ${open ? `<div class="text-xs text-gray-400 mt-2">Still open<ul>${open}</ul></div>` : ''}</div>`;
+        }
+
+        // The project card (front door §1): the project exists the moment it is
+        // said; the card lets the person rename it, move its audience, or say
+        // it is not a project at all. Its taps are the project's own routes, so
+        // a child acts on their own card exactly as on the Projects tab.
+        function renderProjectCard(card) {
+            const ladder = [];
+            if (card.can_edit && !card.body_goal) {
+                if (card.audience !== 'private') ladder.push(['private', 'Make private']);
+                if (card.audience !== 'parents') ladder.push(['parents', 'Share with parents']);
+                if (card.audience !== 'household' && myRole() !== 'child') ladder.push(['household', 'Share with the household']);
+            }
+            const note = card.planning === 'started' ? 'Argyle will ask a couple of questions, then show a plan.' : (card.reason || '');
+            const pid = mfEscape(card.project_id);
+            const buttons = card.can_edit && card.state === 'active' ? `<div class="flex flex-wrap gap-2 mt-2">
+                <button onclick="projectCardRename('${pid}')" class="px-3 py-1 rounded-lg text-xs font-semibold bg-gray-700 text-gray-200">Rename</button>
+                ${ladder.map(([a, label]) => `<button onclick="projectCardAudience('${pid}','${a}')" class="px-3 py-1 rounded-lg text-xs font-semibold bg-gray-700 text-gray-200">${label}</button>`).join('')}
+                <button onclick="projectCardDrop('${pid}')" class="px-3 py-1 rounded-lg text-xs font-semibold bg-gray-800 text-gray-400 border border-gray-700">Not a project</button>
+            </div>` : '';
+            return `<div class="mt-1 px-3 py-2 rounded-xl bg-gray-900 border border-gray-700" data-project-card="${pid}">
+                <div class="flex items-center gap-2"><span class="text-xs uppercase tracking-wide text-teal-300 font-bold">Project</span>
+                    <span class="px-1.5 py-0.5 rounded text-xs bg-gray-800 text-gray-300">${mfEscape(card.audience_label || '')}</span></div>
+                <div class="text-sm text-gray-100 font-semibold mt-1">${mfEscape(card.title || '')}</div>
+                <div class="text-xs text-gray-300 mt-0.5">${mfEscape(card.goal || '')}</div>
+                <div class="text-xs text-gray-500 mt-0.5">${mfEscape(card.owner_label || '')}${card.state !== 'active' ? ' · ' + mfEscape(card.state) : ''}</div>
+                ${note ? `<div class="text-xs text-gray-400 mt-1">${mfEscape(note)}</div>` : ''}${buttons}</div>`;
+        }
+        async function projectCardPatch(id, body) {
+            const r = await fetch(`${apiBase}api/projects/${encodeURIComponent(id)}`, {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+            if (!r.ok) showGlobalAlert('Could not change that project.');
+        }
+        async function projectCardRename(id) {
+            const title = await promptInput('Rename the project', '');
+            if (title && title.trim()) await projectCardPatch(id, {title: title.trim()});
+        }
+        async function projectCardAudience(id, audience) { await projectCardPatch(id, {audience}); }
+        async function projectCardDrop(id) {
+            if (!await promptConfirm('Not a project? This drops it and stops Argyle’s planning.')) return;
+            const r = await fetch(`${apiBase}api/projects/${encodeURIComponent(id)}/state`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({state: 'dropped'})});
+            if (!r.ok) showGlobalAlert('Could not drop that project.');
         }
 
         function renderPlanQuestion(q, canAct) {
