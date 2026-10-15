@@ -2119,107 +2119,8 @@ from models.schemas import CreateTripRequest
 
 @app.post("/api/trip")
 def create_trip_api(req: CreateTripRequest):
-    import uuid
-    from datetime import datetime, timedelta, timezone
-    from zoneinfo import ZoneInfo
-    from services import maps
-    from services.travel_api import get_live_flight_schedule
-    
-    draft_id = f"draft_trip_{uuid.uuid4().hex}"
-    
-    if req.start_date and req.end_date:
-        # Exact dates provided
-        def parse_date(d_str):
-            if len(d_str) == 10:
-                return datetime.strptime(d_str, "%Y-%m-%d").replace(tzinfo=timezone.utc, hour=9)
-            return datetime.fromisoformat(d_str.replace('Z', '+00:00'))
-            
-        try:
-            mock_start = parse_date(req.start_date)
-            mock_end = parse_date(req.end_date)
-        except Exception:
-            mock_start = datetime.now(timezone.utc)
-            mock_end = mock_start + timedelta(days=1)
-    else:
-        # Flexible dates: Calculate mock start
-        base = datetime(2030, 1, 1, tzinfo=timezone.utc)
-        day_of_week = req.start_day_of_week if req.start_day_of_week is not None else 0 # default Monday
-        offset = (day_of_week - base.weekday()) % 7
-        if offset < 0:
-            offset += 7
-            
-        # 1. Determine Home Location and travel time
-        home_loc = maps.get_home_location()
-        dest_loc = req.location or "Unknown"
-        travel_time_mins = maps.get_travel_time_minutes(home_loc, dest_loc) if home_loc else -1
-        
-        arrival_utc = None
-        
-        # 2. Determine Departure date string for flight searches
-        mock_departure_base = base + timedelta(days=offset)
-        dep_date_str = mock_departure_base.strftime("%Y-%m-%d")
-        
-        # 3. If driving is impossible (> 15 hrs approx) or failed (-1)
-        if home_loc and (travel_time_mins == -1 or travel_time_mins >= 900):
-            flight_schedule = get_live_flight_schedule(home_loc, dest_loc, dep_date_str)
-            if flight_schedule and "arrival_time" in flight_schedule:
-                try:
-                    # arrival_time is '2030-01-05 14:40'
-                    arr_dt = datetime.strptime(flight_schedule["arrival_time"], "%Y-%m-%d %H:%M")
-                    # It's local to destination. Convert to UTC properly.
-                    dest_tz_str = maps.get_timezone(dest_loc)
-                    dest_tz = ZoneInfo(dest_tz_str)
-                    arr_dt_local = arr_dt.replace(tzinfo=dest_tz)
-                    # Add 1 hour buffer for airport overhead
-                    arrival_utc = arr_dt_local.astimezone(timezone.utc) + timedelta(hours=1)
-                except Exception as e:
-                    print(f"Failed to parse flight schedule arrival time: {e}")
-                    
-        # 4. Fallback to driving or generic fallback
-        if not arrival_utc:
-            if home_loc and travel_time_mins > 0:
-                try:
-                    home_tz_str = maps.get_timezone(home_loc)
-                    home_tz = ZoneInfo(home_tz_str)
-                    # Assume 8 AM departure
-                    leave_time = datetime(mock_departure_base.year, mock_departure_base.month, mock_departure_base.day, 8, 0, 0, tzinfo=home_tz)
-                    arrival_utc = leave_time.astimezone(timezone.utc) + timedelta(minutes=travel_time_mins + 60)
-                except Exception as e:
-                    print(f"Failed to calculate driving arrival time: {e}")
-                    
-            if not arrival_utc:
-                # Absolute fallback: 9 AM UTC
-                arrival_utc = mock_departure_base + timedelta(hours=9)
-                
-        mock_start = arrival_utc
-        duration = req.duration_nights or 1
-        mock_end = mock_start + timedelta(days=duration)
-        
-    metadata = {
-        "event_id": draft_id,
-        "is_draft": True,
-        "title": req.title,
-        "location": req.location,
-        "draft_start_day": req.start_day_of_week,
-        "draft_duration_nights": req.duration_nights,
-        "mock_start_date": mock_start.timestamp(),
-        "mock_end_date": mock_end.timestamp(),
-        "budget_min_usd": req.budget_min_usd,
-        "budget_max_usd": req.budget_max_usd,
-        "flight_preferences": req.flight_preferences,
-        "attendees": req.attendees,
-        # S4: the create form asked "Show this on the family wall?". Absent
-        # means the closed default (parents) — never write a guess.
-        "audience": req.audience if req.audience in ('household', 'parents',
-                                                     'shared') else None,
-        "travelers": max(1, len(req.attendees)) if req.attendees else 1,
-        "pois": [],
-        "accommodations": [],
-        "flights": [],
-        "activities": []
-    }
-    storage.set_trip_metadata(draft_id, metadata)
-    return {"success": True, "event_id": draft_id}
+    from services import trips
+    return {"success": True, "event_id": trips.create_draft(req)}
 
 @app.get("/trip")
 def trip_view(request: Request, event_id: str):
@@ -13610,47 +13511,31 @@ def _private_audience_guard(req: 'ShoppingListRequest', current: Optional[dict],
     private; a private list with nobody on it would be a list NOBODY sees; and
     the person flipping the switch is added to shared_with automatically —
     locking yourself out must not be one careless tap away."""
+    from services import shopping
     if req.audience is None:
         return None
-    if req.audience not in ('household', 'private'):
-        raise HTTPException(status_code=400, detail="Audience must be 'household' or 'private'")
-    if req.audience == 'private':
-        if req.is_default or (current or {}).get('is_default'):
-            raise HTTPException(
-                status_code=400,
-                detail="The household's default list can't be private")
-        if shared_with is None:
-            shared_with = list((current or {}).get('shared_with') or [])
-        actor_id = _acting_id(request, None)
-        if actor_id and storage.get_member(actor_id) \
-                and actor_id not in shared_with:
-            shared_with.append(actor_id)
-        if not shared_with:
-            raise HTTPException(
-                status_code=400,
-                detail="A private list needs at least one person on it")
+    if shared_with is None:
+        shared_with = list((current or {}).get('shared_with') or [])
+    try:
+        audience = shopping.validate_list_audience(
+            req.audience, req.is_default or (current or {}).get('is_default'),
+            shared_with, _acting_id(request, None))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if audience == 'private':
         req.shared_with = shared_with
-    return req.audience
+    return audience
 
 @app.post("/api/shopping/lists")
 def create_shopping_list(req: ShoppingListRequest, request: Request = None):
-    from models.schemas import ShoppingList
-    if not (req.name or '').strip():
-        raise HTTPException(status_code=400, detail="A list needs a name")
-    if req.shared_with is not None:
-        # S8: only ids that are real members; a typo must not become a grant.
-        req.shared_with = [m for m in req.shared_with if storage.get_member(m)]
-    audience = _private_audience_guard(req, None, req.shared_with, request)
-    lst = ShoppingList(name=req.name.strip(), store=(req.store or '').strip() or None,
-                       errand_tag=(req.errand_tag or '').strip().lower() or None,
-                       is_default=req.is_default,
-                       shared_with=req.shared_with or [],
-                       audience=audience).model_dump()
-    if req.is_default:
-        for other in storage.get_shopping_lists():
-            if other.get('is_default'):
-                storage.update_shopping_list(other['id'], {'is_default': False})
-    storage.add_shopping_list(lst)
+    from services import shopping
+    try:
+        lst = shopping.create_list(
+            req.name, store=req.store, errand_tag=req.errand_tag,
+            is_default=req.is_default, audience=req.audience,
+            shared_with=req.shared_with, actor_id=_acting_id(request, None))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     _touch_stream()
     return lst
 

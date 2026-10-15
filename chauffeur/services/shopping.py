@@ -18,6 +18,51 @@ Two design constraints from docs/meal_design.md:
 """
 from services import storage
 
+
+def validate_list_audience(audience, is_default, shared_with, actor_id=None):
+    """Apply the Lists page's privacy rules, including creator membership."""
+    if audience is None:
+        return None
+    if audience not in ('household', 'private'):
+        raise ValueError("Audience must be 'household' or 'private'")
+    if audience == 'private':
+        if is_default:
+            raise ValueError("The household's default list can't be private")
+        if actor_id and storage.get_member(actor_id) and actor_id not in shared_with:
+            shared_with.append(actor_id)
+        if not shared_with:
+            raise ValueError("A private list needs at least one person on it")
+    return audience
+
+
+def create_list(name, store=None, errand_tag=None, is_default=False,
+                audience=None, shared_with=None, actor_id=None, idem=None) -> dict:
+    """Create a list with the page's rules, reusing a prior idem when given."""
+    from models.schemas import ShoppingList
+
+    with storage.db_lock:
+        if idem is not None:
+            for lst in storage.get_shopping_lists():
+                if lst.get('idem') == idem:
+                    return lst
+        if not (name or '').strip():
+            raise ValueError("A list needs a name")
+        people = [mid for mid in (shared_with or []) if storage.get_member(mid)]
+        audience = validate_list_audience(audience, is_default, people, actor_id)
+        lst = ShoppingList(
+            name=name.strip(), store=(store or '').strip() or None,
+            errand_tag=(errand_tag or '').strip().lower() or None,
+            is_default=is_default, shared_with=people, audience=audience).model_dump()
+        if idem is not None:
+            lst['idem'] = idem
+        if is_default:
+            for other in storage.get_shopping_lists():
+                if other.get('is_default'):
+                    storage.update_shopping_list(other['id'], {'is_default': False})
+        storage.add_shopping_list(lst)
+        return lst
+
+
 EXTRACTION_SYSTEM = (
     "You read a photo taken by a busy parent and turn it into shopping-list "
     "candidates. Reply with STRICT JSON only, no prose, no code fences.\n\n"

@@ -2954,6 +2954,39 @@ def complete_kid_task(task_title: str, member_name: str = "",
 # including kids — an item costs the family nothing, so approval would be
 # friction with no gate (docs/meal_design.md principle 4).
 
+def create_trip(title: str, location: str = None, start_date: str = None,
+                end_date: str = None, travelers: int = 1, idem: str = None,
+                acting_member: dict = None) -> Dict[str, Any]:
+    """Create the same draft as the Trips page, with an explicit headcount."""
+    from models.schemas import CreateTripRequest
+    from services import trips
+    # Chat reaches this with the speaker as the actor; a trip is family planning,
+    # parent/adult work, as the Trips page is (a mission's approver is one).
+    if acting_member is not None and (acting_member.get('role') or '') not in ('parent', 'adult'):
+        return {'status': 'error', 'message': 'Only a parent or adult can create a trip.'}
+    try:
+        req = CreateTripRequest(title=title, location=location, start_date=start_date,
+                                end_date=end_date, travelers=travelers)
+        trip_id = trips.create_draft(req, idem=idem, travelers=req.travelers)
+    except ValueError as exc:
+        return {'status': 'error', 'message': str(exc)}
+    return {'status': 'success', 'message': f'Created draft trip: {title}.',
+            'trip_id': trip_id, 'created': [{'kind': 'trip', 'id': trip_id}]}
+
+
+def create_list(name: str, audience: str = 'household', shared_with: list = None,
+                idem: str = None, acting_member: dict = None) -> Dict[str, Any]:
+    """Create a list with the Lists page's audience and membership rules."""
+    from services import shopping
+    try:
+        lst = shopping.create_list(name, audience=audience, shared_with=shared_with,
+                                   actor_id=(acting_member or {}).get('id'), idem=idem)
+    except ValueError as exc:
+        return {'status': 'error', 'message': str(exc)}
+    return {'status': 'success', 'message': f"Created list: {lst['name']}.",
+            'list_id': lst['id'], 'created': [{'kind': 'list', 'id': lst['id']}]}
+
+
 def _visible_shopping_lists(acting_member: dict = None) -> list:
     """Every list this speaker may know exists. Private lists (audience
     'private') belong only to their shared_with — and a caller with NO
@@ -4195,6 +4228,36 @@ def get_available_tools() -> List[Dict]:
     Returns the JSON schemas for the tools available to the Gemma router.
     """
     return [
+        {
+            "name": "create_trip",
+            "description": "Creates a draft trip on the Trips page. Does not book travel or add a calendar event.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "location": {"type": "string"},
+                    "start_date": {"type": "string", "description": "Arrival date at the destination, YYYY-MM-DD."},
+                    "end_date": {"type": "string", "description": "Departure date from the destination, YYYY-MM-DD."},
+                    "travelers": {"type": "integer", "default": 1},
+                    "idem": {"type": "string", "description": "Reuse this key to retry without creating another trip."}
+                },
+                "required": ["title"]
+            }
+        },
+        {
+            "name": "create_list",
+            "description": "Creates a list on the Lists page. Household lists are shared; private lists are visible only to their people and include the approving member.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "audience": {"type": "string", "enum": ["household", "private"], "default": "household"},
+                    "shared_with": {"type": "array", "items": {"type": "string"}, "description": "Member ids to share with."},
+                    "idem": {"type": "string", "description": "Reuse this key to retry without creating another list."}
+                },
+                "required": ["name"]
+            }
+        },
         _flat_tool("get_travel_time"),
         _flat_tool("find_in_chauffeur"),
         {
@@ -8399,6 +8462,19 @@ def handle_cover_with_assist(args: dict, actor=None) -> dict:
                               scope=args.get('scope') or 'instance', leg=args.get('leg'))
 
 
+def handle_create_trip(args: dict, actor=None) -> dict:
+    return create_trip(args.get('title') or '', location=args.get('location'),
+                       start_date=args.get('start_date'), end_date=args.get('end_date'),
+                       travelers=args.get('travelers', 1), idem=args.get('idem'),
+                       acting_member=actor)
+
+
+def handle_create_list(args: dict, actor=None) -> dict:
+    return create_list(args.get('name') or '', audience=args.get('audience', 'household'),
+                       shared_with=args.get('shared_with'), idem=args.get('idem'),
+                       acting_member=actor)
+
+
 def handle_schedule_trip_itinerary(args: dict, actor=None) -> dict:
     return schedule_trip_itinerary(args.get('trip_id'), acting_member=actor)
 
@@ -8430,6 +8506,8 @@ def handle_propose_program(args: dict, actor=None) -> dict:
 
 
 TOOL_HANDLERS = {
+    "create_trip": handle_create_trip,
+    "create_list": handle_create_list,
     "get_calendar_events": handle_get_calendar_events,
     "get_household_tasks": handle_get_household_tasks,
     "get_household_load": handle_get_household_load,

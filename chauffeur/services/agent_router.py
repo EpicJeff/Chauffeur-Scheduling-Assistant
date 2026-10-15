@@ -1052,6 +1052,13 @@ sending or claiming, and never pass from_member/member_name for them.
                     if isinstance(res, dict) and res.get("schedule_dirty"):
                         schedule_dirty = True
                     if res.get("message"): agent_message = res["message"]
+                elif func_name in ("create_trip", "create_list"):
+                    actor = acting_member
+                    if actor is None and driver:
+                        from services import storage as _st
+                        actor = _st.get_member_by_driver_id(driver_id)
+                    res = execute_tool(func_name, args, actor=actor)
+                    if res.get("message"): agent_message = res["message"]
                 elif func_name in ("list_threads", "create_thread",
                                    "update_thread_action", "add_thread_note",
                                    "draft_thread_message", "close_thread",
