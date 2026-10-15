@@ -247,10 +247,12 @@ def _stage_for_change(mid, stage_id, snap, actor):
 
 
 def can_resume_stage(stage):
-    return (stage.get('kind') == 'build' and stage.get('state') == 'partial'
-            and any(r['state'] == 'proposed' or
-                    (r['state'] == 'failed' and (r.get('result') or {}).get('budget') is True)
-                    for r in stage.get('rows', [])))
+    if stage.get('state') != 'partial':
+        return False
+    return (stage.get('kind') == 'work'
+            or any(r['state'] == 'proposed' or
+                   (r['state'] == 'failed' and (r.get('result') or {}).get('budget') is True)
+                   for r in stage.get('rows', [])))
 
 
 def resume_stage(mission_id, stage_id, snap, actor):
@@ -261,7 +263,10 @@ def resume_stage(mission_id, stage_id, snap, actor):
             return error
         if plan['state'] != 'approved' or not can_resume_stage(stage) or stage_pending(mission):
             return _refused()
-        for row in stage['rows']:
+        if stage['kind'] == 'work':
+            stage['steps_used'] = 0
+            stage.pop('budget_ask_pending', None)
+        for row in stage.get('rows', []):
             if row['state'] == 'failed' and (row.get('result') or {}).get('budget') is True:
                 row['state'] = 'proposed'
                 row.pop('result', None)
@@ -437,6 +442,121 @@ def propose_stage(mission_id, stage_id, rows):
     return {'status': 'success', 'message': 'Stage proposed.'}
 
 
+def running_work(mission):
+    return next((s for s in (mission.get('plan') or {}).get('stages', [])
+                 if s['kind'] == 'work' and s['state'] == 'running'), None)
+
+
+def _propose_work(mid, mission, plan, stage, question=None):
+    from services import missions
+    stage.update(state='proposed', subject=list(missions.subject_of(mission)))
+    stage['snapshot'] = snapshot(stage, stage['subject'], plan['rev'])
+    storage.update_mission(mid, {'plan': plan})
+    _ask(mid, 'stage', question or stage['title'], stage_id=stage['id'])
+
+
+def _offer_followup(mid, mission, stage):
+    from services import missions
+    cap = int(storage.get_settings().get('mission_step_cap', missions.CAPS_DEFAULT['steps']))
+    if cap - int(mission.get('step_count') or 0) < 1 + 2:
+        _ask(mid, 'budget', 'Please raise the step cap, or stop here. Queued writes: '
+             + '; '.join(r['summary'] for r in stage['rows']))
+        return {'status': 'success', 'message': 'Waiting for more step budget.'}
+    return propose_stage(mid, stage['id'], stage['rows'])
+
+
+def prepare_next(mid):
+    """Offer known stages before spending a planner call."""
+    with storage.db_lock:
+        mission = storage.get_mission(mid)
+        plan = mission.get('plan') or {}
+        if mission['status'] != 'running' or plan.get('state') != 'approved':
+            return False
+        stage = next((s for s in plan['stages'] if s['state'] not in ('done', 'skipped')), None)
+        if not stage:
+            return False
+        if stage['state'] == 'pending' and stage['kind'] == 'work':
+            stage['steps_used'] = 0
+            _propose_work(mid, mission, plan, stage)
+            return True
+        if stage['state'] == 'pending' and stage.get('parent') and stage.get('rows'):
+            result = _offer_followup(mid, mission, stage)
+            if result['status'] != 'success':
+                storage.add_mission_step(mid, {'kind': 'note', 'name': 'refused',
+                                              'result_json': {'note': result['message']}})
+            return result['status'] == 'success'
+        return False
+
+
+def queue_row(mid, action):
+    """Keep work-stage writes behind one later build approval."""
+    with storage.db_lock:
+        mission = storage.get_mission(mid)
+        work = running_work(mission)
+        if not work:
+            return _refused()
+        plan = mission['plan']
+        follow = next((s for s in plan['stages'] if s.get('parent') == work['id']), None)
+        row = {'id': f"r{len(follow['rows']) + 1 if follow else 1}",
+               'tool': action.get('tool'), 'args': action.get('args') or {},
+               'summary': action.get('summary') or action.get('why') or action.get('tool'), 'needs': []}
+        error = check_rows([*(follow['rows'] if follow else []), row])
+        if error:
+            return _refused(error)
+        if follow is None:
+            follow = {'id': f"{work['id']}-build", 'kind': 'build', 'parent': work['id'],
+                      'title': f"Do what {work['title']} found", 'why': '', 'makes': [],
+                      'state': 'pending', 'rows': []}
+            if any(s['id'] == follow['id'] for s in plan['stages']):
+                return _refused('The follow-up stage id is already in use.')
+            plan['stages'].insert(plan['stages'].index(work) + 1, follow)
+        follow['rows'].append(row)
+        follow['makes'].append(row['summary'])
+        storage.update_mission(mid, {'plan': plan})
+    return {'status': 'success', 'message': 'Queued for the follow-up build.'}
+
+
+def finish_work(mid, action):
+    with storage.db_lock:
+        mission = storage.get_mission(mid)
+        stage = running_work(mission)
+        if not stage or stage['id'] != action.get('stage_id'):
+            return _refused('Only the running work stage can finish.')
+        stage.update(state='done', summary=action.get('summary') or '', found=action.get('found') or {})
+        storage.update_mission(mid, {'plan': mission['plan']})
+        follow = next((s for s in mission['plan']['stages'] if s.get('parent') == stage['id']), None)
+        if follow and follow.get('rows'):
+            return _offer_followup(mid, storage.get_mission(mid), follow)
+    return {'status': 'success', 'message': 'Work stage done.'}
+
+
+def pause_bound_work(mid, title):
+    with storage.db_lock:
+        mission = storage.get_mission(mid)
+        stage = running_work(mission)
+        if stage:
+            _propose_work(mid, mission, mission['plan'], stage, f'Now about {title} — go on?')
+
+
+def check_work_budget(mid):
+    """Pause spent work; let an existing browse or question finish before asking."""
+    with storage.db_lock:
+        mission = storage.get_mission(mid)
+        stage = next((s for s in (mission.get('plan') or {}).get('stages', [])
+                      if s['kind'] == 'work' and (s['state'] == 'running'
+                          or (s['state'] == 'partial' and s.get('budget_ask_pending')))), None)
+        if (not stage or stage.get('steps_used', 0) < stage['step_budget']
+                or mission['status'] in ('done', 'blocked', 'dropped')):
+            return False
+        stage['state'] = 'partial'
+        stage['budget_ask_pending'] = mission['status'] != 'running'
+        storage.update_mission(mid, {'plan': mission['plan']})
+        if stage['budget_ask_pending']:
+            return False
+        _ask(mid, 'stage', 'Partly done; carry on?', stage_id=stage['id'])
+        return True
+
+
 def _resolve_refs(value, completed):
     if isinstance(value, dict):
         if '$ref' in value:
@@ -482,10 +602,16 @@ def run_stage(mission_id, stage_id, snap, actor):
             return {'status': 'success', 'already': True, 'message': 'Already doing it.'}
         if list(missions.subject_of(mission)) != stage.get('subject'):
             return {'status': 'success', 'moved': True, 'message': 'The subject moved; look again.'}
-        if stage['state'] != 'proposed' or stage['kind'] != 'build' or plan['state'] != 'approved':
+        if stage['state'] != 'proposed' or plan['state'] != 'approved':
             return _refused()
+        if snapshot(stage, stage['subject'], plan['rev']) != snap:
+            return _refused('The plan moved; look again.')
         stage['state'] = 'running'
         storage.update_mission(mission_id, {'plan': plan})
+        if stage['kind'] == 'work':
+            _settle(mission_id, 'stage', 'Going')
+            missions._close(mission_id, 'running')
+            return {'status': 'success', 'message': 'Going.'}
         _active_stages.add(key)
         _settle(mission_id, 'stage', 'Doing it')
         started = _clock()
@@ -556,6 +682,8 @@ def reconcile():
             plan = mission.get('plan') or {}
             changed, uncertain = False, []
             for stage in plan.get('stages', []):
+                if stage['kind'] == 'work':
+                    continue  # The normal persisted planner loop resumes work after restart.
                 if stage['state'] != 'running' or (mission['id'], stage['id']) in _active_stages:
                     continue
                 for row in stage.get('rows', []):

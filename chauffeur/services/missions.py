@@ -151,6 +151,7 @@ def _system_prompt(now: datetime.datetime, settings: dict = None, mission: dict 
         '{"action":"answers","values":{"<question key>":"<answer or you_decide>"}}\n'
         '{"action":"plan","stages":[{"id":"s1","kind":"build|work","title":"<title>","why":"<reason>","makes":[],"owner_member_id":null,"goal":"<work goal>","step_budget":4}]}\n'
         '{"action":"stage","stage_id":"<next pending build>","rows":[{"id":"r1","tool":"<stage-ready tool>","args":{},"summary":"<what changes>","needs":[]}]}\n'
+        '{"action":"stage_done","stage_id":"<running work stage>","summary":"<what was done>","found":{}}\n'
         '{"action":"subject","kind":"<kind>","id":"<id from find_in_chauffeur>"}\n'
         '{"action":"propose","tool":"<PROPOSE tool>","args":{...},'
         '"summary":"<one line a parent reads>","why":"<reason>"}\n'
@@ -171,6 +172,8 @@ def _system_prompt(now: datetime.datetime, settings: dict = None, mission: dict 
         "Only propose rows for the next pending build stage of an approved plan. Use record ids, or {\"$ref\":\"earlier-row-id\",\"kind\":\"occasion\"} for a newly created record. "
         "Each build is one step; each work stage reserves its step_budget plus one follow-up build, plus two closing steps. Work budgets are at most 12; plans at most seven stages. "
         "Plan and stage approval require the person's buttons; free-text steers never approve them.\n"
+        "During a running work stage, pursue CURRENT STAGE with normal reads, research, browse and questions. "
+        "Proposals are queued for one follow-up build approval; use stage_done with summary and found when this part is complete.\n"
         "To find a thing's details, search our own mail (search_mail) before "
         "the web. To deal with a company, prefer its official site. Use browse "
         "only for what reading cannot answer, and name the site. Before any "
@@ -240,6 +243,10 @@ def _user_prompt(mission: dict) -> str:
             lines.append(f"- {q['key']}: {q['ask']} Answer: {value if value is not None else 'unanswered'}")
         for stage in plan.get('stages', []):
             lines.append(f"- {stage['id']} ({stage['kind']}): {stage['title']} — {stage['state']}")
+            if stage.get('found') is not None:
+                lines.append(f"  Found: {_compact(stage['found'])}")
+            if stage['kind'] == 'work' and stage['state'] == 'running':
+                lines.append(f"CURRENT STAGE: {stage['title']} — {stage['goal']}")
     lines.append("TRANSCRIPT SO FAR (oldest first):")
     for s in steps[-25:]:
         rj = s.get('result_json')
@@ -340,6 +347,8 @@ def ask_card(mission: dict) -> dict | None:
     elif asked['name'] == 'stage':
         stage = next((s for s in plan.get('stages', []) if s['id'] == result.get('stage_id')), {})
         card['rows'] = stage.get('rows', [])
+        if stage.get('kind') == 'work':
+            card.update(kind='work', goal=stage.get('goal'))
     elif asked['name'] == 'stage_check':
         card['rows'] = result.get('rows', [])
     return card
@@ -437,6 +446,9 @@ def _dm_person(mission: dict, text: str) -> None:
                    for i in step.get('chat_message_ids') or []):
                 settle_ask_cards(mission['id'], step['id'], 'Moved on')
         card = ask_card(mission)
+        if card and card.get('kind') == 'work':
+            # Chat rendering and settlement share the mission-ask envelope.
+            card = {**card, 'kind': 'mission_ask', 'stage_kind': 'work'}
         argyle = storage.ensure_argyle_member()
         who = storage.get_member(mission.get('created_by') or '') if mission.get('created_by') else None
         people = [who] if who else [m for m in storage.get_all_members() if m.get('role') == 'parent' and not m.get('system')]
@@ -1254,8 +1266,14 @@ def _land_finish(mission: dict, res: dict) -> None:
 def step(mission: dict) -> dict:
     """Advance ONE step. Returns the fresh mission row. All state transitions
     live here so tick() stays a scheduler and tests drive this directly."""
+    from services import planned
     try:
-        return _step_once(mission)
+        mission = storage.get_mission(mission['id'])
+        if planned.check_work_budget(mission['id']) or planned.prepare_next(mission['id']):
+            return storage.get_mission(mission['id'])
+        _step_once(mission)
+        planned.check_work_budget(mission['id'])
+        return storage.get_mission(mission['id'])
     finally:
         _plan_subject.pop(mission['id'], None)
 
@@ -1279,6 +1297,13 @@ def _step_once(mission: dict) -> dict:
     _plan_subject[mid] = before
     res = _llm(mission, _system_prompt(now, settings, mission), _user_prompt(mission),
                settings)
+    from services import planned
+    with storage.db_lock:
+        current = storage.get_mission(mid)
+        work = planned.running_work(current)
+        if work:
+            work['steps_used'] = int(work.get('steps_used') or 0) + 1
+            storage.update_mission(mid, {'plan': current['plan']})
     if subject_of(storage.get_mission(mid)) != before:
         storage.add_mission_step(mid, {'kind': 'note', 'name': 'stale_plan',
             'result_json': {'note': 'the subject changed while planning; planning again'}})
@@ -1302,9 +1327,9 @@ def _step_once(mission: dict) -> dict:
     storage.update_mission(mid, {'consec_errors': 0})
     action = (res.get('action') or '').strip()
 
-    if action in ('interview', 'answers', 'plan', 'stage'):
+    if action in ('interview', 'answers', 'plan', 'stage', 'stage_done'):
         from services import planned
-        result = planned.planner_action(mid, res)
+        result = planned.finish_work(mid, res) if action == 'stage_done' else planned.planner_action(mid, res)
         if result.get('status') != 'success':
             storage.add_mission_step(mid, {'kind': 'note', 'name': 'refused',
                                           'result_json': {'note': result.get('message')}})
@@ -1392,10 +1417,17 @@ def _step_once(mission: dict) -> dict:
                     'subject_history': subjects.history_after_binding(mission, kind, sid)})
             storage.add_mission_step(mid, {'kind': 'note', 'name': 'subject',
                 'result_json': {'kind': kind, 'id': sid, 'title': subjects.title_of(kind, row)}})
+            planned.pause_bound_work(mid, subjects.title_of(kind, row))
         return storage.get_mission(mid)
 
     if action == 'propose':
         name = res.get('tool') or ''
+        if planned.running_work(storage.get_mission(mid)):
+            result = planned.queue_row(mid, res)
+            storage.add_mission_step(mid, {'kind': 'note',
+                'name': 'refused' if result['status'] != 'success' else 'queued',
+                'result_json': {'note': result['message']}})
+            return storage.get_mission(mid)
         if name in EXCLUDED_TOOLS or name not in proposable_tools():
             storage.add_mission_step(mid, {'kind': 'note', 'name': 'refused',
                 'result_json': {'note': f"{name} is not proposable"}})
