@@ -1,0 +1,74 @@
+{# Add a piece's three forms (front door §2): the old Threads create form, the
+   Missions launch card with its tier, the Programs propose form. Each makes the
+   record inside this project (project_id), with the same fields its page had. #}
+<template x-if="pieceForm && pieceForm.projectId === project.id && pieceForm.kind === 'thread'">
+    <form data-piece-form="thread" class="space-y-2 bg-gray-950/60 border border-gray-800 rounded-xl p-3" @submit.prevent="createPiece()">
+        <input name="title" required x-model="pieceDraft.title" placeholder="Who or what (e.g. Pest control)" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm">
+        <textarea name="goal" x-model="pieceDraft.goal" placeholder="What resolving it looks like" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm"></textarea>
+        <div class="flex gap-2">
+            <select name="kind" x-model="pieceDraft.thread_kind" class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-2 py-2 text-gray-100 text-sm">
+                <option value="vendor">A company or person</option><option value="project">An errand of ours</option>
+            </select>
+            <select name="owner_member_id" x-model="pieceDraft.owner_member_id" class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-2 py-2 text-gray-100 text-sm">
+                <template x-for="m in owners().filter(m => m.role !== 'child')" :key="m.id"><option :value="m.id" x-text="m.name"></option></template>
+            </select>
+        </div>
+        <select name="contact_id" x-model="pieceDraft.contact_id" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-2 text-gray-100 text-sm">
+            <option value="">Someone not in contacts</option>
+            <template x-for="c in contacts" :key="c.id"><option :value="c.id" x-text="c.name"></option></template>
+        </select>
+        <template x-if="!pieceDraft.contact_id">
+            <div class="flex gap-2">
+                <input name="counterparty_name" x-model="pieceDraft.counterparty_name" placeholder="Their name" class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm">
+                <input name="counterparty_email" type="email" x-model="pieceDraft.counterparty_email" placeholder="Their email" class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm">
+            </div>
+        </template>
+        <div class="flex gap-2">
+            <input name="next_action" x-model="pieceDraft.next_action" placeholder="First next step" class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm">
+            <input name="next_action_at" type="date" x-model="pieceDraft.next_action_at" class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-2 text-gray-100 text-sm">
+        </div>
+        <div class="flex gap-2">
+            <button data-piece-create :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white disabled:opacity-50">Start the conversation</button>
+            <button type="button" @click="pieceForm = null" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700">Cancel</button>
+        </div>
+    </form>
+</template>
+<template x-if="pieceForm && pieceForm.projectId === project.id && pieceForm.kind === 'mission'">
+    <form data-piece-form="mission" class="space-y-2 bg-gray-950/60 border border-gray-800 rounded-xl p-3" @submit.prevent="createPiece()">
+        <textarea name="goal" required x-model="pieceDraft.goal" rows="2" placeholder="What should Argyle work on?" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm resize-none"></textarea>
+        <div class="flex gap-2">
+            <select name="tier" x-model="pieceDraft.tier" class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-2 py-2 text-gray-100 text-sm">
+                <option value="mission">Pro (paid)</option><option value="flash">Flash (free, benchmark)</option>
+            </select>
+            <button data-piece-create :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white disabled:opacity-50">Launch</button>
+            <button type="button" @click="pieceForm = null" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700">Cancel</button>
+        </div>
+    </form>
+</template>
+<template x-if="pieceForm && pieceForm.projectId === project.id && pieceForm.kind === 'program'">
+    <form data-piece-form="program" class="space-y-2 bg-gray-950/60 border border-gray-800 rounded-xl p-3" @submit.prevent="createPiece()">
+        <input name="title" required x-model="pieceDraft.title" placeholder="The aim (e.g. learn guitar)" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm">
+        <template x-if="!isChild()">
+            <select name="for_member_id" x-model="pieceDraft.for_member_id" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-2 text-gray-100 text-sm">
+                <template x-for="m in owners()" :key="m.id"><option :value="m.id" x-text="m.name"></option></template>
+            </select>
+        </template>
+        <input name="starting_point" x-model="pieceDraft.starting_point" placeholder="Where they are starting (what they can already do)" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm">
+        <div class="flex gap-2">
+            <label class="flex-1 text-xs text-gray-400">Sessions a week<input name="sessions_per_week" type="number" min="1" max="7" x-model.number="pieceDraft.sessions_per_week" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-100 text-sm"></label>
+            <label class="flex-1 text-xs text-gray-400">Minutes<input name="minutes" type="number" min="5" max="240" x-model.number="pieceDraft.minutes" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-100 text-sm"></label>
+            <label class="flex-1 text-xs text-gray-400">Target<input name="target_date" type="date" x-model="pieceDraft.target_date" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-100 text-sm"></label>
+        </div>
+        <div class="flex flex-wrap gap-1">
+            <template x-for="d in [0,1,2,3,4,5,6]" :key="d">
+                <button type="button" @click="togglePieceDay(d)" :aria-pressed="pieceDraft.preferred_days.includes(d) ? 'true' : 'false'"
+                        :class="pieceDraft.preferred_days.includes(d) ? 'bg-teal-700 text-white' : 'bg-gray-800 text-gray-400'"
+                        class="text-[11px] font-bold px-2 py-1 rounded" x-text="['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]"></button>
+            </template>
+        </div>
+        <div class="flex gap-2">
+            <button data-piece-create :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white disabled:opacity-50">Propose it</button>
+            <button type="button" @click="pieceForm = null" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700">Cancel</button>
+        </div>
+    </form>
+</template>

@@ -1,6 +1,6 @@
 {# One builder for /work, /projects and the phone app. Hosts own chrome.
    Programs supplies the disclosure, card, checklist, form and chip vocabulary. #}
-<section x-data="projectsPage()" x-init="load()" @chf-projects-open.window="load()"
+<section x-data='projectsPage({{ (projects_host|default("admin"))|tojson }})' x-init="rootEl = $el; load()" @chf-projects-open.window="load()"
          @chf-projects-context.window="sproutSection = $event.detail" x-show="!sproutSection || shownProjects.length > 0"
          @chf-admin-ready.window="load()" class="panel-page w-full max-w-2xl mx-auto px-4 py-6" x-cloak>
     <h2 class="panel-page-title">Projects</h2>
@@ -41,20 +41,69 @@
             </form>
         </template>
     </div>
-    <p class="text-xs text-gray-500 italic px-1" x-show="!loading && !error && !shownProjects.length">No projects yet.</p>
-    <div class="space-y-2">
-        <template x-for="project in shownProjects" :key="project.id">
-            <article data-project-card class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
-                <button type="button" :data-project-id="project.id" @click="open(project)" :aria-expanded="opened === project.id" class="w-full text-left">
-                    <span class="flex items-start justify-between gap-2">
-                        <span class="text-sm font-bold text-gray-100" x-text="project.title"></span>
+    <template x-if="!opened">
+        <div>
+            <div class="flex flex-wrap items-center gap-2 mb-3">
+                <button type="button" data-lane-filter="programs" @click="programsOnly = !programsOnly; bindCards()" :aria-pressed="programsOnly ? 'true' : 'false'"
+                        :class="programsOnly ? 'bg-teal-700 text-white border-teal-600' : 'bg-gray-800 text-gray-300 border-gray-700'"
+                        class="text-xs font-bold px-2.5 py-1.5 rounded-lg border">Programs</button>
+                <label class="ml-auto flex items-center gap-2 text-[11px] text-gray-500 cursor-pointer select-none">
+                    <input type="checkbox" x-model="showClosed" @change="rememberClosed()" class="h-3.5 w-3.5 accent-teal-400"><span>Show closed</span>
+                </label>
+            </div>
+            <p class="text-xs text-gray-500 italic px-1" x-show="!loading && !error && !shownProjects.length">No projects yet.</p>
+            <template x-for="ln in lanes" :key="ln.key">
+                <div class="mb-5" :data-lane="ln.key">
+                    <button type="button" x-show="ln.key === 'closed'" @click="closedOpen = !closedOpen"
+                            class="w-full flex items-center justify-between text-xs font-black uppercase tracking-widest px-1 mb-2 text-gray-600">
+                        <span x-text="ln.label + ' (' + ln.items.length + ')'"></span>
+                        <span class="normal-case font-semibold" x-text="closedOpen ? 'Hide' : 'Show'"></span>
+                    </button>
+                    <div x-show="ln.key !== 'closed'" class="text-xs font-black uppercase tracking-widest px-1 mb-2" :class="ln.titleClass" x-text="ln.label"></div>
+                    <div class="space-y-2" x-show="ln.key !== 'closed' || closedOpen">
+                        <template x-for="project in ln.items" :key="project.id">
+                            <article data-project-card class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
+                                <button type="button" :data-project-id="project.id" @click="open(project)" class="w-full text-left">
+                                    <span class="flex items-start justify-between gap-2">
+                                        <span class="text-sm font-bold text-gray-100" x-text="project.title"></span>
+                                        <span class="text-xs font-bold px-1.5 py-0.5 rounded shrink-0" :class="chip(project.state)" x-text="project.state"></span>
+                                    </span>
+                                    <span class="block text-[11px] text-gray-500 mt-0.5" x-text="memberName(project.owner_member_id)"></span>
+                                    <span class="block text-xs text-gray-400 mt-1" x-text="project.card_next || ''"></span>
+                                    <span class="block text-xs text-gray-500 mt-1" x-show="project.steps_total > 0" x-text="project.steps_done + ' of ' + project.steps_total + ' done'"></span>
+                                </button>
+                            </article>
+                        </template>
+                    </div>
+                </div>
+            </template>
+            <template x-if="elsewhere.length && !programsOnly">
+                <div class="mb-5" data-lane="elsewhere">
+                    <div class="text-xs font-black uppercase tracking-widest px-1 mb-2 text-gray-500">Your work elsewhere</div>
+                    <div class="space-y-2" data-pieces>
+                        <template x-for="s in elsewhere" :key="s.id">
+                            <div :data-piece="'mission:' + s.id">
+                                <div x-html="window.Situations.cardHtml(s, sitCtx())"></div>
+                                <div class="flex justify-end px-3 mt-1">
+                                    <button type="button" :data-piece-open="'mission:' + s.id" @click="openSheet('mission', s.id, s.title, null)"
+                                            class="text-xs font-bold text-teal-300 underline underline-offset-2">Open</button>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </template>
+    <template x-if="opened && detail">
+        <div data-project-detail class="space-y-3">
+            <button type="button" data-project-back @click="back()" class="text-xs font-semibold text-gray-400 underline underline-offset-2">← All projects</button>
+            <template x-for="project in [detail]" :key="project.id">
+                <article data-project-card class="bg-gray-900 border border-gray-800 rounded-2xl p-3 space-y-2.5">
+                    <div class="flex items-start justify-between gap-2">
+                        <h3 class="text-base font-bold text-gray-100" x-text="project.title"></h3>
                         <span class="text-xs font-bold px-1.5 py-0.5 rounded shrink-0" :class="chip(project.state)" x-text="project.state"></span>
-                    </span>
-                    <span class="block text-xs text-gray-400 mt-1" x-text="project.next_step ? project.next_step.title : ''"></span>
-                    <span class="block text-xs text-gray-500 mt-1" x-text="project.steps_done + ' of ' + project.steps_total + ' done'"></span>
-                </button>
-                <template x-if="opened === project.id">
-                    <div class="mt-3 space-y-2.5">
+                    </div>
                         <p class="text-sm text-gray-300"><span class="text-gray-500">Goal: </span><span x-text="project.goal"></span></p>
                         <p class="text-sm text-gray-300"><span class="text-gray-500">Done when: </span><span x-text="project.done_when"></span></p>
                         <p class="text-xs text-gray-500" x-show="project.target_date" x-text="project.target_date ? 'Target: ' + project.target_date : ''"></p>
@@ -78,7 +127,7 @@
                                         <div class="space-y-1">
                                             <template x-for="(line, i) in foundLines(step.found)" :key="i"><p class="text-gray-300" x-text="line"></p></template>
                                             <p class="text-gray-300" x-show="step.question" x-text="step.question ? 'Argyle needs you: ' + step.question : ''"></p>
-                                            <template x-if="step.mission_id && !isChild()"><a :href="apiBase + 'missions?id=' + encodeURIComponent(step.mission_id)" class="text-blue-400 underline underline-offset-2">Open Argyle’s work and answer</a></template>
+                                            <template x-if="step.mission_id && !isChild()"><button type="button" :data-piece-open="'mission:' + step.mission_id" @click="openSheet('mission', step.mission_id, step.title, project.id)" class="text-blue-400 underline underline-offset-2">Open Argyle’s work and answer</button></template>
                                             <template x-if="step.state === 'doing' && step.can_cancel">
                                                 <div class="flex flex-wrap gap-2">
                                                     <button type="button" :data-step-skip="step.id" @click="cancel(project, step, 'skip')" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Skip</button>
@@ -112,16 +161,49 @@
                             </template>
                         </ol>
                         <template x-if="project.can_act"><button type="button" @click="addStep(project)" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Add a step</button></template>
-                        <div class="space-y-1">
-                            <div class="text-sm font-bold text-gray-300">Pieces</div>
-                            <p class="text-xs text-gray-500 italic" x-show="!project.pieces.length">No pieces attached yet.</p>
-                            <template x-for="piece in project.pieces" :key="piece.kind + ':' + piece.id"><div><a :href="apiBase + piece.link" class="text-xs text-blue-400 underline underline-offset-2" x-text="piece.title"></a></div></template>
+                    <div class="space-y-2" data-pieces>
+                        <div class="text-sm font-bold text-gray-300">Pieces</div>
+                        <p class="text-xs text-gray-500 italic" x-show="!(pieces[project.id] || []).length">No pieces attached yet.</p>
+                        <template x-for="card in (pieces[project.id] || [])" :key="card.kind + ':' + card.id">
+                            <div :data-piece="card.kind + ':' + card.id">
+                                <template x-if="card.situation">
+                                    <div>
+                                        <div x-html="window.Situations.cardHtml(card.situation, sitCtx())"></div>
+                                        <template x-if="card.sheet">
+                                            <div class="flex justify-end px-3 mt-1">
+                                                <button type="button" :data-piece-open="card.kind + ':' + card.id" @click="openSheet(card.kind, card.id, card.title, project.id)"
+                                                        class="text-xs font-bold text-teal-300 underline underline-offset-2">Open</button>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </template>
+                                <template x-if="card.kind === 'program'">
+                                    <div class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
+                                        <div class="flex items-start justify-between gap-2">
+                                            <span class="text-sm font-bold text-gray-100" x-text="card.title"></span>
+                                            <span class="text-xs font-bold px-1.5 py-0.5 rounded shrink-0" :class="chip(card.program.state)" x-text="card.program.state"></span>
+                                        </div>
+                                        <p class="text-xs text-gray-400 mt-1" x-show="card.program.phase" x-text="card.program.phase"></p>
+                                        <p class="text-xs text-blue-300 mt-1" x-show="card.program.state === 'proposed'">Proposed: see its week and approve it here.</p>
+                                        <template x-if="card.sheet">
+                                            <div class="flex justify-end mt-1">
+                                                <button type="button" :data-piece-open="card.kind + ':' + card.id" @click="openSheet(card.kind, card.id, card.title, project.id)"
+                                                        class="text-xs font-bold text-teal-300 underline underline-offset-2">Open</button>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </template>
+                                <template x-if="!card.sheet"><a :href="apiBase + card.link" class="text-xs text-blue-400 underline underline-offset-2" x-text="card.title"></a></template>
+                            </div>
+                        </template>
+                    </div>
+                    <template x-if="project.can_act && project.state === 'active'">
+                        <div class="space-y-2">
+                            <button type="button" data-add-piece @click="addPiece(project)" :disabled="!!busy"
+                                    class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 disabled:opacity-50">Add a piece</button>
+                            {% include 'components/project_piece_forms.html' %}
                         </div>
-                        <div class="space-y-1">
-                            <div class="text-sm font-bold text-gray-300">Conversations</div>
-                            <p class="text-xs text-gray-500 italic" x-show="!(conversations[project.id] || []).length">No conversations here yet.</p>
-                            <template x-for="row in (conversations[project.id] || [])" :key="row.kind + ':' + row.id"><div><a :href="apiBase + (row.kind === 'thread' ? 'threads' : 'missions') + '?id=' + encodeURIComponent(row.id)" class="text-xs text-blue-400 underline underline-offset-2" x-text="row.title"></a></div></template>
-                        </div>
+                    </template>
                         <template x-if="project.can_act">
                             <div class="flex flex-wrap gap-2 mt-2.5">
                                 <template x-if="!isChild() && project.state === 'active'"><button type="button" @click="plan(project)" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Plan it with Argyle</button></template>
@@ -131,18 +213,26 @@
                                 <template x-if="['active', 'paused'].includes(project.state)"><button type="button" @click="state(project, 'dropped', 'Drop')" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Drop</button></template>
                             </div>
                         </template>
-                    </div>
-                </template>
-            </article>
-        </template>
-    </div>
+                </article>
+            </template>
+        </div>
+    </template>
 </section>
 <script>
-function projectsPage() {
+function projectsPage(host = 'admin') {
     return {
-        apiBase: window.chfBase !== undefined ? window.chfBase : '',
+        host, rootEl: null, apiBase: window.chfBase !== undefined ? window.chfBase : '',
         projects: [], members: [], myId: '', loading: false, busy: false, error: '',
-        creating: false, opened: null, hold: null, conversations: {},
+        creating: false, opened: null, hold: null, pieces: {}, elsewhere: [], contacts: [], pieceForm: null,
+        emptyPieceForm: {title: '', goal: '', thread_kind: 'vendor', owner_member_id: '', contact_id: '',
+                         counterparty_name: '', counterparty_email: '', next_action: '', next_action_at: '',
+                         tier: 'mission', for_member_id: '', starting_point: '', sessions_per_week: 3, minutes: 25,
+                         preferred_days: [], target_date: ''},
+        // Alpine can evaluate form bindings once more while their x-if tears down.
+        get pieceDraft() { return this.pieceForm || this.emptyPieceForm; },
+        programsOnly: new URLSearchParams(location.search).get('lane') === 'programs',
+        closedOpen: false,
+        showClosed: (() => { try { return localStorage.getItem('chf_projects_show_closed') === '1'; } catch (e) { return false; } })(),
         sproutSection: document.documentElement.dataset.childStage === 'sprout',
         get shownProjects() { return this.sproutSection ? this.projects.filter(p => p.owner_member_id === this.myId) : this.projects; },
         draft: {title: '', goal: '', done_when: '', audience: 'private', owner_member_id: '', target_date: ''},
@@ -165,7 +255,7 @@ function projectsPage() {
             this.loading = true; this.error = '';
             const who = window.chfPersonId ? window.chfPersonId() : localStorage.getItem('chauffeur_member_id') || '';
             if (this.myId !== who) {
-                this.projects = []; this.members = []; this.opened = null; this.hold = null; this.conversations = {};
+                this.projects = []; this.members = []; this.opened = null; this.hold = null; this.pieces = {}; this.elsewhere = []; this.contacts = []; this.pieceForm = null; this._addressed = false;
                 this.creating = false;
                 this.draft = {title:'', goal:'', done_when:'', audience:'private', owner_member_id:who, target_date:''};
             }
@@ -174,20 +264,126 @@ function projectsPage() {
                 const [data, members] = await Promise.all([this.request('api/projects'), this.request('api/members')]);
                 if (this.myId !== who) return;
                 this.projects = data.projects || []; this.members = members;
+                this.elsewhere = this.isChild() ? [] : ((await this.request('api/projects/elsewhere').catch(() => ({situations: []}))).situations || []);
+                this.bindCards();
                 if (!this.draft.owner_member_id || !this.creating) { this.draft.owner_member_id = who; this.defaultAudience(); }
-                const id = new URLSearchParams(window.location.search).get('id');
-                if (id && !this.opened) { const p = this.projects.find(p => p.id === id); if (p) await this.open(p); }
+                if (this.opened && this.detail) await this.loadPieces(this.detail);
+                if (!this._addressed) { this._addressed = true; await this.fromAddress(); }
             } catch (e) { this.projects = []; this.error = e.message; }
             finally { this.loading = false; }
         },
+        rememberClosed() { try { localStorage.setItem('chf_projects_show_closed', this.showClosed ? '1' : '0'); } catch (e) { /* private window */ } },
+        get detail() { return this.projects.find(p => p.id === this.opened) || null; },
+        get lanes() {
+            const rows = this.shownProjects.filter(p => !this.programsOnly || p.has_program);
+            const by = key => rows.filter(p => (p.lane || 'waiting') === key);
+            const all = [
+                {key: 'needs_you', label: 'Needs you', titleClass: 'text-amber-400', items: by('needs_you')},
+                {key: 'moving', label: 'Moving', titleClass: 'text-teal-300', items: by('moving')},
+                {key: 'waiting', label: 'Waiting', titleClass: 'text-gray-500', items: by('waiting')},
+                {key: 'paused', label: 'Paused', titleClass: 'text-gray-500', items: by('paused')},
+                {key: 'closed', label: 'Done & dropped', titleClass: 'text-gray-600', items: by('closed')},
+            ];
+            return all.filter(l => l.items.length && (l.key !== 'closed' || this.showClosed));
+        },
+        memberName(id) { const m = this.members.find(m => m.id === id); return m ? m.name : ''; },
+        setAddress(params) {
+            if (this.host !== 'admin') return;
+            const q = new URLSearchParams(location.search);
+            for (const [k, v] of Object.entries(params)) { if (v === null || v === undefined) q.delete(k); else q.set(k, v); }
+            const s = q.toString();
+            history.replaceState(history.state, '', location.pathname + (s ? '?' + s : '') + location.hash);
+        },
+        sitCtx() {
+            return {apiBase: this.apiBase, canWrite: !this.isChild(), readOnly: false,
+                    memberId: this.host === 'phone' ? this.myId : undefined,
+                    lookup: (kind, id) => this.situationById(id), onChange: () => this.load()};
+        },
+        situationById(id) {
+            for (const cards of Object.values(this.pieces)) { const c = cards.find(c => c.id === id && c.situation); if (c) return c.situation; }
+            return this.elsewhere.find(s => s.id === id) || null;
+        },
+        bindCards() {
+            const root = this.rootEl;
+            if (!root) return;
+            this.$nextTick(() => {
+                if (!root.isConnected || !window.Situations) return;
+                root.querySelectorAll('[data-pieces]').forEach(el => window.Situations.bind(el, this.sitCtx()));
+            });
+        },
+        openSheet(kind, id, title, projectId) {
+            window.dispatchEvent(new CustomEvent('chf-record-sheet-open', {detail: {kind, id, title: title || '', projectId: projectId || null}}));
+        },
+        async loadPieces(p) {
+            try { this.pieces[p.id] = (await this.request('api/projects/' + encodeURIComponent(p.id) + '/pieces')).pieces || []; }
+            catch (e) { this.error = e.message; }
+            this.bindCards();
+        },
         async open(p) {
-            if (this.opened === p.id) { this.opened = null; this.hold = null; return; }
             try {
                 const data = await this.request('api/projects/' + encodeURIComponent(p.id));
-                this.projects = this.projects.map(row => row.id === p.id ? data.project : row);
-                this.opened = p.id; this.hold = null;
-                if (!this.isChild()) await this.openConversations(p);
+                this.projects = this.projects.map(row => row.id === p.id ? {...row, ...data.project} : row);
+                this.opened = p.id; this.hold = null; this.pieceForm = null;
+                this.setAddress({id: p.id});
+                await this.loadPieces(p);
             } catch (e) { this.error = e.message; }
+        },
+        back() { this.opened = null; this.hold = null; this.pieceForm = null; this.setAddress({id: null, piece: null}); this.bindCards(); },
+        async fromAddress() {
+            if (this.host !== 'admin') return;
+            const q = new URLSearchParams(location.search);
+            const id = q.get('id'), piece = q.get('piece') || '';
+            const [kind, rid] = piece.includes(':') ? piece.split(':', 2) : [null, null];
+            if (id && !this.opened) { const p = this.projects.find(p => p.id === id); if (p) await this.open(p); }
+            if (!kind || !rid) return;
+            if (!id) {
+                const where = await this.request('api/projects/for/' + encodeURIComponent(kind) + '/' + encodeURIComponent(rid)).catch(() => null);
+                if (where && where.project_id) { const p = this.projects.find(p => p.id === where.project_id); if (p) await this.open(p); }
+                else if (!(where && where.record_visible)) { this.error = 'That isn’t here, or isn’t yours to see.'; return; }
+            }
+            this.openSheet(kind, rid, '', this.opened);
+        },
+        async addPiece(p) {
+            const options = [{value: 'existing', label: 'Something already in Chauffeur'}];
+            if (!this.isChild()) options.push({value: 'thread', label: 'A conversation with someone outside'}, {value: 'mission', label: 'Work for Argyle'});
+            options.push({value: 'program', label: 'A practice program'});
+            const pick = await promptChoice('Add a piece', '', options);
+            if (!pick) return;
+            if (pick === 'existing') return this.pickExisting(p);
+            if (pick === 'thread' && !this.contacts.length) this.contacts = await this.request('api/assist-contacts').catch(() => []) || [];
+            this.pieceForm = {projectId: p.id, kind: pick, title: '', goal: '', thread_kind: 'vendor', owner_member_id: this.myId,
+                              contact_id: '', counterparty_name: '', counterparty_email: '', next_action: '', next_action_at: '',
+                              tier: 'mission', for_member_id: this.myId, starting_point: '', sessions_per_week: 3, minutes: 25,
+                              preferred_days: [], target_date: ''};
+        },
+        togglePieceDay(d) { if (!this.pieceForm) return; const days = this.pieceForm.preferred_days; const i = days.indexOf(d); if (i === -1) days.push(d); else days.splice(i, 1); },
+        async pickExisting(p) {
+            const q = await promptInput('Add something already in Chauffeur', 'A trip, an occasion, a list, a program…', {okText: 'Find it'});
+            if (!q || !q.trim()) return;
+            try {
+                const found = (await this.request('api/subjects/search?q=' + encodeURIComponent(q.trim()))).candidates || [];
+                if (!found.length) { showGlobalAlert('Nothing by that name.'); return; }
+                const pick = await promptChoice('Which one?', '', found.map(c => ({value: c.kind + ':' + c.id, label: c.title + ' (' + c.kind + ')'})));
+                if (!pick) return;
+                const [kind, id] = pick.split(':', 2);
+                if (await this.mutate('api/projects/' + encodeURIComponent(p.id) + '/pieces', {kind, id})) await this.loadPieces(p);
+            } catch (e) { this.error = e.message; }
+        },
+        async createPiece() {
+            const f = this.pieceForm;
+            if (!f || this.busy) return;
+            const project = this.detail;
+            const body = f.kind === 'thread'
+                ? {title: f.title.trim(), goal: f.goal, kind: f.thread_kind, owner_member_id: f.owner_member_id, contact_id: f.contact_id || null,
+                   counterparty_name: f.counterparty_name, counterparty_email: f.counterparty_email, next_action: f.next_action,
+                   next_action_at: f.next_action_at || null, project_id: f.projectId}
+                : f.kind === 'mission'
+                ? {goal: f.goal.trim(), tier: f.tier, project_id: f.projectId}
+                : {title: f.title.trim(), for_member_id: f.for_member_id || this.myId, member_id: this.myId || null,
+                   starting_point: f.starting_point.trim(), sessions_per_week: f.sessions_per_week || 3, minutes: f.minutes || 25,
+                   preferred_days: f.preferred_days, target_date: f.target_date || null, project_id: f.projectId};
+            const path = {thread: 'api/threads', mission: 'api/missions/launch', program: 'api/programs'}[f.kind];
+            if (await this.mutate(path, body)) { this.pieceForm = null; if (project) await this.loadPieces(project); }
         },
         ordered(p) { return [...p.steps].sort((a,b) => a.order - b.order); },
         chip(state) { return {active:'bg-teal-500/20 text-teal-300', paused:'bg-amber-500/20 text-amber-300'}[state] || 'bg-gray-700 text-gray-300'; },
@@ -260,10 +456,9 @@ function projectsPage() {
         },
         async plan(p) {
             if (await promptConfirm('Plan it with Argyle?', 'Argyle will help plan the next part. You approve the plan before its steps are added.', 'Plan it', 'Cancel')) {
-                if (await this.mutate('api/projects/' + encodeURIComponent(p.id) + '/plan', {})) await this.openConversations(p);
+                if (await this.mutate('api/projects/' + encodeURIComponent(p.id) + '/plan', {})) await this.loadPieces(p);
             }
         },
-        async openConversations(p) { try { this.conversations[p.id] = await this.request('api/subjects/project/' + encodeURIComponent(p.id) + '/situations'); } catch (e) { this.error = e.message; } }
     };
 }
 </script>
