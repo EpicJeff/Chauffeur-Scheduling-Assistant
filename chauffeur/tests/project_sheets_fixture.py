@@ -48,14 +48,20 @@ def seed():
     IDS['closed'] = threads.create(title='Old permit', owner_member_id='mom', goal='permit', created_by='mom',
                                    project_id='prj-bath')
     storage.update_thread(IDS['closed'], {'state': 'done'})
-    IDS['mission'] = storage.add_mission({'goal': 'Find three tilers', 'created_by': 'mom', 'tier': 'mission', 'status': 'running'})
+    # Keep the sheet answerable across scenarios: the live push loop must not
+    # step this fixture into blocked after repeated missing-key errors.
+    IDS['mission'] = storage.add_mission({'goal': 'Find three tilers', 'created_by': 'mom', 'tier': 'mission', 'status': 'waiting_user'})
+    storage.add_mission_step(IDS['mission'], {'kind': 'ask', 'name': 'question',
+                                            'result_json': {'question': 'Which day suits the tiler?'}})
     projects.adopt('mission', IDS['mission'], None, project_id='prj-bath')
     for pid, title, state in (('pr-prop', 'Tiling basics', 'proposed'), ('pr-live', 'Strength basics', 'active')):
         storage.add_program({'id': pid, 'member_id': 'mom', 'title': title, 'state': state, **_PROGRAM})
         projects.adopt('program', pid, None, project_id='prj-bath')
     storage.add_project({'id': 'prj-gift', 'title': 'Surprise party', 'goal': 'x', 'done_when': 'x', 'owner_member_id': 'mom',
                          'created_by': 'mom', 'audience': 'private', 'pieces': [], 'steps': []})
-    IDS['keeper'] = storage.add_mission({'goal': 'Book the venue', 'created_by': 'aunt', 'tier': 'mission', 'status': 'running'})
+    IDS['keeper'] = storage.add_mission({'goal': 'Book the venue', 'created_by': 'aunt', 'tier': 'mission', 'status': 'waiting_user'})
+    storage.add_mission_step(IDS['keeper'], {'kind': 'ask', 'name': 'question',
+                                           'result_json': {'question': 'Which day suits the venue?'}})
     projects.adopt('mission', IDS['keeper'], None, project_id='prj-gift')
     storage.add_project({'id': 'prj-bike', 'title': 'Ride a bike', 'goal': 'ride to school', 'done_when': 'no hands',
                          'owner_member_id': 'kid', 'created_by': 'kid', 'audience': 'parents', 'pieces': [], 'steps': []})

@@ -3,9 +3,13 @@
    chrome (nav, control_center, hearth) belongs to the HOST page,
    never here. #}
 {% from 'components/settings_drawer.html' import settings_drawer, settings_section, settings_off with context %}
-        <div x-data="threadsPage()" x-init="load()"
-            x-effect="window.chfSetPageTabCount && window.chfSetPageTabCount('threads', groups[0].items.length)" class="panel-page max-w-2xl mx-auto px-4 py-6" x-cloak>
+{% set _sheet = sheet_mode|default(false) %}
+        <div x-data="threadsPage({{ 'true' if _sheet else 'false' }})" x-init="{{ '' if _sheet else 'load()' }}"
+            {% if _sheet %}@chf-record-sheet.window="onSheet($event.detail)"{% else %}x-effect="window.chfSetPageTabCount && window.chfSetPageTabCount('threads', groups[0].items.length)"{% endif %}
+            class="{{ 'px-1 py-1' if _sheet else 'panel-page max-w-2xl mx-auto px-4 py-6' }}" x-cloak>
+            {% if _sheet %}<p class="text-xs text-gray-500 italic px-1" x-show="only && loadedOnce && !groups.length">That conversation isn’t here, or isn’t yours to see.</p>{% endif %}
 
+            {% if not _sheet %}{# sheet:hide #}
             <h2 class="panel-page-title">Threads</h2>
             <p class="text-sm text-gray-500 mb-5">
                 The open loops with somebody outside the family — the pool
@@ -89,6 +93,7 @@
                 <input type="checkbox" x-model="showClosed" @change="rememberClosed()" class="h-3.5 w-3.5 accent-pink-400">
                 <span>Show closed</span>
             </label>
+            {% endif %}{# /sheet:hide #}
             <div x-ref="lane">
             <template x-for="g in groups" :key="g.key">
                 <div class="mb-6" :data-sit-group="g.key">
@@ -348,8 +353,15 @@
 
 
     <script>
-        function threadsPage() {
+        function threadsPage(sheet = false) {
             return {
+                sheet, only: null, loadedOnce: false,
+                onSheet(d) {
+                    if (!d || d.kind !== 'thread' || !d.id) { this.only = null; return; }
+                    this.only = d.id;
+                    this.detailsOpen = { [d.id]: true };
+                    this.load();
+                },
                 apiBase: (window.chfBase !== undefined ? window.chfBase : ''),
                 s: { thread_stall_days: 7 },
                 threads: [],
@@ -416,6 +428,7 @@
                         const sRes2 = await fetch(this.apiBase + 'api/situations?kinds=thread&include_done=1');
                         const sd2 = sRes2.ok ? await sRes2.json() : { situations: [] };
                         this.situations = sd2.situations || [];
+                        this.loadedOnce = true;
                         this.$nextTick(() => window.Situations.bind(this.$refs.lane, this.cardCtx()));
                     } catch (e) { showGlobalAlert("Couldn't load threads."); }
                     this.refreshOpenMissions();
@@ -423,8 +436,9 @@
 
                 showClosed: (() => { try { return localStorage.getItem('chf_threads_show_closed') === '1'; } catch (e) { return false; } })(),
                 get groups() {
-                    const by = (g) => this.situations.filter(s => s.group === g);
+                    const by = (g) => this.situations.filter(s => s.group === g && (!this.sheet || s.id === this.only));
                     const all = this._allGroups(by);
+                    if (this.sheet) return all.filter(g => g.items.length).map(g => ({ ...g, folded: false }));
                     return this.showClosed ? all : all.filter(g => g.key !== 'done');
                 },
                 rememberClosed() { try { localStorage.setItem('chf_threads_show_closed', this.showClosed ? '1' : '0'); } catch (e) { /* private window */ } },

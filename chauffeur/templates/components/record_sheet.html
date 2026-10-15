@@ -1,0 +1,51 @@
+{# The record sheet (front door §2): a project's thread, mission or program, one at
+   a time, beside the Projects page. Framed like the settings drawer (same width,
+   header and close) but it is not the drawer: the drawer holds a page's settings
+   only. Each body is the record's own component in sheet mode, so every control
+   its old page had is the same markup here. Admin hosts only (work.html,
+   projects.html); the phone draws its own sheet in app.html. #}
+{% set sheet_mode = true %}
+<div x-data="chfRecordSheet()" x-show="rsOpen" x-cloak data-record-sheet :data-kind="rsKind" :data-open="rsOpen ? 'true' : null"
+     @chf-record-sheet-open.window="show($event.detail)" @keydown.escape.window="rsOpen && close()" @click.self="close()"
+     class="fixed inset-0 z-[80] bg-black/40 flex justify-end items-end md:items-stretch">
+    <div tabindex="-1" role="dialog" aria-modal="true" :aria-label="rsLabel()"
+         :class="rsKind === 'program' ? 'md:w-[48rem]' : 'md:w-[40rem]'"
+         class="bg-gray-800 w-full h-[88vh] md:h-full overflow-y-auto border-t md:border-t-0 md:border-l border-gray-700 rounded-t-2xl md:rounded-none flex flex-col outline-none">
+        <div class="sticky top-0 z-10 bg-gray-800 border-b border-gray-700 px-4 py-3 flex items-center gap-3">
+            <h2 class="flex-1 min-w-0 text-lg font-extrabold text-white truncate" x-text="rsLabel()"></h2>
+            <button type="button" data-record-sheet-close @click="close()" title="Close" aria-label="Close"
+                    class="w-8 h-8 shrink-0 rounded-full bg-gray-900 text-white hover:bg-gray-700 font-bold">✕</button>
+        </div>
+        <div class="px-2 pt-2 pb-8">
+            <div x-show="rsKind === 'thread'">{% include 'components/threads_page.html' %}</div>
+            <div x-show="rsKind === 'mission'">{% include 'components/missions_page.html' %}</div>
+            <div x-show="rsKind === 'program'">{% include 'components/programs_page.html' %}</div>
+        </div>
+    </div>
+</div>
+<script>
+function chfRecordSheet() {
+    return {
+        rsOpen: false, rsKind: null, rsId: null, rsTitle: '',
+        rsLabel() { return this.rsTitle || ({thread: 'Conversation', mission: 'Argyle’s work', program: 'Program'}[this.rsKind] || ''); },
+        rsAddress(piece) {
+            const q = new URLSearchParams(location.search);
+            if (piece) q.set('piece', piece); else q.delete('piece');
+            const s = q.toString();
+            history.replaceState(history.state, '', location.pathname + (s ? '?' + s : '') + location.hash);
+        },
+        show(d) {
+            if (!d || !['thread', 'mission', 'program'].includes(d.kind) || !d.id) return;
+            this.rsKind = d.kind; this.rsId = d.id; this.rsTitle = d.title || ''; this.rsOpen = true;
+            window.dispatchEvent(new CustomEvent('chf-record-sheet', {detail: {kind: d.kind, id: d.id}}));
+            this.rsAddress(d.kind + ':' + d.id);
+        },
+        close() {
+            this.rsOpen = false; this.rsKind = null; this.rsId = null; this.rsTitle = '';
+            window.dispatchEvent(new CustomEvent('chf-record-sheet', {detail: {kind: null, id: null}}));
+            this.rsAddress(null);
+            window.dispatchEvent(new CustomEvent('chf-projects-open'));   // the project's cards re-read what changed
+        },
+    };
+}
+</script>

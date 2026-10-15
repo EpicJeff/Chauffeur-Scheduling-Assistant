@@ -14,8 +14,12 @@
              (POST .../ack). Every model/user string below renders through
              x-text or JSON.stringify into x-text — never x-html/innerHTML
              — because a transcript carries raw LLM and thread output. -->
-        <div x-data="missionsSettings()" x-init="load(); loadAdmin(); startPolling()" class="panel-page max-w-2xl mx-auto px-4 py-6" x-cloak>
+{% set _sheet = sheet_mode|default(false) %}
+        <div x-data="missionsSettings({{ 'true' if _sheet else 'false' }})" x-init="{{ 'load(); startPolling()' if _sheet else 'load(); loadAdmin(); startPolling()' }}"
+            {% if _sheet %}@chf-record-sheet.window="onSheet($event.detail)"{% endif %}
+            class="{{ 'px-1 py-1' if _sheet else 'panel-page max-w-2xl mx-auto px-4 py-6' }}" x-cloak>
 
+            {% if not _sheet %}{# sheet:hide #}
             <h2 class="panel-page-title">Missions</h2>
             <p class="text-sm text-gray-500 mb-5">
                 Argyle researches and proposes; people approve. A mission works a
@@ -113,7 +117,7 @@
                 <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3" id="netcheck">
                     <div class="flex items-center justify-between gap-2">
                         <div class="text-xs font-semibold text-gray-400">If browses keep timing out</div>
-                        <button @click="netcheck()" :disabled="netBusy"
+                        <button @click="netcheck()" :disabled="!!netBusy"
                             class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-700 text-gray-200 active:bg-gray-600 disabled:opacity-50"
                             x-text="netBusy ? 'Checking…' : 'Check the network'"></button>
                     </div>
@@ -149,6 +153,8 @@
             </div>
             {% endcall %}{% endcall %}
 
+            {% endif %}{# /sheet:hide #}
+
             <!-- Admin-only sections: GET /api/missions/admin 403s a non-parent
                  (same gate as the Mind's /api/mind/admin), and the settings
                  form above must keep working regardless. -->
@@ -161,6 +167,7 @@
             <template x-if="adminChecked && adminAllowed">
                 <div class="mt-6 space-y-6">
 
+                    {% if not _sheet %}{# sheet:hide #}
                     <!-- Launch card: POST /api/missions/launch {goal, tier}. -->
                     <div class="bg-gray-800 rounded-2xl border border-gray-700 p-4">
                         <div class="text-sm font-bold text-gray-200 mb-2">Launch a mission</div>
@@ -173,11 +180,13 @@
                                 <option value="mission">Pro (paid)</option>
                                 <option value="flash">Flash (free, benchmark)</option>
                             </select>
-                            <button @click="launch()" :disabled="launching || !s.missions_enabled"
+                            <button @click="launch()" :disabled="!!(launching || !s.missions_enabled)"
                                 class="shrink-0 text-sm font-bold px-4 py-2 rounded-lg bg-blue-600 text-white active:bg-blue-700 disabled:bg-gray-800 disabled:text-gray-500"
                                 x-text="launching ? 'Launching…' : 'Launch'"></button>
                         </div>
                     </div>
+
+                    {% endif %}{# /sheet:hide #}
 
                     <!-- The lane: one card per mission, grouped by what it
                          needs — a decision left behind counts whatever the
@@ -261,8 +270,15 @@
         </div>
 
     <script>
-        function missionsSettings() {
+        function missionsSettings(sheet = false) {
             return {
+                sheet, only: null,
+                onSheet(d) {
+                    if (!d || d.kind !== 'mission' || !d.id) { this.only = null; return; }
+                    this.only = d.id;
+                    this.detailsOpen = { [d.id]: true };
+                    this.loadAdmin();
+                },
                 apiBase: (window.chfBase !== undefined ? window.chfBase : ''),
                 loaded: false, paidKeySet: false, paidKeyDraft: '',
                 s: {
@@ -408,12 +424,13 @@
                 },
 
                 get groups() {
-                    const by = (g) => this.situations.filter(s => s.group === g);
-                    return [
+                    const by = (g) => this.situations.filter(s => s.group === g && (!this.sheet || s.id === this.only));
+                    const all = [
                         { key: 'now', label: '✋ Needs you', titleClass: 'text-amber-400', items: by('now'), empty: 'No decisions waiting.' },
                         { key: 'moving', label: 'Running', titleClass: 'text-violet-400', items: by('moving').concat(by('in_hand')), empty: 'Nothing running right now.' },
                         { key: 'done', label: 'History', titleClass: 'text-gray-500', items: by('done'), empty: 'Nothing finished yet.' },
                     ];
+                    return this.sheet ? all.filter(g => g.items.length) : all;
                 },
                 missionById(id) { return this.active.find(m => m.id === id) || this.history.find(m => m.id === id) || null; },
                 missionRows(id) { const m = this.missionById(id); return m ? [m] : []; },
@@ -437,7 +454,7 @@
                 // refresh, but a backgrounded tab has no reason to keep polling.
                 startPolling() {
                     setInterval(() => {
-                        if (document.visibilityState === 'visible') this.loadAdmin();
+                        if (document.visibilityState === 'visible' && (!this.sheet || this.only)) this.loadAdmin();
                     }, 15000);
                 },
 

@@ -58,6 +58,8 @@ def scenario_the_detail_view_and_its_pieces():
         sheets = page.evaluate('() => window.__sheets')
         check(sheets and sheets[0]['kind'] == 'thread' and sheets[0]['id'] == IDS['thread'] and sheets[0]['projectId'] == IDS['bath'],
               f"Open asks for the sheet: {sheets}")
+        page.keyboard.press('Escape')
+        page.wait_for_function("() => !document.querySelector('[data-record-sheet]').hasAttribute('data-open')", timeout=5000)
         shot(page, 'slice2-detail')
         # Exercise the delegated card handler itself, not just the sheet's Open.
         act_url = served.url(f'api/situations/thread/{IDS["thread"]}/act')
