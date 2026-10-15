@@ -145,6 +145,42 @@ def scenario_c_every_admin_page_carries_the_gate_and_panels_do_not():
     finally:
         served.stop()
 
+def scenario_d_a_stale_pwa_token_never_locks_an_admin_page():
+    """User report (2026-10-15): "the Routines and Programs admin pages are
+    asking for login over and over even after signing in. Other admin pages
+    seem fine." Both tabs are /rhythms, which mounts the programs component,
+    and that component sent the PWA's own `chauffeur_member_token`; both fetch
+    wrappers yield to a member token already on the request, so a stale PWA
+    token in the same browser beat a fresh admin session (403, member or
+    parent) and the gate asked again forever. An admin page acts as its own
+    session (admin_gate's rule); the PWA's keys are the PWA's."""
+    served = _serve()
+    if served is None:
+        return
+    try:
+        with served.browser() as page:
+            _land(page, served, {'chauffeur_admin_token': TOKENS['parent'], 'chauffeur_admin_token_for': 'mj',
+                                 'chauffeur_member_token': 'stale-pwa-token', 'chauffeur_member_id': 'kid1'})
+            refused = []
+            page.on('response', lambda r: refused.append((r.status, r.url.split('/', 3)[-1][:80],
+                                                          r.headers.get('x-auth-refusal')))
+                    if r.status in (401, 403) else None)
+            for path in ('rhythms?tab=routines', 'rhythms?tab=programs', 'programs'):
+                refused.clear()
+                page.goto(served.url(path), wait_until='load')
+                page.wait_for_timeout(2500)
+                check(_gate_state(page) == 'in', f"/{path} stays signed in: {_gate_state(page)!r}, refused {refused}")
+                check(not [r for r in refused if r[2] and ('member' in r[2] or 'parent' in r[2])],
+                      f"/{path} sends the admin session, never the PWA's: {refused}")
+            me = page.evaluate("""() => { for (const el of document.querySelectorAll('[x-data]')) {
+                    const d = window.Alpine && Alpine.$data(el);
+                    if (d && typeof d.readIdentity === 'function') return d.myId; } return null; }""")
+            check(me == 'mj', f"the programs component is the signed-in parent, not the PWA's member: {me!r}")
+            tok = page.evaluate("() => window.chfPersonToken ? window.chfPersonToken() : null")
+            check(tok == TOKENS['parent'], f"one helper names the page's person for every component: {tok!r}")
+    finally:
+        served.stop()
+
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 

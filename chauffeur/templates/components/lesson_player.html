@@ -2142,12 +2142,13 @@ function lessonPlayer() {
                 const w = this.w || {};
                 // Same header shape every other lesson fetch in this app
                 // uses (family_calendar.html's _startPracticeSession, the
-                // programs card): whatever member token this browser
-                // holds, or none at all on a panel, which has none to
+                // programs card): the person this page acts as,
+                // or none at all on a panel, which has none to
                 // hold and reaches this route at WALL tier anyway.
                 const headers = {'Content-Type': 'application/json'};
                 try {
-                    const token = localStorage.getItem('chauffeur_member_token') || '';
+                    const token = window.chfPersonToken ? window.chfPersonToken()
+                        : (localStorage.getItem('chauffeur_member_token') || '');
                     if (token) headers['X-Member-Token'] = token;
                 } catch (e) { /* a panel has no token and needs none */ }
                 const res = await fetch(

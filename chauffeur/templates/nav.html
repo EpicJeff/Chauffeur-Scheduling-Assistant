@@ -542,6 +542,25 @@
 {% include 'components/card_timers.html' %}
 <script src="{{ 'static/house_return.js'|ver }}" data-house-home="{{ 'true' if house_home_on() else 'false' }}"></script>
 <script>
+    // One identity for this page: a house parent visit, the admin session,
+    // or the PWA member only on pages without an admin gate.
+    window.chfPersonToken = function () {
+        try {
+            const parentVisit = window.chfHouseParent && window.chfHouseParent();
+            if (parentVisit) return parentVisit.token || '';
+            if (window.chfAdminSession) return (window.chfAdminSession() || {}).token || '';
+            return localStorage.getItem('chauffeur_member_token') || '';
+        } catch (e) { return ''; }
+    };
+    window.chfPersonId = function () {
+        try {
+            const parentVisit = window.chfHouseParent && window.chfHouseParent();
+            if (parentVisit) return parentVisit.id || '';
+            if (window.chfAdminSession) return (window.chfAdminSession() || {}).id || '';
+            return localStorage.getItem('chauffeur_member_id') || '';
+        } catch (e) { return ''; }
+    };
+
     // Auth arc S6: a panel is a PLACE, not a person. It holds a device token
     // rather than a member session, because it has to come up after a power
     // cut at 6am with nobody in the room. Installed at the top of nav so it is
@@ -629,13 +648,7 @@
     window.chfAuthUrl = function (url) {
         try {
             if (typeof localStorage === 'undefined') return url;
-            const parentVisit = window.chfHouseParent && window.chfHouseParent();
-            // An admin page (admin_gate) streams as its own session, never as
-            // whoever the PWA in this browser is signed in as.
-            const admin = !parentVisit && window.chfAdminSession ? window.chfAdminSession() : null;
-            const t = parentVisit ? parentVisit.token
-                : (window.chfAdminSession ? (admin && admin.token)
-                   : localStorage.getItem('chauffeur_member_token'));
+            const t = window.chfPersonToken();
             const d = localStorage.getItem('chauffeur_device_token');
             const q = t ? 'member_token=' + encodeURIComponent(t)
                         : (d ? 'device_token=' + encodeURIComponent(d) : '');

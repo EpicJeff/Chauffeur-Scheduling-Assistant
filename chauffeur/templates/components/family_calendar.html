@@ -1296,7 +1296,10 @@ async function _startPracticeSession(w) {
                 r = await fetch(`${base}api/programs/${w.program_id}/lesson-scenes?${qs}`);
             } else {
                 let token = '';
-                try { token = localStorage.getItem('chauffeur_member_token') || ''; }
+                try {
+                    token = window.chfPersonToken ? window.chfPersonToken()
+                        : (localStorage.getItem('chauffeur_member_token') || '');
+                }
                 catch (e) { /* no storage, no token -- the household scope still applies */ }
                 const headers = { 'Content-Type': 'application/json' };
                 if (token) headers['X-Member-Token'] = token;

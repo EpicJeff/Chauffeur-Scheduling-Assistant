@@ -888,8 +888,10 @@
 
                 readIdentity() {
                     try {
-                        this.myId = localStorage.getItem('chauffeur_member_id') || '';
-                        this.myToken = localStorage.getItem('chauffeur_member_token') || '';
+                        this.myId = window.chfPersonId ? window.chfPersonId()
+                            : (localStorage.getItem('chauffeur_member_id') || '');
+                        this.myToken = window.chfPersonToken ? window.chfPersonToken()
+                            : (localStorage.getItem('chauffeur_member_token') || '');
                     } catch (e) { this.myId = ''; this.myToken = ''; }
                 },
 
