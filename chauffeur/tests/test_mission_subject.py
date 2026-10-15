@@ -215,7 +215,8 @@ def scenario_start_mission_for_writes_the_subject_on_the_thread():
     hidden = tools.start_mission_for('order the cake', acting_member=AUNT, focus_key='conv:3', subject_kind='occasion', subject_id='o1')
     check(hidden['status'] == 'success' and storage.get_thread(hidden['thread_id']).get('subject_kind') is None,
           "a subject the asker may not see is dropped, never bound")
-    schema = next(t for t in tools.get_available_tools() if t['name'] == 'start_mission_for')['parameters']['properties']
+    # Front door slice 1: start_mission_for is a registry tool now, not a chat declaration.
+    schema = tools.TOOL_SCHEMAS['start_mission_for']['properties']
     check('subject_kind' in schema and 'subject_id' in schema, f"the tool takes the pair: {list(schema)}")
 
 

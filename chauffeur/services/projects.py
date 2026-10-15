@@ -1,5 +1,6 @@
 """The durable project record, its audience and lifecycle."""
 
+import threading
 import datetime
 import time
 import uuid
@@ -29,9 +30,42 @@ def _parent(member):
     return member.get('role') == 'parent' and not _child(member)
 
 
+_GATE = threading.local()
+
+
+def _wrapped_visible(project, viewer):
+    """A wrapper's title and goal are its record's words (front door §5): it is
+    seen only by someone who may see that record, now, so a subject bound to
+    the record after adoption narrows the wrapper too. Re-entry (a record
+    whose subject is this very project) defers to the outer check."""
+    src = project.get('wrapped_from') or {}
+    kind, rid = src.get('kind'), src.get('id')
+    if kind not in _ADOPT_TABLES or not rid:
+        return True
+    active = getattr(_GATE, 'ids', None)
+    if active is None:
+        active = _GATE.ids = set()
+    if project.get('id') in active:
+        return True
+    active.add(project.get('id'))
+    try:
+        row = _ADOPT_TABLES[kind][0](rid)
+        if row is None:
+            return True     # the record is gone; the project stands on the words it kept
+        if kind == 'program':
+            from services import subjects
+            return subjects.visible('program', row, viewer)
+        from services import situations
+        return situations.can_see(kind, row, viewer)
+    finally:
+        active.discard(project.get('id'))
+
+
 def can_see(project, viewer):
     """A child's private project still includes every active parent."""
     if not project or not _active(viewer):
+        return False
+    if project.get('wrapped_from') and not _wrapped_visible(project, viewer):
         return False
     if viewer['id'] == project.get('owner_member_id'):
         return True
@@ -790,7 +824,9 @@ def _wrapper_fields(kind, row, actor):
     if not _active(member or {}):
         member = situations.parent_of_record()
     voice = bool(row.get('voice_shared') or row.get('requester_provenance'))
-    audience = 'household' if voice else ('parents' if _child(member or {}) else 'private')
+    # Parents saw every thread, mission and program on its own page; the wrapper
+    # keeps them, and the record gate in can_see narrows it to the record.
+    audience = 'household' if voice else 'parents'
     return {'title': title or 'Untitled', 'goal': goal, 'done_when': '', 'owner_member_id': (member or {}).get('id'),
             'audience': audience}
 
@@ -827,6 +863,7 @@ def adopt(kind, record_id, actor, project_id=None):
                     return None
             project = prepared['project']
             project['state'] = _state_for(kind, row)
+            project['wrapped_from'] = {'kind': kind, 'id': record_id}
             pid = storage.add_project(project)
         update(record_id, {'project_id': pid})
         project = storage.get_project(pid)

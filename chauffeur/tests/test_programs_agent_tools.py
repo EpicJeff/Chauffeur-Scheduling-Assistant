@@ -77,10 +77,9 @@ def scenario_the_chat_tool_can_be_told_where_somebody_is_starting():
     has to forward it, or the schema advertises a field that goes nowhere."""
     import inspect
     from services import agent_router
-    tool = next(t for t in agent_tools_v2.get_available_tools()
-                if t['name'] == 'propose_program')
-    check('starting_point' in tool['parameters']['properties'],
-          f"the tool takes it, got {sorted(tool['parameters']['properties'])}")
+    # Front door slice 1: propose_program is a registry tool (plans propose programs); chat starts a project.
+    props = agent_tools_v2.TOOL_SCHEMAS['propose_program']['properties']
+    check('starting_point' in props, f"the tool takes it, got {sorted(props)}")
     check('starting_point' in
           inspect.signature(agent_tools_v2.propose_program).parameters,
           "and the function behind it does too")

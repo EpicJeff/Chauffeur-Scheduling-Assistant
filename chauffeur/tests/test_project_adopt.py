@@ -38,7 +38,7 @@ def scenario_a_thread_created_by_hand_gets_a_project():
     t = storage.get_thread(tid)
     p = storage.get_project(t['project_id'])
     check(p and p['title'] == 'Deck permit' and p['goal'] == 'permit approved' and p['owner_member_id'] == 'mom'
-          and p['audience'] == 'private' and p['state'] == 'active', f"wrapped: {p}")
+          and p['audience'] == 'parents' and p['state'] == 'active', f"wrapped, parents keep what they saw: {p}")
     check(p['pieces'] == [{'kind': 'thread', 'id': tid}], f"the thread is its first piece: {p['pieces']}")
 
 
@@ -140,14 +140,60 @@ def scenario_migration_handles_a_missing_owner():
     tid = storage.add_thread({'title': 'Gutters', 'kind': 'vendor', 'state': 'open', 'owner_member_id': 'gone', 'created_by': 'gone'})
     _p().adopt_existing()
     p = storage.get_project(storage.get_thread(tid)['project_id'])
-    check(p['owner_member_id'] in ('mom', 'dad') and p['audience'] == 'private', f"the parent of record stands in: {p}")
+    check(p['owner_member_id'] in ('mom', 'dad') and p['audience'] == 'parents', f"the parent of record stands in: {p}")
+
+
+
+def scenario_a_wrapper_never_shows_more_than_its_record():
+    """A subject bound after adoption narrows the record; its wrapper narrows with it."""
+    _fresh()
+    tid = threads.create(title='Gift for Kate', owner_member_id='mom', created_by='mom')
+    p = storage.get_project(storage.get_thread(tid)['project_id'])
+    from test_subjects import DAD
+    check(_p().can_see(p, dict(DAD)), "Dad sees Mom's plain thread's wrapper, as he saw the thread")
+    storage.update_thread(tid, {'subject_kind': 'list', 'subject_id': 'l2', 'subject_rev': 1})   # l2: Mom's private list
+    from services import situations
+    check(not situations.can_see('thread', storage.get_thread(tid), dict(DAD)), "the fixture: the thread is now Mom's only")
+    check(not _p().can_see(storage.get_project(p['id']), dict(DAD)), "and its wrapper's words go with it")
+    check(_p().can_see(storage.get_project(p['id']), dict(MOM)), "Mom still sees her own")
+
+
+def scenario_a_plan_in_a_wrapped_mission_reshapes_its_wrapper():
+    """A manual mission lives in a wrapper; approving its plan fills that project, never a second one."""
+    _fresh()
+    from services import situations
+    from test_mission_subject import _plan
+    res = missions.launch('help me learn piano', created_by='mom')
+    mid = res['mission_id']
+    home = storage.get_mission(mid)['project_id']
+    from services import planned
+    _plan({'action': 'interview', 'questions': [{'key': 'level', 'ask': 'Where are you starting?', 'kind': 'text'}]})
+    missions.step(storage.get_mission(mid))
+    planned.answer_plan(mid, {'level': 'never'}, dict(MOM))
+    _plan({'action': 'plan', 'project': {'title': 'Learn piano', 'goal': 'play a song', 'done_when': 'Fur Elise at the recital',
+                                         'owner': 'mom', 'audience': 'household'},
+           'steps': [{'id': 'p1', 'title': 'Buy a keyboard', 'owner': 'mom'}],
+           'stages': [{'id': 's1', 'kind': 'work', 'title': 'Find a teacher', 'why': 'lessons', 'goal': 'two teachers', 'step_budget': 2,
+                       'makes': ['teachers']}]})
+    missions.step(storage.get_mission(mid))
+    plan = storage.get_mission(mid)['plan']
+    out = situations.act('mission', mid, 'approve_plan', option_id=f"approve_plan:{plan['rev']}:approve", payload={}, actor=dict(MOM))
+    check(out['status'] == 'success', f"approved: {out}")
+    rows = storage.get_projects()
+    check(len(rows) == 1 and rows[0]['id'] == home, f"one project, the wrapper: {[r['title'] for r in rows]}")
+    p = rows[0]
+    check(p['title'] == 'Learn piano' and p['done_when'] == 'Fur Elise at the recital' and p['audience'] == 'household'
+          and not p.get('wrapped_from'), f"the plan's project reshaped the wrapper: {p}")
+    check({s['title'] for s in p['steps']} == {'Buy a keyboard', 'Find a teacher'}, f"steps: {p['steps']}")
+    check(missions.subject_of(storage.get_mission(mid))[:2] == ('project', home), "the mission is bound to its home")
 
 
 SCENARIOS = [scenario_a_thread_created_by_hand_gets_a_project, scenario_a_childs_record_gets_a_parents_project,
              scenario_a_thread_origin_mission_joins_the_threads_project, scenario_launch_binds_the_project_before_adopting,
              scenario_the_plan_route_and_advance_make_no_wrapper, scenario_adopt_is_idempotent_and_never_rewraps,
              scenario_a_planner_row_inside_a_project_joins_it,
-             scenario_migration_wraps_every_record_once, scenario_migration_handles_a_missing_owner]
+             scenario_migration_wraps_every_record_once, scenario_migration_handles_a_missing_owner,
+             scenario_a_wrapper_never_shows_more_than_its_record, scenario_a_plan_in_a_wrapped_mission_reshapes_its_wrapper]
 
 if __name__ == "__main__":
     import traceback

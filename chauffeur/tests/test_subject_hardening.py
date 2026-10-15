@@ -278,10 +278,11 @@ def scenario_r3_household_voice_still_names_the_mission_already_under_way():
     from services import voice_tools
     from services import voice_identity as voice
     ctx = voice.VoiceContext('ha', 'assist_satellite.kitchen', 'r1', 'g1', service_revision=voice._revision(), paired=True)
-    first = voice_tools.dispatch('start_mission_for', {'goal': 'fix the dishwasher'}, ctx, focus_key='voice:hh1')
+    # Front door slice 1: the voice door is start_project; the second ask names the first project.
+    first = voice_tools.dispatch('start_project', {'goal': 'fix the dishwasher'}, ctx, focus_key='voice:hh1')
     check(first.get('status') == 'success', f"household voice starts it: {first}")
-    again = voice_tools.dispatch('start_mission_for', {'goal': 'fix the dishwasher please'}, ctx, focus_key='voice:hh2')
-    check(again.get('mission_id') == first.get('mission_id') and 'already' in (again.get('message') or '').lower(),
+    again = voice_tools.dispatch('start_project', {'goal': 'fix the dishwasher please'}, ctx, focus_key='voice:hh2')
+    check(again.get('project_id') == first.get('project_id') and 'already' in (again.get('message') or '').lower(),
           f"the second ask names the first instead of paying for it twice: {again}")
 
 

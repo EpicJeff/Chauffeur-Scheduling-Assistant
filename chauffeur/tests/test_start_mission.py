@@ -55,22 +55,23 @@ def scenario_gates():
 
 def scenario_declared_dispatched_terminal():
     decl = {t['name'] for t in tools.get_available_tools()}
-    check('start_mission_for' in decl and 'start_mission_for' in tools.TOOL_HANDLERS and 'start_mission_for' in tools.TOOL_SCHEMAS, "registry")
+    # Front door slice 1: start_mission_for left the chat declaration (start_project is the one door) but stays in the registry for plans.
+    check('start_mission_for' not in decl and 'start_mission_for' in tools.TOOL_HANDLERS and 'start_mission_for' in tools.TOOL_SCHEMAS, "registry only")
     src = open('services/agent_router.py', encoding='utf-8').read()
-    check('"start_mission_for"' in src.split('TERMINAL_ACTION_TOOLS = {')[1].split('}')[0], "terminal")
+    check('"start_project"' in src.split('TERMINAL_ACTION_TOOLS = {')[1].split('}')[0], "terminal")
     _reset()
     orig = agent_router.call_gemma_with_fallback
     n = {'i': 0}
 
     def fake(prompt, tools_, system):
         n['i'] += 1
-        return {'tool_calls': [{'name': 'start_mission_for', 'arguments': {'goal': 'get the dishwasher fixed'}}], 'message': ''} if n['i'] == 1 else {'tool_calls': [], 'message': ''}
+        return {'tool_calls': [{'name': 'start_project', 'arguments': {'goal': 'get the dishwasher fixed'}}], 'message': ''} if n['i'] == 1 else {'tool_calls': [], 'message': ''}
     agent_router.call_gemma_with_fallback = fake
     try:
         res = agent_router.process_agent_request('get the dishwasher fixed', focus_key='voice:9')
     finally:
         agent_router.call_gemma_with_fallback = orig
-    check(res['message'].startswith('On it.') and storage.get_missions()[0]['created_by'] == 'mom', f"voice opens it as the parent of record: {res}")
+    check(res['message'].startswith('Started a project') and storage.get_missions()[0]['created_by'] == 'mom', f"voice opens it as the parent of record: {res}")
 
 
 SENT = []
@@ -296,7 +297,7 @@ def scenario_launch_refused_opens_no_thread_and_launch_mission_defers():
     res = tools.start_mission_for('get the dishwasher fixed', acting_member=MOM)
     check(res['status'] == 'error' and 'key' in res['message'].lower() and not storage.get_threads(), f"no paid key: no thread: {res}")
     desc = next(t for t in tools.get_available_tools() if t['name'] == 'launch_mission')['description']
-    check('start_mission_for' in desc and 'existing thread' in desc.lower(), "launch_mission says when start_mission_for is the one to use")
+    check('start_project' in desc and 'existing thread' in desc.lower(), "launch_mission says when start_project is the one to use")
     storage.get_settings = lambda: {'missions_enabled': True, 'llm_gemini_paid_api_key': 'paid', 'thread_stall_days': 7}
     out = tools.launch_mission('get the dishwasher fixed', actor=MOM)
     check(out.get('thread_id') and storage.get_threads() and storage.get_missions()[0]['origin_kind'] == 'thread', f"launch_mission with no thread named opens a thread like start_mission_for: {out}")
@@ -344,9 +345,9 @@ def scenario_a_follow_up_on_the_focus_thread_reuses_it():
 
 def scenario_the_model_is_told_argyle_acts_on_websites():
     src = open('services/agent_router.py', encoding='utf-8').read()
-    check('start_mission_for' in src and 'never say' in src.lower() and 'website' in src.lower(),
-          "the router's prompt says Argyle browses and fills forms through missions and never denies it")
-    desc = next(t for t in tools.get_available_tools() if t['name'] == 'start_mission_for')['description']
+    check('start_project' in src and 'never say' in src.lower() and 'website' in src.lower(),
+          "the router's prompt says Argyle browses and fills forms inside projects and never denies it")
+    desc = next(t for t in tools.get_available_tools() if t['name'] == 'start_project')['description']
     check('enter' in desc.lower() and 'pricing' in desc.lower(), f"the tool description names the web-form case: {desc}")
 
 

@@ -30,7 +30,7 @@ def scenario_the_wrapped_record_narrows_only():
     from services import threads
     tid = threads.create(title='Pest control', owner_member_id='aunt', created_by='aunt')
     p = storage.get_project(storage.get_thread(tid)['project_id'])
-    check(p['audience'] == 'private' and _p().can_see(p, dict(MOM)) and not _p().can_see(p, dict(KID)),
+    check(p['audience'] == 'parents' and _p().can_see(p, dict(MOM)) and not _p().can_see(p, dict(KID)),
           "an adult's wrapped thread: parents see it (as they saw the thread), a child does not")
     from services import situations
     check(situations.can_see('thread', storage.get_thread(tid), dict(MOM)), "the thread itself is seen exactly as before")

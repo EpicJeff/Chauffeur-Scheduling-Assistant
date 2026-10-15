@@ -39,28 +39,29 @@ def _stage(mid, sid):
 def scenario_learning_portuguese():
     from services import planned, projects
     _fresh()
-    mid = _mission(created_by='mom')
-    storage.update_mission(mid, {'goal': 'I want to learn Portuguese'})
+    # Front door slice 1: the sentence goes through start_project; the project exists before the interview.
+    from services import agent_tools_v2 as tools
+    started = tools.start_project('I want to learn Portuguese', acting_member=dict(MOM))
+    check(started['status'] == 'success' and started['mission_id'], f"the project card first, then planning: {started}")
+    mid, pid = started['mission_id'], started['project_id']
     _plan({'action': 'interview', 'questions': [{'key': 'level', 'ask': 'Where are you starting?', 'kind': 'text'},
                                                  {'key': 'minutes', 'ask': 'Minutes a session?', 'kind': 'number'}]})
     _step(mid)
     planned.answer_plan(mid, {'level': 'never studied', 'minutes': 20}, dict(MOM))
     _plan({'action': 'plan',
-           'project': {'title': 'Learn Portuguese', 'goal': 'hold a conversation', 'done_when': 'order dinner in Lisbon in Portuguese',
-                       'owner': 'mom', 'audience': 'household'},
            'steps': [{'id': 'p1', 'title': 'Attend a first class', 'owner': 'mom', 'needs': ['s1']}],
            'stages': [{'id': 's1', 'kind': 'build', 'title': 'The program', 'why': 'a weekly plan', 'makes': ['a Portuguese program']},
                       {'id': 's2', 'kind': 'work', 'title': 'Find meetups', 'why': 'practice with people', 'goal': 'three Portuguese meetups nearby',
                        'step_budget': 4, 'makes': ['three meetups'], 'needs': ['s1']}]})
     _step(mid)
     card = missions.ask_card(storage.get_mission(mid))
-    check(card['project']['title'] == 'Learn Portuguese' and [s['title'] for s in card['steps']] == ['Attend a first class'],
-          f"the plan shows the project and your step: {card.get('project')} {card.get('steps')}")
+    check(card['project']['id'] == pid and [s['title'] for s in card['steps']] == ['Attend a first class'],
+          f"the plan names the existing project and your step: {card.get('project')} {card.get('steps')}")
     res = situations.act('mission', mid, 'approve_plan', option_id=f"approve_plan:{_plan_of(mid)['rev']}:approve", payload={}, actor=dict(MOM))
     check(res['status'] == 'success', f"one tap: {res}")
     rows = storage.get_projects()
-    check(len(rows) == 1 and missions.subject_of(storage.get_mission(mid))[:2] == ('project', rows[0]['id']), "the project exists, bound")
-    pid = rows[0]['id']
+    check(len(rows) == 1 and rows[0]['id'] == pid and missions.subject_of(storage.get_mission(mid))[:2] == ('project', pid),
+          "one project, the one started in chat, bound")
     check({s['title'] for s in rows[0]['steps']} == {'Attend a first class', 'The program', 'Find meetups'}, "its steps")
 
     _plan({'action': 'stage', 'stage_id': 's1', 'rows': [

@@ -1953,23 +1953,52 @@ def _thread_writer(acting_member: dict, verb: str):
     return None
 
 
+# Words that say how a person asks, never what they want ("I want to learn X").
+_INTENT_STOP = frozenset('want wants wanted would like need needs please help start make could should '
+                         'with that this from have some about into them their there what when where which '
+                         'while your just really going able also'.split())
+
+
+def _goal_words(text):
+    import re
+    return {re.sub(r'[\W_]', '', w) for w in (text or '').lower().split()} - {''}
+
+
 def _project_intent(goal, subject_title=None):
-    return _intent_words(goal, subject_title) or [w for w in (goal or '').lower().split() if len(w) > 2][:2]
+    import re
+    skip = _goal_words(subject_title) | _INTENT_STOP
+    words = [re.sub(r'[\W_]', '', w) for w in (goal or '').lower().split()]
+    return [w for w in words if len(w) > 3 and w not in skip][:3]
+
+
+def _same_goal(goal, project, subject_title=None):
+    """One goal said twice, either way round: every content word of the shorter
+    phrasing is in the longer ("learn Portuguese" / "learn Brazilian Portuguese")."""
+    new = set(_project_intent(goal, subject_title))
+    old = set(_project_intent(project.get('goal') or project.get('title'), subject_title))
+    have_old = _goal_words((project.get('title') or '') + ' ' + (project.get('goal') or ''))
+    return bool(new and new <= have_old) or bool(old and old <= _goal_words(goal))
 
 
 def start_project(goal: str, title: str = None, for_member_name: str = None, acting_member: dict = None,
-                  focus_key: str = None, voice_context=None, subject_kind: str = None, subject_id: str = None) -> Dict[str, Any]:
+                  focus_key: str = None, voice_context=None, subject_kind: str = None, subject_id: str = None,
+                  spoken: bool = False) -> Dict[str, Any]:
     """The one chat door for anything that takes steps, time or outside people
     (front door §1): the project is created at once, its card is posted
     first, then Argyle plans inside it. A child's project waits for a parent
     to plan it. Voice acts as the parent of record, household audience."""
     from services.voice_identity import VoiceContext
     from services import storage, subjects, situations, projects, missions as _missions, triage as _tri
-    spoken = isinstance(voice_context, VoiceContext)
+    # A room: a real VoiceContext, or the router standing the parent of record
+    # in for a caller with no identity (`spoken=substituted`).
+    ctx = voice_context if isinstance(voice_context, VoiceContext) else None
+    spoken = bool(ctx) or bool(spoken)
     goal = (goal or '').strip()
     if not goal:
         return {"status": "error", "message": "Say what you want to get done."}
-    actor = situations.parent_of_record() if spoken else acting_member
+    actor = (situations.parent_of_record() if ctx else acting_member) if spoken else acting_member
+    if spoken and not actor:
+        actor = situations.parent_of_record()
     if not actor or not actor.get('id'):
         return {"status": "error", "message": "Only a signed-in family member can start a project."}
     # Whose project: the caller's, or a named member (parent/adult only).
@@ -1990,7 +2019,6 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
     if subject is None or not subjects.visible(subject_kind, subject, actor, spoken):
         subject_kind = subject_id = None
     subject_title = subjects.title_of(subject_kind, subject) if subject_kind else None
-    intent = _project_intent(goal, subject_title)
     # The continuation rule: a new goal said while a project is the focus and
     # none of its missions is live is new planning INSIDE that project.
     f = _tri.get_focus(focus_key) if focus_key else None
@@ -2014,8 +2042,7 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
             continue
         if subject_kind and not any(x.get('kind') == subject_kind and x.get('id') == subject_id for x in p.get('pieces') or []):
             continue
-        hay = ((p.get('title') or '') + ' ' + (p.get('goal') or '')).lower()
-        if intent and all(w in hay for w in intent):
+        if _same_goal(goal, p, subject_title):
             matches.append(p)
     if len(matches) == 1:
         p = matches[0]
@@ -2032,8 +2059,8 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
     project = created['project']
     if subject_kind:
         projects.add_piece(project['id'], subject_kind, subject_id, actor)
-    if spoken:
-        storage.update_project(project['id'], {'requester_provenance': voice_context.provenance()})
+    if ctx:
+        storage.update_project(project['id'], {'requester_provenance': ctx.provenance()})
     # Plan inside it: a parent or adult's planning mission, bound before adoption.
     planning, reason, mission_id = 'started', '', None
     if actor.get('role') == 'child' or actor.get('is_child'):
@@ -2043,8 +2070,8 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
                                project_id=project['id'], subject=('project', project['id']))
         if res.get('status') == 'launched':
             mission_id = res['mission_id']
-            if spoken:
-                storage.update_mission(mission_id, {'requester_provenance': voice_context.provenance()})
+            if ctx:
+                storage.update_mission(mission_id, {'requester_provenance': ctx.provenance()})
         else:
             planning = 'off'
             reason = ('Missions are off (Projects settings).' if res.get('status') == 'disabled'
@@ -5075,12 +5102,13 @@ def get_available_tools() -> List[Dict]:
             "parameters": {"type": "object", "properties": {"uid": {"type": "integer"}}, "required": ["uid"]}
         },
         {
-            "name": "start_mission_for",
-            "description": "Start getting something done that takes several steps with people or companies outside the family: 'get the dishwasher fixed', 'find someone to clean the gutters', 'sort out the permit', 'go on their website and enter our details to get appointment times and pricing', 'get a quote from X'. Argyle CAN browse a company's website and fill its forms with the family's details (released by a parent first) to reach prices, slots and quotes; it stops short of booking or paying. Opens a thread (or works on the thread we are talking about) and puts Argyle to work; Argyle comes back with questions and results. Parent/adult only.",
+            "name": "start_project",
+            "description": "The one door for anything that takes steps, time, research, a company, a teacher or a practice plan: 'I want to learn Brazilian Portuguese', 'get the dishwasher fixed', 'renovate the bathroom', 'start Ben on a couch to 5k', 'go on their website and enter our details to get appointment times and pricing', 'get a quote from X'. Starts a PROJECT at once (the person sees its card and can rename it or say it is not a project), then Argyle asks a couple of questions and shows a plan inside it; a program, outside conversations and Argyle's own work fall out of the plan. Argyle CAN browse a company's website and fill its forms with the family's details (released by a parent first) to reach prices, slots and quotes; it stops short of booking or paying. Never for a change to the schedule or a record right now (assign a driver, add an item, send a message): those are direct tools or propose_family_action. Anyone for themselves; naming someone else is parent/adult only.",
             "parameters": {"type": "object",
-                           "properties": {"goal": {"type": "string", "description": "What to get done, in the person's words."},
-                                          "title": {"type": "string", "description": "A short name for the thread, if the person gave one."},
-                                          "subject_kind": {"type": "string", "description": "The subject kind from find_in_chauffeur."},
+                           "properties": {"goal": {"type": "string", "description": "What they want, in their words."},
+                                          "title": {"type": "string", "description": "A short name, if they gave one."},
+                                          "for_member_name": {"type": "string", "description": "Whose project, if not the caller's own."},
+                                          "subject_kind": {"type": "string", "description": "The subject kind from find_in_chauffeur, when the goal names something the family already has."},
                                           "subject_id": {"type": "string", "description": "The subject id from find_in_chauffeur."}},
                            "required": ["goal"]}
         },
@@ -5095,24 +5123,6 @@ def get_available_tools() -> List[Dict]:
                     "include_closed": {"type": "boolean", "description": "Include done/dropped threads. Default false."}
                 },
                 "required": []
-            }
-        },
-        {
-            "name": "create_thread",
-            "description": "Opens a new thread for a promise somebody outside the family made that hasn't closed yet — a vendor callback, a permit application ('start a thread for the deck permit', 'the pest company is supposed to call back, track that'). Parent/adult only; the caller becomes the thread's owner.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "idem": {"type": "string"},
-                    "title": {"type": "string", "description": "What the thread is about, e.g. 'Pest control' or 'Deck permit'."},
-                    "goal": {"type": "string", "description": "What resolving this thread looks like, if said."},
-                    "kind": {"type": "string", "description": "'vendor' or 'project'. Defaults to 'project'."},
-                    "counterparty_name": {"type": "string", "description": "Who's on the other end, if not an existing contact."},
-                    "counterparty_email": {"type": "string", "description": "Their email, if given."},
-                    "next_action": {"type": "string", "description": "What has to happen next, if known."},
-                    "next_action_at": {"type": "string", "description": "When the next action is due, as YYYY-MM-DD."}
-                },
-                "required": ["title"]
             }
         },
         {
@@ -5158,7 +5168,7 @@ def get_available_tools() -> List[Dict]:
         },
         {
             "name": "launch_mission",
-            "description": "Starts a multi-step Argyle MISSION on an EXISTING thread the person names (thread_title): Argyle researches, compares and drafts over the next hour and brings back proposals a parent approves on the Missions page. For a NEW goal with no thread yet ('get the dishwasher fixed', 'find someone to fix the fence') use start_mission_for, which opens the thread too. Nothing is booked, sent or paid automatically — never promise it will be. Parent/adult only.",
+            "description": "Starts a multi-step Argyle MISSION on an EXISTING thread the person names (thread_title): Argyle researches, compares and drafts over the next hour and brings back proposals a parent approves on the Missions page. For a NEW goal with no thread yet ('get the dishwasher fixed', 'find someone to fix the fence') use start_project, which opens the project and plans inside it. Nothing is booked, sent or paid automatically — never promise it will be. Parent/adult only.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -5200,21 +5210,6 @@ def get_available_tools() -> List[Dict]:
                     "program_title": {"type": "string", "description": "The program's title (fuzzy matched), e.g. 'Guitar'."}
                 },
                 "required": ["program_title"]
-            }
-        },
-        {
-            "name": "propose_program",
-            "description": "Proposes a new program: screens the aim, then finds a real cited plan for it ('I want to learn guitar', 'start Ben on a couch to 5k'). Refuses body-composition aims outright (weight, calories, BMI) for anyone, no exceptions. This ONLY proposes — nothing is claimed in the week. A person still has to see the footprint and approve it on the Programs page; there is no chat tool that does that. Proposing for yourself is open to anyone; naming someone else is parent/adult only.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string", "description": "The aim, e.g. 'learn guitar' or 'couch to 5k'."},
-                    "for_member_name": {"type": "string", "description": "Whose program this is, if not the caller's own."},
-                    "sessions_per_week": {"type": "integer", "minimum": 1, "maximum": 7, "description": "How many times a week to practise, 1-7. Defaults to 3."},
-                    "minutes": {"type": "integer", "minimum": 5, "maximum": 240, "description": "Minutes per session, 5-240. Defaults to 25."},
-                    "starting_point": {"type": "string", "description": "What they can already DO, in their own words ('already plays open chords', 'has a keyboard but no pedal', 'reads chapter books'). Makes the plan fit them instead of a generic beginner. Never a weight, a size or a calorie number - those are refused."}
-                },
-                "required": ["title"]
             }
         },
         {
@@ -6689,6 +6684,22 @@ class StartMissionForTool(BaseModel):
     subject_kind: Optional[str] = Field(None, description="The subject kind from find_in_chauffeur.")
     subject_id: Optional[str] = Field(None, description="The subject id from find_in_chauffeur.")
 
+class StartProjectTool(BaseModel):
+    """Start a project for anything that takes steps, time or people outside the family; Argyle plans inside it."""
+    goal: str = Field(..., description="What they want, in their words.")
+    title: Optional[str] = Field(None, description="A short name, if given.")
+    for_member_name: Optional[str] = Field(None, description="Whose project, if not the caller's own.")
+    subject_kind: Optional[str] = Field(None, description="The subject kind from find_in_chauffeur.")
+    subject_id: Optional[str] = Field(None, description="The subject id from find_in_chauffeur.")
+
+class ProposeProgramTool(BaseModel):
+    """Proposes a new program: screens the aim, then finds a real cited plan for it ('learn guitar', 'start Ben on a couch to 5k'). Refuses body-composition aims outright (weight, calories, BMI) for anyone, no exceptions. This ONLY proposes: nothing is claimed in the week; a person approves the footprint on the program. Inside a plan the row carries the plan's project. Proposing for yourself is open to anyone; naming someone else is parent/adult only."""
+    title: str = Field(..., description="The aim, e.g. 'learn guitar' or 'couch to 5k'.")
+    for_member_name: Optional[str] = Field(None, description="Whose program this is, if not the caller's own.")
+    sessions_per_week: Optional[int] = Field(None, ge=1, le=7, description="How many times a week to practise, 1-7. Defaults to 3.")
+    minutes: Optional[int] = Field(None, ge=5, le=240, description="Minutes per session, 5-240. Defaults to 25.")
+    starting_point: Optional[str] = Field(None, description="What they can already DO, in their own words. Never a weight, a size or a calorie number.")
+
 class ListProgramsTool(BaseModel):
     """
     Lists ambitions with a real plan attached — a curated curriculum, reserved practice time, a session log. Each shows who it's for, its state, the phase ahead, and sessions logged.
@@ -7241,6 +7252,8 @@ TOOL_SCHEMAS = {
     "search_mail": SearchMailTool.model_json_schema(),
     "read_mail": ReadMailTool.model_json_schema(),
     "start_mission_for": StartMissionForTool.model_json_schema(),
+    "start_project": StartProjectTool.model_json_schema(),
+    "propose_program": ProposeProgramTool.model_json_schema(),
     "list_programs": ListProgramsTool.model_json_schema(),
     "claim_chore": ClaimChoreTool.model_json_schema(),
     "negotiate_day": NegotiateDayTool.model_json_schema(),
@@ -8509,6 +8522,11 @@ def handle_start_mission_for(args: dict) -> dict:
     return start_mission_for(args.get('goal') or '', title=args.get('title'), acting_member=_registry_parent(),
                              subject_kind=args.get('subject_kind'), subject_id=args.get('subject_id'))
 
+def handle_start_project(args: dict, actor=None) -> dict:
+    return start_project(args.get('goal') or '', title=args.get('title'), for_member_name=args.get('for_member_name'),
+                         acting_member=actor or _registry_parent(),
+                         subject_kind=args.get('subject_kind'), subject_id=args.get('subject_id'))
+
 def handle_list_programs(args: dict) -> dict:
     # The v1 loop resolves no member and can produce no actor -- unlike
     # list_insights, list_programs REQUIRES one (a program is somebody's
@@ -9112,6 +9130,7 @@ TOOL_HANDLERS = {
     "search_mail": handle_search_mail,
     "read_mail": handle_read_mail,
     "start_mission_for": handle_start_mission_for,
+    "start_project": handle_start_project,
     "list_programs": handle_list_programs,
     "claim_chore": handle_claim_chore,
     "negotiate_day": handle_negotiate_day,

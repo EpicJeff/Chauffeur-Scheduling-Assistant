@@ -256,6 +256,9 @@ def _plan_for_change(mid, actor, rev=None):
     return mission, plan, None
 
 
+RESHAPE = ('title', 'goal', 'done_when', 'owner_member_id', 'audience', 'target_date', 'body_goal')
+
+
 def _project_for_plan(mission, proposed, actor):
     """Use the same project rules for the preview and the approval write."""
     from services import projects
@@ -265,6 +268,14 @@ def _project_for_plan(mission, proposed, actor):
         if not projects.can_act(project, actor):
             return None, 'You cannot edit this project'
         return project, None
+    # Every mission lives in a project (front door §1). A person's project is
+    # planned into as it stands; a wrapper made from the record takes the
+    # plan's project as its shape, so approval never makes a second project.
+    home = storage.get_project(mission.get('project_id')) if mission.get('project_id') else None
+    if home and not projects.can_act(home, actor):
+        return None, 'You cannot edit this project'
+    if home and (not home.get('wrapped_from') or proposed is None):
+        return home, None
     if proposed is None:
         return None, None  # Older plans can still run without a project proposal.
     if not isinstance(proposed, dict):
@@ -275,6 +286,8 @@ def _project_for_plan(mission, proposed, actor):
     if 'body_goal' in proposed:
         fields['body_goal'] = proposed['body_goal']
     result = projects.prepare_create(fields, actor)
+    if home and result.get('project'):
+        return {**result['project'], 'id': home['id'], 'reshape': True}, None
     return result.get('project'), result.get('message')
 
 
@@ -318,6 +331,10 @@ def _complete_approval(mission, plan):
             pieces.insert(0, {**earlier, 'added_by': plan['approved_by'], 'added_at': plan['approved_at']})
         patch = {'steps': steps, 'pieces': pieces,
                  'origin_mission_id': project.get('origin_mission_id') or mid}
+        if intent.get('reshape'):
+            # The wrapper becomes the plan's project, before the binding below
+            # makes the record's subject this project.
+            patch.update({**intent['reshape'], 'wrapped_from': None})
         if any(project.get(k) != v for k, v in patch.items()):
             storage.update_project(pid, patch)
         binding = intent.get('binding')
@@ -352,6 +369,8 @@ def approve_plan(mission_id, rev, actor):
                     return _refused(message)
             pid = project.get('id') or f'prj-{mission_id}'
             intent = {'project_id': pid, 'project': project if not project.get('id') else None}
+            if project.get('reshape'):
+                intent['reshape'] = {k: project.get(k) for k in RESHAPE}
             kind, sid, _ = missions.subject_of(mission)
             if kind != 'project':
                 row, binding_kind = mission, 'mission'
@@ -712,10 +731,12 @@ def planner_action(mid, action):
                     return _refused(message)
             candidate['project'] = None
             if project:
-                keys = (('id', 'title', 'goal', 'done_when') if project.get('id') else
+                # A wrapper to reshape keeps the whole proposed shape, as a new project does.
+                existing = project.get('id') and not project.get('reshape')
+                keys = (('id', 'title', 'goal', 'done_when') if existing else
                         ('title', 'goal', 'done_when', 'audience', 'target_date'))
                 candidate['project'] = {k: project.get(k) for k in keys}
-                if not project.get('id'):
+                if not existing:
                     candidate['project']['owner'] = project['owner_member_id']
             plan = candidate
             plan['state'] = 'proposed'

@@ -314,19 +314,21 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
         if source == 'voice' else
         "A RELEASE (sharing the contact card with a site) is the person's own tap: never act on it; "
         "tell them to tap Share on the Missions page, the thread card or the DM card.\n")
-    system_prompt += ("\nARGYLE ACTS IN THE WORLD through missions: it can browse a company's website and fill "
-                      "its forms with the family's details (a parent releases them first) to get appointment "
-                      "times, prices and quotes, search the family's own mailbox, and read a photo a person adds "
-                      "to a thread. It never books, pays, submits or sends on its own. Never say you cannot "
-                      "browse the web or fill out forms: for 'get times and pricing', 'enter my information', "
-                      "'get a quote', 'get X fixed' call start_mission_for (on the thread we are talking about "
-                      "when there is one). A plain web question with no site to act on is research. "
-                      "Before start_mission_for for a goal that names something the family already has "
-                      "(a trip, a party, an event, a person, a list), call find_in_chauffeur and pass the winner "
-                      "as subject_kind and subject_id; if it returns more than one, ask which. "
-                      'A correction or new preference about a mission already running on the thread we are talking about '
+    system_prompt += ("\nARGYLE ACTS IN THE WORLD through projects. One rule: a request that changes the schedule or a "
+                      "record RIGHT NOW (reassign a driver, add a list item, send a message, claim a chore, add an errand) "
+                      "is a direct tool or propose_family_action; anything that takes steps, time, research, a company, a "
+                      "teacher or a practice plan ('I want to learn Portuguese', 'get the dishwasher fixed', 'renovate the "
+                      "bathroom', 'get times and pricing', 'enter my information', 'get a quote', 'start Ben on a couch to 5k') "
+                      "is start_project: the project is created at once and Argyle plans inside it. Inside a project Argyle "
+                      "can browse a company's website and fill its forms with the family's details (a parent releases them "
+                      "first) to get appointment times, prices and quotes, search the family's own mailbox, and read a photo "
+                      "a person adds. It never books, pays, submits or sends on its own. Never say you cannot browse the web "
+                      "or fill out forms. A plain web question with no site to act on is research. Before start_project for "
+                      "a goal that names something the family already has (a trip, a party, an event, a person, a list), call "
+                      "find_in_chauffeur and pass the winner as subject_kind and subject_id; if it returns more than one, ask which. "
+                      'A correction or new preference about work already running on the project we are talking about '
                       '("use the manufacturer instead", "not that company", "only mornings") is act_on_situation with verb answer '
-                      'on that thread, never a new mission. '
+                      'on that project, never a new project. '
                       + release_instruction)
 
     if source == 'voice':
@@ -343,7 +345,7 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                           "Private information and purchases need the phone. For a requested release or booking, "
                           "prepare_voice_approval reads back a pending ask; it never approves it. Never claim "
                           "you approved or sent anything unless the deterministic controller did so. "
-                          "A household request can start mission research with start_mission_for.\n")
+                          "A household request can start a project with start_project.\n")
     elif not driver:
         if acting_member is not None:
             _nm = acting_member.get('name') or 'this family member'
@@ -525,8 +527,8 @@ sending or claiming, and never pass from_member/member_name for them.
     # get_point_balances is a query, but its message is already the complete
     # spoken answer — treating it terminal saves a 40-80s concluding round.
     TERMINAL_ACTION_TOOLS = {"assign_driver_to_event_fuzzy", "remove_override_for_event_fuzzy",
-                             # Browse missions §4: "On it." is the whole reply.
-                             "start_mission_for",
+                             # Front door §1: "Started a project" is the whole reply.
+                             "start_project",
                              # Optional events: the write confirms itself out
                              # loud ("skipped — nobody will be scheduled").
                              "decide_optional_event", "set_event_optional",
@@ -998,7 +1000,7 @@ sending or claiming, and never pass from_member/member_name for them.
                     if res.get("message"): agent_message = res["message"]
                 elif func_name in ("list_situations", "next_situation", "explain_situation", "act_on_situation",
                                    "start_ask", "mark_ask_sent", "answer_ask", "search_mail", "read_mail",
-                                   "start_mission_for", "find_in_chauffeur",
+                                   "start_mission_for", "start_project", "find_in_chauffeur",
                                    "list_projects", "get_project", "add_project_step",
                                    "add_to_project", "set_project_state", "set_step_state"):
                     from services import agent_tools_v2 as _atv2, situations as _sit

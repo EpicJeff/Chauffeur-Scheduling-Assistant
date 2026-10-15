@@ -229,12 +229,17 @@ class VoiceIdentityTests(unittest.TestCase):
     def test_unknown_mission_request_does_not_borrow_parent_or_private_thread(self):
         storage.add_thread({'id': 'private', 'title': 'dishwasher secret', 'owner_member_id': 'jeff'})
         storage.add_mission({'goal': 'dishwasher secret', 'origin_kind': 'thread', 'origin_ref': 'private'})
-        result = voice_tools.dispatch('start_mission_for', {'goal': 'get the dishwasher fixed'}, self.context())
+        # Front door slice 1: voice starts a household project as the parent of record.
+        result = voice_tools.dispatch('start_project', {'goal': 'get the dishwasher fixed'}, self.context())
         self.assertEqual(result['status'], 'success')
-        row = storage.get_mission(result['mission_id'])
-        self.assertIsNone(row['created_by'])
-        self.assertEqual(row['requester_provenance']['actor_kind'], 'household_voice')
-        self.assertNotEqual(row['origin_ref'], 'private')
+        project = storage.get_project(result['project_id'])
+        self.assertEqual(project['audience'], 'household')
+        self.assertEqual(project['requester_provenance']['actor_kind'], 'household_voice')
+        self.assertNotIn({'kind': 'thread', 'id': 'private'}, project['pieces'])
+        if result.get('mission_id'):
+            row = storage.get_mission(result['mission_id'])
+            self.assertEqual(row['requester_provenance']['actor_kind'], 'household_voice')
+            self.assertNotEqual(row['origin_ref'], 'private')
 
     def test_wrong_pin_reverification_cannot_reuse_old_readback(self):
         self.verify()

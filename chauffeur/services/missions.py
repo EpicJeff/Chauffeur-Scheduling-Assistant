@@ -365,6 +365,12 @@ def ask_card(mission: dict) -> dict | None:
         card['stages'] = plan.get('stages', [])
         kind, pid, _ = subject_of(row)
         project = storage.get_project(pid) if kind == 'project' else None
+        if project is None and row.get('project_id'):
+            # The mission's own project (front door §1): a person's project is
+            # named as it stands; a wrapper shows the plan's shape when it has one.
+            home = storage.get_project(row['project_id'])
+            if home and (not home.get('wrapped_from') or not plan.get('project')):
+                project = home
         card['project'] = ({k: project.get(k) for k in ('id', 'title', 'goal', 'done_when')}
                            if project else plan.get('project'))
         card['steps'] = plan.get('steps', [])

@@ -52,15 +52,18 @@ def scenario_dispatch_finds_only_what_may_be_said_aloud():
 
 def scenario_dispatch_start_mission_for_forwards_a_speakable_subject():
     _fresh()
-    out = voice_tools.dispatch('start_mission_for', {'goal': 'book the condo', 'subject_kind': 'trip', 'subject_id': 'ev_hawaii'},
+    # Front door slice 1: the voice door is start_project; a speakable subject becomes the project's first piece.
+    out = voice_tools.dispatch('start_project', {'goal': 'book the condo', 'subject_kind': 'trip', 'subject_id': 'ev_hawaii'},
                                _ctx(), focus_key='voice:1')
     check(out.get('status') == 'success', f"started: {out}")
-    t = storage.get_thread(out['thread_id'])
-    check(t['subject_kind'] == 'trip' and t['subject_id'] == 'ev_hawaii', f"the speakable subject is bound: {t}")
-    out = voice_tools.dispatch('start_mission_for', {'goal': 'book dining at the park', 'subject_kind': 'trip', 'subject_id': 'ev_disney'},
+    p = storage.get_project(out['project_id'])
+    check(any((x['kind'], x['id']) == ('trip', 'ev_hawaii') for x in p['pieces']) and p['audience'] == 'household',
+          f"the speakable subject is a piece: {p}")
+    out = voice_tools.dispatch('start_project', {'goal': 'book dining at the park', 'subject_kind': 'trip', 'subject_id': 'ev_disney'},
                                _ctx(), focus_key='voice:2')
-    check(out.get('status') == 'success' and storage.get_thread(out['thread_id']).get('subject_kind') is None,
-          f"a subject that may not be said aloud is dropped, the mission still starts: {out}")
+    check(out.get('status') == 'success'
+          and not any(x['kind'] == 'trip' for x in storage.get_project(out['project_id'])['pieces']),
+          f"a subject that may not be said aloud is dropped, the project still starts: {out}")
 
 
 def scenario_the_spoken_prompt_carries_about_only_when_safe():

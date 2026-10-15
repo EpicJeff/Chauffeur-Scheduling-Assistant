@@ -77,6 +77,16 @@ def scenario_dedupe_is_by_owner_subject_and_intent():
     check(len(storage.get_projects()) == 2, f"two projects: {[p['title'] for p in storage.get_projects()]}")
 
 
+def scenario_filler_words_never_make_two_goals_the_same():
+    _fresh()
+    guitar = tools.start_project('I want to learn guitar', acting_member=dict(MOM))
+    port = tools.start_project('I want to learn Portuguese', acting_member=dict(MOM))
+    check(port['project_id'] != guitar['project_id'] and 'already' not in port['message'],
+          f"'I want to learn' is not the goal; guitar never blocks Portuguese: {port}")
+    more = tools.start_project('I want to learn Brazilian Portuguese please', acting_member=dict(MOM))
+    check(more['project_id'] == port['project_id'] and 'already under way' in more['message'], f"the same goal said longer is named: {more}")
+
+
 def scenario_two_matches_ask_which():
     _fresh()
     a = _p().create({'title': 'Learn Portuguese', 'goal': 'learn Portuguese fast', 'done_when': 'x', 'owner_member_id': 'mom'}, dict(MOM))['project']
@@ -169,7 +179,7 @@ def scenario_a_new_goal_on_a_focused_project_plans_inside_it():
 
 
 SCENARIOS = [scenario_the_project_exists_at_once_and_its_card_comes_first, scenario_approval_inside_the_started_project_appends_steps,
-             scenario_dedupe_is_by_owner_subject_and_intent, scenario_two_matches_ask_which, scenario_voice_dedupe_is_spoken_safe,
+             scenario_dedupe_is_by_owner_subject_and_intent, scenario_filler_words_never_make_two_goals_the_same, scenario_two_matches_ask_which, scenario_voice_dedupe_is_spoken_safe,
              scenario_not_a_project_drops_project_and_mission_in_one_write, scenario_missions_off_still_creates_the_project,
              scenario_a_child_starts_a_project_and_a_parent_plans_it, scenario_body_goal_pins_private_and_refuses_a_child,
              scenario_channel_refusal_has_no_words, scenario_a_correction_with_a_project_focus_reaches_its_live_mission,

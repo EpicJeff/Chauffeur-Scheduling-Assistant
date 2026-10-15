@@ -200,6 +200,11 @@ def scenario_model_cannot_spoof_identity():
 def scenario_registered():
     names = [t['name'] for t in agent_tools_v2.get_available_tools()]
     for tool in THREAD_TOOLS:
+        if tool == 'create_thread':
+            # Front door slice 1: a new outside conversation starts as a project
+            # (start_project); create_thread stays in the registry for plans.
+            check(tool not in names and tool in agent_tools_v2.TOOL_HANDLERS, f"{tool} is a registry tool")
+            continue
         check(tool in names, f"{tool} missing from the catalog")
 
 
