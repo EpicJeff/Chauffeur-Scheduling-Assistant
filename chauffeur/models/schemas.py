@@ -75,6 +75,10 @@ class Event(BaseModel):
     # cancellation. Derived every refresh, never persisted, never sent to
     # Google.
     practice: Optional[dict] = None
+    # Dated project holds join the shared feed after solving. These references
+    # let the signed-in calendar restore the title for the project's audience.
+    project_id: Optional[str] = None
+    step_id: Optional[str] = None
     # Cancellations: this OCCURRENCE was called off — out of the solve like a
     # skip, still drawn (struck through), with the reason riding along.
     # Stamped each refresh from storage.event_cancellations

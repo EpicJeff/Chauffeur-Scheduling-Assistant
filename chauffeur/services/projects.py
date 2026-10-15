@@ -214,6 +214,165 @@ def _can_edit_step(project, step, actor):
     return can_act(project, actor) and (not _child(actor) or step.get('owner') == actor['id'])
 
 
+def _hold_interval(hold):
+    """Parse the dated, minute-precision wire format without normalizing bad input."""
+    day = datetime.date.fromisoformat(hold['date'])
+    if day.isoformat() != hold['date']:
+        raise ValueError('Date must be YYYY-MM-DD')
+    times = []
+    for key in ('start', 'end'):
+        value = hold[key]
+        parsed = datetime.time.fromisoformat(value)
+        if parsed.strftime('%H:%M') != value:
+            raise ValueError('Time must be HH:MM')
+        times.append(datetime.datetime.combine(day, parsed))
+    if times[1] <= times[0]:
+        raise ValueError('End must be after start')
+    return tuple(times)
+
+
+def _confirmed_holds(start, end):
+    for project in storage.get_projects():
+        for step in project.get('steps') or []:
+            hold = step.get('hold')
+            if step.get('owner') in (None, 'argyle') or not hold:
+                continue
+            if start.isoformat() <= hold['date'] <= end.isoformat():
+                yield project, step, hold
+
+
+def _busy_intervals(member_id, start, end, exclude=None):
+    """The one overlap source for suggestions and confirmation under the lock."""
+    from services import programs
+
+    member = storage.get_member(member_id) or {}
+    schedule = storage.get_cached_schedule() or {}
+    assignments = schedule.get('assignments') or {}
+    busy = []
+    for event in schedule.get('events') or []:
+        # Derived holds must come from live projects below: the cached version
+        # can be stale, and would also make replacing one's own hold impossible.
+        if event.get('event_type') in ('project_hold', 'practice'):
+            continue
+        involved = bool(member.get('driver_id') and
+                        assignments.get(event.get('id')) == member['driver_id'])
+        for key in ('member_ids', 'attendee_ids', 'attendee_member_ids',
+                    'members', 'attendees', 'trip_attendees', 'calendar_ids'):
+            for person in event.get(key) or []:
+                pid = (person.get('member_id') or person.get('id')) if isinstance(person, dict) else person
+                if pid == member_id or (key == 'calendar_ids' and
+                                        member.get('passenger_id') and pid == member['passenger_id']):
+                    involved = True
+        if not involved:
+            continue
+        try:
+            begins, finishes = [datetime.datetime.fromisoformat(event[key].replace('Z', '+00:00'))
+                                for key in ('start', 'end')]
+            # Schedule timestamps carry offsets; holds and waking hours are local.
+            begins, finishes = [dt.astimezone().replace(tzinfo=None) if dt.tzinfo else dt
+                                for dt in (begins, finishes)]
+        except (KeyError, TypeError, ValueError):
+            continue
+        busy.append((begins, finishes))
+    for window in programs.practice_windows(start, end, member_id=member_id):
+        busy.append(_hold_interval({'date': window['date'], 'start': window['time_start'],
+                                    'end': window['time_end']}))
+    for project, step, hold in _confirmed_holds(start, end):
+        if step.get('owner') == member_id and (project['id'], step['id']) != exclude:
+            busy.append(_hold_interval(hold))
+    return busy
+
+
+def find_window(member_id, minutes, by_date, now=None):
+    """First free local waking-hours window, on a half-hour grid."""
+    if type(minutes) is not int or minutes <= 0:
+        raise ValueError('Minutes must be a positive integer')
+    end = datetime.date.fromisoformat(by_date) if isinstance(by_date, str) else by_date
+    if isinstance(by_date, str) and end.isoformat() != by_date:
+        raise ValueError('By date must be YYYY-MM-DD')
+    now = now or datetime.datetime.now()
+    if now.tzinfo:
+        now = now.astimezone().replace(tzinfo=None)
+    day = now.date()
+    duration = datetime.timedelta(minutes=minutes)
+    busy = _busy_intervals(member_id, day, end)
+    while day <= end:
+        cursor = datetime.datetime.combine(day, datetime.time(8))
+        limit = datetime.datetime.combine(day, datetime.time(21))
+        while cursor + duration <= limit:
+            finishes = cursor + duration
+            if cursor >= now and not any(cursor < b and finishes > a for a, b in busy):
+                return {'date': day.isoformat(), 'start': cursor.strftime('%H:%M'),
+                        'end': finishes.strftime('%H:%M')}
+            cursor += datetime.timedelta(minutes=30)
+        day += datetime.timedelta(days=1)
+    return None
+
+
+def _change_hold(project_id, step_id, hold, actor):
+    with storage.db_lock:
+        project = storage.get_project(project_id)
+        if not can_act(project, actor):
+            return _error('You cannot edit this project')
+        steps = deepcopy(project.get('steps') or [])
+        step = next((s for s in steps if s['id'] == step_id), None)
+        if step is None:
+            return _error('No such step')
+        if not _can_edit_step(project, step, actor):
+            return _error('A child can only hold their own steps')
+        if not step.get('owner') or step['owner'] == 'argyle':
+            return _error('Choose a person\'s step')
+        if hold is not None and not _active(storage.get_member(step['owner'])):
+            return _error('Choose an active step owner')
+        if hold is not None:
+            try:
+                begins, finishes = _hold_interval(hold)
+            except (KeyError, TypeError, ValueError):
+                return _error('Choose a YYYY-MM-DD date and HH:MM times, with end after start')
+            busy = _busy_intervals(step['owner'], begins.date(), begins.date(),
+                                   exclude=(project_id, step_id))
+            if any(begins < b and finishes > a for a, b in busy):
+                return _error('That time is no longer free')
+            hold = {key: hold[key] for key in ('date', 'start', 'end')}
+            hold['confirmed_by'] = actor['id']
+        step['hold'] = hold
+        storage.update_project(project_id, {'steps': steps})
+        return {'status': 'success', 'step': step}
+
+
+def confirm_hold(project_id, step_id, hold, actor):
+    if not isinstance(hold, dict):
+        return _error('Choose a dated hold')
+    return _change_hold(project_id, step_id, hold, actor)
+
+
+def clear_hold(project_id, step_id, actor):
+    return _change_hold(project_id, step_id, None, actor)
+
+
+def calendar_holds(start, end, viewer):
+    """Project words only for the audience; shared readers get neutral time."""
+    return [{'date': hold['date'], 'start': hold['start'], 'end': hold['end'],
+             'member_id': step['owner'], 'project_id': project['id'], 'step_id': step['id'],
+             'title': step['title'] if project.get('audience') == 'household' or can_see(project, viewer)
+                      else 'Busy'}
+            for project, step, hold in _confirmed_holds(start, end)]
+
+
+def driver_hold_rules(start, end):
+    from models.schemas import Rule
+
+    rules = []
+    for project, step, hold in _confirmed_holds(start, end):
+        member = storage.get_member(step['owner']) or {}
+        if member.get('driver_id'):
+            rules.append(Rule(driver_id=member['driver_id'], constraint_type='unavailable',
+                              days_of_week=[datetime.date.fromisoformat(hold['date']).weekday()],
+                              time_start=hold['start'], time_end=hold['end'],
+                              start_date=hold['date'], end_date=hold['date']))
+    return rules
+
+
 def _needs_satisfied(step, steps):
     states = {item['id']: item.get('state') for item in steps}
     return all(states.get(sid) in ('done', 'skipped') for sid in step.get('needs') or [])

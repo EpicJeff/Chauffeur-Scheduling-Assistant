@@ -6101,6 +6101,51 @@ def project_step_state(project_id: str, step_id: str, body: dict, request: Reque
     return result
 
 
+@app.post("/api/projects/{project_id}/steps/{step_id}/hold")
+def project_step_hold(project_id: str, step_id: str, body: dict, request: Request = None):
+    import datetime as dt
+    from services import projects
+    actor = _situation_viewer(request)
+    project = _project_for_actor(project_id, actor, writing=True)
+    step = next((s for s in project.get('steps') or [] if s['id'] == step_id), None)
+    if step is None:
+        raise HTTPException(status_code=404, detail="No such step")
+    if not projects._can_edit_step(project, step, actor):
+        raise HTTPException(status_code=403, detail="A child can only hold their own steps")
+    if 'date' in body:
+        result = projects.confirm_hold(project_id, step_id, body, actor)
+        if result['status'] == 'error':
+            raise HTTPException(status_code=400, detail=result['message'])
+        return result
+    if step.get('owner') == 'argyle' or not projects._active(storage.get_member(step.get('owner'))):
+        raise HTTPException(status_code=400, detail="Choose a person's step")
+    by_date = body.get('by_date') or step.get('due_date') or (dt.date.today() + dt.timedelta(days=14)).isoformat()
+    try:
+        window = projects.find_window(step['owner'], body.get('minutes', 60), by_date)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Choose positive minutes and a YYYY-MM-DD by_date")
+    result = {'status': 'success', 'window': window}
+    if window is None:
+        result['message'] = f'No free time before {by_date}'
+    return result
+
+
+@app.post("/api/projects/{project_id}/steps/{step_id}/hold/clear")
+def project_step_hold_clear(project_id: str, step_id: str, request: Request = None):
+    from services import projects
+    actor = _situation_viewer(request)
+    project = _project_for_actor(project_id, actor, writing=True)
+    step = next((s for s in project.get('steps') or [] if s['id'] == step_id), None)
+    if step is None:
+        raise HTTPException(status_code=404, detail="No such step")
+    if not projects._can_edit_step(project, step, actor):
+        raise HTTPException(status_code=403, detail="A child can only hold their own steps")
+    result = projects.clear_hold(project_id, step_id, actor)
+    if result['status'] == 'error':
+        raise HTTPException(status_code=400, detail=result['message'])
+    return result
+
+
 @app.post("/api/projects/{project_id}/pieces")
 def project_add_piece(project_id: str, body: dict, request: Request = None):
     from services import projects
@@ -19308,6 +19353,63 @@ def _practice_events(start_date_str=None, end_date_str=None, days=30,
     return out
 
 
+def _project_hold_events(start_date_str=None, end_date_str=None, days=30,
+                         calendar_metadata=None):
+    """Neutral project time for the shared feed, with no backing calendar."""
+    import datetime as dt
+    import uuid
+    from models.schemas import Event
+    from services import projects
+
+    start = dt.date.fromisoformat(start_date_str) if start_date_str else dt.date.today()
+    end = dt.date.fromisoformat(end_date_str) if end_date_str else start + dt.timedelta(days=days)
+    if end < start:
+        start, end = end, start
+    out = []
+    for hold in projects.calendar_holds(start, end, None):
+        member = storage.get_member(hold['member_id']) or {}
+        key = str(member.get('passenger_id') or hold['member_id'])
+        if isinstance(calendar_metadata, dict):
+            calendar_metadata.setdefault(key, {
+                'summary': member.get('name') or 'Family member',
+                'backgroundColor': member.get('color_code') or '#14B8A6',
+                'foregroundColor': '#ffffff'})
+        out.append(Event(
+            id='project-hold-' + uuid.uuid5(
+                uuid.NAMESPACE_URL, f"project:{hold['project_id']}:step:{hold['step_id']}").hex,
+            title=hold['title'],
+            start=dt.datetime.fromisoformat(f"{hold['date']}T{hold['start']}").astimezone(),
+            end=dt.datetime.fromisoformat(f"{hold['date']}T{hold['end']}").astimezone(),
+            calendar_ids=[key], source_event_ids=[], event_type='project_hold',
+            project_id=hold['project_id'], step_id=hold['step_id']))
+    return out
+
+
+def _project_hold_titles(blob, viewer):
+    """Restore project words only on the authenticated response, never in cache."""
+    from services import projects
+    if not isinstance(blob, dict) or 'events' not in blob:
+        return blob
+    out = dict(blob)
+    out['events'] = []
+    for event in blob.get('events') or []:
+        if event.get('event_type') != 'project_hold':
+            out['events'].append(event)
+            continue
+        event = dict(event)
+        project = storage.get_project(event.get('project_id'))
+        step = next((s for s in (project or {}).get('steps') or []
+                     if s['id'] == event.get('step_id')), None)
+        visible = projects.can_see(project, viewer)
+        event['title'] = (step['title'] if step and
+                          (visible or project.get('audience') == 'household') else 'Busy')
+        if not visible:
+            event.pop('project_id', None)
+            event.pop('step_id', None)
+        out['events'].append(event)
+    return out
+
+
 def _trip_attendee_names(entities, passengers, drivers, members) -> list:
     """Trip entity strings -> the pills a screen can draw.
 
@@ -19570,6 +19672,19 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                         f"{pc.get('time_start')}-{pc.get('time_end')}")
     except Exception as _pce:
         logger.warning(f"Protected-commitment injection failed: {_pce}")
+
+    # Person steps defend drivers' time on this date only. Non-drivers add no
+    # solver input; their holds are shown through the shared event feed below.
+    try:
+        import datetime as _hold_dt
+        from services import projects as _projects
+        _hold_start = (_hold_dt.date.fromisoformat(start_date_str) if start_date_str
+                       else _hold_dt.date.today())
+        _hold_end = (_hold_dt.date.fromisoformat(end_date_str) if end_date_str
+                     else _hold_start + _hold_dt.timedelta(days=days_to_fetch))
+        rules.extend(_projects.driver_hold_rules(_hold_start, _hold_end))
+    except Exception as _phe:
+        logger.warning(f"Project-hold unavailability injection failed: {_phe}")
 
     priority_rules = []
     enable_standard_priority_rules = settings.get("enable_standard_priority_rules", True)
@@ -20367,6 +20482,15 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         except Exception as _pex:
             logger.warning(f"practice windows skipped: {_pex}")
 
+        # Like practice, holds are injected after solving and rule matching.
+        # The shared cache is always the wall/speaker/Mind projection.
+        try:
+            for _he in _project_hold_events(start_date_str, end_date_str,
+                                            days_to_fetch, calendar_metadata):
+                all_events_for_ui[_he.id] = _he
+        except Exception as _hex:
+            logger.warning(f"project holds skipped: {_hex}")
+
         data_payload = jsonable_encoder({
             "duplicate_groups": duplicate_groups,
             "events": list(all_events_for_ui.values()),
@@ -21146,6 +21270,9 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
         _claim = None
     _viewer_id = _acting_id(request, _claim)
     _viewer = storage.get_member(_viewer_id) if _viewer_id else None
+    # A legacy viewer claim may narrow scope, but cannot reveal project words.
+    _hold_viewer_id = _acting_id(request, None)
+    _hold_viewer = storage.get_member(_hold_viewer_id) if _hold_viewer_id else None
     try:
         from services import scope as _scope
         completed = storage.get_completed_drives()
@@ -21325,7 +21452,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                 # Every leg's departure, decided once (services/leave_by)
                 # and drawn as-is by the Drives list and the Schedule page.
                 _leave_by_stamp(cached)
-                return _json_safe(_scope.redact_schedule_blob(cached, _viewer))
+                return _json_safe(_project_hold_titles(_scope.redact_schedule_blob(cached, _viewer), _hold_viewer))
 
         # Fetch fresh and block if no cache exists or forced
         try:
@@ -21356,7 +21483,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                 res["solving_dates"] = schedule_coordinator.get_solving_dates()
             if "error" not in res:
                 _leave_by_stamp(res)
-            return _json_safe(_scope.redact_schedule_blob(res, _viewer))
+            return _json_safe(_project_hold_titles(_scope.redact_schedule_blob(res, _viewer), _hold_viewer))
         except Exception as e:
             import traceback
             return {"error": str(e), "traceback": traceback.format_exc(), "error_debug": str(e)}
