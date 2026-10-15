@@ -911,6 +911,11 @@ def needs_plan(project):
     return not any(m.get('status') in missions.LIVE for m in _work_missions(project))
 
 
+def planless(project):
+    """Only an empty project can still need its first plan."""
+    return needs_plan(project) and not project.get('pieces')
+
+
 def card(project, viewer, planning='started', reason=''):
     """The project chat card (front door §1); None for a viewer who may not see it."""
     if not can_see(project, viewer):
@@ -935,11 +940,12 @@ def _record_visible(kind, row, viewer):
     return situations.can_see(kind, row, viewer)
 
 
-def piece_cards(project, viewer):
+def piece_cards(project, viewer, project_view=None):
     """One card per piece the viewer may see, drawn by its kind (front door §2)."""
     from services import situations, programs
     out = []
-    for piece in view(project, viewer).get('pieces', []):
+    project_view = view(project, viewer) if project_view is None else project_view
+    for piece in project_view.get('pieces', []):
         kind, sid = piece['kind'], piece['id']
         card = {**piece, 'sheet': kind in SHEET_KINDS}
         if kind in ('thread', 'mission'):
@@ -955,7 +961,7 @@ def piece_cards(project, viewer):
     return out
 
 
-def lane(project, viewer, cards=None):
+def lane(project, viewer, cards=None, planless_=None):
     """Which overview lane a project sits in for this viewer (front door §2)."""
     state = project.get('state')
     if state in ('done', 'dropped'):
@@ -963,7 +969,9 @@ def lane(project, viewer, cards=None):
     if state == 'paused':
         return 'paused'
     viewer = viewer or {}
-    if needs_plan(project) and _parent(viewer) and viewer.get('id') != project.get('owner_member_id'):
+    planless_ = planless(project) if planless_ is None else planless_
+    owner = storage.get_member(project.get('owner_member_id')) or {}
+    if planless_ and _child(owner) and _parent(viewer) and viewer.get('id') != project.get('owner_member_id'):
         return 'needs_you'
     cards = piece_cards(project, viewer) if cards is None else cards
     steps = project.get('steps') or []
@@ -985,16 +993,17 @@ def lane(project, viewer, cards=None):
 def overview_row(project, viewer):
     """A project's overview card: its view, its lane and the one line it says next."""
     row = view(project, viewer)
-    cards = piece_cards(project, viewer)
-    planless = needs_plan(project)
+    is_planless = planless(project)
+    cards = ([] if project.get('state') in ('done', 'dropped', 'paused')
+             else piece_cards(project, viewer, project_view=row))
     nxt = (row.get('next_step') or {}).get('title') or ''
-    if not nxt and planless:
+    if not nxt and is_planless:
         nxt = 'Needs a plan'
     if not nxt:
         nxt = next(((c['situation'].get('next_step') or {}).get('label') or ''
                     for c in cards if (c.get('situation') or {}).get('next_step')), '')
-    row.update(lane=lane(project, viewer, cards), card_next=nxt,
-               has_program=any(c['kind'] == 'program' for c in cards), needs_plan=planless)
+    row.update(lane=lane(project, viewer, cards=cards, planless_=is_planless), card_next=nxt,
+               has_program=any(p['kind'] == 'program' for p in row.get('pieces', [])), needs_plan=is_planless)
     return row
 
 
