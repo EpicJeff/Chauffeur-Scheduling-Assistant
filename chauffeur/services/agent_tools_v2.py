@@ -1994,7 +1994,7 @@ def list_threads(state: str = None, owner_name: str = None,
 def create_thread(title: str, goal: str = None, kind: str = None,
                   counterparty_name: str = None, counterparty_email: str = None,
                   next_action: str = None, next_action_at: str = None,
-                  acting_member: dict = None, idem: str = None) -> Dict[str, Any]:
+                  acting_member: dict = None, idem: str = None, project_id: str = None) -> Dict[str, Any]:
     """Open a new thread — a promise somebody outside the family made that
     hasn't closed yet. Parent/adult work, same discipline as dismiss_insight:
     `acting_member` is resolved by the dispatch layer at agent_router.py,
@@ -2023,7 +2023,7 @@ def create_thread(title: str, goal: str = None, kind: str = None,
                 counterparty_email=(counterparty_email or '').strip(),
                 next_action=(next_action or '').strip(),
                 next_action_at=next_action_at,
-                created_by=(acting_member or {}).get('id'), idem=idem)
+                created_by=(acting_member or {}).get('id'), idem=idem, project_id=project_id)
     return {"status": "success", "id": thread_id,
             "created": [{'kind': 'thread', 'id': thread_id}],
             "message": f"Opened a thread: {title}."}
@@ -2337,7 +2337,7 @@ def program_progress(program_title: str, acting_member: dict = None, *,
 def propose_program(title: str, for_member_name: str = None,
                     sessions_per_week: int = None, minutes: int = None,
                     starting_point: str = None,
-                    acting_member: dict = None) -> Dict[str, Any]:
+                    acting_member: dict = None, project_id: str = None) -> Dict[str, Any]:
     """Screen the aim, then curate a real plan for it — the chat mirror of
     `POST /api/programs`. The body-goal screen (`programs_curate.screen_aim`)
     runs BEFORE anything else, same as the endpoint and for the same reason:
@@ -2393,14 +2393,14 @@ def propose_program(title: str, for_member_name: str = None,
                                'minutes': minutes, 'preferred_days': []})
     curated = _cur.curate(title, shape, member_name=member_name,
                           member=member, starting_point=starting_point)
-    pid = _storage.add_program({
+    pid = _prog.create_row({
         'member_id': member_id, 'title': title, 'shape': shape,
         'starting_point': starting_point,
         'phases': curated['phases'], 'source': curated['source'],
         'baseline': {'start_date': None, 'target_date': None,
                      'target_event_id': None, 'rebaselined_at': None,
                      'rebaselines': 0},
-        'created_by': acting_member.get('id')})
+        'created_by': acting_member.get('id')}, project_id=project_id)
     source = curated.get('source') or {}
     n = len(curated.get('phases') or [])
     tail = ("Nothing's claimed yet: see the footprint and approve it on the "
@@ -8736,7 +8736,7 @@ def handle_create_thread(args: dict, actor=None) -> dict:
                          counterparty_name=args.get('counterparty_name'),
                          counterparty_email=args.get('counterparty_email'),
                          next_action=args.get('next_action'), next_action_at=args.get('next_action_at'),
-                         acting_member=actor, idem=args.get('idem'))
+                         acting_member=actor, idem=args.get('idem'), project_id=args.get('project_id'))
 
 
 def handle_get_travel_time(args: dict) -> dict:
@@ -8894,7 +8894,8 @@ def handle_propose_program(args: dict, actor=None) -> dict:
     return propose_program(args.get('title') or '', for_member_name=args.get('for_member_name'),
                             sessions_per_week=args.get('sessions_per_week'), minutes=args.get('minutes'),
                             starting_point=args.get('starting_point'),
-                            acting_member=actor if actor is not None else _registry_parent())
+                            acting_member=actor if actor is not None else _registry_parent(),
+                            project_id=args.get('project_id'))
 
 
 TOOL_HANDLERS = {

@@ -603,7 +603,7 @@ def set_step_state(project_id, step_id, state, actor):
 
 def advance(project_id):
     """Start ready Argyle work once; refused launches remain eligible to retry."""
-    from services import missions, situations, subjects
+    from services import missions, situations
     with storage.db_lock:
         project = storage.get_project(project_id)
         if not project or project.get('state') != 'active':
@@ -623,13 +623,11 @@ def advance(project_id):
             creator = owner if _active(owner) else situations.parent_of_record()
             if not creator:
                 continue
-            result = missions.launch(step['goal'], created_by=creator['id'])
+            result = missions.launch(step['goal'], created_by=creator['id'], project_id=project_id,
+                                     subject=('project', project_id))
             if result.get('status') != 'launched':
                 continue
             mid = result['mission_id']
-            storage.update_mission(mid, {'subject_kind': 'project', 'subject_id': project_id,
-                                        'subject_rev': 1, 'subject_history':
-                                        subjects.history_after_binding({}, 'project', project_id)})
             step['mission_id'] = mid
             _stamp_step(step, 'doing', 'argyle')
             storage.update_project(project_id, {'steps': steps})
@@ -736,6 +734,132 @@ def add_piece(project_id, kind, sid, actor):
 
 def remove_piece(project_id, kind, sid, actor):
     return _change_piece(project_id, kind, sid, actor, removing=True)
+
+
+_ADOPT_TABLES = {'thread': (storage.get_thread, storage.update_thread),
+                 'mission': (storage.get_mission, storage.update_mission),
+                 'program': (storage.get_program, storage.update_program)}
+
+
+def project_for(kind, record_id):
+    """The project a thread, mission or program belongs to, or None."""
+    get, _ = _ADOPT_TABLES[kind]
+    row = get(record_id) or {}
+    return storage.get_project(row.get('project_id')) if row.get('project_id') else None
+
+
+def _belongs_to(kind, row):
+    """The project a record already belongs to by an earlier binding, if any."""
+    from services import missions
+    if kind == 'mission':
+        skind, sid, _ = missions.subject_of(row)
+        if skind == 'project' and storage.get_project(sid):
+            return sid
+        if row.get('origin_kind') == 'thread' and row.get('origin_ref'):
+            thread = storage.get_thread(row['origin_ref']) or {}
+            if thread.get('project_id') and storage.get_project(thread['project_id']):
+                return thread['project_id']
+    for project in storage.get_projects():
+        if any(p.get('kind') == kind and p.get('id') == row.get('id') for p in project.get('pieces') or []):
+            return project['id']
+    return None
+
+
+def _state_for(kind, row):
+    st = row.get('state') if kind != 'mission' else row.get('status')
+    if kind == 'thread':
+        return {'done': 'done', 'dropped': 'dropped'}.get(st, 'active')
+    if kind == 'program':
+        return {'done': 'done', 'dropped': 'dropped', 'paused': 'paused'}.get(st, 'active')
+    from services import missions
+    if st in missions.LIVE or st == 'waiting_user':
+        return 'active'
+    return 'done' if st == 'done' else 'dropped'
+
+
+def _wrapper_fields(kind, row, actor):
+    """Title, goal, owner and audience for a project made from a record (§1)."""
+    from services import situations
+    if kind == 'thread':
+        title, goal, owner = row.get('title') or '', row.get('goal') or row.get('title') or '', row.get('owner_member_id')
+    elif kind == 'program':
+        title, goal, owner = row.get('title') or '', row.get('title') or '', row.get('member_id')
+    else:
+        title, goal, owner = (row.get('goal') or '')[:80], row.get('goal') or '', row.get('created_by')
+    member = storage.get_member(owner) if owner else None
+    if not _active(member or {}):
+        member = situations.parent_of_record()
+    voice = bool(row.get('voice_shared') or row.get('requester_provenance'))
+    audience = 'household' if voice else ('parents' if _child(member or {}) else 'private')
+    return {'title': title or 'Untitled', 'goal': goal, 'done_when': '', 'owner_member_id': (member or {}).get('id'),
+            'audience': audience}
+
+
+def adopt(kind, record_id, actor, project_id=None):
+    """Give a thread, mission or program its one project (front door §1).
+
+    An explicit project wins; else the project the record already belongs to
+    by binding; else a project made from the record. Idempotent: a record
+    that has a project keeps it, even a dropped one (reopening is an act)."""
+    get, update = _ADOPT_TABLES[kind]
+    with storage.db_lock:
+        row = get(record_id)
+        if not row:
+            return None
+        if row.get('project_id') and storage.get_project(row['project_id']):
+            return row['project_id']
+        pid = project_id if project_id and storage.get_project(project_id) else _belongs_to(kind, row)
+        if not pid:
+            fields = _wrapper_fields(kind, row, actor)
+            owner = storage.get_member(fields['owner_member_id']) or {}
+            creator = actor if _active(actor or {}) else (owner if _active(owner) else None)
+            if not creator:
+                from services import situations
+                creator = situations.parent_of_record()
+            if not creator:
+                return None
+            prepared = prepare_create(fields, creator)
+            if prepared['status'] != 'success':
+                # A body-goal title a child typed, or an owner the actor may not
+                # assign: fall back to the creator as owner, private.
+                prepared = prepare_create({**fields, 'owner_member_id': creator['id'], 'audience': 'private'}, creator)
+                if prepared['status'] != 'success':
+                    return None
+            project = prepared['project']
+            project['state'] = _state_for(kind, row)
+            pid = storage.add_project(project)
+        update(record_id, {'project_id': pid})
+        project = storage.get_project(pid)
+        pieces = project.get('pieces') or []
+        if not any(p.get('kind') == kind and p.get('id') == record_id for p in pieces):
+            storage.update_project(pid, {'pieces': pieces + [{'kind': kind, 'id': record_id}]})
+        return pid
+
+
+ADOPTED_KEY = 'projects_adopted_rev'
+
+
+def adopt_existing():
+    """One-time wrap of every thread, mission and program (front door §1).
+
+    Threads first so their missions join the thread's project; closed rows
+    become done or dropped projects so old links still open. Recorded in
+    app state; a later record is adopted at creation."""
+    with storage.db_lock:
+        if int(storage.get_app_state(ADOPTED_KEY) or 0) >= 1:
+            return {'threads': 0, 'missions': 0, 'programs': 0, 'skipped': True}
+        counts = {'threads': 0, 'missions': 0, 'programs': 0, 'skipped': False}
+        for row in storage.get_threads(include_closed=True):
+            if adopt('thread', row['id'], None):
+                counts['threads'] += 1
+        for row in storage.get_missions():
+            if adopt('mission', row['id'], None):
+                counts['missions'] += 1
+        for row in storage.get_programs(include_finished=True):
+            if adopt('program', row['id'], None):
+                counts['programs'] += 1
+        storage.set_app_state(ADOPTED_KEY, 1)
+        return counts
 
 
 def view(project, viewer):

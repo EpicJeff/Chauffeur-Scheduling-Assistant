@@ -468,6 +468,14 @@ async def migrate_coverage_asks_v2499308():
         logger.info(f"v2.499.308 coverage_asks migration: {done} asks carried into the ledger")
 
 
+def migrate_projects_adopt_v2499517():
+    """Front door slice 1: every thread, mission and program gets its project."""
+    from services import projects
+    out = projects.adopt_existing()
+    if not out.get('skipped'):
+        logger.info(f"[migrations] projects adopted: {out}")
+
+
 async def run_all_migrations():
     """Runs all data migrations in the background after startup"""
     await asyncio.sleep(5) # Let the app start up completely
@@ -516,3 +524,7 @@ async def run_all_migrations():
         await migrate_shopping_slug_v2351()
     except Exception as e:
         logger.error(f"Error running shopping slug migration: {e}")
+    try:
+        migrate_projects_adopt_v2499517()
+    except Exception as e:
+        logger.error(f"Error adopting records into projects: {e}")

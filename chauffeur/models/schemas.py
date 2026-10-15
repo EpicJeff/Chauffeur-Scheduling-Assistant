@@ -782,6 +782,7 @@ class Program(BaseModel):
     title: str                                   # the aim, in their words
     state: str = 'proposed'                      # proposed|active|paused|done|dropped
     created_by: Optional[str] = None
+    project_id: Optional[str] = None          # every record belongs to one project (front door §1)
     approved_by: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
     # Phases come from pages the app actually read (or, in the generated tier,
@@ -944,6 +945,7 @@ class Thread(BaseModel):
     subject_id: Optional[str] = None
     subject_rev: int = 0
     subject_history: List[Dict[str, Any]] = Field(default_factory=list)
+    project_id: Optional[str] = None          # every record belongs to one project (front door §1)
     owner_member_id: Optional[str] = None
     contact_id: Optional[str] = None        # an assist contact, when there is one
     counterparty_name: Optional[str] = ""    # a loose name when there is not

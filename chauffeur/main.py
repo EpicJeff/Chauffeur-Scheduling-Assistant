@@ -6059,7 +6059,7 @@ def project_set_state(project_id: str, body: dict, request: Request = None):
 
 @app.post("/api/projects/{project_id}/plan")
 def project_plan(project_id: str, request: Request = None):
-    from services import missions, projects, subjects
+    from services import missions, projects
     actor = _situation_viewer(request)
     with storage.db_lock:
         project = _project_for_actor(project_id, actor, writing=True)
@@ -6067,12 +6067,11 @@ def project_plan(project_id: str, request: Request = None):
             raise HTTPException(status_code=403, detail="Ask a parent or adult to plan with Argyle")
         if project.get('state') != 'active':
             raise HTTPException(status_code=400, detail="Resume the project before planning")
-        result = missions.launch('Help me plan the next part of this project: ' + project['title'], created_by=actor['id'])
+        result = missions.launch('Help me plan the next part of this project: ' + project['title'], created_by=actor['id'],
+                                 project_id=project_id, subject=('project', project_id))
         if result.get('status') != 'launched':
             raise HTTPException(status_code=400, detail=result.get('message') or 'Could not start planning')
         mid = result['mission_id']
-        storage.update_mission(mid, {'subject_kind': 'project', 'subject_id': project_id,
-                                    'subject_rev': 1, 'subject_history': subjects.history_after_binding({}, 'project', project_id)})
         return {'status': 'success', 'mission_id': mid}
 
 
@@ -7398,7 +7397,7 @@ def create_program(body: dict = Body(default={}), request: Request = None):
     member = storage.get_member(member_id) or {}
     curated = _cur.curate(title, shape, member_name=member.get('name') or '',
                           member=member, starting_point=starting_point)
-    pid = storage.add_program({
+    pid = _prog.create_row({
         'member_id': member_id, 'title': title, 'shape': shape,
         'starting_point': starting_point,
         'phases': curated['phases'], 'source': curated['source'],

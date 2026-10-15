@@ -77,10 +77,10 @@ def scenario_the_plan_route_and_advance_make_no_wrapper():
     proj = _p().create({'title': 'Bathroom', 'goal': 'done', 'done_when': 'tiled', 'owner_member_id': 'mom'}, dict(MOM))['project']
     out = main.project_plan(proj['id'], request=_as('mom'))
     check(storage.get_mission(out['mission_id'])['project_id'] == proj['id'] and len(storage.get_projects()) == 1, "plan route")
+    # add_step starts a ready Argyle step itself (core spec Decision 5), through advance.
     _p().add_step(proj['id'], {'title': 'Find a tiler', 'owner': 'argyle', 'goal': 'three tilers nearby'}, dict(MOM))
-    started = _p().advance(proj['id'])
     mids = [s['mission_id'] for s in storage.get_project(proj['id'])['steps'] if s.get('mission_id')]
-    check(started and mids and storage.get_mission(mids[0])['project_id'] == proj['id'] and len(storage.get_projects()) == 1, "advance")
+    check(mids and storage.get_mission(mids[0])['project_id'] == proj['id'] and len(storage.get_projects()) == 1, "advance")
 
 
 def scenario_adopt_is_idempotent_and_never_rewraps():
@@ -104,9 +104,16 @@ def scenario_a_planner_row_inside_a_project_joins_it():
 
 # --- Task 2: the migration ---------------------------------------------------
 
-def scenario_migration_wraps_every_record_once():
+def _bare():
+    # The shared fixture seeds threads and programs of its own; the migration counts every row.
     _fresh()
+    for t in (storage.threads_table, storage.programs_table, storage.missions_table):
+        t.truncate()
     storage.set_app_state('projects_adopted_rev', 0)
+
+
+def scenario_migration_wraps_every_record_once():
+    _bare()
     tid = storage.add_thread({'title': 'Pest control', 'kind': 'vendor', 'state': 'waiting', 'owner_member_id': 'mom', 'created_by': 'mom'})
     live = storage.add_mission({'goal': 'get a quote', 'origin_kind': 'thread', 'origin_ref': tid, 'created_by': 'mom', 'tier': 'mission'})
     closed = storage.add_thread({'title': 'Old permit', 'kind': 'project', 'state': 'done', 'owner_member_id': 'dad', 'created_by': 'dad'})
@@ -129,8 +136,7 @@ def scenario_migration_wraps_every_record_once():
 
 
 def scenario_migration_handles_a_missing_owner():
-    _fresh()
-    storage.set_app_state('projects_adopted_rev', 0)
+    _bare()
     tid = storage.add_thread({'title': 'Gutters', 'kind': 'vendor', 'state': 'open', 'owner_member_id': 'gone', 'created_by': 'gone'})
     _p().adopt_existing()
     p = storage.get_project(storage.get_thread(tid)['project_id'])

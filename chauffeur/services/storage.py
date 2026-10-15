@@ -2982,6 +2982,7 @@ def add_mission(data: dict) -> str:
            'origin_kind': 'manual', 'origin_ref': None, 'created_by': None,
            'subject_kind': None, 'subject_id': None, 'subject_rev': 0,
            'subject_history': [],
+           'project_id': None,
            'tier': 'mission', 'summary': '', 'error': '', 'step_count': 0,
            'consec_errors': 0, 'retry_at': None, 'acknowledged_at': None,
            'finished_at': None, 'plan': None,

@@ -20,6 +20,16 @@ import uuid
 
 from services import stages, storage
 
+
+def create_row(data: dict, project_id: str = None) -> str:
+    """The one door for a new program row: stored, then adopted into its project."""
+    pid = storage.add_program(data)
+    from services import projects
+    projects.adopt('program', pid, storage.get_member(data.get('created_by')) if data.get('created_by') else None,
+                   project_id=project_id)
+    return pid
+
+
 # The states a program can be in. `paused` is a peer of `active`, not a flavour
 # of failure: if the only way out of a program is to fail it, people fail it.
 LIVE_STATES = ('proposed', 'active', 'paused')
@@ -1055,6 +1065,10 @@ def approve(program_id: str, approver_id: str = None, slots: list = None) -> dic
                                       'owner_member_id': row['member_id'],
                                       'goal': 'Have what the next phase needs',
                                       'created_by': approver_id})
+            # The kit thread belongs to the program's project (front door §1).
+            from services import projects as _projects
+            _projects.adopt('thread', tid, storage.get_member(approver_id) if approver_id else None,
+                            project_id=row.get('project_id'))
             emissions['thread_ids'].append(tid)
             made['thread_ids'].append(tid)
             storage.update_program(program_id, {'emissions': emissions})

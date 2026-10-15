@@ -290,7 +290,7 @@ def create(title: str, owner_member_id: str = None, goal: str = '',
            kind: str = 'project', contact_id: str = None,
            counterparty_name: str = '', counterparty_email: str = '',
            next_action: str = '', next_action_at: str = None,
-           created_by: str = None, idem: str = None) -> str:
+           created_by: str = None, idem: str = None, project_id: str = None) -> str:
     """Open a new thread and log the opening move as its first history entry.
 
     That entry is load-bearing, not decoration: `is_stalled` only trusts a
@@ -317,6 +317,8 @@ def create(title: str, owner_member_id: str = None, goal: str = '',
         'text': f'Opened: {title}',
         'who': created_by,
     })
+    from services import projects
+    projects.adopt('thread', thread_id, storage.get_member(created_by) if created_by else None, project_id=project_id)
     from services import situations as _sit
     _sit.touched('thread', thread_id)
     return thread_id

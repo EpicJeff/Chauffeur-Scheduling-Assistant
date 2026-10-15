@@ -1020,6 +1020,8 @@ def run_stage(mission_id, stage_id, snap, actor):
                 storage.update_mission(mission_id, {'plan': plan})
             try:
                 args = _resolve_refs(row['args'], completed)
+                if CONTRACT[row['tool']].get('creates') in ('thread', 'program'):
+                    args.setdefault('project_id', mission.get('project_id'))
                 if row['tool'] == 'draft_message':
                     result = {'status': 'success', 'message': 'Draft saved.', 'created': [],
                               'to': args.get('to'), 'words': args.get('words')}

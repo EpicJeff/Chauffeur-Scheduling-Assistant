@@ -1707,7 +1707,8 @@ def _seed_thread_context(mission_id: str, thread: dict) -> None:
 
 
 def launch(goal: str, origin_kind: str = 'manual', origin_ref=None,
-           created_by=None, tier: str = 'mission') -> dict:
+           created_by=None, tier: str = 'mission', project_id: str = None,
+           subject: tuple = None) -> dict:
     settings = storage.get_settings() or {}
     if not settings.get('missions_enabled', False):
         return {'status': 'disabled',
@@ -1729,6 +1730,12 @@ def launch(goal: str, origin_kind: str = 'manual', origin_ref=None,
         thread = storage.get_thread(origin_ref)
         if thread:
             _seed_thread_context(mid, thread)
+    if subject and subject[0] and subject[1]:
+        from services import subjects
+        storage.update_mission(mid, {'subject_kind': subject[0], 'subject_id': subject[1], 'subject_rev': 1,
+                                     'subject_history': subjects.history_after_binding({}, subject[0], subject[1])})
+    from services import projects
+    projects.adopt('mission', mid, storage.get_member(created_by) if created_by else None, project_id=project_id)
     from services import situations as _sit
     _sit.touched('mission', mid)
     logger.info(f"[missions] launched {mid} ({origin_kind}): {goal[:80]}")
