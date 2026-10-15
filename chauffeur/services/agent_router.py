@@ -1052,7 +1052,10 @@ sending or claiming, and never pass from_member/member_name for them.
                     if isinstance(res, dict) and res.get("schedule_dirty"):
                         schedule_dirty = True
                     if res.get("message"): agent_message = res["message"]
-                elif func_name in ("create_trip", "create_list"):
+                elif func_name in ("create_trip", "create_list",
+                                   "answer_occasion_question", "stamp_occasion_template",
+                                   "add_occasion_dishes", "set_occasion_menu",
+                                   "add_occasion_gift_list"):
                     actor = acting_member
                     if actor is None and driver:
                         from services import storage as _st
@@ -1277,7 +1280,8 @@ sending or claiming, and never pass from_member/member_name for them.
                             args.get("kind", "gathering") or "gathering",
                             args.get("window_start", "") or "",
                             args.get("window_end", "") or "",
-                            args.get("dish_tags", "") or "", acting_member=actor)
+                            args.get("dish_tags", "") or "", acting_member=actor,
+                            idem=args.get("idem"))
                     elif func_name == "get_occasion":
                         res = _atv2.get_occasion(args.get("occasion_name", "") or "",
                                                  acting_member=actor)
@@ -1291,17 +1295,20 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = _atv2.set_occasion_attendance(
                             args.get("occasion_name", "") or "",
                             args.get("who", "") or "",
-                            bool(args.get("coming", True)), acting_member=actor)
+                            bool(args.get("coming", True)), acting_member=actor,
+                            occasion_id=args.get("occasion_id"))
                     elif func_name == "add_occasion_guests":
                         res = _atv2.add_occasion_guests(
                             args.get("occasion_name", "") or "",
                             args.get("who", "") or "",
                             int(args.get("headcount") or 1),
-                            args.get("cannot_eat", "") or "", acting_member=actor)
+                            args.get("cannot_eat", "") or "", acting_member=actor,
+                            occasion_id=args.get("occasion_id"))
                     elif func_name == "source_for_occasion":
                         res = _atv2.source_for_occasion(
                             args.get("occasion_name", "") or "",
-                            args.get("needed", "") or "", acting_member=actor)
+                            args.get("needed", "") or "", acting_member=actor,
+                            occasion_id=args.get("occasion_id"))
                     elif func_name == "suggest_gift_ideas":
                         res = _atv2.suggest_gift_ideas(
                             args.get("occasion_name", "") or "",

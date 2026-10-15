@@ -437,11 +437,13 @@ def act_on_proposal(proposal_id: str, act: str, approver_member: Optional[dict])
     if res.get("status") == "error":
         return {"status": "error", "message": res.get("message") or "That action failed.",
                 "card": build_card(proposal_id, a_type, summary, "proposed")}
+    result = {"status": "success", "message": res.get("message") or f"Done: {summary}",
+              "created": res.get("created") or []}
     storage.update_action_proposal(proposal_id, {
         "status": "approved",
+        "result": result,
         "approved_by_member_id": (approver_member or {}).get("id"),
     })
-    return {"status": "success",
-            "message": res.get("message") or f"Done: {summary}",
+    return {**result,
             "card": build_card(proposal_id, a_type, summary, "approved"),
             "schedule_dirty": a_type in ADMIN_ACTIONS}

@@ -3493,7 +3493,7 @@ def pair_dishes(dish_name: str, partner_names: str, exclusive: bool = False,
             "message": f"Got it — {nm} always comes with {names}.{tail}"}
 
 
-def _find_occasion(name: str, viewer: dict = None) -> Optional[dict]:
+def _find_occasion(name: str, viewer: dict = None, occasion_id: str = None) -> Optional[dict]:
     """Family-network S4: filtered by audience BEFORE matching, so a kid
     asking Argyle about a surprise party gets "nothing on the books" — the
     same answer as a party that does not exist, which is the point (§13: no
@@ -3501,6 +3501,9 @@ def _find_occasion(name: str, viewer: dict = None) -> Optional[dict]:
     dashboard, HA voice — identity on voice is the arc's open question #5)
     keeps today's behaviour."""
     from services import storage, scope
+    if occasion_id is not None:
+        o = storage.get_occasion(occasion_id)
+        return o if o and (viewer is None or scope.audience_allows(o, 'occasion', viewer)) else None
     low = (name or '').strip().lower()
     rows = storage.get_occasions(include_done=True)
     if viewer is not None:
@@ -3519,7 +3522,7 @@ def _find_occasion(name: str, viewer: dict = None) -> Optional[dict]:
 
 def add_occasion(title: str, anchor_date: str, kind: str = "gathering",
                  window_start: str = "", window_end: str = "",
-                 dish_tags: str = "", acting_member: dict = None) -> Dict[str, Any]:
+                 dish_tags: str = "", acting_member: dict = None, idem: str = None) -> Dict[str, Any]:
     """WRITE: "Thanksgiving is on the 26th and my parents are here from the
     25th to the 29th", "Ellie's birthday party is on the 14th".
 
@@ -3535,14 +3538,15 @@ def add_occasion(title: str, anchor_date: str, kind: str = "gathering",
             if t.strip()]
     o = _occ.create(title, day.isoformat(), kind,
                     (window_start or '').strip() or None,
-                    (window_end or '').strip() or None, tags)
+                    (window_end or '').strip() or None, tags, idem=idem)
     lo, hi = _occ.window(o)
     span = "" if lo == hi else f", running {lo.strftime('%a %-d')} to {hi.strftime('%a %-d')}" \
         if hasattr(lo, 'strftime') else ""
     prior = " I've linked it to last year's, so I can tell you what's missing." \
         if o.get('prior_occasion_id') else ""
     return {"status": "success",
-            "message": f"Got it — {o['title']} on {day.strftime('%A %d %B')}{span}.{prior}"}
+            "message": f"Got it — {o['title']} on {day.strftime('%A %d %B')}{span}.{prior}",
+            "occasion_id": o['id'], "created": [{'kind': 'occasion', 'id': o['id']}]}
 
 
 def find_in_chauffeur(query: str = '', kind: str = '', facet: str = '',
@@ -3573,7 +3577,7 @@ def get_occasion(occasion_name: str = "", acting_member: dict = None) -> Dict[st
     if not o:
         return {"status": "success",
                 "message": "I don't have any occasions on the books yet."}
-    c = _occ.contents(o['id'])
+    c = _occ.contents(o['id'], viewer=acting_member)
     away = c.get('days_away')
     bits = [f"{o['title']} — {o['anchor_date']}"
             + (f", {away} days away" if isinstance(away, int) and away >= 0 else "")
@@ -3656,8 +3660,8 @@ def get_occasion_gaps(occasion_name: str = "", acting_member: dict = None) -> Di
     return {"status": "success", "message": msg}
 
 
-def set_occasion_attendance(occasion_name: str, who: str, coming: bool = True,
-                            acting_member: dict = None) -> Dict[str, Any]:
+def set_occasion_attendance(occasion_name: str = "", who: str = "", coming: bool = True,
+                            acting_member: dict = None, occasion_id: str = None) -> Dict[str, Any]:
     """WRITE: "Grandad isn't coming to Thanksgiving this year", "Sarah's away
     for the party", "actually Marta is joining us for Christmas".
 
@@ -3666,7 +3670,7 @@ def set_occasion_attendance(occasion_name: str, who: str, coming: bool = True,
     every plate in the window.
     """
     from services import storage, occasions as _occ
-    o = _find_occasion(occasion_name, acting_member)
+    o = _find_occasion(occasion_name, acting_member, occasion_id)
     if not o:
         return {"status": "error",
                 "message": f"I don't have an occasion called '{occasion_name}'."}
@@ -3688,8 +3692,8 @@ def set_occasion_attendance(occasion_name: str, who: str, coming: bool = True,
                        f"That's {n} eating now."}
 
 
-def add_occasion_guests(occasion_name: str, who: str, headcount: int = 1,
-                        cannot_eat: str = "", acting_member: dict = None) -> Dict[str, Any]:
+def add_occasion_guests(occasion_name: str = "", who: str = "", headcount: int = 1,
+                        cannot_eat: str = "", acting_member: dict = None, occasion_id: str = None) -> Dict[str, Any]:
     """WRITE: "the Wilsons are coming, there are four of them", "Grandma's
     coming and she can't have shellfish".
 
@@ -3698,7 +3702,7 @@ def add_occasion_guests(occasion_name: str, who: str, headcount: int = 1,
     all, given this app deliberately does not send invitations.
     """
     from services import occasions as _occ
-    o = _find_occasion(occasion_name, acting_member)
+    o = _find_occasion(occasion_name, acting_member, occasion_id)
     if not o:
         return {"status": "error",
                 "message": f"I don't have an occasion called '{occasion_name}'."}
@@ -3713,12 +3717,12 @@ def add_occasion_guests(occasion_name: str, who: str, headcount: int = 1,
                        + f" to {o['title']} — that's {n} eating now.{tail}"}
 
 
-def source_for_occasion(occasion_name: str, needed: str,
-                        acting_member: dict = None) -> Dict[str, Any]:
+def source_for_occasion(occasion_name: str = "", needed: str = "",
+                        acting_member: dict = None, occasion_id: str = None) -> Dict[str, Any]:
     """WRITE: "I need party favours for a shark party", "we need decorations
     and paper plates for sixteen"."""
     from services import occasions as _occ
-    o = _find_occasion(occasion_name, acting_member)
+    o = _find_occasion(occasion_name, acting_member, occasion_id)
     if not o:
         return {"status": "error",
                 "message": f"I don't have an occasion called '{occasion_name}'."}
@@ -3730,7 +3734,7 @@ def source_for_occasion(occasion_name: str, needed: str,
     more = f" and {len(res['items']) - 6} more" if len(res['items']) > 6 else ""
     return {"status": "success",
             "message": f"Built a list of {len(res['items'])} for {o['title']} "
-                       f"({res['headcount']} people): {names}{more}. It's on the "
+                       f"({res.get('headcount', _occ.headcount(o['id']))} people): {names}{more}. It's on the "
                        "Shopping page — check it over and it'll go to a cart."}
 
 
@@ -4260,6 +4264,11 @@ def get_available_tools() -> List[Dict]:
         },
         _flat_tool("get_travel_time"),
         _flat_tool("find_in_chauffeur"),
+        _flat_tool("answer_occasion_question"),
+        _flat_tool("stamp_occasion_template"),
+        _flat_tool("add_occasion_dishes"),
+        _flat_tool("set_occasion_menu"),
+        _flat_tool("add_occasion_gift_list"),
         {
             "name": "get_calendar_events",
             "description": "Retrieves calendar events for a date range, each with its assigned_driver (null = unassigned). This is the CORRECT tool for questions about a specific driver's schedule or drives: fetch the range, then filter by assigned_driver.",
@@ -5204,6 +5213,7 @@ def get_available_tools() -> List[Dict]:
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "idem": {"type": "string", "description": "Reuse this key to retry without creating another occasion."},
                     "title": {"type": "string", "description": "What to call it, e.g. Thanksgiving 2026."},
                     "anchor_date": {"type": "string", "description": "The day itself, e.g. 2026-11-26 or the 26th."},
                     "kind": {"type": "string", "description": "thanksgiving|christmas|easter|birthday|party|gathering"},
@@ -5253,11 +5263,12 @@ def get_available_tools() -> List[Dict]:
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "occasion_id": {"type": "string", "description": "Exact occasion id; takes precedence over the name."},
                     "occasion_name": {"type": "string", "description": "Which occasion."},
                     "who": {"type": "string", "description": "A family member's name."},
                     "coming": {"type": "boolean", "description": "true if they are coming, false if not."}
                 },
-                "required": ["occasion_name", "who", "coming"]
+                "required": ["who", "coming"]
             }
         },
         {
@@ -5266,12 +5277,13 @@ def get_available_tools() -> List[Dict]:
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "occasion_id": {"type": "string", "description": "Exact occasion id; takes precedence over the name."},
                     "occasion_name": {"type": "string", "description": "Which occasion."},
                     "who": {"type": "string", "description": "A name or a household, e.g. the Wilsons."},
                     "headcount": {"type": "integer", "description": "How many people that is. Default 1."},
                     "cannot_eat": {"type": "string", "description": "Comma separated allergies/avoidances."}
                 },
-                "required": ["occasion_name", "who"]
+                "required": ["who"]
             }
         },
         {
@@ -5280,10 +5292,11 @@ def get_available_tools() -> List[Dict]:
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "occasion_id": {"type": "string", "description": "Exact occasion id; takes precedence over the name."},
                     "occasion_name": {"type": "string", "description": "Which occasion."},
                     "needed": {"type": "string", "description": "What they need, in their words."}
                 },
-                "required": ["occasion_name", "needed"]
+                "required": ["needed"]
             }
         },
         {
@@ -6497,12 +6510,45 @@ class AddOccasionTool(BaseModel):
     """
     Records a holiday, birthday, party or get-together ("Thanksgiving is on the 26th and my parents are here from the 25th to the 29th"). The window makes holiday dishes available without putting them on any plate.
     """
+    idem: Optional[str] = Field(None, description="Retry key; returns the same occasion when repeated.")
     title: str = Field(..., description="What to call it, e.g. Thanksgiving 2026.")
     anchor_date: str = Field(..., description="The day itself.")
     kind: Optional[str] = Field("gathering", description="thanksgiving|christmas|easter|birthday|party|gathering")
     window_start: Optional[str] = Field("", description="YYYY-MM-DD when guests arrive. Optional.")
     window_end: Optional[str] = Field("", description="YYYY-MM-DD when it ends. Optional.")
     dish_tags: Optional[str] = Field("", description="Comma separated repertoire tags this brings out.")
+
+class AnswerOccasionQuestionTool(BaseModel):
+    """Records an occasion interview answer and runs its cascade, including kitchen headcount. Parent/adult write."""
+    occasion_id: str = Field(..., description="Exact occasion id.")
+    key: str = Field(..., description="Interview question key, e.g. headcount or cake.")
+    value: Any = Field(..., description="The answer, preserving its number, boolean or text type.")
+
+
+class StampOccasionTemplateTool(BaseModel):
+    """Stamps the occasion template's work with deadlines relative to its date. Parent/adult write; omit keys for all applicable work."""
+    occasion_id: str
+    keys: Optional[List[str]] = None
+
+
+class AddOccasionDishesTool(BaseModel):
+    """Adds dishes scoped and tagged for this occasion, outside the everyday repertoire. Returns the created dish ids. Parent/adult write."""
+    occasion_id: str
+    description: str = Field(..., description="Dishes to add, in the family's words.")
+
+
+class SetOccasionMenuTool(BaseModel):
+    """Sets and locks the occasion meal's plate to the given dish ids. Parent/adult write."""
+    occasion_id: str
+    dish_ids: List[str]
+
+
+class AddOccasionGiftListTool(BaseModel):
+    """Creates a private presents list for active parents except the honoree. Refuses if nobody remains; returns its list id. Parent/adult write."""
+    occasion_id: str
+    name: str = 'Presents'
+    idem: Optional[str] = Field(None, description="Reuse this key to retry without creating another list.")
+
 
 class FindInChauffeurTool(BaseModel):
     """Finds something the family already has in Chauffeur (a trip, a party or holiday, a calendar event, a person, an outside contact, a thread, a program, a list) from a few words, and reads its current state when the match is clear."""
@@ -6533,7 +6579,8 @@ class SetOccasionAttendanceTool(BaseModel):
     """
     Records whether someone in the FAMILY is coming to an occasion ("Grandad is not coming to Thanksgiving this year"). Everyone in the household is assumed in except helpers. For people outside the family use add_occasion_guests.
     """
-    occasion_name: str = Field(..., description="Which occasion.")
+    occasion_name: str = Field("", description="Which occasion; optional when using its id.")
+    occasion_id: Optional[str] = Field(None, description="Exact occasion id; takes precedence over the name.")
     who: str = Field(..., description="A family member's name.")
     coming: bool = Field(..., description="true if they are coming, false if not.")
 
@@ -6541,7 +6588,8 @@ class AddOccasionGuestsTool(BaseModel):
     """
     Adds people to an occasion's guest list ("the Wilsons are coming, there are four of them"). Allergies bind like a family member's.
     """
-    occasion_name: str = Field(..., description="Which occasion.")
+    occasion_name: str = Field("", description="Which occasion; optional when using its id.")
+    occasion_id: Optional[str] = Field(None, description="Exact occasion id; takes precedence over the name.")
     who: str = Field(..., description="A name or a household.")
     headcount: Optional[int] = Field(1, description="How many people that is.")
     cannot_eat: Optional[str] = Field("", description="Comma separated allergies/avoidances.")
@@ -6550,7 +6598,8 @@ class SourceForOccasionTool(BaseModel):
     """
     Turns what an occasion needs into a real shopping list scaled to the headcount ("party favours for a shark party").
     """
-    occasion_name: str = Field(..., description="Which occasion.")
+    occasion_name: str = Field("", description="Which occasion; optional when using its id.")
+    occasion_id: Optional[str] = Field(None, description="Exact occasion id; takes precedence over the name.")
     needed: str = Field(..., description="What they need, in their words.")
 
 class SuggestGiftIdeasTool(BaseModel):
@@ -6785,6 +6834,12 @@ class CreateThreadTool(BaseModel):
 
 # A unified schema registry
 TOOL_SCHEMAS = {
+    "answer_occasion_question": AnswerOccasionQuestionTool.model_json_schema(),
+    "stamp_occasion_template": StampOccasionTemplateTool.model_json_schema(),
+    "add_occasion_dishes": AddOccasionDishesTool.model_json_schema(),
+    "set_occasion_menu": SetOccasionMenuTool.model_json_schema(),
+    "add_occasion_gift_list": AddOccasionGiftListTool.model_json_schema(),
+
     "get_travel_time": GetTravelTimeTool.model_json_schema(),
     "start_drive": StartDriveTool.model_json_schema(),
     "update_drive_status": UpdateDriveStatusTool.model_json_schema(),
@@ -8145,19 +8200,75 @@ def handle_pair_dishes(args: dict) -> dict:
 def handle_unpair_dishes(args: dict) -> dict:
     return unpair_dishes(args.get("dish_name") or "", args.get("partner_name") or "")
 
-def handle_add_occasion(args: dict) -> dict:
+def _occasion_stage_write(args, actor, operation, message):
+    """Run stage writes through the occasion service with the page's actor gate."""
+    if actor is not None and actor.get('role') not in ('parent', 'adult'):
+        return {'status': 'error', 'message': 'Only a parent or adult can handle these.'}
+    oid = args.get('occasion_id')
+    if not oid or not _find_occasion('', actor, oid):
+        return {'status': 'error', 'message': 'Occasion not found.'}
+    res = operation(oid)
+    if res.get('error'):
+        return {'status': 'error', 'message': res['error']}
+    return {**res, 'status': 'success', 'message': message}
+
+
+def handle_answer_occasion_question(args: dict, actor=None) -> dict:
+    from services import occasions
+    return _occasion_stage_write(args, actor,
+        lambda oid: occasions.answer(oid, args.get('key') or '', args.get('value')),
+        'Recorded the occasion answer.')
+
+
+def handle_stamp_occasion_template(args: dict, actor=None) -> dict:
+    from services import occasions
+    return _occasion_stage_write(args, actor,
+        lambda oid: occasions.apply_template(oid, args.get('keys')),
+        'Applied the occasion template.')
+
+
+def handle_add_occasion_dishes(args: dict, actor=None) -> dict:
+    from services import occasions
+    res = _occasion_stage_write(args, actor,
+        lambda oid: occasions.add_dishes(oid, args.get('description') or ''),
+        'Added the occasion dishes.')
+    if res.get('status') == 'success':
+        res['created'] = [{'kind': 'dish', 'id': d['id']} for d in res.get('added') or []]
+    return res
+
+
+def handle_set_occasion_menu(args: dict, actor=None) -> dict:
+    from services import occasions
+    return _occasion_stage_write(args, actor,
+        lambda oid: occasions.set_menu(oid, args.get('dish_ids') or []),
+        'Set the occasion menu.')
+
+
+def handle_add_occasion_gift_list(args: dict, actor=None) -> dict:
+    from services import occasions
+    res = _occasion_stage_write(args, actor,
+        lambda oid: occasions.make_gift_list(oid, args.get('name', 'Presents'),
+                                             args.get('idem'), (actor or {}).get('id')),
+        'Made a private presents list for the parents, excluding the honoree.')
+    if res.get('status') == 'success':
+        res['list_id'] = res['list']['id']
+        res['created'] = [{'kind': 'list', 'id': res['list_id']}]
+    return res
+
+
+def handle_add_occasion(args: dict, actor=None) -> dict:
     return add_occasion(args.get("title") or "", args.get("anchor_date") or "",
                         args.get("kind") or "gathering",
                         args.get("window_start") or "", args.get("window_end") or "",
-                        args.get("dish_tags") or "")
+                        args.get("dish_tags") or "", acting_member=actor, idem=args.get('idem'))
 
 def handle_find_in_chauffeur(args: dict) -> dict:
     return find_in_chauffeur(args.get('query') or '', args.get('kind') or '',
                              args.get('facet') or '', acting_member=_REGISTRY_READER)
 
 
-def handle_get_occasion(args: dict) -> dict:
-    return get_occasion(args.get("occasion_name") or "")
+def handle_get_occasion(args: dict, actor=None) -> dict:
+    return get_occasion(args.get("occasion_name") or "", acting_member=actor)
 
 def handle_get_occasion_insights(args: dict) -> dict:
     return get_occasion_insights(args.get("occasion_name") or "")
@@ -8165,24 +8276,24 @@ def handle_get_occasion_insights(args: dict) -> dict:
 def handle_get_occasion_gaps(args: dict) -> dict:
     return get_occasion_gaps(args.get("occasion_name") or "")
 
-def handle_set_occasion_attendance(args: dict) -> dict:
+def handle_set_occasion_attendance(args: dict, actor=None) -> dict:
     return set_occasion_attendance(args.get("occasion_name") or "",
                                    args.get("who") or "",
-                                   bool(args.get("coming", True)))
+                                   bool(args.get("coming", True)), acting_member=actor, occasion_id=args.get('occasion_id'))
 
-def handle_add_occasion_guests(args: dict) -> dict:
+def handle_add_occasion_guests(args: dict, actor=None) -> dict:
     return add_occasion_guests(args.get("occasion_name") or "",
                                args.get("who") or "",
                                int(args.get("headcount") or 1),
-                               args.get("cannot_eat") or "")
+                               args.get("cannot_eat") or "", acting_member=actor, occasion_id=args.get('occasion_id'))
 
 def handle_suggest_gift_ideas(args: dict) -> dict:
     return suggest_gift_ideas(args.get("occasion_name") or "",
                               args.get("extra") or "")
 
-def handle_source_for_occasion(args: dict) -> dict:
+def handle_source_for_occasion(args: dict, actor=None) -> dict:
     return source_for_occasion(args.get("occasion_name") or "",
-                               args.get("needed") or "")
+                               args.get("needed") or "", acting_member=actor, occasion_id=args.get('occasion_id'))
 
 def handle_get_run_sheet(args: dict) -> dict:
     return get_run_sheet(args.get("target_date") or "today",
@@ -8506,6 +8617,12 @@ def handle_propose_program(args: dict, actor=None) -> dict:
 
 
 TOOL_HANDLERS = {
+    "answer_occasion_question": handle_answer_occasion_question,
+    "stamp_occasion_template": handle_stamp_occasion_template,
+    "add_occasion_dishes": handle_add_occasion_dishes,
+    "set_occasion_menu": handle_set_occasion_menu,
+    "add_occasion_gift_list": handle_add_occasion_gift_list,
+
     "create_trip": handle_create_trip,
     "create_list": handle_create_list,
     "get_calendar_events": handle_get_calendar_events,

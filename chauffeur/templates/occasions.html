@@ -230,6 +230,13 @@
                         </div>
                     </div>
 
+                    <div class="mb-4">
+                        <button @click="makeGiftList(o)" :disabled="giftBusy === o.id"
+                            class="px-3 py-2 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-200 text-sm font-bold disabled:opacity-40">
+                            Make a private presents list
+                        </button>
+                    </div>
+
                     <!-- A5: the present, for a party the family is GOING to.
                          The model never names a product — it writes SEARCH
                          QUERIES, Walmart answers with real items and real
@@ -844,6 +851,25 @@
                     showGlobalAlert("Couldn't look that up.");
                 }
                 this.giftBusy = null;
+            },
+            async makeGiftList(o) {
+                this.giftBusy = o.id;
+                try {
+                    const r = await fetch(`${this.apiBase}api/occasions/${o.id}/gift-list`, {
+                        method: 'POST'
+                    });
+                    const res = await r.json();
+                    if (r.ok) {
+                        await this.refresh(o);
+                        showGlobalAlert(`Made '${res.list.name}' — shared with the parents except the person it's for.`);
+                    } else {
+                        showGlobalAlert(res.detail || "Couldn't make that list.");
+                    }
+                } catch (e) {
+                    showGlobalAlert("Couldn't make that list.");
+                } finally {
+                    this.giftBusy = null;
+                }
             },
             async saveGifts(o) {
                 this.giftBusy = o.id;

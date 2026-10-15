@@ -14611,9 +14611,10 @@ def create_occasion(req: OccasionRequest):
     return rec
 
 @app.get("/api/occasions/{occasion_id}")
-def get_occasion_detail(occasion_id: str):
+def get_occasion_detail(occasion_id: str, request: Request = None):
     from services import occasions as _occ
-    res = _occ.contents(occasion_id)
+    viewer_id = _acting_id(request, None)
+    res = _occ.contents(occasion_id, viewer=storage.get_member(viewer_id) if viewer_id else None)
     if not res:
         raise HTTPException(status_code=404, detail="Occasion not found")
     return res
@@ -14786,6 +14787,21 @@ def source_for_occasion(occasion_id: str, req: SourcingRequest):
         raise HTTPException(status_code=400, detail=res['error'])
     _touch_stream()
     return res
+
+@app.post("/api/occasions/{occasion_id}/gift-list")
+def occasion_gift_list(occasion_id: str, request: Request = None):
+    """Make the same private presents list as an approved occasion stage."""
+    from services import occasions, scope
+    actor = _mind_actor(request, None)
+    o = storage.get_occasion(occasion_id)
+    if not o or (actor is not None and not scope.audience_allows(o, 'occasion', actor)):
+        raise HTTPException(status_code=404, detail="Occasion not found")
+    res = occasions.make_gift_list(occasion_id, actor_id=(actor or {}).get('id'))
+    if res.get('error'):
+        raise HTTPException(status_code=400, detail=res['error'])
+    _touch_stream()
+    return res
+
 
 class GiftIdeasRequest(BaseModel):
     extra: Optional[str] = None

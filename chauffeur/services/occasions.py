@@ -86,13 +86,26 @@ def dish_tags_for(day=None) -> set:
 def create(title: str, anchor_date: str, kind: str = 'gathering',
            window_start: str = None, window_end: str = None,
            dish_tags: List[str] = None, notes: str = None,
-           cooks: int = None) -> dict:
+           cooks: int = None, idem: str = None) -> dict:
     """A new occasion, linked to last year's if one is recognisable.
 
     The carryover link is made HERE rather than asked for later, because the
     gap report's only way to surface an absence is a diff against the prior
     instance — and nobody goes back to fill in a "same as last year" field.
     """
+    # Keep the retry lookup and write together, including calls from the page.
+    with storage.db_lock:
+        if idem is not None:
+            existing = next((o for o in storage.get_occasions(include_done=True)
+                             if o.get('idem') == idem), None)
+            if existing:
+                return existing
+        return _create(title, anchor_date, kind, window_start, window_end,
+                       dish_tags, notes, cooks, idem)
+
+
+def _create(title, anchor_date, kind, window_start, window_end, dish_tags,
+            notes, cooks, idem):
     from models.schemas import Occasion
     anchor = _d(anchor_date) or _today()
     rec = Occasion(title=(title or '').strip() or 'Occasion',
@@ -104,6 +117,8 @@ def create(title: str, anchor_date: str, kind: str = 'gathering',
                    cooks=cooks, notes=notes,
                    prior_occasion_id=(find_prior(kind, title, anchor) or {}).get('id'),
                    ).model_dump()
+    if idem is not None:
+        rec['idem'] = idem
     storage.save_occasion(rec)
     return rec
 
@@ -250,8 +265,14 @@ def add_guest(occasion_id: str, name: str, headcount_n: int = 1,
     return rec
 
 
-def contents(occasion_id: str) -> dict:
+_UNFILTERED = object()
+
+
+def contents(occasion_id: str, viewer=_UNFILTERED) -> dict:
     """Everything tagged with this occasion, gathered by DERIVATION.
+
+    Pass a viewer (including None for a shared surface) for user-facing reads.
+    Internal planning can still inspect all the work by omitting it.
 
     Nothing here is stored on the occasion. This is a query across the homes
     each thing already lives in, which is what keeps the occasion from being a
@@ -262,6 +283,9 @@ def contents(occasion_id: str) -> dict:
         return {}
     lists = [dict(l) for l in storage.get_shopping_lists()
              if l.get('occasion_id') == occasion_id]
+    if viewer is not _UNFILTERED:
+        from services import scope
+        lists = [l for l in lists if scope.audience_allows(l, 'shopping_list', viewer)]
     # A6: the rows, not just the list. The gift panel has to show what has
     # already been chosen and work out when it must be in hand, and a second
     # round-trip per list to learn that is a page asking twice for one answer.
@@ -273,6 +297,9 @@ def contents(occasion_id: str) -> dict:
     loose = [i for i in storage.get_shopping_items()
              if i.get('occasion_id') == occasion_id
              and i.get('list_id') not in {l['id'] for l in lists}]
+    if viewer is not _UNFILTERED:
+        loose = [i for i in loose if scope.audience_allows(
+            storage.get_shopping_list(i.get('list_id')) or {}, 'shopping_list', viewer)]
     errands = [e for e in storage.get_all_errands()
                if e.get('occasion_id') == occasion_id]
     trips = [t for t in storage.get_all_trip_metadata()
@@ -1230,6 +1257,64 @@ def accept_invitation(event_id: str = None, title: str = None,
     return {'status': 'success', 'occasion_id': o['id'],
             'message': f"Tracking {o['title']} on {day.strftime('%A %d %B')}. "
                        f"Ask me for present ideas whenever you're ready."}
+
+
+def gift_list_people(occasion: dict) -> List[str]:
+    """Active parents, excluding the person this occasion celebrates."""
+    members = storage.get_all_members()
+    whose = str((occasion.get('answers') or {}).get('whose_party') or '').strip().casefold()
+    title = str(occasion.get('title') or '').strip().casefold()
+    honoree = None
+    for m in members:
+        name = str(m.get('name') or '').strip().casefold()
+        first = name.split()[0] if name else ''
+        if whose and whose in (name, first):
+            honoree = m['id']
+            break
+    if honoree is None:
+        for m in members:
+            name = str(m.get('name') or '').strip().casefold()
+            first = name.split()[0] if name else ''
+            if first and re.match(re.escape(first) + r"(?=$|\W)", title):
+                honoree = m['id']
+                break
+    return [m['id'] for m in members
+            if m.get('role') == 'parent'
+            and (m.get('status') or 'active') == 'active'
+            and m['id'] != honoree]
+
+
+def make_gift_list(occasion_id: str, name: str = 'Presents', idem: str = None,
+                   actor_id: str = None) -> dict:
+    """The tool and page share the same private presents-list creation path."""
+    from services import shopping
+    with storage.db_lock:
+        o = storage.get_occasion(occasion_id)
+        if not o:
+            return {'error': 'no such occasion'}
+        if idem is not None:
+            existing = next((l for l in storage.get_shopping_lists()
+                             if l.get('idem') == idem), None)
+            if existing:
+                if (existing.get('occasion_id') != occasion_id
+                        or existing.get('occasion_key') != 'gift'
+                        or existing.get('audience') != 'private'):
+                    return {'error': 'That retry key belongs to another list.'}
+                return {'list': existing}
+        people = gift_list_people(o)
+        if not people:
+            return {'error': 'Nobody left to share the presents list with.'}
+        try:
+            # The general creator includes its actor. For presents the honoree
+            # and non-parent adults must stay excluded, even if they asked.
+            lst = shopping.create_list(name, audience='private', shared_with=people,
+                                       actor_id=actor_id if actor_id in people else None,
+                                       idem=idem)
+        except ValueError as exc:
+            return {'error': str(exc)}
+        patch = {'occasion_id': occasion_id, 'occasion_key': 'gift'}
+        storage.update_shopping_list(lst['id'], patch)
+        return {'list': {**lst, **patch}}
 
 
 def _gift_visibility(occasion: dict) -> dict:
