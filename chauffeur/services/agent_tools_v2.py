@@ -4338,6 +4338,15 @@ def get_available_tools() -> List[Dict]:
             }
         },
         {
+            "name": "schedule_trip_itinerary",
+            "description": "Schedules all unscheduled trip attractions/POIs on the server and reports placed stops and any that could not fit. No trip page is needed.",
+            "parameters": {
+                "type": "object",
+                "properties": {"trip_id": {"type": "string"}},
+                "required": ["trip_id"]
+            }
+        },
+        {
             "name": "auto_schedule_trip_itinerary",
             "description": "Automatically bulk-schedules all unscheduled attractions/POIs in the trip. Use this if the user asks you to schedule all their attractions into the itinerary.",
             "parameters": {
@@ -5509,6 +5518,25 @@ def get_admin_tools() -> List[Dict]:
             "parameters": fn.get("parameters", {"type": "object", "properties": {}}),
         })
     return bridged
+
+
+def schedule_trip_itinerary(trip_id: str, acting_member=None) -> Dict[str, Any]:
+    """Schedule all unscheduled trip stops on the server through the shared path."""
+    from services import storage, trip_schedule
+    try:
+        result = trip_schedule.run_bulk(trip_id)
+    except LookupError:
+        return {'status': 'error', 'message': 'No such trip.'}
+
+    scheduled = result['scheduled']
+    unplaced = result['unplaced']
+    message = f'Scheduled {len(scheduled)} of {len(scheduled) + len(unplaced)} stops.'
+    if unplaced:
+        meta = storage.get_trip_metadata(trip_id) or {}
+        names = {p['id']: p.get('name') or p['id'] for p in meta.get('pois', [])}
+        message += ' Unplaced: ' + '; '.join(
+            f"{names.get(p['poi_id'], p['poi_id'])}: {p['reason']}" for p in unplaced)
+    return {'status': 'success', 'message': message, **result}
 
 
 def auto_schedule_trip_itinerary(trip_id: str) -> Dict[str, Any]:
@@ -8273,7 +8301,7 @@ REGISTRY_EXCEPTIONS = {
     'research_question': 'Missions use their research action.',
     'assign_driver_to_event_fuzzy': 'Missions use the reassign_driver admin action.',
     'remove_override_for_event_fuzzy': 'Missions use the clear_assignment admin action.',
-    'auto_schedule_trip_itinerary': 'The later schedule_trip_itinerary tool replaces this door.',
+    'auto_schedule_trip_itinerary': 'Chat keeps the trip-page UI action; schedule_trip_itinerary is the server-side registry door.',
 }
 
 
@@ -8371,6 +8399,10 @@ def handle_cover_with_assist(args: dict, actor=None) -> dict:
                               scope=args.get('scope') or 'instance', leg=args.get('leg'))
 
 
+def handle_schedule_trip_itinerary(args: dict, actor=None) -> dict:
+    return schedule_trip_itinerary(args.get('trip_id'), acting_member=actor)
+
+
 def handle_clear_trip_itinerary(args: dict, actor=None) -> dict:
     return clear_trip_itinerary(args.get('trip_id'), args.get('action', 'unlink'))
 
@@ -8416,6 +8448,7 @@ TOOL_HANDLERS = {
     "make_request": handle_make_request,
     "ask_deal": handle_ask_deal,
     "cover_with_assist": handle_cover_with_assist,
+    "schedule_trip_itinerary": handle_schedule_trip_itinerary,
     "clear_trip_itinerary": handle_clear_trip_itinerary,
     "manage_trip_flights": handle_manage_trip_flights,
     "manage_trip_rules": handle_manage_trip_rules,
