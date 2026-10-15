@@ -1608,6 +1608,16 @@ def act_on_situation(ref: str = '', verb: str = '', option_id: str = None, kind:
     if not found:
         return {"status": "error", "message": why}
     k, sid = found
+    if k == 'project':
+        # A project as the focus (front door §1): a correction in words goes to
+        # its one live mission; two ask which; none is nothing to steer.
+        from services import storage as _st, projects as _pj, missions as _ms
+        project = _st.get_project(sid) or {}
+        live = [m for m in _pj._work_missions(project) if m.get('status') in _ms.LIVE]
+        if len(live) != 1:
+            return {"status": "error", "message": ("Nothing is running on that project right now." if not live else
+                    "Which one: " + '; '.join((m.get('goal') or '')[:60] for m in live) + "?")}
+        k, sid = 'mission', live[0]['id']
     if verb in ('approve_plan', 'run_stage'):
         from services import storage, subjects
         private = bool(focus_key and focus_key.startswith('conv:'))
@@ -1941,6 +1951,118 @@ def _thread_writer(acting_member: dict, verb: str):
         return {"status": "error",
                 "message": f"Only a signed-in parent or adult can {verb}."}
     return None
+
+
+def _project_intent(goal, subject_title=None):
+    return _intent_words(goal, subject_title) or [w for w in (goal or '').lower().split() if len(w) > 2][:2]
+
+
+def start_project(goal: str, title: str = None, for_member_name: str = None, acting_member: dict = None,
+                  focus_key: str = None, voice_context=None, subject_kind: str = None, subject_id: str = None) -> Dict[str, Any]:
+    """The one chat door for anything that takes steps, time or outside people
+    (front door §1): the project is created at once, its card is posted
+    first, then Argyle plans inside it. A child's project waits for a parent
+    to plan it. Voice acts as the parent of record, household audience."""
+    from services.voice_identity import VoiceContext
+    from services import storage, subjects, situations, projects, missions as _missions, triage as _tri
+    spoken = isinstance(voice_context, VoiceContext)
+    goal = (goal or '').strip()
+    if not goal:
+        return {"status": "error", "message": "Say what you want to get done."}
+    actor = situations.parent_of_record() if spoken else acting_member
+    if not actor or not actor.get('id'):
+        return {"status": "error", "message": "Only a signed-in family member can start a project."}
+    # Whose project: the caller's, or a named member (parent/adult only).
+    owner = actor
+    if for_member_name and not spoken:
+        owner, refusal = _resolve_named_member_or_refuse(actor, for_member_name, 'start a project for someone else')
+        if refusal:
+            return refusal
+    child_owner = owner.get('role') == 'child' or bool(owner.get('is_child'))
+    audience = 'household' if spoken else ('parents' if child_owner else 'private')
+    # A channel some member may not see the result: no words (core spec §5).
+    if focus_key and str(focus_key).startswith('channel:'):
+        humans = subjects.channel_humans(focus_key) or []
+        probe = {'owner_member_id': owner['id'], 'audience': audience, 'state': 'active'}
+        if humans and not all(projects.can_see(probe, h) for h in humans):
+            return {"status": "refused", "message": "Ask me about that in your own Argyle chat."}
+    subject = subjects.load(subject_kind, subject_id) if subject_kind in subjects.KINDS and subject_id else None
+    if subject is None or not subjects.visible(subject_kind, subject, actor, spoken):
+        subject_kind = subject_id = None
+    subject_title = subjects.title_of(subject_kind, subject) if subject_kind else None
+    intent = _project_intent(goal, subject_title)
+    # The continuation rule: a new goal said while a project is the focus and
+    # none of its missions is live is new planning INSIDE that project.
+    f = _tri.get_focus(focus_key) if focus_key else None
+    if f and f.get('kind') == 'project':
+        focused = storage.get_project(f['id'])
+        if focused and focused.get('state') == 'active' and projects.can_act(focused, actor) \
+                and not any(m.get('status') in _missions.LIVE for m in projects._work_missions(focused)):
+            res = _missions.launch(goal, created_by=actor['id'], project_id=focused['id'], subject=('project', focused['id']))
+            if res.get('status') == 'launched':
+                return {"status": "success", "project_id": focused['id'], "mission_id": res['mission_id'],
+                        "message": f"On it, inside \"{focused['title']}\"."}
+    # Dedupe: same owner, same subject (when one was named), same intent, visible
+    # to the caller (and spoken-safe, household, for voice).
+    matches = []
+    for p in storage.get_projects():
+        if p.get('state') not in ('active', 'paused') or p.get('owner_member_id') != owner['id']:
+            continue
+        if not projects.can_see(p, actor):
+            continue
+        if spoken and (p.get('audience') != 'household' or not subjects.spoken_safe('project', p)):
+            continue
+        if subject_kind and not any(x.get('kind') == subject_kind and x.get('id') == subject_id for x in p.get('pieces') or []):
+            continue
+        hay = ((p.get('title') or '') + ' ' + (p.get('goal') or '')).lower()
+        if intent and all(w in hay for w in intent):
+            matches.append(p)
+    if len(matches) == 1:
+        p = matches[0]
+        _tri.set_focus(focus_key, 'project', p['id'], p.get('title') or '')
+        return {"status": "success", "project_id": p['id'], "mission_id": None,
+                "message": f"That's already under way: \"{p['title']}\". Tell me what to add to it."}
+    if len(matches) > 1:
+        return {"status": "ambiguous", "message": "Which one: " + '; '.join(p['title'] for p in matches) + "?"}
+    # Create the project in the person's words (the body-goal rule inside).
+    fields = {'title': (title or goal)[:80], 'goal': goal, 'done_when': '', 'owner_member_id': owner['id'], 'audience': audience}
+    created = projects.create(fields, actor)
+    if created['status'] != 'success':
+        return {"status": "error", "message": created.get('message') or 'Could not start that project.'}
+    project = created['project']
+    if subject_kind:
+        projects.add_piece(project['id'], subject_kind, subject_id, actor)
+    if spoken:
+        storage.update_project(project['id'], {'requester_provenance': voice_context.provenance()})
+    # Plan inside it: a parent or adult's planning mission, bound before adoption.
+    planning, reason, mission_id = 'started', '', None
+    if actor.get('role') == 'child' or actor.get('is_child'):
+        planning, reason = 'needs_parent', 'Ask a parent to plan it with Argyle.'
+    else:
+        res = _missions.launch('Help me plan the next part of this project: ' + project['title'], created_by=actor['id'],
+                               project_id=project['id'], subject=('project', project['id']))
+        if res.get('status') == 'launched':
+            mission_id = res['mission_id']
+            if spoken:
+                storage.update_mission(mission_id, {'requester_provenance': voice_context.provenance()})
+        else:
+            planning = 'off'
+            reason = ('Missions are off (Projects settings).' if res.get('status') == 'disabled'
+                      else (res.get('message') or 'Planning is off.').replace('Config \u2192 Missions', 'Projects settings'))
+    # The card comes first, in the owner's DM (and the actor's when they differ).
+    argyle = storage.ensure_argyle_member()
+    for m in {owner['id']: owner, actor['id']: actor}.values():
+        member = storage.get_member(m['id'])
+        card = projects.card(project, member, planning=planning, reason=reason) if member else None
+        if card:
+            _post_chat_message(storage.get_or_create_dm(argyle['id'], member['id']), argyle,
+                               f"Started a project: {project['title']}", card=card)
+    _tri.set_focus(focus_key, 'project', project['id'], project.get('title') or '')
+    tail = {'started': "I'll ask a couple of questions, then show you a plan.",
+            'needs_parent': 'A parent can plan it with Argyle from the Projects page.',
+            'off': reason}[planning]
+    return {"status": "success", "project_id": project['id'], "mission_id": mission_id,
+            "message": f"Started a project: \"{project['title']}\". {tail}"}
 
 
 def list_threads(state: str = None, owner_name: str = None,

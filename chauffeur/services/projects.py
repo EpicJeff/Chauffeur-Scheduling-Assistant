@@ -862,6 +862,30 @@ def adopt_existing():
         return counts
 
 
+AUDIENCE_LABEL = {'private': 'Private', 'parents': 'Parents', 'household': 'Household'}
+
+
+def needs_plan(project):
+    """An active project with no steps and no live planning: a parent's Needs you row."""
+    from services import missions
+    if project.get('state') != 'active' or project.get('steps'):
+        return False
+    return not any(m.get('status') in missions.LIVE for m in _work_missions(project))
+
+
+def card(project, viewer, planning='started', reason=''):
+    """The project chat card (front door §1); None for a viewer who may not see it."""
+    if not can_see(project, viewer):
+        return None
+    owner = storage.get_member(project.get('owner_member_id')) or {}
+    return {'kind': 'project', 'project_id': project['id'], 'title': project.get('title') or '',
+            'goal': project.get('goal') or '', 'owner': project.get('owner_member_id'),
+            'owner_label': owner.get('name') if _active(owner) else 'Unassigned',
+            'audience': project.get('audience'), 'audience_label': AUDIENCE_LABEL.get(project.get('audience'), ''),
+            'state': project.get('state'), 'planning': planning, 'reason': reason,
+            'can_edit': can_act(project, viewer), 'body_goal': bool(project.get('body_goal'))}
+
+
 def view(project, viewer):
     """Return only this viewer's project and visible piece references."""
     from services import subjects

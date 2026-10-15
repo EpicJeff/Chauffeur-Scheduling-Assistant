@@ -19,7 +19,7 @@ from services import storage
 
 logger = logging.getLogger(__name__)
 
-KINDS = ('finding', 'insight', 'thread', 'mission')
+KINDS = ('finding', 'insight', 'thread', 'mission', 'project')
 MISSION_HISTORY_CAP = 60      # the terminal rows /api/missions/admin ships; the lane matches it
 VERBS = frozenset({'assign', 'ask', 'plan', 'prepare', 'do', 'done', 'skip',
                    'research', 'draft', 'advance', 'answer', 'close', 'snooze',
@@ -54,6 +54,10 @@ def load(kind: str, sid: str) -> Optional[dict]:
             row = dict(row)
             row['steps'] = storage.get_mission_steps(sid)
         return row
+    if kind == 'project':
+        # A project is a focus a conversation can hold (front door §1); its
+        # taps are its own routes, so it offers no situation options.
+        return storage.get_project(sid)
     return None
 
 
@@ -368,7 +372,8 @@ def _options_mission(row: dict) -> list:
 
 def options_for(kind: str, row: dict) -> list:
     builder = {'finding': _options_finding, 'insight': _options_insight,
-               'thread': _options_thread, 'mission': _options_mission}[kind]
+               'thread': _options_thread, 'mission': _options_mission,
+               'project': lambda row: []}[kind]
     if kind != 'mission' and _is_done(kind, row):
         return []          # a closed situation offers nothing; dismissed is dismissed
     opts = [o for o in builder(row) if o['verb'] in VERBS]
@@ -453,7 +458,7 @@ def _is_done(kind: str, row: dict) -> bool:
         return st in ('done', 'dismissed', 'expired')
     if kind == 'insight':
         return st == 'retired'
-    if kind == 'thread':
+    if kind in ('thread', 'project'):
         return st in ('done', 'dropped')
     return st in ('done', 'blocked', 'dropped')
 
@@ -492,6 +497,9 @@ def _can_see_base(kind: str, row: dict, viewer: Optional[dict]) -> bool:
         return role in WRITE_ROLES
     if kind == 'thread':
         return role in WRITE_ROLES or bool(viewer and row.get('owner_member_id') == viewer.get('id'))
+    if kind == 'project':
+        from services import projects
+        return projects.can_see(row, viewer)
     return role in WRITE_ROLES
 
 
@@ -550,6 +558,9 @@ def channel_visible(kind: str, row: dict, focus_key: str) -> bool:
     """A channel may hear only subjects every human there may read."""
     from services import subjects
     members = subjects.channel_humans(focus_key)
+    if kind == 'project' and members is not None:
+        from services import projects
+        return bool(row) and all(bool(m) and projects.can_see(row, m) for m in members)
     return members is None or bool(row) and all(
         bool(member)
         and all(_subject_visible(k, record, member) for k, record in subjects.subject_records(kind, row))
