@@ -409,6 +409,7 @@ RULES = [
     (ANY, '/api/asks/*', SIGNED_IN, None),
     # Missions: reads for any signed-in member; launching/approving/answering
     # is parent/adult work decided in the handler (`_mind_actor`, reused).
+    ('POST', '/api/missions/{mission_id}/plan/answers', SIGNED_IN, None),
     (ANY, '/api/missions/*', SIGNED_IN, None),
     # The browse network check (Missions drawer): SIGNED_IN at the route,
     # `_mind_actor` refuses a child in the handler.

@@ -1102,6 +1102,8 @@ async def ics_sync_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from services import planned
+    planned.reconcile()
     task = asyncio.create_task(poll_schedule())
     push_task = asyncio.create_task(push_notification_loop())
     ics_task = asyncio.create_task(ics_sync_loop())
@@ -5193,6 +5195,8 @@ def act_on_action_proposal(proposal_id: str, req: ActionProposalAct, background_
     req.member_id = _acting_id(request, req.member_id)
     approver = storage.get_member(req.member_id) if req.member_id else None
     prop = storage.get_action_proposal(proposal_id)
+    if prop and prop.get('stage_id'):
+        raise HTTPException(status_code=409, detail="Handle this row through its stage")
     if prop and prop.get('origin_kind') == 'mission':
         from services import situations
         if not situations.can_see('mission', storage.get_mission(prop.get('origin_id')) or {}, approver):
@@ -6040,13 +6044,22 @@ def missions_proposal_act(mission_id: str, proposal_id: str,
                           body: dict = Body(default={}), request: Request = None,
                           background_tasks: BackgroundTasks = None):
     from services import chat_actions as _ca
-    actor = _mind_actor(request, body.get('member_id'))
-    if not storage.get_mission(mission_id):
+    actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
+    mission = storage.get_mission(mission_id)
+    if not mission:
         raise HTTPException(status_code=404, detail="No such mission")
+    prop = storage.get_action_proposal(proposal_id)
+    if not prop or prop.get('origin_kind') != 'mission' or prop.get('origin_id') != mission_id:
+        raise HTTPException(status_code=404, detail="No such proposal on this mission")
+    from services import situations
+    if not situations.can_see('mission', mission, actor):
+        raise HTTPException(status_code=403, detail="That mission is not visible to you")
+    if prop.get('stage_id'):
+        raise HTTPException(status_code=409, detail="Handle this row through its stage")
     act = body.get('act') or 'approve'
     if act not in ('approve', 'dismiss'):
         raise HTTPException(status_code=400, detail="act must be approve|dismiss")
-    result = _ca.act_on_proposal(proposal_id, act, _approver_of_record(actor))
+    result = _ca.act_on_proposal(proposal_id, act, actor)
     if result.get('status') != 'success':
         raise HTTPException(status_code=400, detail=result.get('message'))
     _mind_refresh_if_dirty(result, background_tasks)
@@ -6130,6 +6143,22 @@ def missions_verify(mission_id: str, body: dict = Body(default={}), request: Req
     if res.get('status') == 'error':
         raise HTTPException(status_code=400, detail=res.get('message'))
     return res
+
+
+@app.post("/api/missions/{mission_id}/plan/answers")
+def missions_plan_answers(mission_id: str, body: dict = Body(default={}), request: Request = None):
+    actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
+    from services import planned, situations
+    mission = storage.get_mission(mission_id)
+    if not mission:
+        raise HTTPException(status_code=404, detail="No such mission")
+    if not situations.can_see('mission', mission, actor):
+        raise HTTPException(status_code=403, detail="That mission is not visible to you")
+    result = planned.answer_plan(mission_id, body.get('answers') or {}, actor)
+    if result['status'] != 'success':
+        raise HTTPException(status_code=400, detail=result['message'])
+    situations.touched('mission', mission_id)
+    return result
 
 
 @app.post("/api/missions/{mission_id}/answer")

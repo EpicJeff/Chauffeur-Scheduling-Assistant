@@ -400,12 +400,41 @@ def create_action_proposal(action_type: str, summary: str, payload: dict,
             "card": build_card(pid, action_type, summary, "proposed")}
 
 
+def run_row(proposal_id, approver, idem):
+    """The stage runner's atomic, durable proposal execution door."""
+    from services import storage, planned
+    with storage.db_lock:
+        prop = storage.get_action_proposal(proposal_id)
+        if not prop or prop.get('status') != 'proposed':
+            return {'status': 'error', 'message': 'already handled', 'created': []}
+        if not _is_admin(approver):
+            return {'status': 'error', 'message': 'Only a parent or adult can approve this.', 'created': []}
+        storage.update_action_proposal(proposal_id, {'status': 'executing'})
+    payload = dict(prop.get('payload') or {})
+    if planned.CONTRACT.get(prop['action_type'], {}).get('idem'):
+        payload['idem'] = idem
+    try:
+        result = _execute(prop['action_type'], payload, approver=approver)
+        ok = result.get('status') == 'success'
+        result = {'status': 'success' if ok else 'error',
+                  'message': result.get('message') or ('Done.' if ok else 'That action failed.'),
+                  'created': result.get('created') or []}
+    except Exception as exc:
+        result = {'status': 'error', 'message': str(exc), 'created': []}
+    storage.update_action_proposal(proposal_id, {
+        'status': 'approved' if result['status'] == 'success' else 'failed',
+        'result': result, 'approved_by_member_id': (approver or {}).get('id')})
+    return result
+
+
 def act_on_proposal(proposal_id: str, act: str, approver_member: Optional[dict]) -> Dict[str, Any]:
     """Approve or dismiss a proposal. Returns {status, message, card, schedule_dirty}."""
     from services import storage
     prop = storage.get_action_proposal(proposal_id)
     if not prop:
         return {"status": "error", "message": "That action is no longer available."}
+    if prop.get('stage_id'):
+        return {'status': 'error', 'message': 'Handle this row through its stage.'}
     a_type, summary = prop.get("action_type"), prop.get("summary")
     if prop.get("status") != "proposed":
         return {"status": "error",

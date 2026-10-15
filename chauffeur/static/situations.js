@@ -9,7 +9,7 @@ window.Situations = (function () {
     'done': 'Done', 'skip': 'Skip', 'research': 'Look it up', 'draft': 'Draft', 'advance': 'Next step',
     'answer': 'Answer', 'close': 'Close', 'snooze': 'Not now', 'dismiss': 'Dismiss', 'own': 'I\'ll handle it',
     'unread': 'Argyle got it wrong', 'release': 'Share', 'submit': 'Book it', 'verify': 'Did it go through?',
-    'subject': 'About'
+    'subject': 'About', 'approve_plan': 'Approve plan', 'run_stage': 'Do this'
   };
   const CHANNEL_LABELS = { chauffeur: 'Chauffeur', email: 'Email', text: 'Text', in_person: 'In person' };
 

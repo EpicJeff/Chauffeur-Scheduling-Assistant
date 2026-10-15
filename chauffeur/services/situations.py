@@ -23,7 +23,8 @@ KINDS = ('finding', 'insight', 'thread', 'mission')
 MISSION_HISTORY_CAP = 60      # the terminal rows /api/missions/admin ships; the lane matches it
 VERBS = frozenset({'assign', 'ask', 'plan', 'prepare', 'do', 'done', 'skip',
                    'research', 'draft', 'advance', 'answer', 'close', 'snooze',
-                   'dismiss', 'own', 'unread', 'release', 'submit', 'verify', 'subject'})
+                   'dismiss', 'own', 'unread', 'release', 'submit', 'verify', 'subject',
+                   'approve_plan', 'run_stage'})
 WRITE_ROLES = ('parent', 'adult')
 # Situation ownership ("I'll handle it myself") lives in its own fields: a
 # thread row already uses owner_member_id for who CARRIES the thread.
@@ -238,7 +239,7 @@ def _options_thread(row: dict) -> list:
     if m:
         mrow = load('mission', m['id'])
         for o in _options_mission(mrow or {}):
-            if o['verb'] in ('answer', 'release', 'submit', 'verify'):
+            if o['verb'] in ('answer', 'release', 'submit', 'verify', 'approve_plan', 'run_stage'):
                 sub = o['id'].split(':', 1)[1] if ':' in o['id'] else ''
                 fwd = _opt(o['verb'], o['label'], o['payload'], f"mission:{m['id']}" + (f":{sub}" if sub else ''))
                 # A steer is offered while the mission works, never owed: it
@@ -274,7 +275,32 @@ def _options_mission(row: dict) -> list:
         rj = (asked or {}).get('result_json') or {}
         name = (asked or {}).get('name')
         aid = (asked or {}).get('id') or ''
-        if name == 'release':
+        plan = row.get('plan') or {}
+        if name == 'plan' and plan.get('state') == 'proposed':
+            rev = plan['rev']
+            out.append(_opt('approve_plan', 'Looks good', {'rev': rev, 'decision': 'approve'}, f'{rev}:approve'))
+            out.append(_opt('approve_plan', 'Stop', {'rev': rev, 'decision': 'stop'}, f'{rev}:stop'))
+            for stage in plan.get('stages', []):
+                if stage['state'] == 'pending':
+                    out.append(_opt('approve_plan', f"Leave out: {stage['title']}",
+                                    {'rev': rev, 'decision': 'drop', 'stage_id': stage['id']}, f"{rev}:drop:{stage['id']}"))
+            out.append(_opt('answer', 'Tell it something', {'ask': 'steer'}, 'steer'))
+        elif name == 'stage':
+            stage = next((s for s in plan.get('stages', []) if s['id'] == rj.get('stage_id') and s['state'] == 'proposed'), None)
+            if stage:
+                base = f"{stage['id']}:{stage['snapshot']}"
+                payload = {'stage_id': stage['id'], 'snapshot': stage['snapshot']}
+                for decision, label in [('approve', 'Do this' if stage['kind'] == 'build' else 'Go do this part'),
+                                        ('skip', 'Not this one'), ('stop', 'Stop')]:
+                    out.append(_opt('run_stage', label, {**payload, 'decision': decision}, f'{base}:{decision}'))
+                for r in stage.get('rows', []):
+                    if r['state'] == 'proposed':
+                        out.append(_opt('run_stage', f"Leave out: {r['summary']}",
+                                        {**payload, 'decision': 'exclude', 'row_id': r['id']}, f"{base}:exclude:{r['id']}"))
+            out.append(_opt('answer', 'Tell it something', {'ask': 'steer'}, 'steer'))
+        elif name == 'stage_check':
+            out.append(_opt('answer', 'Tell it what happened', {'ask': 'steer'}, 'steer'))
+        elif name == 'release':
             # The contact card leaves the house only on this tap (browse missions
             # §1); the button names the exact values so the tap is never blind.
             out.append(_opt('release', rj.get('question') or f"Share with {rj.get('site')}", {'decision': 'approve'}, f'{aid}:approve'))
@@ -308,7 +334,7 @@ def _options_mission(row: dict) -> list:
             continue
         pid = (s.get('result_json') or {}).get('proposal_id')
         prop = storage.get_action_proposal(pid) if pid else None
-        if prop and prop.get('status') == 'proposed':
+        if prop and prop.get('status') == 'proposed' and not prop.get('stage_id'):
             out.append(_opt('do', prop.get('summary') or 'Approve', {'proposal_id': pid}, pid))
     if _is_done('mission', row):
         return out         # a finished mission keeps only the decisions it left behind
@@ -413,7 +439,7 @@ def _is_done(kind: str, row: dict) -> bool:
 def needs_attention(kind: str, row: dict, opts: list) -> bool:
     """Independent of engine status: anything with a decision left is live."""
     if kind == 'mission':
-        return any(o['verb'] in ('answer', 'do', 'release', 'submit', 'verify')
+        return any(o['verb'] in ('answer', 'do', 'release', 'submit', 'verify', 'approve_plan', 'run_stage')
                    and o.get('payload', {}).get('ask') != 'steer' for o in opts)
     if kind == 'thread':
         from services import threads as _th
@@ -720,6 +746,26 @@ def act(kind: str, sid: str, verb: str, option_id: str = None, payload: dict = N
 
 
 def _run(kind, sid, verb, p, actor, row) -> dict:
+    if kind == 'mission' and verb in ('approve_plan', 'run_stage'):
+        from services import planned
+        if verb == 'approve_plan':
+            if p['decision'] == 'approve':
+                return planned.approve_plan(sid, p['rev'], actor)
+            if p['decision'] == 'drop':
+                return planned.drop_stage(sid, p['rev'], p['stage_id'], actor)
+            with storage.db_lock:
+                if (storage.get_mission(sid).get('plan') or {}).get('rev') != p['rev']:
+                    return _refused('The plan moved; look again.')
+                return planned.stop_plan(sid, actor)
+        if p['decision'] == 'approve':
+            return planned.run_stage(sid, p['stage_id'], p['snapshot'], actor)
+        if p['decision'] == 'skip':
+            return planned.skip_stage(sid, p['stage_id'], p['snapshot'], actor)
+        if p['decision'] == 'exclude':
+            return planned.exclude_row(sid, p['stage_id'], p['snapshot'], p['row_id'], actor)
+        with storage.db_lock:
+            _, _, _, error = planned._stage_for_change(sid, p['stage_id'], p['snapshot'], actor)
+            return error or planned.stop_plan(sid, actor)
     if verb == 'subject':
         from services import subjects
         if p.get('clear'):

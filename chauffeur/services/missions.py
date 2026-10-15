@@ -147,6 +147,10 @@ def _system_prompt(now: datetime.datetime, settings: dict = None, mission: dict 
         "When the goal names something the family already has and no ABOUT block is above, call find_in_chauffeur first and bind it with the subject action; when ABOUT is above, it is the truth, not the transcript's older reading; a subject_changed note means re-read before acting.\n"
         "Respond with EXACTLY ONE JSON object, one of:\n"
         '{"action":"tool","tool":"<READ tool>","args":{...}}\n'
+        '{"action":"interview","template":"<occasion kind or null>","questions":[{"key":"budget","ask":"What is the budget?","kind":"number"}]}\n'
+        '{"action":"answers","values":{"<question key>":"<answer or you_decide>"}}\n'
+        '{"action":"plan","stages":[{"id":"s1","kind":"build|work","title":"<title>","why":"<reason>","makes":[],"owner_member_id":null,"goal":"<work goal>","step_budget":4}]}\n'
+        '{"action":"stage","stage_id":"<next pending build>","rows":[{"id":"r1","tool":"<stage-ready tool>","args":{},"summary":"<what changes>","needs":[]}]}\n'
         '{"action":"subject","kind":"<kind>","id":"<id from find_in_chauffeur>"}\n'
         '{"action":"propose","tool":"<PROPOSE tool>","args":{...},'
         '"summary":"<one line a parent reads>","why":"<reason>"}\n'
@@ -162,6 +166,11 @@ def _system_prompt(now: datetime.datetime, settings: dict = None, mission: dict 
         '{"action":"give_up","reason":"<honest blocker>"}\n\n'
         "Prefer finishing with a small set of strong proposals over endless "
         "research.\n"
+        "For a goal needing a plan, interview first (at most two rounds of five), record answers on the mission, then propose stages for approval. "
+        "Interview answers never change the occasion or kitchen: an approved build stage does that. "
+        "Only propose rows for the next pending build stage of an approved plan. Use record ids, or {\"$ref\":\"earlier-row-id\",\"kind\":\"occasion\"} for a newly created record. "
+        "Each build is one step; each work stage reserves its step_budget plus one follow-up build, plus two closing steps. Work budgets are at most 12; plans at most seven stages. "
+        "Plan and stage approval require the person's buttons; free-text steers never approve them.\n"
         "To find a thing's details, search our own mail (search_mail) before "
         "the web. To deal with a company, prefer its official site. Use browse "
         "only for what reading cannot answer, and name the site. Before any "
@@ -223,6 +232,14 @@ def _user_prompt(mission: dict) -> str:
     if steers:
         lines.append("THE PERSON SAID, MID-MISSION (act on this before anything else):")
         lines.extend(f"- {(s.get('result_json') or {}).get('text') or ''}" for s in steers)
+    plan = mission.get('plan')
+    if plan:
+        lines.append(f"PLAN: {plan['state']} (revision {plan['rev']})")
+        for q in plan.get('questions', []):
+            value = 'you decide' if q.get('you_decide') else q.get('answer')
+            lines.append(f"- {q['key']}: {q['ask']} Answer: {value if value is not None else 'unanswered'}")
+        for stage in plan.get('stages', []):
+            lines.append(f"- {stage['id']} ({stage['kind']}): {stage['title']} — {stage['state']}")
     lines.append("TRANSCRIPT SO FAR (oldest first):")
     for s in steps[-25:]:
         rj = s.get('result_json')
@@ -303,7 +320,7 @@ def ask_card(mission: dict) -> dict | None:
     if not row or not (row.get('status') == 'waiting_user' or verify_open(row)):
         return None
     opts = [o for o in situations._options_mission(row)
-            if o['verb'] in ('answer', 'release', 'submit', 'verify')]
+            if o['verb'] in ('answer', 'release', 'submit', 'verify', 'approve_plan', 'run_stage')]
     if not opts:
         return None
     asked = next((s for s in reversed(row.get('steps') or []) if s.get('kind') == 'ask'), None)
@@ -314,6 +331,17 @@ def ask_card(mission: dict) -> dict | None:
             'ask': asked.get('name'), 'question': result.get('question'),
             'goal': mission.get('goal'), 'state': 'open', 'options': opts}
     card.update({k: result[k] for k in ('site', 'url', 'facts', 'button', 'fields', 'values') if k in result})
+    plan = row.get('plan') or {}
+    if asked['name'] == 'interview':
+        from services import planned
+        card['questions'] = planned._remaining(plan)[:planned.CAPS['questions']]
+    elif asked['name'] == 'plan':
+        card['stages'] = plan.get('stages', [])
+    elif asked['name'] == 'stage':
+        stage = next((s for s in plan.get('stages', []) if s['id'] == result.get('stage_id')), {})
+        card['rows'] = stage.get('rows', [])
+    elif asked['name'] == 'stage_check':
+        card['rows'] = result.get('rows', [])
     return card
 
 
@@ -637,7 +665,7 @@ def _pending_ask(mission_id: str, name: str):
 
 
 TERMINAL = ('done', 'blocked', 'dropped')
-TAP_ONLY_ASKS = ('release', 'submit', 'verify')
+TAP_ONLY_ASKS = ('release', 'submit', 'verify', 'plan', 'stage', 'stage_check')
 
 
 def _unverified(mission_id: str) -> list:
@@ -685,13 +713,19 @@ def answer(mission_id: str, text: str, actor: dict) -> dict:
         text = (text or '').strip()
         if not text:
             return {'status': 'error', 'message': 'Say something to send.'}
-        if tap_only_ask_pending(mission_id):
+        planned_ask = next((s for s in reversed(storage.get_mission_steps(mission_id)) if s['kind'] == 'ask'), {})
+        is_plan_steer = mission.get('status') == 'waiting_user' and planned_ask.get('name') in ('plan', 'stage', 'stage_check')
+        if tap_only_ask_pending(mission_id) and not is_plan_steer:
             return {'status': 'error', 'message': 'Answer that one with its buttons.'}
         status = mission.get('status')
         if status in TERMINAL:
             return {'status': 'error', 'message': 'That mission has ended.'}
-        if status == 'waiting_user':
-            storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'user_answer', 'result_json': {'text': text}})
+        if is_plan_steer:
+            storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'user_steer',
+                                                'result_json': {'text': text, 'answered_by': actor.get('id')}})
+            message = 'Told it; the plan still needs its buttons.'
+        elif status == 'waiting_user':
+            storage.add_mission_step(mission_id, {'kind': 'note', 'name': 'user_answer', 'result_json': {'text': text, 'answered_by': actor.get('id')}})
             storage.update_mission(mission_id, {'status': 'running'})
             message = 'Answered.'
         elif status in ('running', 'browsing', 'waiting_retry'):
@@ -1268,6 +1302,14 @@ def _step_once(mission: dict) -> dict:
     storage.update_mission(mid, {'consec_errors': 0})
     action = (res.get('action') or '').strip()
 
+    if action in ('interview', 'answers', 'plan', 'stage'):
+        from services import planned
+        result = planned.planner_action(mid, res)
+        if result.get('status') != 'success':
+            storage.add_mission_step(mid, {'kind': 'note', 'name': 'refused',
+                                          'result_json': {'note': result.get('message')}})
+        return storage.get_mission(mid)
+
     if action == 'tool':
         name = res.get('tool') or ''
         if name not in READ_TOOLS:
@@ -1325,6 +1367,12 @@ def _step_once(mission: dict) -> dict:
                                            'result_json': {'note': 'no readable record to bind'}})
             return storage.get_mission(mid)
         with storage.db_lock:
+            from services import planned
+            current = storage.get_mission(mid)
+            if subject_of(current)[0] and planned.stage_pending(current):
+                storage.add_mission_step(mid, {'kind': 'note', 'name': 'refused',
+                    'result_json': {'note': 'Finish or stop the pending step first; then change what this is about.'}})
+                return current
             if mission.get('origin_kind') == 'thread' and mission.get('origin_ref'):
                 thread = storage.get_thread(mission['origin_ref'])
                 if not thread:
@@ -1513,6 +1561,8 @@ def tick(now: datetime.datetime = None) -> dict:
     """The one entry the push loop calls (mirrors mind.tick). All gating —
     enabled flag, retry promotion, one-mission-at-a-time, steps-per-tick —
     lives here so main.py stays a two-line block and tests drive this."""
+    from services import planned
+    planned.reconcile()
     now = now or datetime.datetime.now()
     settings = storage.get_settings() or {}
     if not settings.get('missions_enabled', False):

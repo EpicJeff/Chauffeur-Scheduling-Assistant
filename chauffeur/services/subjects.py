@@ -268,7 +268,9 @@ def retarget(sit_kind, sid, new_kind, new_id, actor):
         live = [m for m in storage.get_missions(status=['running', 'browsing', 'waiting_user', 'waiting_retry'])
                 if (sit_kind == 'mission' and m['id'] == sid)
                 or (sit_kind == 'thread' and m.get('origin_kind') == 'thread' and m.get('origin_ref') == sid)]
-        if any(m.get('status') == 'browsing' or missions.tap_only_ask_pending(m['id']) for m in live):
+        from services import planned
+        if any(m.get('status') == 'browsing' or missions.tap_only_ask_pending(m['id'])
+               or planned.stage_pending(m) for m in live):
             return {'status': 'refused',
                     'message': 'Finish or stop the pending step first; then change what this is about.'}
         new_row = load(new_kind, new_id) if new_kind else None
