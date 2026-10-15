@@ -1,128 +1,113 @@
 # Planned missions — an interview, a plan you can see, and stages you approve
 
-**Date:** 2026-10-14. **Status:** APPROVED by the user 2026-10-14 (every ASSUMED decision accepted as written). Codex adversarial review done (twelve findings, each verified against the code, all folded in below and named F1–F12 where they land). Slice 2 of three (slice 1: subjects, BUILT v2.499.459–.472; slice 3: wake conditions).
-**Builds on:** `2026-10-14-mission-subject-resolver-design.md` (subjects, `subject_rev`, `subject_history`, ABOUT, audience inheritance, guarded retarget), `2026-09-04-mission-engine-design.md` (the planner loop, READ/PROPOSE, the proposal rail), `2026-09-02-mind-plans-design.md` (plans with per-step approval on a propose-only rail), `docs/occasion_design.md` O2 (template interview, cascades, stamping, gap report), the mid-mission steer (v2.499.458), mission chat cards (v2.499.453).
+**Date:** 2026-10-14. **Status:** REVISED for generality at the user's direction (2026-10-14: "this has to work with anything someone might want to plan — trip, long-term goal, etc. — or have a multi-stage mission for"); the first draft's Codex adversarial review (twelve findings, F1–F12) stays folded in; the revision goes back through Codex before the user approves it. Slice 2 of three (slice 1: subjects, BUILT v2.499.459–.472; slice 3: wake conditions).
+**Builds on:** `2026-10-14-mission-subject-resolver-design.md` (subjects, `subject_rev`, `subject_history`, ABOUT, audience inheritance, guarded retarget), `2026-09-04-mission-engine-design.md` (the planner loop, READ/PROPOSE, the proposal rail), `2026-10-10-browse-missions-design.md` and the submit gate (browse, release, hand-off), `2026-09-02-mind-plans-design.md` (plans with per-step approval), `docs/occasion_design.md` O2, `2026-08-28-programs-design.md` (the curator), the mid-mission steer (v2.499.458), mission chat cards (v2.499.453).
 
 ## Problem
 
-The user (2026-10-14): "a thread or mission could be 'help me plan my Disney trip' or 'help me plan Kate's birthday party' and go through the stages of trip or party planning: create the trip or occasion, fill in the attractions, accommodations, guest list, menu, based on details you provide, volunteered or asked for through a questionnaire, and build the thing for you." And: "I want to learn piano" → a program that adapts, a place for lessons, a piano, books.
+The user (2026-10-14): "a thread or mission could be 'help me plan my Disney trip' or 'help me plan Kate's birthday party' and go through the stages … create the trip or occasion, fill in the attractions, accommodations, guest list, menu … and build the thing for you." And: "I want to learn piano" → a program that adapts, a place to take lessons, a piano, books. And: "this has to work with anything someone might want to plan."
 
-Today a mission advances one action at a time and every write is its own proposal card. A party would be twenty separate approvals with no picture of the whole, and nothing asks the family what it needs to know up front except one `ask_user` question at a time. The field feedback (2026-10-09) is the bar: every handle shows its plan before acting, nothing hand-wavy, and the least-engaged family member must be able to say yes or no.
+Three things stop that today, beyond one-action-at-a-time missions:
+1. **Missions cannot reach most of what Argyle can do.** 29 tools Argyle uses in chat are dispatched by special router code and are absent from the registry missions use: trip itinerary scheduling, flights and rules; creating a program, logging a session, program progress; thread notes, closing, next step, drafting; household tasks; requests; web research; reading the calendar.
+2. **Nothing can CREATE a trip or a list** as a tool (trips are made on the Trips page; lists only through occasion sourcing).
+3. **A stage that is not a batch of writes has no shape.** "Find piano lessons nearby", "find a used piano", "get dining reservations" are research, browsing, threads and questions.
 
-## Decisions (made with the user, or ASSUMED for the user to correct)
+## Decisions (with the user, or ASSUMED and accepted 2026-10-14)
 
-- **One engine, not verticals.** A planned mission is an ordinary mission that carries a `plan`. Domain knowledge enters through the subject's own primitives (an occasion's template interview, stamping and menu; later a trip's scheduler, a program's curator). The user rejected per-domain verticals for the Mind; the same holds here.
-- **Three phases, each visible.** Interview, plan, stages. **Nothing in the family's data is written before the person approves the stage that writes it** — interview answers included (F7).
-- **One approval per stage** (the user, 2026-10-14). A stage runs its rows through ONE guarded stage runner, never through the per-proposal endpoints (F3, F4).
-- **ASSUMED: approval by tap, or by the person's own words in a conversation only they and Argyle are in** (their Argyle DM, the PWA widget, a verified speaker for a spoken-safe subject). In a group or family channel Argyle never approves a stage and answers neutrally (F10). Releasing contact details and booking stay tap-only (locked).
-- **ASSUMED: the interview is a card with all its questions (at most five) and, in conversation, one question at a time;** a person may answer several in prose; every question offers "You decide".
-- **First target: Kate's birthday party.** Slice 2's tool work is scoped to it (F8). Trips and programs reuse the same engine in follow-up targets once their tools are registered and return ids; they are named in Section 9, not built here.
-- **Out of scope:** stages that wait for a date or an event (slice 3, which reuses Section 4's execution contract), sending anything outside the family (messages are drafts the person sends), buying or paying, guests' contact details.
+- **One engine for any goal.** A planned mission is an ordinary mission with a `plan`. The planner decides when a goal deserves one; a plan always shows before anything is written (accepted).
+- **Two kinds of stage** (G3). A **build** stage is a batch of writes behind one approval. A **work** stage is a sub-goal Argyle pursues with its normal loop (READ tools, research, browse, threads, questions); approving it means "go do this part", and any write it wants comes back to the person as a build stage.
+- **Missions get every chat tool** (G1), through the same registry, with the same actor rules chat uses; named exceptions only.
+- **A stage contract, not an occasion allow-list** (G2). A tool may be a build-stage row when it has a contract entry: which arguments are record ids, whether it takes an idempotency key, what it creates, and whether it calls a model. Slice 2 writes contracts for every write in eight domains (occasions, trips, programs, lists, errands, events, threads, household tasks). Anything else is refused as a row with "not stage-ready yet" in words.
+- **Approval by tap, or by the person's words in a private conversation** (accepted). Never from a group or family channel. Releasing contact details and booking stay tap-only (locked).
+- **Interview: one card with up to five questions, and one at a time in conversation** (accepted).
+- **Presents list shared with every parent except the honoree** (accepted).
+- **Three acceptance runs** (G4): Kate's birthday party (mostly build), the Disney trip (build plus a work stage that meets Disney's login wall and hands off), learn piano (a program plus work stages for lessons and an instrument).
+- **Out of scope:** stages that wait for a date or an event, and a program that adapts as sessions are logged (slice 3, reusing Section 4's runner); sending anything outside the family (drafts only); buying or paying.
 
 ## Section 1 — The record
 
-The mission row gains `plan: Optional[dict]`, absent on every existing mission (free-text missions are untouched):
+The mission row gains `plan: Optional[dict]`, absent on every existing mission:
 
 ```
 plan = {
   'state': 'interviewing' | 'proposed' | 'approved' | 'running' | 'done' | 'stopped',
-  'rev': int,                                   # bumps on every change to questions, stages or rows
+  'rev': int,
   'questions': [{'key', 'ask', 'kind': 'yesno'|'number'|'text'|'choice'|'date', 'choices': [...], 'why',
-                 'source': 'template'|'planner', 'template_key': <occasion template key> | None,
-                 'answer': <value> | None, 'you_decide': bool, 'answered_by': member_id | None}],
-  'stages': [{'id', 'title', 'why', 'makes': ['<one line per thing it will create>'], 'owner_member_id': <id> | None,
+                 'source': 'template'|'planner', 'template_key': str | None,
+                 'answer': value | None, 'you_decide': bool, 'answered_by': member_id | None}],
+  'stages': [{'id', 'kind': 'build' | 'work', 'title', 'why', 'makes': [...], 'owner_member_id': id | None,
               'state': 'pending'|'proposed'|'running'|'done'|'partial'|'uncertain'|'skipped',
-              'snapshot': '<digest>' | None,        # F2: covers row ids, tools, args, exclusions, subject triple
-              'rows': [{'id', 'tool', 'args', 'summary', 'needs': [row_id, ...],
+              'snapshot': digest | None, 'subject': [kind, id, rev] | None,
+              # build stages
+              'rows': [{'id', 'tool', 'args', 'summary', 'needs': [row_id], 'resumable': bool,
                         'state': 'proposed'|'excluded'|'running'|'done'|'failed'|'skipped'|'uncertain',
-                        'proposal_id', 'result': {'status', 'message', 'created': [{'kind','id'}]}, 'idem': '<key>'}],
-              'subject': [kind, id, rev] | None}],
-  'approved_by': member_id | None, 'approved_at': ts | None,
+                        'proposal_id', 'idem', 'result': {'status', 'message', 'created': [{'kind','id'}]}}],
+              # work stages
+              'goal': str, 'step_budget': int, 'steps_used': int, 'found': {...}, 'summary': str}],
+  'approved_by': id | None, 'approved_at': ts | None,
 }
 ```
 
-Caps: at most 5 questions per round and 2 rounds; at most 7 stages; at most 15 rows per stage; at most 3 rows per stage that call a model themselves (F12, Section 7).
+Caps: 5 questions per round, 2 rounds; 7 stages; 15 rows per build stage; 3 model-calling rows per build stage; a work stage's `step_budget` at most 12 planner steps.
 
-## Section 2 — The planner's new actions
+## Section 2 — Registry parity (G1)
 
-Allowed only while their phase is current (the step refuses others with a `refused` note):
+Every tool `agent_tools_v2.get_available_tools()` declares to chat gets a registry handler, so missions (and the Mind's bind rail) reach it. The router's special dispatch shows what each needs: an actor resolved at dispatch, never taken from the model. Registry adapters take the actor the mission supplies: the **finder** for reads (slice 1: the creator, else the parent of record), the **approver** for writes (the parent who approved the stage). A parity test asserts `declared ⊆ TOOL_HANDLERS` minus a named exception list:
 
-- `{"action":"interview","questions":[...]}` → `plan.questions`, state `interviewing`, ask step `interview`, `waiting_user`. When the subject is an occasion whose template has unanswered questions (`occasions.interview(id)`), those come first with `source: 'template'` and their `template_key`. For a party with no occasion yet, the planner includes the birthday template's questions by kind (`occasions.TEMPLATES['birthday']['questions']`), marked `template_key` the same way, so they can be replayed once the occasion exists (F7).
-- `{"action":"answers","values":{key: value}}` → turns a person's prose (a `user_answer`) into answers on the card; the card shows them back.
-- `{"action":"plan","stages":[...]}` → `plan.stages`, state `proposed`, ask step `plan`. Refused when `remaining planner attempts < stages + 2` (Section 7).
-- `{"action":"stage","stage_id":"…","rows":[{"tool","args","summary","needs":[…]}]}` → the next approved pending stage only. Each row's tool must be on the stage allow-list (Section 5), never a READ. A row may reference an earlier row's created record with `{"$ref": "<row_id>", "kind": "occasion"}` in an argument (F6). The stage turns `proposed` with a fresh `snapshot`; one ordinary action proposal per row is created with `origin_kind/origin_id/stage_id/row_id` (so it shows on the mission's history) and is EXECUTABLE ONLY BY THE STAGE RUNNER (F4). Ask step `stage`.
+- `send_direct_message` (already excluded from missions: DMs are private space), `announce_to_room` (speaks in a room; never from a mission), `prepare_voice_approval` (voice controller only).
 
-The system prompt states the phases, the caps and the allow-list, and tells the planner: interview only for what no READ tool or ABOUT already says; stages a person would recognise (create the party and its people, food, things to buy, presents, errands, messages to send); after the last stage, finish with what is left (`occasions.gap_report`).
+Reads join `missions.READ_TOOLS` (calendar events, program progress, thread list, household tasks, requests, coverage); writes become proposable. `research_question` maps to the planner's existing `research` action rather than becoming a second path.
 
-## Section 3 — Answering, approving, changing
+## Section 3 — The stage contract (G2)
 
-- **Interview answers stay on the mission** (F7). `missions.answer_plan(mission_id, answers, actor)` writes only `plan.questions` (parent/adult; `you_decide` is a flag, never a value). Nothing reaches the occasion during the interview. The stage that creates or touches the occasion carries `answer_occasion_question` rows for every `template_key` answer (replayed after creation via `$ref`), so cascades (headcount → kitchen) happen inside an approved stage; `you_decide` answers are left out of those rows and the planner's choice is written as a normal row the person sees.
-- **Plan approval.** Verb `plan` options: "Looks good" (`plan:<rev>:approve`), "Leave this out" per stage (`plan:<rev>:drop:<stage_id>`), "Change something" (free text, a steer → replan, `rev` + 1), "Stop". A stale `rev` answers "the plan moved; look again". Approving writes nothing.
-- **Stage approval.** Verb `stage` options: "Do this" (`stage:<stage_id>:<snapshot>:approve`), "Leave this one out" per row (`stage:<stage_id>:<snapshot>:exclude:<row_id>` → `rev` + 1, new snapshot, a new card), "Not this one" (skip), "Stop". The option id carries the SNAPSHOT digest (F2): any change to rows, args, exclusions or the subject makes every earlier button stale.
-- **Who may approve** (F9): a parent or adult for whom `subjects.visible` holds for the mission's whole subject set (current and history), checked by the runner itself, not only by `can_see` (keepers see the row, never approve).
-- **Free text on a waiting plan or stage is a steer, never an approval** (`TAP_ONLY_ASKS` gains `plan` and `stage` for free-text routing); approval in words goes through the approval verb in a private conversation (Decisions).
-- **Retarget and steer.** A proposed or running stage blocks `subjects.retarget`. A steer while a plan is proposed replans; a steer while a stage is proposed withdraws its proposals (status `withdrawn`) and re-proposes it.
+`services/planned.py` holds `CONTRACT = {tool: {'targets': {arg: kind}, 'idem': bool, 'creates': kind | None, 'model_calls': int}}`. A build row's tool must have an entry. For each `targets` argument the row must pass an id (a literal or a `$ref` to an earlier row's created record of that kind); name lookups inside a stage are refused (F6). Tools with `idem: true` receive the row's `idem` and return the existing record on a repeat; tools without it run once and become `uncertain` on a restart (`resumable: false`).
 
-## Section 4 — The stage runner: one guarded, atomic, resumable execution (F3, F4, F5, F6)
+Slice 2's contract, by domain (NEW = a tool added here, each with a hand path on its owning page):
 
-`missions.run_stage(mission_id, stage_id, snapshot, actor)`:
-1. **Claim** under `storage.db_lock`: the mission waits on this stage's ask, the stage is `proposed`, its `snapshot` equals the given one, the mission's current subject triple equals the stage's, the actor passes Section 3's approval rule; then stage → `running` and the ask is settled. A second tap finds `running` and answers "already doing it".
-2. **Rows in order.** Each row: skip (`skipped`, "needs <row> which did not complete") when a `needs` row is not `done`; resolve `$ref` arguments from the referenced row's `result.created` (refuse the row if missing); claim the row (`proposed` → `running`) and its proposal (`proposed` → `executing`) under the lock, persisting both BEFORE the handler runs; run the tool through `chat_actions` execution with the approving actor; persist `result` = `{status, message, created}` and row/proposal states (`done` / `failed`) right after. `created` is a typed list each stage-allowed tool returns (`[{'kind': 'occasion', 'id': …}]`); `chat_actions.act_on_proposal` is extended to keep handler fields `created` and to store the normalized result on the proposal row (F5).
-3. **Idempotency.** Each row carries `idem` = hash(mission, stage, row, snapshot). Tools that create (occasion, list, errand, dishes) accept an idempotency key and return the existing record when they see it again.
-4. **Restart.** On add-on start (and in the missions tick), a stage left `running` is reconciled: rows `running` become `uncertain` (never retried automatically), the stage becomes `uncertain`, and the card asks "Check these: …" with the rows named; a person marks each done / not done, or the planner re-proposes the not-done ones as a new stage.
-5. **Finish.** All rows `done` → stage `done`; any `failed`/`skipped` → `partial`, failures named on the card and in the transcript; the planner then proposes a repair stage or moves on.
-6. **Direct endpoints refuse stage rows** (F4): `/api/action-proposals/{id}/act`, the mission proposal approve route, and the situation `do` verb refuse a proposal with `stage_id` ("approve it as part of its stage"). The pre-existing gap the review found in the mission proposal route — no check that the proposal belongs to the mission or that the actor may see the mission — is fixed in the same change.
+| Domain | Tools |
+|---|---|
+| Occasions | `add_occasion` (creates occasion, idem), `add_occasion_guests`, `set_occasion_attendance` (gain `occasion_id`), NEW `answer_occasion_question`, NEW `stamp_occasion_template`, NEW `add_occasion_dishes` (occasion-scoped, F11), NEW `set_occasion_menu`, `source_for_occasion` (gains `occasion_id`, model 1), NEW `add_occasion_gift_list` (private presents list, F1) |
+| Trips | NEW `create_trip` (a draft trip: title, location, dates, travellers; creates trip; hand path: the Trips page's New trip, exists), `add_trip_poi` (gains `idem`, `category`, `meal_type`; creates poi), `add_trip_accommodation` (registry handler exists; declared to chat), `manage_trip_flights` (adapter; model 1 when it parses text), `auto_schedule_trip_itinerary` (adapter) |
+| Programs | `propose_program` (adapter; creates program as a PROPOSAL the person approves on the Programs page, as today; model 1 for the curator) |
+| Lists | NEW `create_list` (name, audience household or private with `shared_with`; creates list; hand path: the Lists page's New list, exists), `add_shopping_items` (gains `list_id`) |
+| Errands, events | `add_errand`, `create_event` (chat_actions admin actions; gain `idem` and `created`) |
+| Threads | `create_thread` (creates thread), `add_thread_note`, `draft_thread_message` (adapters; drafts are never sent) |
+| Household tasks | `add_household_task` (adapter; creates task) |
+| Messages to send yourself | `draft_message` (mission-local; stores the words on the mission; Copy / Share on the done card) |
 
-Slice 3's wake-driven stages run through this same runner.
+## Section 4 — The planner's actions and the two stage kinds (G3)
 
-## Section 5 — The stage allow-list and the tools it needs (F6, F8, F11, F1)
+Allowed only while their phase is current:
 
-Only these tools may be stage rows in slice 2; each takes explicit ids (never a name lookup inside a stage), accepts `idem`, and returns `created` when it creates something:
+- `interview` / `answers` / `plan` as in the first draft (interview answers stay on the mission, F7; template questions merged by `template_key`; `plan` refused when the step budget cannot cover the stages: `mission_step_cap − step_count < Σ(build stages × 1 + work stages × step_budget) + 2`, F12).
+- `stage` (build): `{"stage_id", "rows": [...]}` for the next approved pending build stage; each row checked against `CONTRACT`; one ordinary proposal per row stamped `origin_*`, `stage_id`, `row_id`, executable only by the runner (F4); a fresh `snapshot` (F2).
+- `work` (start): approving a work stage sets it `running`; from then each planner step sees a `CURRENT STAGE: <title> — <goal>` block above the transcript and may use every normal action (READ tools, `research`, `browse`, `ask_user`, `subject`, and proposals, which are queued as rows of a follow-up build stage rather than sent one by one). Release, submit and hand-off work exactly as in browse missions inside a work stage.
+- `stage_done`: `{"stage_id", "summary", "found": {...}}` closes the running work stage; its `found` is shown on the card and carried to later stages. A work stage that spends its `step_budget` ends `partial` with "carry on?" offered.
 
-| Tool | Status | Notes |
-|---|---|---|
-| `add_occasion` | exists | gains `idem`, returns `created: [{occasion, id}]` |
-| `add_occasion_guests` | exists | gains `occasion_id` (the name path stays for chat; a stage must pass the id) |
-| `set_occasion_attendance` | exists | gains `occasion_id` |
-| `answer_occasion_question` | NEW | `occasions.answer(id, key, value)`; hand path: the occasion page interview (exists) |
-| `stamp_occasion_template` | NEW | `occasions.apply_template(id, keys)`; hand path: apply-template button (exists) |
-| `add_occasion_dishes` | NEW | `occasions.add_dishes(id, description)` — occasion scope and tags, never the everyday repertoire (F11); returns dish ids; hand path: the occasion menu (exists) |
-| `set_occasion_menu` | NEW | `occasions.set_menu(id, dish_ids)`; hand path: the occasion menu picker (exists) |
-| `source_for_occasion` | exists | gains `occasion_id`; counts as a model-calling row |
-| `add_occasion_gift_list` | NEW (F1) | creates the presents list as `audience: 'private'`, `shared_with` = every active parent except the honoree (and except anyone the occasion's `whose_party` names); refuses when that leaves nobody; rows of gift picks go on it; hand path: the occasion page's gift panel gains "Make a private presents list" |
-| `draft_message` | NEW, mission-local | not a registry write: the row stores a drafted text on the mission (to, words); the done card shows it with Copy / Share (the share-out sheet); nothing is sent |
+## Section 5 — The stage runner (F3, F4, F5, F6), unchanged from the first draft
 
-`suggest_gift_ideas` stays a READ the planner uses before proposing the gift rows. Trip and program tools are NOT on slice 2's allow-list (Section 9).
+One door, `planned.run_stage(mission_id, stage_id, snapshot, actor)`: claim under `db_lock` (state, snapshot, subject triple, approver rule) → `running`; rows in order with `needs`, `$ref` resolution, per-row claim and persisted state before and after each handler, `idem` for resumable tools; results kept as `{status, message, created}` (`chat_actions.act_on_proposal` keeps `created` and stores it); restart reconciliation turns `running` rows `uncertain` (never re-run); 120 s bound; model-calling rows charged to the day's pro-call cap before they run; direct proposal endpoints and the `do` verb refuse stage rows; the mission proposal route checks ownership and visibility. A build stage that creates a record while the mission or its thread has no subject binds it (`subject_rev` + 1, `subject_history`). Work stages do not use the runner (they are planner steps); their proposals arrive as a build stage that does.
 
-## Section 6 — The hand path, the cards, and where words go (F9, F10)
+## Section 6 — Answering, approving, changing
 
-- **Cards.** The mission chat card gains `interview` (each question with its control and "You decide"; "Send answers"), `plan` (numbered stages, `makes` lines, owner, "Leave this out", "Looks good", "Change something", "Stop") and `stage` (every row, "Leave this one out", "Do this", "Not this one", "Stop"; afterwards each row's result). The Missions page shows a planned mission as a stepper with the current ask on top; the occasion page's Argyle line shows "Plan: stage 3 of 5 — Supplies".
-- **Keepers get a redacted view** (F9). A creator or owner who may not see the subject (only possible after a parent's hand retarget) sees "Stage 3 of 5, waiting on a parent" and no questions, answers, rows, results or drafts, on every surface (cards, Missions page, `/api/missions/{id}`, DMs). Their DM ask carries no subject words.
-- **Recipient-aware delivery** (F10). Interview, plan and stage cards and every stage result go only to the private conversations of members who may approve (Section 3). In a group or family channel, Argyle answers a question about a planned mission with "I've sent the details to your Argyle chat" and posts nothing of the plan; family-channel bodies therefore never carry plan content into the Mind's snapshot. On a speaker, only a spoken-safe subject's plan is read aloud, and never presents.
-- No browser dialogs.
+As in the first draft, with the verbs renamed because `plan` is the Mind's insight verb: `approve_plan` (options carry `rev`; "Looks good", "Leave this out" per stage, "Change something" = a steer, "Stop") and `run_stage` (options carry the snapshot for build stages; "Do this" / "Go do this part" for work, "Leave this one out" per row, "Not this one", "Stop"). Approver = a parent or adult who may see the mission's whole subject set (F9). Free text on a waiting plan or stage is a steer, never an approval. A proposed or running stage blocks `subjects.retarget`.
 
-## Section 7 — Money, model and time (F12)
+## Section 7 — Cards, keepers, and where words go (F9, F10)
 
-- One planner call per action: about eight to twelve for a party. **Budget at plan time**: the plan is refused with words when `mission_step_cap − step_count < stages + 2` (one stage call each, plus finish and slack), or when the day's `mission_cap_pro_calls` cannot cover it.
-- **Nested model calls**: a row whose tool calls a model (`source_for_occasion`, `add_occasion_dishes` when it parses text) is a model-calling row: at most 3 per stage, each counted against `mission_cap_pro_calls` before it runs; a cap reached mid-stage stops the stage at that row (`partial`, "the day's limit"), resumable tomorrow.
-- **Time**: a stage run is bounded at 120 s; rows still pending at the bound are left `proposed` and the stage `partial` with "carry on" offered.
+The mission chat card gains `interview`, `plan`, `stage` (build: every row; work: the goal and, when done, what it found). The Missions page shows a planned mission as a stepper. The subject's page shows "Plan: stage n of m — <title>" (occasion card, trip page, program row — slice 1's back-link). Keepers who may not see the subject get a redacted view everywhere. Cards and results go only to private conversations of members who may approve; group and family channels get "I've sent the details to your Argyle chat"; speakers read a plan only for a spoken-safe subject and never presents. No browser dialogs.
 
-## Section 8 — Tests (before the code)
+## Section 8 — Money, model, time (F12)
 
-`tests/test_planned_missions.py`: the four actions and their phase gates; interview answers stay on the mission (no occasion write, no kitchen write); `you_decide` never reaches a domain call; plan approval, stale `rev`, per-stage drop; stage rows only from the allow-list, at most 15, at most 3 model-calling; the snapshot in the option id and a stale card refused after "Leave this one out"; the runner's claim (a concurrent second approval answers "already doing it" and runs nothing twice); rows in order, `$ref` resolution, a failed prerequisite skips its dependents; the stored normalized result with `created`; a restart turns `running` rows `uncertain` and never re-runs them; direct proposal endpoints refuse stage rows; the mission proposal route checks ownership and visibility; retarget refused while a stage is proposed or running; a subject change makes the stage stale; the plan-time budget check; the nested-call cap stops a stage resumably.
-`tests/test_planned_missions_party.py`: the acceptance run with a scripted planner on the REAL registry: "help me plan Kate's 10th birthday on February 14" → interview (headcount, cake, theme, gifts, budget) → plan (party and guests; food; supplies; presents; invitations to send) → stage 1 creates the occasion through `add_occasion`, replays the template answers, binds the occasion as the subject → stages 2–5 by id, never by name (a last-year "Kate's birthday" occasion exists in the fixture and is untouched) → the occasion has guests, a menu of occasion-scoped dishes, a supplies list, the cake errand, a private presents list Kate cannot see, and invitation drafts; the gap report closes the mission; nothing written before its stage was approved.
-`tests/test_planned_missions_audience.py`: keeper redaction on every surface; group and family channel answers are neutral and carry no plan words; a spoken plan never names presents; the Mind snapshot never sees plan content.
-`tests/test_planned_mission_cards.py`: node runs of the three card kinds and the stepper.
+One planner call per action: about ten for a party, more for a trip with a dining work stage, bounded by the plan-time budget check. Model-calling rows are charged before they run, at most 3 per build stage. A build stage run is bounded at 120 s; a work stage by its `step_budget`.
 
-## Section 9 — Next targets on the same engine (not built here)
+## Section 9 — Tests (before the code)
 
-- **Trips**: register `auto_schedule_trip_itinerary` and `manage_trip_flights` (absent from the registry today), make trip creation and `add_trip_poi` take ids and return `created`, add them to the allow-list.
-- **Programs**: register `propose_program` (absent from the registry today) as a stage row returning the program id; a program becomes a stage of "learn piano", with lessons (a thread) and buying (research + drafts) as other stages.
-- **Waiting stages** (slice 3): a stage with `not_before` or `on_event` runs through Section 4's runner when woken.
+- `tests/test_registry_parity.py`: every declared tool has a registry handler except the named three; each adapter resolves its actor from the caller, never the model; READ_TOOLS gains the reads.
+- `tests/test_stage_contract.py`: every contract entry names a real handler; a target argument refuses a name; idem tools return the same record twice; `resumable: false` rows become `uncertain` on restart.
+- `tests/test_planned_missions.py`: the first draft's list (interview held on the mission, plan approval and stale rev, snapshots, concurrent approval runs once, `$ref`, failed prerequisites skip dependents, created results, restart reconciliation, direct endpoints refuse stage rows, retarget blocked, budget refusal, nested-call cap) plus work stages: approval starts it, CURRENT STAGE leads the prompt, proposals inside it become a follow-up build stage, `stage_done` closes it with `found`, the step budget ends it `partial`.
+- Acceptance, each with a scripted planner on the REAL registry: `tests/test_planned_party.py` (Kate's 10th: interview, five build stages, a last-year occasion of the same title untouched, a private presents list Kate cannot see, drafts, the gap report); `tests/test_planned_trip.py` ("help me plan our Disney trip in January": interview (dates, travellers, budget, must-dos, dining style) → build: `create_trip` + accommodation + attractions as POIs + dining as `category: 'food'` POIs + `auto_schedule_trip_itinerary` → the trip bound as subject → work: "get dining reservations" browses disneyworld.disney.go.com, meets the login wall, hands off with each restaurant and its scheduled window → finish); `tests/test_planned_piano.py` ("I want to learn piano": interview (who, starting point, minutes, days, budget) → build: `propose_program` → work: "find lessons nearby" (research + `create_thread` proposals drafted to two teachers) → work: "find a piano and books" (research) → build: `create_list` "Piano" with the books and a keyboard line, `draft_message` to the teachers → finish).
+- `tests/test_planned_missions_audience.py` and `tests/test_planned_mission_cards.py` as in the first draft.
 
-## Open questions for the user
+## Open questions
 
-1. May a stage be approved by words in a private conversation, or only by tap? (ASSUMED: words, in private only.)
-2. Interview as one card with up to five questions plus one-at-a-time in conversation? (ASSUMED: yes.)
-3. Should the planner start a plan on its own for any multi-part goal, or only when the person says "plan" / "help me plan"? (ASSUMED: the planner decides; a plan always shows before anything is written.)
-4. Presents list shared with every parent except the honoree — or only with the parent who approved the stage? (ASSUMED: every parent except the honoree.)
+None from the user's last review. Two rulings in this revision, flagged for the user: (1) a write a work stage wants is not proposed on its own; it is gathered into a follow-up build stage the person approves as one; (2) `propose_program` stays a proposal the person approves on the Programs page even inside an approved stage, because the curator's plan is itself something a person reviews (the programs arc's rule).
