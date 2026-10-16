@@ -5184,18 +5184,22 @@ def list_action_proposals(status: str = "proposed", request: Request = None):
     transcript they can read — while parents/adults and an admin surface
     (a control-center page with no person to resolve, same carve-out
     `_mind_actor` makes) keep seeing everything, unchanged from before."""
-    rows = storage.get_action_proposals(status=status or None)
-    actor_id = _acting_id(request, None)
-    actor = storage.get_member(actor_id) if actor_id else None
-    if actor:
-        from services import situations
-        rows = [r for r in rows if r.get('origin_kind') != 'mission'
-                or situations.can_see('mission', storage.get_mission(r.get('origin_id')) or {}, actor)]
-    if actor and actor.get('role') in ('parent', 'adult'):
-        return rows
-    if not actor and _is_admin_surface(request):
-        return rows
-    return [r for r in rows if r.get('channel_id')]
+    from services import access
+    with access.batch():
+        viewer = _piece_viewer(request)
+        rows = [p for p in storage.get_action_proposals(status=status or None)
+                if _proposal_piece_visible(p, viewer)]
+        actor_id = _acting_id(request, None)
+        actor = storage.get_member(actor_id) if actor_id else None
+        if actor:
+            from services import situations
+            rows = [r for r in rows if r.get('origin_kind') != 'mission'
+                    or situations.can_see('mission', storage.get_mission(r.get('origin_id')) or {}, actor)]
+        if actor and actor.get('role') in ('parent', 'adult'):
+            return rows
+        if not actor and _is_admin_surface(request):
+            return rows
+        return [r for r in rows if r.get('channel_id')]
 
 
 @app.post("/api/action-proposals/{proposal_id}/act")
@@ -5213,6 +5217,9 @@ def act_on_action_proposal(proposal_id: str, req: ActionProposalAct, background_
     member token today (a control-center surface, device-token territory
     only) and so still falls back to the claim there, exactly as before this
     fix — unchanged, not widened."""
+    prop = storage.get_action_proposal(proposal_id)
+    if not prop or not _proposal_piece_visible(prop, _piece_viewer(request), 'approve'):
+        raise HTTPException(status_code=404, detail='No such proposal')
     from services import chat_actions
     from services.agent_tools_v2 import _post_chat_message
     req.member_id = _acting_id(request, req.member_id)
@@ -5830,21 +5837,81 @@ def _situation_viewer(request):
     return viewer
 
 
+def _piece_viewer(request):
+    """The signed-in member, or HOUSE when no person resolves (access rule §4)."""
+    from services import access
+    mid = _acting_id(request, None)
+    member = storage.get_member(mid) if mid else None
+    return member or access.HOUSE
+
+
+_PIECE_LOAD = {'thread': lambda rid: storage.get_thread(rid),
+               'mission': lambda rid: storage.get_mission(rid),
+               'program': lambda rid: storage.get_program(rid)}
+
+
+def _piece_or_404(kind, rid, request, verb=None):
+    """A hidden piece has exactly the same response as a missing piece."""
+    from services import access
+    row = _PIECE_LOAD[kind](rid)
+    viewer = _piece_viewer(request)
+    ok = row is not None and (access.record_actable(kind, row, viewer, verb) if verb
+                              else access.record_visible(kind, row, viewer))
+    if not ok:
+        raise HTTPException(status_code=404, detail=f'No such {kind}')
+    return row, access.record_view(kind, row, viewer)
+
+
+def _ask_piece_or_404(ask_id, request, verb=None):
+    from services import access
+    row = storage.get_ask(ask_id)
+    if row:
+        kind, sid = row.get('situation_kind'), row.get('situation_id')
+        if kind not in _PIECE_LOAD:
+            return row
+        piece = _PIECE_LOAD[kind](sid)
+        viewer = _piece_viewer(request)
+        if (access.record_actable(kind, piece, viewer, verb) if verb
+                else access.record_visible(kind, piece, viewer)):
+            return row
+    raise HTTPException(status_code=404, detail='No such ask')
+
+
+def _proposal_piece_visible(prop, viewer, verb=None):
+    """A proposal's words and action belong to its source pieces."""
+    from services import access
+    refs = []
+    if prop.get('origin_kind') == 'mission':
+        refs.append(('mission', prop.get('origin_id'), verb or 'approve'))
+    if prop.get('action_type') in ('log_program_session', 'reshape_program'):
+        refs.append(('program', (prop.get('payload') or {}).get('program_id'),
+                     'session' if prop['action_type'] == 'log_program_session' else 'reshape'))
+    return all(access.record_actable(kind, _PIECE_LOAD[kind](rid), viewer, action)
+               for kind, rid, action in refs)
+
+
 @app.get("/api/situations")
 def situations_list(kinds: str = None, include_done: int = 0, owner: str = None, request: Request = None):
-    from services import situations as _sit
-    want = tuple(k for k in (kinds or '').split(',') if k in _sit.KINDS) or None
-    return {"situations": _sit.list_situations(_situation_viewer(request), kinds=want,
-                                               include_done=bool(include_done), owner=owner or None)}
+    from services import access
+    with access.batch():
+        from services import situations as _sit
+        want = tuple(k for k in (kinds or '').split(',') if k in _sit.KINDS) or None
+        out = []
+        for kind in (want or _sit.KINDS):
+            viewer = _piece_viewer(request) if kind in _PIECE_LOAD else _situation_viewer(request)
+            out.extend(_sit.list_situations(viewer, kinds=(kind,), include_done=bool(include_done), owner=owner or None))
+        return {"situations": _sit.rank(out)}
 
 
 @app.get("/api/situations/{kind}/{sid}")
 def situation_get(kind: str, sid: str, request: Request = None):
+    if kind in _PIECE_LOAD:
+        _piece_or_404(kind, sid, request)
     from services import situations as _sit
     row = _sit.load(kind, sid)
     if not row:
         raise HTTPException(status_code=404, detail="No such situation")
-    viewer = _situation_viewer(request)
+    viewer = _piece_viewer(request) if kind in _PIECE_LOAD else _situation_viewer(request)
     if not _sit.can_see(kind, row, viewer) and not _is_admin_surface(request):
         raise HTTPException(status_code=403, detail="Not yours to see")
     return _sit.view(kind, sid, viewer)
@@ -5852,40 +5919,54 @@ def situation_get(kind: str, sid: str, request: Request = None):
 
 @app.get("/api/subjects/{kind}/{sid}/situations")
 def subject_situations(kind: str, sid: str, request: Request = None):
-    from services import missions, situations as _sit
-    def plan_line(mission):
-        stages = ((mission or {}).get('plan') or {}).get('stages') or []
-        if not stages:
-            return {}
-        index = next((i for i, s in enumerate(stages) if s.get('state') not in ('done', 'skipped')),
-                     len(stages) - 1)
-        return {'plan_line': f"Plan: stage {index + 1} of {len(stages)} — {stages[index].get('title') or ''}"}
+    from services import access
+    with access.batch():
+        from services import missions, situations as _sit
+        def plan_line(mission):
+            if not mission or access.record_view('mission', mission, viewer) != access.FULL:
+                return {}
+            stages = ((mission or {}).get('plan') or {}).get('stages') or []
+            if not stages:
+                return {}
+            index = next((i for i, s in enumerate(stages) if s.get('state') not in ('done', 'skipped')),
+                         len(stages) - 1)
+            return {'plan_line': f"Plan: stage {index + 1} of {len(stages)} — {stages[index].get('title') or ''}"}
 
-    actor = _mind_actor(request, None)
-    if actor is not None and actor.get('role') not in ('parent', 'adult'):
-        raise HTTPException(status_code=403, detail="Parents and adults only")
-    viewer = actor if actor is not None else _sit.parent_of_record()
-    out = []
-    for t in storage.get_threads():
-        if ((t.get('subject_kind'), t.get('subject_id')) == (kind, sid)
-                and _sit.can_see('thread', t, viewer)):
-            v = _sit.view('thread', t['id'], viewer)
-            out.append({'kind': 'thread', 'id': t['id'], 'title': t.get('title'),
-                        'next_step': (v or {}).get('next_step'),
-                        **plan_line(_sit._thread_mission(t))})
-    for m in storage.get_missions(status=missions.LIVE):
-        if (m.get('origin_kind') != 'thread'
-                and (m.get('subject_kind'), m.get('subject_id')) == (kind, sid)
-                and _sit.can_see('mission', m, viewer)):
-            v = _sit.view('mission', m['id'], viewer)
-            out.append({'kind': 'mission', 'id': m['id'], 'title': m.get('goal'),
-                        'next_step': (v or {}).get('next_step'), **plan_line(m)})
-    return out
+        actor = _mind_actor(request, None)
+        if actor is not None and actor.get('role') not in ('parent', 'adult'):
+            raise HTTPException(status_code=403, detail="Parents and adults only")
+        viewer = _piece_viewer(request)
+        out = []
+        for t in storage.get_threads():
+            if ((t.get('subject_kind'), t.get('subject_id')) == (kind, sid)
+                    and _sit.can_see('thread', t, viewer)):
+                v = _sit.view('thread', t['id'], viewer)
+                out.append({'kind': 'thread', 'id': t['id'], 'title': t.get('title'),
+                            'next_step': (v or {}).get('next_step'),
+                            **(plan_line(_sit._thread_mission(t)) if access.record_view('thread', t, viewer) == access.FULL else {})})
+        for m in storage.get_missions(status=missions.LIVE):
+            if (m.get('origin_kind') != 'thread'
+                    and (m.get('subject_kind'), m.get('subject_id')) == (kind, sid)
+                    and _sit.can_see('mission', m, viewer)):
+                v = _sit.view('mission', m['id'], viewer)
+                out.append({'kind': 'mission', 'id': m['id'], 'title': m.get('goal'),
+                            'next_step': (v or {}).get('next_step'),
+                            **(plan_line(m) if access.record_view('mission', m, viewer) == access.FULL else {})})
+        return out
 
 
 @app.post("/api/situations/{kind}/{sid}/act")
 def situations_act(kind: str, sid: str, body: dict = Body(default={}),
                    request: Request = None, background_tasks: BackgroundTasks = None):
+    if kind in _PIECE_LOAD:
+        verb = body.get('verb') or ''
+        option_id = body.get('option_id') or ''
+        action = 'steer' if verb == 'answer' and option_id.endswith(':steer') else verb
+        _piece_or_404(kind, sid, request, action)
+        # A forwarded thread button must also pass the mission's own gate.
+        bits = option_id.split(':')
+        if kind == 'thread' and len(bits) >= 3 and bits[1] == 'mission':
+            _piece_or_404('mission', bits[2], request, action)
     from services import situations as _sit
     actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
     res = _sit.act(kind, sid, body.get('verb') or '', option_id=body.get('option_id'),
@@ -5900,6 +5981,8 @@ def situations_act(kind: str, sid: str, body: dict = Body(default={}),
 
 @app.post("/api/asks")
 def asks_create(body: dict = Body(default={}), request: Request = None):
+    if body.get('kind') in _PIECE_LOAD:
+        _piece_or_404(body['kind'], body.get('id'), request, 'ask')
     from services import situations as _sit, asks as _asks
     actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
     kind, sid = body.get('kind'), body.get('id')
@@ -5956,6 +6039,7 @@ def asks_channels_lookup(name: str = '', member_id: str = None, contact_id: str 
 
 @app.get("/api/asks/{ask_id}/channels")
 def asks_channels(ask_id: str, request: Request = None):
+    _ask_piece_or_404(ask_id, request, None)
     from services import asks as _asks
     _mind_actor(request, None)
     a = storage.get_ask(ask_id)
@@ -5980,6 +6064,7 @@ def _ask_actor(request, claimed):
 
 @app.post("/api/asks/{ask_id}/sent")
 def asks_sent(ask_id: str, body: dict = Body(default={}), request: Request = None):
+    _ask_piece_or_404(ask_id, request, 'sent')
     from services import asks as _asks
     res = _asks.mark_sent(ask_id, _ask_actor(request, body.get('member_id')))
     if res.get('status') == 'refused':
@@ -5991,6 +6076,7 @@ def asks_sent(ask_id: str, body: dict = Body(default={}), request: Request = Non
 
 @app.post("/api/asks/{ask_id}/withdraw")
 def asks_withdraw(ask_id: str, body: dict = Body(default={}), request: Request = None):
+    _ask_piece_or_404(ask_id, request, 'withdraw')
     from services import asks as _asks
     res = _asks.withdraw(ask_id, _ask_actor(request, body.get('member_id')))
     if res.get('status') == 'refused':
@@ -6003,6 +6089,7 @@ def asks_withdraw(ask_id: str, body: dict = Body(default={}), request: Request =
 @app.post("/api/asks/{ask_id}/answer")
 def asks_answer(ask_id: str, body: dict = Body(default={}), request: Request = None,
                 background_tasks: BackgroundTasks = None):
+    _ask_piece_or_404(ask_id, request, 'answer')
     from services import asks as _asks
     actor = _ask_actor(request, body.get('member_id'))
     a = storage.get_ask(ask_id)
@@ -6022,10 +6109,12 @@ def asks_answer(ask_id: str, body: dict = Body(default={}), request: Request = N
 
 @app.get("/api/projects")
 def projects_list(request: Request = None):
-    from services import projects
-    actor = _situation_viewer(request)
-    return {'projects': [projects.overview_row(row, actor) for row in storage.get_projects()
-                         if projects.can_see(row, actor)]}
+    from services import access
+    with access.batch():
+        from services import projects
+        actor = _piece_viewer(request)
+        return {'projects': [projects.overview_row(row, actor) for row in storage.get_projects()
+                             if projects.can_see(row, actor)]}
 
 
 @app.post("/api/projects")
@@ -6060,31 +6149,41 @@ def _project_for_actor(project_id, actor, writing=False):
 
 @app.get("/api/projects/elsewhere")
 def projects_elsewhere(request: Request = None):
-    from services import projects
-    return {'situations': projects.elsewhere(_situation_viewer(request))}
+    from services import access
+    with access.batch():
+        from services import projects
+        return {'situations': projects.elsewhere(_piece_viewer(request))}
 
 
 @app.get("/api/projects/for/{kind}/{record_id}")
 def projects_for_record(kind: str, record_id: str, request: Request = None):
     """Where an old Threads, Missions or Programs link lands (front door §3)."""
-    from services import projects
-    return projects.locate(kind, record_id, _situation_viewer(request))
+    from services import access
+    with access.batch():
+        if kind in _PIECE_LOAD:
+            _piece_or_404(kind, record_id, request)
+        from services import projects
+        return projects.locate(kind, record_id, _piece_viewer(request))
 
 
 @app.get("/api/projects/{project_id}/pieces")
 def project_pieces(project_id: str, request: Request = None):
-    from services import projects
-    actor = _situation_viewer(request)
-    return {'pieces': projects.piece_cards(_project_for_actor(project_id, actor), actor)}
+    from services import access
+    with access.batch():
+        from services import projects
+        actor = _piece_viewer(request)
+        return {'pieces': projects.piece_cards(_project_for_actor(project_id, actor), actor)}
 
 
 
 
 @app.get("/api/projects/{project_id}")
 def project_detail(project_id: str, request: Request = None):
-    from services import projects
-    actor = _situation_viewer(request)
-    return {'project': projects.view(_project_for_actor(project_id, actor), actor)}
+    from services import access
+    with access.batch():
+        from services import projects
+        actor = _piece_viewer(request)
+        return {'project': projects.view(_project_for_actor(project_id, actor), actor)}
 
 
 @app.patch("/api/projects/{project_id}")
@@ -6262,7 +6361,7 @@ def project_step_hold_clear(project_id: str, step_id: str, request: Request = No
 @app.post("/api/projects/{project_id}/pieces")
 def project_add_piece(project_id: str, body: dict, request: Request = None):
     from services import projects
-    actor = _situation_viewer(request)
+    actor = _piece_viewer(request)
     _project_for_actor(project_id, actor, writing=True)
     result = projects.add_piece(project_id, body.get('kind'), body.get('id'), actor)
     if result['status'] == 'error':
@@ -6273,7 +6372,7 @@ def project_add_piece(project_id: str, body: dict, request: Request = None):
 @app.post("/api/projects/{project_id}/pieces/remove")
 def project_remove_piece(project_id: str, body: dict, request: Request = None):
     from services import projects
-    actor = _situation_viewer(request)
+    actor = _piece_viewer(request)
     _project_for_actor(project_id, actor, writing=True)
     result = projects.remove_piece(project_id, body.get('kind'), body.get('id'), actor)
     if result['status'] == 'error':
@@ -6284,25 +6383,29 @@ def project_remove_piece(project_id: str, body: dict, request: Request = None):
 @app.get("/api/subjects/search")
 def subjects_search(q: str = '', request: Request = None, exclude: str = ''):
     """Something already in Chauffeur, found from a project's Add a piece."""
-    from services import subjects
-    actor = _situation_viewer(request)
-    if not (q or '').strip():
-        return {'candidates': []}
-    return {'candidates': [{'kind': c['kind'], 'id': c['id'], 'title': c['title']}
-                           for c in subjects.find_all(q, actor, exclude=exclude.split(','))]}
+    from services import access
+    with access.batch():
+        from services import subjects
+        actor = _piece_viewer(request)
+        if not (q or '').strip():
+            return {'candidates': []}
+        return {'candidates': [{'kind': c['kind'], 'id': c['id'], 'title': c['title']}
+                               for c in subjects.find_all(q, actor, exclude=exclude.split(','))]}
 
 
 @app.get("/api/subjects/{kind}/{sid}/projects")
 def subject_projects(kind: str, sid: str, request: Request = None):
-    from services import projects, subjects
-    actor = _situation_viewer(request)
-    record = subjects.load(kind, sid)
-    if record is None or not subjects.visible(kind, record, actor):
-        raise HTTPException(status_code=404, detail="No such record")
-    return {'projects': [{key: row[key] for key in ('id', 'title', 'state')}
-                         for row in storage.get_projects() if projects.can_see(row, actor)
-                         and any((p.get('kind'), p.get('id')) == (kind, sid)
-                                 for p in row.get('pieces') or [])]}
+    from services import access
+    with access.batch():
+        from services import projects, subjects
+        actor = _piece_viewer(request)
+        record = subjects.load(kind, sid)
+        if record is None or not subjects.visible(kind, record, actor):
+            raise HTTPException(status_code=404, detail="No such record")
+        return {'projects': [{key: row[key] for key in ('id', 'title', 'state')}
+                             for row in storage.get_projects() if projects.can_see(row, actor)
+                             and any((p.get('kind'), p.get('id')) == (kind, sid)
+                                     for p in row.get('pieces') or [])]}
 
 
 # --- Missions (spec: 2026-09-04-mission-engine-design) ---
@@ -6313,21 +6416,24 @@ def missions_admin(request: Request = None):
     surface via `_mind_actor`, refusing a child/helper/guest with 403. The
     route rule is a bare SIGNED_IN wildcard (`/api/missions/*`), same as
     `/api/mind/*`, so the role decision has to live here."""
-    from services import missions
-    actor = _mind_actor(request, None)
-    active = storage.get_missions(status=missions.LIVE)
-    history = storage.get_missions(status=['done', 'blocked', 'dropped'])[:60]
-    if actor is not None:
-        from services import situations
-        active = [m for m in active if situations.can_see('mission', m, actor)]
-        history = [m for m in history if situations.can_see('mission', m, actor)]
-    for m in active:
-        m['steps'] = storage.get_mission_steps(m['id'])
-    if actor is not None:
-        from services import planned
-        active = [planned.keeper_view(m, actor) for m in active]
-        history = [planned.keeper_view(m, actor) for m in history]
-    return {"active": active, "history": history}
+    from services import access
+    with access.batch():
+        from services import missions
+        _mind_actor(request, None)
+        actor = _piece_viewer(request)
+        active = storage.get_missions(status=missions.LIVE)
+        history = storage.get_missions(status=['done', 'blocked', 'dropped'])[:60]
+        if actor is not None:
+            from services import situations
+            active = [m for m in active if situations.can_see('mission', m, actor)]
+            history = [m for m in history if situations.can_see('mission', m, actor)]
+        for m in active:
+            m['steps'] = storage.get_mission_steps(m['id'])
+        if actor is not None:
+            from services import planned
+            active = [planned.keeper_view(m, actor) for m in active]
+            history = [planned.keeper_view(m, actor) for m in history]
+        return {"active": active, "history": history}
 
 
 @app.get("/api/missions/{mission_id}")
@@ -6337,7 +6443,9 @@ def missions_detail(mission_id: str, request: Request = None):
     only, so sixty finished transcripts don't ride every 15s poll). Same
     person-gate as the list; registered after /api/missions/admin so the
     literal segment wins the route match."""
-    actor = _mind_actor(request, None)
+    _piece_or_404('mission', mission_id, request, None)
+    _mind_actor(request, None)
+    actor = _piece_viewer(request)
     row = storage.get_mission(mission_id)
     if not row:
         raise HTTPException(status_code=404, detail="No such mission")
@@ -6354,6 +6462,8 @@ def missions_detail(mission_id: str, request: Request = None):
 
 @app.post("/api/missions/launch")
 def missions_launch(body: dict = Body(default={}), request: Request = None):
+    if body.get('origin_ref'):
+        _piece_or_404('thread', body['origin_ref'], request, 'mission')
     from services import missions as _missions
     actor = _mind_actor(request, body.get('member_id'))
     pid = _project_to_join(body, actor)
@@ -6372,6 +6482,7 @@ def missions_launch(body: dict = Body(default={}), request: Request = None):
 def missions_proposal_act(mission_id: str, proposal_id: str,
                           body: dict = Body(default={}), request: Request = None,
                           background_tasks: BackgroundTasks = None):
+    _piece_or_404('mission', mission_id, request, 'approve')
     from services import chat_actions as _ca
     actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
     mission = storage.get_mission(mission_id)
@@ -6412,6 +6523,9 @@ async def browse_netcheck(request: Request = None):
 def mission_shot(mission_id: str, name: str, request: Request = None):
     """A browse step's screenshot (parent-gated like the transcript). Lives
     under the data dir, never under the moments media root."""
+    _, projection = _piece_or_404('mission', mission_id, request)
+    if projection != 'full':
+        raise HTTPException(status_code=404, detail='No such image')
     actor = _mind_actor(request, request.query_params.get('member_id') if request else None)
     from services import missions as _missions
     import re as _re
@@ -6435,6 +6549,7 @@ def missions_release(mission_id: str, body: dict = Body(default={}), request: Re
     """A release ask answered by hand: approve shares the contact card with
     one site for this mission and resumes the browse; decline hands over;
     stop blocks (services/missions.release)."""
+    _piece_or_404('mission', mission_id, request, 'release')
     from services import missions as _missions
     actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
     res = _missions.release(mission_id, (body.get('decision') or '').strip(), actor, ask_id=(body.get('ask_id') or None))
@@ -6450,6 +6565,7 @@ def missions_submit(mission_id: str, body: dict = Body(default={}), request: Req
     """A submit ask answered by hand (spec 2026-10-11): approve re-runs the
     browse with the approved record and presses once; decline hands over;
     stop blocks. The ask id is the approval; a stale one answers moved."""
+    _piece_or_404('mission', mission_id, request, 'submit')
     from services import missions as _missions
     actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
     res = _missions.submit(mission_id, (body.get('decision') or '').strip(), actor, ask_id=(body.get('ask_id') or None))
@@ -6464,6 +6580,7 @@ def missions_submit(mission_id: str, body: dict = Body(default={}), request: Req
 def missions_verify(mission_id: str, body: dict = Body(default={}), request: Request = None):
     """A parent resolves an attempt the browser could not read: confirmed,
     failed or unsure, with a detail (a confirmation number)."""
+    _piece_or_404('mission', mission_id, request, 'verify')
     from services import missions as _missions
     actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
     res = _missions.verify(mission_id, body.get('ask_id') or None, (body.get('outcome') or '').strip(), actor, detail=body.get('detail') or '')
@@ -6476,6 +6593,7 @@ def missions_verify(mission_id: str, body: dict = Body(default={}), request: Req
 
 @app.post("/api/missions/{mission_id}/plan/answers")
 def missions_plan_answers(mission_id: str, body: dict = Body(default={}), request: Request = None):
+    _piece_or_404('mission', mission_id, request, 'answer')
     actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
     from services import planned, situations
     mission = storage.get_mission(mission_id)
@@ -6496,6 +6614,11 @@ def missions_answer(mission_id: str, body: dict = Body(default={}),
     """Delegate free text to missions.answer, including tap_only_ask_pending:
     a pending release, submit or verify returns 'Answer that one with its buttons.'
     """
+    from services import situations
+    row = situations.load('mission', mission_id)
+    verb = ('steer' if row and any(o['id'] == 'answer:steer'
+                                  for o in situations.options_for('mission', row)) else 'answer')
+    _piece_or_404('mission', mission_id, request, verb)
     actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
     text = (body.get('text') or '').strip()
     from services import missions as _missions
@@ -6512,6 +6635,7 @@ def missions_answer(mission_id: str, body: dict = Body(default={}),
 def delete_mission_route(mission_id: str, member_id: Optional[str] = None, request: Request = None):
     """Delete one mission with its steps and screenshots (services.missions.delete).
     Parent/adult, by hand only; Argyle has no such tool."""
+    _piece_or_404('mission', mission_id, request, 'delete')
     _mind_actor(request, member_id)
     from services import missions as _missions
     res = _missions.delete(mission_id)
@@ -6523,6 +6647,7 @@ def delete_mission_route(mission_id: str, member_id: Optional[str] = None, reque
 @app.post("/api/missions/{mission_id}/drop")
 def missions_drop(mission_id: str, body: dict = Body(default={}),
                   request: Request = None):
+    _piece_or_404('mission', mission_id, request, 'drop')
     _mind_actor(request, body.get('member_id'))
     if not storage.get_mission(mission_id):
         raise HTTPException(status_code=404, detail="No such mission")
@@ -6536,6 +6661,7 @@ def missions_drop(mission_id: str, body: dict = Body(default={}),
 @app.post("/api/missions/{mission_id}/ack")
 def missions_ack(mission_id: str, body: dict = Body(default={}),
                  request: Request = None):
+    _piece_or_404('mission', mission_id, request, 'ack')
     _mind_actor(request, body.get('member_id'))
     if not storage.get_mission(mission_id):
         raise HTTPException(status_code=404, detail="No such mission")
@@ -7024,17 +7150,17 @@ def list_threads(owner: Optional[str] = None, include_closed: bool = False,
     that decides whether a thread has stalled. The Threads page used to port
     that logic into JS; nothing enforced the two staying in sync, so this
     is additive-only on the response and the page reads the field instead."""
-    from services import threads as _threads
-    rows = storage.get_threads(owner=owner, include_closed=include_closed)
-    viewer_id = _acting_id(request, None)
-    viewer = storage.get_member(viewer_id) if viewer_id else None
-    if viewer is not None:
+    from services import access
+    with access.batch():
+        from services import threads as _threads
+        rows = storage.get_threads(owner=owner, include_closed=include_closed)
+        viewer = _piece_viewer(request)
         from services import situations
-        rows = [row for row in rows if not (row.get('subject_kind') or row.get('subject_history'))
-                or situations.can_see('thread', row, viewer)]
-    for row in rows:
-        row['stall_reason'] = _threads.is_stalled(row)
-    return {"threads": rows}
+        rows = [situations.thread_keeper_view(row) if access.record_view('thread', row, viewer) == access.KEEPER else row
+                for row in rows if access.record_visible('thread', row, viewer)]
+        for row in rows:
+            row['stall_reason'] = _threads.is_stalled(row)
+        return {"threads": rows}
 
 
 @app.post("/api/threads")
@@ -7067,23 +7193,26 @@ def create_thread(body: dict = Body(default={}), request: Request = None):
 def thread_missions(thread_id: str, request: Request = None):
     """The missions opened from this thread, newest first, with their steps —
     the same gate as reading the thread (browse missions §5)."""
-    viewer = _situation_viewer(request)
-    from services import situations as _sit
-    row = storage.get_thread(thread_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="No such thread")
-    # A mission's transcript (mail results, released values, the planner's
-    # words) is parent/adult reading, like every other mission read — a
-    # child who owns the thread sees the thread, not this.
-    if not _sit.can_see('thread', row, viewer) or (viewer or {}).get('role') not in _sit.WRITE_ROLES:
-        raise HTTPException(status_code=403, detail="Not yours to see")
-    from services import planned
-    rows = [m for m in storage.get_missions() if m.get('origin_kind') == 'thread'
-            and m.get('origin_ref') == thread_id and _sit.can_see('mission', m, viewer)]
-    rows.sort(key=lambda m: -(m.get('created_at') or 0))
-    for m in rows:
-        m['steps'] = storage.get_mission_steps(m['id'])
-    return {"missions": [planned.keeper_view(m, viewer) for m in rows[:5]]}
+    from services import access
+    with access.batch():
+        _piece_or_404('thread', thread_id, request, None)
+        viewer = _piece_viewer(request)
+        from services import situations as _sit
+        row = storage.get_thread(thread_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="No such thread")
+        # A mission's transcript (mail results, released values, the planner's
+        # words) is parent/adult reading, like every other mission read — a
+        # child who owns the thread sees the thread, not this.
+        if not _sit.can_see('thread', row, viewer) or (viewer or {}).get('role') not in _sit.WRITE_ROLES:
+            raise HTTPException(status_code=403, detail="Not yours to see")
+        from services import planned
+        rows = [m for m in storage.get_missions() if m.get('origin_kind') == 'thread'
+                and m.get('origin_ref') == thread_id and _sit.can_see('mission', m, viewer)]
+        rows.sort(key=lambda m: -(m.get('created_at') or 0))
+        for m in rows:
+            m['steps'] = storage.get_mission_steps(m['id'])
+        return {"missions": [planned.keeper_view(m, viewer) for m in rows[:5]]}
 
 
 @app.patch("/api/threads/{thread_id}")
@@ -7091,6 +7220,7 @@ def patch_thread(thread_id: str, body: dict = Body(default={}), request: Request
     """Direct field edits — retitling, fixing a counterparty email typo.
     State changes go through /advance, /note and /close so they land in
     `history`; this route is for fields that carry no movement of their own."""
+    _piece_or_404('thread', thread_id, request, 'edit')
     from models.schemas import Thread
     _mind_actor(request, body.get('member_id'))
     # Anything that carries movement — state, closed_at, next_action(_at) —
@@ -7098,9 +7228,11 @@ def patch_thread(thread_id: str, body: dict = Body(default={}), request: Request
     # close()/advance(), which log the change. A PATCH that could set them
     # directly would silently break the invariant that the state is always
     # explained by the log (findings 1/2, task 5 review).
+    # A piece's project is fixed at creation; ordinary edits cannot move it
+    # or remove the project's access restriction (access rule section 10.1).
     clean = {k: v for k, v in (body or {}).items()
              if k in Thread.model_fields and k not in (
-                 'id', 'created_at', 'history', 'state', 'closed_at',
+                 'id', 'created_at', 'history', 'state', 'closed_at', 'project_id',
                  'subject_kind', 'subject_id', 'subject_rev', 'subject_history',
                  'next_action', 'next_action_at')}
     ok = storage.update_thread(thread_id, clean)
@@ -7129,6 +7261,7 @@ def _live_thread_or_refuse(thread_id: str) -> dict:
 def note_thread(thread_id: str, body: dict = Body(default={}), request: Request = None):
     """Movement that isn't a change of plan — a call made, a document
     received. Resets the quiet clock (services.threads.note)."""
+    _piece_or_404('thread', thread_id, request, 'note')
     from services import threads as _threads
     actor = _mind_actor(request, body.get('member_id'))
     text = (body.get('text') or '').strip()
@@ -7144,6 +7277,7 @@ def note_thread(thread_id: str, body: dict = Body(default={}), request: Request 
 @app.post("/api/threads/{thread_id}/advance")
 def advance_thread(thread_id: str, body: dict = Body(default={}), request: Request = None):
     """Set the next thing that has to happen, and when (services.threads.advance)."""
+    _piece_or_404('thread', thread_id, request, 'advance')
     from services import threads as _threads
     actor = _mind_actor(request, body.get('member_id'))
     _live_thread_or_refuse(thread_id)
@@ -7159,6 +7293,7 @@ def advance_thread(thread_id: str, body: dict = Body(default={}), request: Reque
 def delete_thread_route(thread_id: str, member_id: Optional[str] = None, request: Request = None):
     """Delete a thread with everything of its own (services.threads.delete).
     Parent/adult, by hand only; Argyle has no such tool."""
+    _piece_or_404('thread', thread_id, request, 'delete')
     _mind_actor(request, member_id)
     from services import threads as _threads
     res = _threads.delete(thread_id)
@@ -7171,6 +7306,7 @@ def delete_thread_route(thread_id: str, member_id: Optional[str] = None, request
 def close_thread(thread_id: str, body: dict = Body(default={}), request: Request = None):
     """End a thread — done when it resolved, dropped when it won't
     (services.threads.close). Stops stalling immediately."""
+    _piece_or_404('thread', thread_id, request, 'close')
     from services import threads as _threads
     actor = _mind_actor(request, body.get('member_id'))
     state = body.get('state') or 'done'
@@ -7191,9 +7327,11 @@ def draft_thread_message(thread_id: str, body: dict = Body(default={}),
     cannot send anything, by construction: draft_message never imports
     services.mailer. See send_thread_message below for the only route
     that can."""
+    _piece_or_404('thread', thread_id, request, 'draft')
     from services import threads as _threads
     _mind_actor(request, body.get('member_id'))
-    res = _threads.draft_message(thread_id, intent=body.get('intent') or '')
+    res = _threads.draft_message(thread_id, intent=body.get('intent') or '',
+                                 viewer=_piece_viewer(request))
     if res.get('status') == 'not_found':
         raise HTTPException(status_code=404, detail="No such thread")
     return res
@@ -7205,6 +7343,7 @@ async def thread_photo(thread_id: str, file: UploadFile = File(...), caption: st
     """A photo on a thread (browse missions §3): a parent or adult, or the
     thread's owner whatever their role. Images only; read once by the vision
     tier; answers a mission waiting on this thread."""
+    _piece_or_404('thread', thread_id, request, 'photo')
     thread = storage.get_thread(thread_id)
     if not thread:
         raise HTTPException(status_code=404, detail="No such thread")
@@ -7239,6 +7378,7 @@ def send_thread_message(thread_id: str, body: dict = Body(default={}),
     not from anything stored). Two endpoints, two functions, on purpose:
     an agent can write words here only through /draft; a person's tap on
     Send is the only path that reaches this one."""
+    _piece_or_404('thread', thread_id, request, 'send')
     from services import threads as _threads
     actor = _mind_actor(request, body.get('member_id'))
     # A closed thread must never be mailed back to life: send_drafted flips
@@ -7263,6 +7403,7 @@ def research_thread(thread_id: str, body: dict = Body(default={}),
     its citation is exactly what services/web.py exists to prevent; any
     other status (disabled/no_key/capped/reserved/no_results/error) appends
     nothing and is returned honestly so the page can say why."""
+    _piece_or_404('thread', thread_id, request, 'research')
     from services import threads as _threads
     _mind_actor(request, body.get('member_id'))
     question = (body.get('question') or '').strip()
@@ -7360,57 +7501,60 @@ def _program_list_scope(request, member_id: Optional[str]):
 @app.get("/api/programs")
 def list_programs_api(member_id: str = None, include_finished: bool = False,
                       request: Request = None):
-    from services import programs as _prog, stages as _stages
-    scope = _program_list_scope(request, member_id)
-    if scope is _NOBODY:
-        return {"programs": []}
-    rows = storage.get_programs(member_id=scope,
-                                include_finished=include_finished)
-    members = {x['id']: x for x in storage.get_all_members(include_archived=True)}
-    out = []
-    for r in rows:
-        # The "did it happen?" question rides the OWNER's own surface rather
-        # than a DM to their parents (see `watchers._program_findings`), so
-        # the pending ask has to come back with the program the PWA already
-        # fetches. `due_asks_for` guards itself: a malformed record costs this
-        # one program its prompt, never the whole list.
-        try:
-            asks = _prog.due_asks_for(r)
-        except Exception as e:
-            print(f"[programs] due ask read failed for {r.get('id')}: {e}")
-            asks = []
-        # The most recent unanswered slot, never a backlog: one question at a
-        # time is the design's own rule, and a list of every evening somebody
-        # did not practise is a miss record wearing a prompt's clothes.
-        ask = ({'slot_date': asks[-1]['slot_date'], 'body': asks[-1]['body']}
-               if asks else None)
-        # Which rung of the ladder, computed HERE rather than re-derived in
-        # the page: the walk depends on when the current phase began and on
-        # every session logged since, and a second implementation of that in
-        # JavaScript is a second implementation that drifts.
-        prog = _prog.progress(r)
-        phase = prog.get('phase') or {}
-        unit = _prog.unit_for(r, phase) or {}
-        # Whether this program's owner can be sent off to do it alone. A
-        # three-year-old cannot read the session or judge that he finished it,
-        # so his plan rides a grown-up's day or it rides nobody's.
-        #
-        # `practices_alone` and NOT `own_account`: two different facts, and
-        # only one of them is about autonomy. A seven-year-old with a PIN on
-        # the family iPad has no account of his own and can still open the
-        # app, see his session in context and follow it -- and he still needs
-        # a grown-up to run it. Whether a household even has a tablet per
-        # child is a per-family fact this app cannot know, so the stage
-        # supplies a default and `capability_overrides` decides.
-        owner = members.get(r.get('member_id')) or {}
-        caps = _stages.capabilities(owner)
-        out.append({**r, 'progress': prog, 'due_ask': ask,
-                    'current_phase': phase.get('name') or '',
-                    'current_unit': unit.get('n') or 0,
-                    'member_name': owner.get('name') or '',
-                    'owner_practices_alone': bool(
-                        caps.get('practices_alone', True))})
-    return {"programs": out}
+    from services import access
+    with access.batch():
+        from services import programs as _prog, stages as _stages
+        scope = _program_list_scope(request, member_id)
+        if scope is _NOBODY:
+            return {"programs": []}
+        viewer = _piece_viewer(request)
+        rows = [r for r in storage.get_programs(member_id=scope, include_finished=include_finished)
+                if access.record_visible('program', r, viewer)]
+        members = {x['id']: x for x in storage.get_all_members(include_archived=True)}
+        out = []
+        for r in rows:
+            # The "did it happen?" question rides the OWNER's own surface rather
+            # than a DM to their parents (see `watchers._program_findings`), so
+            # the pending ask has to come back with the program the PWA already
+            # fetches. `due_asks_for` guards itself: a malformed record costs this
+            # one program its prompt, never the whole list.
+            try:
+                asks = _prog.due_asks_for(r, viewer=viewer)
+            except Exception as e:
+                print(f"[programs] due ask read failed for {r.get('id')}: {e}")
+                asks = []
+            # The most recent unanswered slot, never a backlog: one question at a
+            # time is the design's own rule, and a list of every evening somebody
+            # did not practise is a miss record wearing a prompt's clothes.
+            ask = ({'slot_date': asks[-1]['slot_date'], 'body': asks[-1]['body']}
+                   if asks else None)
+            # Which rung of the ladder, computed HERE rather than re-derived in
+            # the page: the walk depends on when the current phase began and on
+            # every session logged since, and a second implementation of that in
+            # JavaScript is a second implementation that drifts.
+            prog = _prog.progress(r)
+            phase = prog.get('phase') or {}
+            unit = _prog.unit_for(r, phase) or {}
+            # Whether this program's owner can be sent off to do it alone. A
+            # three-year-old cannot read the session or judge that he finished it,
+            # so his plan rides a grown-up's day or it rides nobody's.
+            #
+            # `practices_alone` and NOT `own_account`: two different facts, and
+            # only one of them is about autonomy. A seven-year-old with a PIN on
+            # the family iPad has no account of his own and can still open the
+            # app, see his session in context and follow it -- and he still needs
+            # a grown-up to run it. Whether a household even has a tablet per
+            # child is a per-family fact this app cannot know, so the stage
+            # supplies a default and `capability_overrides` decides.
+            owner = members.get(r.get('member_id')) or {}
+            caps = _stages.capabilities(owner)
+            out.append({**r, 'progress': prog, 'due_ask': ask,
+                        'current_phase': phase.get('name') or '',
+                        'current_unit': unit.get('n') or 0,
+                        'member_name': owner.get('name') or '',
+                        'owner_practices_alone': bool(
+                            caps.get('practices_alone', True))})
+        return {"programs": out}
 
 
 @app.post("/api/programs")
@@ -7503,6 +7647,7 @@ def edit_program(program_id: str, body: dict = Body(default={}),
     re-paces the phases already found with the same arithmetic that produced
     them, and reads nothing.
     """
+    _piece_or_404('program', program_id, request, 'edit')
     from services import programs as _prog, programs_curate as _cur
     row = storage.get_program(program_id)
     if not row:
@@ -7647,6 +7792,7 @@ def move_program_unit(program_id: str, body: dict = Body(default={}),
     hold. Nothing here can mark a lesson missed, because there is nowhere to
     write that down.
     """
+    _piece_or_404('program', program_id, request, 'unit')
     from services import programs as _prog
     row = storage.get_program(program_id)
     if not row:
@@ -7733,36 +7879,11 @@ _LESSON_UNIT_N_MAX = 2**31 - 1
 def get_program_lesson_api(program_id: str, phase_name: str = '',
                            unit_n: int = 0, session_label: str = '',
                            request: Request = None):
-    """The lesson behind one practice window. Null is a fine answer -- the
-    player's fallback ladder plays the plain steps either way, so an
-    unresolved or non-owning caller learns nothing by the difference.
-
-    Read scope asks a narrower question than `list_programs_api`'s own use
-    of `_program_list_scope`: not "which member_id should the list be
-    filtered to" but "may this caller see THIS row" -- so it is called with
-    no filter (None) to learn the caller's own natural scope, and the
-    comparison against the row's owner happens here by hand. A parent, an
-    adult or the control-center stand-in (scope None) sees it regardless of
-    whose program it is, exactly as they see the whole household's
-    programs; a resolved child, helper or guest sees it only when their own
-    id equals the owner; anyone `_program_list_scope` cannot resolve at all
-    gets `_NOBODY`. Both of the last two read as null, not a refusal -- a
-    sibling poking at this by hand learns nothing, not even that it exists.
-
-    An out-of-range, non-numeric, or missing `unit_n` all read the same
-    way: none of them names a real slot, so each is treated exactly like
-    one that does not exist yet rather than like a caller who did something
-    wrong -- this endpoint's own rule, not a 400/403 wearing a read's
-    clothes. `unit_n` arrives already `int`-typed over real HTTP (FastAPI's
-    own query coercion, with no upper bound of its own -- see
-    `_LESSON_UNIT_N_MAX` below), but a direct in-process call -- exactly how
-    every scenario in `test_lesson_endpoints.py` reaches this function --
-    can hand it anything at all, `None` included. Comparing an
-    unnormalised value against `_LESSON_UNIT_N_MAX` before coercing it is
-    the fix-round-1 gap fix round 2 closed: `0 <= None` raises `TypeError`,
-    not the null this endpoint promises. Normalise first, mirroring PUT's
-    own `int(... or 0)`, then range-check.
+    """Read a lesson only when its program is visible (access rule section 4).
+    Hidden and missing programs both return 404. An unknown lesson slot or an
+    unusable unit number still returns null, preserving the player fallback.
     """
+    _piece_or_404('program', program_id, request, None)
     try:
         unit_n = int(unit_n or 0)
     except (TypeError, ValueError, OverflowError):
@@ -7792,6 +7913,7 @@ def put_program_lesson_api(program_id: str, body: dict = Body(default={}),
     (`storage.upsert_program_lesson` enforces that refusal; this endpoint
     only has to ask for it).
     """
+    _piece_or_404('program', program_id, request, 'lesson')
     from services import program_lessons as _pl
     row = storage.get_program(program_id)
     if not row:
@@ -7846,6 +7968,7 @@ def delete_program_lesson_api(program_id: str, phase_name: str = '',
     fallback ladder plays the plain steps the moment this slot comes back
     empty.
     """
+    _piece_or_404('program', program_id, request, 'lesson')
     row = storage.get_program(program_id)
     if not row:
         raise HTTPException(status_code=404, detail="No such program")
@@ -8234,31 +8357,33 @@ def sweep_program_lessons_now(body: dict = Body(default={}),
     from TODAY (`start_offset=0`), never generate_due's own tomorrow, so
     the report shows the very next lesson for every active program.
     """
-    from services import program_lessons as _pl
-    _approver_of_record(_mind_actor(request, body.get('member_id')))
-    settings = storage.get_settings() or {}
-    if not settings.get('programs_enabled', True):
-        return {"status": "error",
-                "message": "Programs are switched off for this household."}
-    if not settings.get('program_lessons_enabled', True):
-        return {"status": "error",
-                "message": "Lesson scripts are switched off for this household."}
-    # Same shape as every other numeral this app takes off a raw JSON body
-    # (PUT .../lesson's own unit_n, just above): a bad TYPE has to land as
-    # a 400, never fall through to a raw traceback, and a huge-but-finite
-    # value (a plain `1e300`) sails through int() without complaint, so
-    # the magnitude is checked separately, after the coercion succeeds.
-    try:
-        days = int(body.get('days', 3))
-        limit = int(body.get('limit', _pl.MAX_SLOTS_PER_PASS))
-    except (TypeError, ValueError, OverflowError):
-        raise HTTPException(status_code=400,
-                            detail="days and limit must be whole numbers")
-    if not (0 <= days <= _LESSON_SWEEP_PARAM_MAX
-           and 0 <= limit <= _LESSON_SWEEP_PARAM_MAX):
-        raise HTTPException(status_code=400,
-                            detail="days and limit are out of range")
-    return _pl.sweep_report(start_offset=0, days=days, limit=limit, force=True)
+    from services import access
+    with access.batch():
+        from services import program_lessons as _pl
+        _approver_of_record(_mind_actor(request, body.get('member_id')))
+        settings = storage.get_settings() or {}
+        if not settings.get('programs_enabled', True):
+            return {"status": "error",
+                    "message": "Programs are switched off for this household."}
+        if not settings.get('program_lessons_enabled', True):
+            return {"status": "error",
+                    "message": "Lesson scripts are switched off for this household."}
+        # Same shape as every other numeral this app takes off a raw JSON body
+        # (PUT .../lesson's own unit_n, just above): a bad TYPE has to land as
+        # a 400, never fall through to a raw traceback, and a huge-but-finite
+        # value (a plain `1e300`) sails through int() without complaint, so
+        # the magnitude is checked separately, after the coercion succeeds.
+        try:
+            days = int(body.get('days', 3))
+            limit = int(body.get('limit', _pl.MAX_SLOTS_PER_PASS))
+        except (TypeError, ValueError, OverflowError):
+            raise HTTPException(status_code=400,
+                                detail="days and limit must be whole numbers")
+        if not (0 <= days <= _LESSON_SWEEP_PARAM_MAX
+               and 0 <= limit <= _LESSON_SWEEP_PARAM_MAX):
+            raise HTTPException(status_code=400,
+                                detail="days and limit are out of range")
+        return _pl.sweep_report(start_offset=0, days=days, limit=limit, force=True, viewer=_piece_viewer(request))
 
 
 @app.get("/api/programs/celebrations")
@@ -8283,6 +8408,7 @@ def program_footprint(program_id: str, request: Request = None):
     """The footprint was the one program read with no ownership gate at all --
     a title, the times it would claim, the kit line and the target date, to
     any signed-in caller holding an id. Same rule as every other read."""
+    _piece_or_404('program', program_id, request, None)
     from services import programs as _prog
     row = storage.get_program(program_id)
     if not row:
@@ -8310,6 +8436,7 @@ def approve_program(program_id: str, background_tasks: BackgroundTasks = None,
                     body: dict = Body(default={}), request: Request = None):
     """Claim the week. Parent/adult work — the control-center surface stands
     in the household's parent of record, same as the Mind's approve tap."""
+    _piece_or_404('program', program_id, request, 'approve')
     from services import programs as _prog
     actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
     return _program_refresh(
@@ -8323,6 +8450,7 @@ def log_program_session(program_id: str, body: dict = Body(default={}),
     """The person practising says so — a kid reporting their own guitar
     session is the point. Logging on somebody ELSE's program is a
     parent/adult act, same rule as every write below."""
+    _piece_or_404('program', program_id, request, 'session')
     from services import programs as _prog
     row = storage.get_program(program_id)
     if not row:
@@ -8342,6 +8470,7 @@ def log_program_session(program_id: str, body: dict = Body(default={}),
 def hit_program_milestone(program_id: str, background_tasks: BackgroundTasks = None,
                           body: dict = Body(default={}),
                           request: Request = None):
+    _piece_or_404('program', program_id, request, 'milestone')
     from services import programs as _prog
     row = storage.get_program(program_id)
     if not row:
@@ -8361,6 +8490,7 @@ def finish_program(program_id: str, background_tasks: BackgroundTasks = None,
     saying so, and only the first of those was ever built — so the only exit
     from a finished plan was a button reading "Dropped. The time is back."
     """
+    _piece_or_404('program', program_id, request, 'finish')
     from services import programs as _prog
     row = storage.get_program(program_id)
     if not row:
@@ -8375,6 +8505,7 @@ def reshape_program(program_id: str, background_tasks: BackgroundTasks = None,
     """The drift finding's offer, made real: hand the program back to
     `proposed` so the footprint can be rebuilt and approved again. Nothing is
     silently re-created — a person still sees the whole footprint and taps."""
+    _piece_or_404('program', program_id, request, 'reshape')
     from services import programs as _prog
     row = storage.get_program(program_id)
     if not row:
@@ -8386,6 +8517,7 @@ def reshape_program(program_id: str, background_tasks: BackgroundTasks = None,
 @app.post("/api/programs/{program_id}/pause")
 def pause_program(program_id: str, background_tasks: BackgroundTasks = None,
                   body: dict = Body(default={}), request: Request = None):
+    _piece_or_404('program', program_id, request, 'pause')
     from services import programs as _prog
     row = storage.get_program(program_id)
     if not row:
@@ -8397,6 +8529,7 @@ def pause_program(program_id: str, background_tasks: BackgroundTasks = None,
 @app.post("/api/programs/{program_id}/resume")
 def resume_program(program_id: str, background_tasks: BackgroundTasks = None,
                    body: dict = Body(default={}), request: Request = None):
+    _piece_or_404('program', program_id, request, 'resume')
     from services import programs as _prog
     row = storage.get_program(program_id)
     if not row:
@@ -8409,6 +8542,7 @@ def resume_program(program_id: str, background_tasks: BackgroundTasks = None,
 def drop_program(program_id: str, background_tasks: BackgroundTasks = None,
                  body: dict = Body(default={}), request: Request = None):
     """Dropping is not failing. The emissions go; the record stays."""
+    _piece_or_404('program', program_id, request, 'drop')
     import time as _t
     from services import programs as _prog
     row = storage.get_program(program_id)

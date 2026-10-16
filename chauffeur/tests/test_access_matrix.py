@@ -4,6 +4,7 @@ Run from chauffeur/: python tests/test_access_matrix.py [class-prefix]
 """
 import sys
 import traceback
+import re
 
 from harness import check
 import access_fixture
@@ -14,7 +15,6 @@ F, K, X = 'full', 'keeper', None
 
 # Reader rows whose task has not landed. Each task deletes its own rows; Task 11 asserts empty.
 PENDING = {
-    'task3': {r[0] for r in reg.READERS if r[1] == '4.1-signed-in'},
     'task4': {r[0] for r in reg.READERS if r[1] == '4.2-conversation'},
     'task5': {r[0] for r in reg.READERS if r[1] == '4.3-channel'},
     'task6': {r[0] for r in reg.READERS if r[1] == '4.4-engine'},
@@ -57,7 +57,7 @@ def observed(text, fx, rkey):
     Secret words count as FULL even without the title: a leak is a leak."""
     if fx.secret(rkey) in text:
         return F
-    return K if fx.title(rkey) in text else None
+    return K if re.search(re.escape(fx.title(rkey)) + r'(?!\w)', text) else None
 
 
 def pending_ids():
@@ -81,16 +81,31 @@ def scenario_every_probe_matches_the_table():
             if KIND[rkey] not in kinds:
                 continue
             for col in COLS:
-                want = expect(cls, rkey, col)
-                got = PROBES[rid](fx, rkey, col)
+                want = signed_in.expected(rid, fx, rkey, col, expect(cls, rkey, col))
+                try:
+                    got = PROBES[rid](fx, rkey, col)
+                except Exception as exc:
+                    got = f'{type(exc).__name__}: {exc}'
                 if got == 'skip':
                     continue
                 if got != want:
                     bad.append(f'{rid} {rkey} {col}: want {want} got {got}')
+                    print('MISMATCH', bad[-1], flush=True)
     check(not bad, '\n'.join(bad))
 
 
+import access_signed_in as signed_in
+signed_in.register(probe)
+
+
+def scenario_signed_in_contracts():
+    if len(sys.argv) < 2 or '4.1-signed-in'.startswith(sys.argv[1]):
+        signed_in.extra_contracts()
+
 SCENARIOS = [v for k, v in list(globals().items()) if k.startswith('scenario_')]
+if len(sys.argv) < 2 or '4.1-signed-in'.startswith(sys.argv[1]):
+    from test_access_round1 import SCENARIOS as ROUND1_SCENARIOS
+    SCENARIOS += ROUND1_SCENARIOS
 if __name__ == '__main__':
     failed = 0
     for fn in SCENARIOS:

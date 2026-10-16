@@ -53,7 +53,7 @@ def _mission(fx, rkey, creator, project, **extra):
 
 def _program(fx, rkey, member, project, **extra):
     pid = storage.add_program({'title': fx.title(rkey), 'member_id': member, 'state': 'active',
-                               'why': fx.secret(rkey), **extra})
+                               'starting_point': fx.secret(rkey), **extra})
     projects.adopt('program', pid, None, project_id=project['id'] if project else None)
     fx.ids[rkey] = pid
     return pid

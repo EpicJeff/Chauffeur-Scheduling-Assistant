@@ -190,7 +190,7 @@ def scenario_detail_serves_done_transcript_and_gates():
         main.missions_detail(mid, request=_as('kid'))
         check(False, "child must be refused")
     except HTTPException as e:
-        check(e.status_code == 403, "child refused with 403")
+        check(e.status_code == 404, "hidden mission matches missing (access rule section 4)")
     try:
         main.missions_detail('nope', request=_as('mom'))
         check(False, "missing mission must 404")

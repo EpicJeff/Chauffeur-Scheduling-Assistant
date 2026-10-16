@@ -1309,7 +1309,7 @@ def _lesson_skip_reason(program_id: str, slot: dict) -> str:
 
 
 def sweep_report(now=None, start_offset: int = 0, days: int = 3,
-                 limit: int = MAX_SLOTS_PER_PASS, force: bool = False) -> dict:
+                 limit: int = MAX_SLOTS_PER_PASS, force: bool = False, viewer=None) -> dict:
     """generate_due, but SEEN. A person who just changed a prompt or a
     screen cannot wait for tonight to find out what it does now -- this
     runs the identical scan, through the identical two functions
@@ -1326,10 +1326,13 @@ def sweep_report(now=None, start_offset: int = 0, days: int = 3,
     have refused. Without `force` this self-throttles exactly like
     generate_due, sharing its own marker -- a real pass, forced or
     nightly, earns the same `program_lessons_swept` date either way, so a
-    manual run at 3pm and the 300s loop's own pass later that night do not
+    unscoped run at 3pm and the 300s loop's own pass later that night do not
     both spend a full pass on the same slots twice: whatever the forced
     run's own `limit` left undone is exactly what the nightly pass, or
     tomorrow night's, still picks up.
+
+    A viewer-scoped manual pass leaves the household day marker alone so
+    unseen programs remain eligible for the nightly pass.
 
     `start_offset=0` is the other half of what makes this a different
     question than generate_due's: today's own windows, not only
@@ -1350,10 +1353,16 @@ def sweep_report(now=None, start_offset: int = 0, days: int = 3,
         settings = storage.get_settings() or {}
         if not _lessons_switched_on(settings):
             return {'wrote': 0, 'skipped': 0, 'slots': []}
-        storage.set_app_state('program_lessons_swept', marker)
+        if viewer is None:
+            # A person's filtered pass cannot mark unseen programs as swept.
+            storage.set_app_state('program_lessons_swept', marker)
         wrote = skipped = spent = 0
         slots = []
         for row, w, unit in _windows_to_scan(now, start_offset, days):
+            if viewer is not None:
+                from services import access
+                if not access.record_visible('program', row, viewer):
+                    continue
             slot = slot_of(w, unit_n=int((unit or {}).get('n') or 0))
             entry = {'program': row.get('title') or 'Practice',
                      # The report otherwise names the program only by

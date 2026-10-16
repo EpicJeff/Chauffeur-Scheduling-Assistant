@@ -1383,7 +1383,7 @@ def forget_emissions(program_id: str, gone: list) -> None:
     storage.update_program(program_id, {'emissions': em})
 
 
-def due_asks_for(program: dict, now=None) -> list:
+def due_asks_for(program: dict, now=None, viewer=None) -> list:
     """Slots of ONE program that have passed and have not been logged.
 
     One question per slot: silence counts nothing — the number only means
@@ -1395,7 +1395,9 @@ def due_asks_for(program: dict, now=None) -> list:
     nobody watched is the one place in this arc where the app could claim more
     than happened, and the design's promise is that it never does.
     """
-    from services import family_digest
+    from services import family_digest, access
+    if not access.record_visible('program', program, viewer or access.HOUSE):
+        return []
     now = now or datetime.datetime.now()
     if program.get('state') != 'active':
         return []

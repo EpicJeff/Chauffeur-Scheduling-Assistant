@@ -126,6 +126,19 @@ def asks_for(kind: str, sid: str, row: dict = None) -> list:
     return rows
 
 
+def keeper_view(ask: dict) -> dict:
+    """Keep ledger identity and state, never words from a hidden piece.
+
+    Allowlist metadata so draft, reply, unlock and future text fields cannot
+    bypass the source situation's keeper projection.
+    """
+    return {key: ask[key] for key in (
+        'id', 'situation_kind', 'situation_id', 'state', 'outcome', 'channel',
+        'asked_by', 'asked_at', 'sent_at', 'answered_by', 'answered_at',
+        'to_member_id', 'to_contact_id',
+    ) if key in ask}
+
+
 def _can_write(actor) -> bool:
     return bool(actor) and actor.get('role') in WRITE_ROLES
 
@@ -138,6 +151,9 @@ def create(kind: str, sid: Optional[str], to: dict, what: str, channel: str, ask
     person to say it left. `trusted` is for the legacy coverage adapter,
     whose endpoints already gated the caller (`_needs_you_actor`)."""
     asker = storage.get_member(asked_by or '') or {'id': asked_by or '', 'role': 'parent' if trusted else ''}
+    from services import access
+    if kind in access.KINDS and not access.record_actable(kind, access.KINDS[kind].load(sid), asker, 'ask'):
+        return {'status': 'refused', 'message': f'No such {kind}'}
     if not trusted and not _can_write(asker):
         return {'status': 'refused', 'message': 'Only a parent or adult can ask.'}
     if channel not in CHANNELS or not (what or '').strip():

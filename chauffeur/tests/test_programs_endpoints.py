@@ -60,8 +60,11 @@ def scenario_a_body_aim_is_refused_at_the_door():
 def scenario_a_child_cannot_approve():
     _reset()
     import main
-    check(_denied(main.approve_program, 'nope',
-                  body={'member_id': 'kid'}, request=None) == 403,
+    # Access rule section 4 hides missing ids before the role gate. Exercise
+    # the role gate with the child's own visible program instead.
+    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed'})
+    check(_denied(main.approve_program, pid,
+                  body={'member_id': 'kid'}, request=Req(storage.create_member_token('kid'))) == 403,
           "approving claims the family's week — that is grown-up work")
 
 
@@ -613,8 +616,8 @@ def scenario_a_child_cannot_edit_a_siblings_proposal():
     pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
                                'state': 'proposed'})
     token = storage.create_member_token('sib')
-    check(_denied(main.edit_program, pid, body={}, request=Req(token)) == 403,
-          "editing somebody else's proposal needs a parent/adult")
+    check(_denied(main.edit_program, pid, body={}, request=Req(token)) == 404,
+          "a hidden sibling proposal matches missing (access rule section 4)")
 
 
 def scenario_dismissing_a_proposal_is_reachable_and_honest():
@@ -647,8 +650,8 @@ def scenario_a_child_cannot_read_a_siblings_footprint():
                                'shape': {'sessions_per_week': 2, 'minutes': 25,
                                          'preferred_days': [1, 3]}})
     sib_token = storage.create_member_token('sib')
-    check(_denied(main.program_footprint, pid, request=Req(sib_token)) == 403,
-          "a sibling learns nothing about it, not even the times it claims")
+    check(_denied(main.program_footprint, pid, request=Req(sib_token)) == 404,
+          "a hidden footprint matches missing (access rule section 4)")
     kid_token = storage.create_member_token('kid')
     fp = main.program_footprint(pid, request=Req(kid_token))
     check('slots' in fp, f"the owner still sees their own, got {fp}")

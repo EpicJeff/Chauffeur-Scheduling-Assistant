@@ -556,6 +556,14 @@ def channel_visible(kind: str, row: dict, focus_key: str) -> bool:
         for member in members)
 
 
+def thread_keeper_view(row):
+    """The shared raw thread projection for a keeper (access rule §3)."""
+    return {**row, 'status_note': '', 'note_source': 'fallback', 'next_steps': [],
+            'next_action': '',
+            'history': [{'kind': 'mission', 'ts': h.get('ts')} if h.get('kind') == 'mission' else h
+                        for h in row.get('history') or []]}
+
+
 def view(kind: str, sid: str, viewer: Optional[dict] = None) -> Optional[dict]:
     if kind not in KINDS:
         return None
@@ -577,11 +585,20 @@ def view(kind: str, sid: str, viewer: Optional[dict] = None) -> Optional[dict]:
     elif keeper and kind == 'thread':
         # Cached planner notes, suggestions and the planned next step can
         # quote the hidden plan or the project the keeper cannot see.
-        row = {**row, 'status_note': '', 'note_source': 'fallback', 'next_steps': [],
-               'next_action': '',
-               'history': [{'kind': 'mission', 'ts': h.get('ts')} if h.get('kind') == 'mission' else h
-                           for h in row.get('history') or []]}
+        row = thread_keeper_view(row)
     opts = options_for(kind, row)
+    if kind == 'thread' and viewer is not None:
+        from services import access
+        visible_opts = []
+        for opt in opts:
+            bits = opt['id'].split(':')
+            if len(bits) >= 3 and bits[1] == 'mission':
+                mission = load('mission', bits[2])
+                projection = access.record_view('mission', mission, viewer)
+                if projection is None or (projection == access.KEEPER and opt['payload'].get('ask') != 'steer'):
+                    continue
+            visible_opts.append(opt)
+        opts = visible_opts
     if keeper:
         opts = [o for o in opts if o['verb'] not in ('approve_plan', 'run_stage')
                 and (':mission:' not in o['id'] or o['payload'].get('ask') == 'steer')]
@@ -603,7 +620,7 @@ def view(kind: str, sid: str, viewer: Optional[dict] = None) -> Optional[dict]:
             row.get('next_action_at') if kind == 'thread' else None),
         'status_note': note, 'note_source': source, 'note_ts': row.get('note_ts'),
         'next_step': opts[0] if opts else None, 'options': opts,
-        'asks': _asks.asks_for(kind, sid, row),
+        'asks': [_asks.keeper_view(a) if keeper else a for a in _asks.asks_for(kind, sid, row)],
         'needs_attention': needs_attention(kind, row, opts),
         'group': _group(kind, row, opts),
         'owner_member_id': row.get(OWNER),
@@ -649,7 +666,7 @@ def rank(rows: list) -> list:
     return sorted(rows, key=key)
 
 
-def _rows_of(kind: str, include_done: bool) -> list:
+def _rows_of(kind: str, include_done: bool, viewer=None) -> list:
     if kind == 'finding':
         from services import findings as _f
         now_ts = time.time()
@@ -659,7 +676,9 @@ def _rows_of(kind: str, include_done: bool) -> list:
         from services import mind as _m
         return [('insight', r['id']) for r in _m.visible_insights({'role': 'parent'})]
     if kind == 'thread':
-        return [('thread', t['id']) for t in storage.get_threads(include_closed=include_done)]
+        from services import access
+        return [('thread', t['id']) for t in storage.get_threads(include_closed=include_done)
+                if access.record_visible('thread', t, viewer or access.HOUSE)]
     if kind == 'mission':
         # Live rows always; terminal rows capped to the same 60 newest that
         # /api/missions/admin ships (get_missions is newest-first), so every
@@ -670,6 +689,9 @@ def _rows_of(kind: str, include_done: bool) -> list:
         # the rest by group. Only 'dropped' is skipped outright.
         out, terminal = [], 0
         for m in storage.get_missions():
+            from services import access
+            if not access.record_visible('mission', m, viewer or access.HOUSE):
+                continue
             st = m.get('status')
             if st in ('done', 'blocked', 'dropped'):
                 if (st == 'dropped' and not include_done) or terminal >= MISSION_HISTORY_CAP:
@@ -688,7 +710,7 @@ def list_situations(viewer: Optional[dict], kinds=None, include_done: bool = Fal
     viewer's role (spec 2026-10-10 §1)."""
     out = []
     for kind in (kinds or KINDS):
-        for k, sid in _rows_of(kind, include_done):
+        for k, sid in _rows_of(kind, include_done, viewer):
             row = load(k, sid)
             if not row or not can_see(k, row, viewer):
                 continue
@@ -916,7 +938,7 @@ def _run(kind, sid, verb, p, actor, row) -> dict:
         return {'status': 'success' if ok else 'error', 'message': 'Next step set.'}
     if verb == 'draft':
         from services import threads as _th
-        res = _th.draft_message(sid, intent=p.get('text') or '')
+        res = _th.draft_message(sid, intent=p.get('text') or '', viewer=actor)
         return {**res, 'status': res.get('status') or 'success'}
     if verb == 'research':
         from services import threads as _th

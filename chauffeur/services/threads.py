@@ -101,7 +101,7 @@ def _draft_context(thread: dict, intent: str = '') -> str:
     return '\n'.join(lines)
 
 
-def draft_message(thread_id: str, intent: str = '') -> dict:
+def draft_message(thread_id: str, intent: str = '', *, viewer: Optional[dict] = None) -> dict:
     """Ask the model for a `{subject, body}` proposal and stop there.
 
     This is the only function in the module that talks to an LLM, and it is
@@ -110,10 +110,18 @@ def draft_message(thread_id: str, intent: str = '') -> dict:
     optional `drafted` history entry — a record that a draft was proposed,
     not that anything was said — and never touches `state`. See
     `send_drafted` for the only function that can actually send.
+
+    Person-facing callers pass viewer so the prompt uses their projection.
     """
     thread = storage.get_thread(thread_id)
     if not thread:
         return {'status': 'not_found'}
+    if viewer is not None:
+        from services import access, situations
+        if not access.record_actable('thread', thread, viewer, 'draft'):
+            return {'status': 'not_found'}
+        if access.record_view('thread', thread, viewer) == access.KEEPER:
+            thread = situations.thread_keeper_view(thread)
 
     from services import model_pools
     settings = storage.get_settings() or {}
@@ -608,12 +616,16 @@ def add_photo(thread_id: str, data: bytes, mime: str, who: Optional[str], captio
     if text:
         storage.update_thread_history_entry(thread_id, {'media_id': saved['id']}, {'text': text})
         entry['text'] = text
-    from services import missions, situations as _sit
+    from services import access, missions, situations as _sit
+    viewer = storage.get_member(who) if who else None
+    viewer = viewer or access.HOUSE
     # A mission waiting on a question on this thread takes the photo as the
     # answer — when it was read. "photo added (not read)" is not an answer:
     # the photo stays on the thread for a person and the mission keeps waiting.
     for m in (storage.get_missions(status=missions.ATTENTION) if text else []):
         if m.get('origin_kind') == 'thread' and m.get('origin_ref') == thread_id:
+            if not access.record_actable('mission', m, viewer, 'answer'):
+                continue
             answer = f"(photo) {text}" + (f" — {entry['caption']}" if entry['caption'] else '')
             storage.add_mission_step(m['id'], {'kind': 'note', 'name': 'user_answer',
                                                'result_json': {'text': answer, 'photo_url': saved['url']}})

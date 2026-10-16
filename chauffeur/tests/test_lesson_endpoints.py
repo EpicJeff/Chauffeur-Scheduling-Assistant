@@ -138,20 +138,16 @@ def scenario_owner_reads_their_lesson():
           f"got {res}")
 
 
-def scenario_a_sibling_gets_null_not_the_lesson():
-    """Read scope here is deliberately softer than the write gate: a
-    resolved child who does not own this program learns nothing by asking,
-    not even that a lesson exists -- null and 'nothing generated yet' are
-    indistinguishable, which is exactly what the player's fallback ladder
-    already treats them as. The owner, and a parent, both still see it."""
+def scenario_a_sibling_gets_404_not_the_lesson():
+    """Access rule section 4: hidden programs match missing programs.
+    The owner and a parent still read the lesson."""
     pid = _reset()
     import main
     storage.add_member({'id': 'sib', 'name': 'Sam', 'role': 'child'})
     sib_token = storage.create_member_token('sib')
-    res = main.get_program_lesson_api(pid, phase_name='F', unit_n=1,
-                                      session_label='', request=Req(sib_token))
-    check(res == {'lesson': None},
-          f"a sibling must see nothing, not even that it exists, got {res}")
+    code = _denied(main.get_program_lesson_api, pid, phase_name='F', unit_n=1,
+                   session_label='', request=Req(sib_token))
+    check(code == 404, f"a hidden program matches missing, got {code}")
 
     kid_token = storage.create_member_token('kid')
     res = main.get_program_lesson_api(pid, phase_name='F', unit_n=1,
@@ -166,11 +162,11 @@ def scenario_a_sibling_gets_null_not_the_lesson():
           f"a parent must see the household's, got {res}")
 
 
-def scenario_a_missing_program_reads_as_a_null_lesson():
+def scenario_a_missing_program_returns_404():
     import main
-    res = main.get_program_lesson_api('nope', phase_name='F', unit_n=1,
-                                      session_label='', request=None)
-    check(res == {'lesson': None}, f"got {res}")
+    code = _denied(main.get_program_lesson_api, 'nope', phase_name='F', unit_n=1,
+                   session_label='', request=None)
+    check(code == 404, f"missing program (access rule section 4), got {code}")
 
 
 # --- unit_n magnitude (fix round 1): int() converts any FINITE magnitude
@@ -460,8 +456,8 @@ def scenario_a_child_cannot_edit_a_siblings_lesson():
         'phase_name': 'F', 'unit_n': 1, 'session_label': '',
         'scenes': [{'type': 'say', 'text': 'nope'}]},
         request=Req(kid_token))
-    check(code == 403,
-          f"a child editing a PARENT's program's lesson must be refused, got {code}")
+    check(code == 404,
+          f"a hidden parent's program matches missing (access rule section 4), got {code}")
     check(storage.get_program_lesson(mom_pid, {'phase_name': 'F', 'unit_n': 1,
                                                'session_label': ''}) is None,
           "and nothing was written")
@@ -479,8 +475,8 @@ def scenario_a_child_cannot_delete_a_siblings_lesson():
     kid_token = storage.create_member_token('kid')
     code = _denied(main.delete_program_lesson_api, mom_pid, phase_name='F',
                    unit_n=1, session_label='', request=Req(kid_token))
-    check(code == 403,
-          f"a child deleting a PARENT's program's lesson must be refused, got {code}")
+    check(code == 404,
+          f"a hidden parent's program matches missing (access rule section 4), got {code}")
     check(storage.get_program_lesson(mom_pid, {'phase_name': 'F', 'unit_n': 1,
                                                'session_label': ''}) is not None,
           "and it survives the refused attempt")
@@ -1163,8 +1159,8 @@ if __name__ == '__main__':
     scenario_the_wall_route_returns_scenes_only()
     scenario_the_wall_route_reads_null_for_anything_it_cannot_resolve()
     scenario_owner_reads_their_lesson()
-    scenario_a_sibling_gets_null_not_the_lesson()
-    scenario_a_missing_program_reads_as_a_null_lesson()
+    scenario_a_sibling_gets_404_not_the_lesson()
+    scenario_a_missing_program_returns_404()
     scenario_a_huge_finite_unit_n_reads_as_no_lesson_on_get()
     scenario_a_huge_finite_float_unit_n_reads_as_no_lesson_on_get()
     scenario_a_none_unit_n_is_treated_as_zero_on_get()

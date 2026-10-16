@@ -857,10 +857,14 @@ def prepare_next(mid):
         return False
 
 
-def queue_row(mid, action):
+def queue_row(mid, action, viewer=None):
     """Keep work-stage writes behind one later build approval."""
     with storage.db_lock:
         mission = storage.get_mission(mid)
+        if viewer is not None:
+            from services import access
+            if not access.record_actable('mission', mission, viewer, 'run_stage'):
+                return _refused('No such mission')
         work = running_work(mission)
         if not work:
             return _refused()

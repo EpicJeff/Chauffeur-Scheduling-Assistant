@@ -438,6 +438,12 @@ def act_on_proposal(proposal_id: str, act: str, approver_member: Optional[dict])
     prop = storage.get_action_proposal(proposal_id)
     if not prop:
         return {"status": "error", "message": "That action is no longer available."}
+    if prop.get('action_type') in ('log_program_session', 'reshape_program'):
+        from services import access
+        row = access.KINDS['program'].load((prop.get('payload') or {}).get('program_id'))
+        verb = 'session' if prop['action_type'] == 'log_program_session' else 'reshape'
+        if not access.record_actable('program', row, approver_member, verb):
+            return {'status': 'error', 'message': 'That action is no longer available.'}
     if prop.get('stage_id'):
         return {'status': 'error', 'message': 'Handle this row through its stage.'}
     a_type, summary = prop.get("action_type"), prop.get("summary")

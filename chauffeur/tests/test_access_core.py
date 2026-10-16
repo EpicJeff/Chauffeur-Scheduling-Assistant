@@ -25,6 +25,11 @@ TABLE = {
     'R12': (F, F, X, X, X, X, X),
 }
 COLS = ('mom', 'dad', 'aunt', 'kid', 'hal', 'pat', 'house')
+# Spec section 7 Acting: visibility is necessary; keeper missions additionally
+# restrict verbs. Existing endpoint role checks still apply to visible records.
+ACT = {rkey: {col: F if value is not None else None for col, value in zip(COLS, row)}
+       for rkey, row in TABLE.items()}
+MISSION_KEEPER_VERBS = frozenset({'ack', 'delete', 'steer'})
 KIND = {'R1': 'thread', 'R2': 'mission', 'R3': 'program', 'R4': 'thread', 'R5t': 'thread',
         'R5p': 'program', 'R6': 'thread', 'R7': 'thread', 'R8': 'thread', 'R10': 'thread',
         'R11': 'mission', 'R12': 'thread', 'R13': 'thread', 'R9origin': 'thread',
