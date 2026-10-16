@@ -39,41 +39,6 @@ def private():
                             'owner_member_id': 'mom', 'audience': 'private'}, dict(MOM))['project']
 
 
-def scenario_private_project_readers():
-    _fresh()
-    p = private()
-    tid = threads.create(title='Secret tiler', owner_member_id='aunt', created_by='mom', project_id=p['id'])
-    mid = storage.add_mission({'goal': 'Secret booking', 'created_by': 'aunt', 'status': 'waiting_user'})
-    projects.adopt('mission', mid, None, project_id=p['id'])
-    storage.add_program({'id': 'secret-program', 'title': 'Secret piano', 'member_id': 'aunt', 'state': 'active'})
-    projects.adopt('program', 'secret-program', None, project_id=p['id'])
-    tokens = {who: {'X-Member-Token': storage.create_member_token(who)} for who in ('mom', 'dad', 'aunt')}
-    failures = []
-    def expect(ok, message):
-        if not ok:
-            failures.append(message)
-    with patch.object(storage, 'get_settings', return_value={**storage.get_settings(), 'auth_enforce': True}):
-        client = TestClient(main.app)
-        for who in tokens:
-            allowed = who != 'dad'
-            for kind, rid in [('thread', tid), ('mission', mid), ('program', 'secret-program')]:
-                got = client.get(f'/api/projects/for/{kind}/{rid}', headers=tokens[who]).json()
-                expect(got['record_visible'] == allowed, f'{who} locate {kind}: {got}')
-                if kind != 'program':
-                    got = client.get(f'/api/situations/{kind}/{rid}', headers=tokens[who])
-                    expect((got.status_code == 200 and bool(got.json())) == allowed, f'{who} situation {kind}')
-            search = client.get('/api/subjects/search?q=Secret', headers=tokens[who]).json()['candidates']
-            expect(bool(search) == allowed, f'{who} search: {search}')
-            for path, key, rid in [('/api/threads', 'threads', tid), ('/api/programs', 'programs', 'secret-program'),
-                                   ('/api/missions/admin', 'active', mid)]:
-                rows = client.get(path, headers=tokens[who]).json()[key]
-                expect(any(r['id'] == rid for r in rows) == allowed, f'{who} {path}')
-        # A wrapper must still delegate to its record without recursing.
-        wrapped = threads.create(title='Shared wrapper', owner_member_id='mom', created_by='mom')
-        expect(projects.can_see(projects.project_for('thread', wrapped), dict(DAD)), 'wrapper visibility')
-    check(not failures, '\n'.join(failures))
-
-
 def scenario_finished_keeper_projection():
     _fresh()
     p = private()
@@ -83,10 +48,6 @@ def scenario_finished_keeper_projection():
     storage.add_mission_step(mid, {'kind': 'note', 'result_json': {'secret': 'Hidden transcript'}})
     rows = projects.elsewhere(dict(AUNT))
     check(len(rows) == 1 and rows[0]['id'] == mid and rows[0]['group'] == 'done', 'finished keeper stays discoverable')
-    from services import planned
-    row = storage.get_mission(mid)
-    row['steps'] = storage.get_mission_steps(mid)
-    check('Hidden' not in json.dumps(planned.keeper_view(row, dict(AUNT))), 'keeper transcript and cached note redacted')
     node("const assert = require('assert'); global.window={}; global.localStorage={getItem:()=>null};\n" + island('projects_page') + """
 const p = projectsPage(); p.elsewhere = [{id:'old',group:'done'}, {id:'live',group:'moving'}];
 assert.deepStrictEqual(p.visibleElsewhere.map(s=>s.id), ['live']);

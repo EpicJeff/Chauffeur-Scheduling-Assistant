@@ -68,7 +68,7 @@ def _enabled():
 
 
 def prepare(ctx, ref, kind):
-    from services import missions, subjects, browse
+    from services import missions, situations, browse
     from services.voice_tools import speech_safe
     if kind not in ('release', 'submit'):
         return {'status': 'refused', 'message': 'That needs your phone.'}
@@ -85,7 +85,7 @@ def prepare(ctx, ref, kind):
         return {'status': 'refused', 'message': 'Only a parent or adult can approve this.'}
     candidates = []
     for mission in storage.get_missions(status=missions.ATTENTION):
-        if not speech_safe(mission) or not subjects.record_visible('mission', mission, member, spoken=True):
+        if not speech_safe(mission) or not situations.can_see('mission', mission, member):
             continue
         thread = storage.get_thread(mission.get('origin_ref')) if mission.get('origin_kind') == 'thread' else None
         if thread and not speech_safe(thread):

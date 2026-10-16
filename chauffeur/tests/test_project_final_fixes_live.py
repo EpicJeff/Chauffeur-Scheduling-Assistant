@@ -7,42 +7,6 @@ from unittest.mock import patch
 from project_sheets_fixture import IDS, admin, check, pwa, serve, shot, storage
 
 
-def scenario_private_pieces_on_both_hosts_and_addresses():
-    served = serve()
-    if served is None:
-        return
-    from services import projects, threads
-    tid = threads.create(title='Private tiler quotation', owner_member_id='mom', created_by='mom', project_id='prj-gift')
-    pid = storage.add_program({'title': 'Private piano curriculum', 'member_id': 'mom', 'state': 'proposed'})
-    projects.adopt('program', pid, None, project_id='prj-gift')
-    with served.browser() as page:
-        admin(page, served, 'dad')
-        for kind, rid, title in [('thread', tid, 'Private tiler quotation'), ('program', pid, 'Private piano curriculum')]:
-            for prefix in ('projects?', 'projects?id=' + IDS['bath'] + '&'):
-                page.goto(served.url(prefix + 'piece=' + kind + ':' + rid), wait_until='load')
-                if '?id=' in prefix:
-                    page.wait_for_selector('[data-record-sheet][data-open="true"]', timeout=15000)
-                else:
-                    page.wait_for_selector('[role="status"]:has-text("That isn\u2019t here, or isn\u2019t yours to see.")', timeout=15000)
-                    page.get_by_text('That isn\u2019t here, or isn\u2019t yours to see.', exact=True).wait_for(state='visible')
-                check(title not in page.locator('body').inner_text(), f'{prefix} does not disclose {kind}')
-        pwa(page, served, 'dad')
-        page.set_viewport_size({'width': 390, 'height': 844})
-        page.goto(served.url('app'), wait_until='load')
-        page.locator('#tab-projects').click(timeout=20000)
-        page.wait_for_selector('[data-project-id="prj-bath"]', timeout=15000)
-        for kind, rid, title in [('thread', tid, 'Private tiler quotation'), ('program', pid, 'Private piano curriculum')]:
-            page.evaluate("d => window.dispatchEvent(new CustomEvent('chf-record-sheet-open', {detail:d}))", {'kind': kind, 'id': rid})
-            page.locator('[data-piece-sheet]').get_by_text('That isn\u2019t here, or isn\u2019t yours to see.', exact=True).wait_for(state='visible', timeout=10000)
-            check(title not in page.locator('body').inner_text(), f'phone does not disclose {kind}')
-            page.locator('[data-pwa-dismiss]').first.click()
-        # Denied situation requests intentionally return 403; keep all JS and
-        # Alpine errors visible while allowing that exact browser network log.
-        errors = [e for e in served.errors() if not e.startswith(
-            'Failed to load resource: the server responded with a status of 403')]
-        check(errors == [], f'no unexpected page errors: {errors}')
-
-
 def scenario_old_verify_and_missing_mission_sheet():
     served = serve()
     if served is None:
@@ -75,7 +39,6 @@ def scenario_finished_keeper_show_closed_and_history():
         return
     from services import projects
     mid = storage.add_mission({'goal': 'Finished keeper booking', 'created_by': 'aunt', 'status': 'done', 'created_at': 1})
-    storage.add_mission_step(mid, {'kind': 'note', 'result_json': {'secret': 'Private project transcript'}})
     projects.adopt('mission', mid, None, project_id='prj-gift')
     with served.browser() as page:
         admin(page, served, 'aunt')
@@ -90,7 +53,6 @@ def scenario_finished_keeper_show_closed_and_history():
         sheet = page.locator('[data-record-sheet]')
         sheet.get_by_role('button', name='OK', exact=True).wait_for(state='visible', timeout=10000)
         sheet.get_by_role('button', name='Delete', exact=True).wait_for(state='visible')
-        check('Private project transcript' not in sheet.inner_text(), 'keeper history is redacted')
         shot(page, 'slice2-finished-keeper')
 
 
@@ -123,7 +85,7 @@ def scenario_restored_creation_choices():
         check(storage.get_program(made.value.json()['id'])['member_id'] == 'helper-final', 'parent can propose for helper')
 
 
-SCENARIOS = [scenario_private_pieces_on_both_hosts_and_addresses, scenario_old_verify_and_missing_mission_sheet,
+SCENARIOS = [scenario_old_verify_and_missing_mission_sheet,
              scenario_finished_keeper_show_closed_and_history, scenario_restored_creation_choices]
 if __name__ == '__main__':
     import traceback

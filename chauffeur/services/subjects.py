@@ -119,50 +119,9 @@ def title_of(kind, row):
 
 def _program_visible(row, viewer):
     from services.agent_tools_v2 import _program_scope_id
-    viewer = viewer or {'id': None, 'role': 'adult'}
-    if row.get('member_id') == viewer.get('id'):
-        return True
-    return _program_scope_id(viewer) is None
-
-
-def record_visible(kind, row, viewer, *, spoken=False, focus_key=None) -> bool:
-    """One record gate: native audience, person-project, keeper, and channel.
-
-    None is a household reader, never an impersonated project owner. Keepers
-    (including a child's parents) retain the record, not its subject's words.
-    """
-    from services import situations, projects
-    if not row or kind not in ('thread', 'mission', 'program'):
-        return False
-    reader = viewer or {'id': None, 'role': 'adult'}
-    owner_key = {'thread': 'owner_member_id', 'mission': 'created_by', 'program': 'member_id'}[kind]
-    owner_id = row.get(owner_key)
-    keeper = bool(reader.get('id') and (reader['id'] == owner_id or (
-        projects._parent(reader) and projects._child(storage.get_member(owner_id) or {}))))
-    base = (_program_visible(row, reader) if kind == 'program'
-            else situations._record_base_visible(kind, row, reader, keeper=keeper))
-    if not base:
-        return False
-    project = containing_project(row)
-    restricted = project and project.get('audience') != 'household'
-    if restricted and (spoken or not reader.get('id') or not (keeper or projects.can_see(project, reader))):
-        return False
-    if spoken:
-        if kind == 'mission':
-            if any(not spoken_safe(k, r) for k, r in subject_records(kind, row)):
-                return False
-        elif not spoken_safe(kind, row):
-            return False
-    humans = channel_humans(focus_key)
-    if humans is not None and project and not all(projects.can_see(project, h) for h in humans):
-        return False
-    return kind == 'program' or situations.channel_visible(kind, row, focus_key)
-
-
-def containing_project(row):
-    """A person's project narrows its pieces; wrappers depend on the piece."""
-    project = storage.get_project(row['project_id']) if row.get('project_id') else None
-    return project if project and not project.get('wrapped_from') else None
+    return viewer is not None and (
+        _program_scope_id(viewer) is None or row.get('member_id') == viewer.get('id')
+    )
 
 
 def _thread_visible(row, viewer):
@@ -176,8 +135,6 @@ def _people_visible(row, viewer):
 
 def visible(kind, row, viewer, spoken=False):
     """Apply the owning kind's visibility before matching any title."""
-    if kind in ('thread', 'mission', 'program'):
-        return record_visible(kind, row, viewer, spoken=spoken)
     adapter = ADAPTERS.get(kind)
     if row is None or adapter is None:
         return False
@@ -186,7 +143,6 @@ def visible(kind, row, viewer, spoken=False):
 
 def subject_records(kind, row):
     """Audience records, including a live mission's proposed project."""
-    project = containing_project(row) if kind in ('thread', 'mission') else None
     proposed = (row.get('plan') or {}).get('project') if kind == 'mission' else None
     if kind == 'thread':
         from services import situations
@@ -198,9 +154,6 @@ def subject_records(kind, row):
     if row.get('subject_kind'):
         entries.append({'kind': row['subject_kind'], 'id': row.get('subject_id')})
     seen, records = set(), []
-    if project:
-        records.append(('project', project))
-        seen.add(('project', project['id']))
     for entry in entries:
         key = (entry.get('kind'), entry.get('id'))
         if key in seen:
@@ -253,10 +206,6 @@ def _thread_spoken_safe(row):
     if any(not spoken_safe(k, record, visited) for k, record in subject_records('thread', row)):
         return False
     return _audience_spoken_safe(row)
-
-
-def _program_spoken_safe(row):
-    return _audience_spoken_safe(row) and record_visible('program', row, None)
 
 
 def spoken_safe(kind, row, visited=None):
@@ -722,7 +671,7 @@ ADAPTERS.update({
         link=lambda sid: f'projects?piece=program:{sid}',
         context=_program_context,
         facets=['sessions'],
-        spoken_safe=_program_spoken_safe,
+        spoken_safe=_audience_spoken_safe,
     ),
     'list': Adapter(
         rows=lambda: storage.get_shopping_lists(),

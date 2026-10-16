@@ -1,7 +1,7 @@
 """A family's active programs become objects, never a copy of private records."""
 import datetime
 import re
-from services import storage, programs, stages, subjects
+from services import storage, programs, stages
 
 
 def appearance(row):
@@ -23,8 +23,6 @@ def objects():
     members = {m['id']: m for m in storage.get_all_members()}
     out = []
     for row in storage.get_programs(state='active'):
-        if not subjects.record_visible('program', row, None):
-            continue
         member = members.get(row.get('member_id'))
         if not member:
             continue
@@ -36,7 +34,7 @@ def objects():
     return out
 
 
-def session(program_id, now=None, *, viewer=None):
+def session(program_id, now=None):
     """Today's session, or the current lesson for an unscheduled practice tap.
 
     Same family-safe material as practice_windows. Opening never writes a
@@ -44,7 +42,7 @@ def session(program_id, now=None, *, viewer=None):
     """
     now = now or datetime.datetime.now()
     row = storage.get_program(program_id)
-    if not subjects.record_visible('program', row, viewer) or row.get('state') != 'active':
+    if not row or row.get('state') != 'active':
         return None
     member = storage.get_member(row.get('member_id'))
     if not member or member.get('archived'):

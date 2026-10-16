@@ -1474,7 +1474,7 @@ def _already_logged(program: dict, day) -> bool:
 CELEBRATION_WINDOW_DAYS = 7
 
 
-def celebrations(now=None, *, viewer=None) -> dict:
+def celebrations(now=None) -> dict:
     """The wall's whole view of every program in the house, and nothing else.
 
     The wall card used to fetch `GET /api/programs` — which could never work
@@ -1496,10 +1496,7 @@ def celebrations(now=None, *, viewer=None) -> dict:
     names = {m['id']: (m.get('name') or '')
              for m in storage.get_all_members(include_archived=True)}
     up_next, practiced, celebrated = None, [], []
-    from services import subjects
     for row in storage.get_programs():
-        if not subjects.record_visible('program', row, viewer):
-            continue
         # Paused is a peer of active, not a flavour of stopped: the wall still
         # gets to celebrate a paused program's last week same as a running one.
         if row.get('state') not in ('active', 'paused'):
@@ -1543,14 +1540,3 @@ def celebrations(now=None, *, viewer=None) -> dict:
                                                 or ph.get('name') or ''})
     return {'up_next': up_next, 'practiced': practiced,
             'celebrated': celebrated}
-
-
-def practice_window_view(window, viewer=None):
-    """A shared calendar keeps the occupied time, never restricted lesson words."""
-    from services import subjects
-    row = storage.get_program(window.get('program_id'))
-    if subjects.record_visible('program', row, viewer):
-        return dict(window)
-    # Allowlist timing and identity only; no phase, lesson, progress or log.
-    return {**{k: window.get(k) for k in ('program_id', 'member_id', 'date', 'time_start', 'time_end')},
-            'title': 'Busy', 'steps': []}

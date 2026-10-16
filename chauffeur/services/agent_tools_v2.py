@@ -1,4 +1,3 @@
-from services import subjects
 import json
 import uuid
 import datetime
@@ -1858,7 +1857,7 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
         if m.get('origin_kind') != 'thread':
             continue
         t = storage.get_thread(m.get('origin_ref') or '')
-        if not t or (not (spoken and viewer is None) and not subjects.record_visible('thread', t, viewer, focus_key=focus_key)):
+        if not t or (not (spoken and viewer is None) and not situations.can_see('thread', t, viewer)):
             continue
         if spoken:
             from services.voice_tools import speech_safe
@@ -1888,7 +1887,7 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
             from services.voice_tools import speech_safe
         compatible = (not subject_kind or ((t or {}).get('subject_kind') in (None, subject_kind)
                                           and (t or {}).get('subject_id') in (None, subject_id)))
-        if (t and (spoken and viewer is None or subjects.record_visible('thread', t, viewer, focus_key=focus_key))
+        if (t and (spoken and viewer is None or situations.can_see('thread', t, viewer))
                 and t.get('state') not in ('done', 'dropped') and not live and compatible
                 and (not spoken or t.get('voice_shared') and speech_safe(t) and subjects.spoken_safe('thread', t))):
             tid = t['id']
@@ -1913,13 +1912,12 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
             "message": "On it. I'll come back when I have something or need you."}
 
 
-def _match_thread(thread_title: str, acting_member: dict, focus_key=None):
+def _match_thread(thread_title: str):
     """Fuzzy title match against open threads, same shape as `_match_task` —
     the model knows a thread by what it's about, never by its id."""
     from services import storage
     q = (thread_title or '').strip().lower()
-    rows = [row for row in storage.get_threads(include_closed=False)
-            if subjects.record_visible('thread', row, acting_member, focus_key=focus_key)]
+    rows = storage.get_threads(include_closed=False)
     if not q:
         return None, rows
     exact = [t for t in rows if (t.get('title') or '').lower() == q]
@@ -2125,8 +2123,7 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
 
 def list_threads(state: str = None, owner_name: str = None,
                  include_closed: bool = False,
-                 acting_member: dict = None, *, _registry_read: bool = False,
-                 focus_key: str = None) -> Dict[str, Any]:
+                 acting_member: dict = None, *, _registry_read: bool = False) -> Dict[str, Any]:
     """Open loops with somebody outside the family — the pest control
     company, the school waitlist. A read for any RESOLVED member (an
     anonymous wall panel is refused — see `_thread_reader`), same rows as
@@ -2148,7 +2145,9 @@ def list_threads(state: str = None, owner_name: str = None,
                     "message": f"I couldn't find '{owner_name}'. Family members: {_member_names()}."}
         owner_id = m['id']
     rows = _storage.get_threads(state=state, owner=owner_id, include_closed=include_closed)
-    rows = [r for r in rows if subjects.record_visible('thread', r, acting_member, focus_key=focus_key)]
+    from services import situations
+    rows = [r for r in rows if not (r.get('subject_kind') or r.get('subject_history'))
+            or situations.can_see('thread', r, acting_member)]
     if not rows:
         return {"status": "success", "message": "No open threads right now."}
     names = {m['id']: m.get('name') for m in _storage.get_all_members(include_archived=True)}
@@ -2210,14 +2209,14 @@ def create_thread(title: str, goal: str = None, kind: str = None,
 
 def update_thread_action(thread_title: str, next_action: str,
                          next_action_at: str = None, note: str = None,
-                         acting_member: dict = None, focus_key: str = None) -> Dict[str, Any]:
+                         acting_member: dict = None) -> Dict[str, Any]:
     """Set the next thing that has to happen on a thread, and when
     (wraps `services.threads.advance`). Parent/adult work, same gate as
     `create_thread`; `acting_member` comes from the dispatch layer."""
     refusal = _thread_writer(acting_member, 'update a thread')
     if refusal:
         return refusal
-    thread, rows = _match_thread(thread_title, acting_member, focus_key)
+    thread, rows = _match_thread(thread_title)
     if not thread:
         open_titles = ', '.join(t.get('title') or '?' for t in rows[:8]) or 'nothing open'
         return {"status": "error",
@@ -2236,8 +2235,7 @@ def update_thread_action(thread_title: str, next_action: str,
 
 
 def add_thread_note(thread_title: str = '', text: str = '', url: str = None,
-                    acting_member: dict = None, thread_id: str = None,
-                    focus_key: str = None) -> Dict[str, Any]:
+                    acting_member: dict = None, thread_id: str = None) -> Dict[str, Any]:
     """Log movement on a thread that isn't a change of plan — a call made, a
     voicemail left (wraps `services.threads.note`). Parent/adult work, same
     gate as `create_thread`; `acting_member` comes from the dispatch layer."""
@@ -2250,10 +2248,10 @@ def add_thread_note(thread_title: str = '', text: str = '', url: str = None,
     if thread_id is not None:
         from services import storage, situations
         thread, rows = storage.get_thread(thread_id), []
-        if not thread or not subjects.record_visible('thread', thread, acting_member, focus_key=focus_key):
+        if not thread or not situations.can_see('thread', thread, acting_member):
             return {'status': 'error', 'message': 'That thread is not available.'}
     else:
-        thread, rows = _match_thread(thread_title, acting_member, focus_key)
+        thread, rows = _match_thread(thread_title)
     if not thread:
         open_titles = ', '.join(t.get('title') or '?' for t in rows[:8]) or 'nothing open'
         return {"status": "error",
@@ -2266,8 +2264,7 @@ def add_thread_note(thread_title: str = '', text: str = '', url: str = None,
 
 
 def draft_thread_message(thread_title: str = '', intent: str = None,
-                         acting_member: dict = None, thread_id: str = None,
-                         focus_key: str = None) -> Dict[str, Any]:
+                         acting_member: dict = None, thread_id: str = None) -> Dict[str, Any]:
     """Ask Argyle to propose a subject/body for a thread and STOP THERE
     (wraps `services.threads.draft_message`, which never imports
     `services.mailer` — it cannot send even by accident, and neither can
@@ -2281,10 +2278,10 @@ def draft_thread_message(thread_title: str = '', intent: str = None,
     if thread_id is not None:
         from services import storage, situations
         thread, rows = storage.get_thread(thread_id), []
-        if not thread or not subjects.record_visible('thread', thread, acting_member, focus_key=focus_key):
+        if not thread or not situations.can_see('thread', thread, acting_member):
             return {'status': 'error', 'message': 'That thread is not available.'}
     else:
-        thread, rows = _match_thread(thread_title, acting_member, focus_key)
+        thread, rows = _match_thread(thread_title)
     if not thread:
         open_titles = ', '.join(t.get('title') or '?' for t in rows[:8]) or 'nothing open'
         return {"status": "error",
@@ -2305,7 +2302,7 @@ def draft_thread_message(thread_title: str = '', intent: str = None,
                         f"Subject: {res['subject']}\n\n{res['body']}")}
 
 
-def launch_mission(goal: str, thread_title: str = None, actor: dict = None, focus_key=None) -> dict:
+def launch_mission(goal: str, thread_title: str = None, actor: dict = None) -> dict:
     """Allowlist: a resolved parent/adult launches; anyone else is refused —
     /api/chat is WALL_OR_SERVICE, so an anonymous panel arrives with no actor
     and must not walk through a role blocklist."""
@@ -2315,13 +2312,13 @@ def launch_mission(goal: str, thread_title: str = None, actor: dict = None, focu
     if not (thread_title or '').strip():
         # A new goal with no thread named is start_mission_for's job: the
         # thread, the focus and the "On it." come with it (browse missions §4).
-        return start_mission_for(goal, acting_member=actor, focus_key=focus_key)
+        return start_mission_for(goal, acting_member=actor)
     return handle_launch_mission({'goal': goal, 'thread_title': thread_title,
-                                  '_member_id': actor.get('id')}, actor=actor, focus_key=focus_key)
+                                  '_member_id': actor.get('id')})
 
 
 def close_thread(thread_title: str, state: str = None,
-                 acting_member: dict = None, focus_key: str = None) -> Dict[str, Any]:
+                 acting_member: dict = None) -> Dict[str, Any]:
     """End a thread — `done` when it resolved, `dropped` when it didn't and
     won't (wraps `services.threads.close`). The state must be said, and only
     those two are accepted — anything else is refused, the same enum
@@ -2335,7 +2332,7 @@ def close_thread(thread_title: str, state: str = None,
         return {"status": "error",
                 "message": "A thread can only close as done or dropped — "
                            "which is it?"}
-    thread, rows = _match_thread(thread_title, acting_member, focus_key)
+    thread, rows = _match_thread(thread_title)
     if not thread:
         open_titles = ', '.join(t.get('title') or '?' for t in rows[:8]) or 'nothing open'
         return {"status": "error",
@@ -2415,7 +2412,7 @@ def _resolve_named_member_or_refuse(acting_member: dict, name: str, verb_phrase:
     return m, None
 
 
-def _match_program(title: str, acting_member: dict, focus_key=None):
+def _match_program(title: str, acting_member: dict):
     """Fuzzy title match against the programs THIS CALLER may see, same
     shape as `_match_thread` — the model knows a program by what it's
     about, never by its id.
@@ -2432,7 +2429,6 @@ def _match_program(title: str, acting_member: dict, focus_key=None):
     q = (title or '').strip().lower()
     rows = _storage.get_programs(member_id=_program_scope_id(acting_member),
                                  include_finished=False)
-    rows = [row for row in rows if subjects.record_visible('program', row, acting_member, focus_key=focus_key)]
     if not q:
         return None, rows
     exact = [p for p in rows if (p.get('title') or '').lower() == q]
@@ -2444,8 +2440,7 @@ def _match_program(title: str, acting_member: dict, focus_key=None):
     return None, rows
 
 
-def list_programs(member_name: str = None, acting_member: dict = None,
-                  focus_key: str = None, *, _registry_read: bool = False) -> Dict[str, Any]:
+def list_programs(member_name: str = None, acting_member: dict = None) -> Dict[str, Any]:
     """What has a real plan attached right now — the wall card's list, in
     words ('what programs are going?', 'what is Ben working on?'). A read
     for any RESOLVED member (see `_program_reader`); a child/helper/guest
@@ -2453,8 +2448,7 @@ def list_programs(member_name: str = None, acting_member: dict = None,
     them, the same scope `GET /api/programs` enforces
     (`main.py`'s `_program_list_scope`) — a program is somebody's personal
     ambition, not household-visible the way a thread is."""
-    registry_audience = _registry_read and (acting_member or {}).get('role') in ('parent', 'adult')
-    refusal = None if registry_audience else _program_reader(acting_member)
+    refusal = _program_reader(acting_member)
     if refusal:
         return refusal
     from services import storage as _storage, programs as _prog
@@ -2467,7 +2461,6 @@ def list_programs(member_name: str = None, acting_member: dict = None,
     else:
         scope_id = _program_scope_id(acting_member)
     rows = _storage.get_programs(member_id=scope_id, include_finished=False)
-    rows = [row for row in rows if subjects.record_visible('program', row, acting_member, focus_key=focus_key)]
     if not rows:
         return {"status": "success", "message": "No programs going right now."}
     names = {m['id']: m.get('name') for m in _storage.get_all_members(include_archived=True)}
@@ -2487,7 +2480,7 @@ def list_programs(member_name: str = None, acting_member: dict = None,
 
 
 def program_progress(program_title: str, acting_member: dict = None, *,
-                     _registry_read: bool = False, focus_key: str = None) -> Dict[str, Any]:
+                     _registry_read: bool = False) -> Dict[str, Any]:
     """How one program is going — sessions logged, minutes, the phase ahead
     (wraps `services.programs.progress`, which is deliberately monotonic: no
     streak, no miss count, no percentage). A read for any RESOLVED member
@@ -2499,7 +2492,7 @@ def program_progress(program_title: str, acting_member: dict = None, *,
     if refusal:
         return refusal
     from services import programs as _prog
-    row, rows = _match_program(program_title, acting_member, focus_key)
+    row, rows = _match_program(program_title, acting_member)
     if not row:
         titles = ', '.join(p.get('title') or '?' for p in rows[:8]) or 'no programs yet'
         return {"status": "error",
@@ -8563,11 +8556,15 @@ def handle_start_project(args: dict, actor=None) -> dict:
                          acting_member=actor or _registry_parent(),
                          subject_kind=args.get('subject_kind'), subject_id=args.get('subject_id'))
 
-def handle_list_programs(args: dict, actor=None) -> dict:
-    return list_programs(member_name=args.get('member_name'),
-                         acting_member=actor if actor is not None else _REGISTRY_READER,
-                         _registry_read=True)
-
+def handle_list_programs(args: dict) -> dict:
+    # The v1 loop resolves no member and can produce no actor -- unlike
+    # list_insights, list_programs REQUIRES one (a program is somebody's
+    # personal ambition, not household-visible the way an insight's safe
+    # default is), so this always comes back refused from this loop. It is
+    # wired for parity with the catalog anyway, exactly as list_insights was
+    # -- a read tool only, never a write, since a write here would have no
+    # actor to attribute it to.
+    return list_programs(member_name=args.get("member_name"))
 
 def handle_claim_chore(args: dict) -> dict:
     return claim_chore(args.get("chore_title", ""),
@@ -8886,19 +8883,19 @@ def handle_ungroup_event(args: dict) -> dict:
     return ride_groups.ungroup_by_title(args.get("event_name") or "",
                                         args.get("target_date") or "today")
 
-def handle_launch_mission(args: dict, actor=None, focus_key=None) -> dict:
-    # Registry readers have no identity. Never borrow one from tool arguments.
+def handle_launch_mission(args: dict) -> dict:
+    # v1 loop is admin-only (dashboard/HA voice), so no acting-member gate is
+    # needed here — same "trusted context" reasoning as handle_send_family_message
+    # and handle_cancel_event. _member_id rides through as attribution only.
     from services import missions, storage as _st
     thread = None
     title = (args.get('thread_title') or '').strip()
     if title:
-        thread = missions._match_thread(title, actor or _REGISTRY_READER, focus_key=focus_key)
-        if not thread:
-            return {'status': 'error', 'message': 'No visible thread matched.'}
+        thread = missions._match_thread(title)
     return missions.launch(args.get('goal') or '',
                            origin_kind='thread' if thread else 'chat',
                            origin_ref=thread['id'] if thread else None,
-                           created_by=(actor or {}).get('id'),
+                           created_by=args.get('_member_id'),
                            tier='mission')
 
 def handle_create_thread(args: dict, actor=None) -> dict:
