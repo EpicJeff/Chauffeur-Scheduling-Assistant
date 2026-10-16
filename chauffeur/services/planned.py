@@ -155,11 +155,9 @@ def may_approve(mission, actor):
 
 
 def is_keeper(mission, viewer) -> bool:
-    """Ownership keeps the mission row, never a hidden subject's contents."""
-    from services import situations
-    return (situations.can_see('mission', mission, viewer)
-            and not all(situations._subject_visible(kind, record, viewer)
-                        for kind, record in subjects.subject_records('mission', mission)))
+    """Ownership keeps the mission row, never what is hidden around it."""
+    from services import access
+    return access.record_view('mission', mission, viewer) == access.KEEPER
 
 
 def redacted(plan) -> dict:

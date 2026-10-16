@@ -514,32 +514,21 @@ def _subject_of(kind: str, row: dict) -> tuple:
 
 def _subject_visible(kind: str, record: dict, viewer: Optional[dict], visited=None) -> bool:
     from services import subjects
-    if kind == 'proposed_project':
-        from services import projects
-        return projects.can_see(record, viewer)
+    if kind in ('project', 'proposed_project'):
+        from services import access
+        return access.project_visible(record, viewer)
     if kind == 'thread':
-        visited = set(visited or ())
-        key = record.get('id')
-        if key in visited or not _can_see_base('thread', record, viewer):
-            return False
-        visited.add(key)
         # Ownership keeps only the top-level row, never a subject's contents.
-        return all(_subject_visible(k, r, viewer, visited)
-                   for k, r in subjects.subject_records('thread', record))
+        from services import access
+        return access.record_view('thread', record, viewer) == access.FULL
     return subjects.visible(kind, record, viewer)
 
 
 def can_see(kind: str, row: dict, viewer: Optional[dict]) -> bool:
-    ok = _can_see_base(kind, row, viewer)
-    if not ok or kind not in ('thread', 'mission'):
-        return ok
-    from services import subjects
-    owner_key = 'owner_member_id' if kind == 'thread' else 'created_by'
-    if viewer and row.get(owner_key) == viewer.get('id'):
-        return True
-    visited = {row.get('id')} if kind == 'thread' else set()
-    return all(_subject_visible(k, record, viewer, visited)
-               for k, record in subjects.subject_records(kind, row))
+    if kind in ('thread', 'mission'):
+        from services import access
+        return access.record_view(kind, row, viewer) is not None
+    return _can_see_base(kind, row, viewer)
 
 
 def subject_view(kind: str, row: dict, viewer: Optional[dict]) -> Optional[dict]:
@@ -576,24 +565,22 @@ def view(kind: str, sid: str, viewer: Optional[dict] = None) -> Optional[dict]:
     if kind == 'project':
         return _project_view(row, viewer)
     keeper = False
-    if kind == 'mission':
+    if kind in ('mission', 'thread') and viewer is not None:
+        from services import access
+        keeper = access.record_view(kind, row, viewer) == access.KEEPER
+    if keeper and kind == 'mission':
         from services import planned
-        keeper = planned.is_keeper(row, viewer)
-        if keeper:
-            # Build labels and the fallback only from metadata. In particular,
-            # neither an interview question nor a stage title is a label here.
-            row = {**planned.keeper_view(row, viewer), 'plan': None,
-                   'status_note': '', 'note_source': 'fallback'}
-    elif kind == 'thread':
-        from services import subjects
-        keeper = (can_see(kind, row, viewer)
-                  and not all(_subject_visible(k, record, viewer)
-                              for k, record in subjects.subject_records(kind, row)))
-        if keeper:
-            # Cached planner notes and suggestions can quote the hidden plan.
-            row = {**row, 'status_note': '', 'note_source': 'fallback', 'next_steps': [],
-                   'history': [{'kind': 'mission', 'ts': h.get('ts')} if h.get('kind') == 'mission' else h
-                               for h in row.get('history') or []]}
+        # Build labels and the fallback only from metadata. In particular,
+        # neither an interview question nor a stage title is a label here.
+        row = {**planned.keeper_view(row, viewer), 'plan': None,
+               'status_note': '', 'note_source': 'fallback'}
+    elif keeper and kind == 'thread':
+        # Cached planner notes, suggestions and the planned next step can
+        # quote the hidden plan or the project the keeper cannot see.
+        row = {**row, 'status_note': '', 'note_source': 'fallback', 'next_steps': [],
+               'next_action': '',
+               'history': [{'kind': 'mission', 'ts': h.get('ts')} if h.get('kind') == 'mission' else h
+                           for h in row.get('history') or []]}
     opts = options_for(kind, row)
     if keeper:
         opts = [o for o in opts if o['verb'] not in ('approve_plan', 'run_stage')

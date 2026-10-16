@@ -118,15 +118,13 @@ def title_of(kind, row):
 
 
 def _program_visible(row, viewer):
-    from services.agent_tools_v2 import _program_scope_id
-    return viewer is not None and (
-        _program_scope_id(viewer) is None or row.get('member_id') == viewer.get('id')
-    )
+    from services import access
+    return access.record_visible('program', row, viewer)
 
 
 def _thread_visible(row, viewer):
-    from services import situations
-    return situations.can_see('thread', row, viewer)
+    from services import access
+    return access.record_visible('thread', row, viewer)
 
 
 def _people_visible(row, viewer):

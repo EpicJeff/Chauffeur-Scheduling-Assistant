@@ -52,11 +52,8 @@ def _wrapped_visible(project, viewer):
         row = _ADOPT_TABLES[kind][0](rid)
         if row is None:
             return True     # the record is gone; the project stands on the words it kept
-        if kind == 'program':
-            from services import subjects
-            return subjects.visible('program', row, viewer)
-        from services import situations
-        return situations.can_see(kind, row, viewer)
+        from services import access
+        return access.record_visible(kind, row, viewer)
     finally:
         active.discard(project.get('id'))
 
@@ -1094,10 +1091,16 @@ def _context(row, viewer, spoken, facet):
 # module after its own built-ins, and either module may be imported first.
 from services import subjects as _subjects
 
+def _adapter_visible(row, viewer):
+    """HOUSE (wall, speaker, Mind) has a meaning here: household projects only."""
+    from services import access
+    return access.project_visible(row, viewer)
+
+
 _subjects.register('project', _subjects.Adapter(
     rows=storage.get_projects,
     title=lambda row: row.get('title') or '',
-    visible=can_see,
+    visible=_adapter_visible,
     closed=lambda row: row.get('state') in ('done', 'dropped'),
     link=lambda sid: f'projects?id={sid}',
     context=_context,
