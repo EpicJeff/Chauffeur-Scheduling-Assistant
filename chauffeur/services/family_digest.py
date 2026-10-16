@@ -11,7 +11,6 @@ Delivery reuses the family-chat rails: the digest is an ordinary ChatMessage
 from the Argyle system member, so SSE + push/HA fan-out come free and the
 recap is readable by everyone, forever, in the thread.
 """
-from services import access
 import datetime
 
 from services import storage, access

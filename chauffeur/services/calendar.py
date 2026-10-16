@@ -595,6 +595,8 @@ def delete_event(calendar_id: str, event_id: str):
         service.events().delete(calendarId=calendar_id, eventId=original_id).execute()
         return True
     except Exception as ex:
+        if getattr(getattr(ex, 'resp', None), 'status', None) in (404, 410):
+            return True
         print(f"Error deleting event {event_id} from {calendar_id}: {ex}")
         return False
 

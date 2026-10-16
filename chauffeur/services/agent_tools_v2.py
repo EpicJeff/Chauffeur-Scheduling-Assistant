@@ -11,6 +11,19 @@ from contextvars import ContextVar
 from contextlib import contextmanager
 
 _mission_context = ContextVar('tool_mission', default=None)
+_calendar_viewer = ContextVar('tool_calendar_viewer', default=access.HOUSE)
+
+
+def calendar_viewer(actor=None, focus_key=None, *, spoken=False):
+    """A personal conversation reads as its person; shared/audible ones as HOUSE."""
+    from services import subjects
+    if spoken or (focus_key or '').startswith('voice:') or access.is_house(actor):
+        return access.HOUSE
+    humans = subjects.channel_humans(focus_key)
+    if humans is not None and not (len(humans) == 1 and humans[0]
+                                  and humans[0].get('id') == (actor or {}).get('id')):
+        return access.HOUSE
+    return actor or access.HOUSE
 
 
 @contextmanager
@@ -95,7 +108,7 @@ def get_calendar_events(start_date: str, end_date: str, spoken: bool = False) ->
     from dateutil.parser import parse
     import datetime
 
-    sched = access.cached_schedule()
+    sched = access.cached_schedule(access.HOUSE if spoken else _calendar_viewer.get())
     events = sched.get("events", [])
     if spoken:
         from services.voice_tools import speech_safe
@@ -146,7 +159,7 @@ def _find_event_fuzzy(event_name: str, target_date: str, spoken: bool = False):
     """
     import datetime
 
-    sched = access.cached_schedule()
+    sched = access.cached_schedule(access.HOUSE if spoken else _calendar_viewer.get())
     events = sched.get("events", [])
     if spoken:
         from services.voice_tools import speech_safe
@@ -1228,7 +1241,7 @@ def cover_with_assist(event_name: str, contact_name: str = None,
     import datetime
     from services import assist as _assist, storage
     day = _parse_fuzzy_date(target_date or 'today')
-    sched = access.cached_schedule() or {}
+    sched = access.cached_schedule(_calendar_viewer.get()) or {}
     todays = []
     for ev in sched.get('events', []):
         try:
@@ -1299,7 +1312,7 @@ def get_assist_coverage(target_date: str = None) -> Dict[str, Any]:
     import datetime
     from services import storage
     day = _parse_fuzzy_date(target_date or 'today')
-    sched = access.cached_schedule() or {}
+    sched = access.cached_schedule(_calendar_viewer.get()) or {}
     # From STORAGE, not the cache. Coverage is written the moment somebody
     # says "Emma's mom is taking them"; the schedule cache only learns about
     # it when the background re-solve lands. Reading the cache here would
@@ -6108,7 +6121,7 @@ def _driver_events_for_date(driver_id: str, target_date) -> List[Dict[str, Any]]
     per-event drive status derived from the drive_status store."""
     import datetime
     from services.storage import get_completed_drives, get_in_progress_drives
-    sched = access.cached_schedule()
+    sched = access.cached_schedule(_calendar_viewer.get())
     assignments = dict(sched.get("assignments", {}))
     assignments.update(sched.get("ghost_assignments", {}))
     completed = set(get_completed_drives())
@@ -9359,6 +9372,8 @@ def execute_tool(name: str, args: dict, actor=None, focus_key=None, mission_id=N
         return {"status": "error", "message": f"Unknown tool {name}"}
     from services import storage
     token = _mission_context.set(storage.get_mission(mission_id) if mission_id else _mission_context.get())
+    calendar_token = _calendar_viewer.set(calendar_viewer(actor, focus_key)
+        if actor is not None or focus_key is not None else _calendar_viewer.get())
     try:
         import inspect
         # Identity belongs to the caller, never to model-authored arguments.
@@ -9377,3 +9392,4 @@ def execute_tool(name: str, args: dict, actor=None, focus_key=None, mission_id=N
         return {"status": "error", "message": str(e), "traceback": traceback.format_exc()}
     finally:
         _mission_context.reset(token)
+        _calendar_viewer.reset(calendar_token)

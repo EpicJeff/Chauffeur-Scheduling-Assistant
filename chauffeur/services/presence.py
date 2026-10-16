@@ -131,7 +131,7 @@ def members_at_event(ev, ev_id, sched=None):
     """Members the schedule places AT this event: the assigned driver plus
     every passenger-bound member (any role — the same four-way binding My Day
     uses, so adults with passenger profiles count as present too)."""
-    sched = access.cached_schedule(blob=sched)
+    sched = access.cached_schedule(blob=sched or None)
     matched_rules = sched.get('matched_rules', {}) or {}
     passengers = {p.get('id'): p for p in storage.get_all_passengers()}
     assignments = dict(sched.get('assignments', {}) or {})
@@ -173,7 +173,7 @@ def moment_push_audience(channel, sched=None):
     keeping-up grandparent's. Falls back past the narrowing when the event
     has left the cache (old thread — nobody's presence is provable)."""
     from services import scope
-    sched = access.cached_schedule(blob=sched)
+    sched = access.cached_schedule(blob=sched or None)
     ev_id = str(channel.get('event_id') or '')
     ev = next((e for e in sched.get('events', [])
                if _base_event_id(e.get('id')) == _base_event_id(ev_id)), None)

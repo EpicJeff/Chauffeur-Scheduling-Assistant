@@ -511,8 +511,9 @@ def migrate_remove_target_events_v2499():
             if not calendar.delete_event(cal_id, event_id):
                 continue
         except Exception as exc:
-            logger.warning(f"Target-event removal will retry for {row['id']}: {exc}")
-            continue
+            if getattr(getattr(exc, 'resp', None), 'status', None) not in (404, 410):
+                logger.warning(f"Target-event removal will retry for {row['id']}: {exc}")
+                continue
         baseline.pop('target_event_id', None)
         emissions = dict(row.get('emissions') or {})
         emissions['event_ids'] = [eid for eid in emissions.get('event_ids') or [] if eid != event_id]

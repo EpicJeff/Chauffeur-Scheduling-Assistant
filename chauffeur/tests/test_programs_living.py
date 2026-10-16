@@ -18,8 +18,9 @@ def _reset():
     storage.add_member({'id': 'lily', 'name': 'Lily', 'role': 'child'})
 
 
+# Task 9 ruling (progress.md, 2026-10-16): target_date is fixed without a calendar event.
 def _mk(start_days_ago=21, member_id='lily', target_date='2026-06-14',
-       target_event_id='evt-campfire', phases=None):
+       phases=None):
     start = (datetime.date.today()
              - datetime.timedelta(days=start_days_ago)).isoformat()
     return storage.add_program({
@@ -27,7 +28,6 @@ def _mk(start_days_ago=21, member_id='lily', target_date='2026-06-14',
         'shape': {'sessions_per_week': 3, 'minutes': 25,
                   'preferred_days': [1, 3, 5]},
         'baseline': {'start_date': start, 'target_date': target_date,
-                     'target_event_id': target_event_id,
                      'rebaselined_at': None, 'rebaselines': 0},
         'phases': phases if phases is not None else
                   [{'name': 'Phase 1', 'weeks': 4, 'what': 'Chords',
@@ -93,7 +93,7 @@ def scenario_rebaseline_never_moves_a_date_the_world_fixed():
     check(after['rebaselines'] == before['rebaselines'] + 1, f"got {after}")
     check(after['target_date'] == before['target_date'],
           "a date the world fixed is not the app's to move")
-    check(after['target_event_id'] == 'evt-campfire', "and its event is untouched")
+    check(not after.get('target_event_id'), 'fixed dates need no calendar event (Task 9 ruling)')
 
 
 def scenario_rebaseline_compresses_phases_to_still_fit():
@@ -103,7 +103,7 @@ def scenario_rebaseline_compresses_phases_to_still_fit():
     that got saved, not just what the return value claims."""
     _reset()
     target = (datetime.date.today() + datetime.timedelta(days=20)).isoformat()
-    pid = _mk(target_date=target, target_event_id='evt-fixed',
+    pid = _mk(target_date=target,
              phases=[{'name': 'Phase 1', 'weeks': 5, 'what': 'Chords',
                       'milestone': 'G to C', 'milestone_hit_at': None},
                      {'name': 'Phase 2', 'weeks': 5, 'what': 'Barre chords',
@@ -130,7 +130,7 @@ def scenario_rebaseline_does_not_claim_a_squeeze_that_never_happened():
     it lands fine; `phases_changed` must say honestly that nothing moved."""
     _reset()
     target = (datetime.date.today() + datetime.timedelta(days=60)).isoformat()
-    pid = _mk(target_date=target, target_event_id='evt-fixed',
+    pid = _mk(target_date=target,
              phases=[{'name': 'Phase 1', 'weeks': 2, 'what': 'Chords',
                       'milestone': 'G to C', 'milestone_hit_at': None}])
     _log_on(pid, 1)      # pace shortfall, but plenty of calendar slack
@@ -161,7 +161,7 @@ def scenario_rebaseline_admits_when_phases_cannot_fit():
     target = (datetime.date.today() + datetime.timedelta(days=3)).isoformat()
     original = [{'name': 'Phase 1', 'weeks': 4, 'what': 'Chords',
                 'milestone': 'G to C', 'milestone_hit_at': None}]
-    pid = _mk(target_date=target, target_event_id='evt-fixed',
+    pid = _mk(target_date=target,
              phases=[dict(p) for p in original])
     _log_on(pid, 1)
     row = storage.get_program(pid)
@@ -181,42 +181,30 @@ def scenario_rebaseline_admits_when_phases_cannot_fit():
 
 
 def scenario_rebaseline_stretches_when_nothing_pins_the_date():
-    """No event anchors this one -- an undated target is the app's to move,
-    same as before this round's fix. Phases are irrelevant here; there is
-    nothing to compress because there is nothing fixed to compress against."""
+    """Task 9 ruling: only the absence of target_date permits stretching."""
     _reset()
-    target = (datetime.date.today() + datetime.timedelta(days=60)).isoformat()
-    pid = _mk(target_date=target, target_event_id=None)
+    pid = _mk(target_date=None)
     _log_on(pid, 1)
     row = storage.get_program(pid)
     out = programs.maybe_rebaseline(row)
-    check(out is not None and out['fits'] is None and out['date_moved'] is True,
-          f"an undated target has nothing to compress against, but the date "
-          f"really moves, got {out}")
-    after = storage.get_program(pid)['baseline']
-    want = (datetime.date.fromisoformat(target) + datetime.timedelta(days=14)).isoformat()
-    check(after['target_date'] == want,
-          f"so the date itself moves instead, got {after['target_date']}")
+    check(out is not None and out['fits'] is None and not out['date_moved'], str(out))
+    check(out['stretched'] and out['phases'][0]['weeks'] > row['phases'][0]['weeks'],
+          'an undated plan stretches its phases')
+    after = storage.get_program(pid)
+    check(after['baseline']['target_date'] is None and after['phases'] == out['phases'],
+          'stretch persisted without inventing a target date')
 
 
-def scenario_an_event_with_no_date_claims_no_room_was_made():
-    """Latent edge case: malformed baseline data (an event id with no date --
-    the schema always populates both together, so this should never happen
-    in practice) must not read as 'I gave the plan more room'. That sentence
-    is only true when a date actually moved, and the stretch path never runs
-    without a `target_date` to move -- so `date_moved` must come back False
-    and the finding must not claim otherwise."""
+def scenario_malformed_target_date_claims_no_room_was_made():
+    """A malformed date cannot justify claiming room (Task 9 fixed-date ruling)."""
     _reset()
-    pid = _mk(target_date=None, target_event_id='evt-fixed')
+    pid = _mk(target_date='invalid-date')
     _log_on(pid, 1)
     row = storage.get_program(pid)
     out = programs.maybe_rebaseline(row)
-    check(out is not None and out['fits'] is None and out['date_moved'] is False,
-          f"nothing to compress against and nothing to stretch, got {out}")
-    day = watchers._eaten_days(out)
-    line = watchers._rebaseline_line(row.get('title'), day, out).lower()
-    check('more room' not in line,
-          f"nothing moved, so nothing may claim room was made, got {line}")
+    check(out is not None and not out['date_moved'] and not out['phases_changed'], str(out))
+    line = watchers._rebaseline_line(row.get('title'), watchers._eaten_days(out), out).lower()
+    check('more room' not in line, f'nothing moved, so no room was made: {line}')
 
 
 def scenario_rebaseline_does_not_chatter():
@@ -486,7 +474,7 @@ def scenario_an_undated_program_really_stretches():
     incremented a counter, burned the fortnight cooldown, touched neither
     phases nor dates, and still posted "want to try a different day?"""
     _reset()
-    pid = _mk(target_date=None, target_event_id=None)
+    pid = _mk(target_date=None)
     _log_on(pid, 1)
     row = storage.get_program(pid)
     before = [p['weeks'] for p in row['phases']]
@@ -512,7 +500,7 @@ def scenario_a_tied_shortfall_names_no_single_day():
                   'preferred_days': [0, 2, 4]},
         'baseline': {'start_date': (datetime.date.today()
                                     - datetime.timedelta(days=21)).isoformat(),
-                     'target_date': None, 'target_event_id': None,
+                     'target_date': None,
                      'rebaselined_at': None, 'rebaselines': 0},
         'phases': [{'name': 'Phase 1', 'weeks': 4, 'what': 'Chords',
                     'milestone': 'G to C', 'milestone_hit_at': None}]})
@@ -560,7 +548,7 @@ if __name__ == '__main__':
     scenario_rebaseline_does_not_claim_a_squeeze_that_never_happened()
     scenario_rebaseline_admits_when_phases_cannot_fit()
     scenario_rebaseline_stretches_when_nothing_pins_the_date()
-    scenario_an_event_with_no_date_claims_no_room_was_made()
+    scenario_malformed_target_date_claims_no_room_was_made()
     scenario_rebaseline_does_not_chatter()
     scenario_a_hand_deleted_slot_is_noticed_not_recreated()
     scenario_a_paused_program_asks_nothing()

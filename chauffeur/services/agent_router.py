@@ -739,6 +739,9 @@ sending or claiming, and never pass from_member/member_name for them.
 
             res = {"error": f"Unknown tool: {func_name}"}
             tool_start = _time.time()
+            from services.agent_tools_v2 import _calendar_viewer, calendar_viewer
+            calendar_token = _calendar_viewer.set(calendar_viewer(
+                acting_member, focus_key, spoken=source == 'voice' or phone_turn is not None))
 
             try:
                 if source == 'voice':
@@ -1458,6 +1461,8 @@ sending or claiming, and never pass from_member/member_name for them.
                         agent_message = res["message"]
             except Exception as e:
                 res = {"error": str(e)}
+            finally:
+                _calendar_viewer.reset(calendar_token)
 
             tool_status = res.get("status", "ok") if isinstance(res, dict) else "?"
             if phone_turn is not None:

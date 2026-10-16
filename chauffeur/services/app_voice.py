@@ -102,8 +102,9 @@ class Turn:
             self.speech_safe = False
         if self.tools and self.tools[-1] == 'get_calendar_events' and isinstance(result, dict):
             from services.voice_tools import speech_safe
-            # Slim typed rows omit privacy flags; inspect their original sources.
-            sources = {r.get('id'): r for r in (storage.get_cached_schedule() or {}).get('events', [])}
+            from services import access
+            # Match the audible HOUSE projection, including hashed Busy ids.
+            sources = {r.get('id'): r for r in access.cached_schedule().get('events', [])}
             for row in result.get('events', []):
                 source = sources.get(row.get('id'))
                 if not source or not speech_safe(source):

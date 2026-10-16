@@ -787,9 +787,13 @@ def practice_windows(start: datetime.date, end: datetime.date,
     viewer = access.HOUSE if viewer is None else viewer
     out = []
     with access.batch():
+        visible = {}
         for window in _practice_windows(start, end, member_id):
-            row = storage.get_program(window['program_id'])
-            if row and access.record_visible('program', row, viewer):
+            pid = window['program_id']
+            if pid not in visible:
+                row = storage.get_program(pid)
+                visible[pid] = bool(row) and access.record_visible('program', row, viewer)
+            if visible[pid]:
                 out.append(window)
             else:
                 event = access.neutral_practice({
@@ -1299,22 +1303,14 @@ def maybe_rebaseline(program: dict, now=None) -> dict:
     date_moved = False
     update = {'baseline': baseline}
     if baseline.get('target_date'):
-        try:
-            target = datetime.date.fromisoformat(baseline['target_date'])
-            baseline['target_date'] = (target + datetime.timedelta(days=14)).isoformat()
-            date_moved = True
-        except (TypeError, ValueError):
-            pass
+        phases, fits = _compress_phases(original_phases, baseline['target_date'], now)
+        update['phases'] = phases
     else:
         phases = _stretch_phases(original_phases, _stretch_factor(short))
         update['phases'] = phases
     storage.update_program(program['id'], update)
-    # `fits` alone isn't enough to word the finding honestly: a program that
-    # already had slack before the date needs `fits=True` without ever
-    # claiming credit for a squeeze that never happened. `date_moved` closes
-    # the same gap on the other branch -- malformed baseline data (an event id
-    # with no date, or a date string that won't parse) must not read as "I
-    # gave the plan more room" when nothing was ever touched.
+    # Slack before a fixed date is not a squeeze; malformed dates cannot
+    # justify claiming room either. Keep those distinctions in the finding.
     return {'weekday': short['weekday'], 'weekdays': short.get('weekdays') or [],
             'baseline': baseline, 'phases': phases,
             'fits': fits, 'phases_changed': phases != original_phases,

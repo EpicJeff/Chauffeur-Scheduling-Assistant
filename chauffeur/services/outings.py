@@ -53,7 +53,10 @@ def outings_for(target_date=None, sched: dict = None,
     """
     now = now or datetime.datetime.now()
     target = _as_date(target_date) or now.date()
-    sched = access.cached_schedule(viewer, blob=sched)
+    return _outings_for_viewed(target, access.cached_schedule(viewer, blob=sched), now)
+
+
+def _outings_for_viewed(target, sched, now):
     events = {e.get('id'): e for e in (sched.get('events') or [])}
     route_edges = sched.get('route_edges') or {}
     final_edges = sched.get('final_edges') or {}
@@ -187,8 +190,11 @@ def packing_for(outing: dict, sched: dict = None, kits: list = None,
     bottle at soccer and again at band is carrying it between the two and
     needs one, not two.
     """
+    return _packing_for_viewed(outing, access.cached_schedule(viewer, blob=sched), kits, passengers, viewer=viewer)
+
+
+def _packing_for_viewed(outing, sched, kits=None, passengers=None, *, viewer=access.HOUSE):
     from services import prep_kits as _prep
-    sched = access.cached_schedule(viewer, blob=sched)
     events = {e.get('id'): e for e in (sched.get('events') or [])}
     if kits is None:
         kits = storage.get_prep_kits()

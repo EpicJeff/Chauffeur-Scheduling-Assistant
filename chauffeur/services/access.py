@@ -356,11 +356,15 @@ def event_view(event, viewer=HOUSE):
     return schedule_view({'events': [event]}, viewer)['events'][0] if event else event
 
 
-def commitment_view(row, viewer=HOUSE):
+def commitment_view(row, viewer=HOUSE, *, programs=None):
     """An emitted reservation follows its program's current audience."""
     source = (row or {}).get('source') or {}
     if source.get('kind') == 'program':
-        program = storage.get_program(source.get('id'))
+        programs = {} if programs is None else programs
+        pid = source.get('id')
+        if pid not in programs:
+            programs[pid] = storage.get_program(pid)
+        program = programs[pid]
         if not program or not record_visible('program', program, viewer):
             return {k: v for k, v in dict(row, title='Busy').items() if k != 'source'}
     return row

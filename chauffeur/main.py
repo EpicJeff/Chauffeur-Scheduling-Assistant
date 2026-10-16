@@ -5348,7 +5348,10 @@ def list_commitments(member_id: Optional[str] = None, request: Request = None):
     rows = storage.get_protected_commitments(member_id=member_id,
                                              include_inactive=True)
     names = {m['id']: m.get('name') for m in storage.get_all_members(include_archived=True)}
-    rows = [dict(access.commitment_view(r, _piece_viewer(request))) for r in rows]
+    viewer = _piece_viewer(request)
+    programs = {}
+    with access.batch():
+        rows = [dict(access.commitment_view(r, viewer, programs=programs)) for r in rows]
     for r in rows:
         r['member_name'] = names.get(r.get('member_id'))
     return rows
