@@ -269,7 +269,9 @@ def snapshot(now: datetime.datetime = None) -> str:
         stalled_ids = {r['id'] for r in rows}
         rows = rows + [t for t in storage.get_threads(include_closed=False)
                        if t['id'] not in stalled_ids]
-        rows = [t for t in rows if all(subjects.visible(k, record, None)
+        # The Mind is a household audience, not a signed-in project viewer.
+        rows = [t for t in rows if all((record.get('audience') == 'household'
+                                       if k in ('project', 'proposed_project') else subjects.visible(k, record, None))
                                       for k, record in subjects.subject_records('thread', t))]
         lines = []
         for t in rows[:40]:

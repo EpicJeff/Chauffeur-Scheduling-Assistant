@@ -417,10 +417,14 @@ def _thread_stalls(now: datetime.datetime):
     "this went quiet") — a thread with no next action set still gets an
     actionable line, because the missing decision IS the next action.
     """
-    from services import threads as _threads
+    from services import threads as _threads, subjects
     today = now.date()
     out = []
     for t in _threads.stalled(today=today):
+        # Findings have no narrower audience, and their DMs go to all parents.
+        if any(k in ('project', 'proposed_project') and r.get('audience') != 'household'
+               for k, r in subjects.subject_records('thread', t)):
+            continue
         thread_id = t.get('id')
         title = t.get('title') or 'Thread'
         next_action = t.get('next_action') or ''
@@ -451,9 +455,12 @@ def _mission_states(now: datetime.datetime):
     parent taps OK on the Projects page (acknowledged_at); waiting hushes when the
     answer arrives (status leaves waiting_user). Steps never page — only
     states a human must resolve."""
-    from services import missions, storage as _st
+    from services import missions, storage as _st, subjects
     out = []
     for m in _st.get_missions(status=('done', 'blocked') + missions.ATTENTION):
+        if any(k in ('project', 'proposed_project') and r.get('audience') != 'household'
+               for k, r in subjects.subject_records('mission', m)):
+            continue
         status = m.get('status')
         if status in ('done', 'blocked') and m.get('acknowledged_at'):
             continue

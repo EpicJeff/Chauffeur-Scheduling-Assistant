@@ -1082,10 +1082,10 @@ sending or claiming, and never pass from_member/member_name for them.
                         actor = _st.get_member_by_driver_id(driver_id)
                     if func_name == "list_programs":
                         res = _atv2.list_programs(member_name=args.get("member_name"),
-                                                  acting_member=actor)
+                                                  acting_member=actor, focus_key=focus_key)
                     elif func_name == "program_progress":
                         res = _atv2.program_progress(args.get("program_title", "") or "",
-                                                     acting_member=actor)
+                                                     acting_member=actor, focus_key=focus_key)
                     elif func_name == "propose_program":
                         res = _atv2.propose_program(args.get("title", "") or "",
                                                     for_member_name=args.get("for_member_name"),
@@ -1101,12 +1101,12 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = _atv2.list_threads(state=args.get("state"),
                                                  owner_name=args.get("owner_name"),
                                                  include_closed=bool(args.get("include_closed")),
-                                                 acting_member=actor)
+                                                 acting_member=actor, focus_key=focus_key)
                     elif func_name == "draft_thread_message":
                         res = _atv2.draft_thread_message(args.get("thread_title", "") or "",
                                                          intent=args.get("intent"),
                                                          thread_id=args.get('thread_id'),
-                                                         acting_member=actor)
+                                                         acting_member=actor, focus_key=focus_key)
                     elif func_name == "launch_mission":
                         res = _atv2.launch_mission(args.get("goal", "") or "",
                                                    args.get("thread_title"),
@@ -1114,7 +1114,7 @@ sending or claiming, and never pass from_member/member_name for them.
                     elif func_name == "close_thread":
                         res = _atv2.close_thread(args.get("thread_title", "") or "",
                                                  state=args.get("state"),
-                                                 acting_member=actor)
+                                                 acting_member=actor, focus_key=focus_key)
                     elif func_name == "create_thread":
                         res = _atv2.create_thread(args.get("title", "") or "",
                                                   goal=args.get("goal"),
@@ -1130,7 +1130,7 @@ sending or claiming, and never pass from_member/member_name for them.
                                                           args.get("next_action", "") or "",
                                                           next_action_at=args.get("next_action_at"),
                                                           note=args.get("note"),
-                                                          acting_member=actor)
+                                                          acting_member=actor, focus_key=focus_key)
                     elif func_name == "negotiate_day":
                         res = _atv2.negotiate_day(day=args.get("day"),
                                                   event_title=args.get("event_title"),
@@ -1144,7 +1144,7 @@ sending or claiming, and never pass from_member/member_name for them.
                                                     args.get("text", "") or "",
                                                     url=args.get("url"),
                                                     thread_id=args.get('thread_id'),
-                                                    acting_member=actor)
+                                                    acting_member=actor, focus_key=focus_key)
                     if res.get("message"): agent_message = res["message"]
                 elif func_name == "claim_chore":
                     from services.agent_tools_v2 import claim_chore

@@ -7307,7 +7307,10 @@ def _program_permission_or_refuse(request, body: dict, row: dict) -> None:
     actor_id = _acting_id(request, claimed)
     if actor_id and row.get('member_id') == actor_id:
         return
-    _approver_of_record(_mind_actor(request, claimed))
+    actor = _approver_of_record(_mind_actor(request, claimed))
+    from services import subjects
+    if not subjects.visible('program', row, actor):
+        raise HTTPException(status_code=403, detail="That program is not available.")
 
 
 # Sentinel for "this caller sees nothing" -- distinct from `None`, which
@@ -7779,6 +7782,9 @@ def get_program_lesson_api(program_id: str, phase_name: str = '',
         return {"lesson": None}
     scope = _program_list_scope(request, None)
     if scope is _NOBODY or (scope is not None and scope != row.get('member_id')):
+        return {"lesson": None}
+    from services import subjects
+    if not subjects.visible('program', row, _situation_viewer(request)):
         return {"lesson": None}
     lesson = storage.get_program_lesson(program_id, {
         'phase_name': phase_name, 'unit_n': unit_n,

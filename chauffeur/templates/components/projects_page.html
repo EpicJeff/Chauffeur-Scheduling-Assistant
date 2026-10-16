@@ -48,7 +48,7 @@
                         :class="programsOnly ? 'bg-teal-700 text-white border-teal-600' : 'bg-gray-800 text-gray-300 border-gray-700'"
                         class="text-xs font-bold px-2.5 py-1.5 rounded-lg border">Programs</button>
                 <label class="ml-auto flex items-center gap-2 text-[11px] text-gray-500 cursor-pointer select-none">
-                    <input type="checkbox" x-model="showClosed" @change="rememberClosed()" class="h-3.5 w-3.5 accent-teal-400"><span>Show closed</span>
+                    <input type="checkbox" x-model="showClosed" @change="rememberClosed(); bindCards()" class="h-3.5 w-3.5 accent-teal-400"><span>Show closed</span>
                 </label>
             </div>
             <p class="text-xs text-gray-500 italic px-1" x-show="!loading && !error && !shownProjects.length">No projects yet.</p>

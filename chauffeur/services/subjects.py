@@ -223,6 +223,12 @@ def _thread_spoken_safe(row):
     return _audience_spoken_safe(row)
 
 
+def _program_spoken_safe(row):
+    project = containing_project(row)
+    return (_audience_spoken_safe(row)
+            and (project is None or project.get('audience') == 'household'))
+
+
 def spoken_safe(kind, row, visited=None):
     adapter = ADAPTERS.get(kind)
     if adapter is None or row is None:
@@ -686,7 +692,7 @@ ADAPTERS.update({
         link=lambda sid: f'projects?piece=program:{sid}',
         context=_program_context,
         facets=['sessions'],
-        spoken_safe=_audience_spoken_safe,
+        spoken_safe=_program_spoken_safe,
     ),
     'list': Adapter(
         rows=lambda: storage.get_shopping_lists(),

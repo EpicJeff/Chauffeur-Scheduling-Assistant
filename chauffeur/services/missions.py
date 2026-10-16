@@ -432,8 +432,12 @@ def read_viewer(mission: dict) -> dict:
     adult = {'id': None, 'role': 'adult'}
     parent = {'id': None, 'role': 'parent'}
     records = subjects.subject_records('mission', mission or {})
-    if records and all(not subjects.visible(kind, row, adult)
-                       and subjects.visible(kind, row, parent) for kind, row in records):
+    # Id-less probes cannot enter a project. Its audience still narrows the
+    # transcript: any parents/private boundary makes generic reads parent-only.
+    # A household subject alongside it must never widen that audience again.
+    if any((row.get('audience') != 'household' if kind in ('project', 'proposed_project')
+            else not subjects.visible(kind, row, adult) and subjects.visible(kind, row, parent))
+           for kind, row in records):
         return parent
     return adult
 
