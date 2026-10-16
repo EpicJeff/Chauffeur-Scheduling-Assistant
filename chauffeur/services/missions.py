@@ -306,11 +306,12 @@ def _close(mission_id: str, status: str, **fields) -> dict:
     return storage.get_mission(mission_id)
 
 
-def _match_thread(title: str):
+def _match_thread(title: str, viewer=None, *, focus_key=None):
     title = (title or '').strip().lower()
     if not title:
         return None
-    rows = storage.get_threads()
+    from services import subjects
+    rows = [t for t in storage.get_threads() if subjects.record_visible('thread', t, viewer, focus_key=focus_key)]
     exact = [t for t in rows if (t.get('title') or '').strip().lower() == title]
     if len(exact) == 1:
         return exact[0]
@@ -1629,7 +1630,10 @@ def _apply_planner_action(mission, res, settings, action, stage_id):
         thread = None
         if mission.get('origin_kind') == 'thread':
             thread = storage.get_thread(mission.get('origin_ref'))
-        thread = thread or _match_thread(res.get('thread_title'))
+        from services import subjects
+        if thread and not subjects.record_visible('thread', thread, read_viewer(mission)):
+            thread = None
+        thread = thread or _match_thread(res.get('thread_title'), read_viewer(mission))
         if not thread:
             storage.add_mission_step(mid, {'kind': 'note', 'name': 'refused',
                 'result_json': {'note': 'no unambiguous thread matched — a tie '

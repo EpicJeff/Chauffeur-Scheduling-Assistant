@@ -5832,10 +5832,13 @@ def _situation_viewer(request):
 
 @app.get("/api/situations")
 def situations_list(kinds: str = None, include_done: int = 0, owner: str = None, request: Request = None):
-    from services import situations as _sit
+    from services import situations as _sit, subjects
     want = tuple(k for k in (kinds or '').split(',') if k in _sit.KINDS) or None
-    return {"situations": _sit.list_situations(_situation_viewer(request), kinds=want,
-                                               include_done=bool(include_done), owner=owner or None)}
+    rows = _sit.list_situations(_situation_viewer(request), kinds=want,
+                               include_done=bool(include_done), owner=owner or None)
+    viewer = _record_viewer(request)
+    return {"situations": [r for r in rows if r['kind'] not in ('thread', 'mission')
+                           or subjects.record_visible(r['kind'], _sit.load(r['kind'], r['id']), viewer)]}
 
 
 @app.get("/api/situations/{kind}/{sid}")
@@ -5844,8 +5847,8 @@ def situation_get(kind: str, sid: str, request: Request = None):
     row = _sit.load(kind, sid)
     if not row:
         raise HTTPException(status_code=404, detail="No such situation")
-    viewer = _situation_viewer(request)
-    if not _sit.can_see(kind, row, viewer) and not _is_admin_surface(request):
+    viewer = _record_viewer(request) if kind in ('thread', 'mission') else _situation_viewer(request)
+    if not _sit.can_see(kind, row, viewer) and (kind in ('thread', 'mission') or not _is_admin_surface(request)):
         raise HTTPException(status_code=403, detail="Not yours to see")
     return _sit.view(kind, sid, viewer)
 
@@ -5887,7 +5890,10 @@ def subject_situations(kind: str, sid: str, request: Request = None):
 def situations_act(kind: str, sid: str, body: dict = Body(default={}),
                    request: Request = None, background_tasks: BackgroundTasks = None):
     from services import situations as _sit
-    actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
+    viewer = _mind_actor(request, body.get('member_id'))
+    if kind in ('thread', 'mission'):
+        _record_or_refuse(kind, sid, viewer)
+    actor = _approver_of_record(viewer)
     res = _sit.act(kind, sid, body.get('verb') or '', option_id=body.get('option_id'),
                    payload=body.get('payload') or {}, actor=actor)
     if res.get('status') == 'refused':
@@ -5901,11 +5907,14 @@ def situations_act(kind: str, sid: str, body: dict = Body(default={}),
 @app.post("/api/asks")
 def asks_create(body: dict = Body(default={}), request: Request = None):
     from services import situations as _sit, asks as _asks
-    actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
+    viewer = _mind_actor(request, body.get('member_id'))
+    actor = _approver_of_record(viewer)
     kind, sid = body.get('kind'), body.get('id')
     to, what, unlocks = dict(body.get('to') or {}), (body.get('what') or '').strip(), None
     if body.get('option_id') and kind and sid:
         row = _sit.load(kind, sid)
+        if not row or not _sit.can_see(kind, row, viewer):
+            raise HTTPException(status_code=403, detail='That record is not available')
         opt = next((o for o in _sit.options_for(kind, row or {}) if o['id'] == body['option_id']
                     and o['verb'] == 'ask'), None) if row else None
         if not opt:
@@ -6307,6 +6316,23 @@ def subject_projects(kind: str, sid: str, request: Request = None):
 
 # --- Missions (spec: 2026-09-04-mission-engine-design) ---
 
+def _record_viewer(request):
+    """A household surface must not borrow the approver's private identity."""
+    member_id = _acting_id(request, None)
+    return storage.get_member(member_id) if member_id else None
+
+
+def _record_or_refuse(kind, rid, viewer):
+    from services import subjects
+    row = {'thread': storage.get_thread, 'mission': storage.get_mission,
+           'program': storage.get_program}[kind](rid)
+    if not row:
+        raise HTTPException(status_code=404, detail="No such record")
+    if not subjects.record_visible(kind, row, viewer):
+        raise HTTPException(status_code=403, detail="That record is not available")
+    return row
+
+
 @app.get("/api/missions/admin")
 def missions_admin(request: Request = None):
     """Same person-gate as study_state: parents/adults or a trusted admin
@@ -6317,10 +6343,9 @@ def missions_admin(request: Request = None):
     actor = _mind_actor(request, None)
     active = storage.get_missions(status=missions.LIVE)
     history = storage.get_missions(status=['done', 'blocked', 'dropped'])[:60]
-    if actor is not None:
-        from services import situations
-        active = [m for m in active if situations.can_see('mission', m, actor)]
-        history = [m for m in history if situations.can_see('mission', m, actor)]
+    from services import subjects
+    active = [m for m in active if subjects.record_visible('mission', m, actor)]
+    history = [m for m in history if subjects.record_visible('mission', m, actor)]
     for m in active:
         m['steps'] = storage.get_mission_steps(m['id'])
     if actor is not None:
@@ -6341,10 +6366,7 @@ def missions_detail(mission_id: str, request: Request = None):
     row = storage.get_mission(mission_id)
     if not row:
         raise HTTPException(status_code=404, detail="No such mission")
-    if actor is not None:
-        from services import situations
-        if not situations.can_see('mission', row, actor):
-            raise HTTPException(status_code=403, detail="You cannot see this mission")
+    _record_or_refuse('mission', mission_id, actor)
     row['steps'] = storage.get_mission_steps(mission_id)
     if actor is not None:
         from services import planned
@@ -6357,6 +6379,8 @@ def missions_launch(body: dict = Body(default={}), request: Request = None):
     from services import missions as _missions
     actor = _mind_actor(request, body.get('member_id'))
     pid = _project_to_join(body, actor)
+    if body.get('origin_kind') == 'thread':
+        _record_or_refuse('thread', body.get('origin_ref'), actor)
     res = _missions.launch((body.get('goal') or ''),
                            origin_kind=body.get('origin_kind') or 'manual',
                            origin_ref=body.get('origin_ref'),
@@ -6373,7 +6397,8 @@ def missions_proposal_act(mission_id: str, proposal_id: str,
                           body: dict = Body(default={}), request: Request = None,
                           background_tasks: BackgroundTasks = None):
     from services import chat_actions as _ca
-    actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
+    viewer = _mind_actor(request, body.get('member_id'))
+    actor = _approver_of_record(viewer)
     mission = storage.get_mission(mission_id)
     if not mission:
         raise HTTPException(status_code=404, detail="No such mission")
@@ -6381,7 +6406,7 @@ def missions_proposal_act(mission_id: str, proposal_id: str,
     if not prop or prop.get('origin_kind') != 'mission' or prop.get('origin_id') != mission_id:
         raise HTTPException(status_code=404, detail="No such proposal on this mission")
     from services import situations
-    if not situations.can_see('mission', mission, actor):
+    if not situations.can_see('mission', mission, viewer):
         raise HTTPException(status_code=403, detail="That mission is not visible to you")
     if prop.get('stage_id'):
         raise HTTPException(status_code=409, detail="Handle this row through its stage")
@@ -6417,11 +6442,7 @@ def mission_shot(mission_id: str, name: str, request: Request = None):
     import re as _re
     # The screenshots are the transcript's pictures: a mission about a record
     # this person may not see is not theirs to look at (subjects, spec §3).
-    _row = storage.get_mission(mission_id) if actor is not None else None
-    if _row is not None:
-        from services import situations as _sit
-        if not _sit.can_see('mission', _row, actor):
-            raise HTTPException(status_code=403, detail="You cannot see this mission")
+    _record_or_refuse('mission', mission_id, actor)
     if not _re.fullmatch(r'[a-z0-9_]+\.png', name or '') or not _re.fullmatch(r'[a-z0-9]+', mission_id or ''):
         raise HTTPException(status_code=404, detail="No such image")
     path = os.path.join(_missions.browse_dir(mission_id), name)
@@ -6436,7 +6457,9 @@ def missions_release(mission_id: str, body: dict = Body(default={}), request: Re
     one site for this mission and resumes the browse; decline hands over;
     stop blocks (services/missions.release)."""
     from services import missions as _missions
-    actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
+    viewer = _mind_actor(request, body.get('member_id'))
+    actor = _approver_of_record(viewer)
+    _record_or_refuse('mission', mission_id, viewer)
     res = _missions.release(mission_id, (body.get('decision') or '').strip(), actor, ask_id=(body.get('ask_id') or None))
     if res.get('status') == 'refused':
         raise HTTPException(status_code=403, detail=res.get('message'))
@@ -6451,7 +6474,9 @@ def missions_submit(mission_id: str, body: dict = Body(default={}), request: Req
     browse with the approved record and presses once; decline hands over;
     stop blocks. The ask id is the approval; a stale one answers moved."""
     from services import missions as _missions
-    actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
+    viewer = _mind_actor(request, body.get('member_id'))
+    actor = _approver_of_record(viewer)
+    _record_or_refuse('mission', mission_id, viewer)
     res = _missions.submit(mission_id, (body.get('decision') or '').strip(), actor, ask_id=(body.get('ask_id') or None))
     if res.get('status') == 'refused':
         raise HTTPException(status_code=403, detail=res.get('message'))
@@ -6465,7 +6490,9 @@ def missions_verify(mission_id: str, body: dict = Body(default={}), request: Req
     """A parent resolves an attempt the browser could not read: confirmed,
     failed or unsure, with a detail (a confirmation number)."""
     from services import missions as _missions
-    actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
+    viewer = _mind_actor(request, body.get('member_id'))
+    actor = _approver_of_record(viewer)
+    _record_or_refuse('mission', mission_id, viewer)
     res = _missions.verify(mission_id, body.get('ask_id') or None, (body.get('outcome') or '').strip(), actor, detail=body.get('detail') or '')
     if res.get('status') == 'refused':
         raise HTTPException(status_code=403, detail=res.get('message'))
@@ -6476,12 +6503,13 @@ def missions_verify(mission_id: str, body: dict = Body(default={}), request: Req
 
 @app.post("/api/missions/{mission_id}/plan/answers")
 def missions_plan_answers(mission_id: str, body: dict = Body(default={}), request: Request = None):
-    actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
+    viewer = _mind_actor(request, body.get('member_id'))
+    actor = _approver_of_record(viewer)
     from services import planned, situations
     mission = storage.get_mission(mission_id)
     if not mission:
         raise HTTPException(status_code=404, detail="No such mission")
-    if not situations.can_see('mission', mission, actor):
+    if not situations.can_see('mission', mission, viewer):
         raise HTTPException(status_code=403, detail="That mission is not visible to you")
     result = planned.answer_plan(mission_id, body.get('answers') or {}, actor)
     if result['status'] != 'success':
@@ -6496,7 +6524,9 @@ def missions_answer(mission_id: str, body: dict = Body(default={}),
     """Delegate free text to missions.answer, including tap_only_ask_pending:
     a pending release, submit or verify returns 'Answer that one with its buttons.'
     """
-    actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
+    viewer = _mind_actor(request, body.get('member_id'))
+    actor = _approver_of_record(viewer)
+    _record_or_refuse('mission', mission_id, viewer)
     text = (body.get('text') or '').strip()
     from services import missions as _missions
     res = _missions.answer(mission_id, text, actor)
@@ -6512,7 +6542,8 @@ def missions_answer(mission_id: str, body: dict = Body(default={}),
 def delete_mission_route(mission_id: str, member_id: Optional[str] = None, request: Request = None):
     """Delete one mission with its steps and screenshots (services.missions.delete).
     Parent/adult, by hand only; Argyle has no such tool."""
-    _mind_actor(request, member_id)
+    actor = _mind_actor(request, member_id)
+    _record_or_refuse('mission', mission_id, actor)
     from services import missions as _missions
     res = _missions.delete(mission_id)
     if res.get('status') == 'not_found':
@@ -6523,7 +6554,8 @@ def delete_mission_route(mission_id: str, member_id: Optional[str] = None, reque
 @app.post("/api/missions/{mission_id}/drop")
 def missions_drop(mission_id: str, body: dict = Body(default={}),
                   request: Request = None):
-    _mind_actor(request, body.get('member_id'))
+    actor = _mind_actor(request, body.get('member_id'))
+    _record_or_refuse('mission', mission_id, actor)
     if not storage.get_mission(mission_id):
         raise HTTPException(status_code=404, detail="No such mission")
     import time as _t
@@ -6536,7 +6568,8 @@ def missions_drop(mission_id: str, body: dict = Body(default={}),
 @app.post("/api/missions/{mission_id}/ack")
 def missions_ack(mission_id: str, body: dict = Body(default={}),
                  request: Request = None):
-    _mind_actor(request, body.get('member_id'))
+    actor = _mind_actor(request, body.get('member_id'))
+    _record_or_refuse('mission', mission_id, actor)
     if not storage.get_mission(mission_id):
         raise HTTPException(status_code=404, detail="No such mission")
     import time as _t
@@ -6730,9 +6763,10 @@ def end_house_session(x_member_token: Optional[str] = Header(None)):
 
 
 @app.get("/api/house/programs/{program_id}/session")
-def house_program_session(program_id: str):
+def house_program_session(program_id: str, request: Request = None):
     from services import house_programs
-    session = house_programs.session(program_id)
+    viewer_id = _acting_id(request, None)
+    session = house_programs.session(program_id, viewer=storage.get_member(viewer_id) if viewer_id else None)
     if session is None:
         raise HTTPException(status_code=404, detail="This program is no longer active")
     return {'window': session}
@@ -7028,11 +7062,8 @@ def list_threads(owner: Optional[str] = None, include_closed: bool = False,
     rows = storage.get_threads(owner=owner, include_closed=include_closed)
     viewer_id = _acting_id(request, None)
     viewer = storage.get_member(viewer_id) if viewer_id else None
-    if viewer is not None:
-        from services import situations, subjects
-        rows = [row for row in rows if not (row.get('subject_kind') or row.get('subject_history')
-                                           or subjects.containing_project(row))
-                or situations.can_see('thread', row, viewer)]
+    from services import subjects
+    rows = [row for row in rows if subjects.record_visible('thread', row, viewer)]
     for row in rows:
         row['stall_reason'] = _threads.is_stalled(row)
     return {"threads": rows}
@@ -7078,9 +7109,11 @@ def thread_missions(thread_id: str, request: Request = None):
     # child who owns the thread sees the thread, not this.
     if not _sit.can_see('thread', row, viewer) or (viewer or {}).get('role') not in _sit.WRITE_ROLES:
         raise HTTPException(status_code=403, detail="Not yours to see")
+    record_viewer = _record_viewer(request)
+    _record_or_refuse('thread', thread_id, record_viewer)
     from services import planned
     rows = [m for m in storage.get_missions() if m.get('origin_kind') == 'thread'
-            and m.get('origin_ref') == thread_id and _sit.can_see('mission', m, viewer)]
+            and m.get('origin_ref') == thread_id and _sit.can_see('mission', m, record_viewer)]
     rows.sort(key=lambda m: -(m.get('created_at') or 0))
     for m in rows:
         m['steps'] = storage.get_mission_steps(m['id'])
@@ -7093,7 +7126,8 @@ def patch_thread(thread_id: str, body: dict = Body(default={}), request: Request
     State changes go through /advance, /note and /close so they land in
     `history`; this route is for fields that carry no movement of their own."""
     from models.schemas import Thread
-    _mind_actor(request, body.get('member_id'))
+    actor = _mind_actor(request, body.get('member_id'))
+    _record_or_refuse('thread', thread_id, actor)
     # Anything that carries movement — state, closed_at, next_action(_at) —
     # is excluded here on purpose: those only ever change through
     # close()/advance(), which log the change. A PATCH that could set them
@@ -7132,6 +7166,7 @@ def note_thread(thread_id: str, body: dict = Body(default={}), request: Request 
     received. Resets the quiet clock (services.threads.note)."""
     from services import threads as _threads
     actor = _mind_actor(request, body.get('member_id'))
+    _record_or_refuse('thread', thread_id, actor)
     text = (body.get('text') or '').strip()
     if not text:
         raise HTTPException(status_code=400, detail="A note needs text")
@@ -7147,6 +7182,7 @@ def advance_thread(thread_id: str, body: dict = Body(default={}), request: Reque
     """Set the next thing that has to happen, and when (services.threads.advance)."""
     from services import threads as _threads
     actor = _mind_actor(request, body.get('member_id'))
+    _record_or_refuse('thread', thread_id, actor)
     _live_thread_or_refuse(thread_id)
     ok = _threads.advance(thread_id, body.get('next_action') or '',
                           next_action_at=body.get('next_action_at'),
@@ -7160,7 +7196,8 @@ def advance_thread(thread_id: str, body: dict = Body(default={}), request: Reque
 def delete_thread_route(thread_id: str, member_id: Optional[str] = None, request: Request = None):
     """Delete a thread with everything of its own (services.threads.delete).
     Parent/adult, by hand only; Argyle has no such tool."""
-    _mind_actor(request, member_id)
+    actor = _mind_actor(request, member_id)
+    _record_or_refuse('thread', thread_id, actor)
     from services import threads as _threads
     res = _threads.delete(thread_id)
     if res.get('status') == 'not_found':
@@ -7174,6 +7211,7 @@ def close_thread(thread_id: str, body: dict = Body(default={}), request: Request
     (services.threads.close). Stops stalling immediately."""
     from services import threads as _threads
     actor = _mind_actor(request, body.get('member_id'))
+    _record_or_refuse('thread', thread_id, actor)
     state = body.get('state') or 'done'
     if state not in ('done', 'dropped'):
         raise HTTPException(status_code=400,
@@ -7193,7 +7231,8 @@ def draft_thread_message(thread_id: str, body: dict = Body(default={}),
     services.mailer. See send_thread_message below for the only route
     that can."""
     from services import threads as _threads
-    _mind_actor(request, body.get('member_id'))
+    actor = _mind_actor(request, body.get('member_id'))
+    _record_or_refuse('thread', thread_id, actor)
     res = _threads.draft_message(thread_id, intent=body.get('intent') or '')
     if res.get('status') == 'not_found':
         raise HTTPException(status_code=404, detail="No such thread")
@@ -7211,6 +7250,7 @@ async def thread_photo(thread_id: str, file: UploadFile = File(...), caption: st
         raise HTTPException(status_code=404, detail="No such thread")
     actor_id = _acting_id(request, member_id)
     actor = storage.get_member(actor_id) if actor_id else None
+    _record_or_refuse('thread', thread_id, actor)
     is_owner = bool(actor and thread.get('owner_member_id') == actor.get('id'))
     if actor and actor.get('role') in ('child', 'helper', 'guest') and not is_owner:
         raise HTTPException(status_code=403, detail="Only a parent, an adult or the thread's owner can add a photo")
@@ -7242,6 +7282,7 @@ def send_thread_message(thread_id: str, body: dict = Body(default={}),
     Send is the only path that reaches this one."""
     from services import threads as _threads
     actor = _mind_actor(request, body.get('member_id'))
+    _record_or_refuse('thread', thread_id, actor)
     # A closed thread must never be mailed back to life: send_drafted flips
     # the thread to `waiting` on success, which would silently reopen it.
     _live_thread_or_refuse(thread_id)
@@ -7265,7 +7306,8 @@ def research_thread(thread_id: str, body: dict = Body(default={}),
     other status (disabled/no_key/capped/reserved/no_results/error) appends
     nothing and is returned honestly so the page can say why."""
     from services import threads as _threads
-    _mind_actor(request, body.get('member_id'))
+    actor = _mind_actor(request, body.get('member_id'))
+    _record_or_refuse('thread', thread_id, actor)
     question = (body.get('question') or '').strip()
     if not question:
         raise HTTPException(status_code=400, detail="A question is needed")
@@ -7306,8 +7348,9 @@ def _program_permission_or_refuse(request, body: dict, row: dict) -> None:
     claimed = body.get('member_id')
     actor_id = _acting_id(request, claimed)
     if actor_id and row.get('member_id') == actor_id:
+        _record_or_refuse('program', row['id'], storage.get_member(actor_id))
         return
-    actor = _approver_of_record(_mind_actor(request, claimed))
+    actor = _mind_actor(request, claimed)
     from services import subjects
     if not subjects.visible('program', row, actor):
         raise HTTPException(status_code=403, detail="That program is not available.")
@@ -7372,7 +7415,7 @@ def list_programs_api(member_id: str = None, include_finished: bool = False,
     rows = storage.get_programs(member_id=scope,
                                 include_finished=include_finished)
     from services import subjects
-    viewer = _situation_viewer(request)
+    viewer = _record_viewer(request)
     rows = [r for r in rows if subjects.visible('program', r, viewer)]
     members = {x['id']: x for x in storage.get_all_members(include_archived=True)}
     out = []
@@ -7686,7 +7729,7 @@ def move_program_unit(program_id: str, body: dict = Body(default={}),
 
 @app.get("/api/practice-windows")
 def practice_windows_api(start_date: str = None, end_date: str = None,
-                         member_id: str = None):
+                         member_id: str = None, request: Request = None):
     """When the household's practice windows actually are, and what is in them.
 
     A household read on purpose, and the one place a program's claimed TIME
@@ -7712,7 +7755,10 @@ def practice_windows_api(start_date: str = None, end_date: str = None,
         start, end = end, start
     if (end - start).days > 60:
         end = start + _dt.timedelta(days=60)
-    return {"windows": _prog.practice_windows(start, end, member_id=member_id)}
+    viewer_id = _acting_id(request, None)
+    viewer = storage.get_member(viewer_id) if viewer_id else None
+    return {"windows": [_prog.practice_window_view(w, viewer)
+                        for w in _prog.practice_windows(start, end, member_id=member_id)]}
 
 
 # --- Lesson player (P2): the hand path beside every generated one ----------
@@ -7784,7 +7830,7 @@ def get_program_lesson_api(program_id: str, phase_name: str = '',
     if scope is _NOBODY or (scope is not None and scope != row.get('member_id')):
         return {"lesson": None}
     from services import subjects
-    if not subjects.visible('program', row, _situation_viewer(request)):
+    if not subjects.record_visible('program', row, _record_viewer(request)):
         return {"lesson": None}
     lesson = storage.get_program_lesson(program_id, {
         'phase_name': phase_name, 'unit_n': unit_n,
@@ -7885,7 +7931,7 @@ def delete_program_lesson_api(program_id: str, phase_name: str = '',
 
 @app.get("/api/programs/{program_id}/lesson-scenes")
 def program_lesson_scenes(program_id: str, phase_name: str = '',
-                          unit_n: int = 0, session_label: str = ''):
+                          unit_n: int = 0, session_label: str = '', request: Request = None):
     """The lesson a wall board may play — the scenes, and nothing else.
 
     A deliberately narrow projection, the same shape and the same reasoning
@@ -7916,7 +7962,7 @@ def program_lesson_scenes(program_id: str, phase_name: str = '',
     test every wall surface in this app has to pass.
 
     Scoped by what it RETURNS, not by who is asking, which is why the
-    handler carries no `request`: scenes, the origin label, and the source
+    handler resolves a viewer when signed in: scenes, the origin label, and the source
     link. No id, no model, no edited flag, no created_at. An unresolvable
     slot reads as `{"lesson": null}`, exactly like the signed-in route's own
     answer for one — nothing distinguishes "no such slot" from "no such
@@ -7929,7 +7975,10 @@ def program_lesson_scenes(program_id: str, phase_name: str = '',
         return {"lesson": None}
     if not (0 <= unit_n <= _LESSON_UNIT_N_MAX):
         return {"lesson": None}
-    if not storage.get_program(program_id):
+    from services import subjects
+    viewer_id = _acting_id(request, None)
+    viewer = storage.get_member(viewer_id) if viewer_id else None
+    if not subjects.record_visible('program', storage.get_program(program_id), viewer):
         return {"lesson": None}
     lesson = storage.get_program_lesson(program_id, {
         'phase_name': phase_name, 'unit_n': unit_n,
@@ -8103,7 +8152,7 @@ _LESSON_HELP_SYSTEM = (
 
 
 @app.post("/api/programs/{program_id}/lesson-help")
-def lesson_help_api(program_id: str, body: dict = Body(default={})):
+def lesson_help_api(program_id: str, body: dict = Body(default={}), request: Request = None):
     """Two sentences about the beat somebody is stuck on, right now.
 
     The one live model call inside a session, and the only thing in this
@@ -8137,8 +8186,8 @@ def lesson_help_api(program_id: str, body: dict = Body(default={})):
     """
     import time
     from services import model_pools, program_lessons as _pl
-    if not storage.get_program(program_id):
-        raise HTTPException(status_code=404, detail="No such program.")
+    viewer_id = _acting_id(request, None)
+    _record_or_refuse('program', program_id, storage.get_member(viewer_id) if viewer_id else None)
     try:
         unit_n = int((body or {}).get('unit_n') or 0)
     except (TypeError, ValueError, OverflowError):
@@ -8273,7 +8322,7 @@ def sweep_program_lessons_now(body: dict = Body(default={}),
 
 
 @app.get("/api/programs/celebrations")
-def program_celebrations():
+def program_celebrations(request: Request = None):
     """What a hallway is allowed to know about the household's programs.
 
     A deliberately narrow projection rather than a widened read: the wall card
@@ -8286,7 +8335,8 @@ def program_celebrations():
     call (`services/auth.py`, WALL).
     """
     from services import programs as _prog
-    return _prog.celebrations()
+    viewer_id = _acting_id(request, None)
+    return _prog.celebrations(viewer=storage.get_member(viewer_id) if viewer_id else None)
 
 
 @app.get("/api/programs/{program_id}/footprint")
@@ -8322,7 +8372,9 @@ def approve_program(program_id: str, background_tasks: BackgroundTasks = None,
     """Claim the week. Parent/adult work — the control-center surface stands
     in the household's parent of record, same as the Mind's approve tap."""
     from services import programs as _prog
-    actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
+    viewer = _mind_actor(request, body.get('member_id'))
+    actor = _approver_of_record(viewer)
+    _record_or_refuse('program', program_id, viewer)
     return _program_refresh(
         _prog.approve(program_id, (actor or {}).get('id'),
                       slots=body.get('slots')), background_tasks)
@@ -19460,6 +19512,7 @@ def _practice_events(start_date_str=None, end_date_str=None, days=30,
 
     out = []
     for w in _prog.practice_windows(start, end):
+        w = _prog.practice_window_view(w)
         try:
             begins = _dt.datetime.fromisoformat(f"{w['date']}T{w['time_start']}:00")
             finishes = _dt.datetime.fromisoformat(f"{w['date']}T{w['time_end']}:00")
@@ -19526,12 +19579,27 @@ def _project_hold_events(start_date_str=None, end_date_str=None, days=30,
 
 def _project_hold_titles(blob, viewer):
     """Restore project words only on the authenticated response, never in cache."""
-    from services import projects
+    from services import projects, programs, subjects
     if not isinstance(blob, dict) or 'events' not in blob:
         return blob
     out = dict(blob)
     out['events'] = []
     for event in blob.get('events') or []:
+        if event.get('event_type') == 'practice':
+            event = dict(event)
+            window = event.get('practice') or {}
+            row = storage.get_program(window.get('program_id'))
+            if viewer and viewer.get('id') and subjects.record_visible('program', row, viewer):
+                import datetime as _dt
+                day = _dt.date.fromisoformat(window['date'])
+                window = next((w for w in programs.practice_windows(day, day)
+                               if w['program_id'] == window.get('program_id')
+                               and w['time_start'] == window.get('time_start')), window)
+            window = programs.practice_window_view(window, viewer if viewer and viewer.get('id') else None)
+            event['practice'] = window
+            event['title'] = window['title'] + (f" · {window['session_label']}" if window.get('session_label') else '')
+            event['description'] = ' · '.join(([window['unit_title']] if window.get('unit_title') else [])
+                                            + (window.get('steps') or [])) or window.get('milestone') or ''
         if event.get('event_type') != 'project_hold':
             out['events'].append(event)
             continue

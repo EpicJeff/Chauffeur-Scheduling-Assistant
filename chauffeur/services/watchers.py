@@ -402,6 +402,73 @@ SCANNED_KINDS = ('unassigned', 'optional_skip', 'proposal', 'chore_verify',
                  'mission_done', 'mission_blocked', 'mission_waiting')
 
 
+def _record_nudges(kind, row, candidates, now):
+    """Keep restricted nudges off household findings; queue their private DM."""
+    from services import subjects
+    if not row:
+        return []
+    if subjects.record_visible(kind, row, None):
+        return candidates
+    # Program drift/rebaseline are one-shot changes, so quiet hours must not
+    # throw their only nudge away. The pending queue is never a Finding row.
+    pending = dict(storage.get_app_state('watcher_record_dms') or {})
+    for candidate in candidates:
+        pending[candidate.key] = {'kind': kind, 'record_id': row['id'],
+                                  'finding': candidate._asdict(), 'at': now.timestamp()}
+    storage.set_app_state('watcher_record_dms', pending)
+    return []
+
+
+def _flush_record_nudges(now):
+    """One consolidated private DM per recipient, with the watcher dedupe."""
+    from services import subjects, missions
+    from services.agent_tools_v2 import _post_chat_message
+    pending = dict(storage.get_app_state('watcher_record_dms') or {})
+    notified = dict(storage.get_app_state('watcher_notified') or {})
+    cutoff = now.timestamp() - NOTIFIED_RETENTION_DAYS * 86400
+    notified = {k: ts for k, ts in notified.items() if ts >= cutoff}
+    parents = [m for m in storage.get_all_members() if m.get('role') == 'parent'
+               and not m.get('system') and not m.get('archived')]
+    by_person = {}
+    for key, item in list(pending.items()):
+        kind = item['kind']
+        row = {'thread': storage.get_thread, 'mission': storage.get_mission,
+               'program': storage.get_program}[kind](item['record_id'])
+        stale = (not row or key in notified or item['at'] < cutoff
+                 or kind == 'thread' and row.get('state') in ('done', 'dropped')
+                 or kind == 'mission' and (row.get('acknowledged_at')
+                     or row.get('status') not in missions.ATTENTION + ('done', 'blocked'))
+                 or kind == 'program' and row.get('state') in ('done', 'dropped'))
+        if stale:
+            pending.pop(key, None)
+            continue
+        project = subjects.containing_project(row)
+        owner = row.get({'thread': 'owner_member_id', 'mission': 'created_by', 'program': 'member_id'}[kind])
+        people = (parents if (project and project.get('audience') == 'parents') or not owner
+                  else [storage.get_member(owner)])
+        for member in people:
+            if member and subjects.record_visible(kind, row, member):
+                by_person.setdefault(member['id'], (member, []))[1].append(Finding(**item['finding']))
+    sent = set()
+    if by_person:
+        argyle = storage.ensure_argyle_member()
+        for member, fresh in by_person.values():
+            try:
+                dm = storage.get_or_create_dm(argyle['id'], member['id'])
+                body = "Heads-up: needs a look:\n" + "\n".join(f.line for f in fresh)
+                _post_chat_message(dm, argyle, body)
+                _post_action_cards(dm, argyle, fresh, member)
+                sent.update(f.key for f in fresh)
+            except Exception as exc:
+                print(f"[watchers] private record DM failed: {exc}")
+    for key in sent:
+        notified[key] = now.timestamp()
+        pending.pop(key, None)
+    storage.set_app_state('watcher_notified', notified)
+    storage.set_app_state('watcher_record_dms', pending)
+    return len(sent)
+
+
 def _thread_stalls(now: datetime.datetime):
     """A thread (services/threads.py) that stalled — a promise to a vendor or
     a project that stopped moving and nothing else in the app would ever
@@ -417,14 +484,10 @@ def _thread_stalls(now: datetime.datetime):
     "this went quiet") — a thread with no next action set still gets an
     actionable line, because the missing decision IS the next action.
     """
-    from services import threads as _threads, subjects
+    from services import threads as _threads
     today = now.date()
     out = []
     for t in _threads.stalled(today=today):
-        # Findings have no narrower audience, and their DMs go to all parents.
-        if any(k in ('project', 'proposed_project') and r.get('audience') != 'household'
-               for k, r in subjects.subject_records('thread', t)):
-            continue
         thread_id = t.get('id')
         title = t.get('title') or 'Thread'
         next_action = t.get('next_action') or ''
@@ -446,7 +509,8 @@ def _thread_stalls(now: datetime.datetime):
             kind='thread_stall', severity=severity, dm=dm,
             subject_type='thread', subject_id=str(thread_id),
             fp=f"{thread_id}|{t.get('next_action_at') or ''}"))
-    return out
+    return [f for candidate in out
+            for f in _record_nudges('thread', storage.get_thread(candidate.subject_id), [candidate], now)]
 
 
 def _mission_states(now: datetime.datetime):
@@ -455,12 +519,9 @@ def _mission_states(now: datetime.datetime):
     parent taps OK on the Projects page (acknowledged_at); waiting hushes when the
     answer arrives (status leaves waiting_user). Steps never page — only
     states a human must resolve."""
-    from services import missions, storage as _st, subjects
+    from services import missions, storage as _st
     out = []
     for m in _st.get_missions(status=('done', 'blocked') + missions.ATTENTION):
-        if any(k in ('project', 'proposed_project') and r.get('audience') != 'household'
-               for k, r in subjects.subject_records('mission', m)):
-            continue
         status = m.get('status')
         if status in ('done', 'blocked') and m.get('acknowledged_at'):
             continue
@@ -481,7 +542,8 @@ def _mission_states(now: datetime.datetime):
         out.append(Finding(key=f"{kind}:{m['id']}", line=line, kind=kind,
                            severity=sev, dm=dm,
                            subject_type='mission', subject_id=str(m['id'])))
-    return out
+    return [f for candidate in out
+            for f in _record_nudges('mission', storage.get_mission(candidate.subject_id), [candidate], now)]
 
 
 WEEKDAY_NAMES = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
@@ -549,7 +611,7 @@ def _program_findings(now: datetime.datetime):
     rule and it is the difference between a finding with a fix attached and a
     reprimand with a number attached.
     """
-    from services import programs as _prog
+    from services import programs as _prog, subjects
     out = []
     if not storage.get_settings().get('programs_enabled', True):
         return out
@@ -601,7 +663,8 @@ def _program_findings(now: datetime.datetime):
                     subject_type='program', subject_id=str(row['id'])))
         except Exception as e:
             print(f"[watchers] program check failed for {row.get('id')}: {e}")
-    return out
+    return [f for candidate in out
+            for f in _record_nudges('program', storage.get_program(candidate.subject_id), [candidate], now)]
 
 
 def collect_findings(now: datetime.datetime = None):
@@ -913,6 +976,7 @@ def run_watchers(now: datetime.datetime = None) -> int:
     if not (QUIET_END_HOUR <= now.hour < QUIET_START_HOUR):
         return 0
 
+    private_sent = _flush_record_nudges(now)
     notified = dict(storage.get_app_state('watcher_notified') or {})
     # prune old markers so the dict never grows without bound
     cutoff = now_ts - NOTIFIED_RETENTION_DAYS * 86400
@@ -931,12 +995,12 @@ def run_watchers(now: datetime.datetime = None) -> int:
              if f.dm and f.key not in notified and not _settled(f)]
     if not fresh:
         storage.set_app_state('watcher_notified', notified)
-        return 0
+        return private_sent
 
     parents = [m for m in storage.get_all_members()
                if m.get('role') == 'parent' and not m.get('system')]
     if not parents:
-        return 0
+        return private_sent
 
     body = "👋 Heads-up — needs a look:\n" + "\n".join(f"• {_heads_up_line(f)}" for f in fresh)
     body += "\n\nAsk me for options, or handle it on the dashboard."
@@ -959,8 +1023,8 @@ def run_watchers(now: datetime.datetime = None) -> int:
                 notified[f.key] = now_ts
         storage.set_app_state('watcher_notified', notified)
         print(f"[watchers] sent {len(fresh)} finding(s) to {len(parents)} parent(s)")
-        return len(fresh)
-    return 0
+        return private_sent + len(fresh)
+    return private_sent
 
 
 # At most this many approve-cards ride a single sweep. The consolidated DM is

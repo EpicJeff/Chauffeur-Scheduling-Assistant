@@ -54,7 +54,7 @@ def _event_ts(e):
 
 
 def _board(now, viewer):
-    from services import mind, threads as _th
+    from services import mind, subjects, threads as _th
     pins = []
     insights = mind.visible_insights(viewer, now=now)
     # Insights are appended BEFORE threads, and the order is load-bearing:
@@ -68,6 +68,8 @@ def _board(now, viewer):
                      'warn': False, 'bad': False, 'changed_ts': r.get('created_ts')})
     stalled = {t['id']: t.get('stall_reason') for t in (_th.stalled(today=now.date()) or [])}
     for t in storage.get_threads(include_closed=False):
+        if not subjects.record_visible('thread', t, viewer):
+            continue
         reason = stalled.get(t['id'])
         pins.append({'id': t['id'], 'kind': 'thread', 'label': t.get('title') or '',
                      'detail': t.get('notes') or t.get('description') or '',
@@ -389,9 +391,11 @@ def _binder_detail(programs, p):
 
 
 def _binders(now, viewer):
-    from services import programs
+    from services import programs, subjects
     out = []
     for p in storage.get_programs() or []:
+        if not subjects.record_visible('program', p, viewer):
+            continue
         if p.get('state') not in ('active', 'paused'):
             continue
         pulled = False

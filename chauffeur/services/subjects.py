@@ -119,14 +119,44 @@ def title_of(kind, row):
 
 def _program_visible(row, viewer):
     from services.agent_tools_v2 import _program_scope_id
-    if viewer is None:
-        return False
+    viewer = viewer or {'id': None, 'role': 'adult'}
     if row.get('member_id') == viewer.get('id'):
         return True
-    from services import projects
+    return _program_scope_id(viewer) is None
+
+
+def record_visible(kind, row, viewer, *, spoken=False, focus_key=None) -> bool:
+    """One record gate: native audience, person-project, keeper, and channel.
+
+    None is a household reader, never an impersonated project owner. Keepers
+    (including a child's parents) retain the record, not its subject's words.
+    """
+    from services import situations, projects
+    if not row or kind not in ('thread', 'mission', 'program'):
+        return False
+    reader = viewer or {'id': None, 'role': 'adult'}
+    owner_key = {'thread': 'owner_member_id', 'mission': 'created_by', 'program': 'member_id'}[kind]
+    owner_id = row.get(owner_key)
+    keeper = bool(reader.get('id') and (reader['id'] == owner_id or (
+        projects._parent(reader) and projects._child(storage.get_member(owner_id) or {}))))
+    base = (_program_visible(row, reader) if kind == 'program'
+            else situations._record_base_visible(kind, row, reader, keeper=keeper))
+    if not base:
+        return False
     project = containing_project(row)
-    return (_program_scope_id(viewer) is None
-            and (project is None or projects.can_see(project, viewer)))
+    restricted = project and project.get('audience') != 'household'
+    if restricted and (spoken or not reader.get('id') or not (keeper or projects.can_see(project, reader))):
+        return False
+    if spoken:
+        if kind == 'mission':
+            if any(not spoken_safe(k, r) for k, r in subject_records(kind, row)):
+                return False
+        elif not spoken_safe(kind, row):
+            return False
+    humans = channel_humans(focus_key)
+    if humans is not None and project and not all(projects.can_see(project, h) for h in humans):
+        return False
+    return kind == 'program' or situations.channel_visible(kind, row, focus_key)
 
 
 def containing_project(row):
@@ -146,6 +176,8 @@ def _people_visible(row, viewer):
 
 def visible(kind, row, viewer, spoken=False):
     """Apply the owning kind's visibility before matching any title."""
+    if kind in ('thread', 'mission', 'program'):
+        return record_visible(kind, row, viewer, spoken=spoken)
     adapter = ADAPTERS.get(kind)
     if row is None or adapter is None:
         return False
@@ -224,9 +256,7 @@ def _thread_spoken_safe(row):
 
 
 def _program_spoken_safe(row):
-    project = containing_project(row)
-    return (_audience_spoken_safe(row)
-            and (project is None or project.get('audience') == 'household'))
+    return _audience_spoken_safe(row) and record_visible('program', row, None)
 
 
 def spoken_safe(kind, row, visited=None):

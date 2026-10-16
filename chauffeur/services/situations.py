@@ -530,19 +530,28 @@ def _subject_visible(kind: str, record: dict, viewer: Optional[dict], visited=No
 
 
 def can_see(kind: str, row: dict, viewer: Optional[dict]) -> bool:
+    if kind in ('thread', 'mission', 'program'):
+        from services import subjects
+        return subjects.record_visible(kind, row, viewer)
+    return _can_see_base(kind, row, viewer)
+
+
+def _record_base_visible(kind, row, viewer, *, keeper=False):
     ok = _can_see_base(kind, row, viewer)
     if not ok or kind not in ('thread', 'mission'):
         return ok
     from services import subjects
     owner_key = 'owner_member_id' if kind == 'thread' else 'created_by'
-    if viewer and row.get(owner_key) == viewer.get('id'):
+    if keeper or viewer and row.get(owner_key) == viewer.get('id'):
         return True
     # subject_records includes the containing person's project, but never a
     # wrapper (whose own visibility delegates back to this record). Keep the
     # owner exception above; view() uses these same audiences to redact it.
     visited = {row.get('id')} if kind == 'thread' else set()
+    project = subjects.containing_project(row)
     return all(_subject_visible(k, record, viewer, visited)
-               for k, record in subjects.subject_records(kind, row))
+               for k, record in subjects.subject_records(kind, row)
+               if not (k == 'project' and project and record.get('id') == project['id']))
 
 
 def subject_view(kind: str, row: dict, viewer: Optional[dict]) -> Optional[dict]:

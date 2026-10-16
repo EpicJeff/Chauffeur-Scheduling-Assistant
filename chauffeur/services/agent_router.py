@@ -1110,7 +1110,7 @@ sending or claiming, and never pass from_member/member_name for them.
                     elif func_name == "launch_mission":
                         res = _atv2.launch_mission(args.get("goal", "") or "",
                                                    args.get("thread_title"),
-                                                   actor)
+                                                   actor, focus_key=focus_key)
                     elif func_name == "close_thread":
                         res = _atv2.close_thread(args.get("thread_title", "") or "",
                                                  state=args.get("state"),
