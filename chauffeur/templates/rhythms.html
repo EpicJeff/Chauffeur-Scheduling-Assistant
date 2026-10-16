@@ -31,6 +31,9 @@
     <script>
         // Growing up lives on Config > People now; old links follow it.
         if ((window.location.hash || '') === '#growing-up') window.location.replace('config#growing-up');
+        if (['#programs-settings', '#lessons', '#programs-pacing'].includes(window.location.hash)) {
+            window.location.replace('work?tab=projects' + window.location.hash);
+        }
     </script>
     {% include 'components/control_center.html' %}
     {% include 'components/moments_hearth.html' %}

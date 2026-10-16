@@ -537,6 +537,9 @@ def can_see(kind: str, row: dict, viewer: Optional[dict]) -> bool:
     owner_key = 'owner_member_id' if kind == 'thread' else 'created_by'
     if viewer and row.get(owner_key) == viewer.get('id'):
         return True
+    # subject_records includes the containing person's project, but never a
+    # wrapper (whose own visibility delegates back to this record). Keep the
+    # owner exception above; view() uses these same audiences to redact it.
     visited = {row.get('id')} if kind == 'thread' else set()
     return all(_subject_visible(k, record, viewer, visited)
                for k, record in subjects.subject_records(kind, row))

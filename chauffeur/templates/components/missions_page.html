@@ -32,11 +32,14 @@
             <!-- Admin-only sections: GET /api/missions/admin 403s a non-parent
                  (same gate as the Mind's /api/mind/admin), and the settings
                  form above must keep working regardless. -->
+            {% if not _sheet %}{# sheet:hide #}
             <p class="text-xs text-gray-500 italic bg-gray-800/60 border border-gray-700 rounded-xl px-4 py-3 mt-6"
                 x-show="adminChecked && !adminAllowed" x-cloak>
                 Only a parent can launch and manage missions, and see their
                 history. Settings still work for you.
             </p>
+            {% endif %}{# /sheet:hide #}
+            <p class="text-xs text-gray-500 italic px-1" x-show="sheet && only && adminChecked && !groups.length">That mission isn’t here, or isn’t yours to see.</p>
 
             <template x-if="adminChecked && adminAllowed">
                 <div class="mt-6 space-y-6">
@@ -146,8 +149,12 @@
     <script>
         function missionsSettings(sheet = false) {
             return {
-                sheet, only: null,
+                sheet, only: null, sheetRead: 0,
                 onSheet(d) {
+                    this.sheetRead++;
+                    this.adminChecked = false;
+                    this.adminAllowed = false;
+                    this.active = []; this.history = []; this.situations = [];
                     if (!d || d.kind !== 'mission' || !d.id) { this.only = null; return; }
                     this.only = d.id;
                     this.detailsOpen = { [d.id]: true };
@@ -275,6 +282,7 @@
                 detailsOpen: {},  // situation id -> details element open
 
                 async loadAdmin() {
+                    if (this.sheet) return this.loadSheet();
                     try {
                         const r = await fetch(this.apiBase + 'api/missions/admin');
                         if (!r.ok) { this.adminAllowed = false; this.adminChecked = true; return; }
@@ -295,6 +303,36 @@
                         this.adminAllowed = false;
                     }
                     this.adminChecked = true;
+                },
+
+                async loadSheet() {
+                    if (!this.only) return;
+                    const id = this.only, read = ++this.sheetRead;
+                    try {
+                        const key = encodeURIComponent(id);
+                        const [r, r2] = await Promise.all([
+                            fetch(this.apiBase + 'api/missions/' + key),
+                            fetch(this.apiBase + 'api/situations/mission/' + key)
+                        ]);
+                        const [mission, situation] = await Promise.all([
+                            r.ok ? r.json() : null, r2.ok ? r2.json() : null
+                        ]);
+                        if (read !== this.sheetRead) return;
+                        this.active = []; this.history = []; this.situations = [];
+                        this.adminAllowed = !!(mission && situation);
+                        if (this.adminAllowed) {
+                            this[situation.group === 'done' ? 'history' : 'active'] = [mission];
+                            this.situations = [situation];
+                            this.$nextTick(() => {
+                                if (this.$refs.lane) window.Situations.bind(this.$refs.lane, this.cardCtx());
+                            });
+                        }
+                    } catch (e) {
+                        if (read !== this.sheetRead) return;
+                        this.active = []; this.history = []; this.situations = [];
+                        this.adminAllowed = false;
+                    }
+                    if (read === this.sheetRead) this.adminChecked = true;
                 },
 
                 get groups() {

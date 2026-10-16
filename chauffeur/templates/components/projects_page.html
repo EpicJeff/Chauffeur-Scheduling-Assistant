@@ -77,11 +77,11 @@
                     </div>
                 </div>
             </template>
-            <template x-if="elsewhere.length && !programsOnly">
+            <template x-if="visibleElsewhere.length && !programsOnly">
                 <div class="mb-5" data-lane="elsewhere">
                     <div class="text-xs font-black uppercase tracking-widest px-1 mb-2 text-gray-500">Your work elsewhere</div>
                     <div class="space-y-2" data-pieces>
-                        <template x-for="s in elsewhere" :key="s.id">
+                        <template x-for="s in visibleElsewhere" :key="s.id">
                             <div :data-piece="'mission:' + s.id">
                                 <div x-html="window.Situations.cardHtml(s, sitCtx())"></div>
                                 <div class="flex justify-end px-3 mt-1">
@@ -273,6 +273,7 @@ function projectsPage(host = 'admin') {
             finally { this.loading = false; }
         },
         rememberClosed() { try { localStorage.setItem('chf_projects_show_closed', this.showClosed ? '1' : '0'); } catch (e) { /* private window */ } },
+        get visibleElsewhere() { return this.elsewhere.filter(s => this.showClosed || s.group !== 'done'); },
         get detail() { return this.projects.find(p => p.id === this.opened) || null; },
         get lanes() {
             const rows = this.shownProjects.filter(p => !this.programsOnly || p.has_program);

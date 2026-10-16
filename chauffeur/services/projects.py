@@ -1021,7 +1021,7 @@ def elsewhere(viewer):
         if project is None or can_see(project, viewer):
             continue
         v = situations.view('mission', m['id'], viewer)
-        if v and v.get('group') != 'done':
+        if v:
             out.append(v)
     return out
 

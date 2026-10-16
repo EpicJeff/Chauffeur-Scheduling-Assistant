@@ -339,6 +339,7 @@
             return {
                 sheet, only: null, loadedOnce: false,
                 onSheet(d) {
+                    this.loadedOnce = false;
                     if (!d || d.kind !== 'thread' || !d.id) { this.only = null; return; }
                     this.only = d.id;
                     this.detailsOpen = { [d.id]: true };

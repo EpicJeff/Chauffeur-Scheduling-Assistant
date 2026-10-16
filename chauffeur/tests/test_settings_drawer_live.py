@@ -129,6 +129,13 @@ def main():
             # Programs: a deep link from another tab lands on the section.
             page.set_viewport_size({'width': 1300, 'height': 900})
             P = '[data-settings-for~="projects"]'
+            # Original cross-tab bookmark and the replacement destination both
+            # reach the same live drawer; retirement must keep old URLs working.
+            for url in ('rhythms?tab=routines#lessons', 'work?tab=projects#lessons'):
+                page.goto(served.url(url), wait_until='networkidle')
+                page.wait_for_selector(P + '[data-open="true"]', timeout=10000)
+                check(_visible(page, '[data-page-tab="projects"]'), f'{url} opens Projects')
+                check(page.url.endswith('work?tab=projects#lessons'), f'{url} keeps the anchor: {page.url}')
             page.goto(served.url('work?tab=mind#lessons'), wait_until='networkidle')
             page.wait_for_selector(P + '[data-open]')
             check(_visible(page, '[data-page-tab="projects"]'), 'work#lessons did not open Projects')

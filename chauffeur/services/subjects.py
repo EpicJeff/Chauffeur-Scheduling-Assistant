@@ -119,9 +119,20 @@ def title_of(kind, row):
 
 def _program_visible(row, viewer):
     from services.agent_tools_v2 import _program_scope_id
-    return viewer is not None and (
-        _program_scope_id(viewer) is None or row.get('member_id') == viewer.get('id')
-    )
+    if viewer is None:
+        return False
+    if row.get('member_id') == viewer.get('id'):
+        return True
+    from services import projects
+    project = containing_project(row)
+    return (_program_scope_id(viewer) is None
+            and (project is None or projects.can_see(project, viewer)))
+
+
+def containing_project(row):
+    """A person's project narrows its pieces; wrappers depend on the piece."""
+    project = storage.get_project(row['project_id']) if row.get('project_id') else None
+    return project if project and not project.get('wrapped_from') else None
 
 
 def _thread_visible(row, viewer):
@@ -143,6 +154,7 @@ def visible(kind, row, viewer, spoken=False):
 
 def subject_records(kind, row):
     """Audience records, including a live mission's proposed project."""
+    project = containing_project(row) if kind in ('thread', 'mission') else None
     proposed = (row.get('plan') or {}).get('project') if kind == 'mission' else None
     if kind == 'thread':
         from services import situations
@@ -154,6 +166,9 @@ def subject_records(kind, row):
     if row.get('subject_kind'):
         entries.append({'kind': row['subject_kind'], 'id': row.get('subject_id')})
     seen, records = set(), []
+    if project:
+        records.append(('project', project))
+        seen.add(('project', project['id']))
     for entry in entries:
         key = (entry.get('kind'), entry.get('id'))
         if key in seen:

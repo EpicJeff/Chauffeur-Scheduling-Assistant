@@ -276,7 +276,13 @@
   }
 
   var PANEL = /[?&]panel=true/.test(window.location.search);
-  function go(slug) { window.location.href = BASE + slug + window.location.search; }
+  function go(slug) {
+    var url = new URL(BASE + slug, window.location.href);
+    new URLSearchParams(window.location.search).forEach(function(value, key) {
+      if (!url.searchParams.has(key)) url.searchParams.append(key, value);
+    });
+    window.location.href = url.pathname + url.search + url.hash;
+  }
   /* a zone's way through, or '' when this device must not go there */
   function zoneUrl(key) {
     var z = ZONES[key] || {};

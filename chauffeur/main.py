@@ -1821,7 +1821,15 @@ def _retired_to(kind: str, request: Request, empty: str):
     """An old Threads, Missions or Programs address (front door §3): the page
     resolves the record and its project itself, so the redirect names no project."""
     rid = request.query_params.get('id')
-    return RedirectResponse(f'projects?piece={kind}:{rid}' if rid else empty)
+    from urllib.parse import parse_qsl, urlencode, urlsplit
+    target = urlsplit('projects' if rid else empty)
+    params = [('piece', f'{kind}:{rid}')] if rid else parse_qsl(target.query)
+    # Preserve the shell's options, including panel/kiosk/tabs/theme. Record
+    # selection and the retired tab belong to this page, not its destination.
+    reserved = {'id', 'tab', 'piece', 'lane'}
+    params.extend((k, v) for k, v in request.query_params.multi_items() if k not in reserved)
+    query = urlencode(params, safe=':')
+    return RedirectResponse(target.path + ('?' + query if query else ''))
 
 
 @app.get("/missions")
@@ -7021,8 +7029,9 @@ def list_threads(owner: Optional[str] = None, include_closed: bool = False,
     viewer_id = _acting_id(request, None)
     viewer = storage.get_member(viewer_id) if viewer_id else None
     if viewer is not None:
-        from services import situations
-        rows = [row for row in rows if not (row.get('subject_kind') or row.get('subject_history'))
+        from services import situations, subjects
+        rows = [row for row in rows if not (row.get('subject_kind') or row.get('subject_history')
+                                           or subjects.containing_project(row))
                 or situations.can_see('thread', row, viewer)]
     for row in rows:
         row['stall_reason'] = _threads.is_stalled(row)
@@ -7320,7 +7329,8 @@ def _program_list_scope(request, member_id: Optional[str]):
       the same reading `_mind_actor` already relies on for a write) gets
       the household: the requested `member_id` if one was explicit, or
       `None` (everyone) if nothing was asked for. This is what keeps
-      `programs.html` — which fetches unfiltered — seeing the household.
+      the Projects program sheets' unfiltered fetch seeing eligible rows;
+      each row also passes the program adapter's current project audience.
     - Anyone else — a resolved child, helper or guest — gets only their
       OWN list, whether they asked for nothing (narrowed quietly, so the
       PWA never has to special-case its own fetch) or asked for
@@ -7358,6 +7368,9 @@ def list_programs_api(member_id: str = None, include_finished: bool = False,
         return {"programs": []}
     rows = storage.get_programs(member_id=scope,
                                 include_finished=include_finished)
+    from services import subjects
+    viewer = _situation_viewer(request)
+    rows = [r for r in rows if subjects.visible('program', r, viewer)]
     members = {x['id']: x for x in storage.get_all_members(include_archived=True)}
     out = []
     for r in rows:
