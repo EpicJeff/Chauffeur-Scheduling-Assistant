@@ -3850,6 +3850,8 @@ def add_project_step(project_id, title, owner=None, needs=None, due_date=None, g
 
 def add_to_project(project_id, kind, id, acting_member=None, focus_key=None):
     from services import projects
+    if kind in projects.PIECE_HOME_KINDS:
+        return {'status': 'error', 'message': 'Threads, missions and programs start inside a project; they are not linked'}
     refused = _project_write_refusal(project_id, focus_key)
     if refused:
         return refused
@@ -6651,7 +6653,7 @@ class AddProjectStepTool(BaseModel):
 
 
 class AddToProjectTool(BaseModel):
-    """Attach an existing visible record as a project's piece."""
+    """Link an existing visible record, except threads, missions and programs, to a project."""
     project_id: str
     kind: str
     id: str

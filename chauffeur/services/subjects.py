@@ -283,8 +283,10 @@ def find(kind, query, viewer, spoken=False):
     return _public(_find(kind, query, viewer, spoken))
 
 
-def find_all(query, viewer, kinds=None, spoken=False):
+def find_all(query, viewer, kinds=None, spoken=False, *, exclude=None):
+    excluded = set(exclude or ())
     candidates = [candidate for kind in (kinds or KINDS)
+                  if kind not in excluded
                   for candidate in _find(kind, query, viewer, spoken)]
     candidates.sort(key=_rank)
     return _public(candidates[:OVERALL])

@@ -6282,14 +6282,14 @@ def project_remove_piece(project_id: str, body: dict, request: Request = None):
 
 
 @app.get("/api/subjects/search")
-def subjects_search(q: str = '', request: Request = None):
+def subjects_search(q: str = '', request: Request = None, exclude: str = ''):
     """Something already in Chauffeur, found from a project's Add a piece."""
     from services import subjects
     actor = _situation_viewer(request)
     if not (q or '').strip():
         return {'candidates': []}
     return {'candidates': [{'kind': c['kind'], 'id': c['id'], 'title': c['title']}
-                           for c in subjects.find_all(q, actor)]}
+                           for c in subjects.find_all(q, actor, exclude=exclude.split(','))]}
 
 
 @app.get("/api/subjects/{kind}/{sid}/projects")

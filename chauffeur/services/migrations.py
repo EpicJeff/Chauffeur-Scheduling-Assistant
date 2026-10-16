@@ -476,6 +476,28 @@ def migrate_projects_adopt_v2499517():
         logger.info(f"[migrations] projects adopted: {out}")
 
 
+def migrate_drop_piece_kind_links_v2499():
+    """Access rule §10.1: drop cross-project and stale home-kind links only."""
+    from services import projects
+    getters = {'thread': storage.get_thread, 'mission': storage.get_mission,
+               'program': storage.get_program}
+    with storage.db_lock:
+        for project in storage.get_projects():
+            pieces = project.get('pieces') or []
+            kept = []
+            for piece in pieces:
+                kind = piece.get('kind')
+                if kind in projects.PIECE_HOME_KINDS:
+                    record = getters[kind](piece.get('id'))
+                    if record is None or (record.get('project_id')
+                                          and record['project_id'] != project['id']):
+                        continue
+                # Keep native and unresolved memberships; these entries drive project views.
+                kept.append(piece)
+            if len(kept) != len(pieces):
+                storage.update_project(project['id'], {'pieces': kept})
+
+
 async def run_all_migrations():
     """Runs all data migrations in the background after startup"""
     await asyncio.sleep(5) # Let the app start up completely
@@ -528,3 +550,7 @@ async def run_all_migrations():
         migrate_projects_adopt_v2499517()
     except Exception as e:
         logger.error(f"Error adopting records into projects: {e}")
+    try:
+        migrate_drop_piece_kind_links_v2499()
+    except Exception as e:
+        logger.error(f"Error dropping project piece-kind links: {e}")

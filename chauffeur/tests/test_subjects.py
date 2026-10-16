@@ -178,6 +178,24 @@ def scenario_resolve_needs_a_clear_margin():
     check(win and win['id'] == 'c3', f"a sound-fold match is a winner when it is the only one (Celma heard as Selma): {win}")
 
 
+def scenario_find_all_excludes_kinds_before_ranking_and_limits():
+    s = _fresh()
+    for i in range(5):
+        storage.add_thread({'id': f'crowd-t{i}', 'title': 'Crowded', 'owner_member_id': 'mom'})
+        storage.add_program({'id': f'crowd-p{i}', 'title': 'Crowded', 'member_id': 'mom'})
+    storage.save_occasion({'id': 'crowd-occasion', 'title': 'Crowded party', 'audience': 'parents'})
+    unfiltered = s.find_all('Crowded', MOM)
+    check(len(unfiltered) == 8 and all(c['kind'] in ('thread', 'program') for c in unfiltered),
+          'ten exact home-kind matches crowd out the substring occasion by default')
+    excluded = ('thread', 'mission', 'program')
+    check(_ids(s.find_all('Crowded', MOM, exclude=excluded)) == ['crowd-occasion'],
+          'exclude before ranking and truncating keeps the occasion')
+    check(s.find_all('Crowded', KID, exclude=excluded) == [], 'exclusion preserves visibility checks')
+    check(s.find_all('Crowded', MOM, kinds=['thread', 'program'], exclude=excluded) == [],
+          'excluding all selected kinds does not fall back to every kind')
+    check(s.find_all('Crowded', MOM) == unfiltered, 'other callers keep the default search')
+
+
 def scenario_resolve_never_calls_a_cross_kind_tie_a_winner():
     s = _fresh()
     none, cands = s.resolve('Disney', MOM)
@@ -334,6 +352,7 @@ SCENARIOS = [
     scenario_visibility_filters_before_matching,
     scenario_spoken_requires_the_kinds_own_audience,
     scenario_find_caps_and_find_all_merges,
+    scenario_find_all_excludes_kinds_before_ranking_and_limits,
     scenario_resolve_needs_a_clear_margin,
     scenario_resolve_never_calls_a_cross_kind_tie_a_winner,
     scenario_link_and_facets,

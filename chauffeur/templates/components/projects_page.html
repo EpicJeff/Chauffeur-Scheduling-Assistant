@@ -359,10 +359,11 @@ function projectsPage(host = 'admin') {
         },
         togglePieceDay(d) { if (!this.pieceForm) return; const days = this.pieceForm.preferred_days; const i = days.indexOf(d); if (i === -1) days.push(d); else days.splice(i, 1); },
         async pickExisting(p) {
-            const q = await promptInput('Add something already in Chauffeur', 'A trip, an occasion, a list, a program…', {okText: 'Find it'});
+            const q = await promptInput('Add something already in Chauffeur', 'A trip, an occasion, a list…', {okText: 'Find it'});
             if (!q || !q.trim()) return;
             try {
-                const found = (await this.request('api/subjects/search?q=' + encodeURIComponent(q.trim()))).candidates || [];
+                const found = ((await this.request('api/subjects/search?q=' + encodeURIComponent(q.trim()) + '&exclude=thread,mission,program')).candidates || [])
+                    .filter(c => !['thread', 'mission', 'program'].includes(c.kind));
                 if (!found.length) { showGlobalAlert('Nothing by that name.'); return; }
                 const pick = await promptChoice('Which one?', '', found.map(c => ({value: c.kind + ':' + c.id, label: c.title + ' (' + c.kind + ')'})));
                 if (!pick) return;

@@ -14,6 +14,12 @@ STATES = ('active', 'paused', 'done', 'dropped')
 EDITABLE = ('title', 'goal', 'done_when', 'owner_member_id', 'audience', 'target_date')
 STEP_STATES = ('todo', 'doing', 'done', 'skipped', 'blocked')
 STEP_EDITABLE = ('title', 'owner', 'needs', 'due_date', 'order', 'goal')
+PIECE_HOME_KINDS = ('thread', 'mission', 'program')   # live in a project through project_id only
+
+
+def _link_kinds():
+    from services import subjects
+    return tuple(k for k in subjects.ADAPTERS if k not in PIECE_HOME_KINDS)
 
 
 def _child(member):
@@ -735,18 +741,25 @@ def on_mission_closed(mission_id, status, reason=''):
 
 
 def _change_piece(project_id, kind, sid, actor, removing=False):
-    from services import subjects
+    from services import access, subjects
 
     with storage.db_lock:
         project = storage.get_project(project_id)
         if not can_act(project, actor):
             return _error('You cannot edit this project')
-        if not isinstance(kind, str) or kind not in subjects.ADAPTERS:
+        if not isinstance(kind, str) or (kind not in subjects.ADAPTERS and kind not in PIECE_HOME_KINDS):
             return _error('Choose a registered record kind')
+        if kind in PIECE_HOME_KINDS and not removing:
+            return _error('Threads, missions and programs start inside a project; they are not linked')
         if not isinstance(sid, str) or not sid:
             return _error('Choose a record id')
-        record = subjects.load(kind, sid)
-        if record is None or not subjects.visible(kind, record, actor):
+        if kind in PIECE_HOME_KINDS:
+            record = access.KINDS[kind].load(sid)
+            visible = access.record_visible(kind, record, actor)
+        else:
+            record = subjects.load(kind, sid)
+            visible = subjects.visible(kind, record, actor)
+        if record is None or not visible:
             return _error('No such visible record')
         pieces = deepcopy(project.get('pieces') or [])
         existing = next((p for p in pieces if (p['kind'], p['id']) == (kind, sid)), None)
