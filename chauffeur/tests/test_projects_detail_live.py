@@ -31,6 +31,66 @@ def scenario_lanes_and_the_programs_filter():
         check(served.errors() == [], f"no page errors: {served.errors()}")
 
 
+def scenario_closed_projects_are_hidden_folded_and_remembered():
+    served = serve()
+    if served is None:
+        return
+    from services import projects
+    project_id = 'prj-bike'  # No work or pieces to stop; restore for later scenarios.
+    original_state = storage.get_project(project_id)['state']
+    try:
+        result = projects.set_state(project_id, 'done', storage.get_member('mom'))
+        check(result.get('status') == 'success', f"the fixture project is done: {result}")
+        with served.browser() as page:
+            admin(page, served, 'mom')
+            with page.expect_response(lambda r: r.request.method == 'GET' and
+                                      r.url == served.url('api/projects'), timeout=15000) as loaded:
+                page.goto(served.url('projects'), wait_until='load')
+            response = loaded.value
+            check(response.status == 200, f"the overview loads: {response.status} {response.text()}")
+            closed = next((p for p in response.json()['projects'] if p['id'] == project_id), None)
+            check(closed and closed['state'] == 'done' and closed['lane'] == 'closed',
+                  f"the loaded overview includes the closed fixture project: {closed}")
+            page.wait_for_selector(f'[data-project-id="{IDS["bath"]}"]', timeout=15000)
+            toggle = page.get_by_role('checkbox', name='Show closed', exact=True)
+            toggle.wait_for(state='visible', timeout=10000)
+            lane = page.locator('[data-lane="closed"]')
+            card = page.locator(f'[data-project-id="{project_id}"]')
+            check(not toggle.is_checked(), "Show closed starts unchecked")
+            check(card.count() == 0 and lane.count() == 0,
+                  "the loaded closed project and its lane are absent by default")
+
+            toggle.check()
+            lane.wait_for(state='visible', timeout=10000)
+            card.wait_for(state='attached', timeout=10000)
+            header = lane.locator('button').first
+            check('Done & dropped' in header.text_content(), "the closed lane names its contents")
+            check(header.get_by_text('Show', exact=True).is_visible() and not card.is_visible(),
+                  "Show closed reveals a folded lane with its project hidden")
+            header.click()
+            card.wait_for(state='visible', timeout=10000)
+            check('Ride a bike' in card.inner_text() and header.get_by_text('Hide', exact=True).is_visible(),
+                  "unfolding the closed lane reveals the closed project's card")
+            check(page.evaluate("() => localStorage.getItem('chf_projects_show_closed')") == '1',
+                  "Show closed stores the choice")
+
+            page.reload(wait_until='load')
+            lane.wait_for(state='visible', timeout=15000)
+            card.wait_for(state='attached', timeout=10000)
+            check(toggle.is_checked() and
+                  page.evaluate("() => localStorage.getItem('chf_projects_show_closed')") == '1',
+                  "Show closed stays checked across reload")
+            check(header.get_by_text('Show', exact=True).is_visible() and not card.is_visible(),
+                  "the remembered closed lane starts folded again after reload")
+            header.click()
+            card.wait_for(state='visible', timeout=10000)
+            check('Ride a bike' in card.inner_text(), "the remembered lane still unfolds to its project")
+            check(served.errors() == [], f"no page errors: {served.errors()}")
+    finally:
+        storage.update_project(project_id, {'state': original_state})
+        served.stop()
+
+
 def scenario_the_detail_view_and_its_pieces():
     served = serve()
     if served is None:
@@ -199,7 +259,8 @@ def scenario_add_a_piece_for_a_child():
         check(any('practice program' in c for c in choices), f"but may propose their own program: {choices}")
 
 
-SCENARIOS = [scenario_lanes_and_the_programs_filter, scenario_the_detail_view_and_its_pieces,
+SCENARIOS = [scenario_lanes_and_the_programs_filter, scenario_closed_projects_are_hidden_folded_and_remembered,
+             scenario_the_detail_view_and_its_pieces,
              scenario_add_a_piece_inside_the_project, scenario_add_a_piece_for_a_child]
 
 if __name__ == "__main__":

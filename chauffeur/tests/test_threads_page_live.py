@@ -120,11 +120,13 @@ def main():
                 check(page.locator(f'details button:has-text("{label}")').count() >= 1, f"{label} still has a home")
             # The sheet isolates one record; a closed record stays reachable
             # through its old bookmark and opens unfolded when asked for.
-            check(page.locator('[data-record-sheet][data-kind=thread] [data-sit-group="done"]').count() == 0, "closed is hidden by default")
+            check(page.locator('[data-record-sheet][data-kind=thread] [data-sit-group="done"]').count() == 0,
+                  "the waiting thread's sheet excludes other closed threads")
             _open_record(page, served, 'Old fence quote')
             check(page.locator('[data-record-sheet][data-kind=thread] [data-sit-group="done"] .situation-card').count() == 1,
                   "the requested closed thread opens unfolded in its sheet")
-            check('Old fence' in page.locator('[data-record-sheet][data-kind=thread] [data-sit-group="done"]').inner_text(), "unfolded: the done thread")
+            check('Old fence' in page.locator('[data-record-sheet][data-kind=thread] [data-sit-group="done"]').inner_text(),
+                  "the closed thread's sheet shows its title")
             _shot(page, 'threads-page')
             check(not b.errors, f"script errors: {b.errors}")
     finally:
