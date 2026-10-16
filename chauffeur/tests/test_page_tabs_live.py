@@ -37,26 +37,29 @@ def main():
         page.on('pageerror', lambda e: errors.append(str(e)))
         page.set_viewport_size({'width': 1400, 'height': 900})
 
-        # Work opens on Mind; the other two organs are out of sight.
+        # Work opens on Projects; Mind is out of sight.
         page.goto(served.url('work'), wait_until='domcontentloaded')
         check(_visible(page, '#page-tabs'), 'the Work page has no tab strip')
-        check(_visible(page, '[data-page-tab="mind"]'), 'Mind is not the default view')
-        check(not _visible(page, '[data-page-tab="threads"]'), 'Threads shows beside Mind')
+        check(_visible(page, '[data-page-tab="projects"]'), 'Projects is not the default view')
+        check(not _visible(page, '[data-page-tab="mind"]'), 'Mind shows beside Projects')
 
         # A click switches in place and the address keeps the tab.
-        page.click('#page-tabs [data-tab-key="threads"]')
+        page.click('#page-tabs [data-tab-key="mind"]')
         page.wait_for_timeout(200)
-        check(_visible(page, '[data-page-tab="threads"]'), 'clicking Threads did not show it')
-        check(not _visible(page, '[data-page-tab="mind"]'), 'Mind still shows after Threads')
-        check('tab=threads' in page.url, f'the URL forgot the tab: {page.url}')
+        check(_visible(page, '[data-page-tab="mind"]'), 'clicking Mind did not show it')
+        check(not _visible(page, '[data-page-tab="projects"]'), 'Projects still shows after Mind')
+        check('tab=mind' in page.url, f'the URL forgot the tab: {page.url}')
         # ...and the tab param never leaks onto a link to another page.
         intake = page.get_attribute('#page-tabs [data-tab-key="intake"]', 'href')
         check('tab=' not in intake, f'Intake link carries a tab: {intake}')
 
         # A reload with the tab opens straight onto it.
         page.goto(served.url('rhythms?tab=programs'), wait_until='domcontentloaded')
-        check(_visible(page, '[data-page-tab="programs"]'), 'rhythms?tab=programs did not open Programs')
-        check(not _visible(page, '[data-page-tab="routines"]'), 'Routines shows beside Programs')
+        page.wait_for_selector('[data-lane-filter="programs"][aria-pressed="true"]')
+        check('projects?lane=programs' in page.url, 'Programs bookmark did not reach Projects')
+        check(not _visible(page, '[data-page-tab="routines"]'), 'Routines shows beside Projects')
+        page.goto(served.url('rhythms?tab=routines'), wait_until='domcontentloaded')
+        check(_visible(page, '[data-page-tab="routines"]'), 'Routines bookmark did not open Routines')
         chores = page.get_attribute('#page-tabs [data-tab-key="chores"]', 'href')
         check(chores.endswith('chores'), f'the Chores tab is not a link to /chores: {chores}')
 
@@ -84,7 +87,8 @@ def main():
         # A panel keeps its own navigation and sees every block.
         page.goto(served.url('work?panel=true'), wait_until='domcontentloaded')
         check(page.query_selector('#page-tabs') is None, 'a panel draws the tab strip')
-        check(_visible(page, '[data-page-tab="threads"]'), 'a panel lost a Work block')
+        check(_visible(page, '[data-page-tab="projects"]'), 'a panel lost Projects')
+        check(_visible(page, '[data-page-tab="mind"]'), 'a panel lost Mind')
 
         check(not errors, f'page errors: {errors[:3]}')
     print('test_page_tabs_live OK')

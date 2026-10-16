@@ -114,15 +114,19 @@ def scenario_ack_and_drop():
     check(storage.get_mission(mid)['acknowledged_at'], "ack quiets the finding")
 
 
-def scenario_page_route_serves_template():
+def scenario_page_route_redirects_to_the_shared_sheet():
     import main, os
     tpl = os.path.join(os.path.dirname(main.__file__), 'templates',
                        'components', 'missions_page.html')
     check(os.path.exists(tpl), "missions page component exists")
     wrapper = open(os.path.join(os.path.dirname(main.__file__), 'templates',
-                                'missions.html'), encoding='utf-8').read()
+                                'components', 'record_sheet.html'), encoding='utf-8').read()
     check("components/missions_page.html" in wrapper,
-          "standalone /missions serves the shared component")
+          "the record sheet serves the shared component")
+    from fastapi.testclient import TestClient
+    response = TestClient(main.app).get('/missions?id=M1', follow_redirects=False)
+    check(response.status_code == 307 and response.headers['location'] == 'projects?piece=mission:M1',
+          "standalone /missions redirects to its record sheet")
     html = open(tpl, encoding='utf-8').read()
     for needle in ('/api/missions/admin', '/api/missions/launch', 'waiting_user'):
         check(needle in html, f"page wires {needle}")
@@ -204,21 +208,25 @@ def scenario_page_wires_history_transcript():
           "one shared transcript component, used by active AND history")
 
 
-def scenario_work_page_hosts_all_three():
+def scenario_work_page_hosts_projects_and_mind():
     import main, os
     tpl = os.path.join(os.path.dirname(main.__file__), 'templates', 'work.html')
     html = open(tpl, encoding='utf-8').read()
-    for comp in ('components/mind_page.html', 'components/missions_page.html',
-                 'components/threads_page.html'):
+    for comp in ('components/mind_page.html', 'components/projects_page.html',
+                 'components/projects_admin.html'):
         check(comp in html, f"/work includes {comp}")
+    sheet = open(os.path.join(os.path.dirname(main.__file__), 'templates',
+                              'components', 'record_sheet.html'), encoding='utf-8').read()
+    for comp in ('components/missions_page.html', 'components/threads_page.html'):
+        check(comp not in html and comp in sheet, f"{comp} lives only in the shared sheet")
     check(html.count('control_center.html') == 1,
           "chrome included once by the host, never by components")
     nav = open(os.path.join(os.path.dirname(main.__file__), 'templates',
                             'nav.html'), encoding='utf-8').read()
     check("'slug': 'work'" in nav, "nav gained the Work entry")
     check("'slug': 'mind'" not in nav and "'slug': 'threads'" not in nav,
-          "mind and threads left the nav (their URLs still serve)")
-    check("'programs', 'work'" in nav, "work is kiosk-hidden")
+          "mind and threads left the nav (old thread URLs redirect)")
+    check("'programs', 'projects', 'work'" in nav, "projects and work are kiosk-hidden")
     for comp in ('mind_page', 'missions_page', 'threads_page'):
         c = open(os.path.join(os.path.dirname(main.__file__), 'templates',
                               'components', comp + '.html'), encoding='utf-8').read()
@@ -233,11 +241,11 @@ if __name__ == '__main__':
     scenario_admin_refuses_a_child()
     scenario_proposal_act_requires_a_real_mission()
     scenario_ack_and_drop()
-    scenario_page_route_serves_template()
+    scenario_page_route_redirects_to_the_shared_sheet()
     scenario_chat_tool_wired_into_both_stacks()
     scenario_chat_launch_respects_allowlist_and_thread_origin()
     scenario_threads_page_has_the_button()
     scenario_detail_serves_done_transcript_and_gates()
     scenario_page_wires_history_transcript()
-    scenario_work_page_hosts_all_three()
+    scenario_work_page_hosts_projects_and_mind()
     print("test_missions_endpoints OK")

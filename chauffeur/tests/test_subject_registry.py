@@ -14,7 +14,8 @@ from test_subjects import _fresh as _fresh_subjects, MOM, KID
 
 EIGHT = ('trip', 'occasion', 'event', 'member', 'contact', 'thread', 'program', 'list')
 LINKS = {'trip': 'trip?event_id=X', 'occasion': 'occasions', 'event': 'app', 'member': 'app',
-         'contact': 'drive_setup', 'thread': 'threads', 'program': 'programs', 'list': 'shopping'}
+         'contact': 'drive_setup', 'thread': 'projects?piece=thread:X',
+         'program': 'projects?piece=program:X', 'list': 'shopping'}
 
 
 def scenario_the_eight_kinds_are_adapters_in_their_old_order():

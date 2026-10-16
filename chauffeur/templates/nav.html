@@ -125,14 +125,11 @@
         {'key': 'tasks', 'label': 'Tasks', 'href': 'errands?tab=tasks', 'path': '/errands', 'tab': 'tasks'}],
     'rhythms': [
         {'key': 'chores', 'label': 'Chores', 'href': 'chores', 'path': '/chores'},
-        {'key': 'routines', 'label': 'Routines', 'href': 'rhythms?tab=routines', 'path': '/rhythms', 'tab': 'routines', 'also': '/routines'},
-        {'key': 'programs', 'label': 'Programs', 'href': 'rhythms?tab=programs', 'path': '/rhythms', 'tab': 'programs', 'also': '/programs'}],
+        {'key': 'routines', 'label': 'Routines', 'href': 'rhythms?tab=routines', 'path': '/rhythms', 'tab': 'routines', 'also': '/routines'}],
     'work': [
         {'key': 'projects', 'label': 'Projects', 'href': 'work?tab=projects', 'path': '/work', 'tab': 'projects', 'also': '/projects'},
         {'key': 'intake', 'label': 'Intake', 'href': 'intake', 'path': '/intake'},
-        {'key': 'mind', 'label': 'Mind', 'href': 'work?tab=mind', 'path': '/work', 'tab': 'mind', 'also': '/mind'},
-        {'key': 'threads', 'label': 'Threads', 'href': 'work?tab=threads', 'path': '/work', 'tab': 'threads', 'also': '/threads'},
-        {'key': 'missions', 'label': 'Missions', 'href': 'work?tab=missions', 'path': '/work', 'tab': 'missions', 'also': '/missions'}],
+        {'key': 'mind', 'label': 'Mind', 'href': 'work?tab=mind', 'path': '/work', 'tab': 'mind', 'also': '/mind'}],
 } %}
 {% set _tab = _qp.get('tab') %}
 {% set _pg = namespace(group=none, active=none, first=none) %}
@@ -731,7 +728,7 @@
             // that administers that must itself stay off one.
             const kioskTabs = (urlParams.get('tabs') || '').toLowerCase()
                 .split(',').map(s => s.trim());
-            ['intake', 'mind', 'threads', 'programs', 'work', 'rhythms', 'school'].forEach(slug => {
+            ['intake', 'mind', 'threads', 'programs', 'projects', 'work', 'rhythms', 'school'].forEach(slug => {
                 if (!kioskTabs.includes(slug)) {
                     document.querySelectorAll(`[data-slug="${slug}"]`)
                         .forEach(a => { a.style.display = 'none'; });

@@ -73,7 +73,7 @@ def main():
             page.wait_for_timeout(150)
             check(not _visible(page, '[data-page-tab="mind"] [data-settings-off]'), 'the off line outlived the switch')
             # heads-ups deep link (was test_config_small_moves_live's path)
-            page.goto(served.url('work?tab=threads#heads-ups'), wait_until='networkidle')
+            page.goto(served.url('work?tab=mind#heads-ups'), wait_until='networkidle')
             page.wait_for_selector(M + '[data-open]')
             check(_visible(page, '#proactiveWatchersEnabled'), 'heads-ups is not reachable in the drawer')
             _shot(page, 'mind-headsups-desktop')

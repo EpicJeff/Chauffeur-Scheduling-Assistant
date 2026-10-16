@@ -46,8 +46,8 @@ def _serve():
         TOKENS['parent'] = storage.create_member_token('mj')
         storage.trusted_devices_table.insert({'device_id': 'laptop', 'device_token': DEVICE_TOKEN,
                                               'label': 'Laptop', 'kind': 'personal'})
-        storage.add_mission({'goal': 'Find a plumber', 'status': 'running', 'created_by': 'mj',
-                             'tier': 'flash', 'origin_kind': 'manual', 'step_count': 0})
+        TOKENS['mission'] = storage.add_mission({'goal': 'Find a plumber', 'status': 'running', 'created_by': 'mj',
+                                                'tier': 'flash', 'origin_kind': 'manual', 'step_count': 0})
 
     served = live_app(seed)
     if served is not None:
@@ -78,7 +78,7 @@ def scenario_a_paired_browser_still_acts_as_the_signed_in_parent():
         with served.browser() as page:
             _land(page, served, {'chauffeur_admin_token': TOKENS['parent'], 'chauffeur_admin_token_for': 'mj',
                                  'chauffeur_device_token': DEVICE_TOKEN, 'chauffeur_device_id': 'laptop'})
-            page.goto(served.url('work?tab=missions'), wait_until='load')
+            page.goto(served.url('missions?id=' + TOKENS['mission']), wait_until='load')
             page.wait_for_timeout(1500)
             got = page.evaluate('''async () => {
                 const r = await fetch('api/missions/admin');
@@ -86,7 +86,7 @@ def scenario_a_paired_browser_still_acts_as_the_signed_in_parent():
             }''')
             check(got['status'] == 200, f"a paired browser with a parent session is the parent, got {got}")
             check(_gate_state(page) == 'in', f"the gate is in: {_gate_state(page)!r}")
-            check(page.locator('#missions .situation-card').count() >= 1, "the missions lane drew as the parent")
+            check(page.locator('[data-record-sheet][data-kind=mission] .situation-card').count() >= 1, "the missions lane drew as the parent")
     finally:
         served.stop()
 
@@ -100,7 +100,7 @@ def scenario_b_a_dead_session_asks_again():
             _land(page, served, {'chauffeur_admin_token': 'stale-token', 'chauffeur_admin_token_for': 'mj'})
             # A page whose reads need a PERSON (the schedule reads pass on local
             # ground as the service tier; the missions admin view does not).
-            page.goto(served.url('work?tab=missions'), wait_until='load')
+            page.goto(served.url('missions?id=' + TOKENS['mission']), wait_until='load')
             page.wait_for_function('''() => { const el = document.querySelector('[x-data="adminGate()"]');
                 return el && Alpine.$data(el).state === 'sign-in'; }''', timeout=15000)
             check(page.locator('form input[type=email]').is_visible(), "the sign-in overlay is up")
@@ -108,7 +108,7 @@ def scenario_b_a_dead_session_asks_again():
             page.fill('form input[type=password]', PASSWORD)
             with page.expect_navigation():
                 page.click('form button[type=submit]')
-            page.wait_for_selector('#missions .situation-card', timeout=20000)
+            page.wait_for_selector('[data-record-sheet][data-kind=mission] .situation-card', timeout=20000)
             check(page.evaluate("() => localStorage.getItem('chauffeur_admin_token')") != 'stale-token',
                   "signing in replaced the dead token")
     finally:
@@ -132,8 +132,8 @@ def scenario_c_every_admin_page_carries_the_gate_and_panels_do_not():
             page.fill('form input[type=password]', PASSWORD)
             with page.expect_navigation():
                 page.click('form button[type=submit]')
-            page.goto(served.url('work?tab=missions'), wait_until='load')
-            page.wait_for_selector('#missions .situation-card', timeout=15000)
+            page.goto(served.url('missions?id=' + TOKENS['mission']), wait_until='load')
+            page.wait_for_selector('[data-record-sheet][data-kind=mission] .situation-card', timeout=15000)
             check(_gate_state(page) == 'in', "the Work page is in after signing in elsewhere")
             # A wall panel is a place, not a person: no gate, no overlay.
             _land(page, served, {'chauffeur_device_token': DEVICE_TOKEN, 'chauffeur_device_id': 'laptop'})

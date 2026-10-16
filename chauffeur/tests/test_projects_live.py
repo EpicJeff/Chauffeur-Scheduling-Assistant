@@ -13,7 +13,7 @@ test relies on (exact):
   * `[data-new-project]` opens the New project form: inputs named title, goal,
     done_when, a select named audience, and `[data-create-project]`;
   * the phone app has a tab `#tab-projects`;
-  * the Programs page shows "Part of: <project>" on a program that is a piece.
+  * an old Programs link opens its piece sheet inside the owning project.
 No browser dialogs anywhere (alert/confirm/prompt).
 
 Run from chauffeur/:  python tests/test_projects_live.py
@@ -81,6 +81,7 @@ def _seed():
                                  'owner_member_id': 'tot', 'created_by': 'mom', 'audience': 'parents'})
     swim = storage.add_project({'id': 'prj-exp', 'title': 'Learn to swim', 'goal': 'swim a length', 'done_when': 'one length alone',
                                 'owner_member_id': 'exp', 'created_by': 'mom', 'audience': 'parents'})
+    storage.update_program('pr1', {'project_id': bath})
     IDS.update(bath=bath, bike=bike, mine=mine, tot=potty, exp=swim)
 
 
@@ -163,8 +164,12 @@ def scenario_the_admin_tab():
             check(any(p['title'] == 'Garage clear-out' and p['created_by'] == 'mom' for p in storage.get_projects()),
                   "a project created by hand")
             check(not dialogs, f"no browser dialogs: {dialogs}")
-            page.goto(served.url('programs'), wait_until='load')
-            page.wait_for_function("() => document.body.innerText.includes('Part of: Bathroom')", timeout=15000)
+            page.goto(served.url('programs?id=pr1'), wait_until='load')
+            page.wait_for_selector('[data-record-sheet][data-open="true"]', timeout=15000)
+            check('Bathroom' in page.locator('[data-project-detail]').inner_text(),
+                  "the program opens in its owning project")
+            check('Strength basics' in page.locator('[data-record-sheet]').inner_text(),
+                  "the old program link opens that program's sheet")
     finally:
         served.stop()
 

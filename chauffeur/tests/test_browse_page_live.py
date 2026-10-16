@@ -59,6 +59,12 @@ def seed():
     missions._browse_async = False
 
 
+def _open_record(page, served, title):
+    row = next(r for r in storage.get_missions() if r['goal'] == title)
+    page.goto(served.url('missions?id=' + row['id']), wait_until='networkidle')
+    page.wait_for_selector('[data-record-sheet][data-open="true"][data-kind="mission"] details[open]', timeout=15000)
+
+
 def main():
     served = live_app(seed)
     if served is None:
@@ -67,12 +73,12 @@ def main():
         b = served.browser(color_scheme='dark')
         with b as page:
             page.set_viewport_size({'width': 1300, 'height': 900})
-            page.goto(served.url('work?tab=missions'), wait_until='networkidle')
-            page.wait_for_selector('#missions .situation-card', timeout=15000)
-            card = page.locator('#missions .situation-card:has-text("dishwasher fixed")').first
+            _open_record(page, served, 'get the dishwasher fixed')
+            page.wait_for_selector('[data-record-sheet][data-kind=mission] .situation-card', timeout=15000)
+            card = page.locator('[data-record-sheet][data-kind=mission] .situation-card:has-text("dishwasher fixed")').first
             check(card.locator('.sit-next button').first.inner_text().startswith('Share with bodewell.com'), "the card's next step is the release")
             rdet = card.locator('xpath=../following-sibling::details[1]').first
-            rdet.locator('summary').first.click()
+            check(rdet.get_attribute('open') is not None, "the record's details open with its sheet")
             page.wait_for_timeout(400)
             tl = rdet.inner_text()
             check('bodewell.com' in tl and 'needs_release' in tl and 'first_name' in tl, f"the browse step shows its outcome: {tl[:300]}")
@@ -91,7 +97,7 @@ def main():
             page.wait_for_timeout(1200)
             if page.locator('#cc-alert-modal').is_visible():
                 page.locator('#cc-alert-modal button:has-text("OK")').click()
-            card = page.locator('#missions .situation-card:has-text("dishwasher fixed")').first
+            card = page.locator('[data-record-sheet][data-kind=mission] .situation-card:has-text("dishwasher fixed")').first
             rdet = card.locator('xpath=../following-sibling::details[1]').first
             if not rdet.get_attribute('open'):
                 rdet.locator('summary').first.click()     # the lane re-rendered; open it again
@@ -99,10 +105,12 @@ def main():
             tl = rdet.inner_text()
             check('finish it on your phone' in tl.lower() and rdet.locator('a[href^="https://bodewell.com"]').count() >= 1,
                   f"the hand-off shows its link: text={tl[:400]!r}")
-            book = page.locator('#missions .situation-card:has-text("book the dishwasher")').first
+            _open_record(page, served, 'book the dishwasher repair')
+            book = page.locator('[data-record-sheet][data-kind=mission] .situation-card:has-text("book the dishwasher")').first
             check(book.locator('.sit-next button').first.inner_text().startswith('Book at'), "the submit card leads with the whole question")
             det = book.locator('xpath=../following-sibling::details[1]').first
-            det.locator('summary').first.click(); page.wait_for_timeout(500)
+            check(det.get_attribute('open') is not None, "the booking details open with its sheet")
+            page.wait_for_timeout(500)
             tl = det.inner_text()
             check("Book at bodewell.com" in tl and 'Tue, Oct 20 8AM-12PM' in tl and 'first_name' in tl and det.locator('button:has-text("Book it")').count() == 1
                   and det.locator('button:has-text("I\'ll finish it myself")').count() == 1 and det.locator('button:has-text("Stop")').count() == 1, f"the submit ask block: {tl[:400]}")
@@ -113,10 +121,12 @@ def main():
             check(any(s['name'] == 'submit_approved' for s in steps), f"Book it approved with the ask id: {[s['name'] for s in steps]}")
             if page.locator('#cc-alert-modal').is_visible():
                 page.locator('#cc-alert-modal button:has-text("OK")').click()
-            perm = page.locator('#missions .situation-card:has-text("permit")').first
+            _open_record(page, served, 'register for the permit')
+            perm = page.locator('[data-record-sheet][data-kind=mission] .situation-card:has-text("permit")').first
             check(perm.locator('.sit-next button').first.inner_text() == 'It went through', "the verify card leads with It went through")
             det = perm.locator('xpath=../following-sibling::details[1]').first
-            det.locator('summary').first.click(); page.wait_for_timeout(500)
+            check(det.get_attribute('open') is not None, "the verification details open with its sheet")
+            page.wait_for_timeout(500)
             det.locator('input[placeholder="Confirmation number or what you saw"]').first.fill('confirmation 4242')
             det.locator('button:has-text("It went through")').first.click(); page.wait_for_timeout(1500)
             m3 = [x for x in storage.get_missions() if x['goal'] == 'register for the permit'][0]

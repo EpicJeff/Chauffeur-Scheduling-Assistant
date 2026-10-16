@@ -44,6 +44,12 @@ def seed():
     chat_actions._execute = lambda a, p, approver=None: {'status': 'success', 'message': 'added'}
 
 
+def _open_record(page, served, title):
+    row = next(r for r in storage.get_missions() if r['goal'] == title)
+    page.goto(served.url('missions?id=' + row['id']), wait_until='networkidle')
+    page.wait_for_selector('[data-record-sheet][data-open="true"][data-kind="mission"] details[open]', timeout=15000)
+
+
 def main():
     served = live_app(seed)
     if served is None:
@@ -52,39 +58,77 @@ def main():
         b = served.browser(color_scheme='dark')
         with b as page:
             page.set_viewport_size({'width': 1300, 'height': 900})
-            page.goto(served.url('work?tab=missions'), wait_until='networkidle')
-            # /work hosts the Mind lane too (hidden tab, its own cards): every
-            # locator below is scoped to the missions section.
-            page.wait_for_selector('#missions .situation-card')
-            now = page.locator('#missions [data-sit-group="now"] .situation-card')
+            # Adding a piece requires a person who can edit its project; the
+            # old unbound launch form also accepted an unattributed admin.
+            page.goto(served.url('api/account/setup'))
+            page.evaluate("""token => {
+                localStorage.setItem('chauffeur_admin_token', token);
+                localStorage.setItem('chauffeur_admin_token_for', 'mom');
+            }""", storage.create_member_token('mom'))
+            _open_record(page, served, 'Find a plumber')
+            # The record sheet isolates the requested mission.
+            page.wait_for_selector('[data-record-sheet][data-kind=mission] .situation-card')
+            now = page.locator('[data-record-sheet][data-kind=mission] [data-sit-group="now"] .situation-card')
             titles = now.locator('.sit-title').all_inner_texts()
-            check('Find a plumber' in titles and 'Compare pool covers' in titles,
-                  f"a waiting mission AND a done one with a pending proposal need you: {titles}")
-            plumber = page.locator('#missions .situation-card:has-text("Find a plumber")').first
+            check('Find a plumber' in titles,
+                  f"a waiting mission needs you: {titles}")
+            plumber = page.locator('[data-record-sheet][data-kind=mission] .situation-card:has-text("Find a plumber")').first
             check(plumber.locator('.sit-next button').first.inner_text() == 'What budget?',
                   "the waiting mission leads with its question")
             plumber.locator('.sit-next button').first.click()
-            page.wait_for_selector('#missions details[open] input[placeholder="Type your answer"]')
-            page.fill('#missions details[open] input[placeholder="Type your answer"]', 'Under 500')
-            page.locator('#missions details[open] button:has-text("Send"):visible').first.click()
+            page.wait_for_selector('[data-record-sheet][data-kind=mission] details[open] input[placeholder="Type your answer"]')
+            page.fill('[data-record-sheet][data-kind=mission] details[open] input[placeholder="Type your answer"]', 'Under 500')
+            page.locator('[data-record-sheet][data-kind=mission] details[open] button:has-text("Send"):visible').first.click()
             page.wait_for_timeout(800)
             steps = storage.get_mission_steps([m for m in storage.get_missions() if m['goal'] == 'Find a plumber'][0]['id'])
             check(any(s.get('name') == 'user_answer' for s in steps), "the answer went through the old box")
             # Approve the pending proposal from the card; the mission moves to history.
-            pool = page.locator('#missions .situation-card:has-text("Compare pool covers")').first
+            _open_record(page, served, 'Compare pool covers')
+            check(page.locator('[data-record-sheet][data-kind=mission] [data-sit-group="now"] .sit-title').inner_text() == 'Compare pool covers',
+                  "a done mission with a pending proposal still needs you")
+            pool = page.locator('[data-record-sheet][data-kind=mission] .situation-card:has-text("Compare pool covers")').first
             pool.locator('.sit-next button').first.click()        # 'Add: call Ace Pools' (do)
             page.wait_for_timeout(1000)
-            check(page.locator('#missions [data-sit-group="done"] .situation-card:has-text("Compare pool covers")').count() == 1,
+            check(page.locator('[data-record-sheet][data-kind=mission] [data-sit-group="done"] .situation-card:has-text("Compare pool covers")').count() == 1,
                   "once its decision is made the finished mission is history")
             # The act reported its outcome in the global notice; a person taps OK.
             if page.locator('#cc-alert-modal').is_visible():
                 page.locator('#cc-alert-modal button:has-text("OK")').click()
             # Launch still works (flash: the pro tier needs the paid key).
-            page.fill('#missions textarea[placeholder*="What should Argyle work on"]', 'Book the dentist')
-            page.locator('#missions select[x-model="launchTier"]').first.select_option('flash')
-            page.locator('#missions button:has-text("Launch")').click()
-            page.wait_for_timeout(800)
+            from services import missions, projects
+            project_id = storage.get_mission(next(m['id'] for m in storage.get_missions()
+                                                 if m['goal'] == 'Find a plumber')).get('project_id')
+            if not project_id:
+                mid = next(m['id'] for m in storage.get_missions() if m['goal'] == 'Find a plumber')
+                project_id = projects.adopt('mission', mid, storage.get_member('mom'))
+            page.goto(served.url('projects?id=' + project_id), wait_until='networkidle')
+            actor_id = page.evaluate('() => window.chfPersonId()')
+            check(actor_id == 'mom' and projects.can_act(storage.get_project(project_id), storage.get_member(actor_id)),
+                  f"the signed-in parent can add to this project: {actor_id}")
+            settings = storage.get_settings()
+            counts = storage.get_app_state('mission_calls:' + datetime.date.today().isoformat()) or {}
+            cap = int(settings.get('mission_cap_launch', missions.CAPS_DEFAULT['launch']))
+            check(settings.get('missions_enabled') and int(counts.get('launch', 0)) < cap,
+                  f"the fixture permits a launch: enabled={settings.get('missions_enabled')}, launches={counts.get('launch', 0)}, cap={cap}")
+            page.locator('[data-add-piece]').click()
+            page.locator('[data-prompt-choice]', has_text='Work for Argyle').first.click()
+            form = page.locator('[data-piece-form="mission"]')
+            form.locator('textarea[name="goal"]').fill('Book the dentist')
+            form.locator('select[name="tier"]').select_option('flash')
+            with page.expect_response(lambda r: r.request.method == 'POST' and
+                                      r.url == served.url('api/missions/launch'), timeout=15000) as launched:
+                form.locator('[data-piece-create]').click()
+            response = launched.value
+            body = response.text()
+            check(response.status == 200, f"the launch POST succeeds: {response.status} {body}")
+            result = response.json()
+            check(result.get('status') == 'launched' and result.get('mission_id'),
+                  f"the launch POST returns a mission: {response.status} {body}")
             check(any(m['goal'] == 'Book the dentist' for m in storage.get_missions()), "the launch form launched")
+            mission = storage.get_mission(result['mission_id'])
+            check(mission and mission['goal'] == 'Book the dentist' and mission['tier'] == 'flash'
+                  and mission['created_by'] == actor_id and mission['project_id'] == project_id,
+                  f"the response's mission belongs to the chosen project and parent: {mission}")
             _shot(page, 'missions-page')
             check(not b.errors, f"script errors: {b.errors}")
     finally:

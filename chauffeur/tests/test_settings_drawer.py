@@ -102,7 +102,7 @@ def scenario_threads_settings_live_in_a_drawer():
 
 
 def scenario_one_lesson_player_outside_the_projects_overlays():
-    for path, query in (('/work', 'tab=projects'), ('/projects', ''), ('/rhythms', 'tab=programs')):
+    for path, query in (('/work', 'tab=projects'), ('/projects', ''), ('/projects', 'lane=programs')):
         players = [parents for attrs, parents in _elements(_render(path, query))
                    if attrs.get('x-data') == 'lessonPlayer()']
         check(len(players) == 1, f'{path} must render exactly one lesson player')

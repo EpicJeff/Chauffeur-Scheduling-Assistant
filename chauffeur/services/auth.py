@@ -242,18 +242,14 @@ RULES = [
     (ANY, '/drive_setup', ANYONE, None),
     (ANY, '/kitchen', ANYONE, None),
     (ANY, '/house', ANYONE, None),
-    # Missions: same admin-page shape as Mind — a shell anyone can load, the
-    # data behind it gated at /api/missions/* below.
+    # Missions: public redirect to Projects; mission APIs remain gated below.
     (ANY, '/missions', ANYONE, None),
     # Study (task 2): same admin-page shape as Mind — a shell anyone can
     # load, the data behind it gated at /api/study/state below.
     (ANY, '/study', ANYONE, None),
-    # Threads: same admin-page shape as Mind — a shell anyone can load, the
-    # data behind it gated at /api/threads/* above (SIGNED_IN to read, the
-    # handler's `_mind_actor` refusing a child/helper/guest write).
+    # Threads: public redirect to Projects; thread APIs retain their own gates.
     (ANY, '/threads', ANYONE, None),
-    # Programs: same admin-page shape as Threads/Mind — a shell anyone can
-    # load, the data behind it gated at /api/programs* above.
+    # Programs: public redirect to Projects; program APIs retain their own gates.
     (ANY, '/programs', ANYONE, None),
     # Projects share the public shell; /api/projects* requires a signed-in member.
     (ANY, '/projects', ANYONE, None),

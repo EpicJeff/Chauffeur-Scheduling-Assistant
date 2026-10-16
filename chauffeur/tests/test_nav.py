@@ -163,7 +163,7 @@ def scenario_the_home_board_is_in_the_nav():
         check(slug in slugs, f"'{slug}' is missing from NAV_ITEMS")
 
 
-ADMIN_ONLY_SLUGS = ('intake', 'mind', 'threads', 'programs',
+ADMIN_ONLY_SLUGS = ('intake', 'mind', 'threads', 'programs', 'projects',
                     'work', 'rhythms', 'school')
 
 

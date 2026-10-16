@@ -448,7 +448,7 @@ def _thread_stalls(now: datetime.datetime):
 def _mission_states(now: datetime.datetime):
     """A mission that stopped needing the engine and started needing a person.
     Signal policy: the next action is IN the line. done/blocked hush once a
-    parent taps OK on /missions (acknowledged_at); waiting hushes when the
+    parent taps OK on the Projects page (acknowledged_at); waiting hushes when the
     answer arrives (status leaves waiting_user). Steps never page — only
     states a human must resolve."""
     from services import missions, storage as _st
@@ -460,7 +460,7 @@ def _mission_states(now: datetime.datetime):
         goal = (m.get('goal') or 'Mission')[:60]
         if status == 'done':
             kind, sev, dm = 'mission_done', 'fyi', False
-            what = m.get('summary') or 'review its proposals on /missions'
+            what = m.get('summary') or 'review its proposals on the Projects page'
             line = f"🎯 Mission done — {goal}: {what}"
         elif status == 'blocked':
             kind, sev, dm = 'mission_blocked', 'fyi', False
@@ -470,7 +470,7 @@ def _mission_states(now: datetime.datetime):
             steps = _st.get_mission_steps(m['id'])
             asks = [s for s in steps if s.get('kind') == 'ask']
             q = (asks[-1].get('result_json') or {}).get('question') if asks else ''
-            line = f"🎯 Mission asks — {goal}: {q or 'answer it on /missions'}"
+            line = f"🎯 Mission asks — {goal}: {q or 'answer it on the Projects page'}"
         out.append(Finding(key=f"{kind}:{m['id']}", line=line, kind=kind,
                            severity=sev, dm=dm,
                            subject_type='mission', subject_id=str(m['id'])))

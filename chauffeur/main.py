@@ -1768,10 +1768,11 @@ def mind_page(request: Request):
 
 @app.get("/rhythms")
 def rhythms_page(request: Request):
-    """Routines + Programs side by side — presentation-only merge of the same
-    components the standalone pages serve."""
+    """The Routines host; old Programs bookmarks follow them to Projects."""
     if request.query_params.get('tab') == 'growing-up':
         return RedirectResponse('config#growing-up')
+    if request.query_params.get('tab') == 'programs':
+        return _retired_to('program', request, 'projects?lane=programs')
     return templates.TemplateResponse(request=request, name="rhythms.html")
 
 
@@ -1809,13 +1810,23 @@ def drive_setup_page(request: Request):
 
 @app.get("/work")
 def work_page(request: Request):
-    """Mind + Missions + Threads on one desk — three columns of the same
-    components the standalone pages serve."""
+    """Projects and Mind on one desk; retired tabs follow their pieces."""
+    tab = request.query_params.get('tab')
+    if tab in ('threads', 'missions'):
+        return _retired_to(tab[:-1], request, 'work?tab=projects')
     return templates.TemplateResponse(request=request, name="work.html")
+
+
+def _retired_to(kind: str, request: Request, empty: str):
+    """An old Threads, Missions or Programs address (front door §3): the page
+    resolves the record and its project itself, so the redirect names no project."""
+    rid = request.query_params.get('id')
+    return RedirectResponse(f'projects?piece={kind}:{rid}' if rid else empty)
+
 
 @app.get("/missions")
 def missions_page(request: Request):
-    return templates.TemplateResponse(request=request, name="missions.html")
+    return _retired_to('mission', request, 'projects')
 
 @app.get("/study")
 def study_page(request: Request):
@@ -1866,11 +1877,11 @@ def house_page(request: Request):
 
 @app.get("/threads")
 def threads_page(request: Request):
-    return templates.TemplateResponse(request=request, name="threads.html")
+    return _retired_to('thread', request, 'projects')
 
 @app.get("/programs")
 def programs_page(request: Request):
-    return templates.TemplateResponse(request=request, name="programs.html")
+    return _retired_to('program', request, 'projects?lane=programs')
 
 @app.get("/projects")
 def projects_page(request: Request):

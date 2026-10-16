@@ -53,6 +53,12 @@ def seed():
     missions._browse = lambda **kw: {'outcome': 'done', 'text': 'ok', 'learned': {}, 'stopped_at': 'u', 'wanted_fields': [], 'turns': 1, 'tokens_in': 1, 'tokens_out': 1, 'seconds': 1, 'screenshots': [], 'filled': {}}
 
 
+def _open_record(page, served, title):
+    row = next(r for r in storage.get_threads(include_closed=True) if r['title'] == title)
+    page.goto(served.url('threads?id=' + row['id']), wait_until='networkidle')
+    page.wait_for_selector('[data-record-sheet][data-open="true"][data-kind="thread"] details[open]', timeout=15000)
+
+
 def main():
     served = live_app(seed)
     if served is None:
@@ -61,23 +67,26 @@ def main():
         b = served.browser(color_scheme='dark')
         with b as page:
             page.set_viewport_size({'width': 1300, 'height': 900})
-            page.goto(served.url('work?tab=threads'), wait_until='networkidle')
-            page.wait_for_selector('#threads .situation-card', timeout=15000)
-            card = page.locator('#threads .situation-card:has-text("Dishwasher repair")').first
+            _open_record(page, served, 'Dishwasher repair')
+            page.wait_for_selector('[data-record-sheet][data-kind=thread] .situation-card', timeout=15000)
+            card = page.locator('[data-record-sheet][data-kind=thread] .situation-card:has-text("Dishwasher repair")').first
             check(card.locator('.sit-next button').first.inner_text().startswith('Share with bodewell.com'), "the thread leads with the release")
             # The details that belong to this card: the next <details> sibling.
             det = card.locator('xpath=../following-sibling::details[1]').first
-            det.locator('summary').first.click()
+            check(det.get_attribute('open') is not None, "the record's details open with its sheet")
             page.wait_for_timeout(800)
             tl = det.inner_text()
             check('search_mail' in tl and 'Your Cafe order' in tl, f"the mission's steps are in the thread's details: {tl[:300]}")
             check('Share with bodewell.com' in tl, "the release ask is shown there too")
             check('Add: call Ace Pools' in tl and det.locator('button:has-text("Approve")').count() == 1, f"a proposal step draws with its Approve: {tl[:400]}")
             check('Jeff' in card.locator('.sit-next button').first.inner_text(), "the Share button shows the exact value")
-            roof = page.locator('#threads .situation-card:has-text("Roof")').first
+            _open_record(page, served, 'Roof')
+            roof = page.locator('[data-record-sheet][data-kind=thread] .situation-card:has-text("Roof")').first
             check(roof.locator('a[href="https://roofco.example/book"]').count() == 1, f"the hand-off card carries its link: {roof.inner_html()[:600]}")
-            gutters = page.locator('#threads .situation-card:has-text("Gutters")').first
+            _open_record(page, served, 'Gutters')
+            gutters = page.locator('[data-record-sheet][data-kind=thread] .situation-card:has-text("Gutters")').first
             check(gutters.locator('.sit-next button').first.inner_text().startswith('Book at'), "the submit card leads with the whole question")
+            _open_record(page, served, 'Dishwasher repair')
             card.locator('.sit-next button').first.click()
             page.wait_for_timeout(1500)
             m = [x for x in storage.get_missions() if x['goal'] == 'get the dishwasher fixed'][0]
@@ -91,6 +100,7 @@ def main():
                 page.wait_for_timeout(800)
             tl = det.inner_text()
             check('Not these' not in tl and 'running' in tl, f"the thread's transcript followed the release: {tl[:300]}")
+            _open_record(page, served, 'Gutters')
             gutters.locator('.sit-next button').first.click()
             page.wait_for_timeout(1500)
             gm = [x for x in storage.get_missions() if x['goal'] == 'get the gutters cleaned'][0]

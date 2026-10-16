@@ -35,6 +35,12 @@ def seed():
                                         {'reading': {'answer': 'yes', 'summary': 'Friday 9am works', 'ts': time.time(), 'source': 'argyle'}})
 
 
+def _open_record(page, served, title):
+    row = next(r for r in storage.get_threads(include_closed=True) if r['title'] == title)
+    page.goto(served.url('threads?id=' + row['id']), wait_until='networkidle')
+    page.wait_for_selector('[data-record-sheet][data-open="true"][data-kind="thread"] details[open]', timeout=15000)
+
+
 def main():
     served = live_app(seed)
     if served is None:
@@ -43,9 +49,9 @@ def main():
         b = served.browser(color_scheme='dark')
         with b as page:
             page.set_viewport_size({'width': 1300, 'height': 900})
-            page.goto(served.url('work?tab=threads'), wait_until='networkidle')
-            page.wait_for_selector('#threads .situation-card', timeout=15000)
-            card = page.locator('#threads .situation-card:has-text("Pest control")').first
+            _open_record(page, served, 'Pest control')
+            page.wait_for_selector('[data-record-sheet][data-kind=thread] .situation-card', timeout=15000)
+            card = page.locator('[data-record-sheet][data-kind=thread] .situation-card:has-text("Pest control")').first
             line = card.locator('[data-ask-line]').first.inner_text()
             check(line.startswith('Emailed Pest Co'), f"a household send reads 'Emailed …': {line}")
             check('Argyle read their reply as yes' in line and 'Friday 9am works' in line, f"the reading line: {line}")
@@ -56,10 +62,10 @@ def main():
             check(card.locator('.sit-next button').first.inner_text().startswith('Confirm with Pest Co'),
                   "the next step is the confirm")
             # The timeline, under the card's details, shows what Argyle read.
-            page.locator('#threads details summary').first.click()
+            page.wait_for_selector('[data-record-sheet][data-kind=thread] details[open]')
             page.wait_for_timeout(400)
             # Every entry carries the span; only the reply's is shown.
-            tl = ' '.join(page.locator('#threads details[open] .thread-reading:visible').all_inner_texts())
+            tl = ' '.join(page.locator('[data-record-sheet][data-kind=thread] details[open] .thread-reading:visible').all_inner_texts())
             check('yes' in tl and 'Friday 9am works' in tl, f"the timeline shows the reading: {tl}")
             # The card's own act() pre-fills the prompt's INPUT with the
             # reading-built step (the page intercepts advance into its form,
@@ -78,7 +84,7 @@ def main():
                   f"the dialog's input is pre-filled, not its message: {prefilled}")
             card.locator('[data-ask-line] button:has-text("Argyle got it wrong")').first.click()
             page.wait_for_timeout(1500)
-            card = page.locator('#threads .situation-card:has-text("Pest control")').first
+            card = page.locator('[data-record-sheet][data-kind=thread] .situation-card:has-text("Pest control")').first
             line = card.locator('[data-ask-line]').first.inner_text()
             check('waiting' in line and 'Argyle read' not in line, f"after the tap, waiting again: {line}")
             check(card.locator('.sit-next button').first.inner_text().startswith('Read their reply'), "next step: read it")

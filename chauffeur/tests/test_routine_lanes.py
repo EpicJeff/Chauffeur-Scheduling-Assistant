@@ -396,17 +396,20 @@ def scenario_the_kid_digest_is_one_drawing_on_both_surfaces():
           f"{filtered['kids']}")
 
 
-def scenario_rhythms_hosts_both_presentation_only():
+def scenario_rhythms_hosts_routines_and_projects_hosts_programs():
     tpl = os.path.join(TPL, 'rhythms.html')
     html = open(tpl, encoding='utf-8').read()
-    for comp in ('components/routines_page.html', 'components/programs_page.html'):
-        check(comp in html, f"/rhythms includes {comp}")
+    check('components/routines_page.html' in html, "/rhythms includes routines")
+    check('components/programs_page.html' not in html, "/rhythms retired Programs")
     check(html.count('control_center.html') == 1,
           "chrome included once by the host")
     flat = tpl_source.read('rhythms.html')
     check(flat.count('function routinesPage()') == 1
-          and flat.count('function programsPage()') == 1,
-          "each island emitted exactly once")
+          and flat.count('function programsPage(') == 0,
+          "only the routines island is emitted, exactly once")
+    sheet = tpl_source.read('components/record_sheet.html')
+    check(sheet.count('function programsPage(') == 1,
+          "the record sheet emits the programs island exactly once")
     nav = open(os.path.join(TPL, 'nav.html'), encoding='utf-8').read()
     check("'slug': 'rhythms'" in nav and "'slug': 'programs'" not in nav,
           "rhythms replaced programs in the nav")
