@@ -79,13 +79,31 @@ def lifecycle_contract(name):
     mid = fx.ids['R9a']
     storage.update_mission(mid, {'status': 'running'})
     if name == 'launch':
-        # An origin_ref alone on a non-thread mission confers no origin right.
-        out = missions.launch('household work', origin_kind='chat', origin_ref=fx.ids['R1'],
-                              created_by='mom', tier='flash', project_id=fx.projects['household']['id'])
-        check(out.get('mission_id'), f'launch executed: {out}')
-        check(not storage.get_mission_steps(out['mission_id']), 'hidden context was not seeded')
-        missions._seed_thread_context(out['mission_id'], storage.get_thread(fx.ids['R1']))
-        check(not storage.get_mission_steps(out['mission_id']), 'seeding rejects an unrelated private thread')
+        from access_signed_in import request
+        # Both launch doors ignore a different home, preserving origin context
+        # for Mom without publishing it in a household mission Dad can read.
+        for http in (False, True):
+            args = {'goal': 'household work', 'origin_kind': 'thread', 'origin_ref': fx.ids['R1'],
+                    'tier': 'flash', 'project_id': fx.projects['household']['id']}
+            if http:
+                response = request(fx, 'mom', 'POST', '/api/missions/launch', json=args)
+                check(response.status_code == 200, response.text)
+                out = response.json()
+            else:
+                out = missions.launch(**args, created_by='mom')
+            check(out.get('mission_id'), f'launch executed: {out}')
+            launched = storage.get_mission(out['mission_id'])
+            check(launched['project_id'] == fx.projects['mom_private']['id'],
+                  f'origin home wins over requested household project: {launched}')
+            mom = request(fx, 'mom', 'GET', f'/api/missions/{launched["id"]}')
+            check(mom.status_code == 200 and fx.secret('R1') in mom.text,
+                  f'Mom retains the real seeded origin context: {mom.text}')
+            dad = request(fx, 'dad', 'GET', f'/api/missions/{launched["id"]}')
+            listing = request(fx, 'dad', 'GET', '/api/missions/admin')
+            check(dad.status_code == 404 and listing.status_code == 200
+                  and launched['id'] not in listing.text
+                  and fx.secret('R1') not in dad.text + listing.text,
+                  f'Dad cannot see the mission or origin words: {dad.text} {listing.text}')
         return
     with patch.object(missions, '_dm_person'):
         out = planned.planner_action(mid, {'action': 'interview', 'questions': [{'key': 'x', 'ask': 'Which day?'}]})
@@ -148,3 +166,23 @@ def extra_contracts():
               f'{engine} finder obeys mission context: {result}')
     for name in ('launch', 'planner_action', 'approve_plan', 'ask_card'):
         lifecycle_contract(name)
+    # The real renderer gets explicit mission authority, never viewer=None.
+    from services import situations
+    fx = access_fixture.build()
+    real_view = situations.view
+    calls = []
+    def render(*args, **kwargs):
+        viewer = args[2] if len(args) > 2 else kwargs.get('viewer')
+        check(viewer is not None, 'engine must give situations.view an explicit reader')
+        calls.append(args)
+        return real_view(*args, **kwargs)
+    with patch.object(situations, 'view', side_effect=render):
+        own = act(fx, {'action': 'tool', 'tool': 'list_situations', 'args': {}}, 'R9a')
+        other = act(fx, {'action': 'tool', 'tool': 'list_situations', 'args': {}}, 'R9b')
+    check(calls and fx.ids['R1'] in words(own) and fx.ids['R1'] not in words(other),
+          'explicit renderer retains own-project access and refuses unrelated private pieces')
+
+
+if __name__ == '__main__':
+    extra_contracts()
+    print('PASS access_engine contracts')

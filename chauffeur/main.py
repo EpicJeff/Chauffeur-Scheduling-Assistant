@@ -6468,17 +6468,21 @@ def missions_detail(mission_id: str, request: Request = None):
 
 @app.post("/api/missions/launch")
 def missions_launch(body: dict = Body(default={}), request: Request = None):
+    origin = None
     if body.get('origin_ref'):
-        _piece_or_404('thread', body['origin_ref'], request, 'mission')
+        origin, _ = _piece_or_404('thread', body['origin_ref'], request, 'mission')
     from services import missions as _missions
     actor = _mind_actor(request, body.get('member_id'))
-    pid = _project_to_join(body, actor)
+    thread_origin = origin is not None and body.get('origin_kind') == 'thread'
+    # A thread's work always lives in its own home; a different requested
+    # project is ignored, including for authorization and subject binding.
+    pid = origin.get('project_id') if thread_origin else _project_to_join(body, actor)
     res = _missions.launch((body.get('goal') or ''),
                            origin_kind=body.get('origin_kind') or 'manual',
                            origin_ref=body.get('origin_ref'),
                            created_by=(actor or {}).get('id') if actor else body.get('member_id'),
                            tier=body.get('tier') or 'mission',
-                           project_id=pid, subject=('project', pid) if pid else None)
+                           project_id=pid, subject=('project', pid) if pid and not thread_origin else None)
     if res.get('status') not in ('launched',):
         raise HTTPException(status_code=400, detail=res.get('message') or res['status'])
     return res

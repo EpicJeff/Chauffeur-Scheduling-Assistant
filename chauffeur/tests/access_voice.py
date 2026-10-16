@@ -172,22 +172,51 @@ def extra_contracts():
         check(fx.title('R5t') not in str(out) and fx.secret('R5t') not in str(out), 'HOUSE still requires spoken_safe')
     # Focus ABOUT is gated by HOUSE, not the authenticated voice's private access.
     fx = access_fixture.build()
-    from services import triage
+    from services import triage, subjects
     storage.update_thread(fx.ids['R1'], {'subject_kind': 'thread', 'subject_id': fx.ids['R4'], 'voice_shared': True})
     storage.update_thread(fx.ids['R4'], {'voice_shared': True})
-    focus = {'kind': 'thread', 'id': fx.ids['R1']}
+    triage.set_focus('voice:room', 'thread', fx.ids['R1'], fx.title('R1'))
     captured = []
     def model(prompt, tools, system_prompt):
         captured.append(system_prompt)
         return {'message': 'ok', 'tool_calls': []}
     with patch.object(identity.VoiceContext, 'verified_member', return_value=fx.viewers['mom']), \
-            patch.object(triage, 'get_focus', return_value=focus), \
+            patch.object(triage, 'get_focus', wraps=triage.get_focus) as focus_read, \
+            patch.object(subjects, 'context', wraps=subjects.context) as about, \
             patch.object(agent_router, 'call_gemma_with_fallback', side_effect=model):
         agent_router.process_agent_request('What about it?', source='voice', voice_context=context(), focus_key='voice:room')
+        focus_read.assert_called_with('voice:room', viewer=access.HOUSE)
+        check(not about.called, 'real focus gate withholds private R1 before ABOUT context')
     check(captured and fx.title('R4') not in captured[0] and fx.secret('R4') not in captured[0], 'voice ABOUT uses HOUSE')
     captured.clear()
     storage.update_thread(fx.ids['R5t'], {'subject_kind': 'program', 'subject_id': fx.ids['R5p'], 'voice_shared': True})
-    with patch.object(triage, 'get_focus', return_value={'kind': 'thread', 'id': fx.ids['R5t']}), \
+    triage.set_focus('voice:room', 'thread', fx.ids['R5t'], fx.title('R5t'))
+    with patch.object(triage, 'get_focus', wraps=triage.get_focus) as focus_read, \
+            patch.object(subjects, 'context', wraps=subjects.context) as about, \
             patch.object(agent_router, 'call_gemma_with_fallback', side_effect=model):
         agent_router.process_agent_request('What about it?', source='voice', voice_context=context(), focus_key='voice:room')
+        focus_read.assert_called_with('voice:room', viewer=access.HOUSE)
+        about.assert_called_with('program', fx.ids['R5p'], access.HOUSE, spoken=True)
     check(captured and fx.title('R5p') in captured[0], 'HOUSE focus keeps household ABOUT context')
+    # Voice creates as the parent of record, but reads a piece subject as HOUSE.
+    from services import agent_tools_v2 as tools, situations
+    for kind, key in (('thread', 'R1'), ('program', 'R3'), ('thread', 'R5t'), ('program', 'R5p')):
+        fx = access_fixture.build()
+        storage.update_thread(fx.ids['R1'], {'voice_shared': True})
+        storage.update_thread(fx.ids['R5t'], {'voice_shared': True})
+        # Give the parent of record full personal access to the private home;
+        # HOUSE still cannot bind it to the new household planning mission.
+        parent = situations.parent_of_record()
+        storage.update_project(fx.projects['mom_private']['id'], {'owner_member_id': parent['id']})
+        out = tools.start_project('Plan a fresh next step', voice_context=context(),
+                                  subject_kind=kind, subject_id=fx.ids[key])
+        check(out.get('mission_id'), f'voice start ran the real launch path: {out}')
+        mission = storage.get_mission(out['mission_id'])
+        bound = missions.subject_of(mission)[:2]
+        check((bound == (kind, fx.ids[key])) == (key in ('R5t', 'R5p')),
+              f'voice piece subject uses HOUSE with household positive control: {kind} {key} {bound}')
+
+
+if __name__ == '__main__':
+    extra_contracts()
+    print('PASS access_voice contracts')

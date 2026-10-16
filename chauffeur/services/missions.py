@@ -1761,9 +1761,14 @@ def launch(goal: str, origin_kind: str = 'manual', origin_ref=None,
         storage.update_mission(mid, {'subject_kind': subject[0], 'subject_id': subject[1], 'subject_rev': 1,
                                      'subject_history': subjects.history_after_binding({}, subject[0], subject[1])})
     from services import projects
-    projects.adopt('mission', mid, storage.get_member(created_by) if created_by else None, project_id=project_id)
+    actor = storage.get_member(created_by) if created_by else None
+    thread = storage.get_thread(origin_ref) if origin_kind == 'thread' and origin_ref else None
+    if thread:
+        # Origin context is private to its thread's home. Ignore a caller's
+        # different project rather than seed that context into a wider home.
+        project_id = projects.adopt('thread', thread['id'], actor)
+    projects.adopt('mission', mid, actor, project_id=project_id)
     if origin_kind == 'thread' and origin_ref:
-        thread = storage.get_thread(origin_ref)
         if thread:
             _seed_thread_context(mid, thread)
     from services import situations as _sit

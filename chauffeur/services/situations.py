@@ -586,19 +586,25 @@ def option_action(kind, row, verb, option_id):
     return verb
 
 
-def view(kind: str, sid: str, viewer: Optional[dict] = None) -> Optional[dict]:
+def view(kind: str, sid: str, viewer: Optional[dict] = None, *, mission: Optional[dict] = None) -> Optional[dict]:
+    """Render for a viewer, or a trusted engine's explicit mission authority."""
     if kind not in KINDS:
         return None
     row = load(kind, sid)
-    if not row or (viewer is not None and not can_see(kind, row, viewer)):
+    from services import access
+    projection = None
+    if mission is not None and kind in access.KINDS:
+        projection = access.mission_view(mission, kind, row)
+        if projection is None:
+            return None
+    elif not row or (viewer is not None and not can_see(kind, row, viewer)):
         return None
     if kind == 'project':
         return _project_view(row, viewer)
     keeper = False
     access_row = row
     if kind in ('mission', 'thread') and viewer is not None:
-        from services import access
-        keeper = access.record_view(kind, row, viewer) == access.KEEPER
+        keeper = (projection if mission is not None else access.record_view(kind, row, viewer)) == access.KEEPER
     if keeper and kind == 'mission':
         from services import planned
         # Build labels and the fallback only from metadata. In particular,
@@ -624,9 +630,10 @@ def view(kind: str, sid: str, viewer: Optional[dict] = None) -> Optional[dict]:
         for opt in opts:
             bits = opt['id'].split(':')
             if len(bits) >= 3 and bits[1] == 'mission':
-                mission = load('mission', bits[2])
-                projection = access.record_view('mission', mission, viewer)
-                if projection is None or (projection == access.KEEPER and opt['payload'].get('ask') != 'steer'):
+                option_mission = load('mission', bits[2])
+                option_view = (access.mission_view(mission, 'mission', option_mission) if mission is not None
+                               else access.record_view('mission', option_mission, viewer))
+                if option_view is None or (option_view == access.KEEPER and opt['payload'].get('ask') != 'steer'):
                     continue
             visible_opts.append(opt)
         opts = visible_opts

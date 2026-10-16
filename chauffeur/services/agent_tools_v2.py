@@ -1550,8 +1550,11 @@ def _render_at(kind, row, view, viewer, focus_key=None):
     # The engine has already passed mission_view, including its own project
     # and origin exceptions. The internal renderer must not reapply HOUSE's
     # narrower project gate to that authorized row.
-    engine = _mission_context.get() is not None and kind in access.KINDS
-    result = situations.view(kind, row['id'], None if engine else _viewer_at(kind, row, view, viewer))
+    mission = _mission_context.get() if kind in access.KINDS else None
+    if mission is not None:
+        result = situations.view(kind, row['id'], access.mission_reader(mission), mission=mission)
+    else:
+        result = situations.view(kind, row['id'], _viewer_at(kind, row, view, viewer))
     if result and kind == 'thread':
         options = []
         for option in result['options']:
@@ -2162,7 +2165,10 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
         if humans and not all(projects.can_see(probe, h) for h in humans):
             return {"status": "refused", "message": "Ask me about that in your own Argyle chat."}
     subject = subjects.load(subject_kind, subject_id) if subject_kind in subjects.KINDS and subject_id else None
-    if subject is None or not subjects.visible(subject_kind, subject, actor, spoken):
+    subject_reader = access.HOUSE if ctx else actor
+    if (subject is None
+            or ctx and subject_kind in access.KINDS and access.record_view(subject_kind, subject, access.HOUSE) is None
+            or not subjects.visible(subject_kind, subject, subject_reader, spoken)):
         subject_kind = subject_id = None
     subject_title = subjects.title_of(subject_kind, subject) if subject_kind else None
     # The continuation rule: a new goal said while a project is the focus and
