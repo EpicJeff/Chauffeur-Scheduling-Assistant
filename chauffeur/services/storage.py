@@ -1272,6 +1272,25 @@ def get_conversation(conv_id: str) -> Optional[dict]:
         res = conversations_table.search(Query().id == conv_id)
         return res[0] if res else None
 
+def get_surface_conversation(kind: str, owner: str) -> dict:
+    """The one live conversation for this person/surface or enrolled panel."""
+    import time
+    import uuid
+    if kind not in ('admin', 'pwa', 'panel') or not owner:
+        raise ValueError('A conversation needs a surface and owner')
+    surface = {'kind': kind, 'owner': owner}
+    with db_lock:
+        # Use the same retention policy as the history list, even on first use.
+        rows = get_all_conversations()
+        for row in rows:
+            if row.get('surface') == surface and not row.get('legacy'):
+                return row
+        now = time.time()
+        row = {'id': 'conv_' + uuid.uuid4().hex, 'type': 'surface',
+               'surface': surface, 'messages': [], 'created_at': now, 'updated_at': now}
+        create_conversation(row)
+        return row
+
 def create_conversation(conv_data: dict) -> str:
     with db_lock:
         conversations_table.insert(conv_data)

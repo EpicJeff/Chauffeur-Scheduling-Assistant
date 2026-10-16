@@ -1145,6 +1145,7 @@
             localStorage.removeItem('chauffeur_driver_id');
             selectedMemberId = memberId;
             localStorage.setItem('chauffeur_member_id', memberId);
+            if (previousMemberId !== selectedMemberId) loadChatHistory();
             if (previousMemberId !== selectedMemberId && typeof mwOnMemberChanged === 'function') {
                 mwOnMemberChanged();
             }
@@ -4005,11 +4006,13 @@
         // endpoints still key on driver_id; member_id is the hub-level identity
         // (messaging, passenger views) introduced with the family refactor.
         function syncMemberIdentity(driverId) {
+            const previous = selectedMemberId;
             const m = membersData.find(m => m.driver_id === driverId);
             if (m) {
                 selectedMemberId = m.id;
                 localStorage.setItem('chauffeur_member_id', m.id);
             }
+            if (previous !== selectedMemberId) loadChatHistory();
         }
 
         function currentMemberRole() {
@@ -7784,6 +7787,7 @@
             localStorage.removeItem('chauffeur_member_id');
             localStorage.removeItem('chauffeur_member_token');
             localStorage.removeItem('chauffeur_member_token_for');
+            loadChatHistory();
             // Signing out has to reach the worker too, or a notification action
             // would keep posting as the person who just left this device.
             mirrorTokenToServiceWorker();
@@ -10423,6 +10427,7 @@
                 popup.classList.toggle('hidden');
                 popup.classList.toggle('flex');
                 if (!popup.classList.contains('hidden')) {
+                    loadChatHistory();
                     if (chatInput) chatInput.focus();
                     scrollToBottom();
                 }
@@ -10430,34 +10435,43 @@
         }
 
         let activeConversationId = null;
+        let pwaChatOwner = null;
+        let pwaChatEpoch = 0;
 
         async function loadChatHistory() {
-            if (!chatMessages) return;
+            const epoch = ++pwaChatEpoch;
+            activeConversationId = null;
+            pwaChatOwner = null;
+            if (!chatMessages) return false;
+            chatMessages.innerHTML = '';
+            const owner = selectedMemberId;
+            const token = memberToken();
+            if (!owner || !token) {
+                appendMessage('assistant', 'Sign in on your personal device to talk to Argyle.');
+                return false;
+            }
             try {
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
-                
-                // Fetch conversations to find active one
-                const cRes = await fetch(`${apiBase}api/chat/conversations`);
+                const cRes = await fetch(`${apiBase}api/chat/conversation?surface=pwa`);
+                if (!cRes.ok) throw new Error('Sign in on your personal device to talk to Argyle.');
                 const cData = await cRes.json();
-                if (cData.conversations && cData.conversations.length > 0) {
-                    const gen = cData.conversations.find(c => c.type === 'general');
-                    if (gen) activeConversationId = gen.id;
-                    else activeConversationId = cData.conversations[0].id;
+                if (epoch !== pwaChatEpoch || owner !== selectedMemberId || token !== memberToken()) return false;
+                const conv = cData.conversation;
+                if (!conv || conv.surface?.kind !== 'pwa' || conv.surface.owner !== owner) {
+                    throw new Error('Sign in on your personal device to talk to Argyle.');
                 }
-
-                if (activeConversationId) {
-                    const res = await fetch(`${apiBase}api/chat/history?conversation_id=${activeConversationId}`);
-                    const data = await res.json();
-                    chatMessages.innerHTML = '';
-                    if (data.history && data.history.length > 0) {
-                        data.history.forEach(msg => appendMessage(msg.role, msg.content));
-                    } else {
-                        appendMessage('assistant', 'Hello! I am Argyle. Need help with your route today?');
-                    }
+                activeConversationId = conv.id;
+                pwaChatOwner = owner;
+                if (conv.messages && conv.messages.length > 0) {
+                    conv.messages.forEach(msg => appendMessage(msg.role, msg.content));
+                } else {
+                    appendMessage('assistant', 'Hello! I am Argyle. Need help with your route today?');
                 }
                 scrollToBottom();
+                return true;
             } catch (err) {
-                console.error('Failed to load chat history', err);
+                if (epoch === pwaChatEpoch) appendMessage('assistant', err.message);
+                return false;
             }
         }
 
@@ -10482,6 +10496,13 @@
             const text = chatInput.value.trim();
             if (!text) return;
 
+            if (!selectedMemberId || !memberToken() || pwaChatOwner !== selectedMemberId || !activeConversationId) {
+                if (!await loadChatHistory()) return;
+            }
+            const owner = selectedMemberId;
+            const token = memberToken();
+            const conversationId = activeConversationId;
+
             appendMessage('user', text);
             chatInput.value = '';
             chatInput.disabled = true;
@@ -10495,14 +10516,15 @@
 
             try {
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
-                const res = await fetch(`${apiBase}api/chat`, {
+                const res = await fetch(`${apiBase}api/chat?surface=pwa`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: text, source: 'pwa', driver_id: selectedDriverId, conversation_id: activeConversationId })
+                    body: JSON.stringify({ message: text, source: 'pwa', driver_id: selectedDriverId, conversation_id: conversationId })
                 });
-
+                if (!res.ok) throw new Error('Sign in on your personal device to talk to Argyle.');
                 const data = await res.json();
                 typingDiv.remove();
+                if (owner !== selectedMemberId || token !== memberToken()) return;
 
                 if (data.error) {
                     appendMessage('assistant', `Error: ${data.error}`);
@@ -10513,7 +10535,9 @@
                 }
             } catch (err) {
                 typingDiv.remove();
-                appendMessage('assistant', `Connection error: ${err.message}`);
+                if (owner === selectedMemberId && token === memberToken()) {
+                    appendMessage('assistant', `Connection error: ${err.message}`);
+                }
             } finally {
                 chatInput.disabled = false;
                 chatSubmitBtn.disabled = false;

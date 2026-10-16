@@ -269,6 +269,7 @@ RULES = [
     # NOT robots-only, and the live audit is what said so: the Argyle bar is
     # drawn on member surfaces (the PWA's FAB) and on wall panels, and each of
     # those callers POSTs /api/chat as itself. Anonymous is the only refusal.
+    ('GET', '/api/chat/conversation', WALL, 'chat.agent'),
     (ANY, '/api/chat/*', WALL_OR_SERVICE, 'chat.agent'),
     (ANY, '/api/app-voice/*', SIGNED_IN, 'chat.agent'),
     # The bar's read side is an EventSource, which can set no headers — the

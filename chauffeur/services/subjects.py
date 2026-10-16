@@ -128,7 +128,9 @@ def _thread_visible(row, viewer):
 
 
 def _people_visible(row, viewer):
-    return (viewer or {}).get('role') in WRITE_ROLES
+    # HOUSE can read household records, but it is not an identified person
+    # with access to the family's contacts (including on a voice satellite).
+    return bool((viewer or {}).get('id')) and viewer.get('role') in WRITE_ROLES
 
 
 def visible(kind, row, viewer, spoken=False):

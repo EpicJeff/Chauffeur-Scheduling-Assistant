@@ -882,11 +882,23 @@ function closeChatHelpModal() {
         if (stored) chatInputHistory = JSON.parse(stored);
     } catch(e) {}
 
-    // Get or create a global conversation ID for continuous context
-    let activeConversationId = localStorage.getItem('chauffeurActiveConvId');
-    if (!activeConversationId) {
-        activeConversationId = 'conv_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-        localStorage.setItem('chauffeurActiveConvId', activeConversationId);
+    // The server owns conversation identity; a panel never uses a person's chat.
+    let activeConversationId = null;
+    const chatSurface = new URLSearchParams(location.search).get('panel') === 'true' ? 'panel' : 'admin';
+    // nav's member session intentionally replaces device headers. Carry the
+    // panel credential explicitly so that signing in keeps this device's chat.
+    const chatDeviceToken = chatSurface === 'panel' ? localStorage.getItem('chauffeur_device_token') : '';
+    const chatDeviceQuery = chatDeviceToken ? '&device_token=' + encodeURIComponent(chatDeviceToken) : '';
+    async function resolveChatConversation() {
+        const apiBase = window.chfBase !== undefined ? window.chfBase : '';
+        const res = await fetch(`${apiBase}api/chat/conversation?surface=${chatSurface}${chatDeviceQuery}`);
+        if (!res.ok) {
+            activeConversationId = null;
+            throw new Error('Sign in on your personal device to talk to Argyle.');
+        }
+        const data = await res.json();
+        activeConversationId = data.conversation.id;
+        return activeConversationId;
     }
 
     if (chatInput) {
@@ -944,6 +956,7 @@ function closeChatHelpModal() {
 
         let keepLoading = false;
         try {
+            await resolveChatConversation();
             const apiBase = (typeof window !== 'undefined' && window.chfBase !== undefined ? window.chfBase : '');
             const pageContext = {
                 pathname: window.location.pathname,
@@ -959,7 +972,7 @@ function closeChatHelpModal() {
                     pageContext.duration_nights = Math.max(1, Math.ceil((end - start) / 86400));
                 }
             }
-            const res = await fetch(`${apiBase}api/chat`, {
+            const res = await fetch(`${apiBase}api/chat?surface=${chatSurface}${chatDeviceQuery}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ message: text, context: pageContext, conversation_id: activeConversationId })
@@ -1308,13 +1321,19 @@ function closeChatHelpModal() {
     });
 
     // Initialize Chat Stream SSE Listener
-    function initChatStream() {
+    async function initChatStream() {
         const apiBase = (typeof window !== 'undefined' && window.chfBase !== undefined ? window.chfBase : '');
+        let conversationId;
+        try {
+            conversationId = await resolveChatConversation();
+        } catch (e) {
+            setTimeout(initChatStream, 5000);
+            return;
+        }
         // EventSource can set no headers; the token rides the query string
         // (nav's chfAuthUrl) so the Argyle bar's read side survives the flip.
-        const streamUrl = window.chfAuthUrl
-            ? window.chfAuthUrl(`${apiBase}api/v2/chat/stream`)
-            : `${apiBase}api/v2/chat/stream`;
+        const ownedStreamUrl = `${apiBase}api/v2/chat/stream?surface=${chatSurface}${chatDeviceQuery}&conversation_id=${encodeURIComponent(conversationId)}`;
+        const streamUrl = window.chfAuthUrl ? window.chfAuthUrl(ownedStreamUrl) : ownedStreamUrl;
         const source = new EventSource(streamUrl);
         source.onmessage = function(event) {
             try {

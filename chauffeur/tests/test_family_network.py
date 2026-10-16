@@ -133,10 +133,11 @@ def scenario_voice_sessions_are_not_household_reading():
                                  "messages": [{"role": "user", "content": "secret"}],
                                  "created_at": 1.0, "updated_at": 9e12})
     ids = lambda req: {c['id'] for c in main.get_conversations(request=req)['conversations']}
-    check(ids(Req()) == {"gen1"}, "anonymous callers see only the shared widget thread")
-    check(ids(Req(tok['emma'])) == {"gen1"}, "a kid sees only the shared widget thread")
+    # Access rule §4.2 (spec lines 162-164): legacy shared chat is parents-only history.
+    check(ids(Req()) == set(), "anonymous callers cannot list legacy shared history")
+    check(ids(Req(tok['emma'])) == set(), "a kid cannot list legacy shared history")
     check(ids(Req(tok['mom'])) == {"gen1", "voice-abc"}, "a parent sees the lot")
-    check(_denied(main.get_chat_history, "voice-abc", request=Req(tok['emma'])) == 403,
+    check(_denied(main.get_chat_history, "voice-abc", request=Req(tok['emma'])) == 404,
           "the history door agrees with the list door")
     hist = main.get_chat_history("voice-abc", request=Req(tok['mom']))['history']
     check(hist and hist[0]['content'] == "secret", "a parent still reads a voice session")

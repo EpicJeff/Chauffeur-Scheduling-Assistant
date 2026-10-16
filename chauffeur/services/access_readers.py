@@ -70,6 +70,7 @@ READERS = [
     ((R, 'POST', '/api/action-proposals/{proposal_id}/act'), '4.1-signed-in', ('mission', 'program'), 'record_actable'),
     ((R, 'GET', '/api/study/state'), '4.6-shared-screen', ('thread', 'program'), 'shared_screen_visible'),
     # §4.2 conversations
+    ((R, 'GET', '/api/chat/conversation'), '4.2-conversation', (), 'conversation_owner'),
     ((R, 'POST', '/api/chat'), '4.2-conversation', ('thread', 'mission', 'program'), 'conversation_view'),
     ((R, 'GET', '/api/chat/history'), '4.2-conversation', (), 'conversation_owner'),
     ((R, 'DELETE', '/api/chat/history'), '4.2-conversation', (), 'conversation_owner'),
@@ -349,6 +350,7 @@ READERS = [
     ]],
     ((F, 'main.perform'), '4.5-voice', ('thread', 'mission', 'program'), 'record_view(HOUSE): nested in POST /api/v2/converse'),
     *[((F, name), 'INTERNAL', (), 'raw (builder, gate or helper; its callers apply the rule)') for name in [
+        'main._chat_conversation',
         'main._kid_members_for_event', 'main._kid_trip_span', 'main._live_thread_or_refuse',
         'main._refresh_schedule_logic_impl', 'main._resolve_cached_event', 'main.compile_and_save_combined',
     ]],

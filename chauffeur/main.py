@@ -4132,12 +4132,14 @@ def phone_voice_cancel(request_id: str, request: Request):
 
 
 @app.get("/api/v2/chat/stream")
-async def stream_agent_chat():
+async def stream_agent_chat(request: Request, conversation_id: str = None):
     """
     Websocket/SSE endpoint for the Frontend to receive agent chat bubbles
     and DOM target coordinates for rendering context-anchored chat bubbles.
     """
     import json
+    conv, _viewer = _chat_conversation(request, conversation_id)
+    conv_id = conv['id']
     async def chat_event_generator():
         last_index = len(CHAT_EVENTS)
         last_ping = time.time()
@@ -4147,7 +4149,9 @@ async def stream_agent_chat():
                 now = time.time()
                 if len(CHAT_EVENTS) > last_index:
                     for i in range(last_index, len(CHAT_EVENTS)):
-                        yield f"data: {json.dumps(CHAT_EVENTS[i])}\n\n"
+                        event = CHAT_EVENTS[i]
+                        if event.get('conversation_id') == conv_id:
+                            yield f"data: {json.dumps(event)}\n\n"
                     last_index = len(CHAT_EVENTS)
                     last_ping = now
                 elif now - last_ping > 15:
@@ -18614,23 +18618,90 @@ class ChatMessagePayload(BaseModel):
     context: Optional[dict] = None
     conversation_id: Optional[str] = None
 
+
+def _chat_identity(request):
+    """Resolve credentials independently: a signed-in person may be on a panel."""
+    from services import auth
+    headers = request.headers if request else {}
+    query = request.query_params if request else {}
+    member = auth.acting_member(headers, query).get('member')
+    device = storage.get_device_by_token(headers.get('x-device-token') or query.get('device_token'))
+    return member, device
+
+
+def _chat_surface(request, surface=None):
+    """Choose the surface from the page, and its owner from validated credentials."""
+    from services import access
+    from urllib.parse import urlparse, parse_qs
+    query = request.query_params if request else {}
+    member, device = _chat_identity(request)
+    referer = request.headers.get('referer', '') if request else ''
+    panel = (surface == 'panel' or query.get('panel') == 'true'
+             or parse_qs(urlparse(referer).query).get('panel') == ['true'])
+    kind = 'panel' if panel else query.get('surface') or surface or ('admin' if member else 'panel' if device else 'admin')
+    if kind not in ('admin', 'pwa', 'panel'):
+        raise HTTPException(status_code=400, detail='Unknown chat surface')
+    if kind in ('admin', 'pwa') and member:
+        return kind, member['id'], member
+    if kind == 'panel' and (device or member):
+        return kind, device['device_id'] if device else 'anon-panel', access.HOUSE
+    raise HTTPException(status_code=401, detail='Sign in on your personal device to talk to Argyle.')
+
+
+def _chat_can_read(conv, request):
+    if not conv:
+        return False
+    member, device = _chat_identity(request)
+    parent = bool(member and member.get('role') == 'parent')
+    surface = conv.get('surface') or {}
+    kind, owner = surface.get('kind'), surface.get('owner')
+    if conv.get('legacy') or not surface or kind == 'satellite' or conv.get('type') == 'voice':
+        return parent
+    if kind in ('admin', 'pwa'):
+        return bool(member and owner == member['id'])
+    if kind == 'panel':
+        if parent or (device and owner == device['device_id']):
+            return True
+        # The fallback panel is shared by signed-in panel pages only.
+        return bool(member and owner == 'anon-panel' and _chat_surface(request)[0] == 'panel')
+    return False
+
+
+def _chat_conversation(request, conversation_id=None, surface=None):
+    """A live reply/stream can use only the current surface's conversation."""
+    kind, owner, viewer = _chat_surface(request, surface)
+    conv = storage.get_conversation(conversation_id) if conversation_id else storage.get_surface_conversation(kind, owner)
+    if not conv or not _chat_can_read(conv, request):
+        raise HTTPException(status_code=404, detail='Conversation not found')
+    if conv.get('legacy') or not conv.get('surface') or conv.get('type') == 'voice' or conv['surface'].get('kind') == 'satellite':
+        raise HTTPException(status_code=409, detail='That conversation is history; start a new one')
+    if conv['surface'] != {'kind': kind, 'owner': owner}:
+        raise HTTPException(status_code=404, detail='Conversation not found')
+    return conv, viewer
+
+
+@app.get('/api/chat/conversation')
+def get_chat_conversation(request: Request):
+    kind, owner, _viewer = _chat_surface(request)
+    return {'conversation': storage.get_surface_conversation(kind, owner)}
+
 @app.post("/api/chat")
 def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks, request: Request = None):
     from services.agent_router import process_agent_request
     from services.llm import auto_name_conversation
     import time
 
-    # The person behind the request, when the caller carries one (the PWA's
-    # Argyle bar sends its member token). The admin widget and a wall carry
-    # none and stay identity-less; the router decides what that means.
-    acting_member = None
-    try:
-        acting_id = _acting_id(request, None) if request is not None else None
-        acting_member = storage.get_member(acting_id) if acting_id else None
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.warning(f"chat: could not resolve the acting member: {e}")
+    # Authorize before naming, prompt-history reads, writes, or dispatch. A
+    # panel always reads as HOUSE, including when a parent opened that page.
+    acting_id = _acting_id(request, None) if request is not None else None
+    surface = 'pwa' if payload.source == 'pwa' else None
+    from urllib.parse import parse_qs
+    if payload.context and parse_qs(str(payload.context.get('search', '')).lstrip('?')).get('panel') == ['true']:
+        surface = 'panel'
+    conv, acting_member = _chat_conversation(request, payload.conversation_id, surface)
+    if conv['surface']['kind'] in ('admin', 'pwa') and acting_member['id'] != acting_id:
+        raise HTTPException(status_code=401, detail='Sign in on your personal device to talk to Argyle.')
+    payload.conversation_id = conv['id']
 
     try:
         is_first = False
@@ -18647,12 +18718,12 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks, 
         if payload.conversation_id:
             conv = storage.get_conversation(payload.conversation_id)
             if conv:
-                conv_history = conv.get("messages", [])
+                conv_history = list(conv.get("messages", []))
                 
             storage.add_message_to_conversation(payload.conversation_id, {'role': 'user', 'content': payload.message, 'timestamp': time.time()})
 
         res = process_agent_request(payload.message, context=payload.context, history=conv_history,
-                                    source=payload.source or "admin", driver_id=payload.driver_id,
+                                    source=conv['surface']['kind'], driver_id=payload.driver_id,
                                     acting_member=acting_member,
                                     focus_key=f"conv:{payload.conversation_id}" if payload.conversation_id else None)
         reply = res.get("message", "I did not understand that.")
@@ -18728,6 +18799,7 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks, 
                             storage.add_message_to_conversation(conv_id, {'role': 'assistant', 'content': msg, 'timestamp': time.time()})
                         
                         CHAT_EVENTS.append({
+                            "conversation_id": conv_id,
                             "reply": msg,
                             "ui_action": "reload"
                         })
@@ -18737,6 +18809,7 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks, 
                     except Exception as e:
                         logger.error(f"Background trip gen error: {e}")
                         CHAT_EVENTS.append({
+                            "conversation_id": conv_id,
                             "reply": f"⚠️ An error occurred while generating your trip: {str(e)}",
                             "ui_action": "reload"
                         })
@@ -18754,18 +18827,19 @@ def get_chat_history(conversation_id: str = None, request: Request = None):
     if not conversation_id:
         return {"history": []}
     conv = storage.get_conversation(conversation_id)
-    # Family-network S1: same door as the list — a voice session is one
-    # person talking to the house, not household reading material.
-    if conv and conv.get('type') == 'voice':
-        viewer_id = _acting_id(request, None)
-        v = storage.get_member(viewer_id) if viewer_id else None
-        if not (v and v.get('role') == 'parent'):
-            raise HTTPException(status_code=403, detail="Voice sessions are parent-only")
-    return {"history": conv.get("messages", []) if conv else []}
+    if not _chat_can_read(conv, request):
+        raise HTTPException(status_code=404, detail='Conversation not found')
+    return {"history": conv.get("messages", [])}
 
 @app.delete("/api/chat/history")
-def clear_chat_history():
-    storage.clear_chat_history()
+def clear_chat_history(conversation_id: str = None, request: Request = None):
+    if conversation_id:
+        conv = storage.get_conversation(conversation_id)
+        if not _chat_can_read(conv, request):
+            raise HTTPException(status_code=404, detail='Conversation not found')
+    else:
+        conv, _viewer = _chat_conversation(request)
+    storage.update_conversation(conv['id'], {'messages': []})
     return {"status": "cleared"}
 
 class CreateConversationPayload(BaseModel):
@@ -18776,30 +18850,19 @@ class CreateConversationPayload(BaseModel):
 
 @app.get("/api/chat/conversations")
 def get_conversations(request: Request = None):
-    # Family-network S1: this returned every Argyle conversation in the
-    # house, voice sessions included. The shared widget thread (type
-    # 'general') stays household-visible — it is all the one UI caller ever
-    # reads — and everything else needs a parent.
-    viewer_id = _acting_id(request, None)
-    v = storage.get_member(viewer_id) if viewer_id else None
-    convs = storage.get_all_conversations()
-    if not (v and v.get('role') == 'parent'):
-        convs = [c for c in convs if (c.get('type') or 'general') == 'general']
+    convs = [c for c in storage.get_all_conversations() if _chat_can_read(c, request)]
     return {"conversations": convs}
 
 @app.post("/api/chat/conversations")
-def create_conversation(payload: CreateConversationPayload):
-    conv_data = payload.model_dump() if hasattr(payload, 'model_dump') else payload.dict()
-    import uuid, time
-    conv_data['id'] = uuid.uuid4().hex
-    conv_data['messages'] = []
-    conv_data['created_at'] = time.time()
-    conv_data['updated_at'] = time.time()
-    conv_id = storage.create_conversation(conv_data)
-    return {"id": conv_id, "conversation": conv_data}
+def create_conversation(payload: CreateConversationPayload, request: Request):
+    kind, owner, _viewer = _chat_surface(request)
+    conv = storage.get_surface_conversation(kind, owner)
+    return {"id": conv['id'], "conversation": conv}
 
 @app.delete("/api/chat/conversations/{conv_id}")
-def delete_conversation(conv_id: str):
+def delete_conversation(conv_id: str, request: Request):
+    if not _chat_can_read(storage.get_conversation(conv_id), request):
+        raise HTTPException(status_code=404, detail='Conversation not found')
     storage.delete_conversation(conv_id)
     return {"status": "deleted"}
 
