@@ -10,7 +10,7 @@
                 <option value="vendor">A company or person</option><option value="project">An errand of ours</option>
             </select>
             <select name="owner_member_id" x-model="pieceDraft.owner_member_id" class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-2 py-2 text-gray-100 text-sm">
-                <template x-for="m in owners().filter(m => m.role !== 'child')" :key="m.id"><option :value="m.id" x-text="m.name"></option></template>
+                <template x-for="m in members" :key="m.id"><option :value="m.id" x-text="m.name"></option></template>
             </select>
         </div>
         <select name="contact_id" x-model="pieceDraft.contact_id" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-2 text-gray-100 text-sm">
