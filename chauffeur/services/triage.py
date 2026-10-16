@@ -13,7 +13,7 @@ import datetime
 import time
 from typing import Optional
 
-from services import storage, situations, missions
+from services import storage, situations, missions, access
 
 FOCUS_KEY = 'triage_focus'
 # The option ids situations._reply_option highlights after a counterparty's reply.
@@ -151,13 +151,16 @@ def clear_focus(key: Optional[str]) -> None:
             storage.set_app_state(FOCUS_KEY, m)
 
 
-def _alive(f: dict) -> bool:
+def _alive(f: dict, viewer=None, key=None) -> bool:
+    from services.agent_tools_v2 import _conversation_view
     row = situations.load(f.get('kind'), f.get('id'))
     if not row:
         return False
+    if _conversation_view(f.get('kind'), row, viewer or access.HOUSE, key) is None:
+        return False
     if (row.get('snoozed_until') or 0) > time.time():
         return False
-    opts = situations.options_for(f['kind'], row)
+    opts = [] if f['kind'] == 'program' else situations.options_for(f['kind'], row)
     return not (situations._is_done(f['kind'], row) and not situations.needs_attention(f['kind'], row, opts))
 
 
@@ -167,7 +170,7 @@ def has_entry(key: Optional[str]) -> bool:
     return bool(key) and key in _load_map()
 
 
-def get_focus(key: Optional[str]) -> Optional[dict]:
+def get_focus(key: Optional[str], viewer=None) -> Optional[dict]:
     """The conversation's current situation, or None. A focus whose
     situation is gone, settled or snoozed is dropped here, so a follow-up
     can never act on a dead row."""
@@ -176,18 +179,29 @@ def get_focus(key: Optional[str]) -> Optional[dict]:
     f = _load_map().get(key)
     if not f:
         return None
-    if (f.get('set_at') or 0) < time.time() - FOCUS_TTL_S or not _alive(f):
+    if viewer is None:
+        from services import subjects
+        humans = subjects.channel_humans(key)
+        if humans is not None and len(humans) == 1:
+            viewer = humans[0]
+    from services.agent_tools_v2 import _conversation_view
+    row = situations.load(f['kind'], f['id'])
+    if row and _conversation_view(f['kind'], row, viewer or access.HOUSE, key) is None:
+        # One excluded speaker must not erase another person's live focus.
+        return None
+    if (f.get('set_at') or 0) < time.time() - FOCUS_TTL_S or not _alive(f, viewer, key):
         clear_focus(key)
         return None
-    return f
+    row = situations.load(f['kind'], f['id'])
+    return {**f, 'title': row.get('title') or row.get('goal') or row.get('line') or ''}
 
 
 def next_for(viewer: Optional[dict], key: Optional[str], skip_current: bool = False) -> Optional[dict]:
     """The situation to speak now. The first on the ranked list, or the one
     after the focus when `skip_current`. Sets focus and cursor; clears the
     focus and returns None when the list is exhausted."""
-    visible = [s for s in situations.list_situations(viewer, spoken=True)
-               if situations.channel_visible(s['kind'], situations.load(s['kind'], s['id']), key)]
+    from services.agent_tools_v2 import _conversation_situations
+    visible = _conversation_situations(viewer, key, spoken=True)
     ranked = triage_rank(visible)
     if not ranked:
         clear_focus(key)
@@ -211,8 +225,10 @@ def next_for(viewer: Optional[dict], key: Optional[str], skip_current: bool = Fa
 
 
 def focus_live_asks(key: Optional[str], viewer: Optional[dict]) -> list:
-    f = get_focus(key)
+    f = get_focus(key, viewer=viewer or access.HOUSE)
     if not f:
         return []
-    s = situations.view(f['kind'], f['id'], viewer)
+    from services.agent_tools_v2 import _conversation_view, _render_at
+    row = situations.load(f['kind'], f['id'])
+    s = _render_at(f['kind'], row, _conversation_view(f['kind'], row, viewer, key), viewer, key)
     return [a for a in (s or {}).get('asks') or [] if a.get('state') in ('drafted', 'sent')]

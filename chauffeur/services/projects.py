@@ -1052,9 +1052,9 @@ def locate(kind, record_id, viewer):
 
 def view(project, viewer):
     """Return only this viewer's project and visible piece references."""
-    from services import subjects
+    from services import subjects, access
 
-    if not can_see(project, viewer):
+    if not access.project_visible(project, viewer):
         return {}
     result = {key: deepcopy(project.get(key)) for key in
               ('id', 'title', 'goal', 'done_when', 'owner_member_id', 'audience', 'state', 'target_date')}

@@ -147,7 +147,8 @@ def scenario_f7_a_bound_missions_proposal_carries_its_audience():
         main.act_on_action_proposal(pid, main.ActionProposalAct(act='dismiss', member_id='dad'), background_tasks=None, request=_as('dad'))
         check(False, "dad may not act on it either")
     except HTTPException as e:
-        check(e.status_code == 403, f"403, got {e.status_code}")
+        # Project access spec §4: hidden and missing records are both 404.
+        check(e.status_code == 404, f"404, got {e.status_code}")
     check(storage.get_action_proposal(pid)['status'] == 'proposed', "untouched")
 
 

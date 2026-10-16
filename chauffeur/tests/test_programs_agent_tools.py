@@ -35,6 +35,11 @@ def scenario_a_body_aim_is_refused_in_chat_too():
 
 def _reset_programs():
     storage.programs_table.truncate()
+    # Access spec §2: a keeper must name an active stored member. These
+    # fixtures used to contain program member ids without any member rows.
+    for mid in ('kid-a', 'kid-b'):
+        if not storage.get_member(mid):
+            storage.add_member({'id': mid, 'name': mid, 'role': 'child'})
 
 
 def scenario_a_childs_not_found_hint_never_names_a_sibling():
@@ -58,9 +63,8 @@ def scenario_a_childs_not_found_hint_never_names_a_sibling():
 
 
 def scenario_a_parents_not_found_hint_still_sees_the_household():
-    """A parent/adult keeps the full household hint -- the scope
-    `_program_scope_id` gives a parent is `None` (everyone), same as
-    `list_programs`."""
+    """A parent/adult keeps the household hint through the conversation gate,
+    just as in `list_programs`."""
     _reset_programs()
     storage.add_program({'member_id': 'kid-a', 'title': 'Guitar practice'})
     storage.add_program({'member_id': 'kid-b', 'title': 'Soccer skills'})

@@ -257,10 +257,10 @@ def _rank(candidate):
     return (-candidate['score'], candidate['_closed'], candidate['when'] or '9999')
 
 
-def _find(kind, query, viewer, spoken):
+def _find(kind, query, viewer, spoken, visibility=None):
     candidates = []
     for row in _rows(kind):
-        if not visible(kind, row, viewer, spoken):
+        if not (visibility(kind, row) if visibility else visible(kind, row, viewer, spoken)):
             continue
         title = title_of(kind, row)
         score = _score(query, title)
@@ -283,17 +283,17 @@ def find(kind, query, viewer, spoken=False):
     return _public(_find(kind, query, viewer, spoken))
 
 
-def find_all(query, viewer, kinds=None, spoken=False, *, exclude=None):
+def find_all(query, viewer, kinds=None, spoken=False, *, exclude=None, visibility=None):
     excluded = set(exclude or ())
     candidates = [candidate for kind in (kinds or KINDS)
                   if kind not in excluded
-                  for candidate in _find(kind, query, viewer, spoken)]
+                  for candidate in _find(kind, query, viewer, spoken, visibility)]
     candidates.sort(key=_rank)
     return _public(candidates[:OVERALL])
 
 
-def resolve(query, viewer, kinds=None, spoken=False):
-    candidates = find_all(query, viewer, kinds, spoken)
+def resolve(query, viewer, kinds=None, spoken=False, *, visibility=None):
+    candidates = find_all(query, viewer, kinds, spoken, visibility=visibility)
     if candidates and candidates[0]['score'] >= 0.7 and (
         len(candidates) == 1 or candidates[0]['score'] - candidates[1]['score'] >= 0.06
     ):

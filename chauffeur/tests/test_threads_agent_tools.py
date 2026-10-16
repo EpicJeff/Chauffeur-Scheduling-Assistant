@@ -142,17 +142,14 @@ def scenario_close_tool_closes_and_holds_the_enum():
 
 
 def scenario_unresolved_caller_is_refused_on_every_tool():
-    """/api/chat is WALL_OR_SERVICE: an anonymous kitchen wall panel reaches
-    these tools with acting_member None. Every thread tool — the read
-    included, since /threads is deliberately hidden from kiosks to keep
-    counterparty data off shared screens — must refuse an unresolved actor,
-    not wave role-None past a blocklist."""
+    """Access spec §2/§4.4: HOUSE reads ordinary pieces; writes keep their gates."""
     _reset()
     parent = {'id': 'm-parent', 'role': 'parent'}
     agent_tools_v2.create_thread('Gutters', acting_member=parent)
+    read = agent_tools_v2.list_threads(acting_member=None)
+    check(read['status'] == 'success' and 'Gutters' in read['message'], 'HOUSE can read an unrestricted thread')
 
     for res, name in (
-        (agent_tools_v2.list_threads(acting_member=None), 'list_threads'),
         (agent_tools_v2.create_thread('X', acting_member=None), 'create_thread'),
         (agent_tools_v2.update_thread_action('Gutters', 'x', acting_member=None),
          'update_thread_action'),

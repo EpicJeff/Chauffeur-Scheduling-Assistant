@@ -139,7 +139,8 @@ READERS = [
         'services.situations._rows_of',
     ]],
     # 4.3-channel: function readers found by the register guard (Task 1 Step 9)
-    *[((F, name), '4.3-channel', ('thread', 'mission', 'program'), 'pending its task') for name in [
+    ((F, 'services.agent_tools_v2._conversation_situations'), '4.3-channel', ('thread', 'mission'), 'conversation_view'),
+    *[((F, name), '4.3-channel', ('thread', 'mission', 'program'), 'conversation_view') for name in [
         'services.agent_tools_v2._match_program',
         'services.agent_tools_v2._match_thread',
         'services.agent_tools_v2.add_thread_note',
@@ -350,6 +351,7 @@ READERS = [
     # INTERNAL (spec Appendix A)
     *[((F, name), 'INTERNAL', (), 'raw') for name in [
         'services.situations.load', 'services.situations._facts', 'services.situations.refresh',
+        'services.agent_tools_v2._render_at',
         'services.situations.options_for', 'services.situations._thread_mission', 'services.subjects.load',
         'services.subjects.subject_records', 'services.projects.adopt', 'services.projects.adopt_existing',
         'services.projects._work_missions', 'services.projects.advance', 'services.projects.resume_waiting',

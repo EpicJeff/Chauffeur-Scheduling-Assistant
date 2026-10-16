@@ -218,8 +218,8 @@ def _card(ask: dict) -> dict:
 def _post(ask_id: str) -> None:
     from services.agent_tools_v2 import _post_chat_message
     ask = storage.get_ask(ask_id)
-    asker = storage.get_member(ask['asked_by']) or {}
-    dm = storage.get_or_create_dm(ask['asked_by'], ask['to_member_id'])
+    asker = storage.get_member(ask['asked_by']) or storage.ensure_argyle_member()
+    dm = storage.get_or_create_dm(asker['id'], ask['to_member_id'])
     msg = _post_chat_message(dm, asker, ask.get('draft_body') or ask['what'], card=_card(ask))
     storage.update_ask(ask_id, {'state': 'sent', 'sent_at': time.time(),
                                 'message_id': (msg or {}).get('id'), 'channel_id': dm.get('id')})

@@ -5,6 +5,7 @@ import time
 from collections import deque
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
+from services import access
 
 CHAT_LOOKUPS_PER_HOUR = 20
 _chat_lookups = deque()
@@ -1377,7 +1378,7 @@ def list_chores() -> Dict[str, Any]:
     return {"status": "success", "message": " | ".join(parts)}
 
 
-def list_open_findings() -> Dict[str, Any]:
+def list_open_findings(acting_member=None, focus_key=None) -> Dict[str, Any]:
     """"What needs me?" — answered from the records, not from a re-scan.
 
     The whole point of the findings table is that the answer is a stored fact
@@ -1386,6 +1387,10 @@ def list_open_findings() -> Dict[str, Any]:
     """
     from services import findings as _f
     rows = _f.open_findings()
+    rows = [r for r in rows if r.get('subject_type') not in access.KINDS or
+            access.conversation_view(r['subject_type'], access.KINDS[r['subject_type']].load(r.get('subject_id')),
+                                     acting_member or access.HOUSE, focus_key) in
+            ((access.FULL, access.KEEPER) if r['subject_type'] == 'program' else (access.FULL,))]
     if not rows:
         return {"status": "success", "message": "Nothing needs you right now."}
     decide = [r for r in rows if r.get('severity') == 'decide']
@@ -1482,6 +1487,88 @@ NOT_ALOUD = "That one is not for a shared speaker; open it on your phone."
 OWN_CHAT = "Ask me about that in your own Argyle chat."
 
 
+def _conversation_view(kind, row, viewer, focus_key):
+    """Piece projections and room sensitivity for Argyle conversations."""
+    from services import situations
+    viewer = viewer or access.HOUSE
+    if not row:
+        return None
+    # HOUSE_PARENT may write household records, but is still a room, not a
+    # parent in private. Keep this out of the engine's situation read gate.
+    if access.is_house(viewer) and kind == 'insight' and _sensitive(kind, row):
+        return None
+    if kind in access.KINDS:
+        return access.conversation_view(kind, row, viewer, focus_key)
+    if kind == 'project':
+        return access.FULL if (access.project_visible(row, viewer)
+                               and situations.channel_visible(kind, row, focus_key)) else None
+    return access.FULL if (situations.can_see(kind, row, viewer)
+                           and situations.channel_visible(kind, row, focus_key)) else None
+
+
+def _viewer_at(kind, row, view, viewer):
+    from services import storage
+    reader = viewer or access.HOUSE
+    if view == access.KEEPER:
+        kid = access.keeper_id(kind, row)
+        reader = {**(storage.get_member(kid) or {}), 'id': kid}
+    elif kind in access.KINDS and access.record_view(kind, row, reader) != access.FULL:
+        # The legacy group rule is subject-only, including when a child asks.
+        # A full row has already passed that rule for every channel recipient.
+        reader = {**reader, 'role': 'adult'}
+    return reader
+
+
+def _render_at(kind, row, view, viewer, focus_key=None):
+    """Render the common projection, independently of who is speaking."""
+    from services import situations, storage
+    if view is None or not row:
+        return None
+    if kind == 'program':
+        return dict(row)  # A program's keeper projection is the whole program (§3).
+    result = situations.view(kind, row['id'], _viewer_at(kind, row, view, viewer))
+    if result and kind == 'thread':
+        options = []
+        for option in result['options']:
+            bits = option['id'].split(':')
+            if len(bits) >= 3 and bits[1] == 'mission':
+                mission = storage.get_mission(bits[2])
+                projection = access.conversation_view('mission', mission, viewer or access.HOUSE, focus_key)
+                if projection is None or projection == access.KEEPER and option['payload'].get('ask') != 'steer':
+                    continue
+            options.append(option)
+        result.update(options=options, next_step=options[0] if options else None)
+    return result
+
+
+def _conversation_situations(viewer, focus_key, kinds=None, spoken=False):
+    from services import situations, storage
+    viewer = viewer or access.HOUSE
+    out = []
+    for kind in kinds or situations.KINDS:
+        # Enumerate first: the legacy channel rule can be wider than the
+        # speaker's primitive role. The conversation gate is authoritative.
+        if kind == 'thread':
+            rows = storage.get_threads(include_closed=False)
+        elif kind == 'mission':
+            rows = storage.get_missions()
+        else:
+            rows = [situations.load(k, sid) for k, sid in situations._rows_of(kind, False, viewer)]
+        terminal = 0
+        for row in rows:
+            view = _conversation_view(kind, row, viewer, focus_key)
+            if view is None or spoken and _sensitive(kind, row):
+                continue
+            if kind == 'mission' and row.get('status') in ('done', 'blocked', 'dropped'):
+                if row['status'] == 'dropped' or terminal >= situations.MISSION_HISTORY_CAP:
+                    continue
+                terminal += 1
+            s = _render_at(kind, row, view, viewer, focus_key)
+            if s and s['group'] != 'done':
+                out.append(s)
+    return situations.rank(out)
+
+
 def _sensitive(kind: str, row: dict) -> bool:
     if kind == 'project':
         return (row or {}).get('audience') != 'household'
@@ -1497,38 +1584,32 @@ def _resolve_situation(ref: str, kind: str = None, viewer: dict = None, focus_ke
     from services import situations as _sit, triage as _tri
     ref = (ref or '').strip()
     if not ref:
-        f = _tri.get_focus(focus_key)
+        f = _tri.get_focus(focus_key, viewer=viewer or access.HOUSE)
         if not f:
             return None, NO_FOCUS
         row = _sit.load(f['kind'], f['id'])
-        if not row or not _sit.can_see(f['kind'], row, viewer):
+        if not _conversation_view(f['kind'], row, viewer, focus_key):
             return None, NO_FOCUS
         if spoken and _sensitive(f['kind'], row):
             return None, NOT_ALOUD
-        if not _sit.channel_visible(f['kind'], row, focus_key):
-            return None, OWN_CHAT
         return (f['kind'], f['id']), None
     found = None
     for k in ([kind] if kind in _sit.KINDS else _sit.KINDS):
         row = _sit.load(k, ref)
         if row:
-            if not _sit.can_see(k, row, viewer):
-                return None, "That one is not yours to see."
+            if not _conversation_view(k, row, viewer, focus_key):
+                return None, "Nothing open matches."
             if spoken and _sensitive(k, row):
                 return None, NOT_ALOUD
-            if not _sit.channel_visible(k, row, focus_key):
-                return None, OWN_CHAT
             found = (k, ref)
             break
     if not found:
-        rows = _sit.list_situations(viewer, kinds=(kind,) if kind in _sit.KINDS else None, spoken=spoken)
+        rows = _conversation_situations(viewer, focus_key, kinds=(kind,) if kind in _sit.KINDS else None, spoken=spoken)
         hits = [s for s in rows if ref.lower() in (s.get('title') or '').lower()]
-        if any(not _sit.channel_visible(s['kind'], _sit.load(s['kind'], s['id']), focus_key) for s in hits):
-            return None, OWN_CHAT
         if len(hits) == 1:
             found = (hits[0]['kind'], hits[0]['id'])
         elif not hits:
-            return None, f"Nothing open matches '{ref}'."
+            return None, "Nothing open matches."
         else:
             names = '; '.join(h['title'] for h in hits[:5])
             return None, f"Which one: {names}?"
@@ -1543,8 +1624,7 @@ def list_situations(kinds: str = None, limit: int = 10, acting_member: dict = No
                     spoken: bool = False, focus_key: str = None) -> Dict[str, Any]:
     from services import situations as _sit
     want = tuple(k for k in (kinds or '').split(',') if k in _sit.KINDS) or None
-    rows = [s for s in _sit.list_situations(acting_member, kinds=want, spoken=spoken)
-            if _sit.channel_visible(s['kind'], _sit.load(s['kind'], s['id']), focus_key)]
+    rows = _conversation_situations(acting_member, focus_key, kinds=want, spoken=spoken)
     rows = rows[:max(1, min(int(limit or 10), 30))]
     if not rows:
         return {"status": "success", "message": "Nothing needs anyone right now.", "situations": []}
@@ -1570,7 +1650,7 @@ def next_situation(skip_current: bool = False, acting_member: dict = None, focus
         # No conversation to hold the focus: end with the title so the
         # follow-up can name it.
         line += f" (Say '{s.get('title')}' to take it further.)"
-    return {"status": "success", "message": line, "situation": s, "focus": _tri.get_focus(focus_key)}
+    return {"status": "success", "message": line, "situation": s, "focus": _tri.get_focus(focus_key, viewer=acting_member or access.HOUSE)}
 
 
 def explain_situation(ref: str = '', kind: str = None, acting_member: dict = None,
@@ -1579,7 +1659,8 @@ def explain_situation(ref: str = '', kind: str = None, acting_member: dict = Non
     found, why = _resolve_situation(ref, kind, acting_member, focus_key, spoken)
     if not found:
         return {"status": "error", "message": why}
-    s = _sit.view(found[0], found[1], acting_member)
+    row = _sit.load(*found)
+    s = _render_at(found[0], row, _conversation_view(found[0], row, acting_member, focus_key), acting_member, focus_key)
     opts = '\n'.join(f"  {i + 1}. {o['label']} [{o['verb']}, option {o['id']}]" for i, o in enumerate(s['options']))
     asks = '\n'.join(f"  - asked {a.get('to_name')} by {a.get('channel')}: {a.get('what')}: {a.get('state')}"
                      + (f" / {a['outcome']}" if a.get('outcome') else '') for a in s['asks']) or '  (none)'
@@ -1616,7 +1697,7 @@ def act_on_situation(ref: str = '', verb: str = '', option_id: str = None, kind:
         from services import storage as _st, projects as _pj, missions as _ms
         project = _st.get_project(sid) or {}
         live = [m for m in _pj._work_missions(project) if m.get('status') in _ms.LIVE
-                and _sit.can_see('mission', m, acting_member) and _sit.channel_visible('mission', m, focus_key)]
+                and _conversation_view('mission', m, acting_member, focus_key) is not None]
         if len(live) != 1:
             return {"status": "error", "message": ("Nothing is running on that project right now." if not live else
                     "Which one: " + '; '.join((m.get('goal') or '')[:60] for m in live) + "?")}
@@ -1644,7 +1725,8 @@ def act_on_situation(ref: str = '', verb: str = '', option_id: str = None, kind:
         # Words change what it is about; Unlink is the card's own button.
         option_id = 'subject'
     if not option_id:
-        all_opts = _sit.options_for(k, _sit.load(k, sid))
+        row = _sit.load(k, sid)
+        all_opts = _render_at(k, row, _conversation_view(k, row, acting_member, focus_key), acting_member, focus_key)['options']
         opts = [o for o in all_opts if o['verb'] == verb]
         # "Handle it": the highlighted next step wins when it carries this verb.
         if len(opts) > 1 and all_opts and all_opts[0]['verb'] == verb:
@@ -1666,7 +1748,13 @@ def act_on_situation(ref: str = '', verb: str = '', option_id: str = None, kind:
             payload['next_action'] = text.strip()
         if next_action_at:
             payload['next_action_at'] = next_action_at
-    res = _sit.act(k, sid, verb, option_id=option_id, payload=payload, actor=acting_member)
+    row = _sit.load(k, sid)
+    projection = _conversation_view(k, row, acting_member, focus_key)
+    projected = _render_at(k, row, projection, acting_member, focus_key)
+    if option_id not in {o['id'] for o in projected['options']}:
+        return {'status': 'error', 'message': 'That option is not available here.'}
+    res = _sit.act(k, sid, verb, option_id=option_id, payload=payload, actor=acting_member,
+                   viewer=_viewer_at(k, row, projection, acting_member))
     if res.get('status') == 'refused':
         return {"status": "error", "message": res.get('message')}
     return res
@@ -1694,7 +1782,7 @@ def start_ask(ref: str = '', to_name: str = '', what: str = '', channel: str = '
     # model wrote that differs from the option's is a different ask: recorded
     # as written, unbound, so a yes never applies something they did not agree to.
     unlocks, bound_what = None, None
-    for o in _sit.options_for(k, row):
+    for o in _render_at(k, row, _conversation_view(k, row, acting_member, focus_key), acting_member, focus_key)['options']:
         if o['verb'] != 'ask':
             continue
         if to.get('contact_id') and (o['payload'].get('to') or {}).get('contact_id') == to['contact_id']:
@@ -1710,7 +1798,8 @@ def start_ask(ref: str = '', to_name: str = '', what: str = '', channel: str = '
     if unlocks and unlocks.get('action_type') == 'assist_assignment' and to.get('contact_id'):
         unlocks = {**unlocks, 'payload': {**unlocks['payload'], 'contact_id': to['contact_id']}}
     event = _sit._cached_event(((unlocks or {}).get('payload') or {}).get('event_id')) if unlocks else None
-    res = _asks.create(k, sid, to, what, channel, acting_member['id'], unlocks=unlocks, event=event)
+    res = _asks.create(k, sid, to, what, channel, acting_member['id'], unlocks=unlocks, event=event,
+                       trusted=acting_member == access.HOUSE_PARENT)
     if res.get('status') != 'success':
         return {"status": "error", "message": res.get('message')}
     a = res['ask']
@@ -1726,7 +1815,7 @@ def start_ask(ref: str = '', to_name: str = '', what: str = '', channel: str = '
 def _focus_ask(focus_key: str, acting_member: dict):
     """The focus situation's ONE live ask, or a refusal naming the choice."""
     from services import triage as _tri
-    if not _tri.get_focus(focus_key):
+    if not _tri.get_focus(focus_key, viewer=acting_member or access.HOUSE):
         return None, NO_FOCUS
     live = _tri.focus_live_asks(focus_key, acting_member)
     if len(live) == 1:
@@ -1743,7 +1832,10 @@ def mark_ask_sent(ask_id: str = None, acting_member: dict = None, focus_key: str
         ask_id, why = _focus_ask(focus_key, acting_member)
         if not ask_id:
             return {"status": "error", "message": why}
+    if not _ask_in_conversation(ask_id, acting_member, focus_key):
+        return {'status': 'error', 'message': 'That ask is not available.'}
     res = _asks.mark_sent(ask_id, acting_member)
+    res = _render_ask_result(res, ask_id, acting_member, focus_key)
     return {**res, "status": "error" if res.get('status') == 'refused' else res.get('status')}
 
 
@@ -1754,13 +1846,40 @@ def answer_ask(ask_id: str = None, answer: str = None, acting_member: dict = Non
         ask_id, why = _focus_ask(focus_key, acting_member)
         if not ask_id:
             return {"status": "error", "message": why}
+    if not _ask_in_conversation(ask_id, acting_member, focus_key):
+        return {'status': 'error', 'message': 'That ask is not available.'}
     recipient = (storage.get_ask(ask_id) or {}).get('to_member_id')
+    actor_id = (acting_member or {}).get('id')
+    is_recipient = bool(actor_id and recipient and actor_id == recipient)
     res = _asks.answer(ask_id, (answer or '').lower(), acting_member,
-                       reported=(acting_member or {}).get('id') != recipient)
+                       reported=not is_recipient)
+    res = _render_ask_result(res, ask_id, acting_member, focus_key)
     return {**res, "status": "error" if res.get('status') == 'refused' else res.get('status')}
 
 
 # --- The family's mailbox (browse missions §3): read-only, parents and adults. --
+
+def _ask_in_conversation(ask_id, viewer, focus_key):
+    return _ask_projection(ask_id, viewer, focus_key) is not None
+
+
+def _render_ask_result(result, ask_id, viewer, focus_key):
+    from services import asks
+    if _ask_projection(ask_id, viewer, focus_key) != access.KEEPER:
+        return result
+    out = {k: v for k, v in result.items() if k in ('status', 'outcome', 'already', 'schedule_dirty')}
+    out['message'] = 'Noted.' if result.get('status') == 'success' else 'That ask could not be updated.'
+    if result.get('ask'):
+        out['ask'] = asks.keeper_view(result['ask'])
+    return out
+
+
+def _ask_projection(ask_id, viewer, focus_key):
+    from services import storage, situations
+    ask = storage.get_ask(ask_id) or {}
+    kind = ask.get('situation_kind')
+    row = situations.load(kind, ask.get('situation_id'))
+    return _conversation_view(kind, row, viewer, focus_key)
 
 def _mail_reader(acting_member: dict):
     """ALLOWLIST: a resolved parent or adult. An anonymous panel (actor None)
@@ -1857,7 +1976,9 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
         if m.get('origin_kind') != 'thread':
             continue
         t = storage.get_thread(m.get('origin_ref') or '')
-        if not t or (not (spoken and viewer is None) and not situations.can_see('thread', t, viewer)):
+        if not t or (not spoken and (access.conversation_view('thread', t, viewer or access.HOUSE, focus_key) is None
+                                    or access.conversation_view('mission', m, viewer or access.HOUSE, focus_key) is None)) \
+                or (spoken and viewer is not None and not situations.can_see('thread', t, viewer)):
             continue
         if spoken:
             from services.voice_tools import speech_safe
@@ -1878,7 +1999,7 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
     # no live mission on it, is a new mission ON THAT THREAD ("get available
     # times and pricing" after the first mission finished), not a new thread.
     tid = None
-    f = _tri.get_focus(focus_key) if (focus_key and not title) else None
+    f = _tri.get_focus(focus_key, viewer=viewer or access.HOUSE) if (focus_key and not title) else None
     if f and f.get('kind') == 'thread':
         t = storage.get_thread(f['id'])
         live = [m for m in storage.get_missions(status=_missions.LIVE)
@@ -1887,7 +2008,7 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
             from services.voice_tools import speech_safe
         compatible = (not subject_kind or ((t or {}).get('subject_kind') in (None, subject_kind)
                                           and (t or {}).get('subject_id') in (None, subject_id)))
-        if (t and (spoken and viewer is None or situations.can_see('thread', t, viewer))
+        if (t and (spoken and viewer is None or _conversation_view('thread', t, viewer, focus_key) is not None)
                 and t.get('state') not in ('done', 'dropped') and not live and compatible
                 and (not spoken or t.get('voice_shared') and speech_safe(t) and subjects.spoken_safe('thread', t))):
             tid = t['id']
@@ -1912,12 +2033,13 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
             "message": "On it. I'll come back when I have something or need you."}
 
 
-def _match_thread(thread_title: str):
+def _match_thread(thread_title: str, viewer=None, focus_key=None):
     """Fuzzy title match against open threads, same shape as `_match_task` —
     the model knows a thread by what it's about, never by its id."""
     from services import storage
     q = (thread_title or '').strip().lower()
-    rows = storage.get_threads(include_closed=False)
+    rows = [r for r in storage.get_threads(include_closed=False)
+            if access.conversation_view('thread', r, viewer or access.HOUSE, focus_key) is not None]
     if not q:
         return None, rows
     exact = [t for t in rows if (t.get('title') or '').lower() == q]
@@ -1929,27 +2051,12 @@ def _match_thread(thread_title: str):
     return None, rows
 
 
-def _thread_reader(acting_member: dict):
-    """ALLOWLIST, not a blocklist: a thread names a counterparty and what
-    the family is chasing with them, and /threads is deliberately hidden
-    from kiosks so that data stays off shared screens. /api/chat is
-    WALL_OR_SERVICE, so an anonymous kitchen wall panel reaches these tools
-    with NO resolved actor — a `role not in (...)` blocklist waves that
-    None straight through. Reads require a RESOLVED member of any role;
-    writes (`_thread_writer`) require a resolved parent/adult, the same
-    discipline as main.py's `_mind_actor`."""
-    if not (acting_member or {}).get('id'):
-        return {"status": "error",
-                "message": "Threads are for signed-in family members — "
-                           "I can't show them here."}
-    return None
-
-
 def _thread_writer(acting_member: dict, verb: str):
-    """Parent/adult, resolved — see `_thread_reader` for why this is an
-    allowlist. An unresolved actor (wall panel, anonymous chat) and a
-    resolved child/helper/guest are refused the same way."""
-    if not (acting_member or {}).get('id') \
+    """Allow resolved parents/adults or the trusted household writer.
+
+    Each row still supplies its own conversation access gate.
+    """
+    if (not (acting_member or {}).get('id') and acting_member != access.HOUSE_PARENT) \
             or (acting_member or {}).get('role') not in ('parent', 'adult'):
         return {"status": "error",
                 "message": f"Only a signed-in parent or adult can {verb}."}
@@ -2036,7 +2143,7 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
     # The continuation rule: a new goal said while a project is the focus and
     # none of its missions is live is new planning INSIDE that project.
     child_actor = actor.get('role') == 'child' or bool(actor.get('is_child'))
-    f = _tri.get_focus(focus_key) if focus_key else None
+    f = _tri.get_focus(focus_key, viewer=actor) if focus_key else None
     focused = storage.get_project(f['id']) if f and f.get('kind') == 'project' else None
     if focused and not _project_in_reach(focused, actor, spoken, focus_key):
         focused = None
@@ -2123,18 +2230,8 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
 
 def list_threads(state: str = None, owner_name: str = None,
                  include_closed: bool = False,
-                 acting_member: dict = None, *, _registry_read: bool = False) -> Dict[str, Any]:
-    """Open loops with somebody outside the family — the pest control
-    company, the school waitlist. A read for any RESOLVED member (an
-    anonymous wall panel is refused — see `_thread_reader`), same rows as
-    GET /api/threads; each is annotated with the same stall reason
-    (`services.threads.is_stalled`) that page and the nightly sweep use."""
-    # Only the trusted registry adapter supplies an id-less audience. Chat
-    # still requires a signed-in member, and rows retain their audience gate.
-    registry_audience = _registry_read and (acting_member or {}).get('role') in ('parent', 'adult')
-    refusal = None if registry_audience else _thread_reader(acting_member)
-    if refusal:
-        return refusal
+                 acting_member: dict = None, focus_key: str = None) -> Dict[str, Any]:
+    """Open loops at this conversation's projection, with their usual stall cues."""
     from services import threads as _threads
     from services import storage as _storage
     owner_id = None
@@ -2146,14 +2243,17 @@ def list_threads(state: str = None, owner_name: str = None,
         owner_id = m['id']
     rows = _storage.get_threads(state=state, owner=owner_id, include_closed=include_closed)
     from services import situations
-    rows = [r for r in rows if not (r.get('subject_kind') or r.get('subject_history'))
-            or situations.can_see('thread', r, acting_member)]
+    rows = [r for r in rows if access.conversation_view('thread', r, acting_member or access.HOUSE, focus_key) is not None]
     if not rows:
         return {"status": "success", "message": "No open threads right now."}
     names = {m['id']: m.get('name') for m in _storage.get_all_members(include_archived=True)}
     lines = []
     for t in rows[:15]:
-        bits = [t.get('title') or 'Thread']
+        projection = access.conversation_view('thread', t, acting_member or access.HOUSE, focus_key)
+        rendered = _render_at('thread', t, projection, acting_member, focus_key)
+        if projection == access.KEEPER:
+            t = situations.thread_keeper_view(t)
+        bits = [(rendered or {}).get('title') or 'Thread']
         holder = names.get(t.get('owner_member_id') or '')
         if holder:
             bits.append(holder)
@@ -2172,7 +2272,7 @@ def list_threads(state: str = None, owner_name: str = None,
 def create_thread(title: str, goal: str = None, kind: str = None,
                   counterparty_name: str = None, counterparty_email: str = None,
                   next_action: str = None, next_action_at: str = None,
-                  acting_member: dict = None, idem: str = None, project_id: str = None) -> Dict[str, Any]:
+                  acting_member: dict = None, idem: str = None, project_id: str = None, focus_key: str = None) -> Dict[str, Any]:
     """Open a new thread — a promise somebody outside the family made that
     hasn't closed yet. Parent/adult work, same discipline as dismiss_insight:
     `acting_member` is resolved by the dispatch layer at agent_router.py,
@@ -2186,10 +2286,14 @@ def create_thread(title: str, goal: str = None, kind: str = None,
     if not title:
         return {"status": "error", "message": "What is the thread about?"}
     from services import storage, threads as _threads
+    if project_id and not _project_readable(storage.get_project(project_id), acting_member, focus_key):
+        return {'status': 'error', 'message': 'No such visible project.'}
     with storage.db_lock:
         existing = next((t for t in storage.get_threads(include_closed=True)
                          if idem and t.get('idem') == idem), None)
         if existing:
+            if access.conversation_view('thread', existing, acting_member or access.HOUSE, focus_key) is None:
+                return {'status': 'error', 'message': 'That thread is not available.'}
             thread_id = existing['id']
         else:
             thread_id = _threads.create(
@@ -2209,18 +2313,18 @@ def create_thread(title: str, goal: str = None, kind: str = None,
 
 def update_thread_action(thread_title: str, next_action: str,
                          next_action_at: str = None, note: str = None,
-                         acting_member: dict = None) -> Dict[str, Any]:
+                         acting_member: dict = None, focus_key: str = None) -> Dict[str, Any]:
     """Set the next thing that has to happen on a thread, and when
     (wraps `services.threads.advance`). Parent/adult work, same gate as
     `create_thread`; `acting_member` comes from the dispatch layer."""
     refusal = _thread_writer(acting_member, 'update a thread')
     if refusal:
         return refusal
-    thread, rows = _match_thread(thread_title)
+    thread, rows = _match_thread(thread_title, acting_member, focus_key)
     if not thread:
         open_titles = ', '.join(t.get('title') or '?' for t in rows[:8]) or 'nothing open'
         return {"status": "error",
-                "message": f"I couldn't pin down '{thread_title}'. Open threads: {open_titles}."}
+                "message": f"I couldn't find a matching thread. Open threads: {open_titles}."}
     from services import threads as _threads
     ok = _threads.advance(thread['id'], (next_action or '').strip(),
                          next_action_at=next_action_at, note=note,
@@ -2235,7 +2339,7 @@ def update_thread_action(thread_title: str, next_action: str,
 
 
 def add_thread_note(thread_title: str = '', text: str = '', url: str = None,
-                    acting_member: dict = None, thread_id: str = None) -> Dict[str, Any]:
+                    acting_member: dict = None, thread_id: str = None, focus_key: str = None) -> Dict[str, Any]:
     """Log movement on a thread that isn't a change of plan — a call made, a
     voicemail left (wraps `services.threads.note`). Parent/adult work, same
     gate as `create_thread`; `acting_member` comes from the dispatch layer."""
@@ -2248,14 +2352,14 @@ def add_thread_note(thread_title: str = '', text: str = '', url: str = None,
     if thread_id is not None:
         from services import storage, situations
         thread, rows = storage.get_thread(thread_id), []
-        if not thread or not situations.can_see('thread', thread, acting_member):
+        if not thread or access.conversation_view('thread', thread, acting_member or access.HOUSE, focus_key) is None:
             return {'status': 'error', 'message': 'That thread is not available.'}
     else:
-        thread, rows = _match_thread(thread_title)
+        thread, rows = _match_thread(thread_title, acting_member, focus_key)
     if not thread:
         open_titles = ', '.join(t.get('title') or '?' for t in rows[:8]) or 'nothing open'
         return {"status": "error",
-                "message": f"I couldn't pin down '{thread_title}'. Open threads: {open_titles}."}
+                "message": f"I couldn't find a matching thread. Open threads: {open_titles}."}
     from services import threads as _threads
     ok = _threads.note(thread['id'], text, who=(acting_member or {}).get('id'), url=url)
     if not ok:
@@ -2264,7 +2368,7 @@ def add_thread_note(thread_title: str = '', text: str = '', url: str = None,
 
 
 def draft_thread_message(thread_title: str = '', intent: str = None,
-                         acting_member: dict = None, thread_id: str = None) -> Dict[str, Any]:
+                         acting_member: dict = None, thread_id: str = None, focus_key: str = None) -> Dict[str, Any]:
     """Ask Argyle to propose a subject/body for a thread and STOP THERE
     (wraps `services.threads.draft_message`, which never imports
     `services.mailer` — it cannot send even by accident, and neither can
@@ -2278,16 +2382,18 @@ def draft_thread_message(thread_title: str = '', intent: str = None,
     if thread_id is not None:
         from services import storage, situations
         thread, rows = storage.get_thread(thread_id), []
-        if not thread or not situations.can_see('thread', thread, acting_member):
+        if not thread or access.conversation_view('thread', thread, acting_member or access.HOUSE, focus_key) is None:
             return {'status': 'error', 'message': 'That thread is not available.'}
     else:
-        thread, rows = _match_thread(thread_title)
+        thread, rows = _match_thread(thread_title, acting_member, focus_key)
     if not thread:
         open_titles = ', '.join(t.get('title') or '?' for t in rows[:8]) or 'nothing open'
         return {"status": "error",
-                "message": f"I couldn't pin down '{thread_title}'. Open threads: {open_titles}."}
+                "message": f"I couldn't find a matching thread. Open threads: {open_titles}."}
     from services import threads as _threads
-    res = _threads.draft_message(thread['id'], intent=(intent or '').strip())
+    projection = access.conversation_view('thread', thread, acting_member or access.HOUSE, focus_key)
+    res = _threads.draft_message(thread['id'], intent=(intent or '').strip(),
+                                 viewer=_viewer_at('thread', thread, projection, acting_member))
     if res.get('status') != 'ok':
         reason = res.get('reason') or "the model didn't come back with a draft"
         return {"status": "error",
@@ -2302,23 +2408,19 @@ def draft_thread_message(thread_title: str = '', intent: str = None,
                         f"Subject: {res['subject']}\n\n{res['body']}")}
 
 
-def launch_mission(goal: str, thread_title: str = None, actor: dict = None) -> dict:
-    """Allowlist: a resolved parent/adult launches; anyone else is refused —
-    /api/chat is WALL_OR_SERVICE, so an anonymous panel arrives with no actor
-    and must not walk through a role blocklist."""
-    if not actor or (actor.get('role') or '') not in ('parent', 'adult'):
-        return {'status': 'refused',
-                'message': 'Only a parent or adult can start a mission.'}
+def launch_mission(goal: str, thread_title: str = None, actor: dict = None,
+                   acting_member: dict = None, focus_key: str = None) -> dict:
+    actor = acting_member or actor
+    if not actor or actor.get('role') not in ('parent', 'adult') or not access._active(actor):
+        return {'status': 'refused', 'message': 'Only a parent or adult can start a mission.'}
     if not (thread_title or '').strip():
-        # A new goal with no thread named is start_mission_for's job: the
-        # thread, the focus and the "On it." come with it (browse missions §4).
-        return start_mission_for(goal, acting_member=actor)
+        return start_mission_for(goal, acting_member=actor, focus_key=focus_key)
     return handle_launch_mission({'goal': goal, 'thread_title': thread_title,
-                                  '_member_id': actor.get('id')})
+                                  '_member_id': actor.get('id')}, actor=actor, focus_key=focus_key)
 
 
 def close_thread(thread_title: str, state: str = None,
-                 acting_member: dict = None) -> Dict[str, Any]:
+                 acting_member: dict = None, focus_key: str = None) -> Dict[str, Any]:
     """End a thread — `done` when it resolved, `dropped` when it didn't and
     won't (wraps `services.threads.close`). The state must be said, and only
     those two are accepted — anything else is refused, the same enum
@@ -2332,11 +2434,11 @@ def close_thread(thread_title: str, state: str = None,
         return {"status": "error",
                 "message": "A thread can only close as done or dropped — "
                            "which is it?"}
-    thread, rows = _match_thread(thread_title)
+    thread, rows = _match_thread(thread_title, acting_member, focus_key)
     if not thread:
         open_titles = ', '.join(t.get('title') or '?' for t in rows[:8]) or 'nothing open'
         return {"status": "error",
-                "message": f"I couldn't pin down '{thread_title}'. Open threads: {open_titles}."}
+                "message": f"I couldn't find a matching thread. Open threads: {open_titles}."}
     from services import threads as _threads
     ok = _threads.close(thread['id'], state=state,
                         who=(acting_member or {}).get('id'))
@@ -2346,28 +2448,14 @@ def close_thread(thread_title: str, state: str = None,
             "message": f"Closed \"{thread['title']}\" as {state}."}
 
 
-def _program_reader(acting_member: dict):
-    """ALLOWLIST, not a blocklist: a program is somebody's personal ambition
-    — reserved practice time, a session log, a curated plan — and /api/chat
-    is WALL_OR_SERVICE, so an anonymous kitchen wall panel reaches these
-    tools with NO resolved actor. A `role not in (...)` blocklist waves that
-    None straight through, same trap `_thread_reader` closes. Reads require
-    a RESOLVED member of any role."""
-    if not (acting_member or {}).get('id'):
-        return {"status": "error",
-                "message": "Programs are for signed-in family members — "
-                           "I can't show them here."}
-    return None
-
-
 def _program_writer(acting_member: dict, verb: str):
-    """A resolved member, full stop — see `_program_reader` for why this is
-    an allowlist. Which member may act on WHICH program (your own freely, a
+    """A resolved member or the trusted household writer. Who may act on
+    WHICH program (your own freely, a
     parent/adult stands in otherwise, matching `main.py`'s
     `_program_permission_or_refuse`) needs the program row in hand, so that
     half is checked per-call by `_program_owns_or_parent` below; this only
     closes the unresolved-caller gap."""
-    if not (acting_member or {}).get('id'):
+    if not (acting_member or {}).get('id') and acting_member != access.HOUSE_PARENT:
         return {"status": "error",
                 "message": f"Only a signed-in family member can {verb}."}
     return None
@@ -2383,17 +2471,6 @@ def _program_owns_or_parent(acting_member: dict, row: dict, verb: str):
         return None
     return {"status": "error",
             "message": f"Only a parent or adult can {verb} for someone else."}
-
-
-def _program_scope_id(acting_member: dict):
-    """None (the household) for a parent/adult, otherwise the caller's own
-    id — the same partition `list_programs` shows. Pulled out so
-    `_match_program` can scope BEFORE it matches: a program is somebody's
-    personal ambition, not household-visible the way a thread is, and that
-    has to hold for the not-found hint too, not just the happy path."""
-    if (acting_member.get('role') or '') in ('child', 'helper', 'guest'):
-        return acting_member.get('id')
-    return None
 
 
 def _resolve_named_member_or_refuse(acting_member: dict, name: str, verb_phrase: str):
@@ -2412,23 +2489,12 @@ def _resolve_named_member_or_refuse(acting_member: dict, name: str, verb_phrase:
     return m, None
 
 
-def _match_program(title: str, acting_member: dict):
-    """Fuzzy title match against the programs THIS CALLER may see, same
-    shape as `_match_thread` — the model knows a program by what it's
-    about, never by its id.
-
-    Scoped with `_program_scope_id` BEFORE the match runs, so the returned
-    `rows` — which both callers turn straight into the not-found hint — can
-    never contain a program outside what `list_programs` would already show
-    this caller. Scoping only the happy path and leaving the failure
-    message built from every household program was the actual bug: a
-    child's typo would get a sibling's program title read back to them,
-    exactly the household-visibility this arc's reads are scoped to avoid.
-    """
+def _match_program(title: str, acting_member: dict, focus_key=None):
+    """Match only this conversation's programs; the hint uses that same set."""
     from services import storage as _storage
     q = (title or '').strip().lower()
-    rows = _storage.get_programs(member_id=_program_scope_id(acting_member),
-                                 include_finished=False)
+    rows = [r for r in _storage.get_programs(include_finished=False)
+            if access.conversation_view('program', r, acting_member or access.HOUSE, focus_key) is not None]
     if not q:
         return None, rows
     exact = [p for p in rows if (p.get('title') or '').lower() == q]
@@ -2440,32 +2506,25 @@ def _match_program(title: str, acting_member: dict):
     return None, rows
 
 
-def list_programs(member_name: str = None, acting_member: dict = None) -> Dict[str, Any]:
-    """What has a real plan attached right now — the wall card's list, in
-    words ('what programs are going?', 'what is Ben working on?'). A read
-    for any RESOLVED member (see `_program_reader`); a child/helper/guest
-    sees only their own program unless a parent/adult is asking or naming
-    them, the same scope `GET /api/programs` enforces
-    (`main.py`'s `_program_list_scope`) — a program is somebody's personal
-    ambition, not household-visible the way a thread is."""
-    refusal = _program_reader(acting_member)
-    if refusal:
-        return refusal
+def list_programs(member_name: str = None, acting_member: dict = None, focus_key: str = None) -> Dict[str, Any]:
+    """Programs this conversation can receive. A keeper gets their whole program."""
+    acting_member = acting_member or access.HOUSE
     from services import storage as _storage, programs as _prog
+    scope_id = None
     if member_name:
         m, refusal = _resolve_named_member_or_refuse(
             acting_member, member_name, "see someone else's programs")
         if refusal:
             return refusal
         scope_id = m['id']
-    else:
-        scope_id = _program_scope_id(acting_member)
-    rows = _storage.get_programs(member_id=scope_id, include_finished=False)
+    rows = [r for r in _storage.get_programs(member_id=scope_id, include_finished=False)
+            if access.conversation_view('program', r, acting_member or access.HOUSE, focus_key) is not None]
     if not rows:
         return {"status": "success", "message": "No programs going right now."}
     names = {m['id']: m.get('name') for m in _storage.get_all_members(include_archived=True)}
     lines = []
     for p in rows[:15]:
+        p = _render_at('program', p, access.conversation_view('program', p, acting_member or access.HOUSE, focus_key), acting_member)
         prog = _prog.progress(p)
         bits = [p.get('title') or 'Program']
         holder = names.get(p.get('member_id') or '')
@@ -2479,27 +2538,15 @@ def list_programs(member_name: str = None, acting_member: dict = None) -> Dict[s
     return {"status": "success", "message": "Programs:\n" + "\n".join(lines)}
 
 
-def program_progress(program_title: str, acting_member: dict = None, *,
-                     _registry_read: bool = False) -> Dict[str, Any]:
-    """How one program is going — sessions logged, minutes, the phase ahead
-    (wraps `services.programs.progress`, which is deliberately monotonic: no
-    streak, no miss count, no percentage). A read for any RESOLVED member
-    (see `_program_reader`), but only on your own program or one you parent
-    (`_program_owns_or_parent`) — a program is somebody's personal ambition."""
-    # Registry reads carry an audience rather than a signed-in person.
-    registry_audience = _registry_read and (acting_member or {}).get('role') in ('parent', 'adult')
-    refusal = None if registry_audience else _program_reader(acting_member)
-    if refusal:
-        return refusal
+def program_progress(program_title: str, acting_member: dict = None, focus_key: str = None) -> Dict[str, Any]:
+    """Sessions, minutes and phase for a program visible in this conversation."""
     from services import programs as _prog
-    row, rows = _match_program(program_title, acting_member)
+    row, rows = _match_program(program_title, acting_member, focus_key)
     if not row:
         titles = ', '.join(p.get('title') or '?' for p in rows[:8]) or 'no programs yet'
         return {"status": "error",
-                "message": f"I couldn't pin down '{program_title}'. Programs: {titles}."}
-    refusal = _program_owns_or_parent(acting_member, row, 'see progress on')
-    if refusal:
-        return refusal
+                "message": f"I couldn't find a matching program. Programs: {titles}."}
+    row = _render_at('program', row, access.conversation_view('program', row, acting_member or access.HOUSE, focus_key), acting_member)
     p = _prog.progress(row)
     bits = [f"{row.get('title')}: {p['sessions']} session(s)",
             f"{p['minutes']} minutes"]
@@ -2515,7 +2562,7 @@ def program_progress(program_title: str, acting_member: dict = None, *,
 def propose_program(title: str, for_member_name: str = None,
                     sessions_per_week: int = None, minutes: int = None,
                     starting_point: str = None,
-                    acting_member: dict = None, project_id: str = None) -> Dict[str, Any]:
+                    acting_member: dict = None, project_id: str = None, focus_key: str = None) -> Dict[str, Any]:
     """Screen the aim, then curate a real plan for it — the chat mirror of
     `POST /api/programs`. The body-goal screen (`programs_curate.screen_aim`)
     runs BEFORE anything else, same as the endpoint and for the same reason:
@@ -2532,6 +2579,8 @@ def propose_program(title: str, for_member_name: str = None,
     if refusal:
         return refusal
     from services import storage as _st, programs_curate as _cur
+    if project_id and not _project_readable(_st.get_project(project_id), acting_member, focus_key):
+        return {'status': 'error', 'message': 'No such visible project.'}
     # `programs_enabled` governs the whole feature, not only the sweep: with
     # it off, proposing here would still spend a real research run.
     if not _st.get_settings().get('programs_enabled', True):
@@ -2604,7 +2653,7 @@ def propose_program(title: str, for_member_name: str = None,
 
 
 def log_program_session(program_title: str, minutes: int = None,
-                        acting_member: dict = None) -> Dict[str, Any]:
+                        acting_member: dict = None, focus_key: str = None) -> Dict[str, Any]:
     """The person practising says so — a kid reporting their own guitar
     session is the point (wraps `services.programs.log_session`, which only
     ever counts up). Logging on somebody ELSE's program needs a
@@ -2612,11 +2661,11 @@ def log_program_session(program_title: str, minutes: int = None,
     refusal = _program_writer(acting_member, 'log a session')
     if refusal:
         return refusal
-    row, rows = _match_program(program_title, acting_member)
+    row, rows = _match_program(program_title, acting_member, focus_key)
     if not row:
         titles = ', '.join(p.get('title') or '?' for p in rows[:8]) or 'no programs yet'
         return {"status": "error",
-                "message": f"I couldn't pin down '{program_title}'. Programs: {titles}."}
+                "message": f"I couldn't find a matching program. Programs: {titles}."}
     refusal = _program_owns_or_parent(acting_member, row, 'log a session')
     if refusal:
         return refusal
@@ -3783,13 +3832,14 @@ def add_occasion(title: str, anchor_date: str, kind: str = "gathering",
 def _project_readable(project, actor, focus_key=None, spoken=False):
     from services import projects, subjects
     humans = subjects.channel_humans(focus_key)
-    return (projects.can_see(project, actor)
-            and (humans is None or all(projects.can_see(project, m) for m in humans))
+    return (access.project_visible(project, actor or access.HOUSE)
+            and (humans is None or all(access.project_visible(project, m) for m in humans))
             and (not spoken or subjects.spoken_safe('project', project)))
 
 
 def list_projects(acting_member=None, focus_key=None, spoken=False):
     from services import projects, storage
+    acting_member = acting_member or access.HOUSE
     rows = []
     for project in storage.get_projects():
         if _project_readable(project, acting_member, focus_key, spoken):
@@ -3803,6 +3853,7 @@ def list_projects(acting_member=None, focus_key=None, spoken=False):
 
 def get_project(project_id, acting_member=None, focus_key=None, spoken=False):
     from services import projects, storage, subjects
+    acting_member = acting_member or access.HOUSE
     project = storage.get_project(project_id)
     if not _project_readable(project, acting_member, focus_key, spoken):
         return {'status': 'error', 'message': 'No such visible project.'}
@@ -3810,9 +3861,11 @@ def get_project(project_id, acting_member=None, focus_key=None, spoken=False):
     humans = subjects.channel_humans(focus_key)
     pieces = []
     for piece in view['pieces']:
-        record = subjects.load(piece['kind'], piece['id'])
-        if (record is not None and (humans is None or all(subjects.visible(
-                piece['kind'], record, m) for m in humans))
+        record = (access.KINDS[piece['kind']].load(piece['id']) if piece['kind'] in access.KINDS
+                  else subjects.load(piece['kind'], piece['id']))
+        if (record is not None and (access.conversation_view(piece['kind'], record, acting_member or access.HOUSE, focus_key) is not None
+                if piece['kind'] in access.KINDS else (humans is None or all(subjects.visible(
+                piece['kind'], record, m) for m in humans)))
                 and (not spoken or subjects.spoken_safe(piece['kind'], record))):
             pieces.append(piece)
     view['pieces'] = pieces
@@ -3821,7 +3874,7 @@ def get_project(project_id, acting_member=None, focus_key=None, spoken=False):
     lines.extend(f"- {s['title']} [{s['state']}] (step {s['id']})"
                  for s in sorted(view['steps'], key=lambda s: s['order']))
     lines.append('Pieces:')
-    lines.extend(f"- {subjects.title_of(p['kind'], subjects.load(p['kind'], p['id']))} "
+    lines.extend(f"- {p['title']} "
                  f"({p['kind']} {p['id']})" for p in pieces)
     return {'status': 'success', 'message': '\n'.join(lines), 'project': view}
 
@@ -3881,7 +3934,7 @@ def set_step_state(project_id, step_id, state, acting_member=None, focus_key=Non
 
 
 def find_in_chauffeur(query: str = '', kind: str = '', facet: str = '',
-                      acting_member: dict = None, spoken: bool = False) -> Dict[str, Any]:
+                      acting_member: dict = None, spoken: bool = False, focus_key=None) -> Dict[str, Any]:
     """Find an existing family record and read it only on a clear match."""
     from services import subjects
     q = (query or '').strip()
@@ -3889,12 +3942,31 @@ def find_in_chauffeur(query: str = '', kind: str = '', facet: str = '',
         return {'status': 'error', 'candidates': [], 'context': None,
                 'message': 'Say what to look for.'}
     kinds = [kind] if kind in subjects.KINDS else None
-    winner, candidates = subjects.resolve(q, acting_member, kinds=kinds, spoken=spoken)
+    acting_member = acting_member or access.HOUSE
+    humans = subjects.channel_humans(focus_key)
+    def allowed(k, row):
+        if spoken and not subjects.spoken_safe(k, row):
+            return False
+        if k in access.KINDS:
+            return access.conversation_view(k, row, acting_member, focus_key) is not None
+        return subjects.visible(k, row, acting_member, spoken) and (
+            humans is None or all(subjects.visible(k, row, m) for m in humans))
+    winner, candidates = subjects.resolve(q, acting_member, kinds=kinds, spoken=spoken, visibility=allowed)
     # A clear match offers that record; alternatives are for an unresolved tie.
     if winner:
         candidates = [winner]
-    ctx = subjects.context(winner['kind'], winner['id'], acting_member,
-                           spoken=spoken, facet=facet or None) if winner else None
+    ctx = None
+    if winner and winner['kind'] in access.KINDS:
+        k = winner['kind']
+        row = subjects.load(k, winner['id'])
+        projection = access.conversation_view(k, row, acting_member, focus_key)
+        if projection == access.KEEPER and k != 'program':
+            ctx = json.dumps(_render_at(k, row, projection, acting_member, focus_key))
+        else:
+            ctx = subjects.context(k, row['id'], _viewer_at(k, row, projection, acting_member),
+                                   spoken=spoken, facet=facet or None)
+    elif winner:
+        ctx = subjects.context(winner['kind'], winner['id'], acting_member, spoken=spoken, facet=facet or None)
     message = (f"Found {winner['title']}." if winner else
                ('Nothing by that name.' if not candidates else
                 'More than one: ' + '; '.join(c['title'] for c in candidates)))
@@ -8464,8 +8536,8 @@ def handle_get_family_messages(args: dict) -> dict:
 def handle_list_chores(args: dict) -> dict:
     return list_chores()
 
-def handle_list_open_findings(args: dict) -> dict:
-    return list_open_findings()
+def handle_list_open_findings(args: dict, actor=None, focus_key=None) -> dict:
+    return list_open_findings(acting_member=actor or access.HOUSE, focus_key=focus_key)
 
 def handle_list_insights(args: dict) -> dict:
     # v1 loop runs only in admin contexts, so no acting-member gate needed;
@@ -8479,67 +8551,63 @@ def handle_dismiss_insight(args: dict) -> dict:
     return dismiss_insight(args.get("insight_id") or "")
 
 def _registry_parent() -> dict:
-    # Registry WRITES (action buttons, mission proposals) run in admin
-    # contexts; the parent of record stands in, as the admin surface's
-    # approvals do.
+    """Legacy non-piece identity; piece reads/writes use HOUSE/HOUSE_PARENT."""
     from services import storage
     return next((m for m in storage.get_all_members() if m.get('role') == 'parent'), None)
 
-# Registry READS carry no person. They see what any adult sees (findings and
-# plain insights) and never a parents-only row: a mission transcript is
-# readable by adults.
-_REGISTRY_READER = {'id': None, 'role': 'adult'}
 
-def handle_list_projects(args: dict, actor=None) -> dict:
-    return list_projects(acting_member=actor)
+_REGISTRY_READER = access.HOUSE
+
+def handle_list_projects(args: dict, actor=None, focus_key=None) -> dict:
+    return list_projects(acting_member=actor, focus_key=focus_key)
 
 
-def handle_get_project(args: dict, actor=None) -> dict:
-    return get_project(args.get('project_id'), acting_member=actor)
+def handle_get_project(args: dict, actor=None, focus_key=None) -> dict:
+    return get_project(args.get('project_id'), acting_member=actor, focus_key=focus_key)
 
 
-def handle_add_project_step(args: dict, actor=None) -> dict:
+def handle_add_project_step(args: dict, actor=None, focus_key=None) -> dict:
     return add_project_step(args.get('project_id'), args.get('title'),
                             owner=args.get('owner'), needs=args.get('needs'),
-                            due_date=args.get('due_date'), goal=args.get('goal'), acting_member=actor)
+                            due_date=args.get('due_date'), goal=args.get('goal'), acting_member=actor, focus_key=focus_key)
 
 
-def handle_add_to_project(args: dict, actor=None) -> dict:
-    return add_to_project(args.get('project_id'), args.get('kind'), args.get('id'), acting_member=actor)
+def handle_add_to_project(args: dict, actor=None, focus_key=None) -> dict:
+    return add_to_project(args.get('project_id'), args.get('kind'), args.get('id'), acting_member=actor, focus_key=focus_key)
 
 
-def handle_set_project_state(args: dict, actor=None) -> dict:
-    return set_project_state(args.get('project_id'), args.get('state'), acting_member=actor)
+def handle_set_project_state(args: dict, actor=None, focus_key=None) -> dict:
+    return set_project_state(args.get('project_id'), args.get('state'), acting_member=actor, focus_key=focus_key)
 
 
-def handle_set_step_state(args: dict, actor=None) -> dict:
-    return set_step_state(args.get('project_id'), args.get('step_id'), args.get('state'), acting_member=actor)
+def handle_set_step_state(args: dict, actor=None, focus_key=None) -> dict:
+    return set_step_state(args.get('project_id'), args.get('step_id'), args.get('state'), acting_member=actor, focus_key=focus_key)
 
 
-def handle_list_situations(args: dict) -> dict:
+def handle_list_situations(args: dict, actor=None, focus_key=None) -> dict:
     return list_situations(kinds=args.get('kinds'), limit=args.get('limit') or 10,
-                           acting_member=_REGISTRY_READER)
+                           acting_member=actor if actor is not None else access.HOUSE, focus_key=focus_key)
 
-def handle_next_situation(args: dict) -> dict:
-    return next_situation(skip_current=bool(args.get('skip_current')), acting_member=_REGISTRY_READER)
+def handle_next_situation(args: dict, actor=None, focus_key=None) -> dict:
+    return next_situation(skip_current=bool(args.get('skip_current')), acting_member=actor if actor is not None else access.HOUSE, focus_key=focus_key)
 
-def handle_explain_situation(args: dict) -> dict:
-    return explain_situation(args.get('ref') or '', kind=args.get('kind'), acting_member=_REGISTRY_READER)
+def handle_explain_situation(args: dict, actor=None, focus_key=None) -> dict:
+    return explain_situation(args.get('ref') or '', kind=args.get('kind'), acting_member=actor if actor is not None else access.HOUSE, focus_key=focus_key)
 
-def handle_act_on_situation(args: dict) -> dict:
+def handle_act_on_situation(args: dict, actor=None, focus_key=None) -> dict:
     return act_on_situation(args.get('ref') or '', args.get('verb') or '', option_id=args.get('option_id'),
                             kind=args.get('kind'), text=args.get('text'),
-                            next_action_at=args.get('next_action_at'), acting_member=_registry_parent())
+                            next_action_at=args.get('next_action_at'), acting_member=actor if actor is not None else access.HOUSE_PARENT, focus_key=focus_key)
 
-def handle_start_ask(args: dict) -> dict:
+def handle_start_ask(args: dict, actor=None, focus_key=None) -> dict:
     return start_ask(args.get('ref') or '', args.get('to_name') or '', args.get('what') or '',
-                     args.get('channel') or '', kind=args.get('kind'), acting_member=_registry_parent())
+                     args.get('channel') or '', kind=args.get('kind'), acting_member=actor if actor is not None else access.HOUSE_PARENT, focus_key=focus_key)
 
-def handle_mark_ask_sent(args: dict) -> dict:
-    return mark_ask_sent(args.get('ask_id') or '', acting_member=_registry_parent())
+def handle_mark_ask_sent(args: dict, actor=None, focus_key=None) -> dict:
+    return mark_ask_sent(args.get('ask_id') or '', acting_member=actor if actor is not None else access.HOUSE_PARENT, focus_key=focus_key)
 
-def handle_answer_ask(args: dict) -> dict:
-    return answer_ask(args.get('ask_id') or '', args.get('answer') or '', acting_member=_registry_parent())
+def handle_answer_ask(args: dict, actor=None, focus_key=None) -> dict:
+    return answer_ask(args.get('ask_id') or '', args.get('answer') or '', acting_member=actor if actor is not None else access.HOUSE_PARENT, focus_key=focus_key)
 
 def handle_search_mail(args: dict) -> dict:
     # Registry context is the trusted admin/mission loop: the parent of record reads.
@@ -8549,24 +8617,18 @@ def handle_search_mail(args: dict) -> dict:
 def handle_read_mail(args: dict) -> dict:
     return read_mail(int(args.get('uid') or 0), acting_member=_registry_parent())
 
-def handle_start_mission_for(args: dict) -> dict:
-    return start_mission_for(args.get('goal') or '', title=args.get('title'), acting_member=_registry_parent(),
-                             subject_kind=args.get('subject_kind'), subject_id=args.get('subject_id'))
+def handle_start_mission_for(args: dict, actor=None, focus_key=None) -> dict:
+    return start_mission_for(args.get('goal') or '', title=args.get('title'), acting_member=actor if actor is not None else access.HOUSE_PARENT,
+                             subject_kind=args.get('subject_kind'), subject_id=args.get('subject_id'), focus_key=focus_key)
 
-def handle_start_project(args: dict, actor=None) -> dict:
+def handle_start_project(args: dict, actor=None, focus_key=None) -> dict:
     return start_project(args.get('goal') or '', title=args.get('title'), for_member_name=args.get('for_member_name'),
-                         acting_member=actor or _registry_parent(),
-                         subject_kind=args.get('subject_kind'), subject_id=args.get('subject_id'))
+                         acting_member=actor or access.HOUSE_PARENT,
+                         subject_kind=args.get('subject_kind'), subject_id=args.get('subject_id'), focus_key=focus_key)
 
-def handle_list_programs(args: dict) -> dict:
-    # The v1 loop resolves no member and can produce no actor -- unlike
-    # list_insights, list_programs REQUIRES one (a program is somebody's
-    # personal ambition, not household-visible the way an insight's safe
-    # default is), so this always comes back refused from this loop. It is
-    # wired for parity with the catalog anyway, exactly as list_insights was
-    # -- a read tool only, never a write, since a write here would have no
-    # actor to attribute it to.
-    return list_programs(member_name=args.get("member_name"))
+def handle_list_programs(args: dict, actor=None, focus_key=None) -> dict:
+    return list_programs(member_name=args.get('member_name'), acting_member=actor or access.HOUSE, focus_key=focus_key)
+
 
 def handle_claim_chore(args: dict) -> dict:
     return claim_chore(args.get("chore_title", ""),
@@ -8722,9 +8784,9 @@ def handle_add_occasion(args: dict, actor=None) -> dict:
                         args.get("window_start") or "", args.get("window_end") or "",
                         args.get("dish_tags") or "", acting_member=actor, idem=args.get('idem'))
 
-def handle_find_in_chauffeur(args: dict) -> dict:
+def handle_find_in_chauffeur(args: dict, actor=None, focus_key=None) -> dict:
     return find_in_chauffeur(args.get('query') or '', args.get('kind') or '',
-                             args.get('facet') or '', acting_member=_REGISTRY_READER)
+                             args.get('facet') or '', acting_member=actor if actor is not None else access.HOUSE, focus_key=focus_key)
 
 
 def handle_get_occasion(args: dict, actor=None) -> dict:
@@ -8885,7 +8947,7 @@ def handle_ungroup_event(args: dict) -> dict:
     return ride_groups.ungroup_by_title(args.get("event_name") or "",
                                         args.get("target_date") or "today")
 
-def handle_launch_mission(args: dict) -> dict:
+def handle_launch_mission(args: dict, actor=None, focus_key=None) -> dict:
     # v1 loop is admin-only (dashboard/HA voice), so no acting-member gate is
     # needed here — same "trusted context" reasoning as handle_send_family_message
     # and handle_cancel_event. _member_id rides through as attribution only.
@@ -8893,21 +8955,21 @@ def handle_launch_mission(args: dict) -> dict:
     thread = None
     title = (args.get('thread_title') or '').strip()
     if title:
-        thread = missions._match_thread(title)
+        thread, _ = _match_thread(title, actor or access.HOUSE, focus_key)
     return missions.launch(args.get('goal') or '',
                            origin_kind='thread' if thread else 'chat',
                            origin_ref=thread['id'] if thread else None,
                            created_by=args.get('_member_id'),
                            tier='mission')
 
-def handle_create_thread(args: dict, actor=None) -> dict:
-    actor = actor if actor is not None else _registry_parent()
+def handle_create_thread(args: dict, actor=None, focus_key=None) -> dict:
+    actor = actor if actor is not None else access.HOUSE_PARENT
     return create_thread(args.get('title') or '', goal=args.get('goal'),
                          kind=args.get('kind') or 'vendor',
                          counterparty_name=args.get('counterparty_name'),
                          counterparty_email=args.get('counterparty_email'),
                          next_action=args.get('next_action'), next_action_at=args.get('next_action_at'),
-                         acting_member=actor, idem=args.get('idem'), project_id=args.get('project_id'))
+                         acting_member=actor, idem=args.get('idem'), project_id=args.get('project_id'), focus_key=focus_key)
 
 
 def handle_get_travel_time(args: dict) -> dict:
@@ -8942,24 +9004,24 @@ def handle_get_household_load(args: dict, actor=None) -> dict:
 
 
 def handle_get_requests(args: dict, actor=None) -> dict:
-    return get_requests(acting_member=actor if actor is not None else _REGISTRY_READER)
+    return get_requests(acting_member=actor if actor is not None else access.HOUSE)
 
 
 def handle_get_assist_coverage(args: dict, actor=None) -> dict:
     return get_assist_coverage(args.get('target_date'))
 
 
-def handle_list_threads(args: dict, actor=None) -> dict:
+def handle_list_threads(args: dict, actor=None, focus_key=None) -> dict:
     return list_threads(state=args.get('state'), owner_name=args.get('owner_name'),
                         include_closed=bool(args.get('include_closed')),
-                        acting_member=actor if actor is not None else _REGISTRY_READER,
-                        _registry_read=True)
+                        acting_member=actor if actor is not None else access.HOUSE,
+                        focus_key=focus_key)
 
 
-def handle_program_progress(args: dict, actor=None) -> dict:
+def handle_program_progress(args: dict, actor=None, focus_key=None) -> dict:
     return program_progress(args.get('program_title') or '',
-                            acting_member=actor if actor is not None else _REGISTRY_READER,
-                            _registry_read=True)
+                            acting_member=actor if actor is not None else access.HOUSE,
+                            focus_key=focus_key)
 
 
 def handle_add_household_task(args: dict, actor=None) -> dict:
@@ -8980,27 +9042,27 @@ def handle_complete_household_task(args: dict, actor=None) -> dict:
                                    acting_member=actor if actor is not None else _registry_parent())
 
 
-def handle_add_thread_note(args: dict, actor=None) -> dict:
+def handle_add_thread_note(args: dict, actor=None, focus_key=None) -> dict:
     return add_thread_note(args.get('thread_title') or '', args.get('text') or '', url=args.get('url'),
                            thread_id=args.get('thread_id'),
-                           acting_member=actor if actor is not None else _registry_parent())
+                           acting_member=actor if actor is not None else access.HOUSE_PARENT, focus_key=focus_key)
 
 
-def handle_close_thread(args: dict, actor=None) -> dict:
+def handle_close_thread(args: dict, actor=None, focus_key=None) -> dict:
     return close_thread(args.get('thread_title') or '', state=args.get('state'),
-                         acting_member=actor if actor is not None else _registry_parent())
+                         acting_member=actor if actor is not None else access.HOUSE_PARENT, focus_key=focus_key)
 
 
-def handle_update_thread_action(args: dict, actor=None) -> dict:
+def handle_update_thread_action(args: dict, actor=None, focus_key=None) -> dict:
     return update_thread_action(args.get('thread_title') or '', args.get('next_action') or '',
                                  next_action_at=args.get('next_action_at'), note=args.get('note'),
-                                 acting_member=actor if actor is not None else _registry_parent())
+                                 acting_member=actor if actor is not None else access.HOUSE_PARENT, focus_key=focus_key)
 
 
-def handle_draft_thread_message(args: dict, actor=None) -> dict:
+def handle_draft_thread_message(args: dict, actor=None, focus_key=None) -> dict:
     return draft_thread_message(args.get('thread_title') or '', intent=args.get('intent'),
                                  thread_id=args.get('thread_id'),
-                           acting_member=actor if actor is not None else _registry_parent())
+                           acting_member=actor if actor is not None else access.HOUSE_PARENT, focus_key=focus_key)
 
 
 def handle_answer_request(args: dict, actor=None) -> dict:
@@ -9056,17 +9118,17 @@ def handle_manage_trip_rules(args: dict, actor=None) -> dict:
                               rule=args.get('rule'), rule_id=args.get('rule_id'))
 
 
-def handle_log_program_session(args: dict, actor=None) -> dict:
+def handle_log_program_session(args: dict, actor=None, focus_key=None) -> dict:
     return log_program_session(args.get('program_title') or '', minutes=args.get('minutes'),
-                                acting_member=actor if actor is not None else _registry_parent())
+                                acting_member=actor if actor is not None else access.HOUSE_PARENT, focus_key=focus_key)
 
 
-def handle_propose_program(args: dict, actor=None) -> dict:
+def handle_propose_program(args: dict, actor=None, focus_key=None) -> dict:
     return propose_program(args.get('title') or '', for_member_name=args.get('for_member_name'),
                             sessions_per_week=args.get('sessions_per_week'), minutes=args.get('minutes'),
                             starting_point=args.get('starting_point'),
-                            acting_member=actor if actor is not None else _registry_parent(),
-                            project_id=args.get('project_id'))
+                            acting_member=actor if actor is not None else access.HOUSE_PARENT,
+                            project_id=args.get('project_id'), focus_key=focus_key)
 
 
 TOOL_HANDLERS = {
@@ -9232,7 +9294,7 @@ for _tool in get_available_tools():
         }
 
 
-def execute_tool(name: str, args: dict, actor=None) -> dict:
+def execute_tool(name: str, args: dict, actor=None, focus_key=None) -> dict:
     from services import budget_guard
     handler = TOOL_HANDLERS.get(name)
     if not handler:
@@ -9240,10 +9302,14 @@ def execute_tool(name: str, args: dict, actor=None) -> dict:
     try:
         import inspect
         # Identity belongs to the caller, never to model-authored arguments.
-        args = {k: v for k, v in args.items() if k != 'acting_member'}
-        if 'actor' in inspect.signature(handler).parameters:
-            return handler(args, actor=actor)
-        return handler(args)
+        args = {k: v for k, v in args.items() if k not in ('acting_member', 'focus_key', 'actor')}
+        parameters = inspect.signature(handler).parameters
+        context = {}
+        if 'actor' in parameters:
+            context['actor'] = actor
+        if 'focus_key' in parameters:
+            context['focus_key'] = focus_key
+        return handler(args, **context)
     except budget_guard.BudgetExhausted:
         raise
     except Exception as e:

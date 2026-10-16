@@ -243,20 +243,45 @@ def _with_gemma(fake, fn):
         agent_router.call_gemma_with_fallback = orig
 
 
-def scenario_voice_acts_as_the_parent_of_record():
+def _hidden_parent_thread():
+    tid = threads.create('Hidden parent title', owner_member_id='mom', created_by='mom')
+    storage.update_project(storage.get_thread(tid)['project_id'], {'audience': 'private', 'wrapped_from': None})
+    from services import access
+    check(access.record_view('thread', storage.get_thread(tid), MOM) == access.FULL,
+          "the hidden fixture is readable by Mom")
+    check(access.record_view('thread', storage.get_thread(tid), access.HOUSE) is None,
+          "the hidden fixture is not household-visible")
+    return tid
+
+
+def _identity_free_turn(call, text, focus_key):
+    cap = {}
+    # A voice: key is only a focus key; default source='admin' is not voice.
+    res = _with_gemma(_fake_gemma(call, cap),
+                      lambda: agent_router.process_agent_request(text, focus_key=focus_key))
+    check('Hidden parent title' not in str(res) + cap['system'],
+          "an identity-free non-voice turn exposes no hidden title in its prompt or result")
+    return res
+
+
+def scenario_identity_free_admin_writes_without_member_attribution():
+    # Formerly scenario_voice_acts_as_the_parent_of_record.
     _reset()
+    hidden = _hidden_parent_thread()
+    triage.set_focus('voice:1', 'thread', hidden, 'Hidden parent title')
+    _identity_free_turn({'name': 'explain_situation', 'arguments': {}}, 'explain it', 'voice:1')
     storage.add_assist_contact({'id': 'c1', 'name': 'Sarah', 'kinds': ['driving'], 'active': True})
     fid = _finding('No driver yet: Soccer', 'decide', 30, 'ev1')
     start = NOON + datetime.timedelta(hours=30)
     storage.set_cached_schedule({'events': [{'id': 'ev1', 'title': 'Soccer', 'start': start.isoformat(),
                                              'end': start.isoformat()}], 'assignments': {}, 'unassigned': ['ev1']})
     call = {'name': 'next_situation', 'arguments': {}}
-    res = _with_gemma(_fake_gemma(call), lambda: agent_router.process_agent_request('what needs my attention', focus_key='voice:1'))
-    check(res['message'].startswith('No driver yet: Soccer.'), f"voice hears the ride with no identity: {res}")
+    res = _identity_free_turn(call, 'what needs my attention', 'voice:1')
+    check(res['message'].startswith('No driver yet: Soccer.'), f"HOUSE reads the household ride: {res}")
     call = {'name': 'start_ask', 'arguments': {'to_name': 'Sarah', 'what': 'drive Kate Thursday', 'channel': 'text'}}
-    res = _with_gemma(_fake_gemma(call), lambda: agent_router.process_agent_request('text Sarah and ask her', focus_key='voice:1'))
+    res = _identity_free_turn(call, 'text Sarah and ask her', 'voice:1')
     asks = storage.get_asks(situation_kind='finding', situation_id=fid)
-    check(len(asks) == 1 and asks[0]['asked_by'] == 'mom', f"the ask is the parent of record's: {asks}")
+    check(len(asks) == 1 and not asks[0]['asked_by'], f"the ask carries no member identity: {asks}")
     res = _with_gemma(_fake_gemma(call), lambda: agent_router.process_agent_request('text Sarah', focus_key='voice:1', propose_only=True))
     check(len(storage.get_asks(situation_kind='finding', situation_id=fid)) == 1, "propose-only never reaches start_ask")
     kid = {'id': 'kid', 'name': 'Kate', 'role': 'child'}
@@ -264,6 +289,14 @@ def scenario_voice_acts_as_the_parent_of_record():
                                                                                      acting_member=kid, focus_key='channel:9'))
     check(len(storage.get_asks(situation_kind='finding', situation_id=fid)) == 1 and 'parent or adult' in res['message'],
           f"a child via @argyle is refused as today: {res}")
+    tid = threads.create('Household repair', owner_member_id='mom', created_by='mom')
+    storage.update_project(storage.get_thread(tid)['project_id'], {'audience': 'household'})
+    triage.set_focus('voice:1', 'thread', tid, 'Household repair')
+    res = _identity_free_turn({'name': 'act_on_situation', 'arguments': {'verb': 'advance', 'text': 'Call the repair shop'}},
+                              'note the call', 'voice:1')
+    notes = [h for h in storage.get_thread(tid)['history'] if h['kind'] == 'advance']
+    check(res['status'] == 'success' and len(notes) == 1 and not notes[0].get('who'),
+          f"the household note carries no member identity: {res}, {notes}")
 
 
 def scenario_voice_never_hears_a_sensitive_insight():
@@ -303,14 +336,16 @@ def scenario_voice_without_a_conversation_has_no_focus():
     check(not storage.get_app_state(triage.FOCUS_KEY), "nothing written with no key")
 
 
-SCENARIOS += [scenario_voice_acts_as_the_parent_of_record, scenario_voice_never_hears_a_sensitive_insight,
+SCENARIOS += [scenario_identity_free_admin_writes_without_member_attribution, scenario_voice_never_hears_a_sensitive_insight,
               scenario_focus_line_present_exactly_when_live, scenario_voice_without_a_conversation_has_no_focus]
 
 
-def scenario_e2e_voice_ask_round_trip():
-    """Spec acceptance 1: voice, no identity: triage → text Sarah → sent it →
+def scenario_e2e_identity_free_admin_household_ask_round_trip():
+    """No identity, non-voice: triage → text Sarah → sent it →
     she said yes → applied once → the finding retires by absence."""
+    # Formerly scenario_e2e_voice_ask_round_trip.
     _reset()
+    _hidden_parent_thread()
     storage.add_assist_contact({'id': 'c1', 'name': 'Sarah', 'kinds': ['driving'], 'active': True})
     start = (NOON + datetime.timedelta(days=2)).replace(hour=16)
     storage.set_cached_schedule({'events': [{'id': 'ev1', 'title': 'Soccer', 'start': start.isoformat(),
@@ -318,17 +353,20 @@ def scenario_e2e_voice_ask_round_trip():
     fid = storage.add_finding({'identity': 'unassigned:ev1', 'kind': 'unassigned', 'severity': 'decide',
                                'line': 'No driver yet: Soccer', 'subject_type': 'event', 'subject_id': 'ev1',
                                'due_at': start.timestamp(), 'state': 'open', 'fingerprint': f"ev1|{start.timestamp()}"})
-    turn = lambda call, text: _with_gemma(_fake_gemma(call), lambda: agent_router.process_agent_request(text, focus_key='voice:7'))
+    turn = lambda call, text: _identity_free_turn(call, text, 'voice:7')
+    res = turn({'name': 'list_situations', 'arguments': {}}, 'what needs attention')
+    check('No driver yet: Soccer' in str(res), "HOUSE lists the household-visible record")
     res = turn({'name': 'next_situation', 'arguments': {}}, 'what needs my attention')
     check(res['message'].startswith('No driver yet: Soccer.'), f"turn 1: {res}")
     res = turn({'name': 'start_ask', 'arguments': {'to_name': 'Sarah', 'what': '', 'channel': 'text'}}, 'text Sarah and ask her')
     a = storage.get_asks(situation_kind='finding', situation_id=fid)[0]
-    check(a['state'] == 'drafted' and a['asked_by'] == 'mom' and (a['unlocks'] or {}).get('action_type') == 'assist_assignment', f"turn 2: {a}")
+    check(a['state'] == 'drafted' and not a['asked_by'] and (a['unlocks'] or {}).get('action_type') == 'assist_assignment', f"turn 2: {a}")
     res = turn({'name': 'mark_ask_sent', 'arguments': {}}, 'sent it')
     check(storage.get_ask(a['id'])['state'] == 'sent', f"turn 3: {res}")
     res = turn({'name': 'answer_ask', 'arguments': {'answer': 'yes'}}, 'she said yes')
     a = storage.get_ask(a['id'])
     check(a['state'] == 'yes' and a['outcome'] == 'applied', f"turn 4: {a}")
+    check(not a['asked_by'] and not a['answered_by'], "neither ask nor reported answer borrows a member identity")
     res = turn({'name': 'answer_ask', 'arguments': {'answer': 'yes'}}, 'she said yes')
     check(storage.get_ask(a['id'])['outcome'] == 'applied' and res['status'] != 'error', "a duplicate yes is a no-op")
     check(storage.get_ask(a['id'])['applied_at'] is not None, "applied once, stamped once")
@@ -356,7 +394,7 @@ def scenario_e2e_next_walks_the_list_without_repeating_a_closed_row():
     check(res['situation'] is None, "then the list ends")
 
 
-SCENARIOS += [scenario_e2e_voice_ask_round_trip, scenario_e2e_next_walks_the_list_without_repeating_a_closed_row]
+SCENARIOS += [scenario_e2e_identity_free_admin_household_ask_round_trip, scenario_e2e_next_walks_the_list_without_repeating_a_closed_row]
 
 
 # --- final review fixes ------------------------------------------------------

@@ -48,6 +48,8 @@ def load(kind: str, sid: str) -> Optional[dict]:
         return storage.get_mind_insight(sid)
     if kind == 'thread':
         return storage.get_thread(sid)
+    if kind == 'program':
+        return storage.get_program(sid)
     if kind == 'mission':
         row = storage.get_mission(sid)
         if row:
@@ -498,8 +500,8 @@ def _can_see_base(kind: str, row: dict, viewer: Optional[dict]) -> bool:
     if kind == 'thread':
         return role in WRITE_ROLES or bool(viewer and row.get('owner_member_id') == viewer.get('id'))
     if kind == 'project':
-        from services import projects
-        return projects.can_see(row, viewer)
+        from services import access
+        return access.project_visible(row, viewer)
     return role in WRITE_ROLES
 
 
@@ -550,10 +552,19 @@ def channel_visible(kind: str, row: dict, focus_key: str) -> bool:
     if kind == 'project' and members is not None:
         from services import projects
         return bool(row) and all(bool(m) and projects.can_see(row, m) for m in members)
-    return members is None or bool(row) and all(
+    if members is None:
+        return True
+    from services import access
+    return access.conversation_view(kind, row, None, focus_key) is not None
+
+
+def _legacy_channel_visible(kind, row, humans):
+    """Unrestricted pieces keep the channel's original subject-only rule."""
+    from services import subjects
+    return bool(row) and all(
         bool(member)
         and all(_subject_visible(k, record, member) for k, record in subjects.subject_records(kind, row))
-        for member in members)
+        for member in humans)
 
 
 def thread_keeper_view(row):
@@ -784,7 +795,7 @@ def done(kind: str, sid: str, actor: dict) -> dict:
 
 
 def act(kind: str, sid: str, verb: str, option_id: str = None, payload: dict = None,
-        actor: dict = None) -> dict:
+        actor: dict = None, viewer: dict = None) -> dict:
     """The single implementation behind every card button and every agent
     tool. The option is re-derived from the row RIGHT NOW; an id from an
     earlier view that no longer exists is refused, nothing runs."""
@@ -808,7 +819,7 @@ def act(kind: str, sid: str, verb: str, option_id: str = None, payload: dict = N
         # options re-derived, every gate kept), then the thread moved too.
         bits = opt['id'].split(':')
         mid, sub = bits[2], ':'.join(bits[3:])
-        res = act('mission', mid, verb, option_id=f"{verb}:{sub}" if sub else verb, payload=payload, actor=actor)
+        res = act('mission', mid, verb, option_id=f"{verb}:{sub}" if sub else verb, payload=payload, actor=actor, viewer=viewer)
         if res.get('status') in ('success', 'proposed', 'planned'):
             bump_rev(kind, sid)
             request_refresh(kind, sid)
@@ -827,7 +838,7 @@ def act(kind: str, sid: str, verb: str, option_id: str = None, payload: dict = N
         p.update({k: v for k, v in free.items() if k in ('query', 'kind', 'id', 'clear')})
         p.update(opt['payload'])
 
-    res = _run(kind, sid, verb, p, actor, row)
+    res = _run(kind, sid, verb, p, actor, row, viewer=viewer)
     if kind == 'mission' and verb in ('answer', 'release', 'submit', 'verify') \
             and res.get('status') == 'success' and not res.get('moved') and not res.get('already'):
         from services import missions
@@ -844,7 +855,7 @@ def act(kind: str, sid: str, verb: str, option_id: str = None, payload: dict = N
     return res
 
 
-def _run(kind, sid, verb, p, actor, row) -> dict:
+def _run(kind, sid, verb, p, actor, row, viewer=None) -> dict:
     if kind == 'mission' and verb in ('approve_plan', 'run_stage'):
         from services import planned
         if verb == 'approve_plan':
@@ -938,7 +949,7 @@ def _run(kind, sid, verb, p, actor, row) -> dict:
         return {'status': 'success' if ok else 'error', 'message': 'Next step set.'}
     if verb == 'draft':
         from services import threads as _th
-        res = _th.draft_message(sid, intent=p.get('text') or '', viewer=actor)
+        res = _th.draft_message(sid, intent=p.get('text') or '', viewer=viewer or actor)
         return {**res, 'status': res.get('status') or 'success'}
     if verb == 'research':
         from services import threads as _th

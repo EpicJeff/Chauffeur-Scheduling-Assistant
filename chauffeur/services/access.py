@@ -184,6 +184,34 @@ def record_visible(kind, row, viewer):
     return record_view(kind, row, viewer) is not None
 
 
+def channel_view(kind, row, focus_key):
+    """The projection every human in a channel may receive (spec §4.3)."""
+    from services import subjects, situations
+    humans = subjects.channel_humans(focus_key)
+    if humans is None:
+        return NOT_A_CHANNEL
+    if not restricted(home_project(row)):
+        return FULL if situations._legacy_channel_visible(kind, row, humans) else None
+    views = [record_view(kind, row, h) if h else None for h in humans]
+    if not views or any(v is None for v in views):
+        return None
+    return KEEPER if KEEPER in views else FULL
+
+
+def conversation_view(kind, row, viewer, focus_key):
+    """What Argyle may show here: the channel's common projection, else the speaker's."""
+    from services import subjects
+    humans = subjects.channel_humans(focus_key)
+    # A person's Argyle DM is their own surface. This exception belongs
+    # here, not in channel_humans: another speaker still uses the audience's
+    # common projection (controller ruling, 2026-10-16).
+    if (humans is not None and len(humans) == 1 and humans[0]
+            and (viewer or {}).get('id') == humans[0].get('id')):
+        return record_view(kind, row, viewer)
+    view = channel_view(kind, row, focus_key)
+    return record_view(kind, row, viewer) if view is NOT_A_CHANNEL else view
+
+
 def record_actable(kind, row, viewer, verb):
     view = record_view(kind, row, viewer)
     if view is None:

@@ -16,7 +16,6 @@ F, K, X = 'full', 'keeper', None
 # Reader rows whose task has not landed. Each task deletes its own rows; Task 11 asserts empty.
 PENDING = {
     'task4': {r[0] for r in reg.READERS if r[1] == '4.2-conversation'},
-    'task5': {r[0] for r in reg.READERS if r[1] == '4.3-channel'},
     'task6': {r[0] for r in reg.READERS if r[1] == '4.4-engine'},
     'task7': {r[0] for r in reg.READERS if r[1] == '4.5-voice'},
     'task8': {r[0] for r in reg.READERS if r[1] == '4.6-shared-screen'},
@@ -96,6 +95,14 @@ def scenario_every_probe_matches_the_table():
 
 import access_signed_in as signed_in
 signed_in.register(probe)
+
+import access_channels as channels
+channels.register(probe)
+
+
+def scenario_channel_contracts():
+    if len(sys.argv) < 2 or '4.3-channel'.startswith(sys.argv[1]):
+        channels.extra_contracts()
 
 
 def scenario_signed_in_contracts():

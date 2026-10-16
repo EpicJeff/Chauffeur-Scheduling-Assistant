@@ -44,7 +44,9 @@ def scenario_the_project_exists_at_once_and_its_card_comes_first():
     check(cards and cards[0]['card']['kind'] == 'project' and cards[0]['card']['project_id'] == p['id'],
           f"the project card is the first card in Mom's DM: {[c['card']['kind'] for c in cards]}")
     check(cards[0]['card']['planning'] == 'started', f"and says planning started: {cards[0]['card']}")
-    f = triage.get_focus('channel:dm1')
+    # Access spec §4.2/§4.3: this synthetic DM key has no stored audience;
+    # a private focus is read as its speaker, never an identity-free parent.
+    f = triage.get_focus('channel:dm1', viewer=MOM)
     check(f and f['kind'] == 'project' and f['id'] == p['id'], f"the project is the focus: {f}")
 
 

@@ -72,8 +72,11 @@ def act_expected(rkey, col, verb):
 
 def project_visible(fx, rkey, col):
     # Fixture audiences, independent of production projects.can_see.
-    if col in ('pat', 'house'):
+    if col == 'pat':
         return False
+    if col == 'house':
+        # Household projects, plus the wrapper of a HOUSE-visible thread (§2).
+        return rkey in ('R5t', 'R5p', 'R12', 'R13')
     if rkey in ('R1', 'R2', 'R3', 'R7'):
         return col == 'mom'
     if rkey in ('R4', 'R11'):

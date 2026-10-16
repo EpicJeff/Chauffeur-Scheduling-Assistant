@@ -263,29 +263,31 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
     # focus is injected; triage.get_focus drops a settled one itself.
     if focus_key and source != 'voice':
         try:
-            from services import triage as _tri, situations as _sit
-            _f = _tri.get_focus(focus_key)
+            from services import triage as _tri, situations as _sit, access
+            from services.agent_tools_v2 import _conversation_view, _render_at
+            _viewer = acting_member or access.HOUSE
+            _f = _tri.get_focus(focus_key, viewer=_viewer)
             # A group channel shares one focus: only a speaker who may SEE the
             # situation is told its title (a child is not told a parent's).
             _row = _sit.load(_f['kind'], _f['id']) if _f else None
-            _viewer = acting_member or _sit.parent_of_record()
-            if _f and _row and _sit.can_see(_f['kind'], _row, _viewer):
+            _view = _conversation_view(_f['kind'], _row, _viewer, focus_key) if _f else None
+            if _view is not None:
                 from services.app_voice import current as phone_voice
                 if phone_voice.get() is not None:
                     phone_voice.get().speech_safe = False
-                _s = _sit.view(_f['kind'], _f['id'], _viewer)
-                from services import subjects, storage
-                shared_ok = _sit.channel_visible(_f['kind'], _row, focus_key)
+                _s = _render_at(_f['kind'], _row, _view, _viewer, focus_key)
+                from services import subjects
                 # The next-step label can itself be a stage title or a row's
                 # words. Apply ABOUT's audience gate before injecting FOCUS.
-                if shared_ok:
-                    _nxt = ((_s or {}).get('next_step') or {}).get('label') or '-'
-                    system_prompt += (f"\nFOCUS: {_f['kind']} \"{_f.get('title')}\" — next step: {_nxt}. "
-                                      "\"Handle it\", \"do that\", \"ask X by Y\", \"she said yes\", \"sent it\", "
-                                      "\"next\", \"skip it\" refer to this one unless another is named: call the "
-                                      "situation tools with NO ref for it.\n")
+                _nxt = ((_s or {}).get('next_step') or {}).get('label') or '-'
+                _title = (_s or {}).get('title') or _f['title']
+                _next = '' if _view == access.KEEPER else f' — next step: {_nxt}.'
+                system_prompt += (f"\nFOCUS: {_f['kind']} \"{_title}\"{_next} "
+                                  "\"Handle it\", \"do that\", \"ask X by Y\", \"she said yes\", \"sent it\", "
+                                  "\"next\", \"skip it\" refer to this one unless another is named: call the "
+                                  "situation tools with NO ref for it.\n")
                 sv = (_s or {}).get('subject')
-                if sv and shared_ok:
+                if sv and _view != access.KEEPER:
                     ctx = subjects.context(sv['kind'], sv['id'], _viewer)
                     if ctx:
                         system_prompt += f'\nABOUT: {sv["kind"]} "{sv["title"]}"\n{ctx}\n'
@@ -974,7 +976,7 @@ sending or claiming, and never pass from_member/member_name for them.
                     res = list_chores()
                 elif func_name == "list_open_findings":
                     from services.agent_tools_v2 import list_open_findings
-                    res = list_open_findings()
+                    res = list_open_findings(acting_member=acting_member, focus_key=focus_key)
                     if res.get("message"): agent_message = res["message"]
                 elif func_name == "research_question":
                     from services.agent_tools_v2 import research_question
@@ -1003,23 +1005,25 @@ sending or claiming, and never pass from_member/member_name for them.
                                    "start_mission_for", "start_project", "find_in_chauffeur",
                                    "list_projects", "get_project", "add_project_step",
                                    "add_to_project", "set_project_state", "set_step_state"):
-                    from services import agent_tools_v2 as _atv2, situations as _sit
-                    # Same actor resolution as the thread tools below: resolved
-                    # HERE at dispatch, never taken from the model. A caller with
-                    # no identity (HA voice, the admin widget) acts as the parent
-                    # of record — the rule the admin pages already use — and is
-                    # treated as a ROOM: nothing sensitive is read out. Never on
-                    # the propose-only rail, never in driver mode, and never for
-                    # the PWA: a phone always carries a person, so one that cannot
-                    # name its member is refused rather than promoted.
+                    from services import agent_tools_v2 as _atv2, situations as _sit, access
+                    # Resolve identity here, never from model arguments. Reads
+                    # without a person use HOUSE, piece writes HOUSE_PARENT.
+                    # Voice and mailbox tools keep their existing identity path.
                     actor = acting_member
                     substituted = False
                     if actor is None and driver:
                         from services import storage as _st
                         actor = _st.get_member_by_driver_id(driver_id)
                     elif actor is None and not propose_only and source != 'pwa':
-                        actor = _sit.parent_of_record()
+                        actor = access.HOUSE if func_name in (
+                            'list_situations', 'next_situation', 'explain_situation',
+                            'list_projects', 'get_project', 'find_in_chauffeur') else (
+                                _sit.parent_of_record() if source == 'voice' or func_name in ('search_mail', 'read_mail')
+                                else access.HOUSE_PARENT)
                         substituted = actor is not None
+                    if actor is None and func_name in ('list_situations', 'next_situation', 'explain_situation',
+                                                      'list_projects', 'get_project', 'find_in_chauffeur'):
+                        actor = access.HOUSE
                     fn = getattr(_atv2, func_name)
                     allowed = fn.__code__.co_varnames[:fn.__code__.co_argcount]
                     kwargs = {k: v for k, v in (args or {}).items()
@@ -1027,24 +1031,14 @@ sending or claiming, and never pass from_member/member_name for them.
                     if 'focus_key' in allowed:
                         kwargs['focus_key'] = focus_key
                     if 'spoken' in allowed:
-                        kwargs['spoken'] = substituted
+                        # Panels read as HOUSE; the satellite's additional
+                        # spoken restriction belongs to voice dispatch (§4.2).
+                        kwargs['spoken'] = substituted and (
+                            source == 'voice' or (focus_key or '').startswith('voice:')
+                            or func_name in ('search_mail', 'read_mail'))
                     if 'voice_context' in allowed:
                         kwargs['voice_context'] = voice_context
-                    channel_members = None
-                    if func_name == 'find_in_chauffeur':
-                        from services import subjects
-                        channel_members = subjects.channel_humans(focus_key)
                     res = fn(**kwargs, acting_member=actor)
-                    if channel_members is not None:
-                        candidates = res.get('candidates') or []
-                        kept = [c for c in candidates if all(subjects.visible(
-                            c['kind'], subjects.load(c['kind'], c['id']), member) for member in channel_members)]
-                        res['candidates'] = kept
-                        if len(candidates) != 1 or candidates[0] not in kept:
-                            res['context'] = None
-                        if len(kept) != len(candidates):
-                            res['message'] = ('Nothing by that name.' if not kept else
-                                              'More than one: ' + '; '.join(c['title'] for c in kept))
                     if isinstance(res, dict) and res.get("schedule_dirty"):
                         schedule_dirty = True
                     if res.get("message"): agent_message = res["message"]
@@ -1068,53 +1062,50 @@ sending or claiming, and never pass from_member/member_name for them.
                                    "negotiate_day", "ask_deal",
                                    "list_programs", "program_progress",
                                    "propose_program", "log_program_session"):
-                    from services import agent_tools_v2 as _atv2
-                    # Same actor resolution as list_insights/dismiss_insight
-                    # above: resolved HERE at dispatch, never taken from the
-                    # model. The tools gate on this actor as an ALLOWLIST —
-                    # reads need a resolved member, writes a resolved
-                    # parent/adult — so an anonymous wall panel (/api/chat is
-                    # WALL_OR_SERVICE, actor stays None) is refused instead
-                    # of walking through a role blocklist with role None.
+                    from services import agent_tools_v2 as _atv2, access
+                    # Identity-free reads use HOUSE; writes retain their
+                    # existing actor gates. Focus is trusted caller context.
                     actor = acting_member
                     if actor is None and driver:
                         from services import storage as _st
                         actor = _st.get_member_by_driver_id(driver_id)
+                    if actor is None and func_name in ('list_threads', 'list_programs', 'program_progress'):
+                        actor = access.HOUSE
                     if func_name == "list_programs":
                         res = _atv2.list_programs(member_name=args.get("member_name"),
-                                                  acting_member=actor)
+                                                  acting_member=actor, focus_key=focus_key)
                     elif func_name == "program_progress":
                         res = _atv2.program_progress(args.get("program_title", "") or "",
-                                                     acting_member=actor)
+                                                     acting_member=actor, focus_key=focus_key)
                     elif func_name == "propose_program":
                         res = _atv2.propose_program(args.get("title", "") or "",
                                                     for_member_name=args.get("for_member_name"),
                                                     sessions_per_week=args.get("sessions_per_week"),
                                                     minutes=args.get("minutes"),
                                                     starting_point=args.get("starting_point"),
-                                                    acting_member=actor)
+                                                    acting_member=actor, focus_key=focus_key)
                     elif func_name == "log_program_session":
                         res = _atv2.log_program_session(args.get("program_title", "") or "",
                                                          minutes=args.get("minutes"),
-                                                         acting_member=actor)
+                                                         acting_member=actor, focus_key=focus_key)
                     elif func_name == "list_threads":
                         res = _atv2.list_threads(state=args.get("state"),
                                                  owner_name=args.get("owner_name"),
                                                  include_closed=bool(args.get("include_closed")),
-                                                 acting_member=actor)
+                                                 acting_member=actor, focus_key=focus_key)
                     elif func_name == "draft_thread_message":
                         res = _atv2.draft_thread_message(args.get("thread_title", "") or "",
                                                          intent=args.get("intent"),
                                                          thread_id=args.get('thread_id'),
-                                                         acting_member=actor)
+                                                         acting_member=actor, focus_key=focus_key)
                     elif func_name == "launch_mission":
                         res = _atv2.launch_mission(args.get("goal", "") or "",
                                                    args.get("thread_title"),
-                                                   actor)
+                                                   acting_member=actor, focus_key=focus_key)
                     elif func_name == "close_thread":
                         res = _atv2.close_thread(args.get("thread_title", "") or "",
                                                  state=args.get("state"),
-                                                 acting_member=actor)
+                                                 acting_member=actor, focus_key=focus_key)
                     elif func_name == "create_thread":
                         res = _atv2.create_thread(args.get("title", "") or "",
                                                   goal=args.get("goal"),
@@ -1124,13 +1115,13 @@ sending or claiming, and never pass from_member/member_name for them.
                                                   next_action=args.get("next_action"),
                                                   next_action_at=args.get("next_action_at"),
                                                   idem=args.get('idem'),
-                                                  acting_member=actor)
+                                                  acting_member=actor, focus_key=focus_key)
                     elif func_name == "update_thread_action":
                         res = _atv2.update_thread_action(args.get("thread_title", "") or "",
                                                           args.get("next_action", "") or "",
                                                           next_action_at=args.get("next_action_at"),
                                                           note=args.get("note"),
-                                                          acting_member=actor)
+                                                          acting_member=actor, focus_key=focus_key)
                     elif func_name == "negotiate_day":
                         res = _atv2.negotiate_day(day=args.get("day"),
                                                   event_title=args.get("event_title"),
@@ -1144,7 +1135,7 @@ sending or claiming, and never pass from_member/member_name for them.
                                                     args.get("text", "") or "",
                                                     url=args.get("url"),
                                                     thread_id=args.get('thread_id'),
-                                                    acting_member=actor)
+                                                    acting_member=actor, focus_key=focus_key)
                     if res.get("message"): agent_message = res["message"]
                 elif func_name == "claim_chore":
                     from services.agent_tools_v2 import claim_chore
