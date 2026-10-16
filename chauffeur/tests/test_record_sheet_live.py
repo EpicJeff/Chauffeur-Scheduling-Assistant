@@ -136,8 +136,42 @@ def scenario_a_program_in_the_sheet():
         check(served.errors() == [], f"no page errors: {served.errors()}")
 
 
+def scenario_the_projects_drawer():
+    served = serve()
+    if served is None:
+        return
+    with served.browser() as page:
+        page.on('dialog', lambda d: d.dismiss())
+        admin(page, served, 'mom')
+        page.goto(served.url('work?tab=projects#threads-settings'), wait_until='load')
+        page.wait_for_selector('[data-settings-for~="projects"][data-open="true"]', timeout=15000)
+        drawer = page.locator('[data-settings-for~="projects"]')
+        text = drawer.inner_text().lower()
+        for label in ('Stalls after', 'Household contact card', 'Pacing'):
+            check(label.lower() in text, f"the Projects drawer holds {label}")
+        box = drawer.locator('#threadStallDays')
+        box.fill('9'); box.dispatch_event('change')
+        from project_sheets_fixture import storage
+        for _ in range(40):
+            if (storage.get_settings() or {}).get('thread_stall_days') == 9:
+                break
+            page.wait_for_timeout(250)
+        check((storage.get_settings() or {}).get('thread_stall_days') == 9, "the moved input still saves")
+        shot(page, 'slice2-projects-drawer')
+        page.evaluate("(id) => window.dispatchEvent(new CustomEvent('chf-record-sheet-open', {detail: {kind: 'thread', id}}))", IDS['thread'])
+        page.wait_for_selector('[data-record-sheet][data-open="true"]', timeout=10000)
+        page.keyboard.press('Escape')
+        page.wait_for_function("() => !document.querySelector('[data-settings-for=projects]').hasAttribute('data-open')", timeout=5000)
+        check(page.locator('[data-record-sheet][data-open="true"]').count() == 1,
+              "Escape closes the drawer and keeps the record sheet open")
+        page.keyboard.press('Escape')
+        page.wait_for_function("() => !document.querySelector('[data-record-sheet]').hasAttribute('data-open')", timeout=5000)
+        check(served.errors() == [], f"no page errors: {served.errors()}")
+
+
 SCENARIOS = [scenario_a_thread_in_the_sheet, scenario_a_closed_thread_opens_in_the_sheet, scenario_switching_records_shows_only_the_new_one,
-             scenario_a_mission_in_the_sheet, scenario_a_keeper_gets_the_record_alone, scenario_a_program_in_the_sheet]
+             scenario_a_mission_in_the_sheet, scenario_a_keeper_gets_the_record_alone, scenario_a_program_in_the_sheet,
+             scenario_the_projects_drawer]
 
 if __name__ == "__main__":
     import traceback

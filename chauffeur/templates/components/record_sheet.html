@@ -30,6 +30,8 @@ function chfRecordSheet() {
         rsLabel() { return this.rsTitle || ({thread: 'Conversation', mission: 'Argyle’s work', program: 'Program'}[this.rsKind] || ''); },
         rsEscape() {
             if (!this.rsOpen) return;
+            // The drawer above this sheet owns the first Escape.
+            if (document.querySelector('[data-settings-for][data-open="true"]')) return;
             // Capture runs before input/choice prompts hide themselves on Escape.
             const picker = document.getElementById('emoji-picker-root');
             const promptOpen = typeof window.chfPromptOpen === 'function' ? window.chfPromptOpen() :

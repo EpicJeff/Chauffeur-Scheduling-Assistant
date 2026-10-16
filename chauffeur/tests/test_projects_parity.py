@@ -274,13 +274,51 @@ PARITY += [
 ]
 
 
+S = T + '{}_settings.html'
+PARITY += [
+    ('Settings: thread stall days', S.format('threads'),
+     within("{% call settings_section('threads-settings',", '{% endcall %}',
+            'x-model.number="s.thread_stall_days"', bound('saveStallDays'))),
+    ('Settings: missions on, paid key, pool, caps', S.format('missions'),
+     within("{% call settings_section('missions-settings',", '{% endcall %}',
+            'x-model="s.missions_enabled"', 'x-model="s.model_pool_pro"',
+            'x-model.number="s.mission_cap_launch"', 'x-model.number="s.mission_step_cap"',
+            'x-model.number="s.mission_cap_pro_calls"', bound('save'), bound('savePaidKey'))),
+    ('Settings: remove the paid key', S.format('missions'), bound('removePaidKey')),
+    ('Settings: browser and check the network', S.format('missions'),
+     within("{% call settings_section('browse',", '{% endcall %}', bound('save'), bound('netcheck'))),
+    ('Settings: the household contact card', S.format('missions'),
+     within("{% call settings_section('contact-card',", '{% endcall %}',
+            'x-model="s.contact_first_name"', bound('save'))),
+    ('Settings: programs on and generation', S.format('programs'),
+     within("{% call settings_section('programs-settings',", '{% endcall %}',
+            'x-model="s.programs_enabled"', 'x-model="s.programs_generate_enabled"', bound('saveProgramSettings'))),
+    ('Settings: lessons and write lessons now', S.format('programs'),
+     within('<section id="lessons"', '</section>',
+            'x-model="s.program_lessons_enabled"', bound('saveProgramSettings'), bound('runLessonSweep'))),
+    ('Settings: play a swept slot', S.format('programs'),
+     within('<section id="lessons"', '</section>', bound('playSweepSlot', 'slot'))),
+    ('Settings: pacing', S.format('programs'),
+     within("{% call settings_section('programs-pacing',", '{% endcall %}',
+            'x-model.number="s.programs_research_pages"', bound('saveProgramSettings'))),
+    ('Settings: one Projects drawer', T + 'projects_admin.html',
+     within("{% call settings_drawer('projects',", '{% endcall %}',
+            "include 'components/missions_settings.html'", "include 'components/threads_settings.html'",
+            "include 'components/programs_settings.html'")),
+    ('Settings: missions off, turn on', T + 'projects_admin.html',
+     re.compile(r"\{\{ settings_off\('[^']*', 'projects', 'missions-settings', 'loaded && !s.missions_enabled'\) \}\}")),
+    ('Settings: programs off, turn on', T + 'projects_admin.html',
+     re.compile(r"\{\{ settings_off\('[^']*', 'projects', 'programs-settings', 'settingsLoaded && !s.programs_enabled'\) \}\}")),
+]
+
+
 HIDE, END_HIDE = '{# sheet:hide #}', '{# /sheet:hide #}'
 HIDDEN = re.compile(re.escape(HIDE) + r'(.*?)' + re.escape(END_HIDE), re.S)
 EVENT = re.compile(r"(?:@[\w:.-]+|x-on:[\w:.-]+|on[a-z]+)=([\"'])(.*?)\1", re.S)
 CHROME = {
-    TP: {'createThread', 'creating', 'rememberClosed', 'saveStallDays'},
-    MP: {'launch', 'save', 'savePaidKey', 'removePaidKey', 'netcheck'},
-    PP: {'proposeProgram', 'toggleDay', 'creating', 'runLessonSweep', 'playSweepSlot', 'saveProgramSettings'},
+    TP: {'createThread', 'creating', 'rememberClosed'},
+    MP: {'launch'},
+    PP: {'proposeProgram', 'toggleDay', 'creating'},
 }
 
 

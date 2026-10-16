@@ -88,11 +88,11 @@ def main():
             page.wait_for_selector(M + '[data-open]')
             _shot(page, 'mind-open-phone')
 
-            # Missions: seven controls in the drawer; the paid key is set / not set only.
+            # Missions settings now live in Projects; the paid key is set / not set only.
             page.set_viewport_size({'width': 1300, 'height': 900})
-            X = '[data-settings-for~="missions"]'
-            page.goto(served.url('work?tab=missions'), wait_until='networkidle')
-            page.wait_for_selector('[data-page-tab="missions"] [data-settings-off]', state='visible')
+            X = '[data-settings-for~="projects"]'
+            page.goto(served.url('work?tab=projects'), wait_until='networkidle')
+            page.wait_for_selector('[data-page-tab="projects"] [x-data="missionsSettings()"] [data-settings-off]', state='visible')
             _shot(page, 'missions-closed-desktop')
             page.click('#page-settings-gear')
             page.wait_for_selector(X + '[data-open]')

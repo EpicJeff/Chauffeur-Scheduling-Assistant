@@ -1,4 +1,18 @@
 {# What the admin hosts of the Projects page add around the shared component
-   (front door §2-§3): the record sheet now; the Projects drawer and the
-   switched-off notices in the retirement task. The phone app never includes it. #}
+   (front door §2-§3): the switched-off notices, the one Projects drawer, the
+   record sheet. Each settings partial sits in a small island of its owning
+   component, so every input saves through the method it always used. The
+   phone app never includes this file. #}
+{% from 'components/settings_drawer.html' import settings_drawer, settings_off with context %}
+<div x-data="missionsSettings()" x-init="load()">
+    {{ settings_off('Argyle’s work is off — Argyle runs none.', 'projects', 'missions-settings', 'loaded && !s.missions_enabled') }}
+</div>
+<div x-data="programsPage()" x-init="loadSettings()">
+    {{ settings_off('Programs are off — nothing is asked, re-planned or found.', 'projects', 'programs-settings', 'settingsLoaded && !s.programs_enabled') }}
+</div>
+{% call settings_drawer('projects', 'Projects', sections=[('missions-settings', 'Argyle’s work'), ('browse', 'Browser'), ('contact-card', 'Contact card'), ('threads-settings', 'Threads'), ('programs-settings', 'Programs'), ('lessons', 'Lessons'), ('programs-pacing', 'Pacing')]) %}
+<div x-data="missionsSettings()" x-init="load()" class="flex flex-col gap-6">{% include 'components/missions_settings.html' %}</div>
+<div x-data="threadsPage()" x-init="loadSettings()" class="flex flex-col gap-6">{% include 'components/threads_settings.html' %}</div>
+<div x-data="programsPage()" x-init="loadSettings()" class="flex flex-col gap-6">{% include 'components/programs_settings.html' %}</div>
+{% endcall %}
 {% include 'components/record_sheet.html' %}

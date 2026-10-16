@@ -658,57 +658,57 @@ ENTRIES: List[dict] = [
     _e('missions_enabled', 'missions', 'Missions',
        'Argyle can work multi-step missions (research, compare, draft, '
        'propose) on the paid pro model. Off means completely off — no LLM '
-       'calls, no ticks.', page='work?tab=missions', anchor='missions-settings'),
+       'calls, no ticks.', page='work?tab=projects', anchor='missions-settings'),
     _e('llm_gemini_paid_api_key', 'missions', 'Paid Gemini API key',
        'Billed key used ONLY by missions (the pro pool). Regular Chauffeur '
-       'traffic stays on the free key.', page='work?tab=missions', anchor='missions-settings'),
+       'traffic stays on the free key.', page='work?tab=projects', anchor='missions-settings'),
     _e('model_pool_pro', 'missions', 'Pro model pool',
        'Comma-separated pro models missions may use '
-       '(default gemini-3.1-pro-preview).', page='work?tab=missions', anchor='missions-settings'),
+       '(default gemini-3.1-pro-preview).', page='work?tab=projects', anchor='missions-settings'),
     _e('mission_cap_launch', 'missions', 'Daily launch cap',
-       'Missions that may be started per day (default 3).', page='work?tab=missions', anchor='missions-settings'),
+       'Missions that may be started per day (default 3).', page='work?tab=projects', anchor='missions-settings'),
     _e('mission_step_cap', 'missions', 'Steps per mission',
        'LLM calls one mission may spend before it must stop (default 40).',
-       page='work?tab=missions', anchor='missions-settings'),
+       page='work?tab=projects', anchor='missions-settings'),
     _e('mission_cap_pro_calls', 'missions', 'Daily pro-call cap',
        'Total paid-model calls per day across all missions (default 120).',
-       page='work?tab=missions', anchor='missions-settings'),
+       page='work?tab=projects', anchor='missions-settings'),
     _e('thread_cap_photo_reads', 'missions', 'Daily photo-read cap',
        'Hard ceiling on photos Argyle reads off a thread per day (default 20). Over the cap a photo is '
        'kept but not read.',
-       page='work?tab=missions', anchor='missions-settings'),
+       page='work?tab=projects', anchor='missions-settings'),
     _e('contact_first_name', 'missions', 'Contact card: first name',
        "The family's own contact details, filled once. A mission releases them to a site only after a parent "
        "approves that site, once per mission.",
-       page='work?tab=missions', anchor='contact-card'),
-    _e('contact_last_name', 'missions', 'Contact card: last name', "The family's surname as a site's form would want it. Released only per site per mission, after a parent approves.", page='work?tab=missions', anchor='contact-card'),
-    _e('contact_email', 'missions', 'Contact card: email', "The household email a site may write to. Released only per site per mission, after a parent approves.", page='work?tab=missions', anchor='contact-card'),
-    _e('contact_phone', 'missions', 'Contact card: phone', "The household phone a site may call or text. Released only per site per mission, after a parent approves.", page='work?tab=missions', anchor='contact-card'),
-    _e('contact_street', 'missions', 'Contact card: street', "The street address a technician would come to. Released only per site per mission, after a parent approves.", page='work?tab=missions', anchor='contact-card'),
-    _e('contact_apt', 'missions', 'Contact card: apt / suite', "Apartment, suite or unit, if any. Released with the street address, per site per mission.", page='work?tab=missions', anchor='contact-card'),
-    _e('contact_city', 'missions', 'Contact card: city', "The city of the household address. Released only per site per mission, after a parent approves.", page='work?tab=missions', anchor='contact-card'),
-    _e('contact_state', 'missions', 'Contact card: state', "The state or province of the household address. Released only per site per mission, after a parent approves.", page='work?tab=missions', anchor='contact-card'),
-    _e('contact_zip', 'missions', 'Contact card: ZIP', "The ZIP or postal code of the household address. Released only per site per mission, after a parent approves.", page='work?tab=missions', anchor='contact-card'),
+       page='work?tab=projects', anchor='contact-card'),
+    _e('contact_last_name', 'missions', 'Contact card: last name', "The family's surname as a site's form would want it. Released only per site per mission, after a parent approves.", page='work?tab=projects', anchor='contact-card'),
+    _e('contact_email', 'missions', 'Contact card: email', "The household email a site may write to. Released only per site per mission, after a parent approves.", page='work?tab=projects', anchor='contact-card'),
+    _e('contact_phone', 'missions', 'Contact card: phone', "The household phone a site may call or text. Released only per site per mission, after a parent approves.", page='work?tab=projects', anchor='contact-card'),
+    _e('contact_street', 'missions', 'Contact card: street', "The street address a technician would come to. Released only per site per mission, after a parent approves.", page='work?tab=projects', anchor='contact-card'),
+    _e('contact_apt', 'missions', 'Contact card: apt / suite', "Apartment, suite or unit, if any. Released with the street address, per site per mission.", page='work?tab=projects', anchor='contact-card'),
+    _e('contact_city', 'missions', 'Contact card: city', "The city of the household address. Released only per site per mission, after a parent approves.", page='work?tab=projects', anchor='contact-card'),
+    _e('contact_state', 'missions', 'Contact card: state', "The state or province of the household address. Released only per site per mission, after a parent approves.", page='work?tab=projects', anchor='contact-card'),
+    _e('contact_zip', 'missions', 'Contact card: ZIP', "The ZIP or postal code of the household address. Released only per site per mission, after a parent approves.", page='work?tab=projects', anchor='contact-card'),
     _e('contact_preferred', 'missions', 'Contact card: preferred contact',
-       'How the household prefers a site to reach it: text, email or phone. Released per site per mission like the rest of the card.', page='work?tab=missions', anchor='contact-card'),
+       'How the household prefers a site to reach it: text, email or phone. Released per site per mission like the rest of the card.', page='work?tab=projects', anchor='contact-card'),
     _e('missions_captcha_attempts', 'missions', 'Let Argyle attempt human-verification checks',
        "Off by default. On, a browse may tick a CAPTCHA checkbox and try at most two image challenges, then hands "
        "the page to you.",
-       page='work?tab=missions', anchor='browse'),
+       page='work?tab=projects', anchor='browse'),
     _e('missions_submit_enabled', 'missions', 'Argyle may book and submit forms with your approval',
        "On by default. A browse that reaches a Book, Confirm, Submit or Send button stops and asks; a parent taps Book it and the "
        "browser presses once. Payment is never pressed, on or off. Off: the browser stops at such a button and hands you the page.",
-       page='work?tab=missions', anchor='browse'),
+       page='work?tab=projects', anchor='browse'),
     _e('mission_cap_browse_turns', 'missions', 'Daily browse-turn cap',
        "Hard ceiling on browser actions Argyle takes per day across missions (default 400), billed on the paid key.",
-       page='work?tab=missions', anchor='browse'),
+       page='work?tab=projects', anchor='browse'),
 
     # --- Threads (open loops with people outside the family) ---
     _e('thread_stall_days', 'threads', 'Stalls after (days)',
        'How many days of no movement before an open thread counts as quiet '
        'and becomes a finding (default 7). A thread with a next-action date '
        'in the past stalls immediately regardless of this.',
-       page='work?tab=threads', anchor='threads-settings'),
+       page='work?tab=projects', anchor='threads-settings'),
 
     # --- Negotiation (the smallest change that makes a day work) ---
     _e('negotiation_enabled', 'negotiation', 'Look for deals',
@@ -733,35 +733,35 @@ ENTRIES: List[dict] = [
     _e('programs_enabled', 'programs', 'Programs',
        'Find real plans for what people want to do, claim the time, and count '
        'what happens. Off means no asks, no re-baselining and no findings.',
-       page='rhythms?tab=programs', anchor='programs-settings'),
+       page='work?tab=projects', anchor='programs-settings'),
     _e('programs_ask_grace_hours', 'programs', 'Ask after (hours)',
        'How long after a practice window ends before asking whether it '
        'happened (default 2). Quiet hours are always honoured on top of this.',
-       page='rhythms?tab=programs', anchor='programs-pacing'),
+       page='work?tab=projects', anchor='programs-pacing'),
     _e('programs_rebaseline_days', 'programs', 'Look back (days)',
        'How far back the check for a struggling program looks (default 21).',
-       page='rhythms?tab=programs', anchor='programs-pacing'),
+       page='work?tab=projects', anchor='programs-pacing'),
     _e('programs_rebaseline_cooldown_days', 'programs', 'Re-baseline at most every (days)',
        'The minimum gap between two timeline stretches, so a plan cannot '
-       'chatter about bending (default 14).', page='rhythms?tab=programs', anchor='programs-pacing'),
+       'chatter about bending (default 14).', page='work?tab=projects', anchor='programs-pacing'),
     _e('programs_generate_enabled', 'programs', 'Make a plan when none is found',
        'When research turns up no published program for an aim, let the app '
        'write one and label it as made by the app (default on). Off means '
        'those programs claim practice time and carry no plan at all.',
-       page='rhythms?tab=programs', anchor='programs-settings'),
+       page='work?tab=projects', anchor='programs-settings'),
     _e('program_lessons_enabled', 'programs', 'Lesson scripts',
        'Write a short scripted lesson for each practice session the night '
        'before — the session still shows its plain steps with this off '
-       '(default on).', page='rhythms?tab=programs', anchor='lessons'),
+       '(default on).', page='work?tab=projects', anchor='lessons'),
     _e('lesson_help_daily_cap', 'programs', 'Questions a day during a session',
        'How many times anybody in the house may tap Explain this inside a '
        'lesson before the app stops answering for the day (default 20). '
        'Zero switches it off. Nothing asked or answered is ever recorded.',
-       page='rhythms?tab=programs', anchor='lessons'),
+       page='work?tab=projects', anchor='lessons'),
     _e('programs_research_pages', 'programs', 'Pages to read',
        'How many real pages a curation run reads before proposing a plan '
        '(default 4). One run per program, cached for its life.',
-       page='rhythms?tab=programs', anchor='programs-pacing'),
+       page='work?tab=projects', anchor='programs-pacing'),
 ]
 
 BY_KEY: Dict[str, dict] = {e['key']: e for e in ENTRIES}
