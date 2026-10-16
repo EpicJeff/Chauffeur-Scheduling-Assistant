@@ -468,14 +468,13 @@ def _monitor(now, viewer=access.HOUSE):
                          for m in members][:8]}
 
 
-def _map(now, viewer=access.HOUSE):
+def _map(now, viewer=None):
     """Real destination coordinates from the household's geocode cache.
 
     Reading the Study never initiates provider calls. Unknown locations stay
     unpinned; a trip's event_id is the key used by the existing trip page.
     """
     from services import scope, maps
-    viewer = viewer or access.HOUSE
     home = None
     home_location = maps.get_home_location()
     if home_location:
@@ -502,8 +501,9 @@ def _map(now, viewer=access.HOUSE):
         # (scope.AUDIENCE_DEFAULTS: a plan is a surprise until somebody says
         # otherwise), and a RESOLVED non-parent viewer is held to that — an
         # adult in the house must not read a surprise off the study wall.
-        # An identity-free caller is HOUSE, including a trusted panel.
-        if not scope.audience_allows(t, 'trip', viewer):
+        # None is the admin surface, where /trips already lists every trip.
+        # Trips are outside the piece access rule.
+        if viewer is not None and not scope.audience_allows(t, 'trip', viewer):
             continue
         ts = t.get('mock_start_date')
         try:
@@ -544,13 +544,15 @@ _SECTIONS = {'board': _board, 'desk': _desk, 'tray': _tray, 'stickies': _stickie
              'monitor': _monitor, 'map': _map}
 
 
-def state(viewer=access.HOUSE, now: datetime.datetime = None) -> dict:
-    viewer = viewer or access.HOUSE
+def state(viewer=None, now: datetime.datetime = None) -> dict:
     now = now or datetime.datetime.now()
     furniture = {}
     for key, fn in _SECTIONS.items():
         try:
-            furniture[key] = fn(now, viewer)
+            # Only piece sections use HOUSE when no person is resolved.
+            # Other sections retain their existing None/admin semantics.
+            section_viewer = (viewer or access.HOUSE) if key in ('board', 'binders', 'stickies') else viewer
+            furniture[key] = fn(now, section_viewer)
         except Exception as e:
             logger.warning(f'[study] section {key} failed: {e}')
             furniture[key] = _CALM[key]

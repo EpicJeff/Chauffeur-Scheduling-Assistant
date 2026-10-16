@@ -142,7 +142,10 @@ def scenario_stickies_carry_their_finding_lines():
     rows = [{'id': f'f{i}', 'line': f'thing {i}', 'severity': 'decide' if i < 2 else 'fyi'}
             for i in range(6)]
     try:
-        findings.open_findings = lambda severity=None: rows
+        def open_findings(severity=None, include_in_hand=False, *, viewer=None):
+            check(viewer == PARENT, 'stickies pass the parent to the findings reader')
+            return rows
+        findings.open_findings = open_findings
         st = study.state(PARENT, now=NOON)['furniture']['stickies']
     finally:
         findings.open_findings = orig
@@ -150,6 +153,24 @@ def scenario_stickies_carry_their_finding_lines():
     check(len(st['items']) == 6, f'all findings can be browsed: {st["items"]}')
     check(st['items'][0] == {'id': 'f0', 'line': 'thing 0', 'severity': 'decide', 'due_at': None},
           f'each note carries its line and its severity: {st["items"][0]}')
+
+
+def scenario_stickies_read_real_parent_findings():
+    """Exercise the viewer-aware findings reader as well as the stub contract."""
+    _reset()
+    storage.findings_table.truncate()
+    try:
+        for i in range(6):
+            storage.add_finding({'id': f'f{i}', 'state': 'open', 'line': f'thing {i}',
+                                 'severity': 'decide' if i < 2 else 'fyi'})
+        st = study.state(PARENT, now=NOON)['furniture']['stickies']
+        check(st['count'] == 6 and st['worst'] == 'decide', f'real parent findings: {st}')
+        check(len(st['items']) == 6 and {r['line'] for r in st['items']} ==
+              {f'thing {i}' for i in range(6)}, f'all real finding lines survive: {st}')
+        check(st['items'][0] == {'id': 'f0', 'line': 'thing 0', 'severity': 'decide', 'due_at': None},
+              f'real notes retain their fields and severity: {st["items"]}')
+    finally:
+        storage.findings_table.truncate()
 
 
 def scenario_calendar_days_carry_their_events_in_the_drivers_colour():
@@ -836,6 +857,7 @@ if __name__ == '__main__':
     scenario_desk_line_rides_the_same_gate_as_its_row()
     scenario_tray_carries_the_titles_it_is_waiting_on()
     scenario_stickies_carry_their_finding_lines()
+    scenario_stickies_read_real_parent_findings()
     scenario_calendar_days_carry_their_events_in_the_drivers_colour()
     scenario_window_signs_respect_the_ready_gate()
     scenario_contracts_carry_the_deals_they_are_waiting_on()

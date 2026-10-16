@@ -490,6 +490,35 @@ def round1_shared_contracts():
     home_board.build(config, now=NOW, viewer=viewer)
     check(set(home_board._CACHE) != keys, 'project audience changes cache key')
 
+    # Each access input must invalidate a warm board independently. Restore
+    # the original value to prove ordinary builds still reuse their entry.
+    def changes_key(label, row, update, field, value):
+        home_board._CACHE.clear()
+        before = home_board.build(config, now=NOW, viewer=viewer)
+        keys = set(home_board._CACHE)
+        try:
+            update(row['id'], {field: value})
+            after = home_board.build(config, now=NOW, viewer=viewer)
+            check(set(home_board._CACHE) != keys and after is not before,
+                  label + ' changes cache key')
+        finally:
+            update(row['id'], {field: row.get(field)})
+        check(home_board.build(config, now=NOW, viewer=viewer) is before,
+              label + ' restored key reuses cached board')
+
+    changes_key('project owner', storage.get_project(fx.projects['mom_private']['id']),
+                storage.update_project, 'owner_member_id', 'aunt')
+    member = storage.get_member('mom')
+    for field in ('is_child', 'system'):
+        changes_key('member ' + field, member, storage.update_member, field, True)
+    for kind, row, update in (
+            ('thread', storage.get_thread(fx.ids['R5t']), storage.update_thread),
+            ('mission', storage.get_mission(fx.ids['R9b']), storage.update_mission),
+            ('program', storage.get_program(fx.ids['R5p']), storage.update_program)):
+        for field, value in (('subject_kind', 'occasion'), ('subject_id', 'occ-parents'),
+                             ('subject_history', [{'kind': 'occasion', 'id': 'occ-parents'}])):
+            changes_key(kind + ' ' + field, row, update, field, value)
+
 
 def round1_signal_contracts():
     from services import agent_tools_v2, situations, chat_actions
