@@ -297,6 +297,48 @@ def neutral_practice(event):
             'practice': {k: practice.get(k) for k in NEUTRAL_PRACTICE_KEYS}}
 
 
+def schedule_view(blob, viewer):
+    """Apply the current audience to a schedule blob, row by row, at read time."""
+    import copy
+    if not blob:
+        return blob
+    out = copy.copy(blob)
+    with batch():
+        programs = {}
+        def visible(pid):
+            if pid not in programs:
+                row = storage.get_program(pid)
+                programs[pid] = bool(row) and (record_visible('program', row, viewer)
+                                               if not is_house(viewer) else record_visible('program', row, HOUSE))
+            return programs[pid]
+        events = []
+        for ev in blob.get('events') or []:
+            pid = ((ev.get('practice') or {}).get('program_id')) if ev.get('event_type') == 'practice' else None
+            events.append(ev if not pid or visible(pid) else neutral_practice(ev))
+        out['events'] = events
+    return out
+
+
+def cached_schedule(viewer=HOUSE, *, blob=None):
+    """One consumption boundary for stored schedules and caller-supplied blobs."""
+    return schedule_view(storage.get_cached_schedule() if blob is None else blob, viewer) or {}
+
+
+def event_view(event, viewer=HOUSE):
+    """Apply the same rule when a reader already resolved an event by id."""
+    return schedule_view({'events': [event]}, viewer)['events'][0] if event else event
+
+
+def commitment_view(row, viewer=HOUSE):
+    """An emitted reservation follows its program's current audience."""
+    source = (row or {}).get('source') or {}
+    if source.get('kind') == 'program':
+        program = storage.get_program(source.get('id'))
+        if not program or not record_visible('program', program, viewer):
+            return {k: v for k, v in dict(row, title='Busy').items() if k != 'source'}
+    return row
+
+
 def shared_schedule_view(blob, viewer=HOUSE):
     """Shared-screen practice words, checked against the current program.
 

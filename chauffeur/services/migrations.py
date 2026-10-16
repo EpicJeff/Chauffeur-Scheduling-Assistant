@@ -498,6 +498,38 @@ def migrate_drop_piece_kind_links_v2499():
                 storage.update_project(project['id'], {'pieces': kept})
 
 
+def migrate_remove_target_events_v2499():
+    """Spec 10.3: retire calendar copies of program target dates, retry failures."""
+    from services import calendar
+    cal_id = ((storage.get_settings() or {}).get('calendar_ids') or ['primary'])[0]
+    for row in storage.get_programs():
+        baseline = dict(row.get('baseline') or {})
+        event_id = baseline.get('target_event_id')
+        if not event_id:
+            continue
+        try:
+            if not calendar.delete_event(cal_id, event_id):
+                continue
+        except Exception as exc:
+            logger.warning(f"Target-event removal will retry for {row['id']}: {exc}")
+            continue
+        baseline.pop('target_event_id', None)
+        emissions = dict(row.get('emissions') or {})
+        emissions['event_ids'] = [eid for eid in emissions.get('event_ids') or [] if eid != event_id]
+        storage.update_program(row['id'], {'baseline': baseline, 'emissions': emissions})
+        with storage.db_lock:
+            storage._invalidate_schedule_caches()
+
+
+def migrate_commitment_sources_v2499():
+    """Backfill program provenance, including inactive and paused reservations."""
+    for row in storage.get_programs():
+        for cid in (row.get('emissions') or {}).get('commitment_ids') or []:
+            commitment = storage.get_protected_commitment(cid)
+            if commitment and not commitment.get('source'):
+                storage.update_protected_commitment(cid, {'source': {'kind': 'program', 'id': row['id']}})
+
+
 async def run_all_migrations():
     """Runs all data migrations in the background after startup"""
     await asyncio.sleep(5) # Let the app start up completely
@@ -554,3 +586,8 @@ async def run_all_migrations():
         migrate_drop_piece_kind_links_v2499()
     except Exception as e:
         logger.error(f"Error dropping project piece-kind links: {e}")
+    for migrate in (migrate_commitment_sources_v2499, migrate_remove_target_events_v2499):
+        try:
+            migrate()
+        except Exception as e:
+            logger.error(f"Error in {migrate.__name__}: {e}")

@@ -189,7 +189,7 @@ READERS = [
         'services.study._monitor',
     ]],
     # 4.7-calendar: function readers found by the register guard (Task 1 Step 9)
-    *[((F, name), '4.7-calendar', ('thread', 'mission', 'program'), 'pending its task') for name in [
+    *[((F, name), '4.7-calendar', ('thread', 'mission', 'program'), 'schedule_view / commitment_view at consumption') for name in [
         'services.agent_tools_v2._driver_events_for_date',
         'services.agent_tools_v2._find_event_fuzzy',
         'services.agent_tools_v2.get_calendar_events',
@@ -232,6 +232,12 @@ READERS = [
         'services.email_ingest._run_ingest_locked',
         'services.meals.eating_plan',
     ]],
+    ((F, 'services.programs._practice_windows'), 'INTERNAL', ('program',),
+     'full-word builder for the shared cache and per-recipient pushes; practice_windows applies the read rule'),
+    ((F, 'services.migrations.migrate_commitment_sources_v2499'), 'INTERNAL', ('program',),
+     'migration writes source ids only; no words are shown'),
+    ((F, 'services.migrations.migrate_remove_target_events_v2499'), 'INTERNAL', ('program',),
+     'migration deletes obsolete calendar copies by id; no words are shown'),
     # 4.8-signals: function readers found by the register guard (Task 1 Step 9)
     *[((F, name), '4.8-signals', ('thread', 'mission', 'program'), 'finding_visible / private_recipients') for name in [
         'services.findings.open_findings',
@@ -334,7 +340,8 @@ READERS = [
     ((R, 'POST', '/api/asks/{ask_id}/withdraw'), '4.1-signed-in', ('thread', 'mission'), 'record_actable'),
     ((P, '*', '/api/projects'), 'NONE', (), 'projects.can_see/can_act; project access is unchanged by this spec'),
     ((R, 'POST', '/api/study/trips/{event_id}/locate'), 'NONE', (), 'trip'),
-    ((R, 'GET', '/api/household-load'), '4.7-calendar', ('program',), 'schedule_view'),
+    ((R, 'GET', '/api/household-load'), 'INTERNAL', (),
+     'aggregate completed-drive/job counts from daily_stats; no schedule, commitment or program words (spec 4.8)'),
     ((R, 'GET', '/api/assist-history'), 'NONE', (), 'assist contacts'),
     ((R, 'GET', '/api/ha/frontend/history'), 'NONE', (), 'HA frontend'),
     ((R, 'POST', '/api/packing/claim'), 'NONE', (), 'packing claims'),
@@ -352,9 +359,10 @@ READERS = [
     ((R, 'POST', '/api/events/{event_id}/attendance'), 'INTERNAL', (), 'an action on a calendar event'),
     ((R, 'POST', '/api/events/{event_id}/optional_decision'), 'INTERNAL', (), 'an action on a calendar event'),
     ((R, 'GET', '/api/debug/travel'), 'INTERNAL', (), 'parents debug'),
-    *[((F, name), '4.7-calendar', ('program',), 'pending its task') for name in [
+    *[((F, name), '4.7-calendar', ('program',), 'cached_schedule(HOUSE) at consumption') for name in [
         'main._assist_event_context', 'main._notify_kids_driver_changes', 'main._notify_kids_ride_started',
         'main._notify_ride_eta_update',
+        'main.flush_assignment_notifications',
     ]],
     ((F, 'main.perform'), '4.5-voice', ('thread', 'mission', 'program'), 'record_view(HOUSE): nested in POST /api/v2/converse'),
     *[((F, name), 'INTERNAL', (), 'raw (builder, gate or helper; its callers apply the rule)') for name in [

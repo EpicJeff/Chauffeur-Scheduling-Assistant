@@ -28,6 +28,7 @@ parent can verify by looking: a drive at that time, a protected window, a day
 marked away. `matcher.explain_assignment_conflicts` remains the deeper answer
 for the override dialog, where the full model is already in hand.
 """
+from services import access
 import datetime
 
 from services import assist, storage
@@ -77,6 +78,7 @@ def _protected_window(member_id, ev_start):
     """A standing commitment (load arc A6) covering this hour. Protected time is
     a reason a person is not available, and naming it is the point — 'Sarah:
     Thursday run 6–7' reads as a decision the family already made."""
+    # Emitted commitment words follow the program, even in a blocking reason.
     for pc in storage.get_protected_commitments(member_id=member_id):
         if ev_start.weekday() not in set(pc.get('days_of_week') or []):
             continue
@@ -88,7 +90,7 @@ def _protected_window(member_id, ev_start):
         w_start = ev_start.replace(hour=sh, minute=sm, second=0, microsecond=0)
         w_end = ev_start.replace(hour=eh, minute=em, second=0, microsecond=0)
         if w_start <= ev_start <= w_end:
-            return pc
+            return access.commitment_view(pc)
     return None
 
 
@@ -210,7 +212,8 @@ def ladder(ev, cache=None, now=None) -> dict:
     proposal-shaped so the caller can turn them into approve cards without
     knowing anything about what each one does.
     """
-    cache = cache if cache is not None else (storage.get_cached_schedule() or {})
+    cache = access.cached_schedule(blob=cache)
+    ev = access.event_view(ev)
     now = now or datetime.datetime.now()
     title = ev.get('title') or 'Event'
     start = _parse(ev.get('start'))
@@ -291,7 +294,7 @@ def start_ask(event_id: str, contact_id: str = None, contact_name: str = None,
     services.asks: a text-channel ask, template-drafted (no LLM call on this
     path), sent at once."""
     from services import asks as _asks
-    cache = storage.get_cached_schedule() or {}
+    cache = access.cached_schedule() or {}
     ev = next((e for e in (cache.get('events') or [])
                if str(e.get('id')) == str(event_id)), None)
     if not ev:

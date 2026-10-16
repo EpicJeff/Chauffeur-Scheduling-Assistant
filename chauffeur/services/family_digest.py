@@ -11,6 +11,7 @@ Delivery reuses the family-chat rails: the digest is an ordinary ChatMessage
 from the Argyle system member, so SSE + push/HA fan-out come free and the
 recap is readable by everyone, forever, in the thread.
 """
+from services import access
 import datetime
 
 from services import storage, access
@@ -385,7 +386,7 @@ def build_household_briefing(target_date: datetime.date = None) -> dict:
     same for every adult, because a shared picture is the point.
     """
     tomorrow = target_date or (datetime.date.today() + datetime.timedelta(days=1))
-    cache = access.shared_schedule_view(storage.get_cached_schedule(), access.HOUSE)
+    cache = access.cached_schedule()
     events = {str(e.get("id")): e for e in cache.get("events", [])}
     assignments = dict(cache.get("assignments") or {})
     assist_map = dict(cache.get("assist_assignments") or {})
@@ -491,7 +492,7 @@ def build_drive_digests(target_date: datetime.date = None) -> dict:
     from services import prep_kits
     from services.leave_by import stamp_departure as _stamp_departure
     tomorrow = target_date or (datetime.date.today() + datetime.timedelta(days=1))
-    cache = storage.get_cached_schedule() or {}
+    cache = access.cached_schedule() or {}
     events = {e.get("id"): e for e in cache.get("events", [])}
     kits = storage.get_prep_kits()
     pax = prep_kits.passenger_objs()

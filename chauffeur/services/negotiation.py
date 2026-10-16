@@ -22,6 +22,7 @@ The prices in `GIVE_UP` are the design, not tuning. Lifting a protected window
 is the most expensive thing the negotiator can ask for, because protected time
 is the one place an adult's time is FOR something rather than an obstacle.
 """
+from services import access
 import datetime
 
 from services import coverage_options, maps, solve_pack, storage
@@ -128,6 +129,7 @@ def candidates(pack: dict, seed_event_id: str, assignments: dict = None) -> list
     the `swap_drive` lever finds nobody to free. Falling back to it here is a
     last resort for a caller with nothing better, not the intended path.
     """
+    pack = access.cached_schedule(blob=pack)
     events = {str(e.get('id')): e for e in pack.get('events') or []}
     seed = events.get(str(seed_event_id))
     if not seed:
@@ -265,7 +267,8 @@ def candidates(pack: dict, seed_event_id: str, assignments: dict = None) -> list
                 # "no filter" and hands back every family member's protected
                 # time, which is not this driver's to give up.
                 continue
-            for pc in storage.get_protected_commitments(member_id=member['id']):
+            for raw_pc in storage.get_protected_commitments(member_id=member['id']):
+                pc = access.commitment_view(raw_pc)
                 if str(pc.get('id')) != str(b.get('commitment_id') or ''):
                     continue
                 if str(pc.get('id')) not in (pack.get('protected_rule_index') or {}):
@@ -829,7 +832,7 @@ def expire_part(part_id: str) -> dict:
 
 
 def _cached_event(event_id) -> dict:
-    sched = storage.get_cached_schedule() or {}
+    sched = access.cached_schedule() or {}
     return next((e for e in (sched.get('events') or [])
                  if str(e.get('id')) == str(event_id)), None)
 

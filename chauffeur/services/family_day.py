@@ -13,12 +13,12 @@ safe on every poll. The solver sees nothing new through this module.
 import datetime
 from typing import List, Optional
 
-from services import outings, storage
+from services import outings, storage, access
 
 
 def blocks_for(target_date=None, sched: dict = None,
                now: datetime.datetime = None,
-               items_by_key: dict = None) -> dict:
+               items_by_key: dict = None, *, viewer=access.HOUSE) -> dict:
     """Every block of one day, time-ordered, plus the all-day banner.
 
     `items_by_key` maps a block key to how many things it needs packed. It is
@@ -29,15 +29,16 @@ def blocks_for(target_date=None, sched: dict = None,
     """
     now = now or datetime.datetime.now()
     target = outings._as_date(target_date) or now.date()
-    sched = sched if sched is not None else (storage.get_cached_schedule() or {})
-    day = _raw_blocks(target, sched, now)
-    day['blocks'].extend(_prep_blocks(target, sched, now, items_by_key))
+    sched = access.cached_schedule(viewer, blob=sched)
+    day = _raw_blocks(target, sched, now, viewer=viewer)
+    day['blocks'].extend(_prep_blocks(target, sched, now, items_by_key, viewer=viewer))
     day['blocks'].sort(key=lambda b: (b['start'], b['key']))
     return day
 
 
-def _raw_blocks(target, sched: dict, now: datetime.datetime) -> dict:
+def _raw_blocks(target, sched: dict, now: datetime.datetime, *, viewer=access.HOUSE) -> dict:
     """One day's happenings, before prep is placed among them."""
+    sched = access.cached_schedule(viewer, blob=sched)
     events = {e.get('id'): e for e in (sched.get('events') or [])}
     assist = sched.get('assist_assignments') or {}
     contacts = {str(c.get('id')): c
@@ -68,7 +69,7 @@ def _raw_blocks(target, sched: dict, now: datetime.datetime) -> dict:
 
     blocks = []
     all_day = []
-    outing_rows = outings.outings_for(target, sched, now)
+    outing_rows = outings.outings_for(target, sched, now, viewer=viewer)
     inside_an_outing = {eid for o in outing_rows for eid in o['event_ids']}
     for o in outing_rows:
         lines = [_line(events.get(e), members, cal_meta, matched.get(e))
@@ -187,7 +188,7 @@ def _prep_window(depart: datetime.datetime):
 
 
 def _prep_blocks(target, sched: dict, now: datetime.datetime,
-                 items_by_key: dict = None) -> List[dict]:
+                 items_by_key: dict = None, *, viewer=access.HOUSE) -> List[dict]:
     """The prep blocks that belong to `target` — at most one per part of the
     day, each holding a tile per event.
 
@@ -206,10 +207,10 @@ def _prep_blocks(target, sched: dict, now: datetime.datetime,
     buckets = {}
     for offset in (0, 1):
         day = target + datetime.timedelta(days=offset)
-        for b in _raw_blocks(day, sched, now)['blocks']:
+        for b in _raw_blocks(day, sched, now, viewer=viewer)['blocks']:
             if b.get('canceled') or b['kind'] == 'prep':
                 continue
-            if not _has_items(b, sched, items_by_key):
+            if not _has_items(b, sched, items_by_key, viewer=viewer):
                 continue
             depart = outings._parse(b.get('start'))
             if not depart:
@@ -269,7 +270,7 @@ def _prep_blocks(target, sched: dict, now: datetime.datetime,
     evening = buckets.get('evening')
     if evening:
         ends = [b.get('end') or b.get('start')
-                for b in _raw_blocks(target, sched, now)['blocks']
+                for b in _raw_blocks(target, sched, now, viewer=viewer)['blocks']
                 if not b.get('canceled')]
         latest = max(ends) if ends else None
         if latest and latest > evening['start']:
@@ -314,13 +315,13 @@ def _bucket_anchor(when: datetime.datetime) -> datetime.datetime:
     return datetime.datetime.combine(day, datetime.time(_AFTERNOON_ENDS, 0))
 
 
-def _has_items(b: dict, sched: dict, items_by_key: dict = None) -> bool:
+def _has_items(b: dict, sched: dict, items_by_key: dict = None, *, viewer=access.HOUSE) -> bool:
     if items_by_key is not None:
         return bool(items_by_key.get(b['key']))
     try:
         groups = outings.packing_for(
             {'event_ids': (b['event_ids'] if b['kind'] == 'outing'
-                           else [b['event_id']])}, sched)
+                           else [b['event_id']])}, sched, viewer=viewer)
         return any(g.get('items') for g in groups)
     except Exception:
         return False
@@ -370,7 +371,7 @@ def _block_title(b: dict) -> str:
     return b.get('title') or 'Event'
 
 
-def day_in_focus(now: datetime.datetime = None, sched: dict = None) -> datetime.date:
+def day_in_focus(now: datetime.datetime = None, sched: dict = None, *, viewer=access.HOUSE) -> datetime.date:
     """The day the household is actually thinking about.
 
     Today while any block is still ahead; tomorrow once the last one is done.
@@ -380,8 +381,8 @@ def day_in_focus(now: datetime.datetime = None, sched: dict = None) -> datetime.
     """
     now = now or datetime.datetime.now()
     today = now.date()
-    sched = sched if sched is not None else (storage.get_cached_schedule() or {})
-    for b in blocks_for(today, sched, now)['blocks']:
+    sched = access.cached_schedule(viewer, blob=sched)
+    for b in blocks_for(today, sched, now, viewer=viewer)['blocks']:
         if b.get('canceled'):
             continue
         # A prep block's `end` is its POSITION (the bucket anchor); its

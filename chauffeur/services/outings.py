@@ -23,7 +23,7 @@ this. An outing is an outing.
 import datetime
 from typing import List, Optional
 
-from services import storage
+from services import storage, access
 
 
 def _parse(raw) -> Optional[datetime.datetime]:
@@ -45,7 +45,7 @@ def _as_date(raw) -> Optional[datetime.date]:
 
 
 def outings_for(target_date=None, sched: dict = None,
-                now: datetime.datetime = None) -> List[dict]:
+                now: datetime.datetime = None, *, viewer=access.HOUSE) -> List[dict]:
     """Every trip out of the house on one day, one entry per driver per trip.
 
     Sorted by departure, which is the order a household acts in — the same
@@ -53,7 +53,7 @@ def outings_for(target_date=None, sched: dict = None,
     """
     now = now or datetime.datetime.now()
     target = _as_date(target_date) or now.date()
-    sched = sched if sched is not None else (storage.get_cached_schedule() or {})
+    sched = access.cached_schedule(viewer, blob=sched)
     events = {e.get('id'): e for e in (sched.get('events') or [])}
     route_edges = sched.get('route_edges') or {}
     final_edges = sched.get('final_edges') or {}
@@ -177,7 +177,7 @@ def _outing(d_id: str, chain: list, final_edges_for_driver: dict = None,
 
 
 def packing_for(outing: dict, sched: dict = None, kits: list = None,
-                passengers: list = None) -> List[dict]:
+                passengers: list = None, *, viewer=access.HOUSE) -> List[dict]:
     """What one outing needs packed, grouped by kit, with a NEEDED count.
 
     The count is the point. Prep items are deduped case-insensitively today,
@@ -188,7 +188,7 @@ def packing_for(outing: dict, sched: dict = None, kits: list = None,
     needs one, not two.
     """
     from services import prep_kits as _prep
-    sched = sched if sched is not None else (storage.get_cached_schedule() or {})
+    sched = access.cached_schedule(viewer, blob=sched)
     events = {e.get('id'): e for e in (sched.get('events') or [])}
     if kits is None:
         kits = storage.get_prep_kits()

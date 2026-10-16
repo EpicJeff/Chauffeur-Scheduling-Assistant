@@ -14,9 +14,7 @@ from services import access, access_readers as reg
 F, K, X = 'full', 'keeper', None
 
 # Reader rows whose task has not landed. Each task deletes its own rows; Task 11 asserts empty.
-PENDING = {
-    'task9': {r[0] for r in reg.READERS if r[1] == '4.7-calendar'},
-}
+PENDING = {}
 
 PROBES = {}     # reader id -> probe(fx, rkey, col) -> 'full' | 'keeper' | None
 
@@ -106,6 +104,9 @@ voice.register(probe)
 
 import access_shared_signals as shared_signals
 shared_signals.register(probe, expect, observed)
+
+import access_calendar as calendar
+calendar.register(probe)
 
 
 def scenario_shared_contracts():

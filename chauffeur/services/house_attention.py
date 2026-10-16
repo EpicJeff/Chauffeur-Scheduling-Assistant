@@ -45,7 +45,8 @@ def _errands(now):
 
 def _programs(now, *, viewer=access.HOUSE):
     from services import programs
-    rows = programs.practice_windows(now.date(), now.date())
+    # Filter with the shared-screen union below, before counting anything.
+    rows = programs._practice_windows(now.date(), now.date())
     with access.batch():
         rows = [w for w in rows if access.shared_screen_visible(
             'program', storage.get_program(w.get('program_id')), viewer)]

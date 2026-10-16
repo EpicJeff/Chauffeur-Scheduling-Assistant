@@ -1,5 +1,7 @@
 """Resolve a thread or mission's optional subject to a Chauffeur record."""
 
+from services import access
+
 import datetime
 import difflib
 from collections.abc import Callable
@@ -125,6 +127,14 @@ def _program_visible(row, viewer):
 def _thread_visible(row, viewer):
     from services import access
     return access.record_visible('thread', row, viewer)
+
+
+def _event_visible(row, viewer):
+    if not scope.audience_allows(row, 'calendar_event', viewer):
+        return False
+    # Matching exposes the title before context() runs. Apply the same
+    # calendar view here so a private practice cannot become an ABOUT chip.
+    return access.event_view(row, viewer) is row
 
 
 def _people_visible(row, viewer):
@@ -523,6 +533,7 @@ def _occasion_context(row, viewer, spoken, facet):
 
 
 def _event_context(row, viewer, spoken, facet):
+    row = access.event_view(row, access.HOUSE if spoken else viewer)
     assignments = (storage.get_cached_schedule() or {}).get('assignments') or {}
     driver_id = assignments.get(row['id'])
     driver_name = next((driver.get('name') for driver in storage.get_all_drivers()
@@ -632,7 +643,7 @@ ADAPTERS.update({
     'event': Adapter(
         rows=lambda: list((storage.get_cached_schedule() or {}).get('events') or []),
         title=_title,
-        visible=lambda row, viewer: scope.audience_allows(row, 'calendar_event', viewer),
+        visible=_event_visible,
         closed=lambda row: _dated_closed('event', row),
         link=lambda sid: 'app',
         context=_event_context,

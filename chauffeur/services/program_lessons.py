@@ -1193,7 +1193,7 @@ def _windows_to_scan(now, start_offset: int, days: int):
     from services import storage, programs
     start = now.date() + datetime.timedelta(days=start_offset)
     rows = {r['id']: r for r in storage.get_programs(state='active')}
-    for w in programs.practice_windows(
+    for w in programs._practice_windows(
             start, start + datetime.timedelta(days=days)):
         row = rows.get(w.get('program_id'))
         if not row:

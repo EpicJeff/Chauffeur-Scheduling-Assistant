@@ -8,6 +8,7 @@ note_source, owner_member_id, owned_at) that this module alone writes.
 Boundaries (same as the Mind's, enforced by tests on this file's source):
 never import a DM accessor, never read gift records.
 """
+from services import access
 import datetime
 import json
 import logging
@@ -81,7 +82,7 @@ def _member_name(member_id) -> str:
 
 
 def _cached_event(event_id: str) -> Optional[dict]:
-    sched = storage.get_cached_schedule() or {}
+    sched = access.cached_schedule() or {}
     return next((e for e in sched.get('events') or []
                  if str(e.get('id')) == str(event_id)), None)
 

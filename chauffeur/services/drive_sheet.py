@@ -15,6 +15,7 @@ knowing where somebody is — and the reason the sheet is worth a wake lock.
 
 See docs/drive_sheet_design.md.
 """
+from services import access
 import datetime
 import re
 from typing import Optional
@@ -72,7 +73,7 @@ def ride_members_for_event(ev, ev_id, sched=None) -> list:
     and wrong for a roll call: the sixteen-year-old with a passenger record
     is somebody the driver still has to have in the car."""
     from services import family_digest
-    sched = sched or storage.get_cached_schedule() or {}
+    sched = access.cached_schedule(blob=sched)
     matched_rules = sched.get('matched_rules', {}) or {}
     passengers = {p.get('id'): p for p in storage.get_all_passengers()}
     out = []
@@ -192,7 +193,7 @@ def sheet(leg_id: str, now=None) -> dict:
     """Everything the drive sheet draws, in one call."""
     now = now or datetime.datetime.now()
     from services import leave_by
-    sched = storage.get_cached_schedule() or {}
+    sched = access.cached_schedule() or {}
     events = {str(e.get('id')): e for e in (sched.get('events') or [])}
     ev, title = _event_for_leg(leg_id, events)
     ev_id = _leg_event_id(leg_id)
@@ -253,7 +254,7 @@ def _message_audience(leg_id, sched=None) -> list:
     include a child) the parents who are not driving — the same audience
     shape as the on-the-way push, so the family never learns two different
     rules for who gets told what about a drive."""
-    sched = sched or storage.get_cached_schedule() or {}
+    sched = access.cached_schedule(blob=sched)
     events = {str(e.get('id')): e for e in (sched.get('events') or [])}
     ev, _title = _event_for_leg(leg_id, events)
     if ev is None:
@@ -284,7 +285,7 @@ def send_quick_message(leg_id: str, key: str, sender_member: dict) -> dict:
         return {'status': 'error', 'message': f"Unknown message '{key}'"}
     if not (sender_member or {}).get('id'):
         return {'status': 'error', 'message': 'No sender for this message.'}
-    sched = storage.get_cached_schedule() or {}
+    sched = access.cached_schedule() or {}
     events = {str(e.get('id')): e for e in (sched.get('events') or [])}
     _ev, title = _event_for_leg(leg_id, events)
     if str(leg_id).startswith('final_'):

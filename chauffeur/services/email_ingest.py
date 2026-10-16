@@ -30,6 +30,7 @@ parent to ignore it, which is worse than no queue):
 First run on a mailbox stores the current max UID and processes nothing —
 subscribing must not storm through years of backlog.
 """
+from services import access
 import datetime
 import email
 import email.header
@@ -895,7 +896,7 @@ def run_photo_ingest(image_b64: str, mime: str, caption: str = '') -> dict:
 
     member_names = [m.get('name') for m in storage.get_all_members() if m.get('name')]
     _known = known_events_block(
-        (storage.get_cached_schedule() or {}).get('events', []),
+        (access.cached_schedule() or {}).get('events', []),
         [p for p in storage.get_proposals() if p.get('status') == 'proposed'])
     now = _dt.datetime.now().astimezone()
     prompt = (f"Current date: {now.strftime('%A %Y-%m-%d')}\n"
@@ -922,7 +923,7 @@ def run_photo_ingest(image_b64: str, mime: str, caption: str = '') -> dict:
         return summary
 
     existing = storage.get_proposals()
-    sched_events = (storage.get_cached_schedule() or {}).get('events', [])
+    sched_events = (access.cached_schedule() or {}).get('events', [])
     dropped = duped = supplies_only = 0
     for item in items:
         prop = normalize_item(item)
@@ -1049,7 +1050,7 @@ def _run_ingest_locked() -> dict:
 
     member_names = [m.get('name') for m in storage.get_all_members() if m.get('name')]
     existing = storage.get_proposals()
-    sched_events = (storage.get_cached_schedule() or {}).get('events', [])
+    sched_events = (access.cached_schedule() or {}).get('events', [])
     # Built once per poll, not per message: the calendar does not change
     # between two messages of the same batch. Only PENDING proposals join the
     # real calendar here — an ignored proposal is precisely something the

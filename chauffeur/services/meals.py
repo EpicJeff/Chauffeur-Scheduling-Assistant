@@ -26,6 +26,8 @@ Slots are emitted as SPANS, never timestamps: "between drop-off and about
 
 See docs/meal_design.md §M2.
 """
+
+from services import access
 import datetime
 from typing import Optional
 
@@ -363,7 +365,7 @@ def _span_label(s, mins, lo=None) -> str:
 
 
 def eating_plan(date_str: str, meal: str = 'dinner', sched: dict = None,
-                settings: dict = None) -> dict:
+                settings: dict = None, *, viewer=access.HOUSE) -> dict:
     """The day's eating plan for one meal window.
 
     Returns per-member slots plus the household picture: who eats when, how
@@ -374,7 +376,7 @@ def eating_plan(date_str: str, meal: str = 'dinner', sched: dict = None,
     slot" is the honest trigger for suggesting food on the route, and a
     cooking adult with no window is why dinner did not happen.
     """
-    sched = sched if sched is not None else (storage.get_cached_schedule() or {})
+    sched = access.cached_schedule(viewer, blob=sched)
     settings = settings if settings is not None else (storage.get_settings() or {})
     drivers_by_event = _driver_member_ids(sched)
 

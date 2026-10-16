@@ -669,7 +669,7 @@ def _occurrences_before(days, anchor: datetime.date,
     return total
 
 
-def practice_windows(start: datetime.date, end: datetime.date,
+def _practice_windows(start: datetime.date, end: datetime.date,
                      member_id: str = None) -> list:
     """Every practice window between two dates, as dated occurrences.
 
@@ -734,6 +734,7 @@ def practice_windows(start: datetime.date, end: datetime.date,
                 'commitment_id': cid,
                 'member_id': row.get('member_id'),
                 'member_name': member.get('name') or '',
+                'color': member.get('color_code') or '#14b8a6',
                 # Whether the person this window belongs to can be sent
                 # off to do it alone. Carried HERE rather than looked up
                 # by each surface, because a scene's own `grownup` flag
@@ -779,6 +780,27 @@ def practice_windows(start: datetime.date, end: datetime.date,
     return out
 
 
+def practice_windows(start: datetime.date, end: datetime.date,
+                     member_id: str = None, *, viewer=None) -> list:
+    """Dated windows, with private words removed for this reader now."""
+    from services import access
+    viewer = access.HOUSE if viewer is None else viewer
+    out = []
+    with access.batch():
+        for window in _practice_windows(start, end, member_id):
+            row = storage.get_program(window['program_id'])
+            if row and access.record_visible('program', row, viewer):
+                out.append(window)
+            else:
+                event = access.neutral_practice({
+                    'id': f"practice-{window['program_id']}-{window['date']}-{window['time_start']}",
+                    'start': f"{window['date']}T{window['time_start']}:00",
+                    'end': f"{window['date']}T{window['time_end']}:00",
+                    'practice': window})
+                out.append({**event['practice'], 'id': event['id'], 'title': 'Busy'})
+    return out
+
+
 def due_practice_pushes(now=None) -> list:
     """Windows that have just started and have not been announced yet.
 
@@ -796,7 +818,7 @@ def due_practice_pushes(now=None) -> list:
     today = now.date()
     fired = set(storage.get_app_state(PUSH_STATE_KEY) or [])
     out = []
-    for w in practice_windows(today, today):
+    for w in _practice_windows(today, today):
         if w['logged']:
             continue
         try:
@@ -807,10 +829,24 @@ def due_practice_pushes(now=None) -> list:
         late = (now - start_at).total_seconds()
         if not 0 <= late <= PUSH_WINDOW_SECONDS:
             continue
-        key = f"{w['program_id']}|{w['date']}|{w['time_start']}"
-        if key in fired:
+        import hashlib
+        program_key = hashlib.sha1(w['program_id'].encode()).hexdigest()[:12]
+        key = f"{program_key}|{w['date']}|{w['time_start']}"
+        legacy_key = f"{w['program_id']}|{w['date']}|{w['time_start']}"
+        if key in fired or legacy_key in fired:
             continue
-        out.append({**w, 'push_key': key})
+        # The push is driver-keyed; a child's attached driver can be a helper
+        # who may not read the child's program. Resolve the real recipient.
+        from services import access
+        member = storage.get_member(w.get('member_id')) or {}
+        driver = member.get('driver_id')
+        recipients = [m for m in storage.get_all_members() if driver and m.get('driver_id') == driver]
+        program = storage.get_program(w['program_id'])
+        safe = w if program and all(access.record_visible('program', program, recipient)
+                                    for recipient in (recipients or [access.HOUSE])) else {
+            **{k: w.get(k) for k in access.NEUTRAL_PRACTICE_KEYS},
+            'title': 'Practice time', 'steps': [], 'milestone': '', 'session_label': ''}
+        out.append({**safe, 'push_key': key})
     return out
 
 
@@ -831,15 +867,11 @@ def mark_practice_pushed(keys) -> None:
 def footprint(program: dict) -> dict:
     """Everything approval would create, for the screen that asks."""
     shape = program.get('shape') or {}
-    baseline = program.get('baseline') or {}
     kit = _kit_line(program)
-    target_date = baseline.get('target_date')
     return {
         'slots': propose_slots(program.get('member_id'), shape),
         'thread': kit,
-        'event': ({'title': program.get('title'), 'date': target_date}
-                  if target_date and not baseline.get('target_event_id')
-                  else None),
+        'event': None,  # spec 10.3: target dates are program data, never calendar events
     }
 
 
@@ -983,7 +1015,8 @@ def _emit_commitments(program_id: str, row: dict, slots: list,
             'id': uuid.uuid4().hex,
             'member_id': row['member_id'], 'title': row.get('title') or 'Practice',
             'days_of_week': [s['day']], 'time_start': s['time_start'],
-            'time_end': s['time_end'], 'active': True})
+            'time_end': s['time_end'], 'active': True,
+            'source': {'kind': 'program', 'id': row['id']}})
         emissions['commitment_ids'].append(cid)
         # `made` is appended to INSIDE the loop, never sliced off afterwards:
         # the whole point of this list is the case where the loop RAISES
@@ -999,11 +1032,9 @@ def _emit_commitments(program_id: str, row: dict, slots: list,
 def approve(program_id: str, approver_id: str = None, slots: list = None) -> dict:
     """Claim the week. One act, everything the footprint showed.
 
-    Applies the way negotiation proved: pre-flight everything first, local
-    writes before the single external one, and stamp each emission as it lands
+    Pre-flight everything first, then stamp each local emission as it lands
     so a failure can say how far it got instead of implying nothing happened.
     """
-    from services import calendar as _cal
     row = storage.get_program(program_id)
     if not row:
         return {'status': 'error', 'message': 'That program is no longer here.'}
@@ -1035,7 +1066,7 @@ def approve(program_id: str, approver_id: str = None, slots: list = None) -> dic
                 'message': f"That program is already {current.get('state')}."}
 
     # A program can reach `proposed` a SECOND time, through `reshape()` after
-    # drift. Its kit thread and its target event are still standing, so the
+    # drift. Its kit thread is still standing, so the
     # emissions start from what the row already holds rather than an empty
     # triple -- otherwise a re-approval orphans the thread it forgot and opens
     # a duplicate beside it. `made` tracks only what THIS attempt created,
@@ -1073,49 +1104,7 @@ def approve(program_id: str, approver_id: str = None, slots: list = None) -> dic
             made['thread_ids'].append(tid)
             storage.update_program(program_id, {'emissions': emissions})
 
-        # The one write that reaches another system goes last.
         baseline = dict(row.get('baseline') or {})
-        if baseline.get('target_date') and not baseline.get('target_event_id'):
-            try:
-                settings = storage.get_settings() or {}
-                cal_id = (settings.get('calendar_ids') or ['primary'])[0]
-                # calendar.create_event sends {'dateTime': start} with no
-                # timeZone attached, and Google rejects a naive dateTime
-                # outright ("Missing time zone definition") -- the same trap
-                # chat_actions._create_event documents and normalizes at the
-                # caller. Stamp the server's local offset on here rather
-                # than teaching create_event a new parameter for one caller.
-                naive_start = datetime.datetime.fromisoformat(
-                    f"{baseline['target_date']}T09:00:00")
-                # 09:00 on the family's clock (services/tz.py), not the box's
-                from services import tz as _tz
-                start_iso = _tz.localize(naive_start, cal_id).isoformat()
-                end_iso = _tz.localize(naive_start + datetime.timedelta(hours=1), cal_id).isoformat()
-                ev_id = _cal.create_event(cal_id, row.get('title') or 'Program',
-                                          start_iso, end_iso)
-                # create_event catches every Google API exception itself and
-                # returns None on a real rejection (bad calendar id, quota,
-                # transient failure) rather than raising -- the try/except
-                # above only ever catches OUR pre-insert failures (a bad
-                # date string). A falsy id IS the production failure signal,
-                # same convention as chat_actions._create_event's
-                # `if not gid`, and it must never be recorded as though it
-                # were a real event id.
-                if not ev_id:
-                    raise RuntimeError("the calendar didn't create the event")
-                emissions['event_ids'].append(ev_id)
-                made['event_ids'].append(ev_id)
-                baseline['target_event_id'] = ev_id
-            except Exception as e:
-                # _revert_attempt undoes EVERYTHING this attempt stamped, the
-                # commitments included -- so by the time whoever called
-                # approve() reads this message, the practice time is not
-                # claimed anymore. Say that, not the opposite.
-                raise RuntimeError(
-                    "The calendar refused the target date, so nothing was "
-                    f"kept -- {row.get('title') or 'this program'} is back "
-                    f"to unclaimed and can be approved again once that's "
-                    f"sorted out: {e}") from e
 
         # The state flip has to be inside this same bracket: it is a write
         # like any other (update_program's own key screen can raise), and
@@ -1309,33 +1298,14 @@ def maybe_rebaseline(program: dict, now=None) -> dict:
     fits = None
     date_moved = False
     update = {'baseline': baseline}
-    if baseline.get('target_date') and baseline.get('target_event_id'):
-        # A real event pins the date -- the phases give way instead of it.
-        phases, fits = _compress_phases(original_phases, baseline['target_date'], now)
-        update['phases'] = phases
-    elif baseline.get('target_date'):
-        # No event pins this one down: an undated target is the app's to move.
+    if baseline.get('target_date'):
         try:
             target = datetime.date.fromisoformat(baseline['target_date'])
             baseline['target_date'] = (target + datetime.timedelta(days=14)).isoformat()
             date_moved = True
         except (TypeError, ValueError):
             pass
-    elif not baseline.get('target_event_id'):
-        # No target date at all -- which is the DEFAULT, both from the chat
-        # tool and from the page unless somebody types one, so this is the
-        # common program rather than an edge case.
-        #
-        # An event id with no date falls through BOTH branches deliberately:
-        # that is malformed data (the schema writes the pair together), and
-        # the event still pins a real day in the world that this app cannot
-        # read. Giving the plan more weeks against a date it cannot see is
-        # exactly the lie about fitting the compress path refuses to tell, so
-        # nothing moves and the finding says only what is on the table. For one release this branch
-        # did not exist: it bumped a counter, burned the fortnight cooldown,
-        # and still posted "want to try a different day?" while the timeline
-        # it promised to stretch was never touched. Here the phases ARE the
-        # timeline, so they are what gives.
+    else:
         phases = _stretch_phases(original_phases, _stretch_factor(short))
         update['phases'] = phases
     storage.update_program(program['id'], update)

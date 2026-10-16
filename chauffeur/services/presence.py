@@ -18,6 +18,7 @@ it reaches everyone the schedule kept away. Three jobs live here:
 Never nag: one prompt per event per day, only within the opening minutes,
 only when someone is actually kept away.
 """
+from services import access
 import datetime
 import time
 
@@ -130,7 +131,7 @@ def members_at_event(ev, ev_id, sched=None):
     """Members the schedule places AT this event: the assigned driver plus
     every passenger-bound member (any role — the same four-way binding My Day
     uses, so adults with passenger profiles count as present too)."""
-    sched = sched or storage.get_cached_schedule() or {}
+    sched = access.cached_schedule(blob=sched)
     matched_rules = sched.get('matched_rules', {}) or {}
     passengers = {p.get('id'): p for p in storage.get_all_passengers()}
     assignments = dict(sched.get('assignments', {}) or {})
@@ -172,7 +173,7 @@ def moment_push_audience(channel, sched=None):
     keeping-up grandparent's. Falls back past the narrowing when the event
     has left the cache (old thread — nobody's presence is provable)."""
     from services import scope
-    sched = sched or storage.get_cached_schedule() or {}
+    sched = access.cached_schedule(blob=sched)
     ev_id = str(channel.get('event_id') or '')
     ev = next((e for e in sched.get('events', [])
                if _base_event_id(e.get('id')) == _base_event_id(ev_id)), None)
@@ -199,7 +200,7 @@ def run_capture_prompts(send, now=None):
     moment. `send(member, title, body, path)` is injected (cars.run_sweep
     convention). Returns the base event ids prompted."""
     now = now or datetime.datetime.now()
-    sched = storage.get_cached_schedule() or {}
+    sched = access.cached_schedule() or {}
     events = sched.get('events', []) or []
     today = now.date().isoformat()
 

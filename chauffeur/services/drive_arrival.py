@@ -21,6 +21,7 @@ Deliberately narrow:
     a false complete is worse than a stale flag — it un-tracks a drive that
     is genuinely happening.
 """
+from services import access
 import datetime
 import math
 import re
@@ -55,7 +56,7 @@ def _route_leg_context(leg_id, sched=None):
     """
     if not str(leg_id).startswith('route_'):
         return None
-    sched = sched if sched is not None else (storage.get_cached_schedule() or {})
+    sched = access.cached_schedule(blob=sched)
     events = {str(e.get('id')): e for e in sched.get('events') or []}
     for edges in (sched.get('route_edges') or {}).values():
         for source, edge in (edges or {}).items():
@@ -246,7 +247,7 @@ def eta_for_start(leg_id: str, now_ts: float,
     which matters when they start the drive from the store rather than the
     driveway. One Directions call at most, on an explicit human action —
     never from a loop."""
-    sched = storage.get_cached_schedule() or {}
+    sched = access.cached_schedule() or {}
     events = {e.get('id'): e for e in (sched.get('events') or [])}
     ev_id = _leg_event_id(leg_id)
     assignments = dict(sched.get('assignments') or {})
@@ -301,7 +302,7 @@ def tap_check(leg_id: str, lat=None, lng=None, accuracy=None,
     'unknown leg' for a drive that finished correctly reads as breakage."""
     now_ts = now_ts if now_ts is not None else datetime.datetime.now().timestamp()
     row = storage.get_drive_status(leg_id) or {}
-    sched = storage.get_cached_schedule() or {}
+    sched = access.cached_schedule() or {}
     events = {e.get('id'): e for e in (sched.get('events') or [])}
     ev_id = _leg_event_id(leg_id)
     ev = events.get(ev_id) or events.get(re.sub(r'_(dropoff|pickup)$', '', ev_id)) or {}
@@ -346,7 +347,7 @@ def run_nudges(now_ts: float, notify) -> List[str]:
             if r.get('eta_ts') and not r.get('arrival_nudged_ts')]
     if not rows:
         return []
-    sched = storage.get_cached_schedule() or {}
+    sched = access.cached_schedule() or {}
     events = {e.get('id'): e for e in (sched.get('events') or [])}
     assignments = dict(sched.get('assignments') or {})
     assignments.update(sched.get('ghost_assignments') or {})
@@ -415,7 +416,7 @@ def check_leg_at(leg_id: str, lat, lng, accuracy=None,
     row = storage.get_drive_status(leg_id) or {}
     if row.get('status') != 'in_progress':
         return None
-    sched = storage.get_cached_schedule() or {}
+    sched = access.cached_schedule() or {}
     events = {e.get('id'): e for e in (sched.get('events') or [])}
     dest, g = _dest_geocode(leg_id, events)
     if not g:
@@ -435,7 +436,7 @@ def check_arrivals(now_ts: float = None) -> List[dict]:
     if not legs:
         return []
     now_ts = now_ts if now_ts is not None else datetime.datetime.now().timestamp()
-    sched = storage.get_cached_schedule() or {}
+    sched = access.cached_schedule() or {}
     events = {e.get('id'): e for e in (sched.get('events') or [])}
     assignments = dict(sched.get('assignments') or {})
     assignments.update(sched.get('ghost_assignments') or {})

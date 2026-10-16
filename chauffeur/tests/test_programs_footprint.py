@@ -71,76 +71,34 @@ def _with_target_date(pid):
                                               'rebaselines': 0}})
 
 
-def scenario_a_pre_insert_failure_says_what_already_happened():
-    """One way create_event can fail this module: OUR code raises before
-    ever reaching Google (a bad date string, e.g.) -- the try/except exists
-    for exactly this. The calendar is the one write that reaches another
-    system, so it goes last, and when it refuses the program must not imply
-    nothing happened -- but the practice time it claimed on the way there
-    is also not real anymore, so the revert has to clean that up rather
-    than leave it as an orphan reservation nothing owns."""
+def scenario_a_target_date_never_calls_a_failing_calendar():
+    """Access spec 10.3: target dates write no calendar event, even offline."""
     _reset()
     pid = _mk()
     _with_target_date(pid)
-    from services import calendar as _cal
-    real = _cal.create_event
-    _cal.create_event = lambda *a, **kw: (_ for _ in ()).throw(
-        RuntimeError('calendar said no'))
-    try:
+    from unittest.mock import patch
+    with patch('services.calendar.create_event', side_effect=RuntimeError('calendar offline')) as create:
         res = programs.approve(pid, 'mom')
-        row = storage.get_program(pid)
-        check(res['status'] == 'error', f"it reports the failure, got {res}")
-        check(row['state'] == 'proposed',
-              f"reverted, not stranded and not silently active, got {row['state']}")
-        msg = (res.get('message') or '').lower()
-        check('nothing was kept' in msg or 'unclaimed' in msg,
-              f"the message has to describe what is NOW true -- the revert "
-              f"already undid it, got {res}")
-        check('is claimed' not in msg,
-              f"must not claim something the revert already undid, got {res}")
-        check(not row['emissions']['commitment_ids'],
-              f"the revert cleaned up what it claimed, got {row['emissions']}")
-        check(not storage.get_protected_commitments(member_id='lily'),
-              "and left no orphan reservation behind either")
-    finally:
-        _cal.create_event = real
+    row = storage.get_program(pid)
+    check(res['status'] == 'success' and row['state'] == 'active', str(res))
+    check(not create.called, 'spec 10.3: approval never attempts a target event')
+    check(len(row['emissions']['commitment_ids']) == 3, 'practice still claims its time')
+    check(row['baseline']['target_date'] == '2026-06-14', 'the target remains program data')
+    check(row['emissions']['event_ids'] == [], 'no calendar emission')
 
 
-def scenario_a_rejected_write_returns_none_not_an_exception():
-    """The REAL production shape: calendar.create_event catches every Google
-    API exception itself (services/calendar.py) and returns None on a bad
-    calendar id, a quota error, or a transient failure -- it does not raise.
-    A stub that raises instead doesn't exercise this at all, so this one
-    keeps the actual contract: a falsy return is the failure signal, and
-    approve() must catch it rather than recording None as an event id and
-    reporting success with a target date that silently does not exist."""
+def scenario_a_target_date_never_calls_a_rejecting_calendar():
+    """Access spec 10.3: a falsy calendar result cannot affect local approval."""
     _reset()
     pid = _mk()
     _with_target_date(pid)
-    from services import calendar as _cal
-    real = _cal.create_event
-    _cal.create_event = lambda *a, **kw: None
-    try:
+    from unittest.mock import patch
+    with patch('services.calendar.create_event', return_value=None) as create:
         res = programs.approve(pid, 'mom')
-        row = storage.get_program(pid)
-        check(res['status'] == 'error',
-              f"a None from the calendar must not read as success, got {res}")
-        check(row['state'] == 'proposed',
-              f"reverted, not stranded and not silently active, got {row['state']}")
-        check(None not in row['emissions']['event_ids'],
-              f"a null id must never be recorded as a real one, got {row['emissions']}")
-        msg = (res.get('message') or '').lower()
-        check('nothing was kept' in msg or 'unclaimed' in msg,
-              f"the message has to describe what is NOW true -- the revert "
-              f"already undid it, got {res}")
-        check('is claimed' not in msg,
-              f"must not claim something the revert already undid, got {res}")
-        check(not row['emissions']['commitment_ids'],
-              f"the revert cleaned up what it claimed, got {row['emissions']}")
-        check(not storage.get_protected_commitments(member_id='lily'),
-              "and left no orphan reservation behind either")
-    finally:
-        _cal.create_event = real
+    row = storage.get_program(pid)
+    check(res['status'] == 'success' and row['state'] == 'active', str(res))
+    check(not create.called and row['emissions']['event_ids'] == [], 'no external calendar write')
+    check(len(storage.get_protected_commitments(member_id='lily')) == 3, 'reservations still created')
 
 
 def scenario_a_local_write_failure_reverts_and_cleans_up():
@@ -237,18 +195,14 @@ def scenario_a_final_flip_failure_reverts_and_cleans_up():
               "not just assumed to")
         check(not storage.get_threads(owner='lily'),
               "and it is really gone, not just attempted")
-        check(removed_events == ['fake-event-1'],
-              f"the calendar event this attempt created also gets cleaned "
-              f"up -- the only write here that reaches another system, and "
-              f"the one thing a plain delete can't undo if left alone, "
+        check(removed_events == [],
+              f"spec 10.3: a failed final flip has no target event to remove, "
               f"got {removed_events}")
     finally:
         storage.update_program = real_update
         storage.delete_thread = real_delete_thread
 
-    # The retry still needs the calendar stubbed -- baseline.target_date is
-    # unchanged (that write never landed), so the calendar branch fires
-    # again.
+    # Spec 10.3: retry remains entirely local; target_date is kept as data.
     try:
         retry = programs.approve(pid, 'mom')
         check(retry['status'] == 'success', f"a plain retry must work, got {retry}")
@@ -689,8 +643,8 @@ if __name__ == '__main__':
     scenario_slots_match_the_shape()
     scenario_the_footprint_is_visible_before_the_tap()
     scenario_approval_claims_the_time()
-    scenario_a_pre_insert_failure_says_what_already_happened()
-    scenario_a_rejected_write_returns_none_not_an_exception()
+    scenario_a_target_date_never_calls_a_failing_calendar()
+    scenario_a_target_date_never_calls_a_rejecting_calendar()
     scenario_a_local_write_failure_reverts_and_cleans_up()
     scenario_a_final_flip_failure_reverts_and_cleans_up()
     scenario_a_revert_survives_the_settings_read_failing()

@@ -21,6 +21,7 @@ Two rules hold the design together (docs/occasion_design.md):
    Sunday and exactly one meal in it is The Meal — Friday lunch is sandwiches.
 """
 
+from services import access
 import datetime
 import re
 import time
@@ -787,7 +788,7 @@ def add_dishes(occasion_id: str, description: str) -> dict:
 
 def _sched():
     try:
-        return storage.get_cached_schedule() or {}
+        return access.cached_schedule() or {}
     except Exception:
         return {}
 
@@ -1162,7 +1163,7 @@ def invitation_candidates(now: datetime.datetime = None, ahead_days: int = 21) -
     known = {(o.get('answers') or {}).get('source_event_id')
              for o in storage.get_occasions(include_done=True)}
     out = []
-    for ev in (storage.get_cached_schedule() or {}).get('events', []):
+    for ev in (access.cached_schedule() or {}).get('events', []):
         gid = str(ev.get('id') or '')
         if not gid or gid in known or not _party_shaped(ev.get('title')):
             continue

@@ -49,7 +49,8 @@ def session(program_id, now=None, *, viewer=access.HOUSE):
     member = storage.get_member(row.get('member_id'))
     if not member or member.get('archived'):
         return None
-    windows = [w for w in programs.practice_windows(now.date(), now.date(), member_id=member['id'])
+    # This shared-screen row already passed the HOUSE-or-person gate above.
+    windows = [w for w in programs._practice_windows(now.date(), now.date(), member_id=member['id'])
                if w['program_id'] == program_id]
     if windows:
         upcoming = [w for w in windows if (w.get('time_end') or '') >= now.strftime('%H:%M') and not w.get('logged')]

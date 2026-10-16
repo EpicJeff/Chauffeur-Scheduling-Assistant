@@ -27,6 +27,7 @@ Tuesday's sibling. Solver-side, a canceled event leaves the optimisation
 exactly the way a skipped optional does: not assignable, not unassigned,
 nothing chased. Still drawn, struck through, wearing its reason.
 """
+from services import access
 import datetime
 import re
 
@@ -110,6 +111,7 @@ def _notify(ev, reason: str, restored: bool) -> None:
     Never raises — a push failure must not fail the cancel."""
     try:
         import main as _m
+        ev = access.event_view(ev if isinstance(ev, dict) else ev.model_dump(mode='json'))
         get = ev.get if isinstance(ev, dict) else lambda k, d=None: getattr(ev, k, d)
         ev_id = str(get('id') or '')
         title = strip_cancel_prefix(_title_of(ev))
@@ -123,7 +125,7 @@ def _notify(ev, reason: str, restored: bool) -> None:
         # A same-day cancel outranks quiet hours — the driver may already be
         # reaching for keys. Tomorrow-or-later waits for the waking day.
         urgent = _event_date(ev) == datetime.date.today().isoformat()
-        sched = storage.get_cached_schedule() or {}
+        sched = access.cached_schedule() or {}
         assignments = dict(sched.get('assignments') or {})
         assignments.update(sched.get('ghost_assignments') or {})
         d_id = assignments.get(ev_id)

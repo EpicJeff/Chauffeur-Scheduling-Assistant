@@ -957,7 +957,7 @@ def flush_assignment_notifications():
     land quietly in the in-app bell (telemetry) and the schedule itself,
     and the 20:00 digest restates tomorrow regardless."""
     import datetime as _dt
-    from services import storage
+    from services import storage, access
     global _pending_flush_timer
 
     with _pending_changes_lock:
@@ -987,7 +987,7 @@ def flush_assignment_notifications():
     for ev_id, entry in buffered.items():
         old_d = entry.get("first_old")
         new_d = entry.get("last_new")
-        ev = entry.get("ev") or {}
+        ev = access.event_view(entry.get("ev") or {})
         if old_d == new_d:
             continue  # churned back within the run — no net change
         try:
@@ -5335,18 +5335,28 @@ def _public_member(m: dict) -> dict:
 # --- Protected commitments (load arc A6) ---
 # The one place an adult's time is FOR something rather than an obstacle.
 
+def _commitment_access(commitment_id, request):
+    row = storage.get_protected_commitment(commitment_id)
+    source = (row or {}).get('source') or {}
+    if source.get('kind') == 'program':
+        _piece_or_404('program', source.get('id'), request, 'edit')
+
+
 @app.get("/api/commitments")
-def list_commitments(member_id: Optional[str] = None):
+def list_commitments(member_id: Optional[str] = None, request: Request = None):
+    from services import access
     rows = storage.get_protected_commitments(member_id=member_id,
                                              include_inactive=True)
     names = {m['id']: m.get('name') for m in storage.get_all_members(include_archived=True)}
+    rows = [dict(access.commitment_view(r, _piece_viewer(request))) for r in rows]
     for r in rows:
         r['member_name'] = names.get(r.get('member_id'))
     return rows
 
 @app.post("/api/commitments")
-def create_commitment(pc: ProtectedCommitment, background_tasks: BackgroundTasks):
+def create_commitment(pc: ProtectedCommitment, background_tasks: BackgroundTasks, request: Request = None):
     data = pc.model_dump()
+    _commitment_access(data['id'], request)
     if not (data.get('title') or '').strip():
         raise HTTPException(status_code=400, detail="It needs a name")
     if not storage.get_member(data.get('member_id') or ''):
@@ -5359,7 +5369,8 @@ def create_commitment(pc: ProtectedCommitment, background_tasks: BackgroundTasks
 
 @app.patch("/api/commitments/{commitment_id}")
 def patch_commitment(commitment_id: str, updates: dict = Body(...),
-                     background_tasks: BackgroundTasks = None):
+                     background_tasks: BackgroundTasks = None, request: Request = None):
+    _commitment_access(commitment_id, request)
     clean = {k: v for k, v in (updates or {}).items()
              if k in ProtectedCommitment.model_fields and k not in ('id', 'created_at')}
     if not storage.update_protected_commitment(commitment_id, clean):
@@ -5369,7 +5380,8 @@ def patch_commitment(commitment_id: str, updates: dict = Body(...),
     return {"status": "success"}
 
 @app.delete("/api/commitments/{commitment_id}")
-def remove_commitment(commitment_id: str, background_tasks: BackgroundTasks):
+def remove_commitment(commitment_id: str, background_tasks: BackgroundTasks, request: Request = None):
+    _commitment_access(commitment_id, request)
     storage.delete_protected_commitment(commitment_id)
     background_tasks.add_task(trigger_background_refresh, None, None, True)
     return {"status": "success"}
@@ -7839,18 +7851,11 @@ def move_program_unit(program_id: str, body: dict = Body(default={}),
 
 @app.get("/api/practice-windows")
 def practice_windows_api(start_date: str = None, end_date: str = None,
-                         member_id: str = None):
-    """When the household's practice windows actually are, and what is in them.
+                         member_id: str = None, request: Request = None):
+    """Dated practice windows on the signed-in person's surface.
 
-    A household read on purpose, and the one place a program's claimed TIME
-    becomes visible to anybody but its owner. The disclosure is already made
-    elsewhere -- the Programs page lists every member's programs and the wall
-    card names whose milestone is close -- so what this adds is the hour
-    beside the thing everyone can already see, which is the only way somebody
-    else stops booking over it in good faith.
-
-    Protected commitments that did NOT come from a program are untouched by
-    this and stay as private as they have always been.
+    Private programs retain their time and colour as Busy; words follow the
+    current program audience. Non-program commitments are not part of this feed.
     """
     import datetime as _dt
     from services import programs as _prog
@@ -7865,7 +7870,7 @@ def practice_windows_api(start_date: str = None, end_date: str = None,
         start, end = end, start
     if (end - start).days > 60:
         end = start + _dt.timedelta(days=60)
-    return {"windows": _prog.practice_windows(start, end, member_id=member_id)}
+    return {"windows": _prog.practice_windows(start, end, member_id=member_id, viewer=_piece_viewer(request))}
 
 
 # --- Lesson player (P2): the hand path beside every generated one ----------
@@ -8652,9 +8657,10 @@ def _assist_event_context(event_id: str):
     server resolves the series key and the date itself rather than trusting a
     client to compute them — otherwise the dashboard, the phone and the agent
     each get their own chance to key coverage differently."""
+    from services import access
     requested = str(event_id or '')
     base, leg = _assist_svc.split_leg(requested)
-    sched = storage.get_cached_schedule() or {}
+    sched = access.cached_schedule() or {}
     # Prefer the selected leg: it carries the right time and may carry the
     # recurring id even when the unsplit source event is absent.
     for ev in sched.get('events', []):
@@ -11828,13 +11834,14 @@ def remove_prep_kit(kit_id: str):
     return {"status": "deleted"}
 
 @app.get("/api/prep-kits/matches")
-def prep_kit_matches():
+def prep_kit_matches(request: Request = None):
     """Which upcoming schedule-cache events each kit matches — the same
     visibility routing rules get, so a kit's filters are verifiable instead
     of guessed. Split dropoff/pickup variants collapse to one entry."""
+    from services import access
     from services import prep_kits
     kits = storage.get_prep_kits()
-    cache = storage.get_cached_schedule() or {}
+    cache = access.cached_schedule(_piece_viewer(request)) or {}
     pax = prep_kits.passenger_objs()
     out = {k['id']: [] for k in kits}
     seen = {k['id']: set() for k in kits}
@@ -11854,11 +11861,12 @@ def prep_kit_matches():
     return out
 
 @app.post("/api/prep-kits/suggest")
-def suggest_prep_kits():
+def suggest_prep_kits(request: Request = None):
     """One LLM request over upcoming event titles -> proposed kits for review.
     Nothing is saved here — the client edits and POSTs the ones it keeps."""
+    from services import access
     from services import prep_kits
-    cache = storage.get_cached_schedule() or {}
+    cache = access.cached_schedule(_piece_viewer(request)) or {}
     titles = {e.get('title') for e in cache.get('events', [])
               if e.get('title') and e.get('event_type') != 'errand'
               and not e.get('trip_suppressed')}
@@ -11871,7 +11879,7 @@ def suggest_prep_kits():
     return {"kits": kits}
 
 @app.get("/api/packing/day")
-def packing_day(date: str = None, days: int = 1):
+def packing_day(date: str = None, days: int = 1, request: Request = None):
     """The household's day (or several), as blocks: outings, at-home events,
     covered rides, and the prep that has to happen before them.
 
@@ -11883,13 +11891,14 @@ def packing_day(date: str = None, days: int = 1):
     because prep for tomorrow morning has to be visible tonight -- a one-day
     card cannot show work that belongs to the evening before.
     """
+    from services import access
     import datetime
     from services import family_day as _fam
     from services import outings as _outings
     from services import prep_kits as _prep
     now = datetime.datetime.now()
-    sched = storage.get_cached_schedule() or {}
-    first = (_outings._as_date(date) if date else None) or _fam.day_in_focus(now, sched)
+    sched = access.cached_schedule(_piece_viewer(request)) or {}
+    first = (_outings._as_date(date) if date else None) or _fam.day_in_focus(now, sched, viewer=_piece_viewer(request))
     span = max(1, min(int(days or 1), 14))
     drivers = {str(d.get('id')): d for d in storage.get_all_drivers()}
     kits, pax = storage.get_prep_kits(), _prep.passenger_objs()
@@ -11897,7 +11906,7 @@ def packing_day(date: str = None, days: int = 1):
     out_days = []
     for i in range(span):
         target = first + datetime.timedelta(days=i)
-        out_days.append(_packing_day_payload(target, sched, now, drivers, kits, pax))
+        out_days.append(_packing_day_payload(target, sched, now, drivers, kits, pax, viewer=_piece_viewer(request)))
     return {'date': first.isoformat(),
             'is_tomorrow': first > now.date(),
             'days': out_days,
@@ -11906,7 +11915,7 @@ def packing_day(date: str = None, days: int = 1):
             'blocks': out_days[0]['blocks']}
 
 
-def _packing_day_payload(target, sched, now, drivers, kits, pax) -> dict:
+def _packing_day_payload(target, sched, now, drivers, kits, pax, *, viewer=None) -> dict:
     """One day, with every block's packing resolved against its claims."""
     import datetime
     from services import family_day as _fam
@@ -11922,15 +11931,15 @@ def _packing_day_payload(target, sched, now, drivers, kits, pax) -> dict:
     # was never placed at all. That is most of a Saturday.
     for offset in (0, 1):
         probe = target + datetime.timedelta(days=offset)
-        for b in _fam.blocks_for(probe, sched, now, items_by_key={})['blocks']:
+        for b in _fam.blocks_for(probe, sched, now, items_by_key={}, viewer=viewer)['blocks']:
             if b.get('canceled') or b['key'] in counts:
                 continue
             groups = _outings.packing_for(
                 {'event_ids': (b['event_ids'] if b['kind'] == 'outing'
-                               else [b['event_id']])}, sched, kits, pax)
+                               else [b['event_id']])}, sched, kits, pax, viewer=viewer)
             counts[b['key']] = sum(len(g.get('items') or []) for g in groups)
 
-    day = _fam.blocks_for(target, sched, now, items_by_key=counts)
+    day = _fam.blocks_for(target, sched, now, items_by_key=counts, viewer=viewer)
     claims = {}
     # A prep block on tonight holds tiles for TOMORROW's trips, and those
     # claims are filed on tomorrow's date — reading only today's would show
@@ -11953,7 +11962,7 @@ def _packing_day_payload(target, sched, now, drivers, kits, pax) -> dict:
             tiles = []
             for t in b.get('tiles') or []:
                 t_groups = _outings.packing_for(
-                    {'event_ids': [t['event_id']]}, sched, kits, pax)
+                    {'event_ids': [t['event_id']]}, sched, kits, pax, viewer=viewer)
                 t_packed = t_needed = 0
                 for g in t_groups:
                     for item in g['items']:
@@ -11980,7 +11989,7 @@ def _packing_day_payload(target, sched, now, drivers, kits, pax) -> dict:
         source_key = b['key']
         groups = [] if b.get('canceled') else _outings.packing_for(
             {'event_ids': (b['event_ids'] if b['kind'] == 'outing'
-                           else [b['event_id']])}, sched, kits, pax)
+                           else [b['event_id']])}, sched, kits, pax, viewer=viewer)
         packed = needed = 0
         for g in groups:
             for item in g['items']:
@@ -12026,9 +12035,10 @@ def _day_label(target, today) -> str:
 
 
 @app.post("/api/packing/claim")
-def packing_claim(payload: dict = Body(...)):
+def packing_claim(payload: dict = Body(...), request: Request = None):
     """One thing packed, or one un-packed. A count, not a checkbox."""
     import datetime
+    from services import access
     from services import family_day as _fam
     from services import outings as _outings
     from services import prep_kits as _prep
@@ -12046,9 +12056,9 @@ def packing_claim(payload: dict = Body(...)):
     if delta == 0:
         raise HTTPException(status_code=400, detail="delta must not be zero")
     now = datetime.datetime.now()
-    sched = storage.get_cached_schedule() or {}
+    sched = access.cached_schedule(_piece_viewer(request))
     asked = _outings._as_date(payload.get('date'))
-    target = asked or _fam.day_in_focus(now, sched)
+    target = asked or _fam.day_in_focus(now, sched, viewer=_piece_viewer(request))
     # The block has to be real and the item has to be one of its own — a
     # stale card must not file claims into the void, and a fabricated
     # item_key must not mint XP (each distinct key is a fresh once-guard).
@@ -12062,7 +12072,7 @@ def packing_claim(payload: dict = Body(...)):
     found_on = target
     for offset in (0, 1, -1):
         probe = target + datetime.timedelta(days=offset)
-        for candidate in _fam.blocks_for(probe, sched, now)['blocks']:
+        for candidate in _fam.blocks_for(probe, sched, now, viewer=_piece_viewer(request))['blocks']:
             if candidate['kind'] != 'prep' and candidate['key'] == outing_key:
                 block, found_on = candidate, probe
                 break
@@ -12081,7 +12091,7 @@ def packing_claim(payload: dict = Body(...)):
     kits, pax = storage.get_prep_kits(), _prep.passenger_objs()
     groups = [] if block.get('canceled') else _outings.packing_for(
         {'event_ids': (block['event_ids'] if block['kind'] == 'outing'
-                       else [block['event_id']])}, sched, kits, pax)
+                       else [block['event_id']])}, sched, kits, pax, viewer=_piece_viewer(request))
     needed_by_item = {i['key']: i['needed'] for g in groups for i in g['items']}
     if item_key not in needed_by_item:
         raise HTTPException(status_code=404, detail="that item is not on this block")
@@ -13271,6 +13281,7 @@ def member_day(member_id: str, date: Optional[str] = None, request: Request = No
     """A passenger-lens day: the member's events from the combined schedule
     cache (matched via their passenger record's calendar_ids/hashtags), each
     with the assigned driver resolved to a member and a drive status."""
+    from services import access
     import datetime as _dt
     member = storage.get_member(member_id)
     if not member:
@@ -13297,7 +13308,7 @@ def member_day(member_id: str, date: Optional[str] = None, request: Request = No
                 p_tags = {t.lower() for t in (p.get('hashtags') or [])}
                 break
 
-    sched = storage.get_cached_schedule() or {}
+    sched = access.cached_schedule(_piece_viewer(request)) or {}
     if p_id and date_str < _dt.date.today().isoformat() and not any(
             str(e.get('start', '')).startswith(date_str)
             for e in sched.get('events', [])):
@@ -13306,7 +13317,7 @@ def member_day(member_id: str, date: Optional[str] = None, request: Request = No
         # same per-day path the Family tab's back arrow pages in.
         try:
             past = get_schedule(BackgroundTasks(), start_date=date_str,
-                                end_date=date_str)
+                                end_date=date_str, request=request)
             if isinstance(past, dict) and 'events' in past:
                 sched = past
         except Exception as e:
@@ -14219,7 +14230,7 @@ def meals_plan(date: Optional[str] = None, meal: str = 'dinner',
     import datetime as _dt
     from services import meals as _meals
     date_str = date or _dt.date.today().isoformat()
-    plan = _meals.eating_plan(date_str, meal if meal in _meals.MEAL_WINDOWS else 'dinner')
+    plan = _meals.eating_plan(date_str, meal if meal in _meals.MEAL_WINDOWS else 'dinner', viewer=_piece_viewer(request))
     plan['lines'] = _meals.plan_summary_lines(plan)
     viewer_id = _acting_id(request, None)
     viewer = storage.get_member(viewer_id) if viewer_id else None
@@ -15545,13 +15556,14 @@ def _notify_kids_ride_started(event_id, now=None, leg_id=None):
     Once per event per day (app_state markers, so later legs of the same
     drive stay quiet); kid quiet hours SKIP rather than defer — a stale
     on-the-way push is worse than none."""
+    from services import access
     import datetime as _dt
     from services import family_digest
     try:
         now = now or _dt.datetime.now()
         if family_digest.in_kid_quiet_hours(now, storage.get_settings() or {}):
             return
-        sched = storage.get_cached_schedule() or {}
+        sched = access.cached_schedule() or {}
         ev, title = _ride_event(sched, event_id)
         if not ev:
             return
@@ -15588,13 +15600,14 @@ def _notify_ride_eta_update(event_id, leg_id, now=None):
     """The driver tapped 'send a new time' (share_eta): same audience as
     the on-the-way push, no dedup marker — this fires only on an explicit
     human act, and twice means the driver meant it twice."""
+    from services import access
     import datetime as _dt
     from services import family_digest
     try:
         now = now or _dt.datetime.now()
         if family_digest.in_kid_quiet_hours(now, storage.get_settings() or {}):
             return
-        sched = storage.get_cached_schedule() or {}
+        sched = access.cached_schedule() or {}
         ev, title = _ride_event(sched, event_id)
         if not ev:
             return
@@ -15620,16 +15633,17 @@ def _notify_kids_driver_changes(buffered, now=None):
     watchers chase unassigned events); only the next 48h — far-future churn
     is noise a kid can't act on, the evening digest covers it; kid quiet
     hours skip entirely (the digest restates tomorrow anyway)."""
+    from services import access
     import datetime as _dt
     from services import family_digest
     now = now or _dt.datetime.now()
     if family_digest.in_kid_quiet_hours(now, storage.get_settings() or {}):
         return
     horizon = now + _dt.timedelta(hours=48)
-    sched = storage.get_cached_schedule() or {}
+    sched = access.cached_schedule() or {}
     for ev_id, entry in buffered.items():
         old_d, new_d = entry.get("first_old"), entry.get("last_new")
-        ev = entry.get("ev") or {}
+        ev = access.event_view(entry.get("ev") or {})
         if old_d == new_d or not new_d or str(new_d).startswith("ghost_"):
             continue
         try:
@@ -16352,6 +16366,7 @@ def family_locations(viewer: Optional[str] = None, request: Request = None):
     zone and pin are withheld and the row says so with `private` instead.
     Driving context stays either way: "en route to practice" is the schedule
     speaking, and the kiosk already shows the schedule."""
+    from services import access
     from services import ha_api, stages
     from services import auth as _auth
     # Family-network S1: `viewer` was CLIENT-ASSERTED — any caller could name
@@ -16379,7 +16394,7 @@ def family_locations(viewer: Optional[str] = None, request: Request = None):
         _allowed_subjects = _scope.sees_people(_viewer_m, storage.get_all_members())
     driving_by_driver = {}
     try:
-        sched = storage.get_cached_schedule() or {}
+        sched = access.cached_schedule(_piece_viewer(request)) or {}
         events_by_id = {e.get('id'): e for e in sched.get('events', [])}
         assignments = dict(sched.get('assignments', {}))
         assignments.update(sched.get('ghost_assignments', {}))
@@ -18066,12 +18081,13 @@ class OverrideCheckPayload(BaseModel):
     driver_id: str
 
 @app.post("/api/overrides/check")
-def check_override_conflicts(payload: OverrideCheckPayload):
+def check_override_conflicts(payload: OverrideCheckPayload, request: Request = None):
     """Dry-run: reasons the solver would normally refuse this (event, driver)
     pair. Informational only — the override still wins if created."""
+    from services import access
     from models.schemas import Event as EventModel
     import datetime as _dt
-    cache = storage.get_cached_schedule()
+    cache = access.cached_schedule(_piece_viewer(request))
     ev_dict = next((e for e in cache.get("events", []) if e.get("id") == payload.event_id), None)
     d_dict = next((d for d in storage.get_all_drivers() if d.get("id") == payload.driver_id), None)
     if not ev_dict or not d_dict:
@@ -18242,6 +18258,7 @@ def list_triage_events(request: Request = None):
     /api/schedule is. The cache trails a save by one solve, so an event whose
     config has since been written is dropped here rather than offered again.
     Events that have already ended are not setup work any more."""
+    from services import access
     _claim = None
     try:
         _claim = (getattr(request, 'query_params', {}) or {}).get('viewer')
@@ -18250,7 +18267,7 @@ def list_triage_events(request: Request = None):
     _viewer_id = _acting_id(request, _claim)
     _viewer = storage.get_member(_viewer_id) if _viewer_id else None
     from services import scope as _scope
-    cached = storage.get_cached_schedule() or {}
+    cached = access.cached_schedule(_piece_viewer(request)) or {}
     blob = _scope.redact_schedule_blob(cached, _viewer) if cached else {}
     with storage.db_lock:
         configured = {c['google_id'] for c in storage.event_configs_table.all() if 'google_id' in c}
@@ -19671,7 +19688,7 @@ def _practice_events(start_date_str=None, end_date_str=None, days=30,
                 'foregroundColor': '#ffffff'}
 
     out = []
-    for w in _prog.practice_windows(start, end):
+    for w in _prog._practice_windows(start, end):
         try:
             begins = _dt.datetime.fromisoformat(f"{w['date']}T{w['time_start']}:00")
             finishes = _dt.datetime.fromisoformat(f"{w['date']}T{w['time_end']}:00")
@@ -21614,6 +21631,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
     # the flip, on a phone whose token went stale. A real token still wins
     # (acting_member prefers it), and once enforcing, tokenless is refused by
     # the guard before it ever reaches here.
+    from services import access
     _claim = None
     try:
         _claim = (getattr(request, 'query_params', {}) or {}).get('viewer')
@@ -21772,6 +21790,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                         pass
                 
             if cached:
+                cached = access.schedule_view(cached, _piece_viewer(request))
                 cached["completed_drives"] = completed
                 cached["in_progress_drives"] = in_progress
                 cached["prep_by_event"] = _prep_by_event(cached.get("events"))
@@ -21818,7 +21837,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                 except Exception:
                     pass
 
-            res = refresh_schedule_logic(start_date, end_date, force_refresh=force_refresh)
+            res = access.schedule_view(refresh_schedule_logic(start_date, end_date, force_refresh=force_refresh), _piece_viewer(request))
             
             import time
             now = time.time()
@@ -21843,11 +21862,13 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
 
 @app.get("/api/ha_sensors")
 def get_ha_sensors(background_tasks: BackgroundTasks):
+    from services import access
     try:
         cache = storage.get_cached_schedule()
         if not cache:
             cache = refresh_schedule_logic(None, None, True)
             
+        cache = access.schedule_view(cache, access.HOUSE)
         import urllib.parse
         from datetime import datetime
         

@@ -17,6 +17,7 @@ Rules of calm (design principles — argue before violating):
 - Statuses are date-bound; nothing in this module ever carries a status
   forward past its date.
 """
+from services import access
 import datetime
 
 from services import storage
@@ -334,7 +335,7 @@ def auto_set_from_calendar(now: datetime.datetime = None, horizon_days: int = 7)
     # cached one slice per day — a 5-day trip must become ONE 5-day span,
     # never five one-day instances), then span the event's own dates.
     spans = {}  # base id -> {'title','text','start','end'}
-    for ev in (storage.get_cached_schedule() or {}).get('events', []):
+    for ev in (access.cached_schedule() or {}).get('events', []):
         if ev.get('event_type') == 'errand':
             continue
         base = str(ev.get('id', '')).split('_slice_')[0]
@@ -491,7 +492,7 @@ def send_coverage_reports(now: datetime.datetime = None, lookahead_days: int = 4
     now = now or datetime.datetime.now()
     today = now.date()
     horizon = (today + datetime.timedelta(days=lookahead_days)).isoformat()
-    sched = storage.get_cached_schedule() or {}
+    sched = access.cached_schedule() or {}
     if not sched.get('events') and not sched.get('assignments'):
         return []  # not re-solved yet — retry next sweep
     sent_marks = dict(storage.get_app_state('status_coverage_sent') or {})

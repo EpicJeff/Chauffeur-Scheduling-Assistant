@@ -26,6 +26,7 @@ Rules this module holds to:
     not tapping a wall). This flag is R3's cue trigger; here it only tints.
   * No flagged items — no runway. Blank means blank.
 """
+from services import access
 import datetime
 from typing import Optional
 
@@ -52,7 +53,7 @@ def _member_be_ready(member: dict, date_str: str) -> Optional[datetime.datetime]
     polls this. None when the schedule makes no claim, which is most
     Saturdays, and exactly when item times should carry the runway alone."""
     from services import scope, leave_by
-    sched = storage.get_cached_schedule() or {}
+    sched = access.cached_schedule() or {}
     members = storage.get_all_members()
     passengers = {p.get('id'): p for p in storage.get_all_passengers()}
     assignments = dict(sched.get('assignments') or {})

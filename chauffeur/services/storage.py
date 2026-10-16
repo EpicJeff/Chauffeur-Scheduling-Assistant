@@ -2788,6 +2788,12 @@ def get_protected_commitments(member_id: str = None,
     rows.sort(key=lambda c: (c.get('title') or '').lower())
     return rows
 
+def get_protected_commitment(commitment_id: str) -> Optional[dict]:
+    with db_lock:
+        rows = protected_commitments_table.search(Query().id == commitment_id)
+        return dict(rows[0]) if rows else None
+
+
 def add_protected_commitment(data: dict) -> str:
     # Cache invalidation on every mutation, same as status days: a protected
     # window moves driver availability, and a stale cache would keep placing
