@@ -165,7 +165,9 @@ def _send(thread: dict, entry: dict, reading: Optional[dict]) -> bool:
         try:
             s = _sit.view('thread', thread['id'], m)
             nxt = ((s or {}).get('next_step') or {}).get('label') or ''
-            body = dm_line(thread, entry, reading, nxt)
+            body = (access.neutral_signal_line('thread', thread)
+                    if access.record_view('thread', thread, m) == access.KEEPER else
+                    dm_line(thread, entry, reading, nxt))
             _post(storage.get_or_create_dm(argyle['id'], m['id']), argyle, body)
             sent = True
         except Exception as e:
@@ -194,8 +196,13 @@ def flush_pending_dms(now: datetime.datetime = None) -> int:
         return 0
     posted = 0
     for thread in storage.get_threads(include_closed=False):
+        recipientless = access.restricted(access.home_project(thread)) and not _recipients(thread)
         for h in list(thread.get('history') or []):
             if h.get('kind') == 'received' and h.get('dm_pending'):
+                from services.watchers import NOTIFIED_RETENTION_DAYS
+                if recipientless and h.get('ts') and h['ts'] < now.timestamp() - NOTIFIED_RETENTION_DAYS * 86400:
+                    storage.update_thread_history_entry(thread['id'], {'message_id': h.get('message_id')}, {'dm_pending': False})
+                    continue
                 if _send(thread, h, h.get('reading')):
                     storage.update_thread_history_entry(thread['id'], {'message_id': h.get('message_id')}, {'dm_pending': False})
                     posted += 1

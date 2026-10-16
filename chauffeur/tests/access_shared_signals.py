@@ -96,7 +96,7 @@ def shared_probe(fx, key, col, rid):
         out = house_programs.session(fx.ids[key], NOW, viewer=viewer)
     elif name == '_programs':
         windows = [{'program_id': fx.ids[key], 'title': fx.title(key)}]
-        with patch.object(programs, 'practice_windows', return_value=windows):
+        with patch.object(programs, '_practice_windows', return_value=windows):
             out = house_attention._programs(NOW, viewer=viewer)
         check(out['available'] == int(want), f'attention {key} {col}: {out}')
         return 'skip'
@@ -139,8 +139,8 @@ def shared_probe(fx, key, col, rid):
         storage.add_finding({'subject_type': KIND[key], 'subject_id': fx.ids[key],
                             'line': fx.title(key) + ' ' + fx.secret(key), 'state': 'open'})
         out = home_board._tile_mind(NOW, viewer=viewer)
-        # Findings are rendered through their source rule (§4.8), even here.
-        check(seen(out, fx, key) == (allowed(key, col) and col in ('mom', 'dad', 'aunt', 'house')), text(out))
+        # Identity-free screens show insights only. People get HOUSE union own.
+        check(seen(out, fx, key) == (col != 'house' and col != 'pat' and want), text(out))
         return 'skip'
     elif name == 'build':
         home_board._CACHE.clear()
@@ -256,6 +256,8 @@ def delivery_contract(name):
             else:
                 replies.flush_pending_dms(NOW)
                 check([s[0] for s in sent] == [['aunt']], f'reply flush: {sent}')
+            check(all(fx.secret('R1') not in text((body, card)) for ids, body, card in sent if ids == ['aunt']),
+                  'keeper reply DM has no next action or reply words')
         elif name in ('_thread_stalls', '_mission_states', '_program_findings', 'run_watchers',
                       '_post_action_cards', '_heads_up_line'):
             if name == '_heads_up_line':
@@ -360,6 +362,7 @@ def current_fixture():
 
 
 def shared_contracts():
+    round1_shared_contracts()
     fx = fresh()
     seed(fx)
     for col in ('house', 'mom', 'dad', 'aunt', 'kid'):
@@ -386,6 +389,7 @@ def shared_contracts():
 
 
 def signal_contracts():
+    round1_signal_contracts()
     for name in ('_dm_person', '_thread_stalls', '_mission_states', '_program_findings',
                  'read', 'flush_pending_dms', '_prep_kit_findings'):
         delivery_contract(name)
@@ -442,6 +446,9 @@ def signal_contracts():
         messages = storage.get_channel_messages(dm['id'])
         check(seen(messages, fx, 'R1') == (col == 'aunt'), 'R1 stored privately only for Aunt')
         check(seen(messages, fx, 'R4') == (col in ('mom', 'dad')), 'R4 stored for both active parents')
+        if col == 'aunt':
+            check(all(fx.secret(key) not in text(messages) for key in ('R1', 'R2')),
+                  'stored keeper DMs contain no next-action or question words')
         if col == 'pat':
             check(not messages, 'disabled Pat has no stored DM')
     # An old calendar watermark cannot re-say a private title on removal,
@@ -454,3 +461,133 @@ def signal_contracts():
             'fp': '2026-10-16T17:00:00|2026-10-16T18:00:00|None'}})
     storage.set_cached_schedule({'events': []})
     check(not seen(mind._gather_deltas(NOW), fx, 'R3'), 'removed private practice watermark stays silent')
+
+
+def round1_shared_contracts():
+    fx = fresh()
+    for kind in ('occasion_gap', 'care_gap'):
+        storage.add_finding({'kind': kind, 'line': kind + '-finding-secret', 'state': 'open'})
+    storage.add_mind_insight({'state': 'active', 'line': 'wall-insight', 'sensitivity': 'normal'})
+    wall = home_board._tile_mind(NOW, viewer=access.HOUSE)
+    check('wall-insight' in text(wall), 'anonymous wall retains insights')
+    check('finding-secret' not in text(wall), 'anonymous wall never shows occasion/care findings')
+    kate = home_board._tile_mind(NOW, viewer=fx.viewers['kid'])
+    check({(s['kind'], s['id']) for s in wall['situations']} <=
+          {(s['kind'], s['id']) for s in kate['situations']}, 'Kate never sees less than wall')
+    check('occasion_gap-finding-secret' in text(kate) and 'care_gap-finding-secret' in text(kate),
+          'signed-in Kate retains HOUSE findings')
+
+    seed(fx)
+    config = json.dumps([{'id': 'cache-proof', 'type': 'calendar', 'config': {'view': 'list'}}])
+    home_board._CACHE.clear()
+    before = home_board.build(config, now=NOW, viewer=fx.viewers['mom'])
+    keys = set(home_board._CACHE)
+    storage.update_member('mom', {'last_seen_at': NOW.timestamp(), 'presence': 'away'})
+    viewer = storage.get_member('mom')
+    after = home_board.build(config, now=NOW, viewer=viewer)
+    check(set(home_board._CACHE) == keys and after is before, 'member heartbeat/presence preserves cache key')
+    storage.update_project(fx.projects['mom_private']['id'], {'audience': 'household'})
+    home_board.build(config, now=NOW, viewer=viewer)
+    check(set(home_board._CACHE) != keys, 'project audience changes cache key')
+
+
+def round1_signal_contracts():
+    from services import agent_tools_v2, situations, chat_actions
+    fx = fresh()
+    f = findings.make('thread_stall:' + fx.ids['R1'], fx.title('R1') + ' ' + fx.secret('R1'),
+                      kind='thread_stall', subject_type='thread', subject_id=fx.ids['R1'])
+    fid = storage.add_finding({'identity': findings.identity(f), 'kind': f.kind, 'state': 'open',
+                               'subject_type': 'thread', 'subject_id': fx.ids['R1'], 'line': f.line,
+                               'created_at': NOW.timestamp(), 'last_seen_at': NOW.timestamp() - 100})
+    original = storage.get_finding(fid)
+    with ExitStack() as stack:
+        sent = captures(stack)
+        stack.enter_context(patch.object(watchers, '_prep_kit_findings', return_value=[]))
+        stack.enter_context(patch.object(programs, 'maybe_rebaseline', return_value=None))
+        for due in ('2020-01-01', '2026-10-15'):  # paging and quiet restricted stalls
+            storage.update_thread(fx.ids['R1'], {'next_action_at': due})
+            watchers.run_watchers(NOW)
+            check(storage.get_finding(fid) == original, 'restricted signal is seen without updating old row')
+            counts = findings.month_counts(NOW.timestamp() - 1, viewer=fx.viewers['mom'])
+            check(counts['still_open'] >= 1 and counts['cleared_themselves'] == 0, 'restricted stall is never counted cleared')
+        check(any(seen(s, fx, 'R1') for s in sent), 'real sweep delivered restricted stall')
+        for ids, body, card in sent:
+            if ids == ['aunt']:
+                check(fx.secret('R1') not in text((body, card)) and fx.secret('R2') not in text((body, card)),
+                      'Aunt watcher DM has no next action or question')
+    check(any(r['id'] == fid for r in findings.open_findings(viewer=fx.viewers['mom'])), 'old finding remains readable')
+
+    fx = fresh()
+    for key in ('R1', 'R2'):
+        fid = storage.add_finding({'identity': 'keeper-' + key, 'kind': 'thread_stall' if key == 'R1' else 'mission_waiting',
+                                  'subject_type': KIND[key], 'subject_id': fx.ids[key],
+                                  'line': fx.title(key) + ' ' + fx.secret(key), 'state': 'open', 'severity': 'decide',
+                                  'status_note': fx.secret(key), 'note_source': 'argyle', 'note_rev': 0, 'rev': 0,
+                                  'next_action': fx.secret(key), 'goal': fx.secret(key), 'question': fx.secret(key),
+                                  'sit_owner_member_id': 'aunt', 'sit_owned_at': NOW.timestamp()})
+        for surface in (agent_tools_v2.list_open_findings(acting_member=fx.viewers['aunt']),
+                        request(fx, 'aunt', 'GET', '/api/findings').json(),
+                        study._stickies(NOW, fx.viewers['aunt']),
+                        situations.view('finding', fid, fx.viewers['aunt'])):
+            check(seen(surface, fx, key), 'keeper finding stays present')
+            check(fx.secret(key) not in text(surface), 'keeper finding surface contains only neutral words')
+        check(situations.view('finding', fid, fx.viewers['aunt'])['owner_member_id'] == 'aunt',
+              'keeper projection preserves finding ownership metadata')
+        private = findings.make('keeper-' + key, fx.title(key) + ' ' + fx.secret(key),
+                                subject_type=KIND[key], subject_id=fx.ids[key])
+        check(fx.secret(key) not in watchers._heads_up_line(private, fx.viewers['aunt']), 'keeper heads-up neutral')
+        with patch.object(situations, 'view', side_effect=RuntimeError('render failed')):
+            check(fx.secret(key) not in watchers._heads_up_line(private, fx.viewers['aunt']), 'keeper fallback stays neutral')
+        with patch.object(access, 'record_view', side_effect=RuntimeError('projection failed')):
+            check(fx.secret(key) not in watchers._heads_up_line(private, fx.viewers['aunt']), 'failed source projection never leaks raw line')
+        storage.update_finding(fid, {'state': 'done'})
+        check(fx.secret(key) not in request(fx, 'aunt', 'GET', '/api/findings?state=done').text, 'historical keeper projection')
+
+    fx = fresh()
+    private = findings.make('child-card', fx.title('R3'), subject_type='program', subject_id=fx.ids['R3'],
+                            action={'action_type': 'reshape_program', 'label': 'Reshape', 'payload': {'program_id': fx.ids['R3']}})
+    with ExitStack() as stack:
+        sent = captures(stack)
+        stack.enter_context(patch.object(watchers, 'collect_findings', return_value=([private], [])))
+        stack.enter_context(patch.object(watchers, '_prep_kit_findings', return_value=[]))
+        create = stack.enter_context(patch.object(chat_actions, 'create_action_proposal', return_value={'status': 'refused'}))
+        watchers.run_watchers(NOW)
+        check(any(ids == ['kid'] and seen(body, fx, 'R3') for ids, body, card in sent), 'child keeper gets line')
+        check(create.call_count == 2, 'only two parents receive action proposals')
+        create.reset_mock()
+        watchers._post_action_cards({'id': 'kid'}, storage.ensure_argyle_member(), [private], fx.viewers['kid'])
+        check(not create.called, 'child keeper never gets approve card')
+
+    fx = fresh()
+    storage.update_thread(fx.ids['R1'], {'owner_member_id': ''})
+    old_ts = (NOW - dt.timedelta(days=watchers.NOTIFIED_RETENTION_DAYS + 1)).timestamp()
+    for mid, ts in [('old', old_ts), ('recent', NOW.timestamp())]:
+        storage.append_thread_history(fx.ids['R1'], {'kind': 'received', 'message_id': mid, 'text': fx.secret('R1'),
+                                                    'ts': ts, 'dm_pending': True})
+    with ExitStack() as stack:
+        sent = captures(stack)
+        check(replies.flush_pending_dms(NOW) == 0 and not sent, 'no recipient receives reply')
+    history = {h['message_id']: h for h in load(fx, 'R1')['history'] if h.get('message_id') in ('old', 'recent')}
+    check(not history['old']['dm_pending'] and history['recent']['dm_pending'], 'recipientless replies age out without refreshing timestamp')
+    check(history['old']['ts'] == old_ts, 'reply age remains original')
+
+    fx = fresh()
+    storage.add_mind_insight({'state': 'dismissed', 'line': 'sensitive-reaction-history', 'sensitivity': 'sensitive', 'outcome': 'not_useful'})
+    storage.add_mind_insight({'state': 'active', 'line': 'sensitive-active-history', 'sensitivity': 'sensitive'})
+    check('sensitive-reaction-history' in mind.snapshot(NOW), 'Mind remembers sensitive reactions')
+    check('sensitive-active-history' not in text(mind.visible_insights(access.HOUSE)), 'wall still excludes sensitive insights')
+
+
+if __name__ == '__main__':
+    import test_access_matrix as matrix
+    import traceback
+    failed = 0
+    for fn in (matrix.shared_signals.round1_shared_contracts, matrix.shared_signals.round1_signal_contracts):
+        try:
+            fn()
+            print('PASS', fn.__name__)
+        except Exception:
+            failed += 1
+            print('FAIL', fn.__name__)
+            traceback.print_exc()
+    raise SystemExit(bool(failed))

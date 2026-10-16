@@ -268,6 +268,33 @@ def finding_visible(finding, viewer):
     return row is None or record_visible(kind, row, viewer)
 
 
+def neutral_signal_line(kind, row):
+    """A keeper's signal names the record, never its next action or question."""
+    title = row.get('title') or (row.get('goal') if kind == 'mission' else None) or kind
+    return f'Argyle needs a parent on {title}'
+
+
+def finding_view(finding, viewer, *, focus_key=NOT_A_CHANNEL):
+    """Project source-derived words before a finding leaves a read surface."""
+    kind = finding.get('subject_type')
+    spec = KINDS.get(kind)
+    row = spec.load(finding.get('subject_id')) if spec and finding.get('subject_id') else None
+    if row is None:
+        return finding
+    projection = (record_view(kind, row, viewer) if focus_key is NOT_A_CHANNEL else
+                  conversation_view(kind, row, viewer, focus_key))
+    if projection is None:
+        return None
+    if projection != KEEPER or kind not in ('thread', 'mission'):
+        return finding
+    # Keep lifecycle metadata, but no cached note, proposal or free-text field.
+    out = {k: finding[k] for k in ('id', 'identity', 'kind', 'severity', 'subject_type', 'subject_id',
+           'state', 'created_at', 'last_seen_at', 'due_at', 'resolved_at', 'resolved_by',
+           'snoozed_until', 'sit_owner_member_id', 'sit_owned_at', 'rev') if k in finding}
+    out['line'] = neutral_signal_line(kind, row)
+    return out
+
+
 def private_recipients(kind, row):
     """Who a restricted record's DM-worthy signal goes to (spec §4.8)."""
     from services import projects

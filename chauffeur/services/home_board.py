@@ -46,6 +46,7 @@ def _member_image(m):
 
 
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -2752,10 +2753,25 @@ def _tile_errand_list(now, config=None, **_):
 
 
 def _tile_mind(now, config=None, viewer=access.HOUSE, **_):
-    """Needs you: source-visible findings and non-sensitive insights for
-    HOUSE; the signed-in person's view when present. Words, never buttons."""
+    """Insights on an identity-free screen; HOUSE union own for a person."""
     from services import situations as _sit
-    rows = _sit.list_situations(viewer, kinds=('finding', 'insight'))
+    rows = _sit.list_situations(access.HOUSE, kinds=('insight',))
+    if access._person(viewer):
+        from services import findings
+        seen = {(s['kind'], s['id']) for s in rows}
+        # Keep the wall's insights even when the person's own role is scoped.
+        for s in _sit.list_situations(viewer, kinds=('finding', 'insight')):
+            if (s['kind'], s['id']) not in seen:
+                rows.append(s)
+                seen.add((s['kind'], s['id']))
+        for audience in (access.HOUSE, viewer):
+            for f in findings.open_findings(viewer=audience):
+                if ('finding', f['id']) in seen or (f.get('snoozed_until') or 0) > now.timestamp():
+                    continue
+                rows.append({'kind': 'finding', 'id': f['id'], 'title': f['line'],
+                             'status_note': f.get('status_note') or '',
+                             'note_source': f.get('note_source'), 'next_step': None})
+                seen.add(('finding', f['id']))
     if not rows:
         return None
     return {'situations': [{'kind': s['kind'], 'id': s['id'], 'title': s['title'],
@@ -5327,11 +5343,18 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
     # put placeholder boxes on the kitchen wall.
     # Audience changes must take effect even while the presentation cache is
     # warm. Keep its TTL benefit, keyed by the current access inputs as well.
-    policy = [storage.get_projects(), storage.get_all_members(),
-              storage.get_programs(include_finished=True), storage.get_threads(include_closed=True),
-              storage.get_missions(), storage.get_mind_insights()]
+    policy = []
+    for records, fields in (
+            (storage.get_projects(), ('id', 'audience', 'wrapped_from')),
+            (storage.get_all_members(), ('id', 'role', 'status')),
+            (storage.get_programs(include_finished=True), ('id', 'project_id', 'member_id')),
+            (storage.get_threads(include_closed=True), ('id', 'project_id', 'owner_member_id')),
+            (storage.get_missions(), ('id', 'project_id', 'created_by'))):
+        policy.append([[r.get(k) for k in fields] for r in sorted(records, key=lambda r: r['id'])])
+    policy_digest = hashlib.sha256(json.dumps(policy, sort_keys=True).encode('utf-8')).hexdigest()
+    viewer_key = {k: (viewer or access.HOUSE).get(k) for k in ('id', 'role', 'status', 'house')}
     cache_key = json.dumps([page_obj['slug'], page_obj['columns'],
-                            page_obj['row_height'], editing, instances, viewer, policy],
+                            page_obj['row_height'], editing, instances, viewer_key, policy_digest],
                            sort_keys=True)
     held = _CACHE.get(cache_key)
     if held and time.time() - held['at'] < TTL_SECONDS:

@@ -91,7 +91,7 @@ def open_findings(severity: str = None, include_in_hand: bool = False, *, viewer
     if include_in_hand:
         rows = rows + storage.get_findings(state='in_hand')
     with access.batch():
-        rows = [r for r in rows if access.finding_visible(r, viewer)]
+        rows = [v for r in rows if (v := access.finding_view(r, viewer)) is not None]
     if severity:
         rows = [r for r in rows if r.get('severity') == severity]
     order = {'decide': 0, 'approve': 1, 'fyi': 2}
@@ -101,7 +101,7 @@ def open_findings(severity: str = None, include_in_hand: bool = False, *, viewer
     return rows
 
 
-def reconcile(found, scanned_kinds, now_ts: float = None) -> dict:
+def reconcile(found, scanned_kinds, now_ts: float = None, *, seen_only=()) -> dict:
     """Fold this sweep's findings into the record table.
 
     Returns the counts the digest reports — all of them real, none of them
@@ -113,6 +113,9 @@ def reconcile(found, scanned_kinds, now_ts: float = None) -> dict:
     seen = {}
     for f in found:
         seen[identity(f)] = f
+    # Restricted signals still answer the sweep's question. They must neither
+    # publish/update a household row nor make a continuing issue look cleared.
+    observed = set(seen) | {identity(f) for f in seen_only}
 
     opened = reopened = 0
     for ident, f in seen.items():
@@ -147,7 +150,7 @@ def reconcile(found, scanned_kinds, now_ts: float = None) -> dict:
 
     closed = expired = 0
     for row in storage.get_findings(state='open') + storage.get_findings(state='in_hand'):
-        if row.get('identity') in seen:
+        if row.get('identity') in observed:
             continue
         if row.get('kind') not in scanned:
             # This sweep did not ask the question, so it cannot answer it.

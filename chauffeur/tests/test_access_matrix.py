@@ -69,7 +69,6 @@ def scenario_every_probe_matches_the_table():
     for rid, cls, kinds, _check in reg.READERS:
         if rid not in PROBES or rid in pending_ids() or not cls.startswith(only):
             continue
-        print('PROBE', rid, flush=True)
         for rkey in TABLE:
             if KIND[rkey] not in kinds:
                 continue

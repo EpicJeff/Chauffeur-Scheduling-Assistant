@@ -1405,10 +1405,8 @@ def list_open_findings(acting_member=None, focus_key=None) -> Dict[str, Any]:
     """
     from services import findings as _f
     rows = _f.open_findings(viewer=acting_member or access.HOUSE)
-    rows = [r for r in rows if r.get('subject_type') not in access.KINDS or
-            access.KINDS[r['subject_type']].load(r.get('subject_id')) is None or
-            _conversation_view(r['subject_type'], access.KINDS[r['subject_type']].load(r.get('subject_id')),
-                                     acting_member or access.HOUSE, focus_key) is not None]
+    rows = [v for r in rows if (v := access.finding_view(
+        r, acting_member or access.HOUSE, focus_key=focus_key)) is not None]
     if not rows:
         return {"status": "success", "message": "Nothing needs you right now."}
     decide = [r for r in rows if r.get('severity') == 'decide']

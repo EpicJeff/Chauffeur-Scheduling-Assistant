@@ -234,7 +234,7 @@ def snapshot(now: datetime.datetime = None) -> str:
                          f"{r.get('line')}" for r in rows[:40])
 
     def _own_insights():
-        rows = [r for r in storage.get_mind_insights() if r.get('sensitivity') != 'sensitive']
+        rows = storage.get_mind_insights()
         lines = []
         for r in rows[-30:]:
             if r['state'] == 'active' and \

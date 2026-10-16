@@ -5413,7 +5413,8 @@ def list_findings(state: str = 'open', request: Request = None):
     viewer = _piece_viewer(request)
     if state == 'open':
         return {"findings": _f.open_findings(viewer=viewer)}
-    return {"findings": [f for f in storage.get_findings(state=state) if access.finding_visible(f, viewer)]}
+    return {"findings": [v for f in storage.get_findings(state=state)
+                         if (v := access.finding_view(f, viewer)) is not None]}
 
 @app.post("/api/findings/{finding_id}/resolve")
 def resolve_finding(finding_id: str, body: dict = Body(default={}),

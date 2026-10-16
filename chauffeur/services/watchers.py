@@ -409,7 +409,7 @@ _private_signals = ContextVar('watcher_private_signals', default=None)
 def _household_signals(found):
     """Restricted signals never become household findings (§4.8).
 
-    During a sweep, keep only signals the existing policy would DM. Outside
+    During a sweep, retain restricted signals as seen-only. Outside
     a sweep collectors remain read-only and simply omit restricted records.
     """
     public = []
@@ -418,7 +418,7 @@ def _household_signals(found):
         row = spec.load(f.subject_id) if spec else None
         if row and access.restricted(access.home_project(row)):
             pending = _private_signals.get()
-            if f.dm and pending is not None:
+            if pending is not None:
                 pending.append(f)
         else:
             public.append(f)
@@ -865,16 +865,18 @@ def _heads_up_line(f, viewer=access.HOUSE) -> str:
     and who has already been asked (spec 2026-10-09-situations-design §3).
     Reads the situation the sweep just reconciled; with no record yet (or
     anything odd) it is the line alone, never a crash in the sweep."""
+    fallback = ''
     try:
         from services import situations as _sit
         source = access.KINDS.get(f.subject_type)
         record = source.load(f.subject_id) if source else None
-        if record and access.restricted(access.home_project(record)):
+        if record:
             view = access.record_view(f.subject_type, record, viewer)
-            if view is None:
+            if view is None and access.restricted(access.home_project(record)):
                 return ''
-            if f.subject_type == 'mission' and view == access.KEEPER:
-                return 'Argyle needs a parent to look at your mission.'
+            if f.subject_type in ('thread', 'mission') and view == access.KEEPER:
+                return access.neutral_signal_line(f.subject_type, record)
+        fallback = f.line
         row = storage.get_finding_by_identity(_findings.identity(f))
         if not row:
             return f.line
@@ -893,7 +895,7 @@ def _heads_up_line(f, viewer=access.HOUSE) -> str:
         return out
     except Exception as e:
         print(f"[watchers] heads-up clause failed: {e}")
-        return f.line
+        return fallback
 
 
 def run_watchers(now: datetime.datetime = None) -> int:
@@ -938,7 +940,7 @@ def run_watchers(now: datetime.datetime = None) -> int:
     if any(f.kind == 'prep_suggest' for f in findings):
         scanned.add('prep_suggest')
     try:
-        _findings.reconcile(findings, scanned, now_ts)
+        _findings.reconcile(findings, scanned, now_ts, seen_only=private)
     except Exception as e:
         print(f"[watchers] finding reconcile failed: {e}")
     # A yes whose applying was interrupted between claim and completion is
@@ -996,13 +998,7 @@ def run_watchers(now: datetime.datetime = None) -> int:
         try:
             lines = []
             for f in recipient_findings:
-                if f.key in private_keys and f.subject_type == 'mission' and access.record_view(
-                        'mission', access.KINDS['mission'].load(f.subject_id), parent) == access.KEEPER:
-                    lines.append('Argyle needs a parent to look at your mission.')
-                else:
-                    # Subject-only signals retain the old household line; a
-                    # restricted signal is rendered for its private recipient.
-                    lines.append(_heads_up_line(f, parent))
+                lines.append(_heads_up_line(f, parent))
             body = "👋 Heads-up — needs a look:\n" + "\n".join(f"• {line}" for line in lines)
             body += "\n\nAsk me for options, or handle it on the dashboard."
             dm = storage.get_or_create_dm(argyle['id'], parent['id'])
@@ -1034,11 +1030,13 @@ def _post_action_cards(dm, argyle, fresh, parent):
     """One approve card per actionable finding, after the consolidated line.
 
     This is the hand path: the same proposal machinery the agent uses
-    (services/chat_actions.py), so a tap goes through the tested handler and
-    the parent/admin gate is enforced at approval rather than here.
+    (services/chat_actions.py), so a tap goes through the tested handler.
+    Only parents receive approve cards; keepers still receive their line.
     """
     from services import chat_actions
     from services.agent_tools_v2 import _post_chat_message
+    if not parent or parent.get('role') != 'parent' or not access._active(parent):
+        return
     posted = 0
     for f in fresh:
         if posted >= MAX_ACTION_CARDS or not f.action:

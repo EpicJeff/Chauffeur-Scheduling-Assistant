@@ -608,6 +608,11 @@ def view(kind: str, sid: str, viewer: Optional[dict] = None, *, mission: Optiona
         return _project_view(row, viewer)
     keeper = False
     access_row = row
+    if kind == 'finding' and viewer is not None:
+        row = access.finding_view(row, viewer)
+        if row is None:
+            return None
+        keeper = row is not access_row
     if kind in ('mission', 'thread') and viewer is not None:
         keeper = (projection if mission is not None else access.record_view(kind, row, viewer)) == access.KEEPER
     if keeper and kind == 'mission':
