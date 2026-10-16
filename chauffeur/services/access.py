@@ -23,10 +23,13 @@ _cache = ContextVar('access_cache', default=None)
 
 @contextmanager
 def batch():
-    """Memoise project and member lookups for one read-only list call.
+    """Memoise project/member lookups and live origins for one read-only call.
 
     Explicit, not request-wide: a write route that changes a project and then
     reads it back must never see the old row."""
+    if _cache.get() is not None:
+        yield
+        return
     token = _cache.set({})
     try:
         yield
@@ -49,6 +52,22 @@ def _get_project(pid):
 
 def _get_member(mid):
     return _memo(('member', mid), lambda: storage.get_member(mid)) if mid else None
+
+
+def thread_mission(row):
+    """Newest live mission by origin, indexed once per read-only batch."""
+    def index():
+        from services import missions
+        out = {}
+        for mission in storage.get_missions(status=missions.LIVE):
+            if mission.get('origin_kind') != 'thread':
+                continue
+            ref = mission.get('origin_ref')
+            previous = out.get(ref)
+            if previous is None or (mission.get('created_at') or 0) >= (previous.get('created_at') or 0):
+                out[ref] = mission
+        return out
+    return _memo('live_missions_by_origin', index).get(row.get('id'))
 
 
 def is_house(viewer):
@@ -313,6 +332,13 @@ def private_recipients(kind, row):
 NEUTRAL_PRACTICE_KEYS = ('member_id', 'color', 'date', 'time_start', 'time_end')
 
 
+def practice_hidden(program, viewer, *, shared=False):
+    """Only a restricted home can hide calendar words (scope is not secrecy)."""
+    visible = shared_screen_visible if shared else record_visible
+    return bool(program and restricted(home_project(program))
+                and not visible('program', program, viewer))
+
+
 def neutral_practice(event):
     """The Busy copy of a practice event (spec §4.7): structure, no words."""
     import hashlib
@@ -335,8 +361,7 @@ def schedule_view(blob, viewer):
         def visible(pid):
             if pid not in programs:
                 row = storage.get_program(pid)
-                programs[pid] = bool(row) and (record_visible('program', row, viewer)
-                                               if not is_house(viewer) else record_visible('program', row, HOUSE))
+                programs[pid] = not practice_hidden(row, HOUSE if is_house(viewer) else viewer)
             return programs[pid]
         events = []
         for ev in blob.get('events') or []:
@@ -359,14 +384,25 @@ def event_view(event, viewer=HOUSE):
 def commitment_view(row, viewer=HOUSE, *, programs=None):
     """An emitted reservation follows its program's current audience."""
     source = (row or {}).get('source') or {}
+    programs = {} if programs is None else programs
+    program = None
     if source.get('kind') == 'program':
-        programs = {} if programs is None else programs
         pid = source.get('id')
         if pid not in programs:
             programs[pid] = storage.get_program(pid)
         program = programs[pid]
-        if not program or not record_visible('program', program, viewer):
-            return {k: v for k, v in dict(row, title='Busy').items() if k != 'source'}
+    if program is None:
+        # Legacy emissions can precede the provenance backfill. An orphaned
+        # source has no authority; only a surviving emitter can restrict it.
+        def emitters():
+            out = {}
+            for program in storage.get_programs(include_finished=True):
+                for cid in (program.get('emissions') or {}).get('commitment_ids') or []:
+                    out.setdefault(cid, program)
+            return out
+        program = _memo('commitment_emitters', emitters).get((row or {}).get('id'))
+    if program and not record_visible('program', program, viewer):
+        return {k: v for k, v in dict(row, title='Busy').items() if k != 'source'}
     return row
 
 
@@ -386,7 +422,7 @@ def shared_schedule_view(blob, viewer=HOUSE):
             if pid:
                 if pid not in visible:
                     row = storage.get_program(pid)
-                    visible[pid] = bool(row) and shared_screen_visible('program', row, viewer)
+                    visible[pid] = not practice_hidden(row, viewer, shared=True)
                 event = event if visible[pid] else neutral_practice(event)
             if event.get('event_type') == 'practice' and not (event.get('practice') or {}).get('program_id'):
                 # Per-day cache merges may contain both an earlier neutral

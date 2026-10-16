@@ -78,6 +78,7 @@ def build():
     _thread(fx, 'R4', 'mom', mom_parents)
     _thread(fx, 'R5t', 'dad', household)
     _program(fx, 'R5p', 'kid', household)
+    _program(fx, 'R5s', 'sib', household)  # sibling scope is not calendar secrecy
 
     storage.save_occasion({'id': 'occ-kate-mom', 'title': 'Dad surprise', 'audience': 'private',
                            'shared_with': ['mom', 'kid']})

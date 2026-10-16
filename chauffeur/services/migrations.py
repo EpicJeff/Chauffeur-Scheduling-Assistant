@@ -502,7 +502,7 @@ def migrate_remove_target_events_v2499():
     """Spec 10.3: retire calendar copies of program target dates, retry failures."""
     from services import calendar
     cal_id = ((storage.get_settings() or {}).get('calendar_ids') or ['primary'])[0]
-    for row in storage.get_programs():
+    for row in storage.get_programs(include_finished=True):
         baseline = dict(row.get('baseline') or {})
         event_id = baseline.get('target_event_id')
         if not event_id:
@@ -524,7 +524,7 @@ def migrate_remove_target_events_v2499():
 
 def migrate_commitment_sources_v2499():
     """Backfill program provenance, including inactive and paused reservations."""
-    for row in storage.get_programs():
+    for row in storage.get_programs(include_finished=True):
         for cid in (row.get('emissions') or {}).get('commitment_ids') or []:
             commitment = storage.get_protected_commitment(cid)
             if commitment and not commitment.get('source'):

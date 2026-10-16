@@ -46,6 +46,9 @@ def run(fx, key, col, rid):
         out = response.json()
         check('error' not in out if isinstance(out, dict) else True, text(out))
         want = col in ('mom', 'dad', 'kid') if key == 'R3' else col in ('mom', 'dad', 'aunt', 'kid', 'house')
+        # Final I4: scope alone never hides an unrestricted home's practice.
+        if key == 'R5p' and col == 'hal' and path in ('/api/practice-windows', '/api/schedule'):
+            want = True
         # Packing includes the same complete event on the day spine.
         check((fx.title(key) in text(out)) == want, f'{rid} {key} {col}: {text(out)[:1800]}')
         if not want:
@@ -221,7 +224,7 @@ def reader_probe(fx, key, fullname):
             else: out = fn(eid, NOW, leg)
         else: raise AssertionError('no runtime call for ' + fullname)
         if name not in ('_protected_window',):
-            check(view.called or (module_name.endswith('programs') and record.called),
+            check(view.called or (module_name.endswith('programs') and (record.called or key == 'R5p')),
                   fullname + ' did not reach the calendar access boundary')
     if key == 'R3':
         check(fx.title(key) not in text((out, delivered)) and fx.secret(key) not in text((out, delivered)),

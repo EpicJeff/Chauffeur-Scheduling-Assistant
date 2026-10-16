@@ -792,7 +792,7 @@ def practice_windows(start: datetime.date, end: datetime.date,
             pid = window['program_id']
             if pid not in visible:
                 row = storage.get_program(pid)
-                visible[pid] = bool(row) and access.record_visible('program', row, viewer)
+                visible[pid] = not access.practice_hidden(row, viewer)
             if visible[pid]:
                 out.append(window)
             else:

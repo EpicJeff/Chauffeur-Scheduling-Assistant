@@ -143,12 +143,15 @@ def scenario_f7_a_bound_missions_proposal_carries_its_audience():
     dads = [r['id'] for r in main.list_action_proposals(request=_as('dad'))]
     check(pid not in dads, "dad, whom the private list excludes, does not see it among the approvals")
     check(pid in [r['id'] for r in main.list_action_proposals(request=_as('mom'))], "mom does")
-    try:
-        main.act_on_action_proposal(pid, main.ActionProposalAct(act='dismiss', member_id='dad'), background_tasks=None, request=_as('dad'))
-        check(False, "dad may not act on it either")
-    except HTTPException as e:
-        # Project access spec §4: hidden and missing records are both 404.
-        check(e.status_code == 404, f"404, got {e.status_code}")
+    # Project access spec §4: a hidden record answers exactly like a missing
+    # one. For action proposals that is the existing missing reply (access
+    # rule follow-up A, ruling B4), never a 403 or a different shape.
+    hidden_reply = main.act_on_action_proposal(pid, main.ActionProposalAct(act='dismiss', member_id='dad'),
+                                               background_tasks=None, request=_as('dad'))
+    missing_reply = main.act_on_action_proposal('no-such-proposal', main.ActionProposalAct(act='dismiss', member_id='dad'),
+                                                background_tasks=None, request=_as('dad'))
+    check(hidden_reply == missing_reply and hidden_reply.get('status') == 'error',
+          f"dad may not act on it either, and learns nothing: {hidden_reply} vs {missing_reply}")
     check(storage.get_action_proposal(pid)['status'] == 'proposed', "untouched")
 
 

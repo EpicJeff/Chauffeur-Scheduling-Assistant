@@ -1051,6 +1051,7 @@ def invalidate_cache():
     the reload the writer triggers (packing_card's chf-pack-change) rebuilds
     instead of reading its own stale hero back out of the TTL window."""
     _CACHE.clear()
+    _ACCESS_DIGEST.clear()
 
 
 # --- small shared helpers -------------------------------------------------
@@ -5319,6 +5320,31 @@ def profile(tabs: Optional[str] = None, widgets: Optional[str] = None,
             'screensaver': screensaver_config(settings)}
 
 
+ACCESS_DIGEST_SECONDS = 3
+_ACCESS_DIGEST = {}
+
+
+def _access_input_digest():
+    stamp = time.monotonic()
+    if stamp - _ACCESS_DIGEST.get('at', float('-inf')) < ACCESS_DIGEST_SECONDS:
+        return _ACCESS_DIGEST['digest']
+    policy = []
+    for records, fields in (
+            (storage.get_projects(), ('id', 'audience', 'wrapped_from', 'owner_member_id')),
+            (storage.get_all_members(), ('id', 'role', 'status', 'is_child', 'system')),
+            (storage.get_programs(include_finished=True),
+             ('id', 'project_id', 'member_id', 'subject_kind', 'subject_id', 'subject_history')),
+            (storage.get_threads(include_closed=True),
+             ('id', 'project_id', 'owner_member_id', 'subject_kind', 'subject_id', 'subject_history')),
+            (storage.get_missions(),
+             ('id', 'project_id', 'created_by', 'subject_kind', 'subject_id', 'subject_history'))):
+        policy.append([[r.get(k) for k in fields] for r in sorted(records, key=lambda r: r['id'])])
+    digest = hashlib.sha256(json.dumps(policy, sort_keys=True).encode('utf-8')).hexdigest()
+    _ACCESS_DIGEST.update(at=stamp, digest=digest)
+    return digest
+
+
+@access.batch()
 def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
           now: datetime.datetime = None, page: Optional[str] = None,
           editing: bool = False, *, viewer=access.HOUSE) -> dict:
@@ -5342,19 +5368,9 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
     # empty cards the wall leaves out, and one cache entry serving both would
     # put placeholder boxes on the kitchen wall.
     # Audience changes must take effect even while the presentation cache is
-    # warm. Keep its TTL benefit, keyed by the current access inputs as well.
-    policy = []
-    for records, fields in (
-            (storage.get_projects(), ('id', 'audience', 'wrapped_from', 'owner_member_id')),
-            (storage.get_all_members(), ('id', 'role', 'status', 'is_child', 'system')),
-            (storage.get_programs(include_finished=True),
-             ('id', 'project_id', 'member_id', 'subject_kind', 'subject_id', 'subject_history')),
-            (storage.get_threads(include_closed=True),
-             ('id', 'project_id', 'owner_member_id', 'subject_kind', 'subject_id', 'subject_history')),
-            (storage.get_missions(),
-             ('id', 'project_id', 'created_by', 'subject_kind', 'subject_id', 'subject_history'))):
-        policy.append([[r.get(k) for k in fields] for r in sorted(records, key=lambda r: r['id'])])
-    policy_digest = hashlib.sha256(json.dumps(policy, sort_keys=True).encode('utf-8')).hexdigest()
+    # warm. Access inputs are refreshed every few seconds independently of
+    # the longer presentation TTL.
+    policy_digest = _access_input_digest()
     viewer_key = {k: (viewer or access.HOUSE).get(k) for k in ('id', 'role', 'status', 'house')}
     cache_key = json.dumps([page_obj['slug'], page_obj['columns'],
                             page_obj['row_height'], editing, instances, viewer_key, policy_digest],

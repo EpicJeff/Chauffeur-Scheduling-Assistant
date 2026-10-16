@@ -1001,12 +1001,17 @@ sending or claiming, and never pass from_member/member_name for them.
                         actor = _st.get_member_by_driver_id(driver_id)
                     role = actor.get('role') if (actor or {}).get('id') and not access.is_house(actor) else None
                     if func_name == "list_insights":
-                        res = _atv2.list_insights(member_role=role)
-                    elif not _is_admin_member(actor):
+                        res = _atv2.list_insights(acting_member=actor)
+                    elif not (_is_admin_member(actor) or actor is None or access.is_house(actor)):
                         res = {'status': 'error', 'message': 'Only a signed-in parent or adult can dismiss this.'}
                     else:
-                        res = _atv2.dismiss_insight(args.get("insight_id", ""),
-                                                    member_role=role)
+                        from services import storage as _st
+                        iid = args.get('insight_id', '')
+                        insight = _st.get_mind_insight(iid) or {}
+                        if insight.get('sensitivity') == 'sensitive' and role != 'parent':
+                            res = {'status': 'error', 'message': 'That is no longer here.'}
+                        else:
+                            res = _atv2.dismiss_insight(iid, member_role=role)
                     if res.get("message"): agent_message = res["message"]
                 elif func_name in ("list_situations", "next_situation", "explain_situation", "act_on_situation",
                                    "start_ask", "mark_ask_sent", "answer_ask", "search_mail", "read_mail",
@@ -1022,7 +1027,7 @@ sending or claiming, and never pass from_member/member_name for them.
                     if actor is None and driver:
                         from services import storage as _st
                         actor = _st.get_member_by_driver_id(driver_id)
-                    elif actor is None and not propose_only and source != 'pwa':
+                    elif (actor is None or (access.is_house(actor) and source != 'voice')) and not propose_only and source != 'pwa':
                         actor = access.HOUSE if func_name in (
                             'list_situations', 'next_situation', 'explain_situation',
                             'list_projects', 'get_project', 'find_in_chauffeur') else (

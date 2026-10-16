@@ -643,6 +643,7 @@ def collect_findings(now: datetime.datetime = None):
     return findings, unclaimed
 
 
+@access.batch()
 def _commitment_findings(now: datetime.datetime):
     """Protected time, watched (load arc A6).
 
@@ -666,16 +667,9 @@ def _commitment_findings(now: datetime.datetime):
         members = {m['id']: m for m in storage.get_all_members()}
         horizon = now + datetime.timedelta(days=4)
         out = []
+        programs = {}
         for pc in storage.get_protected_commitments():
-            source = pc.get('source') or {}
-            program = (storage.get_program(source.get('id')) if source.get('kind') == 'program' else None)
-            if program is None:
-                # Task 9 backfills source; old emitted rows must already be
-                # safe when this collector names a commitment today.
-                program = next((p for p in storage.get_programs(include_finished=True)
-                                if pc.get('id') in (p.get('emissions') or {}).get('commitment_ids', [])), None)
-            if program and not access.record_visible('program', program, access.HOUSE):
-                pc = {**pc, 'title': 'Busy'}
+            pc = access.commitment_view(pc, access.HOUSE, programs=programs)
             member = members.get(pc.get('member_id')) or {}
             drv = member.get('driver_id')
             days = set(pc.get('days_of_week') or [])

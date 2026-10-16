@@ -544,6 +544,7 @@ _SECTIONS = {'board': _board, 'desk': _desk, 'tray': _tray, 'stickies': _stickie
              'monitor': _monitor, 'map': _map}
 
 
+@access.batch()
 def state(viewer=None, now: datetime.datetime = None) -> dict:
     now = now or datetime.datetime.now()
     furniture = {}

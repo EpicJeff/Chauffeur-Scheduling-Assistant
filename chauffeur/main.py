@@ -5338,7 +5338,7 @@ def _public_member(m: dict) -> dict:
 def _commitment_access(commitment_id, request):
     row = storage.get_protected_commitment(commitment_id)
     source = (row or {}).get('source') or {}
-    if source.get('kind') == 'program':
+    if source.get('kind') == 'program' and storage.get_program(source.get('id')):
         _piece_or_404('program', source.get('id'), request, 'edit')
 
 

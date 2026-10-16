@@ -218,11 +218,7 @@ def _reply_option(row: dict):
 
 def _thread_mission(row: dict):
     """The newest live mission opened from this thread, or None."""
-    from services import missions
-    rows = [m for m in storage.get_missions(status=missions.LIVE)
-            if m.get('origin_kind') == 'thread' and m.get('origin_ref') == row.get('id')]
-    rows.sort(key=lambda m: m.get('created_at') or 0)
-    return rows[-1] if rows else None
+    return access.thread_mission(row)
 
 
 def _options_subject(row: dict) -> list:
@@ -494,8 +490,10 @@ def _can_see_base(kind: str, row: dict, viewer: Optional[dict]) -> bool:
     role = (viewer or {}).get('role')
     if kind == 'insight':
         if row.get('sensitivity') == 'sensitive':
-            from services import access
-            return role == 'parent' and not access.is_house(viewer)
+            # Internal parent-only transcript reads keep their authority.
+            # Display lists use mind.visible_insights; Argyle's room gate
+            # separately refuses HOUSE and HOUSE_PARENT (Task 5 ruling).
+            return role == 'parent'
         return True
     if kind == 'finding':
         return role in WRITE_ROLES
@@ -591,11 +589,12 @@ def option_action(kind, row, verb, option_id):
     return verb
 
 
-def view(kind: str, sid: str, viewer: Optional[dict] = None, *, mission: Optional[dict] = None) -> Optional[dict]:
+def view(kind: str, sid: str, viewer: Optional[dict] = None, *, mission: Optional[dict] = None,
+         row: Optional[dict] = None) -> Optional[dict]:
     """Render for a viewer, or a trusted engine's explicit mission authority."""
     if kind not in KINDS:
         return None
-    row = load(kind, sid)
+    row = load(kind, sid) if row is None else row
     from services import access
     projection = None
     if mission is not None and kind in access.KINDS:
@@ -604,6 +603,8 @@ def view(kind: str, sid: str, viewer: Optional[dict] = None, *, mission: Optiona
             return None
     elif not row or (viewer is not None and not can_see(kind, row, viewer)):
         return None
+    if kind == 'mission' and 'steps' not in row:
+        row = dict(row, steps=storage.get_mission_steps(sid))
     if kind == 'project':
         return _project_view(row, viewer)
     keeper = False
@@ -755,6 +756,7 @@ def _rows_of(kind: str, include_done: bool, viewer=None) -> list:
     return []
 
 
+@access.batch()
 def list_situations(viewer: Optional[dict], kinds=None, include_done: bool = False,
                     owner: str = None, spoken: bool = False) -> list:
     """`owner` narrows THREADS to one member's own (the PWA House tab's
@@ -771,7 +773,7 @@ def list_situations(viewer: Optional[dict], kinds=None, include_done: bool = Fal
                 continue
             if spoken and k == 'insight' and row.get('sensitivity') == 'sensitive':
                 continue
-            s = view(k, sid, viewer)
+            s = view(k, sid, viewer, row=row)
             if s and (include_done or s['group'] != 'done'):
                 out.append(s)
     return rank(out)

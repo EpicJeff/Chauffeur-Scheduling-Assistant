@@ -366,12 +366,16 @@ READERS = [
     ]],
     ((F, 'main.perform'), '4.5-voice', ('thread', 'mission', 'program'), 'record_view(HOUSE): nested in POST /api/v2/converse'),
     *[((F, name), 'INTERNAL', (), 'raw (builder, gate or helper; its callers apply the rule)') for name in [
+        'main._commitment_access',
         'main._chat_conversation',
         'main._kid_members_for_event', 'main._kid_trip_span', 'main._live_thread_or_refuse',
         'main._refresh_schedule_logic_impl', 'main._resolve_cached_event', 'main.compile_and_save_combined',
     ]],
+    ((F, 'services.situations.view'), 'INTERNAL', ('thread', 'mission'),
+     'canonical record_view projection renderer; registered routes/tools are its display surfaces'),
     # INTERNAL (spec Appendix A)
     *[((F, name), 'INTERNAL', (), 'raw') for name in [
+        'services.home_board._access_input_digest',
         'services.situations.load', 'services.situations._facts', 'services.situations.refresh',
         'services.agent_tools_v2._render_at',
         'services.situations.options_for', 'services.situations._thread_mission', 'services.subjects.load',

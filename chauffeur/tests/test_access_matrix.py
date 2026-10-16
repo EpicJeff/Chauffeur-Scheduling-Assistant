@@ -142,6 +142,11 @@ def scenario_signed_in_contracts():
     if len(sys.argv) < 2 or '4.1-signed-in'.startswith(sys.argv[1]):
         signed_in.extra_contracts()
 
+def scenario_nothing_pending():
+    """Task 11: every surface class has landed; no reader may stay pending."""
+    check(not pending_ids(), f'readers still pending: {sorted(map(str, pending_ids()))}')
+
+
 SCENARIOS = [v for k, v in list(globals().items()) if k.startswith('scenario_')]
 if len(sys.argv) < 2 or '4.1-signed-in'.startswith(sys.argv[1]):
     from test_access_round1 import SCENARIOS as ROUND1_SCENARIOS

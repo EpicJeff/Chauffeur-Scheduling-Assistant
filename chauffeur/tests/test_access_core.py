@@ -191,6 +191,73 @@ def scenario_batch_memoises_projects():
         storage.get_project = real
 
 
+def scenario_batches_index_live_missions_and_reuse_situation_rows():
+    from unittest.mock import patch
+    from collections import Counter
+    from services import situations, subjects, study, home_board, missions, agent_tools_v2 as tools
+    from test_access_calendar import NOW
+    import json
+    fx = access_fixture.build()
+    tid = fx.ids['R5t']
+    for n in (1, 2):
+        mid = storage.add_mission({'goal': 'Origin work', 'status': 'waiting_user', 'created_by': 'dad',
+            'origin_kind': 'thread', 'origin_ref': tid, 'created_at': n,
+            'project_id': fx.projects['household']['id']})
+    with patch.object(storage, 'get_missions', wraps=storage.get_missions) as reads:
+        with access.batch():
+            for key in ('R1', 'R4', 'R5t', 'R6', 'R7', 'R10'):
+                row = storage.get_thread(fx.ids[key])
+                subjects.subject_records('thread', row)
+                access.record_view('thread', row, fx.viewers['mom'])
+            with access.batch():
+                check(situations._thread_mission(storage.get_thread(tid))['id'] == mid, 'newest origin mission wins')
+        check(sum(c.kwargs.get('status') == missions.LIVE for c in reads.call_args_list) == 1,
+              'one live mission scan across nested batches: ' + str(reads.call_args_list))
+    storage.update_mission(mid, {'status': 'done'})
+    check(situations._thread_mission(storage.get_thread(tid))['id'] != mid, 'no mission index survives a batch')
+
+    storage.add_finding({'kind': 'thread_stall', 'state': 'open', 'line': 'Origin needs attention',
+                        'subject_type': 'thread', 'subject_id': tid})
+    config = json.dumps([{'id': 'batch-proof', 'type': 'mind'}])
+    home_board.invalidate_cache()
+    calls = [('Study', lambda: study.state(fx.viewers['mom'], NOW)),
+             ('board', lambda: home_board.build(config, now=NOW, viewer=fx.viewers['mom'])),
+             ('router listing', lambda: tools.list_situations(acting_member=fx.viewers['mom']))]
+    for name, run in calls:
+        with patch.object(storage, 'get_missions', wraps=storage.get_missions) as reads:
+            result = run()
+        scans = sum(c.kwargs.get('status') == missions.LIVE for c in reads.call_args_list)
+        check(result and scans == 1, f'{name}: expected one live origin scan, got {scans}')
+    with patch.object(situations, 'load', wraps=situations.load) as reads:
+        result = situations.list_situations(fx.viewers['mom'], kinds=('thread',))
+    counts = Counter(c.args for c in reads.call_args_list if c.args[0] == 'thread')
+    check(result and counts and max(counts.values()) == 1, 'list_situations loads each thread once: ' + str(counts))
+    with patch.object(storage, 'get_mission', wraps=storage.get_mission) as rows, \
+         patch.object(storage, 'get_mission_steps', wraps=storage.get_mission_steps) as steps:
+        result = situations.list_situations(fx.viewers['mom'], kinds=('mission',))
+    for label, reads in (('mission rows', rows), ('mission steps', steps)):
+        counts = Counter(c.args[0] for c in reads.call_args_list)
+        check(result and counts and max(counts.values()) == 1,
+              'list_situations loads ' + label + ' once: ' + str(counts))
+    with patch.object(situations, 'load', wraps=situations.load) as reads:
+        result = tools.list_situations(kinds='thread', acting_member=fx.viewers['mom'])
+    check(result['situations'] and not any(c.args[0] == 'thread' for c in reads.call_args_list),
+          'router listing renders its enumerated rows without reloading them')
+    with patch.object(situations, 'load', wraps=situations.load) as reads:
+        result = situations.list_situations(fx.viewers['mom'], kinds=('mission',))
+    counts = Counter(c.args for c in reads.call_args_list if c.args[0] == 'mission')
+    check(result and counts and max(counts.values()) == 1, 'list_situations loads each mission once: ' + str(counts))
+    with patch.object(storage, 'get_mission_steps', wraps=storage.get_mission_steps) as steps:
+        result = tools.list_situations(kinds='mission', acting_member=fx.viewers['mom'])
+    counts = Counter(c.args[0] for c in steps.call_args_list)
+    check(result['situations'] and counts and max(counts.values()) == 1,
+          'router listing hydrates each visible mission once: ' + str(counts))
+    with patch.object(storage, 'get_mission_steps', wraps=storage.get_mission_steps) as steps:
+        check(situations.view('mission', fx.ids['R2'], fx.viewers['dad'],
+                              row=storage.get_mission(fx.ids['R2'])) is None, 'hidden mission stays absent')
+    check(not steps.called, 'visibility is checked before hydrating an enumerated mission')
+
+
 SCENARIOS = [v for k, v in list(globals().items()) if k.startswith('scenario_')]
 if __name__ == '__main__':
     failed = 0

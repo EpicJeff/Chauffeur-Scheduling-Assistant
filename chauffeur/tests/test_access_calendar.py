@@ -16,9 +16,10 @@ NOW = dt.datetime(2026, 10, 16, 17, 0)
 def seed(fx, key='R3'):
     storage.protected_commitments_table.truncate()
     pid = fx.ids[key]
+    member = storage.get_program(pid)['member_id']
     cid = 'calendar-' + key
     storage.add_protected_commitment({
-        'id': cid, 'member_id': 'kid', 'title': fx.title(key),
+        'id': cid, 'member_id': member, 'title': fx.title(key),
         'days_of_week': [DAY.weekday()], 'time_start': '17:00', 'time_end': '17:30',
         'active': True, 'source': {'kind': 'program', 'id': pid}})
     storage.update_program(pid, {
@@ -30,8 +31,8 @@ def seed(fx, key='R3'):
         'id': f'practice-{pid}-2026-10-16-17:00', 'title': fx.title(key),
         'description': fx.secret(key), 'event_type': 'practice',
         'start': '2026-10-16T17:00:00', 'end': '2026-10-16T17:30:00',
-        'all_day': False, 'calendar_ids': ['kid'],
-        'practice': {'program_id': pid, 'member_id': 'kid', 'color': '#123456',
+        'all_day': False, 'calendar_ids': [member],
+        'practice': {'program_id': pid, 'member_id': member, 'color': '#123456',
                      'date': DAY.isoformat(), 'time_start': '17:00', 'time_end': '17:30',
                      'unit_title': fx.secret(key), 'steps': [fx.secret(key)],
                      'milestone': fx.secret(key)}}
@@ -336,6 +337,83 @@ def scenario_voice_today_speaks_neutral_practice():
         result = main.phone_voice_run(turn.id, request)
     check(result['speech_safe'] and result['speech'] == 'Busy is at five today.', str(result))
     check(fx.title('R3') not in json.dumps(result), str(result))
+
+
+def scenario_closed_programs_migrate_target_and_commitment_source():
+    for state in ('done', 'dropped'):
+        fx = access_fixture.build()
+        _, cid = seed(fx)
+        storage.update_protected_commitment(cid, {'source': None})
+        storage.update_program(fx.ids['R3'], {'state': state,
+            'baseline': {'target_date': '2027-01-01', 'target_event_id': 'closed-target'},
+            'emissions': {'event_ids': ['closed-target'], 'commitment_ids': [cid]}})
+        with patch('services.calendar.delete_event', return_value=True) as delete:
+            migrations.migrate_remove_target_events_v2499()
+            migrations.migrate_commitment_sources_v2499()
+        row = storage.get_program(fx.ids['R3'])
+        check(delete.call_count == 1 and delete.call_args.args[-1] == 'closed-target', state)
+        check(not row['baseline'].get('target_event_id') and not row['emissions']['event_ids'], str(row))
+        check(storage.get_protected_commitment(cid)['source']['id'] == row['id'], state + ' backfill')
+
+
+def scenario_sibling_household_practice_stays_titled():
+    from access_shared_signals import request
+    from services import home_board, family_day
+    import main
+    fx = access_fixture.build()
+    event, _ = seed(fx, 'R5s')
+    check(not access.record_visible('program', storage.get_program(fx.ids['R5s']), fx.viewers['kid']),
+          'fixture really fails the sibling scope base')
+    for path in ('/api/schedule', '/api/packing/day?date=2026-10-16',
+                 '/api/practice-windows?start_date=2026-10-16&end_date=2026-10-16'):
+        with patch.object(main, 'trigger_background_refresh'):
+            response = request(fx, 'kid', 'GET', path)
+        check(response.status_code == 200 and fx.title('R5s') in response.text, path + ': ' + response.text)
+    raw = storage.get_cached_schedule()
+    for viewer in (access.HOUSE, fx.viewers['kid']):
+        check(access.schedule_view(raw, viewer)['events'][0] == event, 'calendar keeps complete sibling practice')
+        check(access.shared_schedule_view(raw, viewer)['events'][0] == event, 'wall union agrees')
+        day = home_board.day_schedule(DAY, raw, viewer=viewer)
+        check(fx.title('R5s') in json.dumps(day), 'member day schedule retains title')
+        check(fx.title('R5s') in json.dumps(family_day.blocks_for(DAY, raw, NOW, viewer=viewer)),
+              'family day retains title')
+    # The member-day route deliberately omits practice cards, but must consume
+    # the same titled schedule; no unrelated day payload expansion here.
+    consumed = []
+    real_cached_schedule = access.cached_schedule
+    def consume_schedule(viewer=access.HOUSE):
+        result = real_cached_schedule(viewer)
+        consumed.append((viewer, result))
+        return result
+    with patch.object(access, 'cached_schedule', side_effect=consume_schedule) as consume:
+        response = request(fx, 'kid', 'GET', '/api/members/kid/day?date=2026-10-16')
+    check(response.status_code == 200 and consume.called, response.text)
+    check(any(viewer.get('id') == 'kid' and fx.title('R5s') in json.dumps(blob)
+              for viewer, blob in consumed), 'member day actually consumes Kate\'s titled sibling practice')
+
+
+def scenario_legacy_commitment_projection_and_orphan_writes():
+    from access_shared_signals import request
+    from services import watchers
+    import main
+    fx = access_fixture.build()
+    _, cid = seed(fx)
+    storage.update_protected_commitment(cid, {'source': None})
+    row = storage.get_protected_commitment(cid)
+    check(access.commitment_view(row, access.HOUSE)['title'] == 'Busy', 'legacy emitter fallback is central')
+    check(access.commitment_view(row, fx.viewers['dad'])['title'] == fx.title('R3'), 'parent keeps legacy title')
+    with patch.object(access, 'commitment_view', wraps=access.commitment_view) as project:
+        watchers._commitment_findings(NOW)
+    check(project.called, 'watcher really uses the shared commitment projection')
+    storage.update_protected_commitment(cid, {'source': {'kind': 'program', 'id': 'gone-program'}})
+    storage.update_program(fx.ids['R3'], {'emissions': {}})
+    response = request(fx, 'dad', 'GET', '/api/commitments')
+    check(response.status_code == 200 and fx.title('R3') in response.text, 'orphan has no source audience')
+    with patch.object(main, 'trigger_background_refresh'):
+        response = request(fx, 'dad', 'PATCH', '/api/commitments/' + cid, json={'title': 'Edited orphan'})
+        check(response.status_code == 200 and storage.get_protected_commitment(cid)['title'] == 'Edited orphan', response.text)
+        response = request(fx, 'dad', 'DELETE', '/api/commitments/' + cid)
+    check(response.status_code == 200 and storage.get_protected_commitment(cid) is None, response.text)
 
 
 SCENARIOS = [v for k, v in list(globals().items()) if k.startswith('scenario_')]

@@ -1463,16 +1463,14 @@ def research_question(question: str) -> Dict[str, Any]:
             "message": friendly.get(status, res.get('message') or "Search failed.")}
 
 
-def list_insights(member_role: str = None) -> Dict[str, Any]:
-    """Things Argyle's Mind is currently keeping an eye on ('the Argyle
-    noticed lane'). member_role is filled by the DISPATCH LAYER from the
-    resolved caller identity (acting_member / driver's member), never taken
-    from the model — mind.visible_insights() is the same server-side
-    sensitivity gate the /api/mind/insights endpoint uses, and a caller with
-    no resolved identity gets the same no-sensitive-rows payload as the wall
-    panel."""
+def list_insights(member_role: str = None, acting_member: dict = None) -> Dict[str, Any]:
+    """The Mind lane, using the dispatch layer's resolved person.
+
+    A role alone grants no sensitive reads; legacy role-only callers and
+    identity-free surfaces receive the same rows as the wall.
+    """
     from services import mind as _mind
-    viewer = {'role': member_role} if member_role else None
+    viewer = acting_member or access.HOUSE
     rows = _mind.visible_insights(viewer)
     return {"insights": [{"id": r['id'], "line": r['line'],
                           "detail": r.get('detail') or '',
@@ -1566,9 +1564,9 @@ def _render_at(kind, row, view, viewer, focus_key=None):
     # narrower project gate to that authorized row.
     mission = _mission_context.get() if kind in access.KINDS else None
     if mission is not None:
-        result = situations.view(kind, row['id'], access.mission_reader(mission), mission=mission)
+        result = situations.view(kind, row['id'], access.mission_reader(mission), mission=mission, row=row)
     else:
-        result = situations.view(kind, row['id'], _viewer_at(kind, row, view, viewer))
+        result = situations.view(kind, row['id'], _viewer_at(kind, row, view, viewer), row=row)
     if result and kind == 'thread':
         options = []
         for option in result['options']:
@@ -1583,6 +1581,7 @@ def _render_at(kind, row, view, viewer, focus_key=None):
     return result
 
 
+@access.batch()
 def _conversation_situations(viewer, focus_key, kinds=None, spoken=False):
     from services import situations, storage
     viewer = viewer or access.HOUSE
@@ -2136,7 +2135,7 @@ def _project_in_reach(project, actor, spoken, focus_key):
     """May this conversation name this project: the asker sees it, a room hears
     only a household project, and every person in a channel may see it."""
     from services import projects, subjects, situations
-    if not projects.can_see(project, actor):
+    if not access.project_visible(project, actor):
         return False
     if spoken and (project.get('audience') != 'household' or not subjects.spoken_safe('project', project)):
         return False
@@ -8610,11 +8609,8 @@ def handle_list_chores(args: dict) -> dict:
 def handle_list_open_findings(args: dict, actor=None, focus_key=None) -> dict:
     return list_open_findings(acting_member=actor or access.HOUSE, focus_key=focus_key)
 
-def handle_list_insights(args: dict) -> dict:
-    # v1 loop runs only in admin contexts, so no acting-member gate needed;
-    # member_role stays unset, which visible_insights treats like the wall
-    # panel (no sensitive rows) — the safe default with no resolved identity.
-    return list_insights()
+def handle_list_insights(args: dict, actor=None) -> dict:
+    return list_insights(acting_member=actor or access.HOUSE)
 
 def handle_dismiss_insight(args: dict) -> dict:
     # Same "admin-only context" reasoning as handle_post_weekly_digest: no

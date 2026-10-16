@@ -179,7 +179,16 @@ def run_one(name, fx, rkey, col, context):
         with patch.object(findings, 'open_findings', return_value=[{'id': 'f', 'severity': 'decide',
                      'line': title + ' ' + fx.secret(rkey), 'subject_type': kind, 'subject_id': sid}]):
             out = tools.list_open_findings(**kwargs)
-        want = F if want == F or kind == 'program' and want else None
+        # Tasks 8+10 I2: a keeper keeps a neutral finding, without source words.
+        if want == K and kind in ('thread', 'mission'):
+            message = out.get('message', '')
+            check(message in ('Needs a decision: ' + title,
+                              'Needs a decision: Argyle needs a parent on ' + title),
+                  f'{label}: keeper finding must be neutral: {out}')
+            check(all(words not in json.dumps(out, default=str)
+                      for words in (fx.secret(rkey), 'next_action', 'question')),
+                  f'{label}: keeper finding reveals source words: {out}')
+        want = F if want == F or kind == 'program' and want else K if want == K else None
     elif name == 'find_in_chauffeur':
         out = tools.find_in_chauffeur(title, kind=kind, **kwargs)
         # Candidate cards carry metadata; keeper context must never carry words.
@@ -325,7 +334,7 @@ def router_dispatch_context():
           f'router must pass channel focus to launch title matching: {launch.call_args}')
     for name, args in (('list_threads', {}), ('list_programs', {}), ('list_situations', {}),
                        ('get_project', {'project_id': fx.projects['household']['id']})):
-        prompt, out = capture_router(None, 'conv:panel', [{'name': name, 'arguments': args}])
+        prompt, out = capture_router(access.HOUSE, 'conv:panel', [{'name': name, 'arguments': args}])
         check(observe([prompt, out], fx, 'R1') is None and observe([prompt, out], fx, 'R4') is None,
               f'{name}: identity-free dispatch must not borrow parent identity')
         check('error' not in json.dumps(out).lower(), f'{name}: identity-free read must execute: {out}')
@@ -367,7 +376,7 @@ def panel_write_dispatch():
         before = snapshot()
         with patch.object(missions, 'launch', return_value={'status': 'launched', 'mission_id': 'new'}) as launch, \
              patch.object(asks, 'draft', return_value={'subject': '', 'body': 'Please help', 'source': 'template'}):
-            prompt, out = capture_router(None, 'conv:panel', [{'name': name, 'arguments': args}])
+            prompt, out = capture_router(access.HOUSE, 'conv:panel', [{'name': name, 'arguments': args}])
         if any(observe([prompt, out], fx, r) is not None for r in ('R1', 'R2', 'R4')):
             errors.append(f'{name}: hidden title in router output')
         if snapshot() != before:
@@ -382,7 +391,7 @@ def panel_write_dispatch():
     for rkey in ('R1', 'R2', 'R4', 'R5t'):
         fx = access_fixture.build()
         kind, row = load(fx, rkey)
-        capture_router(None, 'conv:panel', [{'name': 'act_on_situation', 'arguments': {
+        capture_router(access.HOUSE, 'conv:panel', [{'name': 'act_on_situation', 'arguments': {
             'ref': row['id'], 'kind': kind, 'verb': 'close',
             'option_id': 'close:done' if kind == 'thread' else 'close:dropped'}}])
         after = load(fx, rkey)[1]
@@ -429,7 +438,7 @@ def panel_sensitive_insights():
         triage.set_focus('conv:panel', 'insight', ids[0], titles[0])
         with patch.object(asks, 'draft', return_value={'subject': '', 'body': 'Please help', 'source': 'template'}), \
              patch.object(missions, 'launch', return_value={'status': 'launched', 'mission_id': 'new'}):
-            prompt, out = capture_router(None, 'conv:panel', [{'name': name, 'arguments': args}])
+            prompt, out = capture_router(access.HOUSE, 'conv:panel', [{'name': name, 'arguments': args}])
         # The model's own arguments are echoed into its next prompt. They
         # are inputs, not disclosure; still check every tool result and FOCUS.
         prompt = prompt.replace(f'Tool Call: {name}({json.dumps(args)})', '')
@@ -447,7 +456,7 @@ def panel_sensitive_insights():
     out = tools.act_on_situation(ids[0], kind='insight', verb='dismiss', acting_member=fx.viewers['mom'])
     check(out['status'] == 'success' and storage.get_mind_insight(ids[0])['state'] == 'retired',
           'a parent still dismisses sensitive insights')
-    capture_router(None, 'conv:panel', [{'name': 'act_on_situation', 'arguments': {
+    capture_router(access.HOUSE, 'conv:panel', [{'name': 'act_on_situation', 'arguments': {
         'ref': normal, 'kind': 'insight', 'verb': 'dismiss'}}])
     check(storage.get_mind_insight(normal)['state'] == 'retired', 'panel retains normal insight writes')
 
@@ -482,7 +491,7 @@ def panel_start_project():
     for focused_kind, focused_id in (('project', private['id']), ('thread', fx.ids['R1'])):
         triage.set_focus('conv:panel', focused_kind, focused_id, 'SECRET panel focus')
         before = {p['id'] for p in storage.get_projects()}
-        prompt, out = capture_router(None, 'conv:panel', [{'name': 'start_project', 'arguments': {
+        prompt, out = capture_router(access.HOUSE, 'conv:panel', [{'name': 'start_project', 'arguments': {
             'goal': goal, 'subject_kind': 'thread', 'subject_id': fx.ids['R1'],
             'for_member_name': 'Kate'}}])
         new = [p for p in storage.get_projects() if p['id'] not in before]
@@ -571,13 +580,66 @@ def registry_and_ask_payloads():
           'an identity-free registry ask posts as Argyle, never an invented parent')
 
 
+def panel_household_ask_and_mission_writes():
+    """Production HOUSE actor reaches the real ask lifecycle and launch."""
+    fx = access_fixture.build()
+    key = 'conv:panel'
+    tid = fx.ids['R5t']
+    before = {a['id'] for a in storage.asks_table.all()}
+    from services import asks
+    with patch.object(asks, '_pool_call', return_value={}):  # external drafting model only
+        capture_router(access.HOUSE, key, [{'name': 'start_ask', 'arguments': {
+            'ref': tid, 'kind': 'thread', 'to_name': 'Mom', 'what': 'Please call the shop', 'channel': 'text'}}])
+    created = [a for a in storage.asks_table.all() if a['id'] not in before]
+    check(len(created) == 1 and created[0]['state'] == 'drafted', 'panel creates real household ask')
+    aid = created[0]['id']
+    capture_router(access.HOUSE, key, [{'name': 'mark_ask_sent', 'arguments': {'ask_id': aid}}])
+    check(storage.get_ask(aid)['state'] == 'sent', 'panel marks it sent')
+    capture_router(access.HOUSE, key, [{'name': 'answer_ask', 'arguments': {'ask_id': aid, 'answer': 'no'}}])
+    check(storage.get_ask(aid)['state'] == 'no', 'panel reports the answer')
+    before = {m['id'] for m in storage.get_missions()}
+    triage.set_focus(key, 'thread', tid, fx.title('R5t'))
+    capture_router(access.HOUSE, key, [{'name': 'start_mission_for', 'arguments': {
+        'goal': 'Find a shop with appointments'}}])
+    created = [m for m in storage.get_missions() if m['id'] not in before]
+    check(len(created) == 1 and created[0]['origin_ref'] == tid, 'panel launches on real household thread')
+
+
+def router_insight_identity_and_panel_dismissal():
+    fx = access_fixture.build()
+    storage.mind_insights_table.truncate()
+    sensitive = storage.add_mind_insight({'slug': 'private', 'line': 'Sensitive parent insight',
+        'state': 'active', 'sensitivity': 'sensitive'})
+    normal = storage.add_mind_insight({'slug': 'normal', 'line': 'Normal household insight',
+        'state': 'active', 'sensitivity': 'normal'})
+    parent = tools.list_insights(acting_member=fx.viewers['mom'])
+    check('Sensitive parent insight' in json.dumps(parent), 'resolved id reaches Mind gate')
+    for viewer, allowed in ((fx.viewers['mom'], True), (access.HOUSE, False), (access.HOUSE_PARENT, False)):
+        out = tools.execute_tool('list_insights', {}, actor=viewer)
+        check(('Sensitive parent insight' in json.dumps(out)) == allowed,
+              'registry forwards resolved insight identity without inventing a parent')
+    check('Sensitive parent insight' in json.dumps(tools.execute_tool('list_insights', {}, actor=fx.viewers['mom'])),
+          'registry forwards the resolved identity too')
+    for viewer, key, allowed in ((fx.viewers['mom'], focus(fx, 'dm', 'mom'), True),
+                                  (access.HOUSE, 'conv:panel', False),
+                                  (access.HOUSE_PARENT, 'conv:panel', False)):
+        prompt, out = capture_router(viewer, key, [{'name': 'list_insights', 'arguments': {}}])
+        check(('Sensitive parent insight' in prompt + json.dumps(out)) == allowed,
+              'router insight sensitivity follows the resolved person')
+    capture_router(access.HOUSE, 'conv:panel', [{'name': 'dismiss_insight', 'arguments': {'insight_id': sensitive}}])
+    check(storage.get_mind_insight(sensitive)['state'] == 'active', 'panel cannot dismiss sensitive insight')
+    capture_router(access.HOUSE, 'conv:panel', [{'name': 'dismiss_insight', 'arguments': {'insight_id': normal}}])
+    check(storage.get_mind_insight(normal)['state'] == 'retired', 'panel dismisses normal insight')
+
+
 def extra_contracts():
     errors = []
     for fn in (B1_household_piece_readable_by_engine, B2_channel_program_rule, I2_keeper_own_dm,
                M5_unmatched_launch_falls_back, dm_speaker_record_view, keeper_draft_prompt,
                router_dispatch_context, project_tools_channel_contract, finder_filters_before_matching,
                registry_and_ask_payloads, panel_write_dispatch, panel_sensitive_insights,
-               conversation_mission_history, panel_start_project):
+               conversation_mission_history, panel_start_project,
+               panel_household_ask_and_mission_writes, router_insight_identity_and_panel_dismissal):
         try:
             fn()
             print('PASS', fn.__name__)

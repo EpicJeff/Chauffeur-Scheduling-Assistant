@@ -361,7 +361,9 @@ def current_fixture():
     return _fixture
 
 
+@patch.object(home_board, 'ACCESS_DIGEST_SECONDS', 0)  # isolate digest input coverage from its memo window
 def shared_contracts():
+    digest_memo_window()
     round1_shared_contracts()
     fx = fresh()
     seed(fx)
@@ -463,6 +465,7 @@ def signal_contracts():
     check(not seen(mind._gather_deltas(NOW), fx, 'R3'), 'removed private practice watermark stays silent')
 
 
+@patch.object(home_board, 'ACCESS_DIGEST_SECONDS', 0)  # every input still participates when refreshed
 def round1_shared_contracts():
     fx = fresh()
     for kind in ('occasion_gap', 'care_gap'):
@@ -607,11 +610,40 @@ def round1_signal_contracts():
     check('sensitive-active-history' not in text(mind.visible_insights(access.HOUSE)), 'wall still excludes sensitive insights')
 
 
+def digest_memo_window():
+    fx = fresh()
+    seed(fx)
+    pid = fx.projects['mom_private']['id']
+    storage.update_project(pid, {'audience': 'household'})
+    home_board.invalidate_cache()
+    config = json.dumps([{'id': 'digest-window', 'type': 'calendar', 'config': {'view': 'list'}}])
+    with ExitStack() as stack:
+        stack.enter_context(patch.object(home_board, 'ACCESS_DIGEST_SECONDS', 3))
+        clock = stack.enter_context(patch.object(home_board.time, 'monotonic', return_value=100.0))
+        reads = [stack.enter_context(patch.object(storage, name, wraps=getattr(storage, name)))
+                 for name in ('get_projects', 'get_all_members', 'get_programs', 'get_threads', 'get_missions')]
+        first = home_board.build(config, now=NOW)
+        check(seen(first, fx, 'R3'), 'fixture starts titled on the wall')
+        counts = [r.call_count for r in reads]
+        check(all(counts), 'real board digest reads every access input family')
+        check(home_board.build(config, now=NOW) is first, 'warm board reused')
+        check([r.call_count for r in reads] == counts, 'warm build performs no access table scans')
+        storage.update_project(pid, {'audience': 'private'})
+        clock.return_value = 102.0
+        check(home_board.build(config, now=NOW) is first, 'memo is deliberately bounded to a few seconds')
+        clock.return_value = 103.1
+        after = home_board.build(config, now=NOW)
+        check(after is not first and not seen(after, fx, 'R3'), 'first build after memo window narrows warm board')
+        check(all(r.call_count > n for r, n in zip(reads, counts)), 'digest inputs refresh after the window')
+    home_board.invalidate_cache()
+
+
 if __name__ == '__main__':
     import test_access_matrix as matrix
     import traceback
     failed = 0
-    for fn in (matrix.shared_signals.round1_shared_contracts, matrix.shared_signals.round1_signal_contracts):
+    for fn in (matrix.shared_signals.round1_shared_contracts, matrix.shared_signals.round1_signal_contracts,
+               matrix.shared_signals.digest_memo_window):
         try:
             fn()
             print('PASS', fn.__name__)
