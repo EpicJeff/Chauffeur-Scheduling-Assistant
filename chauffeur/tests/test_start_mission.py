@@ -60,18 +60,69 @@ def scenario_declared_dispatched_terminal():
     src = open('services/agent_router.py', encoding='utf-8').read()
     check('"start_project"' in src.split('TERMINAL_ACTION_TOOLS = {')[1].split('}')[0], "terminal")
     _reset()
+    # Production voice supplies source + a server-verified VoiceContext. A
+    # voice: focus key alone is an identity-free admin call (spec 4.4/4.5).
+    from services import voice_identity as identity
+    import uuid
+    storage.add_member({'id': 'alex', 'name': 'Alex', 'role': 'adult'})
+    settings = {**storage.get_settings(), 'service_token': 'followup-b-service'}
+    storage.get_settings = lambda: settings
+    identity.configure(True, [{'ha_instance_id': 'ha', 'satellite_id': 'kitchen', 'enabled': True}])
+    storage.set_member_pin('alex', '1234')
+
+    def context():
+        return identity.context({'ha_instance_id': 'ha', 'satellite_id': 'kitchen',
+                                 'observed_at': time.time(), 'request_id': uuid.uuid4().hex}, True)
+
+    identity.intercept("It's Alex", context())
+    identity.intercept('My PIN is 1234', context())
+    ctx = context()
+    check((ctx.verified_member() or {}).get('id') == 'alex', 'real PIN-verified adult speaker')
+    from services import projects
+    private = projects.create({'title': 'SECRET repair plan', 'goal': 'get the dishwasher fixed',
+                               'owner_member_id': 'alex', 'audience': 'private'},
+                              storage.get_member('alex'))['project']
+    private_thread = threads.create('SECRET repair correspondence', owner_member_id='alex',
+                                    created_by='alex', project_id=private['id'])
+    storage.update_thread(private_thread, {'voice_shared': True})
+    triage.set_focus('voice:9', 'thread', private_thread, 'SECRET repair correspondence')
     orig = agent_router.call_gemma_with_fallback
     n = {'i': 0}
 
     def fake(prompt, tools_, system):
+        check('SECRET repair' not in prompt + system, 'verified voice still reads as HOUSE (spec 4.5)')
         n['i'] += 1
-        return {'tool_calls': [{'name': 'start_project', 'arguments': {'goal': 'get the dishwasher fixed'}}], 'message': ''} if n['i'] == 1 else {'tool_calls': [], 'message': ''}
+        return {'tool_calls': [{'name': 'start_project', 'arguments': {'goal': 'get the dishwasher fixed',
+                'subject_kind': 'thread', 'subject_id': private_thread}}], 'message': ''} if n['i'] == 1 else {'tool_calls': [], 'message': ''}
     agent_router.call_gemma_with_fallback = fake
     try:
-        res = agent_router.process_agent_request('get the dishwasher fixed', focus_key='voice:9')
+        res = agent_router.process_agent_request('get the dishwasher fixed', source='voice',
+                                                 voice_context=ctx, focus_key='voice:9')
     finally:
         agent_router.call_gemma_with_fallback = orig
-    check(res['message'].startswith('Started a project') and storage.get_missions()[0]['created_by'] == 'mom', f"voice opens it as the parent of record: {res}")
+    check(res['message'].startswith('Started a project'), f"verified voice opens a project: {res}")
+    project = storage.get_project(triage.get_focus('voice:9')['id'])
+    check(project['owner_member_id'] == 'alex' and project['audience'] == 'household',
+          f"the project belongs to the verified speaker: {project}")
+    mission = storage.get_missions()[0]
+    check(mission['created_by'] == 'alex', 'planning runs for the verified speaker')
+    check(missions.subject_of(mission)[:2] == ('project', project['id']),
+          'the verified speaker cannot bind their private thread into room planning')
+    check('SECRET repair' not in res['message'], 'no private words are read aloud')
+
+
+def scenario_identity_free_non_voice_starts_household_project():
+    _reset()
+    from unittest.mock import patch
+    reply = {'tool_calls': [{'name': 'start_project', 'arguments': {'goal': 'repair the garage'}}], 'message': ''}
+    with patch.object(agent_router, 'call_gemma_with_fallback', return_value=reply):
+        res = agent_router.process_agent_request('repair the garage', focus_key='voice:legacy')
+    check(res['message'].startswith('Started a project'), f"identity-free start remains available: {res}")
+    project = storage.get_project(triage.get_focus('voice:legacy')['id'])
+    check(project['owner_member_id'] == situations.parent_of_record()['id']
+          and project['audience'] == 'household', 'Follow-up B: parent owns the household project')
+    check(any(m['project_id'] == project['id'] for m in storage.get_missions()),
+          'identity-free call creates planning inside the household project')
 
 
 SENT = []
@@ -264,24 +315,29 @@ def scenario_thread_missions_endpoint_is_parent_only():
     mission's transcript (mail results, released values)."""
     _reset(); _dm_capture()
     import main
-    from fastapi import HTTPException
     tid = threads.create("Kate's science fair", owner_member_id='kid', created_by='mom')
     mid = storage.add_mission({'goal': 'supplies', 'origin_kind': 'thread', 'origin_ref': tid, 'created_by': 'mom', 'tier': 'mission'})
     storage.add_mission_step(mid, {'kind': 'ask', 'name': 'release', 'result_json': {'question': 'q', 'site': 's', 'fields': ['phone'], 'values': {'phone': '919-327-7497'}}})
-    orig = main._situation_viewer
-    try:
-        main._situation_viewer = lambda r: storage.get_member('kid')
-        try:
-            main.thread_missions(tid, request=None)
-            code = 200
-        except HTTPException as e:
-            code = e.status_code
-        check(code == 403, f"the owner child is refused the transcript: {code}")
-        main._situation_viewer = lambda r: storage.get_member('mom')
-        out = main.thread_missions(tid, request=None)
-        check(out['missions'] and out['missions'][0]['steps'], "a parent reads it")
-    finally:
-        main._situation_viewer = orig
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch
+    client = TestClient(main.app)
+    tokens = {member: {'X-Member-Token': storage.create_member_token(member)} for member in ('kid', 'mom')}
+    with patch.object(storage, 'get_settings', return_value={**storage.get_settings(), 'auth_enforce': True}):
+        # Both a parent's mission and the child's own mission stay WRITE_ROLES
+        # reading. Exercise middleware and real token resolution, not a resolver stub.
+        for creator in ('mom', 'kid'):
+            storage.update_mission(mid, {'created_by': creator})
+            response = client.get(f'/api/threads/{tid}/missions', headers=tokens['kid'])
+            check(response.status_code == 403 and response.json() == {'detail': 'Not yours to see'},
+                  f"the owner child is refused the transcript: {response.status_code} {response.text}")
+            detail = client.get(f'/api/missions/{mid}', headers=tokens['kid'])
+            check(detail.status_code == 404 and '919-327-7497' not in detail.text,
+                  f"a child creator cannot read a mission by id: {detail.status_code} {detail.text}")
+            response = client.get(f'/api/threads/{tid}/missions', headers=tokens['mom'])
+            check(response.status_code == 200, f"a parent reads it: {response.text}")
+            out = response.json()
+            check(out['missions'] and out['missions'][0]['steps'], "a parent reads the transcript")
+            check('919-327-7497' in response.text, 'parent positive control includes the released value')
 
 
 def scenario_launch_refused_opens_no_thread_and_launch_mission_defers():
@@ -434,7 +490,7 @@ def scenario_the_dishwasher_is_booked_on_a_tap():
 
 
 SCENARIOS = [scenario_opens_thread_and_mission_and_focus, scenario_a_running_mission_is_not_duplicated, scenario_gates,
-             scenario_declared_dispatched_terminal,
+             scenario_declared_dispatched_terminal, scenario_identity_free_non_voice_starts_household_project,
              scenario_ask_user_dms_the_question, scenario_finish_lands_on_the_thread_with_a_prefilled_next_step,
              scenario_finish_without_next_action, scenario_finish_on_a_closed_thread,
              scenario_thread_card_carries_its_missions_question, scenario_thread_card_carries_its_missions_release,

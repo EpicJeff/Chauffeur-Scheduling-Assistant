@@ -2135,29 +2135,31 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
     """The one chat door for anything that takes steps, time or outside people
     (front door §1): the project is created at once, its card is posted
     first, then Argyle plans inside it. A child's project waits for a parent
-    to plan it. Voice acts as the parent of record, household audience."""
+    to plan it. Verified voice acts as its member; other voice and House
+    callers use the parent of record. Rooms use the household audience."""
     from services.voice_identity import VoiceContext
     from services import storage, subjects, situations, projects, missions as _missions, triage as _tri
-    # A room: a real VoiceContext, or the router standing the parent of record
-    # in for a caller with no identity (`spoken=substituted`).
+    # Voice writes use the verified member when present. Room reads still
+    # use HOUSE and spoken_safe, independently of that write identity.
     ctx = voice_context if isinstance(voice_context, VoiceContext) else None
+    house = not ctx and access.is_house(acting_member)
     spoken = bool(ctx) or bool(spoken)
     goal = (goal or '').strip()
     if not goal:
         return {"status": "error", "message": "Say what you want to get done."}
-    actor = (situations.parent_of_record() if ctx else acting_member) if spoken else acting_member
-    if spoken and not actor:
+    actor = (ctx.verified_member() or situations.parent_of_record()) if ctx else acting_member
+    if house or (spoken and not actor):
         actor = situations.parent_of_record()
     if not actor or not actor.get('id'):
         return {"status": "error", "message": "Only a signed-in family member can start a project."}
     # Whose project: the caller's, or a named member (parent/adult only).
     owner = actor
-    if for_member_name and not spoken:
+    if for_member_name and not spoken and not house:
         owner, refusal = _resolve_named_member_or_refuse(actor, for_member_name, 'start a project for someone else')
         if refusal:
             return refusal
     child_owner = owner.get('role') == 'child' or bool(owner.get('is_child'))
-    audience = 'household' if spoken else ('parents' if child_owner else 'private')
+    audience = 'household' if spoken or house else ('parents' if child_owner else 'private')
     # A channel some member may not see the result: no words (core spec §5).
     if focus_key and str(focus_key).startswith('channel:'):
         humans = subjects.channel_humans(focus_key) or []
@@ -2165,18 +2167,19 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
         if humans and not all(projects.can_see(probe, h) for h in humans):
             return {"status": "refused", "message": "Ask me about that in your own Argyle chat."}
     subject = subjects.load(subject_kind, subject_id) if subject_kind in subjects.KINDS and subject_id else None
-    subject_reader = access.HOUSE if ctx else actor
+    # The parent owns room-started work, but supplies no private read authority.
+    subject_reader = access.HOUSE if ctx or house else actor
     if (subject is None
-            or ctx and subject_kind in access.KINDS and access.record_view(subject_kind, subject, access.HOUSE) is None
+            or (ctx or house) and subject_kind in access.KINDS and access.record_view(subject_kind, subject, access.HOUSE) is None
             or not subjects.visible(subject_kind, subject, subject_reader, spoken)):
         subject_kind = subject_id = None
     subject_title = subjects.title_of(subject_kind, subject) if subject_kind else None
     # The continuation rule: a new goal said while a project is the focus and
     # none of its missions is live is new planning INSIDE that project.
     child_actor = actor.get('role') == 'child' or bool(actor.get('is_child'))
-    f = _tri.get_focus(focus_key, viewer=actor) if focus_key else None
+    f = _tri.get_focus(focus_key, viewer=subject_reader) if focus_key else None
     focused = storage.get_project(f['id']) if f and f.get('kind') == 'project' else None
-    if focused and not _project_in_reach(focused, actor, spoken, focus_key):
+    if focused and not _project_in_reach(focused, subject_reader, spoken, focus_key):
         focused = None
     if focused and child_actor and focused.get('state') == 'active' and projects.can_act(focused, actor):
         # A child's follow-up adds no paid work they cannot answer (front door §1).
@@ -2195,7 +2198,7 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
     for p in storage.get_projects():
         if p.get('state') not in ('active', 'paused') or p.get('owner_member_id') != owner['id']:
             continue
-        if not _project_in_reach(p, actor, spoken, focus_key):
+        if not _project_in_reach(p, subject_reader, spoken, focus_key):
             continue
         if subject_kind in projects.PIECE_HOME_KINDS:
             # Home records are never cross-linked. The subject's own home or

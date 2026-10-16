@@ -375,7 +375,9 @@ def panel_write_dispatch():
         if launch.called and launch.call_args.kwargs.get('origin_ref') in (fx.ids['R1'], fx.ids['R4']):
             errors.append(f'{name}: launched on a hidden thread')
         if name == 'start_project' and launch.called:
-            errors.append('start_project: borrowed a parent identity')
+            project = storage.get_project(launch.call_args.kwargs['project_id'])
+            check(project['owner_member_id'] == situations.parent_of_record()['id']
+                  and project['audience'] == 'household', 'panel project follows the Follow-up B ruling')
     # Direct-id writes must also be gated, and a household write still works.
     for rkey in ('R1', 'R2', 'R4', 'R5t'):
         fx = access_fixture.build()
@@ -470,6 +472,36 @@ def conversation_mission_history():
     check(rendered == ['done', 'blocked', 'live'], f'mission history policy: {rendered}')
 
 
+def panel_start_project():
+    """A panel can start household work without reading the parent's private work."""
+    from services import projects
+    fx = access_fixture.build()
+    goal = 'Repair the garage roof'
+    private = fx.projects['mom_private']
+    storage.update_project(private['id'], {'title': 'SECRET garage project', 'goal': goal})
+    for focused_kind, focused_id in (('project', private['id']), ('thread', fx.ids['R1'])):
+        triage.set_focus('conv:panel', focused_kind, focused_id, 'SECRET panel focus')
+        before = {p['id'] for p in storage.get_projects()}
+        prompt, out = capture_router(None, 'conv:panel', [{'name': 'start_project', 'arguments': {
+            'goal': goal, 'subject_kind': 'thread', 'subject_id': fx.ids['R1'],
+            'for_member_name': 'Kate'}}])
+        new = [p for p in storage.get_projects() if p['id'] not in before]
+        check(len(new) == 1, f'panel creates a project instead of deduping or continuing private work: {out}')
+        project = new[0]
+        check(project['owner_member_id'] == situations.parent_of_record()['id']
+              and project['audience'] == 'household', f'panel ownership and audience: {project}')
+        planning = projects._work_missions(project)
+        check(len(planning) == 1 and missions.subject_of(planning[0])[:2] == ('project', project['id']),
+              'panel planning binds only its new household project, never the private subject')
+        check(not any(p['kind'] == 'thread' and p['id'] == fx.ids['R1'] for p in project['pieces']),
+              'no private subject attached as a piece')
+        check('SECRET' not in prompt + json.dumps(out) and fx.title('R1') not in json.dumps(out),
+              'private focus, dedupe candidate and subject words stay out of the room')
+        # Give the next iteration a different goal so household dedupe cannot mask creation.
+        goal = 'Replace the garage door'
+        storage.update_project(private['id'], {'goal': goal})
+
+
 def project_tools_channel_contract():
     """Exercise the registered project rows with no piece-kind matrix cells."""
     fx = access_fixture.build()
@@ -545,7 +577,7 @@ def extra_contracts():
                M5_unmatched_launch_falls_back, dm_speaker_record_view, keeper_draft_prompt,
                router_dispatch_context, project_tools_channel_contract, finder_filters_before_matching,
                registry_and_ask_payloads, panel_write_dispatch, panel_sensitive_insights,
-               conversation_mission_history):
+               conversation_mission_history, panel_start_project):
         try:
             fn()
             print('PASS', fn.__name__)
