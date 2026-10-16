@@ -313,6 +313,7 @@ def _project_steps(plan, mid):
 
 def _complete_approval(mission, plan):
     """Replay the persisted write intent under db_lock, including after a crash."""
+    from services import projects
     intent = plan.get('approval')
     mid = mission['id']
     if intent:
@@ -331,6 +332,11 @@ def _complete_approval(mission, plan):
                 order += 1
         pieces = list(project.get('pieces') or [])
         earlier = intent.get('earlier_subject')
+        if earlier and earlier['kind'] in projects.PIECE_HOME_KINDS:
+            from services import access
+            record = access.KINDS[earlier['kind']].load(earlier['id'])
+            if not record or record.get('project_id') != pid:
+                earlier = None
         if earlier and not any((p['kind'], p['id']) == (earlier['kind'], earlier['id']) for p in pieces):
             pieces.insert(0, {**earlier, 'added_by': plan['approved_by'], 'added_at': plan['approved_at']})
         patch = {'steps': steps, 'pieces': pieces,

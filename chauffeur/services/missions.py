@@ -769,6 +769,15 @@ def tap_only_ask_pending(mission_id: str) -> bool:
     return mission.get('status') in ATTENTION or verify_open({**mission, 'id': mission_id})
 
 
+def answer_verb(mission: dict) -> str:
+    """Which free-text action answer() will perform, independent of card options."""
+    if mission.get('status') not in ATTENTION:
+        return 'steer'
+    asked = next((s for s in reversed(storage.get_mission_steps(mission['id']))
+                  if s['kind'] == 'ask'), {})
+    return 'steer' if asked.get('name') in ('plan', 'stage', 'stage_check') else 'answer'
+
+
 def answer(mission_id: str, text: str, actor: dict) -> dict:
     """The one free-text door: answer a question or steer a live mission."""
     if (actor or {}).get('role') not in ('parent', 'adult'):
@@ -781,7 +790,7 @@ def answer(mission_id: str, text: str, actor: dict) -> dict:
         if not text:
             return {'status': 'error', 'message': 'Say something to send.'}
         planned_ask = next((s for s in reversed(storage.get_mission_steps(mission_id)) if s['kind'] == 'ask'), {})
-        is_plan_steer = mission.get('status') in ATTENTION and planned_ask.get('name') in ('plan', 'stage', 'stage_check')
+        is_plan_steer = mission.get('status') in ATTENTION and answer_verb(mission) == 'steer'
         if tap_only_ask_pending(mission_id) and not is_plan_steer:
             return {'status': 'error', 'message': 'Answer that one with its buttons.'}
         status = mission.get('status')

@@ -2166,7 +2166,17 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
             continue
         if not _project_in_reach(p, actor, spoken, focus_key):
             continue
-        if subject_kind and not any(x.get('kind') == subject_kind and x.get('id') == subject_id for x in p.get('pieces') or []):
+        if subject_kind in projects.PIECE_HOME_KINDS:
+            # Home records are never cross-linked. The subject's own home or
+            # a planning mission about it establishes the relationship instead.
+            related = subject.get('project_id') == p['id'] or any(
+                _missions.subject_of(m)[:2] == (subject_kind, subject_id)
+                or any(h.get('kind') == subject_kind and h.get('id') == subject_id
+                       for h in m.get('subject_history') or [])
+                for m in projects._work_missions(p))
+            if not related:
+                continue
+        elif subject_kind and not any(x.get('kind') == subject_kind and x.get('id') == subject_id for x in p.get('pieces') or []):
             continue
         if _same_goal(goal, p, subject_title):
             matches.append(p)
@@ -2183,7 +2193,7 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
     if created['status'] != 'success':
         return {"status": "error", "message": created.get('message') or 'Could not start that project.'}
     project = created['project']
-    if subject_kind:
+    if subject_kind and subject_kind not in projects.PIECE_HOME_KINDS:
         projects.add_piece(project['id'], subject_kind, subject_id, actor)
     if ctx:
         storage.update_project(project['id'], {'requester_provenance': ctx.provenance()})
@@ -2193,7 +2203,8 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
         planning, reason = 'needs_parent', 'Ask a parent to plan it with Argyle.'
     else:
         res = _missions.launch('Help me plan the next part of this project: ' + project['title'], created_by=actor['id'],
-                               project_id=project['id'], subject=('project', project['id']))
+                               project_id=project['id'], subject=(subject_kind, subject_id)
+                               if subject_kind in projects.PIECE_HOME_KINDS else ('project', project['id']))
         if res.get('status') == 'launched':
             mission_id = res['mission_id']
             if ctx:

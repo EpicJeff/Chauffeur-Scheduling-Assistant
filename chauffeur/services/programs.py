@@ -1396,7 +1396,7 @@ def due_asks_for(program: dict, now=None, viewer=None) -> list:
     than happened, and the design's promise is that it never does.
     """
     from services import family_digest, access
-    if not access.record_visible('program', program, viewer or access.HOUSE):
+    if viewer is not None and not access.record_visible('program', program, viewer):
         return []
     now = now or datetime.datetime.now()
     if program.get('state') != 'active':

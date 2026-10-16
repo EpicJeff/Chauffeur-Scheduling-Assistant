@@ -19,6 +19,9 @@ import main
 F, K = 'full', 'keeper'
 PROGRAM_VERBS = ('approve', 'session', 'milestone', 'finish', 'reshape', 'pause',
                  'resume', 'drop', 'edit', 'unit')
+PROJECT_WRITES = {'/api/projects/{project_id}/plan',
+                  '/api/projects/{project_id}/steps/{step_id}/cancel',
+                  '/api/projects/{project_id}/steps/{step_id}/hold'}
 
 
 def request(fx, col, method, path, **kwargs):
@@ -103,6 +106,22 @@ def expected(rid, fx, rkey, col, value):
     if rid not in IDS:
         return value
     path = rid[-1]
+    if path in PROJECT_WRITES:
+        if col == 'house':
+            return 'skip'
+        if not project_visible(fx, rkey, col):
+            return None
+        # Projects keep their existing distinction: a visible project the
+        # caller cannot edit is 403; a hidden project is 404.
+        if col == 'hal':
+            return 'FORBIDDEN-NOT-404'
+        # A child acts only inside their own project. These fixture projects
+        # belong to Kate for R6/R11; plan/cancel retain their adult role gate.
+        if col == 'kid':
+            if rkey not in ('R6', 'R11'):
+                return 'FORBIDDEN-NOT-404'
+            return F if path.endswith('/hold') else 'FORBIDDEN-NOT-404'
+        return F
     if rid[0] == 'route' and rid[1] == 'POST' and path in ('/api/threads', '/api/programs'):
         if col == 'pat':
             return None
@@ -194,6 +213,9 @@ IDS = {
     ('route', 'GET', '/api/projects/{project_id}'),
     ('route', 'POST', '/api/projects/{project_id}/pieces'),
     ('route', 'POST', '/api/projects/{project_id}/pieces/remove'),
+    ('route', 'POST', '/api/projects/{project_id}/plan'),
+    ('route', 'POST', '/api/projects/{project_id}/steps/{step_id}/cancel'),
+    ('route', 'POST', '/api/projects/{project_id}/steps/{step_id}/hold'),
     ('route', 'GET', '/api/subjects/search'),
     ('route', 'GET', '/api/subjects/{kind}/{sid}/projects'),
     ('route', 'GET', '/api/action-proposals'),
@@ -288,6 +310,15 @@ def write_probe(rid, fx, rkey, col, forced_verb=None):
     fx = access_fixture.build()
     kind, row = load(fx, rkey)
     sid, path, method = row['id'], rid[-1], rid[1]
+    if path in PROJECT_WRITES:
+        pid = row['project_id']
+        step = {'id': 'access-project-step', 'title': 'A step', 'needs': [], 'order': 0,
+                'owner': 'argyle' if path.endswith('/cancel') else 'kid',
+                'state': 'doing' if path.endswith('/cancel') else 'todo'}
+        storage.update_project(pid, {'steps': [step]})
+        path = path.replace('{project_id}', pid).replace('{step_id}', step['id'])
+        r = request(fx, col, method, path, json={'outcome': 'stop', 'by_date': '2020-01-01'})
+        return result(r)
     verb = forced_verb or verb_for(rid)
     if rid[0] == 'route-prefix':
         errors = []
@@ -360,6 +391,9 @@ def write_probe(rid, fx, rkey, col, forced_verb=None):
         else:
             r = request(fx, col, method, path, json=body)
     outcome = result(r)
+    if r is not None and rid[-1] == '/api/action-proposals/{proposal_id}/act' and r.status_code == 200 and r.json() == {
+            'status': 'error', 'message': 'That action is no longer available.'}:
+        return None
     if outcome == F and r.json().get('status') in ('error', 'refused', 'not_found'):
         return f'ACTION-NOT-ACCEPTED: {r.text[:160]}'
     return outcome

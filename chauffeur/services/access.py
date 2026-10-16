@@ -232,6 +232,6 @@ def shared_screen_visible(kind, row, viewer):
 register('thread', 'owner_member_id', _thread_base, lambda rid: storage.get_thread(rid),
          keeper_verbs=None)   # a thread keeper keeps every thread verb; view() drops mission options
 register('mission', 'created_by', _mission_base, lambda rid: storage.get_mission(rid),
-         keeper_verbs=frozenset({'ack', 'delete', 'steer'}))
+         keeper_verbs=frozenset({'ack', 'delete', 'steer', 'drop', 'own'}))
 register('program', 'member_id', _program_base, lambda rid: storage.get_program(rid),
          keeper_verbs=None)

@@ -575,6 +575,17 @@ def thread_keeper_view(row):
                         for h in row.get('history') or []]}
 
 
+def option_action(kind, row, verb, option_id):
+    """Translate a card option into the verb checked by piece routes."""
+    if kind == 'mission':
+        if verb == 'answer' and (option_id or '').endswith(':steer'):
+            from services import missions
+            return missions.answer_verb(row) if row else 'answer'
+        if verb == 'close' and option_id == 'close:dropped':
+            return 'drop'
+    return verb
+
+
 def view(kind: str, sid: str, viewer: Optional[dict] = None) -> Optional[dict]:
     if kind not in KINDS:
         return None
@@ -584,6 +595,7 @@ def view(kind: str, sid: str, viewer: Optional[dict] = None) -> Optional[dict]:
     if kind == 'project':
         return _project_view(row, viewer)
     keeper = False
+    access_row = row
     if kind in ('mission', 'thread') and viewer is not None:
         from services import access
         keeper = access.record_view(kind, row, viewer) == access.KEEPER
@@ -592,12 +604,20 @@ def view(kind: str, sid: str, viewer: Optional[dict] = None) -> Optional[dict]:
         # Build labels and the fallback only from metadata. In particular,
         # neither an interview question nor a stage title is a label here.
         row = {**planned.keeper_view(row, viewer), 'plan': None,
+               OWNER: row.get(OWNER), OWNED_AT: row.get(OWNED_AT),
                'status_note': '', 'note_source': 'fallback'}
     elif keeper and kind == 'thread':
         # Cached planner notes, suggestions and the planned next step can
         # quote the hidden plan or the project the keeper cannot see.
         row = thread_keeper_view(row)
     opts = options_for(kind, row)
+    if keeper and kind == 'mission':
+        from services import missions
+        # Redacting a proposed plan removes its option builder's state. Keep
+        # its free-text steering path, using only the ask's type and status.
+        if (row.get('status') in missions.LIVE and missions.answer_verb(access_row) == 'steer'
+                and not any(o['id'] == 'answer:steer' for o in opts)):
+            opts.insert(0, _opt('answer', 'Tell it something', {'ask': 'steer'}, 'steer'))
     if kind == 'thread' and viewer is not None:
         from services import access
         visible_opts = []
@@ -613,6 +633,9 @@ def view(kind: str, sid: str, viewer: Optional[dict] = None) -> Optional[dict]:
     if keeper:
         opts = [o for o in opts if o['verb'] not in ('approve_plan', 'run_stage')
                 and (':mission:' not in o['id'] or o['payload'].get('ask') == 'steer')]
+        if kind == 'mission':
+            opts = [o for o in opts if access.record_actable(
+                kind, access_row, viewer, option_action(kind, access_row, o['verb'], o['id']))]
     from services import asks as _asks
     note = row.get('status_note') or ''
     source = row.get('note_source') or 'fallback'

@@ -29,7 +29,8 @@ COLS = ('mom', 'dad', 'aunt', 'kid', 'hal', 'pat', 'house')
 # restrict verbs. Existing endpoint role checks still apply to visible records.
 ACT = {rkey: {col: F if value is not None else None for col, value in zip(COLS, row)}
        for rkey, row in TABLE.items()}
-MISSION_KEEPER_VERBS = frozenset({'ack', 'delete', 'steer'})
+# Task 3 binding follow-up ruling: drop and own remain available to keepers.
+MISSION_KEEPER_VERBS = frozenset({'ack', 'delete', 'steer', 'drop', 'own'})
 KIND = {'R1': 'thread', 'R2': 'mission', 'R3': 'program', 'R4': 'thread', 'R5t': 'thread',
         'R5p': 'program', 'R6': 'thread', 'R7': 'thread', 'R8': 'thread', 'R10': 'thread',
         'R11': 'mission', 'R12': 'thread', 'R13': 'thread', 'R9origin': 'thread',
@@ -115,9 +116,9 @@ def scenario_actable():
     _, r2 = load(fx, 'R2')
     aunt, dad = fx.viewers['aunt'], fx.viewers['dad']
     check(not access.record_actable('mission', r2, dad, 'answer'), 'Dad cannot act on R2')
-    for verb in ('ack', 'delete', 'steer'):
+    for verb in ('ack', 'delete', 'steer', 'drop', 'own'):
         check(access.record_actable('mission', r2, aunt, verb), f'keeper may {verb}')
-    for verb in ('approve_plan', 'run_stage', 'answer', 'release', 'submit', 'verify'):
+    for verb in ('approve_plan', 'run_stage', 'answer', 'release', 'submit', 'verify', 'subject'):
         check(not access.record_actable('mission', r2, aunt, verb), f'keeper may not {verb}')
     _, r3 = load(fx, 'R3')
     check(access.record_actable('program', r3, fx.viewers['kid'], 'session'), 'child keeper acts on her program')

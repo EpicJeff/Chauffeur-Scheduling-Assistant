@@ -5219,7 +5219,7 @@ def act_on_action_proposal(proposal_id: str, req: ActionProposalAct, background_
     fix — unchanged, not widened."""
     prop = storage.get_action_proposal(proposal_id)
     if not prop or not _proposal_piece_visible(prop, _piece_viewer(request), 'approve'):
-        raise HTTPException(status_code=404, detail='No such proposal')
+        return {'status': 'error', 'message': 'That action is no longer available.'}
     from services import chat_actions
     from services.agent_tools_v2 import _post_chat_message
     req.member_id = _acting_id(request, req.member_id)
@@ -5958,16 +5958,17 @@ def subject_situations(kind: str, sid: str, request: Request = None):
 @app.post("/api/situations/{kind}/{sid}/act")
 def situations_act(kind: str, sid: str, body: dict = Body(default={}),
                    request: Request = None, background_tasks: BackgroundTasks = None):
+    from services import situations as _sit
     if kind in _PIECE_LOAD:
         verb = body.get('verb') or ''
         option_id = body.get('option_id') or ''
-        action = 'steer' if verb == 'answer' and option_id.endswith(':steer') else verb
+        action = _sit.option_action(kind, _PIECE_LOAD[kind](sid), verb, option_id)
         _piece_or_404(kind, sid, request, action)
         # A forwarded thread button must also pass the mission's own gate.
         bits = option_id.split(':')
         if kind == 'thread' and len(bits) >= 3 and bits[1] == 'mission':
+            action = _sit.option_action('mission', storage.get_mission(bits[2]), verb, option_id)
             _piece_or_404('mission', bits[2], request, action)
-    from services import situations as _sit
     actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
     res = _sit.act(kind, sid, body.get('verb') or '', option_id=body.get('option_id'),
                    payload=body.get('payload') or {}, actor=actor)
@@ -6089,13 +6090,14 @@ def asks_withdraw(ask_id: str, body: dict = Body(default={}), request: Request =
 @app.post("/api/asks/{ask_id}/answer")
 def asks_answer(ask_id: str, body: dict = Body(default={}), request: Request = None,
                 background_tasks: BackgroundTasks = None):
-    _ask_piece_or_404(ask_id, request, 'answer')
     from services import asks as _asks
     actor = _ask_actor(request, body.get('member_id'))
     a = storage.get_ask(ask_id)
     if not a:
         raise HTTPException(status_code=404, detail="No such ask")
     reported = bool(body.get('reported')) or (actor.get('id') != a.get('to_member_id'))
+    if reported or not actor.get('id') or not a.get('to_member_id'):
+        _ask_piece_or_404(ask_id, request, 'answer')
     res = _asks.answer(ask_id, body.get('answer') or '', actor, reported=reported)
     if res.get('status') == 'refused':
         raise HTTPException(status_code=403, detail=res.get('message'))
@@ -6211,7 +6213,7 @@ def project_set_state(project_id: str, body: dict, request: Request = None):
 @app.post("/api/projects/{project_id}/plan")
 def project_plan(project_id: str, request: Request = None):
     from services import missions, projects
-    actor = _situation_viewer(request)
+    actor = _piece_viewer(request)
     with storage.db_lock:
         project = _project_for_actor(project_id, actor, writing=True)
         if projects._child(actor):
@@ -6275,7 +6277,7 @@ def project_step_state(project_id: str, step_id: str, body: dict, request: Reque
 @app.post("/api/projects/{project_id}/steps/{step_id}/cancel")
 def project_step_cancel(project_id: str, step_id: str, body: dict, request: Request = None):
     from services import missions, planned, projects
-    actor = _situation_viewer(request)
+    actor = _piece_viewer(request)
     with storage.db_lock:
         project = _project_for_actor(project_id, actor, writing=True)
         step = next((s for s in project.get('steps') or [] if s['id'] == step_id), None)
@@ -6316,7 +6318,7 @@ def project_step_hold(project_id: str, step_id: str, body: dict, request: Reques
                       background_tasks: BackgroundTasks = None):
     import datetime as dt
     from services import projects
-    actor = _situation_viewer(request)
+    actor = _piece_viewer(request)
     project = _project_for_actor(project_id, actor, writing=True)
     step = next((s for s in project.get('steps') or [] if s['id'] == step_id), None)
     if step is None:
@@ -6614,10 +6616,9 @@ def missions_answer(mission_id: str, body: dict = Body(default={}),
     """Delegate free text to missions.answer, including tap_only_ask_pending:
     a pending release, submit or verify returns 'Answer that one with its buttons.'
     """
-    from services import situations
+    from services import situations, missions
     row = situations.load('mission', mission_id)
-    verb = ('steer' if row and any(o['id'] == 'answer:steer'
-                                  for o in situations.options_for('mission', row)) else 'answer')
+    verb = missions.answer_verb(row) if row else 'answer'
     _piece_or_404('mission', mission_id, request, verb)
     actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
     text = (body.get('text') or '').strip()
