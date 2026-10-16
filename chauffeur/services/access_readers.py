@@ -173,10 +173,11 @@ READERS = [
         'services.app_voice.tool_result',
     ]],
     # 4.6-shared-screen: function readers found by the register guard (Task 1 Step 9)
-    *[((F, name), '4.6-shared-screen', ('thread', 'mission', 'program'), 'pending its task') for name in [
+    *[((F, name), '4.6-shared-screen', ('thread', 'mission', 'program'), 'shared_screen_visible') for name in [
         'services.home_board._tile_calendar',
         'services.home_board._tile_drives',
         'services.home_board._tile_programs',
+        'services.home_board._tile_mind',
         'services.home_board._trip_rows',
         'services.home_board.build',
         'services.home_board.day_schedule',
@@ -232,7 +233,7 @@ READERS = [
         'services.meals.eating_plan',
     ]],
     # 4.8-signals: function readers found by the register guard (Task 1 Step 9)
-    *[((F, name), '4.8-signals', ('thread', 'mission', 'program'), 'pending its task') for name in [
+    *[((F, name), '4.8-signals', ('thread', 'mission', 'program'), 'finding_visible / private_recipients') for name in [
         'services.findings.open_findings',
         'services.mind._calendar',
         'services.mind._threads',
@@ -242,6 +243,9 @@ READERS = [
         'services.watchers._commitment_findings',
         'services.watchers._prep_kit_findings',
         'services.watchers._unassigned_findings',
+        'services.watchers.run_watchers',
+        'services.watchers._heads_up_line',
+        'services.watchers._post_action_cards',
     ]],
     # INTERNAL: function readers found by the register guard (Task 1 Step 9)
     *[((F, name), 'INTERNAL', ('thread', 'mission', 'program'), 'raw (an action or decision; its callers apply the rule)') for name in [

@@ -35,9 +35,10 @@ extra fields carry severity, subject and the proposed action. Indexing still
 works, so the collectors read the same as they always did.
 """
 import datetime
+from contextvars import ContextVar
 import time
 
-from services import coverage_options as _coverage, findings as _findings, storage
+from services import access, coverage_options as _coverage, findings as _findings, storage
 from services.findings import Finding
 
 WATCH_WINDOW_DAYS = 3          # unassigned-event lookahead
@@ -123,7 +124,7 @@ def _unassigned_findings(now: datetime.datetime):
     sweep, so counting here caps the whole sweep at NEGOTIATE_PER_SWEEP seeds
     no matter how many uncovered events it finds.
     """
-    cache = storage.get_cached_schedule() or {}
+    cache = access.shared_schedule_view(storage.get_cached_schedule(), access.HOUSE)
     events = {str(e.get('id')): e for e in cache.get('events', [])}
     # Outside hands (load arc A1). A ride a carpool parent is making was never
     # ours to cover, and "🚨 No driver yet" for it is the standing false alarm
@@ -324,7 +325,7 @@ def _prep_kit_findings(now_ts: float):
     storage.set_app_state('prep_suggest_last_run', now_ts)
     try:
         from services import prep_kits
-        cache = storage.get_cached_schedule() or {}
+        cache = access.shared_schedule_view(storage.get_cached_schedule(), access.HOUSE)
         titles = {e.get('title') for e in cache.get('events', [])
                   if e.get('title') and e.get('event_type') != 'errand'
                   and not e.get('trip_suppressed')}
@@ -402,6 +403,28 @@ SCANNED_KINDS = ('unassigned', 'optional_skip', 'proposal', 'chore_verify',
                  'mission_done', 'mission_blocked', 'mission_waiting')
 
 
+_private_signals = ContextVar('watcher_private_signals', default=None)
+
+
+def _household_signals(found):
+    """Restricted signals never become household findings (§4.8).
+
+    During a sweep, keep only signals the existing policy would DM. Outside
+    a sweep collectors remain read-only and simply omit restricted records.
+    """
+    public = []
+    for f in found:
+        spec = access.KINDS.get(f.subject_type)
+        row = spec.load(f.subject_id) if spec else None
+        if row and access.restricted(access.home_project(row)):
+            pending = _private_signals.get()
+            if f.dm and pending is not None:
+                pending.append(f)
+        else:
+            public.append(f)
+    return public
+
+
 def _thread_stalls(now: datetime.datetime):
     """A thread (services/threads.py) that stalled — a promise to a vendor or
     a project that stopped moving and nothing else in the app would ever
@@ -442,7 +465,7 @@ def _thread_stalls(now: datetime.datetime):
             kind='thread_stall', severity=severity, dm=dm,
             subject_type='thread', subject_id=str(thread_id),
             fp=f"{thread_id}|{t.get('next_action_at') or ''}"))
-    return out
+    return _household_signals(out)
 
 
 def _mission_states(now: datetime.datetime):
@@ -474,7 +497,7 @@ def _mission_states(now: datetime.datetime):
         out.append(Finding(key=f"{kind}:{m['id']}", line=line, kind=kind,
                            severity=sev, dm=dm,
                            subject_type='mission', subject_id=str(m['id'])))
-    return out
+    return _household_signals(out)
 
 
 WEEKDAY_NAMES = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
@@ -594,7 +617,7 @@ def _program_findings(now: datetime.datetime):
                     subject_type='program', subject_id=str(row['id'])))
         except Exception as e:
             print(f"[watchers] program check failed for {row.get('id')}: {e}")
-    return out
+    return _household_signals(out)
 
 
 def collect_findings(now: datetime.datetime = None):
@@ -635,7 +658,7 @@ def _commitment_findings(now: datetime.datetime):
     time does.
     """
     try:
-        cache = storage.get_cached_schedule() or {}
+        cache = access.shared_schedule_view(storage.get_cached_schedule(), access.HOUSE)
         events = {str(e.get('id')): e for e in cache.get('events', [])}
         assignments = dict(cache.get('assignments') or {})
         unassigned = set(str(x) for x in cache.get('unassigned') or [])
@@ -644,6 +667,15 @@ def _commitment_findings(now: datetime.datetime):
         horizon = now + datetime.timedelta(days=4)
         out = []
         for pc in storage.get_protected_commitments():
+            source = pc.get('source') or {}
+            program = (storage.get_program(source.get('id')) if source.get('kind') == 'program' else None)
+            if program is None:
+                # Task 9 backfills source; old emitted rows must already be
+                # safe when this collector names a commitment today.
+                program = next((p for p in storage.get_programs(include_finished=True)
+                                if pc.get('id') in (p.get('emissions') or {}).get('commitment_ids', [])), None)
+            if program and not access.record_visible('program', program, access.HOUSE):
+                pc = {**pc, 'title': 'Busy'}
             member = members.get(pc.get('member_id')) or {}
             drv = member.get('driver_id')
             days = set(pc.get('days_of_week') or [])
@@ -828,17 +860,25 @@ def _unclaimed_batch(unclaimed) -> Finding:
                    subject_id='__unclaimed_batch__')
 
 
-def _heads_up_line(f) -> str:
+def _heads_up_line(f, viewer=access.HOUSE) -> str:
     """The DM's line for one finding: what it is, then what to do about it
     and who has already been asked (spec 2026-10-09-situations-design §3).
     Reads the situation the sweep just reconciled; with no record yet (or
     anything odd) it is the line alone, never a crash in the sweep."""
     try:
         from services import situations as _sit
+        source = access.KINDS.get(f.subject_type)
+        record = source.load(f.subject_id) if source else None
+        if record and access.restricted(access.home_project(record)):
+            view = access.record_view(f.subject_type, record, viewer)
+            if view is None:
+                return ''
+            if f.subject_type == 'mission' and view == access.KEEPER:
+                return 'Argyle needs a parent to look at your mission.'
         row = storage.get_finding_by_identity(_findings.identity(f))
         if not row:
             return f.line
-        s = _sit.view('finding', row['id'], {'role': 'parent'})
+        s = _sit.view('finding', row['id'], viewer)
         if not s:
             return f.line
         out = f.line
@@ -881,7 +921,13 @@ def run_watchers(now: datetime.datetime = None) -> int:
         return 0
 
     now_ts = now.timestamp()
-    findings, unclaimed = collect_findings(now)
+    private = []
+    token = _private_signals.set(private)
+    try:
+        findings, unclaimed = collect_findings(now)
+        findings = _household_signals(findings)
+    finally:
+        _private_signals.reset(token)
     if unclaimed:
         findings.append(_unclaimed_batch(unclaimed))
     findings += _prep_kit_findings(now_ts)
@@ -920,39 +966,60 @@ def run_watchers(now: datetime.datetime = None) -> int:
         row = storage.get_finding_by_identity(_findings.identity(f))
         return bool(row and (row.get('state') in ('dismissed', 'in_hand')
                              or (row.get('snoozed_until') or 0) > now_ts))
-    fresh = [f for f in findings
+    fresh = [f for f in findings + private
              if f.dm and f.key not in notified and not _settled(f)]
     if not fresh:
         storage.set_app_state('watcher_notified', notified)
         return 0
 
     parents = [m for m in storage.get_all_members()
-               if m.get('role') == 'parent' and not m.get('system')]
-    if not parents:
-        return 0
-
-    body = "👋 Heads-up — needs a look:\n" + "\n".join(f"• {_heads_up_line(f)}" for f in fresh)
-    body += "\n\nAsk me for options, or handle it on the dashboard."
+               if m.get('role') == 'parent' and not m.get('system') and access._active(m)]
+    recipients = {}
+    private_keys = {f.key for f in private}
+    for f in fresh:
+        if f.key in private_keys:
+            row = access.KINDS[f.subject_type].load(f.subject_id)
+            ids = access.private_recipients(f.subject_type, row) if row else []
+        else:
+            # Subject-only records keep the existing household DM policy (I3).
+            ids = [m['id'] for m in parents]
+        for mid in ids:
+            recipients.setdefault(mid, []).append(f)
 
     from services.agent_tools_v2 import _post_chat_message
     argyle = storage.ensure_argyle_member()
-    sent = False
-    for parent in parents:
+    sent_keys = set()
+    for mid, recipient_findings in recipients.items():
+        parent = storage.get_member(mid)
+        if not parent or not access._active(parent):
+            continue
         try:
+            lines = []
+            for f in recipient_findings:
+                if f.key in private_keys and f.subject_type == 'mission' and access.record_view(
+                        'mission', access.KINDS['mission'].load(f.subject_id), parent) == access.KEEPER:
+                    lines.append('Argyle needs a parent to look at your mission.')
+                else:
+                    # Subject-only signals retain the old household line; a
+                    # restricted signal is rendered for its private recipient.
+                    lines.append(_heads_up_line(f, parent))
+            body = "👋 Heads-up — needs a look:\n" + "\n".join(f"• {line}" for line in lines)
+            body += "\n\nAsk me for options, or handle it on the dashboard."
             dm = storage.get_or_create_dm(argyle['id'], parent['id'])
             _post_chat_message(dm, argyle, body)
-            _post_action_cards(dm, argyle, fresh, parent)
-            sent = True
+            _post_action_cards(dm, argyle, recipient_findings, parent)
+            sent_keys.update(f.key for f in recipient_findings)
         except Exception as e:
             print(f"[watchers] DM to {parent.get('name')} failed: {e}")
 
-    if sent:
+    if sent_keys:
         for f in fresh:
-            if f.key != '__unclaimed_batch__':
+            if f.key in sent_keys and f.key != '__unclaimed_batch__':
                 notified[f.key] = now_ts
         storage.set_app_state('watcher_notified', notified)
-        print(f"[watchers] sent {len(fresh)} finding(s) to {len(parents)} parent(s)")
-        return len(fresh)
+        print(f"[watchers] sent {len(sent_keys)} finding(s) to {len(recipients)} recipient(s)")
+        return len(sent_keys)
+    storage.set_app_state('watcher_notified', notified)
     return 0
 
 
@@ -976,6 +1043,12 @@ def _post_action_cards(dm, argyle, fresh, parent):
     for f in fresh:
         if posted >= MAX_ACTION_CARDS or not f.action:
             continue
+        spec = access.KINDS.get(f.subject_type)
+        row = spec.load(f.subject_id) if spec else None
+        if row and access.restricted(access.home_project(row)):
+            view = access.record_view(f.subject_type, row, parent)
+            if view is None or (view == access.KEEPER and f.subject_type != 'program'):
+                continue
         act = f.action
         try:
             res = chat_actions.create_action_proposal(

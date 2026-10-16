@@ -8,7 +8,7 @@ import math
 import time
 from typing import Optional
 
-from services import storage
+from services import storage, access
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ def _event_ts(e):
         return None
 
 
-def _board(now, viewer):
+def _board(now, viewer=access.HOUSE):
     from services import mind, threads as _th
     pins = []
     insights = mind.visible_insights(viewer, now=now)
@@ -68,6 +68,8 @@ def _board(now, viewer):
                      'warn': False, 'bad': False, 'changed_ts': r.get('created_ts')})
     stalled = {t['id']: t.get('stall_reason') for t in (_th.stalled(today=now.date()) or [])}
     for t in storage.get_threads(include_closed=False):
+        if not access.shared_screen_visible('thread', t, viewer):
+            continue
         reason = stalled.get(t['id'])
         pins.append({'id': t['id'], 'kind': 'thread', 'label': t.get('title') or '',
                      'detail': t.get('notes') or t.get('description') or '',
@@ -88,7 +90,7 @@ def _desk(now, viewer):
     for r in storage.get_mind_insights(state='in_hand'):
         steps = (r.get('plan_json') or {}).get('steps') or []
         open_steps = [s for s in steps if s.get('status') == 'open']
-        if viewer is None or viewer.get('role') != 'parent':
+        if access.is_house(viewer) or viewer is None or viewer.get('role') != 'parent':
             if r.get('sensitivity') == 'sensitive':
                 continue
         # `line` is the detail the room paints on the top sheet of the stack
@@ -125,7 +127,7 @@ def _tray(now, viewer):
 
 def _stickies(now, viewer):
     from services import findings
-    rows = findings.open_findings() or []
+    rows = findings.open_findings(viewer=viewer or access.HOUSE) or []
     # Real severities are decide/approve/fyi (services/findings.py:49 --
     # `severity: str = 'fyi'  # decide | approve | fyi`), not high/medium/low.
     # decide is the most urgent -- open_findings's own sort (line 75) puts it
@@ -161,8 +163,8 @@ def _driver_colours():
     return out
 
 
-def _calendar(now, viewer):
-    sched = storage.get_cached_schedule() or {}
+def _calendar(now, viewer=access.HOUSE):
+    sched = access.shared_schedule_view(storage.get_cached_schedule(), viewer)
     days = [(now.date() + datetime.timedelta(days=i)) for i in range(7)]
     counts = {d.isoformat(): 0 for d in days}
     events_by_id = {e.get('id'): e for e in (sched.get('events') or [])}
@@ -388,10 +390,12 @@ def _binder_detail(programs, p):
     return ' · '.join(bits)
 
 
-def _binders(now, viewer):
+def _binders(now, viewer=access.HOUSE):
     from services import programs
     out = []
     for p in storage.get_programs() or []:
+        if not access.shared_screen_visible('program', p, viewer):
+            continue
         if p.get('state') not in ('active', 'paused'):
             continue
         pulled = False
@@ -425,7 +429,7 @@ def _gauges(now, viewer):
             'ingest_errors': errors}
 
 
-def _monitor(now, viewer):
+def _monitor(now, viewer=access.HOUSE):
     """Argyle's own screen: one cluster per person, sized by the week they
     are walking into. The node graph the screen animates is DECORATION — the
     dots orbit, the edges are drawn between whatever happens to be near, and
@@ -438,7 +442,7 @@ def _monitor(now, viewer):
     of their calendars — that is one thing in their week, not two — so each
     person is counted at most once per event.
     """
-    sched = storage.get_cached_schedule() or {}
+    sched = access.shared_schedule_view(storage.get_cached_schedule(), viewer)
     horizon = now.date() + datetime.timedelta(days=7)
     members = sorted(storage.get_all_members(),
                      key=lambda m: ((m.get('name') or '').lower(), str(m.get('id'))))
@@ -464,13 +468,14 @@ def _monitor(now, viewer):
                          for m in members][:8]}
 
 
-def _map(now, viewer):
+def _map(now, viewer=access.HOUSE):
     """Real destination coordinates from the household's geocode cache.
 
     Reading the Study never initiates provider calls. Unknown locations stay
     unpinned; a trip's event_id is the key used by the existing trip page.
     """
     from services import scope, maps
+    viewer = viewer or access.HOUSE
     home = None
     home_location = maps.get_home_location()
     if home_location:
@@ -482,7 +487,7 @@ def _map(now, viewer):
                 home = {'lat': lat, 'lon': lon}
         except (KeyError, ValueError, TypeError):
             pass
-    sched = storage.get_cached_schedule() or {}
+    sched = access.shared_schedule_view(storage.get_cached_schedule(), viewer)
     starts = {}
     for e in sched.get('events') or []:
         eid = e.get('id')
@@ -497,10 +502,8 @@ def _map(now, viewer):
         # (scope.AUDIENCE_DEFAULTS: a plan is a surprise until somebody says
         # otherwise), and a RESOLVED non-parent viewer is held to that — an
         # adult in the house must not read a surprise off the study wall.
-        # `viewer is None` is the ADMIN SURFACE, where /trips itself already
-        # lists every trip including the ones the family wall may not show,
-        # so the map opens no door that surface did not already have.
-        if viewer is not None and not scope.audience_allows(t, 'trip', viewer):
+        # An identity-free caller is HOUSE, including a trusted panel.
+        if not scope.audience_allows(t, 'trip', viewer):
             continue
         ts = t.get('mock_start_date')
         try:
@@ -541,7 +544,8 @@ _SECTIONS = {'board': _board, 'desk': _desk, 'tray': _tray, 'stickies': _stickie
              'monitor': _monitor, 'map': _map}
 
 
-def state(viewer: Optional[dict], now: datetime.datetime = None) -> dict:
+def state(viewer=access.HOUSE, now: datetime.datetime = None) -> dict:
+    viewer = viewer or access.HOUSE
     now = now or datetime.datetime.now()
     furniture = {}
     for key, fn in _SECTIONS.items():

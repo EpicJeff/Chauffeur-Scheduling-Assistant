@@ -14,7 +14,7 @@ import logging
 import time
 from typing import Optional
 
-from services import storage
+from services import storage, access
 
 logger = logging.getLogger(__name__)
 
@@ -148,21 +148,24 @@ def dm_line(thread: dict, entry: dict, reading: Optional[dict], next_label: str 
 
 
 def _recipients(thread: dict) -> list:
+    if access.restricted(access.home_project(thread)):
+        return [storage.get_member(mid) for mid in access.private_recipients('thread', thread)]
     owner = storage.get_member(thread.get('owner_member_id') or '') if thread.get('owner_member_id') else None
-    if owner and (owner.get('status') or 'active') == 'active':
+    if owner and access._active(owner):
         return [owner]
-    return [m for m in storage.get_all_members() if m.get('role') == 'parent' and not m.get('system')]
+    return [m for m in storage.get_all_members() if m.get('role') == 'parent' and not m.get('system')
+            and access._active(m) and access.record_visible('thread', thread, m)]
 
 
 def _send(thread: dict, entry: dict, reading: Optional[dict]) -> bool:
     from services import situations as _sit
-    s = _sit.view('thread', thread['id'], _sit.parent_of_record())
-    nxt = ((s or {}).get('next_step') or {}).get('label') or ''
-    body = dm_line(thread, entry, reading, nxt)
     argyle = storage.ensure_argyle_member()
     sent = False
     for m in _recipients(thread):
         try:
+            s = _sit.view('thread', thread['id'], m)
+            nxt = ((s or {}).get('next_step') or {}).get('label') or ''
+            body = dm_line(thread, entry, reading, nxt)
             _post(storage.get_or_create_dm(argyle['id'], m['id']), argyle, body)
             sent = True
         except Exception as e:

@@ -17,7 +17,7 @@ import datetime
 import logging
 import time
 
-from services import scope, storage
+from services import scope, storage, access
 
 logger = logging.getLogger(__name__)
 
@@ -106,12 +106,12 @@ def _flat(dt: datetime.datetime) -> datetime.datetime:
     return dt
 
 
-def _today_events(now: datetime.datetime):
+def _today_events(now: datetime.datetime, *, viewer=access.HOUSE):
     """Today's still-to-come events from the schedule CACHE — the
     calendar-shows-everything feed, never recomputed here (trip ownership
     and driver_events rules live upstream). The try covers the COMPARISON
     too: one malformed or mixed-tz event drops itself, never the day."""
-    cache = storage.get_cached_schedule() or {}
+    cache = access.shared_schedule_view(storage.get_cached_schedule(), viewer)
     out = []
     for ev in cache.get('events', []):
         try:
@@ -125,8 +125,8 @@ def _today_events(now: datetime.datetime):
     return out, (cache.get('assignments') or {})
 
 
-def _door(now: datetime.datetime) -> dict:
-    upcoming, assignments = _today_events(now)
+def _door(now: datetime.datetime, *, viewer=access.HOUSE) -> dict:
+    upcoming, assignments = _today_events(now, viewer=viewer)
     driven = [(s, e) for s, e in upcoming if assignments.get(e.get('id'))]
     nxt = driven[0] if driven else (upcoming[0] if upcoming else None)
     if not nxt:
@@ -140,8 +140,8 @@ def _door(now: datetime.datetime) -> dict:
             'label': label}
 
 
-def _calendar(now: datetime.datetime) -> dict:
-    upcoming, _ = _today_events(now)
+def _calendar(now: datetime.datetime, *, viewer=access.HOUSE) -> dict:
+    upcoming, _ = _today_events(now, viewer=viewer)
     if not upcoming:
         return _calm(today=0, next=None)
     return {'calm': False, 'today': len(upcoming),
@@ -212,7 +212,7 @@ def _pet() -> dict:
                       'level': int(r.get('level') or 1)} for r in rows[:4]]}
 
 
-def state(since_ts: float = 0, now: datetime.datetime = None) -> dict:
+def state(since_ts: float = 0, now: datetime.datetime = None, *, viewer=access.HOUSE) -> dict:
     """The room's one feed. `since_ts` is the panel's own last-visit epoch
     (localStorage on the panel, study idiom) — it shapes only the fridge's
     catch-up count."""
@@ -221,8 +221,8 @@ def state(since_ts: float = 0, now: datetime.datetime = None) -> dict:
     sections = (('fridge', lambda: _fridge(float(since_ts or 0))),
                 ('counter', _counter),
                 ('board', _board),
-                ('door', lambda: _door(now)),
-                ('calendar', lambda: _calendar(now)),
+                ('door', lambda: _door(now, viewer=viewer)),
+                ('calendar', lambda: _calendar(now, viewer=viewer)),
                 ('radio', _radio),
                 ('window', _window),
                 ('pet', _pet))

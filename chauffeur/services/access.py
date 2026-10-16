@@ -259,6 +259,73 @@ def shared_screen_visible(kind, row, viewer):
     return bool(_person(viewer)) and record_visible(kind, row, viewer)
 
 
+def finding_visible(finding, viewer):
+    """A finding derives its audience from its source record, now (spec §4.8)."""
+    kind = finding.get('subject_type')
+    if kind not in KINDS or not finding.get('subject_id'):
+        return True
+    row = KINDS[kind].load(finding['subject_id'])
+    return row is None or record_visible(kind, row, viewer)
+
+
+def private_recipients(kind, row):
+    """Who a restricted record's DM-worthy signal goes to (spec §4.8)."""
+    from services import projects
+    home = home_project(row)
+    out = []
+    keeper = keeper_id(kind, row)
+    if keeper:
+        out.append(keeper)
+    child_keeper = bool(keeper) and projects._child(_get_member(keeper) or {})
+    if (home and home.get('audience') == 'parents') or child_keeper:
+        out += [m['id'] for m in storage.get_all_members()
+                if projects._parent(m) and projects._active(m) and record_visible(kind, row, m)]
+    return list(dict.fromkeys(out))
+
+
+NEUTRAL_PRACTICE_KEYS = ('member_id', 'color', 'date', 'time_start', 'time_end')
+
+
+def neutral_practice(event):
+    """The Busy copy of a practice event (spec §4.7): structure, no words."""
+    import hashlib
+    practice = event.get('practice') or {}
+    return {'id': 'busy-' + hashlib.sha1(str(event.get('id')).encode()).hexdigest()[:12],
+            'title': 'Busy', 'description': '', 'start': event.get('start'), 'end': event.get('end'),
+            'all_day': event.get('all_day', False), 'event_type': 'practice',
+            'calendar_ids': event.get('calendar_ids') or [],
+            'practice': {k: practice.get(k) for k in NEUTRAL_PRACTICE_KEYS}}
+
+
+def shared_schedule_view(blob, viewer=HOUSE):
+    """Shared-screen practice words, checked against the current program.
+
+    Task 9 owns the general calendar view. These readers use the shared
+    screen union (§4.6), including a signed-in child's household practices.
+    """
+    out = dict(blob or {})
+    with batch():
+        visible = {}
+        events = []
+        neutral_ids = set()
+        for event in out.get('events') or []:
+            pid = (event.get('practice') or {}).get('program_id')
+            if pid:
+                if pid not in visible:
+                    row = storage.get_program(pid)
+                    visible[pid] = bool(row) and shared_screen_visible('program', row, viewer)
+                event = event if visible[pid] else neutral_practice(event)
+            if event.get('event_type') == 'practice' and not (event.get('practice') or {}).get('program_id'):
+                # Per-day cache merges may contain both an earlier neutral
+                # copy and the original event. They represent the same time.
+                if event.get('id') in neutral_ids:
+                    continue
+                neutral_ids.add(event.get('id'))
+            events.append(event)
+        out['events'] = events
+    return out
+
+
 register('thread', 'owner_member_id', _thread_base, lambda rid: storage.get_thread(rid),
          keeper_verbs=None)   # a thread keeper keeps every thread verb; view() drops mission options
 register('mission', 'created_by', _mission_base, lambda rid: storage.get_mission(rid),

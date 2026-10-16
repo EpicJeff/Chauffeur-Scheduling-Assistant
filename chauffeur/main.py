@@ -1544,7 +1544,7 @@ def home_board_api(widgets: Optional[str] = None, page: Optional[str] = None,
     the whole payload."""
     from services import home_board, scope as _scope
     data = home_board.build(
-        requested=widgets, page=page,
+        requested=widgets, page=page, viewer=_piece_viewer(request),
         kid_digest_fn=lambda: _build_kid_digests(_kid_digest_default_date()))
     viewer_id = _acting_id(request, None)
     viewer = storage.get_member(viewer_id) if viewer_id else None
@@ -1556,7 +1556,7 @@ class BoardPreviewRequest(BaseModel):
 
 
 @app.post("/api/home_board/preview")
-def home_board_preview(req: BoardPreviewRequest):
+def home_board_preview(req: BoardPreviewRequest, request: Request = None):
     """The board as the EDITOR currently has it — built, but not saved.
 
     Arrange mode draws SERVER-built tiles ordered by the draft, so a tile the
@@ -1579,7 +1579,7 @@ def home_board_preview(req: BoardPreviewRequest):
     # hide people vanished, and vanishing took the settings with it, so the
     # only way back was editing the board's stored config by hand.
     return home_board.build(
-        requested=json.dumps(req.widgets), page=req.page, editing=True,
+        requested=json.dumps(req.widgets), page=req.page, editing=True, viewer=_piece_viewer(request),
         kid_digest_fn=lambda: _build_kid_digests(_kid_digest_default_date()))
 
 
@@ -5397,9 +5397,11 @@ def list_findings(state: str = 'open', request: Request = None):
     soonest first — the order somebody would work down it."""
     from services import findings as _f
     _needs_you_actor(request, None)
+    from services import access
+    viewer = _piece_viewer(request)
     if state == 'open':
-        return {"findings": _f.open_findings()}
-    return {"findings": storage.get_findings(state=state)}
+        return {"findings": _f.open_findings(viewer=viewer)}
+    return {"findings": [f for f in storage.get_findings(state=state) if access.finding_visible(f, viewer)]}
 
 @app.post("/api/findings/{finding_id}/resolve")
 def resolve_finding(finding_id: str, body: dict = Body(default={}),
@@ -5409,6 +5411,10 @@ def resolve_finding(finding_id: str, body: dict = Body(default={}),
     teaches people to stop tapping."""
     from services import findings as _f
     actor = _needs_you_actor(request, body.get('member_id'))
+    from services import access
+    row = storage.get_finding(finding_id)
+    if not row or not access.finding_visible(row, _piece_viewer(request)):
+        raise HTTPException(status_code=404, detail='No such finding')
     res = _f.resolve(finding_id, body.get('act') or 'tap',
                      member_id=(actor or {}).get('id'))
     if res.get('status') != 'success':
@@ -6702,7 +6708,7 @@ def house_state_api(since: float = 0, request: Request = None):
     panels are DEVICE tier and the payload is family-safe by construction
     (pinned in test_house_state)."""
     from services import house_room as _house
-    return _house.state(since_ts=float(since or 0))
+    return _house.state(since_ts=float(since or 0), viewer=_piece_viewer(request))
 
 
 # --- The facade generator (spec 2026-09-15 §3.2) ---
@@ -6835,7 +6841,7 @@ def study_state(request: Request = None):
     underneath by mind.visible_insights."""
     from services import study as _study
     actor = _mind_actor(request, None)
-    return _study.state(actor)
+    return _study.state(_piece_viewer(request))
 
 
 @app.post("/api/study/trips/{event_id}/locate")
@@ -6865,9 +6871,9 @@ def end_house_session(x_member_token: Optional[str] = Header(None)):
 
 
 @app.get("/api/house/programs/{program_id}/session")
-def house_program_session(program_id: str):
+def house_program_session(program_id: str, request: Request = None):
     from services import house_programs
-    session = house_programs.session(program_id)
+    session = house_programs.session(program_id, viewer=_piece_viewer(request))
     if session is None:
         raise HTTPException(status_code=404, detail="This program is no longer active")
     return {'window': session}
@@ -8006,7 +8012,7 @@ def delete_program_lesson_api(program_id: str, phase_name: str = '',
 
 @app.get("/api/programs/{program_id}/lesson-scenes")
 def program_lesson_scenes(program_id: str, phase_name: str = '',
-                          unit_n: int = 0, session_label: str = ''):
+                          unit_n: int = 0, session_label: str = '', request: Request = None):
     """The lesson a wall board may play — the scenes, and nothing else.
 
     A deliberately narrow projection, the same shape and the same reasoning
@@ -8036,21 +8042,20 @@ def program_lesson_scenes(program_id: str, phase_name: str = '',
     to count, order, or read as one person short of another — the standing
     test every wall surface in this app has to pass.
 
-    Scoped by what it RETURNS, not by who is asking, which is why the
-    handler carries no `request`: scenes, the origin label, and the source
-    link. No id, no model, no edited flag, no created_at. An unresolvable
-    slot reads as `{"lesson": null}`, exactly like the signed-in route's own
-    answer for one — nothing distinguishes "no such slot" from "no such
-    program" from "nothing generated yet", because the player's fallback
-    ladder plays the plain steps for all three.
+    Scenes, the origin label, and the source link; no stored generation
+    metadata. The shared-screen audience is checked before reading a slot.
+    A missing or hidden program returns 404; an unresolved lesson slot on
+    an accessible program reads as `{"lesson": null}`.
     """
+    from services import access
+    row = storage.get_program(program_id)
+    if not row or not access.shared_screen_visible('program', row, _piece_viewer(request)):
+        raise HTTPException(status_code=404, detail="No such program.")
     try:
         unit_n = int(unit_n or 0)
     except (TypeError, ValueError, OverflowError):
         return {"lesson": None}
     if not (0 <= unit_n <= _LESSON_UNIT_N_MAX):
-        return {"lesson": None}
-    if not storage.get_program(program_id):
         return {"lesson": None}
     lesson = storage.get_program_lesson(program_id, {
         'phase_name': phase_name, 'unit_n': unit_n,
@@ -8224,7 +8229,7 @@ _LESSON_HELP_SYSTEM = (
 
 
 @app.post("/api/programs/{program_id}/lesson-help")
-def lesson_help_api(program_id: str, body: dict = Body(default={})):
+def lesson_help_api(program_id: str, body: dict = Body(default={}), request: Request = None):
     """Two sentences about the beat somebody is stuck on, right now.
 
     The one live model call inside a session, and the only thing in this
@@ -8258,7 +8263,9 @@ def lesson_help_api(program_id: str, body: dict = Body(default={})):
     """
     import time
     from services import model_pools, program_lessons as _pl
-    if not storage.get_program(program_id):
+    from services import access
+    row = storage.get_program(program_id)
+    if not row or not access.shared_screen_visible('program', row, _piece_viewer(request)):
         raise HTTPException(status_code=404, detail="No such program.")
     try:
         unit_n = int((body or {}).get('unit_n') or 0)
@@ -8396,7 +8403,7 @@ def sweep_program_lessons_now(body: dict = Body(default={}),
 
 
 @app.get("/api/programs/celebrations")
-def program_celebrations():
+def program_celebrations(request: Request = None):
     """What a hallway is allowed to know about the household's programs.
 
     A deliberately narrow projection rather than a widened read: the wall card
@@ -8409,7 +8416,7 @@ def program_celebrations():
     call (`services/auth.py`, WALL).
     """
     from services import programs as _prog
-    return _prog.celebrations()
+    return _prog.celebrations(viewer=_piece_viewer(request))
 
 
 @app.get("/api/programs/{program_id}/footprint")

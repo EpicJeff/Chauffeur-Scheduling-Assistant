@@ -499,15 +499,24 @@ def _dm_person(mission: dict, text: str) -> None:
             # Chat rendering and settlement share the mission-ask envelope.
             card = {**card, 'kind': 'mission_ask', 'stage_kind': 'work'}
         argyle = storage.ensure_argyle_member()
+        from services import access
         who = storage.get_member(mission.get('created_by') or '') if mission.get('created_by') else None
-        people = [who] if who else [m for m in storage.get_all_members() if m.get('role') == 'parent' and not m.get('system')]
-        if not who:
-            from services import situations
-            people = [m for m in people if situations.can_see('mission', mission, m)]
+        if access.restricted(access.home_project(mission)):
+            people = [storage.get_member(mid) for mid in access.private_recipients('mission', mission)]
+            if not who and not people:
+                people = [m for m in storage.get_all_members() if m.get('role') == 'parent' and not m.get('system')]
+        else:
+            people = [who] if who else [m for m in storage.get_all_members() if m.get('role') == 'parent' and not m.get('system')]
+        people = [m for m in people if m and access._active(m) and access.record_visible('mission', mission, m)]
         for m in people:
             from services import planned
             keeper = planned.is_keeper(mission, m)
             recipient_card = None if keeper else card
+            if recipient_card and recipient_card.get('project'):
+                project = recipient_card['project']
+                project = storage.get_project(project.get('id')) or project
+                if not access.project_visible(project, m):
+                    recipient_card = None
             body = 'Argyle needs a parent to look at your mission.' if keeper else text
             message = _post(storage.get_or_create_dm(argyle['id'], m['id']), argyle, body, card=recipient_card)
             if recipient_card and card.get('ask_id') and message and message.get('id'):

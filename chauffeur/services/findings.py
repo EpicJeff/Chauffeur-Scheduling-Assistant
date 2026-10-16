@@ -36,7 +36,7 @@ Three rules keep it honest:
 import time
 from typing import NamedTuple, Optional
 
-from services import storage
+from services import storage, access
 
 # Resolved rows are kept long enough to answer "what happened this month" for
 # the digest, and no longer. Open rows are never pruned.
@@ -86,10 +86,12 @@ def identity(f: Finding) -> str:
     return f"{f.kind}:{f.key}"
 
 
-def open_findings(severity: str = None, include_in_hand: bool = False) -> list:
+def open_findings(severity: str = None, include_in_hand: bool = False, *, viewer=access.HOUSE) -> list:
     rows = storage.get_findings(state='open')
     if include_in_hand:
         rows = rows + storage.get_findings(state='in_hand')
+    with access.batch():
+        rows = [r for r in rows if access.finding_visible(r, viewer)]
     if severity:
         rows = [r for r in rows if r.get('severity') == severity]
     order = {'decide': 0, 'approve': 1, 'fyi': 2}
@@ -201,11 +203,11 @@ def resolve(finding_id: str, how: str, member_id: str = None) -> dict:
             'message': 'Done.' if how == 'tap' else 'Left it.'}
 
 
-def month_counts(since_ts: float) -> dict:
+def month_counts(since_ts: float, *, viewer=access.HOUSE) -> dict:
     """Real counts for the digest. Anything we cannot count, we do not say —
     there is no estimated-hours-saved here on purpose."""
     rows = [r for r in storage.get_findings()
-            if (r.get('created_at') or 0) >= since_ts]
+            if (r.get('created_at') or 0) >= since_ts and access.finding_visible(r, viewer)]
     out = {'watched': len(rows), 'cleared_themselves': 0, 'one_tap': 0,
            'decided': 0, 'expired': 0, 'still_open': 0}
     for r in rows:

@@ -13,7 +13,7 @@ import time
 import uuid
 from typing import List, Optional
 
-from services import storage
+from services import storage, access
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +152,7 @@ def snapshot(now: datetime.datetime = None) -> str:
             parts.append(f"## {title}\n{body}")
 
     def _calendar():
-        sched = storage.get_cached_schedule() or {}
+        sched = access.shared_schedule_view(storage.get_cached_schedule(), access.HOUSE)
         events = sched.get('events') or []
         assignments = dict(sched.get('assignments') or {})
         # Ghost assignments are outside hands covering a ride — merged the
@@ -234,7 +234,7 @@ def snapshot(now: datetime.datetime = None) -> str:
                          f"{r.get('line')}" for r in rows[:40])
 
     def _own_insights():
-        rows = storage.get_mind_insights()
+        rows = [r for r in storage.get_mind_insights() if r.get('sensitivity') != 'sensitive']
         lines = []
         for r in rows[-30:]:
             if r['state'] == 'active' and \
@@ -262,15 +262,13 @@ def snapshot(now: datetime.datetime = None) -> str:
 
     def _threads():
         from services import threads as _th
-        from services import subjects
         rows = _th.stalled(today=now.date()) or []
         # Open-but-not-stalled threads still matter (a stalled one is the
         # loudest signal, not the only one worth showing).
         stalled_ids = {r['id'] for r in rows}
         rows = rows + [t for t in storage.get_threads(include_closed=False)
                        if t['id'] not in stalled_ids]
-        rows = [t for t in rows if all(subjects.visible(k, record, None)
-                                      for k, record in subjects.subject_records('thread', t))]
+        rows = [t for t in rows if access.record_visible('thread', t, access.HOUSE)]
         lines = []
         for t in rows[:40]:
             owner = storage.get_member(t.get('owner_member_id') or '') or {}
@@ -336,7 +334,7 @@ def visible_insights(viewer: Optional[dict],
         due = steps_due(r, now.date())
         if due:
             rows.append({**r, 'due_step_count': len(due)})
-    if viewer and viewer.get('role') in ('parent',):
+    if viewer and not access.is_house(viewer) and viewer.get('role') in ('parent',):
         return rows
     return [r for r in rows if r.get('sensitivity') != 'sensitive']
 
@@ -718,7 +716,8 @@ def _gather_deltas(now: datetime.datetime) -> list:
     # a ride fingerprints as covered, not unassigned. Titles ride along so
     # the delta lines the sentinel reads name the event, not an opaque id —
     # and a removed event still names itself from the stored value.
-    sched = storage.get_cached_schedule() or {}
+    raw = storage.get_cached_schedule() or {}
+    sched = access.shared_schedule_view(raw, access.HOUSE)
     assignments = dict(sched.get('assignments') or {})
     assignments.update(sched.get('ghost_assignments') or {})
     # Only FUTURE events are diffed. The cache is a rolling forward window,
@@ -728,11 +727,29 @@ def _gather_deltas(now: datetime.datetime) -> list:
     today_iso = now.date().isoformat()
     cur = {str(e.get('id')): {
                'title': e.get('title') or '?',
+               **({'program_id': e['practice']['program_id']}
+                  if (e.get('practice') or {}).get('program_id') else {}),
                'fp': f"{e.get('start')}|{e.get('end')}|"
                      f"{assignments.get(e.get('id'))}"}
            for e in (sched.get('events') or [])
            if str(e.get('start') or '')[:10] >= today_iso}
     prev = dict(storage.get_app_state('mind_event_state') or {})
+    # A pre-narrowing watermark must not re-say a now-private title as a
+    # removal. Remove its raw id silently before diffing the neutral copy.
+    safe_ids = {str(e.get('id')) for e in sched.get('events') or []}
+    hidden_ids = {str(e.get('id')) for e in raw.get('events') or []} - safe_ids
+    prev = {k: v for k, v in prev.items() if k not in hidden_ids}
+    # A removed practice can still be named in an older watermark, even
+    # though it is no longer in the schedule. Re-check its source too.
+    program_rows = {p['id']: p for p in storage.get_programs(include_finished=True)}
+    for key, old in list(prev.items()):
+        pid = old.get('program_id') if isinstance(old, dict) else None
+        if not pid and key.startswith('practice-'):
+            pid = next((pid for pid in program_rows if key.startswith('practice-' + pid + '-')), None)
+            if not pid:
+                prev[key] = {**old, 'title': 'Busy'} if isinstance(old, dict) else old
+        if pid and not access.record_visible('program', program_rows.get(pid), access.HOUSE):
+            prev.pop(key)
 
     def _is_future(v):
         fp = v.get('fp') if isinstance(v, dict) else str(v or '')
@@ -756,7 +773,9 @@ def _gather_deltas(now: datetime.datetime) -> list:
         storage.set_app_state('mind_event_state', cur)
         added = [k for k in cur if k not in prev]
         gone = [k for k in prev if k not in cur]
-        changed = [k for k in cur if k in prev and cur[k] != prev[k]]
+        changed = [k for k in cur if k in prev and
+                   (cur[k].get('title'), cur[k].get('fp')) !=
+                   ((_cal_title(prev, k)), prev[k].get('fp') if isinstance(prev[k], dict) else prev[k])]
         if prev:  # first run is baseline, not a delta storm
             for k in added[:10]:
                 deltas.append(f"[calendar] new: {_cal_title(cur, k)} "

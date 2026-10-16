@@ -493,7 +493,8 @@ def _can_see_base(kind: str, row: dict, viewer: Optional[dict]) -> bool:
     role = (viewer or {}).get('role')
     if kind == 'insight':
         if row.get('sensitivity') == 'sensitive':
-            return role == 'parent'
+            from services import access
+            return role == 'parent' and not access.is_house(viewer)
         return True
     if kind == 'finding':
         return role in WRITE_ROLES
@@ -527,6 +528,9 @@ def _subject_visible(kind: str, record: dict, viewer: Optional[dict], visited=No
 
 
 def can_see(kind: str, row: dict, viewer: Optional[dict]) -> bool:
+    if kind == 'finding':
+        from services import access
+        return _can_see_base(kind, row, viewer) and access.finding_visible(row, viewer or access.HOUSE)
     if kind in ('thread', 'mission'):
         from services import access
         return access.record_view(kind, row, viewer) is not None
@@ -711,11 +715,13 @@ def _rows_of(kind: str, include_done: bool, viewer=None) -> list:
     if kind == 'finding':
         from services import findings as _f
         now_ts = time.time()
-        return [('finding', r['id']) for r in _f.open_findings(include_in_hand=True)
+        from services import access
+        return [('finding', r['id']) for r in _f.open_findings(include_in_hand=True, viewer=viewer or access.HOUSE)
                 if (r.get('snoozed_until') or 0) <= now_ts]
     if kind == 'insight':
         from services import mind as _m
-        return [('insight', r['id']) for r in _m.visible_insights({'role': 'parent'})]
+        from services import access
+        return [('insight', r['id']) for r in _m.visible_insights(viewer or access.HOUSE)]
     if kind == 'thread':
         from services import access
         return [('thread', t['id']) for t in storage.get_threads(include_closed=include_done)

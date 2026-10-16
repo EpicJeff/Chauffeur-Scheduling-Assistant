@@ -18,7 +18,7 @@ import re
 import time
 import uuid
 
-from services import stages, storage
+from services import stages, storage, access
 
 
 def create_row(data: dict, project_id: str = None) -> str:
@@ -1476,7 +1476,7 @@ def _already_logged(program: dict, day) -> bool:
 CELEBRATION_WINDOW_DAYS = 7
 
 
-def celebrations(now=None) -> dict:
+def celebrations(now=None, *, viewer=access.HOUSE) -> dict:
     """The wall's whole view of every program in the house, and nothing else.
 
     The wall card used to fetch `GET /api/programs` — which could never work
@@ -1499,6 +1499,8 @@ def celebrations(now=None) -> dict:
              for m in storage.get_all_members(include_archived=True)}
     up_next, practiced, celebrated = None, [], []
     for row in storage.get_programs():
+        if not access.shared_screen_visible('program', row, viewer):
+            continue
         # Paused is a peer of active, not a flavour of stopped: the wall still
         # gets to celebrate a paused program's last week same as a running one.
         if row.get('state') not in ('active', 'paused'):

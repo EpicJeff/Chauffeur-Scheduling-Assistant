@@ -1404,21 +1404,24 @@ def list_open_findings(acting_member=None, focus_key=None) -> Dict[str, Any]:
     agent can never disagree about what is still outstanding.
     """
     from services import findings as _f
-    rows = _f.open_findings()
+    rows = _f.open_findings(viewer=acting_member or access.HOUSE)
     rows = [r for r in rows if r.get('subject_type') not in access.KINDS or
+            access.KINDS[r['subject_type']].load(r.get('subject_id')) is None or
             _conversation_view(r['subject_type'], access.KINDS[r['subject_type']].load(r.get('subject_id')),
-                                     acting_member or access.HOUSE, focus_key) in
-            ((access.FULL, access.KEEPER) if r['subject_type'] == 'program' else (access.FULL,))]
+                                     acting_member or access.HOUSE, focus_key) is not None]
     if not rows:
         return {"status": "success", "message": "Nothing needs you right now."}
     decide = [r for r in rows if r.get('severity') == 'decide']
     approve = [r for r in rows if r.get('severity') == 'approve']
+    other = [r for r in rows if r.get('severity') not in ('decide', 'approve')]
     parts = []
     if decide:
         parts.append("Needs a decision: " + "; ".join(r['line'] for r in decide[:4]))
     if approve:
         parts.append("One tap each: " + "; ".join(r['line'] for r in approve[:4]))
-    rest = len(rows) - len(decide[:4]) - len(approve[:4])
+    if other:
+        parts.append("Also watching: " + "; ".join(r['line'] for r in other[:4]))
+    rest = len(rows) - len(decide[:4]) - len(approve[:4]) - len(other[:4])
     if rest > 0:
         parts.append(f"...and {rest} more on the list")
     return {"status": "success", "message": " | ".join(parts)}

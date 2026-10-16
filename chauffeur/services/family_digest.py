@@ -13,7 +13,7 @@ recap is readable by everyone, forever, in the thread.
 """
 import datetime
 
-from services import storage
+from services import storage, access
 
 
 def _minutes(ev):
@@ -385,7 +385,7 @@ def build_household_briefing(target_date: datetime.date = None) -> dict:
     same for every adult, because a shared picture is the point.
     """
     tomorrow = target_date or (datetime.date.today() + datetime.timedelta(days=1))
-    cache = storage.get_cached_schedule() or {}
+    cache = access.shared_schedule_view(storage.get_cached_schedule(), access.HOUSE)
     events = {str(e.get("id")): e for e in cache.get("events", [])}
     assignments = dict(cache.get("assignments") or {})
     assist_map = dict(cache.get("assist_assignments") or {})
@@ -400,7 +400,9 @@ def build_household_briefing(target_date: datetime.date = None) -> dict:
 
     covered, open_lines = [], []
     for ev_id, ev in events.items():
-        if ev.get('event_type') in ('errand', 'background_trip') or ev.get('trip_suppressed'):
+        if (ev.get('event_type') in ('errand', 'background_trip', 'project_hold')
+                or ev.get('trip_suppressed')
+                or (ev.get('event_type') == 'practice' and not (ev.get('practice') or {}).get('program_id'))):
             continue
         if ev_id.endswith('_dropoff') or ev_id.endswith('_pickup'):
             continue

@@ -13,7 +13,7 @@ settings keys cars.py reads (car_battery_warn_pct / car_fuel_warn_pct).
 import datetime
 import logging
 
-from services import kitchen_room, storage
+from services import kitchen_room, storage, access
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +112,7 @@ def _packs(now, sched: dict):
     return out, due
 
 
-def _mudroom(now=None) -> dict:
+def _mudroom(now=None, *, viewer=access.HOUSE) -> dict:
     """The bench: one backpack per packing group for the day in focus, OPEN
     while it is still short and closed once it is done. With no kits to
     match — most households, most days — the fallback is the old honest
@@ -130,7 +130,7 @@ def _mudroom(now=None) -> dict:
     packs, due, known = [], False, True
     try:
         packs, due = _packs(now or datetime.datetime.now(),
-                            storage.get_cached_schedule() or {})
+                            access.shared_schedule_view(storage.get_cached_schedule(), viewer))
     except Exception as e:
         logger.debug(f"[house] mudroom packs fell back to the roster: {e}")
         packs, due = [], False
@@ -140,22 +140,22 @@ def _mudroom(now=None) -> dict:
     return {'calm': (not due), 'bags': bags, 'packs': packs, 'packing_known': known}
 
 
-def state(since_ts: float = 0, now=None) -> dict:
+def state(since_ts: float = 0, now=None, *, viewer=access.HOUSE) -> dict:
     from services import house_attention
     from services import house_programs
-    out = kitchen_room.state(since_ts=since_ts, now=now)
-    out['attention'] = house_attention.state(now)
+    out = kitchen_room.state(since_ts=since_ts, now=now, viewer=viewer)
+    out['attention'] = house_attention.state(now, viewer=viewer)
     from services import house_facade
     try:
         out['facade'] = house_facade.active_bundle()
     except Exception:
         out['facade'] = None
     try:
-        out['program_objects'] = house_programs.objects()
+        out['program_objects'] = house_programs.objects(viewer=viewer)
     except Exception:
         out['program_objects'] = None
     for name, build in (('garage', _garage), ('curb', lambda: _curb(now)),
-                        ('mudroom', lambda: _mudroom(now))):
+                        ('mudroom', lambda: _mudroom(now, viewer=viewer))):
         try:
             out[name] = build()
         except Exception as e:

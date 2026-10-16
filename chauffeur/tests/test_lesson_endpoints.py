@@ -98,16 +98,19 @@ def scenario_the_wall_route_returns_scenes_only():
           "the wall says where its lesson came from too")
 
 
-def scenario_the_wall_route_reads_null_for_anything_it_cannot_resolve():
-    """A missing program, an unknown slot, a bad unit_n and a slot whose
-    only row is a recorded failure all read the same: null, which every
-    surface plays as the plain steps. Nothing here is a refusal wearing a
-    read's clothes."""
+def scenario_the_wall_route_hides_missing_programs_and_reads_null_for_missing_slots():
+    """Access spec §4.6: a hidden program and a missing program both 404.
+    Missing slots and recorded failures on an accessible program stay null.
+    """
     pid = _reset()
     import main
-    check(main.program_lesson_scenes('nope', phase_name='F', unit_n=1,
-                                     session_label='')['lesson'] is None,
-          "no such program")
+    from fastapi import HTTPException
+    try:
+        main.program_lesson_scenes('nope', phase_name='F', unit_n=1, session_label='')
+    except HTTPException as exc:
+        check(exc.status_code == 404, 'missing and hidden programs have the same response')
+    else:
+        check(False, 'missing program must 404 under the access rule')
     check(main.program_lesson_scenes(pid, phase_name='Other', unit_n=1,
                                      session_label='')['lesson'] is None,
           "no such slot")
@@ -1157,7 +1160,7 @@ if __name__ == '__main__':
     scenario_endpoints_exist()
     scenario_the_wall_route_exists_and_is_wall_tier()
     scenario_the_wall_route_returns_scenes_only()
-    scenario_the_wall_route_reads_null_for_anything_it_cannot_resolve()
+    scenario_the_wall_route_hides_missing_programs_and_reads_null_for_missing_slots()
     scenario_owner_reads_their_lesson()
     scenario_a_sibling_gets_404_not_the_lesson()
     scenario_a_missing_program_returns_404()

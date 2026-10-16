@@ -15,9 +15,7 @@ F, K, X = 'full', 'keeper', None
 
 # Reader rows whose task has not landed. Each task deletes its own rows; Task 11 asserts empty.
 PENDING = {
-    'task8': {r[0] for r in reg.READERS if r[1] == '4.6-shared-screen'},
     'task9': {r[0] for r in reg.READERS if r[1] == '4.7-calendar'},
-    'task10': {r[0] for r in reg.READERS if r[1] == '4.8-signals'},
 }
 
 PROBES = {}     # reader id -> probe(fx, rkey, col) -> 'full' | 'keeper' | None
@@ -73,6 +71,7 @@ def scenario_every_probe_matches_the_table():
     for rid, cls, kinds, _check in reg.READERS:
         if rid not in PROBES or rid in pending_ids() or not cls.startswith(only):
             continue
+        print('PROBE', rid, flush=True)
         for rkey in TABLE:
             if KIND[rkey] not in kinds:
                 continue
@@ -104,6 +103,19 @@ engine.register(probe)
 
 import access_voice as voice
 voice.register(probe)
+
+import access_shared_signals as shared_signals
+shared_signals.register(probe, expect, observed)
+
+
+def scenario_shared_contracts():
+    if len(sys.argv) < 2 or '4.6-shared-screen'.startswith(sys.argv[1]):
+        shared_signals.shared_contracts()
+
+
+def scenario_signal_contracts():
+    if len(sys.argv) < 2 or '4.8-signals'.startswith(sys.argv[1]):
+        shared_signals.signal_contracts()
 
 
 def scenario_engine_contracts():

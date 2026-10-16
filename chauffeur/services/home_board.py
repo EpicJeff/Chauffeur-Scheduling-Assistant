@@ -52,7 +52,7 @@ import re
 import time
 from typing import Callable, List, Optional
 
-from services import leave_by, scope, storage
+from services import leave_by, scope, storage, access
 
 # ── The option vocabulary.
 #
@@ -1113,7 +1113,7 @@ def _driver_index() -> dict:
     return idx
 
 
-def day_schedule(day: datetime.date, sched: dict = None) -> dict:
+def day_schedule(day: datetime.date, sched: dict = None, *, viewer=access.HOUSE) -> dict:
     """The cached schedule, with ONE day taken from the freshest source there is.
 
     Reported from the wall: an event changed, the schedule re-solved, and the
@@ -1143,11 +1143,11 @@ def day_schedule(day: datetime.date, sched: dict = None) -> dict:
         print(f"[home_board] daily schedule read failed: {e}")
         daily = None
     if not daily:
-        return sched
+        return access.shared_schedule_view(sched, viewer)
 
     day_ids = {e.get('id') for e in (daily.get('events') or [])}
     if not day_ids:
-        return sched
+        return access.shared_schedule_view(sched, viewer)
 
     # Authoritative for the whole DAY, not only for the ids it happens to list.
     # An event the re-solve dropped is gone from the daily row, so keying the
@@ -1203,7 +1203,7 @@ def day_schedule(day: datetime.date, sched: dict = None) -> dict:
     errands = [er for er in (sched.get('scheduled_errands') or [])
                if str(_parse(er.get('start_time')) or '')[:10] != day.isoformat()]
     merged['scheduled_errands'] = errands + list(daily.get('scheduled_errands') or [])
-    return merged
+    return access.shared_schedule_view(merged, viewer)
 
 
 def _errand_leave(start: datetime.datetime, er: dict) -> dict:
@@ -1222,7 +1222,7 @@ def _errand_leave(start: datetime.datetime, er: dict) -> dict:
 
 
 def todays_runs(target: datetime.date = None, sched: dict = None,
-                now: datetime.datetime = None) -> List[dict]:
+                now: datetime.datetime = None, *, viewer=access.HOUSE) -> List[dict]:
     """Every assigned drive and scheduled errand on one day, sorted by time,
     each tagged done / live / **over**.
 
@@ -1238,6 +1238,7 @@ def todays_runs(target: datetime.date = None, sched: dict = None,
     now = now or datetime.datetime.now()
     target = target or now.date()
     sched = sched if sched is not None else (storage.get_cached_schedule() or {})
+    sched = access.shared_schedule_view(sched, viewer)
     events = {e.get('id'): e for e in (sched.get('events') or [])}
     drivers = _driver_index()
 
@@ -1607,7 +1608,7 @@ def _schedule_slice(day: datetime.date, sched: dict, drivers=None,
     }
 
 
-def _tile_drives(now, runs, sched=None, config=None, **_):
+def _tile_drives(now, runs, sched=None, config=None, viewer=access.HOUSE, **_):
     """The rest of the day, drawn by the DRIVES PAGE'S OWN TIMELINE.
 
     The first version of this tile drew a timeline of its own — lanes, blocks,
@@ -1621,6 +1622,12 @@ def _tile_drives(now, runs, sched=None, config=None, **_):
     the two halves of the board cannot disagree about what is behind us — and
     the page decides how it looks.
     """
+    raw = sched if sched is not None else storage.get_cached_schedule() or {}
+    sched = access.shared_schedule_view(raw, viewer)
+    # A neutral practice is time on the calendar, never an uncovered drive.
+    visible_ids = {e.get('id') for e in sched.get('events') or []}
+    hidden_ids = {e.get('id') for e in raw.get('events') or []} - visible_ids
+    runs = [r for r in runs if r.get('id') not in hidden_ids]
     view = _cfg_str(config, 'view', 'timeline') or 'timeline'
     show_errands = _cfg_bool(config, 'errands', True)
     # Rides at the TOP of both payload shapes, like the calendar's: the board's
@@ -2024,7 +2031,7 @@ def _tile_packing(now, config=None, **_):
         return None
 
 
-def _tile_programs(now, config=None, **_):
+def _tile_programs(now, config=None, viewer=access.HOUSE, **_):
     """The wall's programs card: self-fetching, like packing above -- this
     is only the mount. `components/programs_card.html` calls `api/programs`
     and `api/members` itself and decides on its own what is safe to
@@ -2039,7 +2046,8 @@ def _tile_programs(now, config=None, **_):
     dropped one still means programs are a thing this household uses.
     """
     try:
-        if not storage.get_programs(include_finished=True):
+        if not any(access.shared_screen_visible('program', p, viewer)
+                   for p in storage.get_programs(include_finished=True)):
             return None
         return {'mounted': True}
     except Exception as e:
@@ -2437,7 +2445,7 @@ _CAL_GRID_VIEWS = {'month': 'dayGridMonth', 'week': 'timeGridWeek',
                    'day': 'timeGridDay', 'agenda': 'agenda'}
 
 
-def _tile_calendar(now, sched=None, settings=None, config=None, **_):
+def _tile_calendar(now, sched=None, settings=None, config=None, viewer=access.HOUSE, **_):
     """The drives tile answers "who is taking whom"; this answers "what is on",
     which on most days is a different list — a dentist appointment nobody
     drives to still belongs on the wall.
@@ -2454,7 +2462,7 @@ def _tile_calendar(now, sched=None, settings=None, config=None, **_):
     afternoon reads as a quiet day rather than as a day nearly done.
     """
     try:
-        sched = sched if sched is not None else (storage.get_cached_schedule() or {})
+        sched = access.shared_schedule_view(sched if sched is not None else storage.get_cached_schedule(), viewer)
         assignments = sched.get('assignments') or {}
         unassigned = set(sched.get('unassigned') or [])
         drivers = _driver_index()
@@ -2743,12 +2751,11 @@ def _tile_errand_list(now, config=None, **_):
         return None
 
 
-def _tile_mind(now, config=None, **_):
-    """Needs you, identity-free (the tile always asks with no viewer, so a
-    sensitive row or a finding never reaches a wall): title, Argyle's line,
-    and the next step as words, never a button."""
+def _tile_mind(now, config=None, viewer=access.HOUSE, **_):
+    """Needs you: source-visible findings and non-sensitive insights for
+    HOUSE; the signed-in person's view when present. Words, never buttons."""
     from services import situations as _sit
-    rows = _sit.list_situations(None, kinds=('finding', 'insight'))
+    rows = _sit.list_situations(viewer, kinds=('finding', 'insight'))
     if not rows:
         return None
     return {'situations': [{'kind': s['kind'], 'id': s['id'], 'title': s['title'],
@@ -2757,7 +2764,7 @@ def _tile_mind(now, config=None, **_):
                            for s in rows[:6]]}
 
 
-def _trip_rows(now, back_days: int = 0, viewer: Optional[dict] = None):
+def _trip_rows(now, back_days: int = 0, viewer=access.HOUSE):
     """Trips this install can know about WITHOUT calling Google, newest-first.
 
     Three sources, because no single one is complete:
@@ -2772,6 +2779,7 @@ def _trip_rows(now, back_days: int = 0, viewer: Optional[dict] = None):
        trip whose snapshot is stale or was never taken still shows up, because
        its POIs are sitting in the schedule cache with real dates on them.
     """
+    viewer = viewer or access.HOUSE
     seen, rows = set(), []
     hidden = [0]   # trips withheld from THIS viewer (family-network S4)
     # How far back a caller wants to look. The glance tile wants 0 — "the next
@@ -2855,7 +2863,7 @@ def _trip_rows(now, back_days: int = 0, viewer: Optional[dict] = None):
                 t.get('location'), t.get('background_url'), True)
 
     spans = {}
-    for ev in (storage.get_cached_schedule() or {}).get('events') or []:
+    for ev in access.shared_schedule_view(storage.get_cached_schedule(), viewer).get('events') or []:
         tid = ev.get('trip_id')
         s, e = _parse(ev.get('start')), _parse(ev.get('end'))
         if not tid or not s:
@@ -5297,7 +5305,7 @@ def profile(tabs: Optional[str] = None, widgets: Optional[str] = None,
 
 def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
           now: datetime.datetime = None, page: Optional[str] = None,
-          editing: bool = False) -> dict:
+          editing: bool = False, *, viewer=access.HOUSE) -> dict:
     """The whole board in one payload.
 
     `editing` is the editor's preview: every configured tile and card draws,
@@ -5317,8 +5325,13 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
     # `editing` rides the key: the same board built for the editor holds the
     # empty cards the wall leaves out, and one cache entry serving both would
     # put placeholder boxes on the kitchen wall.
+    # Audience changes must take effect even while the presentation cache is
+    # warm. Keep its TTL benefit, keyed by the current access inputs as well.
+    policy = [storage.get_projects(), storage.get_all_members(),
+              storage.get_programs(include_finished=True), storage.get_threads(include_closed=True),
+              storage.get_missions(), storage.get_mind_insights()]
     cache_key = json.dumps([page_obj['slug'], page_obj['columns'],
-                            page_obj['row_height'], editing, instances],
+                            page_obj['row_height'], editing, instances, viewer, policy],
                            sort_keys=True)
     held = _CACHE.get(cache_key)
     if held and time.time() - held['at'] < TTL_SECONDS:
@@ -5349,8 +5362,8 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
                    for i in instances
                    if (i.get('config') or {}).get('days') is not None])
     for i in range(max(1, depth)):
-        sched = day_schedule(now.date() + datetime.timedelta(days=i), sched)
-    runs = todays_runs(now.date(), sched=sched, now=now)
+        sched = day_schedule(now.date() + datetime.timedelta(days=i), sched, viewer=viewer)
+    runs = todays_runs(now.date(), sched=sched, now=now, viewer=viewer)
 
     tiles = []
     for inst in instances:
@@ -5358,7 +5371,7 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
         # drawn, and a built-in tile whose only card said nothing is not a
         # tile. Reserved empty space is still the thing being avoided.
         tile = _build_tile(inst, now, runs=runs, sched=sched, settings=settings,
-                           kid_digest_fn=kid_digest_fn, editing=editing)
+                           kid_digest_fn=kid_digest_fn, editing=editing, viewer=viewer)
         if tile:
             tiles.append(tile)
 

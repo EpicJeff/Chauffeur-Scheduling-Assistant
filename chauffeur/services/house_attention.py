@@ -1,6 +1,6 @@
 """Small, family-safe action signals. Information alone is not an alarm."""
 import datetime
-from services import storage
+from services import storage, access
 
 
 def _signal(count=0, available=0):
@@ -43,15 +43,18 @@ def _errands(now):
     return _signal(sum(r.get('status') == 'past_due' for r in rows), len(rows))
 
 
-def _programs(now):
+def _programs(now, *, viewer=access.HOUSE):
     from services import programs
     rows = programs.practice_windows(now.date(), now.date())
+    with access.batch():
+        rows = [w for w in rows if access.shared_screen_visible(
+            'program', storage.get_program(w.get('program_id')), viewer)]
     # Practice is an invitation. Never turn progress or missed sessions into
     # an amber family scoreboard.
     return _signal(0, len(rows))
 
 
-def state(now=None):
+def state(now=None, *, viewer=access.HOUSE):
     now = now or datetime.datetime.now()
     if now.tzinfo is not None:
         now = now.astimezone().replace(tzinfo=None)
@@ -59,7 +62,7 @@ def state(now=None):
     for key, build in (('chores', _chores), ('routines', _routines),
                        ('tasks', _tasks), ('errands', _errands), ('programs', _programs)):
         try:
-            result[key] = build(now)
+            result[key] = build(now, viewer=viewer) if key == 'programs' else build(now)
         except Exception:
             # A failed read cannot honestly promise that nothing needs attention.
             result[key] = {'count': 0, 'available': 0, 'known': False}
