@@ -55,12 +55,23 @@ def _functions_calling_getters(path, module):
     return out
 
 
+def _route_handlers():
+    """main.<endpoint> for every route the register classifies (a handler is its route's row)."""
+    out = set()
+    for route in main.app.routes:
+        fn = getattr(route, 'endpoint', None)
+        for method in getattr(route, 'methods', None) or []:
+            if fn and reg.resolve_route(method, getattr(route, 'path', '')) is not None:
+                out.add('main.' + fn.__name__)
+    return out
+
+
 def scenario_every_function_reader_is_classified():
-    known = {r[0][1] for r in reg.READERS if r[0][0] == 'reader'}
+    known = {r[0][1] for r in reg.READERS if r[0][0] == 'reader'} | _route_handlers()
     routes = {r[0][2] for r in reg.READERS if r[0][0] in ('route', 'route-prefix')}
     missing = []
-    for path in sorted((ROOT / 'services').glob('*.py')):
-        module = 'services.' + path.stem
+    for path in [ROOT / 'main.py'] + sorted((ROOT / 'services').glob('*.py')):
+        module = 'main' if path.name == 'main.py' else 'services.' + path.stem
         if module in ('services.storage', 'services.access', 'services.access_readers'):
             continue
         for fn in _functions_calling_getters(path, module):

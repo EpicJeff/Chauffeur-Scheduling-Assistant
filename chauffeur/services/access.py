@@ -52,7 +52,9 @@ def _get_member(mid):
 
 
 def is_house(viewer):
-    return bool(viewer) and bool(viewer.get('house'))
+    """A reader with no person: HOUSE, HOUSE_PARENT, or a legacy id-less sentinel
+    such as agent_tools_v2._REGISTRY_READER (its role still decides adult/parent)."""
+    return bool(viewer) and (bool(viewer.get('house')) or not viewer.get('id'))
 
 
 def _active(member):
@@ -144,7 +146,11 @@ def _subjects_full(kind, row, viewer, home, visited):
             continue        # checked once, by the project layer (spec §3)
         if skind in KINDS:
             key = (skind, record.get('id'))
-            if key in visited or record_view(skind, record, viewer, _visited=visited) != FULL:
+            # A thread or mission subject must be readable in full (its keeper
+            # projection hides words the outer record may quote); a program's
+            # keeper projection IS the whole program (spec §3).
+            enough = (FULL, KEEPER) if skind == 'program' else (FULL,)
+            if key in visited or record_view(skind, record, viewer, _visited=visited) not in enough:
                 return False
         elif skind in ('project', 'proposed_project'):
             if not project_visible(record, viewer):

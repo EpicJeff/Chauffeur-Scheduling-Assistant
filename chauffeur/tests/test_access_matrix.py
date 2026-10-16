@@ -52,10 +52,12 @@ def expect(cls, rkey, col):
 
 
 def observed(text, fx, rkey):
-    """Classify a reader's output: absent, keeper words only, or the full words."""
-    if fx.title(rkey) not in text:
-        return None
-    return F if fx.secret(rkey) in text else K
+    """Classify a reader's output: absent, keeper words only, or the full words.
+
+    Secret words count as FULL even without the title: a leak is a leak."""
+    if fx.secret(rkey) in text:
+        return F
+    return K if fx.title(rkey) in text else None
 
 
 def pending_ids():

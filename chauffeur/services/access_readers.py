@@ -218,6 +218,9 @@ READERS = [
         'services.status_protocols.auto_set_from_calendar',
         'services.status_protocols.send_coverage_reports',
         'services.subjects._event_context',
+        'services.email_ingest.run_photo_ingest',
+        'services.email_ingest._run_ingest_locked',
+        'services.meals.eating_plan',
     ]],
     # 4.8-signals: function readers found by the register guard (Task 1 Step 9)
     *[((F, name), '4.8-signals', ('thread', 'mission', 'program'), 'pending its task') for name in [
@@ -235,14 +238,14 @@ READERS = [
     *[((F, name), 'INTERNAL', ('thread', 'mission', 'program'), 'raw (an action or decision; its callers apply the rule)') for name in [
         'services.asks.unread',
         'services.chat_actions._skip_occurrence',
-        'services.email_ingest._run_ingest_locked',
-        'services.email_ingest.run_photo_ingest',
+        
+        
         'services.family_digest.record_daily_stats',
         'services.findings.month_counts',
         'services.findings.reconcile',
         'services.meals.compose_week',
         'services.meals.eaters_on',
-        'services.meals.eating_plan',
+        
         'services.meals.grocery_day_candidates',
         'services.missions._ask_by_id',
         'services.missions._close',
@@ -323,6 +326,27 @@ READERS = [
     ((R, 'POST', '/api/packing/claim'), 'NONE', (), 'packing claims'),
     ((R, 'GET', '/api/meals/history'), 'NONE', (), 'meals'),
     ((T, 'ask_deal'), 'NONE', (), 'negotiation deal, not a piece'),
+    # Task 1 review fix: main.py readers (Codex T1 #5) and derived schedule words (#3, #4)
+    ((R, 'GET', '/api/meals/plan'), '4.7-calendar', ('program',), 'schedule_view (meals._span_label quotes event titles)'),
+    ((R, 'GET', '/api/prep-kits/matches'), '4.7-calendar', ('program',), 'schedule_view'),
+    ((R, 'POST', '/api/prep-kits/suggest'), '4.7-calendar', ('program',), 'schedule_view (titles go to the LLM, suggestions shown)'),
+    ((R, 'GET', '/api/members/{member_id}/day'), '4.7-calendar', ('program',), 'schedule_view'),
+    ((R, 'GET', '/api/events/triage'), '4.7-calendar', ('program',), 'schedule_view'),
+    ((R, 'GET', '/api/family/locations'), '4.7-calendar', ('program',), 'schedule_view'),
+    ((R, 'POST', '/api/overrides/check'), '4.7-calendar', ('program',), 'schedule_view'),
+    ((R, 'GET', '/api/ha_sensors'), '4.7-calendar', ('program',), 'schedule_view(HOUSE): HA dashboards are household screens'),
+    ((R, 'POST', '/api/events/{event_id}/attendance'), 'INTERNAL', (), 'an action on a calendar event'),
+    ((R, 'POST', '/api/events/{event_id}/optional_decision'), 'INTERNAL', (), 'an action on a calendar event'),
+    ((R, 'GET', '/api/debug/travel'), 'INTERNAL', (), 'parents debug'),
+    *[((F, name), '4.7-calendar', ('program',), 'pending its task') for name in [
+        'main._assist_event_context', 'main._notify_kids_driver_changes', 'main._notify_kids_ride_started',
+        'main._notify_ride_eta_update',
+    ]],
+    ((F, 'main.perform'), '4.5-voice', ('thread', 'mission', 'program'), 'record_view(HOUSE): nested in POST /api/v2/converse'),
+    *[((F, name), 'INTERNAL', (), 'raw (builder, gate or helper; its callers apply the rule)') for name in [
+        'main._kid_members_for_event', 'main._kid_trip_span', 'main._live_thread_or_refuse',
+        'main._refresh_schedule_logic_impl', 'main._resolve_cached_event', 'main.compile_and_save_combined',
+    ]],
     # INTERNAL (spec Appendix A)
     *[((F, name), 'INTERNAL', (), 'raw') for name in [
         'services.situations.load', 'services.situations._facts', 'services.situations.refresh',

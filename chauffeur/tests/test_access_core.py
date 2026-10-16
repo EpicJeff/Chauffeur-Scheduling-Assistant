@@ -139,6 +139,34 @@ def scenario_wrapper_project_follows_its_record():
     check(not access.project_visible(fx.projects['mom_private'], access.HOUSE), 'HOUSE never sees a private project')
 
 
+def scenario_program_subject_keeper_reads_it():
+    """Codex T1 review #1: Aunt's program in Mom's private project; Aunt's own household
+    thread about it stays visible to Aunt (a program keeper reads the whole program)."""
+    fx = access_fixture.build()
+    pid = storage.add_program({'title': 'Aunt piano', 'member_id': 'aunt', 'state': 'active'})
+    from services import projects
+    projects.adopt('program', pid, None, project_id=fx.projects['mom_private']['id'])
+    tid = threads.create(title='About piano', owner_member_id='aunt', created_by='aunt',
+                         project_id=fx.projects['household']['id'])
+    storage.update_thread(tid, {'subject_kind': 'program', 'subject_id': pid})
+    row = storage.get_thread(tid)
+    check(access.record_view('thread', row, fx.viewers['aunt']) == 'full', 'program keeper reads the thread about it')
+    check(access.record_view('thread', row, fx.viewers['dad']) is None, 'Dad cannot see the private program, so not the thread')
+
+
+def scenario_legacy_id_less_sentinels_are_house():
+    """Codex T1 review #2: _REGISTRY_READER and missions.read_viewer's dicts read as HOUSE."""
+    fx = access_fixture.build()
+    from services import agent_tools_v2
+    kind, rec = load(fx, 'R5t')
+    check(access.record_view(kind, rec, agent_tools_v2._REGISTRY_READER) == 'full', 'registry reader sees household')
+    kind, rec = load(fx, 'R1')
+    check(access.record_view(kind, rec, agent_tools_v2._REGISTRY_READER) is None, 'registry reader never sees private')
+    kind, rec = load(fx, 'R8')
+    check(access.record_view(kind, rec, {'id': None, 'role': 'parent'}) == 'full', 'legacy parent sentinel = HOUSE_PARENT')
+    check(access.record_view(kind, rec, None) is None, 'None is still nobody')
+
+
 def scenario_batch_memoises_projects():
     fx = access_fixture.build()
     calls = {'n': 0}
