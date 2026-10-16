@@ -6,6 +6,20 @@ from collections import deque
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 from services import access
+from contextvars import ContextVar
+from contextlib import contextmanager
+
+_mission_context = ContextVar('tool_mission', default=None)
+
+
+@contextmanager
+def mission_context(mission_id):
+    """Caller-owned tool context; never taken from model-authored arguments."""
+    token = _mission_context.set(access.KINDS['mission'].load(mission_id))
+    try:
+        yield
+    finally:
+        _mission_context.reset(token)
 
 CHAT_LOOKUPS_PER_HOUR = 20
 _chat_lookups = deque()
@@ -1388,7 +1402,7 @@ def list_open_findings(acting_member=None, focus_key=None) -> Dict[str, Any]:
     from services import findings as _f
     rows = _f.open_findings()
     rows = [r for r in rows if r.get('subject_type') not in access.KINDS or
-            access.conversation_view(r['subject_type'], access.KINDS[r['subject_type']].load(r.get('subject_id')),
+            _conversation_view(r['subject_type'], access.KINDS[r['subject_type']].load(r.get('subject_id')),
                                      acting_member or access.HOUSE, focus_key) in
             ((access.FULL, access.KEEPER) if r['subject_type'] == 'program' else (access.FULL,))]
     if not rows:
@@ -1498,6 +1512,9 @@ def _conversation_view(kind, row, viewer, focus_key):
     if access.is_house(viewer) and kind == 'insight' and _sensitive(kind, row):
         return None
     if kind in access.KINDS:
+        mission = _mission_context.get()
+        if mission is not None:
+            return access.mission_view(mission, kind, row)
         return access.conversation_view(kind, row, viewer, focus_key)
     if kind == 'project':
         return access.FULL if (access.project_visible(row, viewer)
@@ -1526,14 +1543,18 @@ def _render_at(kind, row, view, viewer, focus_key=None):
         return None
     if kind == 'program':
         return dict(row)  # A program's keeper projection is the whole program (§3).
-    result = situations.view(kind, row['id'], _viewer_at(kind, row, view, viewer))
+    # The engine has already passed mission_view, including its own project
+    # and origin exceptions. The internal renderer must not reapply HOUSE's
+    # narrower project gate to that authorized row.
+    engine = _mission_context.get() is not None and kind in access.KINDS
+    result = situations.view(kind, row['id'], None if engine else _viewer_at(kind, row, view, viewer))
     if result and kind == 'thread':
         options = []
         for option in result['options']:
             bits = option['id'].split(':')
             if len(bits) >= 3 and bits[1] == 'mission':
                 mission = storage.get_mission(bits[2])
-                projection = access.conversation_view('mission', mission, viewer or access.HOUSE, focus_key)
+                projection = _conversation_view('mission', mission, viewer or access.HOUSE, focus_key)
                 if projection is None or projection == access.KEEPER and option['payload'].get('ask') != 'steer':
                     continue
             options.append(option)
@@ -1976,8 +1997,8 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
         if m.get('origin_kind') != 'thread':
             continue
         t = storage.get_thread(m.get('origin_ref') or '')
-        if not t or (not spoken and (access.conversation_view('thread', t, viewer or access.HOUSE, focus_key) is None
-                                    or access.conversation_view('mission', m, viewer or access.HOUSE, focus_key) is None)) \
+        if not t or (not spoken and (_conversation_view('thread', t, viewer or access.HOUSE, focus_key) is None
+                                    or _conversation_view('mission', m, viewer or access.HOUSE, focus_key) is None)) \
                 or (spoken and viewer is not None and not situations.can_see('thread', t, viewer)):
             continue
         if spoken:
@@ -2039,7 +2060,7 @@ def _match_thread(thread_title: str, viewer=None, focus_key=None):
     from services import storage
     q = (thread_title or '').strip().lower()
     rows = [r for r in storage.get_threads(include_closed=False)
-            if access.conversation_view('thread', r, viewer or access.HOUSE, focus_key) is not None]
+            if _conversation_view('thread', r, viewer or access.HOUSE, focus_key) is not None]
     if not q:
         return None, rows
     exact = [t for t in rows if (t.get('title') or '').lower() == q]
@@ -2254,13 +2275,13 @@ def list_threads(state: str = None, owner_name: str = None,
         owner_id = m['id']
     rows = _storage.get_threads(state=state, owner=owner_id, include_closed=include_closed)
     from services import situations
-    rows = [r for r in rows if access.conversation_view('thread', r, acting_member or access.HOUSE, focus_key) is not None]
+    rows = [r for r in rows if _conversation_view('thread', r, acting_member or access.HOUSE, focus_key) is not None]
     if not rows:
         return {"status": "success", "message": "No open threads right now."}
     names = {m['id']: m.get('name') for m in _storage.get_all_members(include_archived=True)}
     lines = []
     for t in rows[:15]:
-        projection = access.conversation_view('thread', t, acting_member or access.HOUSE, focus_key)
+        projection = _conversation_view('thread', t, acting_member or access.HOUSE, focus_key)
         rendered = _render_at('thread', t, projection, acting_member, focus_key)
         if projection == access.KEEPER:
             t = situations.thread_keeper_view(t)
@@ -2303,7 +2324,7 @@ def create_thread(title: str, goal: str = None, kind: str = None,
         existing = next((t for t in storage.get_threads(include_closed=True)
                          if idem and t.get('idem') == idem), None)
         if existing:
-            if access.conversation_view('thread', existing, acting_member or access.HOUSE, focus_key) is None:
+            if _conversation_view('thread', existing, acting_member or access.HOUSE, focus_key) is None:
                 return {'status': 'error', 'message': 'That thread is not available.'}
             thread_id = existing['id']
         else:
@@ -2363,7 +2384,7 @@ def add_thread_note(thread_title: str = '', text: str = '', url: str = None,
     if thread_id is not None:
         from services import storage, situations
         thread, rows = storage.get_thread(thread_id), []
-        if not thread or access.conversation_view('thread', thread, acting_member or access.HOUSE, focus_key) is None:
+        if not thread or _conversation_view('thread', thread, acting_member or access.HOUSE, focus_key) is None:
             return {'status': 'error', 'message': 'That thread is not available.'}
     else:
         thread, rows = _match_thread(thread_title, acting_member, focus_key)
@@ -2393,7 +2414,7 @@ def draft_thread_message(thread_title: str = '', intent: str = None,
     if thread_id is not None:
         from services import storage, situations
         thread, rows = storage.get_thread(thread_id), []
-        if not thread or access.conversation_view('thread', thread, acting_member or access.HOUSE, focus_key) is None:
+        if not thread or _conversation_view('thread', thread, acting_member or access.HOUSE, focus_key) is None:
             return {'status': 'error', 'message': 'That thread is not available.'}
     else:
         thread, rows = _match_thread(thread_title, acting_member, focus_key)
@@ -2402,7 +2423,7 @@ def draft_thread_message(thread_title: str = '', intent: str = None,
         return {"status": "error",
                 "message": f"I couldn't find a matching thread. Open threads: {open_titles}."}
     from services import threads as _threads
-    projection = access.conversation_view('thread', thread, acting_member or access.HOUSE, focus_key)
+    projection = _conversation_view('thread', thread, acting_member or access.HOUSE, focus_key)
     res = _threads.draft_message(thread['id'], intent=(intent or '').strip(),
                                  viewer=_viewer_at('thread', thread, projection, acting_member))
     if res.get('status') != 'ok':
@@ -2505,7 +2526,7 @@ def _match_program(title: str, acting_member: dict, focus_key=None):
     from services import storage as _storage
     q = (title or '').strip().lower()
     rows = [r for r in _storage.get_programs(include_finished=False)
-            if access.conversation_view('program', r, acting_member or access.HOUSE, focus_key) is not None]
+            if _conversation_view('program', r, acting_member or access.HOUSE, focus_key) is not None]
     if not q:
         return None, rows
     exact = [p for p in rows if (p.get('title') or '').lower() == q]
@@ -2529,13 +2550,13 @@ def list_programs(member_name: str = None, acting_member: dict = None, focus_key
             return refusal
         scope_id = m['id']
     rows = [r for r in _storage.get_programs(member_id=scope_id, include_finished=False)
-            if access.conversation_view('program', r, acting_member or access.HOUSE, focus_key) is not None]
+            if _conversation_view('program', r, acting_member or access.HOUSE, focus_key) is not None]
     if not rows:
         return {"status": "success", "message": "No programs going right now."}
     names = {m['id']: m.get('name') for m in _storage.get_all_members(include_archived=True)}
     lines = []
     for p in rows[:15]:
-        p = _render_at('program', p, access.conversation_view('program', p, acting_member or access.HOUSE, focus_key), acting_member)
+        p = _render_at('program', p, _conversation_view('program', p, acting_member or access.HOUSE, focus_key), acting_member)
         prog = _prog.progress(p)
         bits = [p.get('title') or 'Program']
         holder = names.get(p.get('member_id') or '')
@@ -2557,7 +2578,7 @@ def program_progress(program_title: str, acting_member: dict = None, focus_key: 
         titles = ', '.join(p.get('title') or '?' for p in rows[:8]) or 'no programs yet'
         return {"status": "error",
                 "message": f"I couldn't find a matching program. Programs: {titles}."}
-    row = _render_at('program', row, access.conversation_view('program', row, acting_member or access.HOUSE, focus_key), acting_member)
+    row = _render_at('program', row, _conversation_view('program', row, acting_member or access.HOUSE, focus_key), acting_member)
     p = _prog.progress(row)
     bits = [f"{row.get('title')}: {p['sessions']} session(s)",
             f"{p['minutes']} minutes"]
@@ -3874,7 +3895,7 @@ def get_project(project_id, acting_member=None, focus_key=None, spoken=False):
     for piece in view['pieces']:
         record = (access.KINDS[piece['kind']].load(piece['id']) if piece['kind'] in access.KINDS
                   else subjects.load(piece['kind'], piece['id']))
-        if (record is not None and (access.conversation_view(piece['kind'], record, acting_member or access.HOUSE, focus_key) is not None
+        if (record is not None and (_conversation_view(piece['kind'], record, acting_member or access.HOUSE, focus_key) is not None
                 if piece['kind'] in access.KINDS else (humans is None or all(subjects.visible(
                 piece['kind'], record, m) for m in humans)))
                 and (not spoken or subjects.spoken_safe(piece['kind'], record))):
@@ -3945,7 +3966,8 @@ def set_step_state(project_id, step_id, state, acting_member=None, focus_key=Non
 
 
 def find_in_chauffeur(query: str = '', kind: str = '', facet: str = '',
-                      acting_member: dict = None, spoken: bool = False, focus_key=None) -> Dict[str, Any]:
+                      acting_member: dict = None, spoken: bool = False, focus_key=None,
+                      mission_id=None) -> Dict[str, Any]:
     """Find an existing family record and read it only on a clear match."""
     from services import subjects
     q = (query or '').strip()
@@ -3954,12 +3976,16 @@ def find_in_chauffeur(query: str = '', kind: str = '', facet: str = '',
                 'message': 'Say what to look for.'}
     kinds = [kind] if kind in subjects.KINDS else None
     acting_member = acting_member or access.HOUSE
+    from services import storage
+    mission = storage.get_mission(mission_id) if mission_id else _mission_context.get()
     humans = subjects.channel_humans(focus_key)
     def allowed(k, row):
         if spoken and not subjects.spoken_safe(k, row):
             return False
         if k in access.KINDS:
-            return access.conversation_view(k, row, acting_member, focus_key) is not None
+            if mission is not None:
+                return access.mission_view(mission, k, row) is not None
+            return _conversation_view(k, row, acting_member, focus_key) is not None
         return subjects.visible(k, row, acting_member, spoken) and (
             humans is None or all(subjects.visible(k, row, m) for m in humans))
     winner, candidates = subjects.resolve(q, acting_member, kinds=kinds, spoken=spoken, visibility=allowed)
@@ -3970,12 +3996,19 @@ def find_in_chauffeur(query: str = '', kind: str = '', facet: str = '',
     if winner and winner['kind'] in access.KINDS:
         k = winner['kind']
         row = subjects.load(k, winner['id'])
-        projection = access.conversation_view(k, row, acting_member, focus_key)
+        projection = (access.mission_view(mission, k, row) if mission is not None else
+                      _conversation_view(k, row, acting_member, focus_key))
         if projection == access.KEEPER and k != 'program':
             ctx = json.dumps(_render_at(k, row, projection, acting_member, focus_key))
         else:
-            ctx = subjects.context(k, row['id'], _viewer_at(k, row, projection, acting_member),
-                                   spoken=spoken, facet=facet or None)
+            if mission is not None:
+                # Authorised by mission_view above, retaining adapter facets
+                # and budgets without re-running the person's project gate.
+                ctx = subjects.ADAPTERS[k].context(row, access.mission_reader(mission), spoken,
+                                                  facet if facet in subjects.facets(k) else None)
+            else:
+                ctx = subjects.context(k, row['id'], _viewer_at(k, row, projection, acting_member),
+                                       spoken=spoken, facet=facet or None)
     elif winner:
         ctx = subjects.context(winner['kind'], winner['id'], acting_member, spoken=spoken, facet=facet or None)
     message = (f"Found {winner['title']}." if winner else
@@ -9305,15 +9338,17 @@ for _tool in get_available_tools():
         }
 
 
-def execute_tool(name: str, args: dict, actor=None, focus_key=None) -> dict:
+def execute_tool(name: str, args: dict, actor=None, focus_key=None, mission_id=None) -> dict:
     from services import budget_guard
     handler = TOOL_HANDLERS.get(name)
     if not handler:
         return {"status": "error", "message": f"Unknown tool {name}"}
+    from services import storage
+    token = _mission_context.set(storage.get_mission(mission_id) if mission_id else _mission_context.get())
     try:
         import inspect
         # Identity belongs to the caller, never to model-authored arguments.
-        args = {k: v for k, v in args.items() if k not in ('acting_member', 'focus_key', 'actor')}
+        args = {k: v for k, v in args.items() if k not in ('acting_member', 'focus_key', 'actor', 'mission_id')}
         parameters = inspect.signature(handler).parameters
         context = {}
         if 'actor' in parameters:
@@ -9326,3 +9361,5 @@ def execute_tool(name: str, args: dict, actor=None, focus_key=None) -> dict:
     except Exception as e:
         import traceback
         return {"status": "error", "message": str(e), "traceback": traceback.format_exc()}
+    finally:
+        _mission_context.reset(token)

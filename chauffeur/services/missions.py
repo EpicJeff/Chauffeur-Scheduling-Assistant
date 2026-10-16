@@ -306,11 +306,13 @@ def _close(mission_id: str, status: str, **fields) -> dict:
     return storage.get_mission(mission_id)
 
 
-def _match_thread(title: str):
+def _match_thread(title: str, mission=None):
     title = (title or '').strip().lower()
     if not title:
         return None
-    rows = storage.get_threads()
+    from services import access
+    rows = [t for t in storage.get_threads()
+            if access.mission_view(mission or {}, 'thread', t) is not None]
     exact = [t for t in rows if (t.get('title') or '').strip().lower() == title]
     if len(exact) == 1:
         return exact[0]
@@ -371,8 +373,10 @@ def ask_card(mission: dict) -> dict | None:
             home = storage.get_project(row['project_id'])
             if home and (not home.get('wrapped_from') or not plan.get('project')):
                 project = home
-        card['project'] = ({k: project.get(k) for k in ('id', 'title', 'goal', 'done_when')}
-                           if project else plan.get('project'))
+        from services import access
+        if access.mission_view(row, 'mission', row) is not None:
+            card['project'] = ({k: project.get(k) for k in ('id', 'title', 'goal', 'done_when')}
+                               if project else plan.get('project'))
         card['steps'] = plan.get('steps', [])
     elif asked['name'] == 'stage':
         stage = next((s for s in plan.get('stages', []) if s['id'] == result.get('stage_id')), {})
@@ -428,14 +432,8 @@ def subject_of(mission: dict) -> tuple:
 
 def read_viewer(mission: dict) -> dict:
     """Generic reads may store only what the transcript's audience may see."""
-    from services import subjects
-    adult = {'id': None, 'role': 'adult'}
-    parent = {'id': None, 'role': 'parent'}
-    records = subjects.subject_records('mission', mission or {})
-    if records and all(not subjects.visible(kind, row, adult)
-                       and subjects.visible(kind, row, parent) for kind, row in records):
-        return parent
-    return adult
+    from services import access
+    return access.mission_reader(mission)
 
 
 def _finder(mission: dict) -> dict | None:
@@ -1488,13 +1486,15 @@ def _apply_planner_action(mission, res, settings, action, stage_id):
         args = res.get('args') or {}
         stored_args = args
         if name == 'find_in_chauffeur':
-            from services import subjects
+            from services import subjects, access
             out = agent_tools_v2.find_in_chauffeur(
                 args.get('query') or '', args.get('kind') or '', args.get('facet') or '',
-                acting_member=_finder(mission))
+                acting_member=_finder(mission), mission_id=mid)
             candidates = out.get('candidates') or []
-            kept = [c for c in candidates if subjects.visible(
-                c['kind'], subjects.load(c['kind'], c['id']), agent_tools_v2._REGISTRY_READER)]
+            kept = [c for c in candidates if (
+                access.mission_view(mission, c['kind'], subjects.load(c['kind'], c['id'])) is not None
+                if c['kind'] in access.KINDS else subjects.visible(
+                    c['kind'], subjects.load(c['kind'], c['id']), agent_tools_v2._REGISTRY_READER))]
             withheld = len(candidates) - len(kept)
             if withheld:
                 # The generated query can itself be the withheld title.
@@ -1504,12 +1504,18 @@ def _apply_planner_action(mission, res, settings, action, stage_id):
             else:
                 safe_candidates = [c if c in kept else {'kind': c['kind'], 'id': c['id'], 'withheld': True}
                                    for c in candidates]
+                context = None
+                if out.get('context') and safe_candidates and not safe_candidates[0].get('withheld'):
+                    first = safe_candidates[0]
+                    # Piece context has passed mission_view. Other adapters
+                    # must still redact private subfields for the room reader.
+                    context = (out['context'] if first['kind'] in access.KINDS else
+                               subjects.context(first['kind'], first['id'], agent_tools_v2._REGISTRY_READER,
+                                                facet=args.get('facet') or None))
                 # A clear winner is returned alone; a tie has no context.
                 _last_lookups[mid] = {
                     'status': out.get('status'), 'candidates': safe_candidates,
-                    'context': subjects.context(safe_candidates[0]['kind'], safe_candidates[0]['id'],
-                                               agent_tools_v2._REGISTRY_READER, facet=args.get('facet') or None)
-                               if out.get('context') and safe_candidates and not safe_candidates[0].get('withheld') else None,
+                    'context': context,
                 }
             # The stored words name only what any adult may read: the tool's own
             # message can name the withheld record ("Found Disney World.").
@@ -1518,18 +1524,20 @@ def _apply_planner_action(mission, res, settings, action, stage_id):
                 + (" Also: " + '; '.join(c['title'] for c in kept) if kept else ''))
             out = {'status': out.get('status'), 'message': said, 'candidates': kept, 'withheld': withheld}
         else:
-            out = agent_tools_v2.execute_tool(name, args, actor=read_viewer(mission))
+            with agent_tools_v2.mission_context(mid):
+                out = agent_tools_v2.execute_tool(name, args, actor=read_viewer(mission))
         storage.add_mission_step(mid, {'kind': 'tool', 'name': name,
                                        'args_json': stored_args,
                                        'result_json': out})
         return storage.get_mission(mid)
 
     if action == 'subject':
-        from services import subjects
+        from services import subjects, access
         kind = (res.get('kind') or '').strip()
         sid = str(res.get('id') or '').strip()
         row = subjects.load(kind, sid) if kind in subjects.KINDS else None
-        if row is None or not subjects.visible(kind, row, _finder(mission)):
+        if row is None or not (access.mission_view(mission, kind, row) is not None
+                               if kind in access.KINDS else subjects.visible(kind, row, _finder(mission))):
             storage.add_mission_step(mid, {'kind': 'note', 'name': 'refused',
                                            'result_json': {'note': 'no readable record to bind'}})
             return storage.get_mission(mid)
@@ -1626,6 +1634,7 @@ def _apply_planner_action(mission, res, settings, action, stage_id):
         return storage.get_mission(mid)
 
     if action == 'draft':
+        from services import access
         plan = (storage.get_mission(mid) or {}).get('plan')
         if plan and plan.get('state') not in ('done', 'stopped'):
             storage.add_mission_step(mid, {'kind': 'note', 'name': 'refused',
@@ -1634,7 +1643,9 @@ def _apply_planner_action(mission, res, settings, action, stage_id):
         thread = None
         if mission.get('origin_kind') == 'thread':
             thread = storage.get_thread(mission.get('origin_ref'))
-        thread = thread or _match_thread(res.get('thread_title'))
+            if access.mission_view(mission, 'thread', thread) is None:
+                thread = None
+        thread = thread or _match_thread(res.get('thread_title'), mission=mission)
         if not thread:
             storage.add_mission_step(mid, {'kind': 'note', 'name': 'refused',
                 'result_json': {'note': 'no unambiguous thread matched — a tie '
@@ -1705,6 +1716,10 @@ def _seed_thread_context(mission_id: str, thread: dict) -> None:
     fix all it said was '(Opened from thread <id>)', an opaque id the model
     has no way to use. Covers both thread doorways at once (the button and
     chat's fuzzy title match) because both funnel through `launch()`."""
+    from services import access
+    mission = storage.get_mission(mission_id) or {}
+    if access.mission_view(mission, 'thread', thread) is None:
+        return
     counterparty = {k: thread.get(k) for k in
                     ('counterparty_name', 'counterparty_email', 'contact_id')}
     history_tail = [{'kind': h.get('kind'), 'text': _compact(h.get('text'), 300)}
@@ -1741,16 +1756,16 @@ def launch(goal: str, origin_kind: str = 'manual', origin_ref=None,
     mid = storage.add_mission({'goal': goal, 'origin_kind': origin_kind,
                                'origin_ref': origin_ref, 'created_by': created_by,
                                'tier': tier})
-    if origin_kind == 'thread' and origin_ref:
-        thread = storage.get_thread(origin_ref)
-        if thread:
-            _seed_thread_context(mid, thread)
     if subject and subject[0] and subject[1]:
         from services import subjects
         storage.update_mission(mid, {'subject_kind': subject[0], 'subject_id': subject[1], 'subject_rev': 1,
                                      'subject_history': subjects.history_after_binding({}, subject[0], subject[1])})
     from services import projects
     projects.adopt('mission', mid, storage.get_member(created_by) if created_by else None, project_id=project_id)
+    if origin_kind == 'thread' and origin_ref:
+        thread = storage.get_thread(origin_ref)
+        if thread:
+            _seed_thread_context(mid, thread)
     from services import situations as _sit
     _sit.touched('mission', mid)
     logger.info(f"[missions] launched {mid} ({origin_kind}): {goal[:80]}")

@@ -295,14 +295,15 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
             logger.warning(f"Could not inject focus: {e}")
     if focus_key and source == 'voice':
         try:
-            from services import triage, subjects, voice_tools, storage
-            f = triage.get_focus(focus_key)
+            from services import access, triage, subjects, voice_tools, storage
+            f = triage.get_focus(focus_key, viewer=access.HOUSE)
             thread = storage.get_thread(f['id']) if f and f['kind'] == 'thread' else None
-            if thread and subjects.spoken_safe('thread', thread) and voice_tools.speech_safe(thread):
+            if (thread and access.record_view('thread', thread, access.HOUSE) is not None
+                    and subjects.spoken_safe('thread', thread) and voice_tools.speech_safe(thread)):
                 kind, sid = thread.get('subject_kind'), thread.get('subject_id')
                 record = subjects.load(kind, sid) if kind and sid else None
                 if record and subjects.spoken_safe(kind, record):
-                    ctx = subjects.context(kind, sid, voice_context.verified_member(), spoken=True)
+                    ctx = subjects.context(kind, sid, access.HOUSE, spoken=True)
                     if ctx:
                         title = subjects.title_of(kind, record)
                         system_prompt += f'\nABOUT: {kind} "{title}"\n{ctx}\n'
@@ -1027,7 +1028,7 @@ sending or claiming, and never pass from_member/member_name for them.
                     fn = getattr(_atv2, func_name)
                     allowed = fn.__code__.co_varnames[:fn.__code__.co_argcount]
                     kwargs = {k: v for k, v in (args or {}).items()
-                              if k in allowed and k not in ('acting_member', 'focus_key', 'spoken', 'voice_context')}
+                              if k in allowed and k not in ('acting_member', 'focus_key', 'spoken', 'voice_context', 'mission_id')}
                     if 'focus_key' in allowed:
                         kwargs['focus_key'] = focus_key
                     if 'spoken' in allowed:

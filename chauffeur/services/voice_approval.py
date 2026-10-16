@@ -5,7 +5,14 @@ import json
 import time
 import uuid
 
-from services import storage, voice_identity as identity
+from services import access, storage, voice_identity as identity
+
+PRIVATE = "That one's private — open it on your phone."
+
+
+def _room_visible(mission, thread):
+    return (access.record_view('mission', mission, access.HOUSE) is not None
+            and (not thread or access.record_view('thread', thread, access.HOUSE) is not None))
 
 
 def tool_schema():
@@ -51,6 +58,8 @@ def valid(context, ask, actor, card=None):
     from services.voice_tools import speech_safe
     mission = storage.get_mission(ask.get('mission_id')) or {}
     thread = storage.get_thread(mission.get('origin_ref')) if mission.get('origin_kind') == 'thread' else None
+    if not _room_visible(mission, thread):
+        return False
     if not speech_safe(mission) or not speech_safe(ask.get('result_json') or {}) or (thread and not speech_safe(thread)):
         return False
     return bool(member and storage.member_has_access(member) and actor and member['id'] == actor.get('id')
@@ -99,6 +108,9 @@ def prepare(ctx, ref, kind):
     if len(candidates) != 1:
         return {'status': 'refused', 'message': 'Name the mission you want to approve, or choose its card on your phone.'}
     mission, ask = candidates[0]
+    thread = storage.get_thread(mission.get('origin_ref')) if mission.get('origin_kind') == 'thread' else None
+    if not _room_visible(mission, thread):
+        return {'status': 'refused', 'message': PRIVATE}
     rj = ask.get('result_json') or {}
     if not speech_safe(rj):
         return {'status': 'refused', 'message': 'That question needs its private card on your phone.'}
@@ -160,6 +172,10 @@ def intercept(text, ctx):
             return {'status': 'refused', 'message': 'That approval did not match. Ask me to read it back again.'}
         context = ApprovalContext(ctx, readback['id'], readback['ask_id'], readback['kind'], readback['digest'], time.time())
     from services import missions
+    mission = storage.get_mission(readback['mission_id']) or {}
+    thread = storage.get_thread(mission.get('origin_ref')) if mission.get('origin_kind') == 'thread' else None
+    if not _room_visible(mission, thread):
+        return {'status': 'refused', 'message': PRIVATE}
     # Identity lock is released before the domain service starts a browser job.
     res = getattr(missions, readback['kind'])(readback['mission_id'], 'approve', member,
                                             ask_id=readback['ask_id'], approval_context=context)

@@ -1,5 +1,5 @@
 """Speech-safe projections and explicit household delegation on the agent rail."""
-from services import storage, scope
+from services import storage, scope, access
 from services.voice_identity import VoiceContext, _revision, voice_names
 
 TOOLS = frozenset({'get_calendar_events', 'get_travel_time', 'assign_driver_to_event_fuzzy',
@@ -97,7 +97,7 @@ def dispatch(name, args, ctx: VoiceContext, focus_key=None):
         result = {'status': 'success', 'message': f'Sent to {destination}.'}
     elif name == 'find_in_chauffeur':
         return tools.find_in_chauffeur(args.get('query') or '', args.get('kind') or '',
-                                       args.get('facet') or '', acting_member=ctx.verified_member(),
+                                       args.get('facet') or '', acting_member=access.HOUSE,
                                        spoken=True)
     else:
         result = tools.start_project(args.get('goal') or '', args.get('title'),

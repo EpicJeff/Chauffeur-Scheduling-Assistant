@@ -184,6 +184,36 @@ def record_visible(kind, row, viewer):
     return record_view(kind, row, viewer) is not None
 
 
+def mission_reader(mission):
+    """HOUSE or HOUSE_PARENT for the mission's existing subject audience."""
+    from services import subjects
+
+    def seen(kind, row, viewer):
+        if kind in KINDS:
+            return record_view(kind, row, viewer) == FULL
+        if kind in ('project', 'proposed_project'):
+            return project_visible(row, viewer)
+        return subjects.visible(kind, row, viewer)
+
+    records = subjects.subject_records('mission', mission or {})
+    if records and all(not seen(k, r, HOUSE) and seen(k, r, HOUSE_PARENT) for k, r in records):
+        return HOUSE_PARENT
+    return HOUSE
+
+
+def mission_view(mission, kind, row):
+    """What a mission's own reads may see (spec §4.4)."""
+    if not row:
+        return None
+    if (kind == 'thread' and mission.get('origin_kind') == 'thread'
+            and row.get('id') == mission.get('origin_ref')):
+        return FULL
+    reader = mission_reader(mission)
+    if mission.get('project_id') and row.get('project_id') == mission.get('project_id'):
+        return record_view(kind, row, reader, skip_project=True)
+    return record_view(kind, row, reader)
+
+
 def channel_view(kind, row, focus_key):
     """The projection every human in a channel may receive (spec §4.3)."""
     from services import subjects, situations
