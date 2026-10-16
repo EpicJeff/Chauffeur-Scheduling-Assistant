@@ -18644,7 +18644,7 @@ def _chat_surface(request, surface=None):
     if kind in ('admin', 'pwa') and member:
         return kind, member['id'], member
     if kind == 'panel' and (device or member):
-        return kind, device['device_id'] if device else 'anon-panel', access.HOUSE
+        return kind, device['device_id'] if device else 'anon-panel:' + member['id'], access.HOUSE
     raise HTTPException(status_code=401, detail='Sign in on your personal device to talk to Argyle.')
 
 
@@ -18662,8 +18662,22 @@ def _chat_can_read(conv, request):
     if kind == 'panel':
         if parent or (device and owner == device['device_id']):
             return True
-        # The fallback panel is shared by signed-in panel pages only.
-        return bool(member and owner == 'anon-panel' and _chat_surface(request)[0] == 'panel')
+        return bool(member and owner == 'anon-panel:' + member['id'])
+    return False
+
+
+def _chat_can_erase(conv, request):
+    """Parents can inspect history; only a live surface's owner may erase it."""
+    if not conv or conv.get('legacy') or conv.get('type') == 'voice':
+        return False
+    member, device = _chat_identity(request)
+    surface = conv.get('surface') or {}
+    kind, owner = surface.get('kind'), surface.get('owner')
+    if kind in ('admin', 'pwa'):
+        return bool(member and owner == member['id'])
+    if kind == 'panel':
+        return bool((device and owner == device['device_id'])
+                    or (member and owner == 'anon-panel:' + member['id']))
     return False
 
 
@@ -18835,7 +18849,7 @@ def get_chat_history(conversation_id: str = None, request: Request = None):
 def clear_chat_history(conversation_id: str = None, request: Request = None):
     if conversation_id:
         conv = storage.get_conversation(conversation_id)
-        if not _chat_can_read(conv, request):
+        if not _chat_can_erase(conv, request):
             raise HTTPException(status_code=404, detail='Conversation not found')
     else:
         conv, _viewer = _chat_conversation(request)
@@ -18861,7 +18875,7 @@ def create_conversation(payload: CreateConversationPayload, request: Request):
 
 @app.delete("/api/chat/conversations/{conv_id}")
 def delete_conversation(conv_id: str, request: Request):
-    if not _chat_can_read(storage.get_conversation(conv_id), request):
+    if not _chat_can_erase(storage.get_conversation(conv_id), request):
         raise HTTPException(status_code=404, detail='Conversation not found')
     storage.delete_conversation(conv_id)
     return {"status": "deleted"}

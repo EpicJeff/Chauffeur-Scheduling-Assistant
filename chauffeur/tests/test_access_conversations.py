@@ -95,7 +95,15 @@ def scenario_panel_reads_as_house_and_keeps_its_device():
         check(c.get('/api/chat/conversation?surface=admin', headers=device).status_code == 401, 'device cannot open admin')
         check(c.get('/api/chat/conversation?surface=pwa', headers=device).status_code == 401, 'device cannot open PWA')
         anon = c.get('/api/chat/conversation?panel=true', headers=mom).json()['conversation']
-        check(anon['surface'] == {'kind': 'panel', 'owner': 'anon-panel'}, 'member-only panel fallback')
+        check(anon['surface'] == {'kind': 'panel', 'owner': 'anon-panel:mom'}, 'member-only panel fallback is per person')
+        kate = headers('kid')
+        kate_panel = c.get('/api/chat/conversation?panel=true', headers=kate).json()['conversation']
+        check(kate_panel['surface']['owner'] == 'anon-panel:kid' and kate_panel['id'] != anon['id'], 'Kate has a separate panel')
+        storage.add_message_to_conversation(anon['id'], {'role': 'assistant', 'content': 'Mom tablet words'})
+        check(c.get('/api/chat/history?panel=true&conversation_id=' + anon['id'], headers=kate).status_code == 404,
+              'Kate cannot read Mom tablet history')
+        check(c.post('/api/chat?panel=true', headers=kate, json={'message': 'hi', 'conversation_id': anon['id']}).status_code == 404,
+              'Kate cannot post into Mom tablet conversation')
         c.post('/api/chat?panel=true', headers=mom, json={'message': 'hi', 'conversation_id': anon['id']})
         check(seen[-1]['acting_member'] == access.HOUSE, 'member-only panel reads HOUSE')
         r = c.post('/api/chat?surface=admin', headers=mom,
@@ -128,6 +136,9 @@ def scenario_legacy_and_satellite_history_are_parents_only():
                 check(r.status_code == (409 if parent else 404), f'never answer into history: {r.status_code}')
                 if parent:
                     check(r.json()['detail'] == 'That conversation is history; start a new one', 'history refusal wording')
+                    for method, path in [('DELETE', '/api/chat/history?conversation_id='), ('DELETE', '/api/chat/conversations/')]:
+                        check(c.request(method, path + cid, headers=h).status_code == 404, 'parents cannot erase read-only history')
+                    check(storage.get_conversation(cid)['messages'], 'read-only history preserved')
         router.assert_not_called()
 
 
@@ -206,6 +217,84 @@ def scenario_surface_storage_is_atomic_and_expires():
     check(storage.get_surface_conversation('pwa', 'mom')['id'] != ids[0], 'expired surface recreated')
 
 
+def scenario_only_the_panel_owner_can_clear_or_delete():
+    fresh()
+    device = {'X-Device-Token': storage.enrol_device_token('kitchen', 'Kitchen')}
+    with enforced():
+        c = TestClient(main.app)
+        for owner, surface in ((device, 'panel'), (headers('mom'), 'panel')):
+            conv = conversation(c, owner, surface)
+            storage.add_message_to_conversation(conv['id'], {'role': 'assistant', 'content': 'keep this'})
+            for parent in (headers('dad'), headers('mom') if owner == device else headers('dad')):
+                check(c.get('/api/chat/history?conversation_id=' + conv['id'], headers=parent).status_code == 200, 'parent may read panel')
+                for path in ('/api/chat/history?conversation_id=', '/api/chat/conversations/'):
+                    check(c.delete(path + conv['id'], headers=parent).status_code == 404, 'read permission grants no erase permission')
+                check(storage.get_conversation(conv['id'])['messages'], 'parent read preserves panel messages')
+            check(c.delete('/api/chat/history?conversation_id=' + conv['id'], headers=owner).status_code == 200, 'owner clears panel')
+            check(not storage.get_conversation(conv['id'])['messages'], 'owner clear ran')
+            check(c.delete('/api/chat/conversations/' + conv['id'], headers=owner).status_code == 200, 'owner deletes panel')
+            check(storage.get_conversation(conv['id']) is None, 'owner delete ran')
+
+
+def scenario_panel_refuses_person_only_adult_tools_and_person_prompt():
+    from services import agent_tools_v2 as tools, negotiation, trips, occasions
+    from access_channels import capture_router
+    fresh()
+    cases = [('ask_deal', {'event_title': 'Soccer'}, 'grown-up'),
+             ('add_trip_accommodation', {'trip_id': 't1', 'name': 'Hotel'}, 'parent or adult'),
+             ('create_trip', {'title': 'Vacation'}, 'parent or adult'),
+             ('answer_occasion_question', {'occasion_id': 'o1', 'key': 'theme', 'value': 'party'}, 'parent or adult'),
+             ('launch_mission', {'goal': 'Find available lessons'}, 'parent or adult'),
+             ('search_mail', {'query': 'appointment'}, 'signed-in parent or adult')]
+    for actor in (access.HOUSE, access.HOUSE_PARENT, {'id': 'mom', 'role': 'parent', 'house': True}):
+        with patch.object(negotiation, 'start_asks') as send, patch.object(trips, 'create_draft') as create, \
+             patch.object(occasions, 'answer') as answer, patch.object(tools, 'handle_launch_mission') as launch:
+            for name, args, refusal in cases:
+                prompt, out = capture_router(actor, 'conv:panel', [{'name': name, 'arguments': args}])
+                check(refusal in str([prompt, out]), f'{name} refuses household actor: {out}')
+                check('You are speaking with' not in prompt and 'Resolve \'me\'' not in prompt, 'HOUSE prompt has no person line')
+            send.assert_not_called()
+            create.assert_not_called()
+            answer.assert_not_called()
+            launch.assert_not_called()
+        check(not agent_router._is_admin_member(actor), 'house actor cannot pass adult scheduling bridge gate')
+        before = storage.get_all_rules()
+        capture_router(actor, 'conv:panel', [{'name': 'add_routing_rule', 'arguments': {
+            'constraint_type': 'unavailable', 'driver_id': 'dad'}}])
+        check(storage.get_all_rules() == before, 'real router refuses HOUSE scheduling bridge write')
+    for actor in (storage.get_member('mom'), storage.get_member('aunt')):
+        check(agent_router._is_admin_member(actor), 'real adult retains scheduling bridge access')
+
+
+def scenario_house_insight_dispatch_never_uses_a_parent_role():
+    from access_channels import capture_router
+    fresh()
+    sid = storage.add_mind_insight({'slug': 'private', 'line': 'SENSITIVE parent words',
+                                   'category': 'c', 'sensitivity': 'sensitive', 'identity': 'c:private'})
+    for actor in (access.HOUSE, access.HOUSE_PARENT, {'role': 'parent'}):
+        prompt, out = capture_router(actor, 'conv:panel', [{'name': 'list_insights', 'arguments': {}}])
+        check('SENSITIVE parent words' not in str([prompt, out]), 'identity-free role cannot read private insights')
+        before = storage.get_mind_insight(sid)
+        prompt, out = capture_router(actor, 'conv:panel', [{'name': 'dismiss_insight', 'arguments': {'insight_id': sid}}])
+        check(storage.get_mind_insight(sid) == before, 'identity-free role cannot dismiss insights')
+
+
+def scenario_panel_mission_keeps_member_subject_but_cannot_see_contacts():
+    from services import subjects, missions
+    from access_channels import capture_router
+    fresh()
+    storage.add_member({'id': 'emma', 'name': 'Emma', 'role': 'child'})
+    for viewer in (access.HOUSE, access.HOUSE_PARENT):
+        check(subjects.visible('member', storage.get_member('emma'), viewer), 'house can see member subject')
+        check(not subjects.visible('contact', {'id': 'contact', 'name': 'Grandma'}, viewer), 'contacts still require a person')
+        # Run router -> tool -> persisted thread; only the asynchronous mission launch is stubbed.
+        with patch.object(missions, 'launch', return_value={'status': 'launched', 'mission_id': 'new'}):
+            prompt, out = capture_router(viewer, 'conv:panel', [{'name': 'start_mission_for', 'arguments': {
+                'goal': 'Find piano lessons for Emma', 'subject_kind': 'member', 'subject_id': 'emma'}}])
+        rows = [t for t in storage.get_threads() if t.get('subject_kind') == 'member' and t.get('subject_id') == 'emma']
+        check(rows, f'panel for Emma keeps its member subject: {out}')
+
+
 def scenario_clients_request_server_owned_conversations():
     src = (ROOT / 'templates/components/control_center.html').read_text(encoding='utf-8')
     check('chauffeurActiveConvId' not in src, 'widget has no invented localStorage id')
@@ -219,8 +308,10 @@ let selectedMemberId = 'mom', token = 'mom-token', selectedDriverId = 'driver';
 let calls = [], messages = [];
 const box = {innerHTML:'', scrollHeight:0, scrollTop:0, appendChild(){}};
 const input = {value:'hello', style:{}, focus(){}};
-const document = {getElementById:id=>id==='chat-messages'?box:id==='chat-input'?input:{},
- addEventListener(){}, createElement(){return {remove(){}}}};
+const events = {};
+const popup = {classList:{hidden:true, toggle(k){if(k==='hidden')this.hidden=!this.hidden;}, contains(){return this.hidden;}}};
+const document = {getElementById:id=>id==='chat-messages'?box:id==='chat-input'?input:id==='kiosk-chat-popup'?popup:{},
+ addEventListener(k,fn){events[k]=fn;}, createElement(){return {remove(){}}}};
 const window = {location:{pathname:'/app', search:''}};
 function memberToken(){return token;}
 function showGlobalAlert(s){messages.push(s);}
@@ -231,7 +322,10 @@ function fetchSchedule(){}
 """ + script + """
 appendMessage = (role,text)=>messages.push(text);
 (async()=>{
- await loadChatHistory();
+ if(events.DOMContentLoaded) await events.DOMContentLoaded();
+ assert.equal(calls.length,0,'closed popup does not create a row on page load');
+ toggleKioskChat();
+ await new Promise(resolve=>setImmediate(resolve));
  assert(calls.some(x=>x[0].includes('api/chat/conversation?surface=pwa')));
  assert(!calls.some(x=>x[0].endsWith('api/chat/conversations')));
  await submitChat({preventDefault(){}});
@@ -245,6 +339,14 @@ appendMessage = (role,text)=>messages.push(text);
  await loadChatHistory(); await submitChat({preventDefault(){}});
  assert.equal(activeConversationId,null); assert.equal(calls.length,0);
  assert(messages.some(x=>x.includes('Sign in on your personal device')));
+ selectedMemberId='mom'; token='mom-token'; calls=[]; popup.classList.hidden=true;
+ await resetPwaChat();
+ assert.equal(activeConversationId,null); assert.equal(calls.length,0,'closed identity reset stays lazy');
+ input.value='first send'; await submitChat({preventDefault(){}});
+ assert(calls.some(x=>x[0].includes('conversation?surface=pwa')),'first send resolves its conversation');
+ selectedMemberId='dad'; token='dad-token'; calls=[]; popup.classList.hidden=false;
+ await resetPwaChat();
+ assert.equal(activeConversationId,'owned-dad','open popup follows changed identity');
 })().catch(e=>{console.error(e);process.exitCode=1});
 """
     r = subprocess.run(['node', '-e', js], text=True, capture_output=True)
@@ -260,7 +362,7 @@ const assert = require('assert');
 const location = {search:'?panel=true'};
 const localStorage = {getItem:k=>k==='chauffeur_device_token'?'panel-credential':null};
 let requests=[], streams=[];
-const window = {chfBase:'/', chfAuthUrl:u=>u+'&member_token=member-credential'};
+const window = {chfBase:'/', chfPersonToken:()=>MEMBER_TOKEN, chfAuthUrl:u=>u+'&member_token=member-credential'};
 async function fetch(u){requests.push(u);return {ok:true,json:async()=>({conversation:{id:'owned-panel'}})};}
 class EventSource {constructor(u){streams.push(u)}}
 """ + setup + stream + """
@@ -274,8 +376,34 @@ class EventSource {constructor(u){streams.push(u)}}
  assert(streams[0].includes('conversation_id=owned-panel'));
 })().catch(e=>{console.error(e);process.exitCode=1});
 """
-    r = subprocess.run(['node', '-e', js], text=True, capture_output=True)
-    check(r.returncode == 0, f'panel widget runtime: {r.stdout}\n{r.stderr}')
+    for search, member in [('?panel=true', 'member-credential'), ('', '')]:
+        runtime = js.replace("search:'?panel=true'", 'search:' + repr(search)).replace('MEMBER_TOKEN', repr(member))
+        r = subprocess.run(['node', '-e', runtime], text=True, capture_output=True)
+        check(r.returncode == 0, f'panel widget runtime ({search}, member={bool(member)}): {r.stdout}\n{r.stderr}')
+
+
+def scenario_conversation_probes_run_extra_contracts_once():
+    import access_conversations as probes
+    from services import access_readers
+    from test_access_core import COLS
+    registered = {}
+    def probe(rid):
+        def save(fn):
+            registered[rid] = fn
+            return fn
+        return save
+    probes.register(probe)
+    fx = fresh()
+    with patch.object(probes, 'extra_contracts') as contracts:
+        for rid, cls, kinds, _ in access_readers.READERS:
+            if cls == '4.2-conversation' and not kinds:
+                for col in COLS:
+                    registered[rid](fx, 'R1', col)
+        check(contracts.call_count == 0, 'per-column probes leave contracts to the matrix once-only hook')
+        import test_access_matrix as matrix
+        with patch.object(matrix.sys, 'argv', ['test_access_matrix.py', '4.2']):
+            matrix.scenario_conversation_contracts()
+        contracts.assert_called_once()
 
 
 SCENARIOS = [v for k, v in list(globals().items()) if k.startswith('scenario_')]

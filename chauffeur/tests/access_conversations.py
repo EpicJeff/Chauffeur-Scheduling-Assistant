@@ -15,6 +15,10 @@ def register(probe):
         if cls != '4.2-conversation':
             continue
         def run(fx, rkey, col, rid=rid):
+            if rid[-1] not in ('/api/chat', '/api/v2/chat/stream'):
+                # Empty-kind ownership rows run in the matrix's once-only
+                # scenario_conversation_contracts hook, never per viewer.
+                return 'skip'
             # Earlier reader probes intentionally rebuild storage. Keep this
             # reader's rows and ids together, as the channel probes do.
             fx = access_fixture.build()
@@ -48,6 +52,8 @@ def register(probe):
                     chunk = stream_chunk(h, conv['id'])
                     check('own words' in chunk and 'secret' not in chunk, 'only owned SSE events')
                     return 'skip'  # ownership assertions, not a new record projection
-                extra_contracts()  # zero-kind rows are exercised by the contract scenario below
-                return 'skip'
         probe(rid)(run)
+
+
+if __name__ == '__main__':
+    extra_contracts()

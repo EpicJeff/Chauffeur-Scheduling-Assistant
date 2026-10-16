@@ -128,6 +128,10 @@ def _thread_visible(row, viewer):
 
 
 def _people_visible(row, viewer):
+    return (viewer or {}).get('role') in WRITE_ROLES
+
+
+def _contact_visible(row, viewer):
     # HOUSE can read household records, but it is not an identified person
     # with access to the family's contacts (including on a voice satellite).
     return bool((viewer or {}).get('id')) and viewer.get('role') in WRITE_ROLES
@@ -648,7 +652,7 @@ ADAPTERS.update({
     'contact': Adapter(
         rows=lambda: storage.get_assist_contacts(),
         title=lambda row: row.get('relation_label') or row.get('name') or '',
-        visible=_people_visible,
+        visible=_contact_visible,
         closed=lambda row: False,
         link=lambda sid: 'drive_setup',
         context=_contact_context,

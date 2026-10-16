@@ -884,7 +884,8 @@ function closeChatHelpModal() {
 
     // The server owns conversation identity; a panel never uses a person's chat.
     let activeConversationId = null;
-    const chatSurface = new URLSearchParams(location.search).get('panel') === 'true' ? 'panel' : 'admin';
+    const chatSurface = (new URLSearchParams(location.search).get('panel') === 'true'
+        || (localStorage.getItem('chauffeur_device_token') && !window.chfPersonToken?.())) ? 'panel' : 'admin';
     // nav's member session intentionally replaces device headers. Carry the
     // panel credential explicitly so that signing in keeps this device's chat.
     const chatDeviceToken = chatSurface === 'panel' ? localStorage.getItem('chauffeur_device_token') : '';

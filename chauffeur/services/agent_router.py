@@ -119,7 +119,8 @@ def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Di
 def _is_admin_member(member) -> bool:
     """Parents/adults may drive the scheduling-core (bridge) tools; children and
     helpers may not. Used to scope @argyle in the family chat by who is asking."""
-    return bool(member) and member.get('role') in ('parent', 'adult')
+    from services import access
+    return bool((member or {}).get('id')) and not access.is_house(member) and member.get('role') in ('parent', 'adult')
 
 
 DEFAULT_AGENT_MESSAGE = "I have processed your request."
@@ -186,6 +187,7 @@ def process_agent_request(user_prompt: str, context: Optional[Dict] = None, hist
     the thing being talked about under it (services/triage.py); it is handed to
     them at dispatch and never shown to the model as a parameter.
     """
+    from services import access
     if source == 'voice':
         from services.voice_identity import VoiceContext
         if not isinstance(voice_context, VoiceContext):
@@ -350,7 +352,7 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                           "you approved or sent anything unless the deterministic controller did so. "
                           "A household request can start a project with start_project.\n")
     elif not driver:
-        if acting_member is not None:
+        if (acting_member or {}).get('id') and not access.is_house(acting_member):
             _nm = acting_member.get('name') or 'this family member'
             _role = acting_member.get('role') or 'adult'
             system_prompt += (f"\nYou are speaking with {_nm} (role: {_role}) in the family chat. "
@@ -994,9 +996,11 @@ sending or claiming, and never pass from_member/member_name for them.
                     if actor is None and driver:
                         from services import storage as _st
                         actor = _st.get_member_by_driver_id(driver_id)
-                    role = actor.get('role') if actor else None
+                    role = actor.get('role') if (actor or {}).get('id') and not access.is_house(actor) else None
                     if func_name == "list_insights":
                         res = _atv2.list_insights(member_role=role)
+                    elif not _is_admin_member(actor):
+                        res = {'status': 'error', 'message': 'Only a signed-in parent or adult can dismiss this.'}
                     else:
                         res = _atv2.dismiss_insight(args.get("insight_id", ""),
                                                     member_role=role)
@@ -1051,7 +1055,7 @@ sending or claiming, and never pass from_member/member_name for them.
                     if actor is None and driver:
                         from services import storage as _st
                         actor = _st.get_member_by_driver_id(driver_id)
-                    if func_name == 'add_trip_accommodation' and (actor or {}).get('role') not in ('parent', 'adult'):
+                    if func_name == 'add_trip_accommodation' and not _is_admin_member(actor):
                         res = {'status': 'refused', 'message': 'A parent or adult can add a stay.'}
                     else:
                         res = execute_tool(func_name, args, actor=actor)

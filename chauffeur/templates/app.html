@@ -1145,7 +1145,7 @@
             localStorage.removeItem('chauffeur_driver_id');
             selectedMemberId = memberId;
             localStorage.setItem('chauffeur_member_id', memberId);
-            if (previousMemberId !== selectedMemberId) loadChatHistory();
+            if (previousMemberId !== selectedMemberId) resetPwaChat();
             if (previousMemberId !== selectedMemberId && typeof mwOnMemberChanged === 'function') {
                 mwOnMemberChanged();
             }
@@ -4012,7 +4012,7 @@
                 selectedMemberId = m.id;
                 localStorage.setItem('chauffeur_member_id', m.id);
             }
-            if (previous !== selectedMemberId) loadChatHistory();
+            if (previous !== selectedMemberId) resetPwaChat();
         }
 
         function currentMemberRole() {
@@ -7787,7 +7787,7 @@
             localStorage.removeItem('chauffeur_member_id');
             localStorage.removeItem('chauffeur_member_token');
             localStorage.removeItem('chauffeur_member_token_for');
-            loadChatHistory();
+            resetPwaChat();
             // Signing out has to reach the worker too, or a notification action
             // would keep posting as the person who just left this device.
             mirrorTokenToServiceWorker();
@@ -10438,6 +10438,15 @@
         let pwaChatOwner = null;
         let pwaChatEpoch = 0;
 
+        function resetPwaChat() {
+            ++pwaChatEpoch;
+            activeConversationId = null;
+            pwaChatOwner = null;
+            if (chatMessages) chatMessages.innerHTML = '';
+            const popup = document.getElementById('kiosk-chat-popup');
+            if (popup && !popup.classList.contains('hidden')) return loadChatHistory();
+        }
+
         async function loadChatHistory() {
             const epoch = ++pwaChatEpoch;
             activeConversationId = null;
@@ -10545,9 +10554,6 @@
             }
         }
 
-        document.addEventListener('DOMContentLoaded', () => {
-            loadChatHistory();
-        });
     </script>
 </body>
 

@@ -25,6 +25,10 @@ CHAT_LOOKUPS_PER_HOUR = 20
 _chat_lookups = deque()
 
 
+def _adult_person(actor):
+    return bool((actor or {}).get('id')) and not access.is_house(actor) and actor.get('role') in ('parent', 'adult')
+
+
 def _stamp_departure(event: dict, sched: dict, driver_id: str,
                      start: datetime.datetime) -> dict:
     """The schedule's own departure on a tool row (services/leave_by owns it)."""
@@ -1905,7 +1909,7 @@ def _ask_projection(ask_id, viewer, focus_key):
 def _mail_reader(acting_member: dict):
     """ALLOWLIST: a resolved parent or adult. An anonymous panel (actor None)
     and a child, helper or guest are refused the same way."""
-    if not (acting_member or {}).get('id') or (acting_member or {}).get('role') not in ('parent', 'adult'):
+    if not _adult_person(acting_member):
         return {"status": "error", "message": "Only a signed-in parent or adult can search the family mailbox."}
     return None
 
@@ -2443,7 +2447,7 @@ def draft_thread_message(thread_title: str = '', intent: str = None,
 def launch_mission(goal: str, thread_title: str = None, actor: dict = None,
                    acting_member: dict = None, focus_key: str = None) -> dict:
     actor = acting_member or actor
-    if not actor or actor.get('role') not in ('parent', 'adult') or not access._active(actor):
+    if not _adult_person(actor) or not access._active(actor):
         return {'status': 'refused', 'message': 'Only a parent or adult can start a mission.'}
     if not (thread_title or '').strip():
         return start_mission_for(goal, acting_member=actor, focus_key=focus_key)
@@ -2770,7 +2774,7 @@ def ask_deal(event_title: str, day: str = None, acting_member: dict = None) -> d
     never guessing.
     """
     from services import negotiation, storage as _st
-    if not acting_member or acting_member.get('role') not in ('parent', 'adult'):
+    if not _adult_person(acting_member):
         return {'status': 'error',
                 'message': "Asking the family to rearrange their evening is a "
                            "grown-up's call — it needs a parent or an adult."}
@@ -3269,7 +3273,7 @@ def create_trip(title: str, location: str = None, start_date: str = None,
     from services import trips
     # Chat reaches this with the speaker as the actor; a trip is family planning,
     # parent/adult work, as the Trips page is (a mission's approver is one).
-    if acting_member is not None and (acting_member.get('role') or '') not in ('parent', 'adult'):
+    if not _adult_person(acting_member):
         return {'status': 'error', 'message': 'Only a parent or adult can create a trip.'}
     try:
         req = CreateTripRequest(title=title, location=location, start_date=start_date,
@@ -8768,7 +8772,7 @@ def handle_unpair_dishes(args: dict) -> dict:
 
 def _occasion_stage_write(args, actor, operation, message):
     """Run stage writes through the occasion service with the page's actor gate."""
-    if actor is not None and actor.get('role') not in ('parent', 'adult'):
+    if not _adult_person(actor):
         return {'status': 'error', 'message': 'Only a parent or adult can handle these.'}
     oid = args.get('occasion_id')
     if not oid or not _find_occasion('', actor, oid):
