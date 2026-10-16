@@ -115,7 +115,7 @@ READERS = [
     ((F, 'services.missions._seed_thread_context'), '4.4-engine', ('thread',), 'mission_view'),
     ((F, 'services.missions.ask_card'), '4.4-engine', ('mission',), 'mission_view'),
     ((F, 'services.agent_tools_v2.execute_tool'), '4.4-engine', ('thread', 'mission', 'program'), 'mission_view via caller-owned mission_id'),
-    ((F, 'services.agent_tools_v2.find_in_chauffeur'), '4.3-channel', ('thread', 'mission', 'program'), 'conversation_view; mission_view for engine calls'),
+    ((F, 'services.agent_tools_v2.find_in_chauffeur'), '4.3-channel', ('thread', 'program'), 'conversation_view; mission_view for engine calls (missions are not searchable subjects)'),
     ((F, 'services.missions._land_finish'), '4.8-signals', ('mission', 'thread'), 'record_view'),
     ((F, 'services.missions._dm_person'), '4.8-signals', ('mission',), 'record_view'),
     ((F, 'services.voice_approval.prepare'), '4.5-voice', ('mission', 'thread'), 'record_view(HOUSE)'),
