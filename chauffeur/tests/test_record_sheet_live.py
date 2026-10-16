@@ -169,9 +169,69 @@ def scenario_the_projects_drawer():
         check(served.errors() == [], f"no page errors: {served.errors()}")
 
 
+def scenario_drawer_lesson_preview_without_a_record_sheet():
+    served = serve()
+    if served is None:
+        return
+    with served.browser() as page:
+        admin(page, served, 'mom')
+        for url in ('work?tab=projects#lessons', 'projects#lessons'):
+            page.goto(served.url(url), wait_until='load')
+            page.wait_for_selector('[data-settings-for~="projects"][data-open="true"]', timeout=15000)
+            player = page.locator('[x-data="lessonPlayer()"]')
+            check(player.count() == 1, f'{url} has exactly one shared lesson player')
+            check(not page.locator('[data-record-sheet]').is_visible(), 'the record sheet starts closed')
+            # Exact event/detail shape emitted by programsPage.playSweepSlot.
+            page.evaluate("""() => window.dispatchEvent(new CustomEvent('lesson-player:open', {
+                detail: {
+                    preview: true,
+                    window: {title: 'Drawer preview', session_label: 'Session A',
+                             phase_name: 'Basics', steps: [], unit_title: '', milestone: ''},
+                    lesson: {scenes: [{type: 'say', text: 'A lesson from the Projects drawer.'}]}
+                }
+            }))""")
+            player.wait_for(state='visible', timeout=10000)
+            box = player.bounding_box()
+            check(box is not None and box['width'] > 0 and box['height'] > 0,
+                  f'{url} lesson preview has a visible non-zero box: {box}')
+            check('Drawer preview' in player.inner_text(), 'the requested preview is displayed')
+            check(not page.locator('[data-record-sheet]').is_visible(), 'playing does not require opening a record sheet')
+            player.get_by_role('button', name='Close session', exact=True).click()
+            player.wait_for(state='hidden', timeout=5000)
+        check(served.errors() == [], f"no page errors: {served.errors()}")
+
+
+def scenario_project_off_notices_follow_saves():
+    served = serve()
+    if served is None:
+        return
+    from project_sheets_fixture import storage
+    storage.update_settings({'missions_enabled': False, 'programs_enabled': False})
+    with served.browser() as page:
+        admin(page, served, 'mom')
+        page.goto(served.url('work?tab=projects'), wait_until='load')
+        drawer = page.locator('[data-settings-for~="projects"]')
+        for owner, setting in (('missionsSettings()', 'missions_enabled'), ('programsPage()', 'programs_enabled')):
+            notice = page.locator(f'[data-page-tab="projects"] [x-data="{owner}"] [data-settings-off]')
+            notice.wait_for(state='visible', timeout=15000)
+            notice.get_by_role('button', name='Turn on').click()
+            drawer.wait_for(state='visible', timeout=5000)
+            toggle = drawer.locator(f'input[x-model="s.{setting}"]')
+            toggle.check()
+            notice.wait_for(state='hidden', timeout=10000)
+            check(storage.get_settings().get(setting) is True, f'{setting} is saved on')
+            toggle.uncheck()
+            notice.wait_for(state='visible', timeout=10000)
+            check(storage.get_settings().get(setting) is False, f'{setting} is saved off')
+            drawer.get_by_role('button', name='Close settings', exact=True).click()
+            drawer.wait_for(state='hidden', timeout=5000)
+        check(served.errors() == [], f"no page errors: {served.errors()}")
+
+
 SCENARIOS = [scenario_a_thread_in_the_sheet, scenario_a_closed_thread_opens_in_the_sheet, scenario_switching_records_shows_only_the_new_one,
              scenario_a_mission_in_the_sheet, scenario_a_keeper_gets_the_record_alone, scenario_a_program_in_the_sheet,
-             scenario_the_projects_drawer]
+             scenario_the_projects_drawer, scenario_drawer_lesson_preview_without_a_record_sheet,
+             scenario_project_off_notices_follow_saves]
 
 if __name__ == "__main__":
     import traceback

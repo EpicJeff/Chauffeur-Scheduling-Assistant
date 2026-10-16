@@ -674,7 +674,9 @@
             </template>
 
         </div>
+    {% if not _sheet %}{# sheet:hide #}
     {% include 'components/lesson_player.html' %}
+    {% endif %}{# /sheet:hide #}
     <script>
         function programsPage(sheet = false) {
             return {

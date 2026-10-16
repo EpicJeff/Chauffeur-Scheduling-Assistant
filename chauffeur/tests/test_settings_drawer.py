@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import tempfile
+from html.parser import HTMLParser
 
 os.environ.setdefault('CHAUFFEUR_DATA_DIR', tempfile.mkdtemp(prefix='settings_drawer_'))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -21,6 +22,34 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 def check(cond, msg):
     if not cond:
         raise AssertionError(msg)
+
+
+def _elements(html):
+    """Rendered elements and their ancestors, excluding script text."""
+    class Elements(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack, self.rows = [], []
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            self.rows.append((attrs, [a for _, a in self.stack]))
+            if tag not in {'area', 'base', 'br', 'col', 'embed', 'hr', 'img',
+                           'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'}:
+                self.stack.append((tag, attrs))
+
+        def handle_endtag(self, tag):
+            for i in range(len(self.stack) - 1, -1, -1):
+                if self.stack[i][0] == tag:
+                    del self.stack[i:]
+                    break
+
+        def handle_startendtag(self, tag, attrs):
+            self.rows.append((dict(attrs), [a for _, a in self.stack]))
+
+    parser = Elements()
+    parser.feed(html)
+    return parser.rows
 
 
 def _render(path, query=''):
@@ -39,7 +68,7 @@ def _render(path, query=''):
 
 def scenario_every_admin_page_draws_the_bar():
     """Grouped pages show their tabs; ungrouped ones show their name."""
-    for path, key in (('/work', 'mind'), ('/trips', 'trips'), ('/map', 'map'),
+    for path, key in (('/work', 'projects'), ('/trips', 'trips'), ('/map', 'map'),
                       ('/config', 'config'), ('/settings', 'settings')):
         html = _render(path)
         check('id="page-tabs"' in html, f'{path} draws no page bar')
@@ -55,16 +84,30 @@ def scenario_walls_get_no_bar_no_gear_no_drawer():
             html = _render(path, q)
             check('id="page-tabs"' not in html, f'{path}?{q} draws the page bar')
             check('id="page-settings-gear"' not in html, f'{path}?{q} draws the gear')
-            check('data-settings-for' not in html, f'{path}?{q} draws a settings drawer')
+            check(not any('data-settings-for' in attrs for attrs, _ in _elements(html)),
+                  f'{path}?{q} draws a settings drawer')
 
 
 def scenario_threads_settings_live_in_a_drawer():
-    html = _render('/work', 'tab=threads')
-    m = re.search(r'data-settings-for="threads"', html)
-    check(m, 'the Threads drawer is missing')
+    html = _render('/work', 'tab=projects')
+    m = re.search(r'data-settings-for="projects"', html)
+    check(m, 'the Projects drawer is missing')
     i = html.index('id="threadStallDays"')
-    check(i > m.start(), 'the stall-days input sits outside the Threads drawer')
+    check(i > m.start(), 'the stall-days input sits outside the Projects drawer')
+    for anchor in ('threads-settings', 'threadStallDays'):
+        rows = [parents for attrs, parents in _elements(html) if attrs.get('id') == anchor]
+        check(len(rows) == 1 and any(a.get('data-settings-for') == 'projects' for a in rows[0]),
+              f'{anchor} must render once inside the Projects drawer')
     check('saveStallDays()' in html, 'the stall-days input lost its save')
+
+
+def scenario_one_lesson_player_outside_the_projects_overlays():
+    for path, query in (('/work', 'tab=projects'), ('/projects', ''), ('/rhythms', 'tab=programs')):
+        players = [parents for attrs, parents in _elements(_render(path, query))
+                   if attrs.get('x-data') == 'lessonPlayer()']
+        check(len(players) == 1, f'{path} must render exactly one lesson player')
+        check(not any('data-record-sheet' in a or 'data-settings-for' in a for a in players[0]),
+              f'{path} lesson player is trapped inside a record sheet or settings drawer')
 
 
 def scenario_the_drawer_script_loads_everywhere():
