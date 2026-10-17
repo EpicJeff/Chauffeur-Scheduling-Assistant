@@ -320,18 +320,21 @@ def finding_view(finding, viewer, *, focus_key=NOT_A_CHANNEL):
 
 
 def private_recipients(kind, row):
-    """Who a restricted record's DM-worthy signal goes to (spec §4.8)."""
+    """Who a restricted record's DM-worthy signal goes to (access spec §4.8, audience spec §4)."""
     from services import projects
     home = home_project(row)
-    out = []
     keeper = keeper_id(kind, row)
-    if keeper:
-        out.append(keeper)
     child_keeper = bool(keeper) and projects._child(_get_member(keeper) or {})
-    if (home and home.get('audience') == 'parents') or child_keeper:
-        out += [m['id'] for m in storage.get_all_members()
-                if projects._parent(m) and projects._active(m) and record_visible(kind, row, m)]
-    return list(dict.fromkeys(out))
+    members = [m for m in storage.get_all_members() if projects._active(m)]
+    out = [keeper] if keeper else []
+    audience = (home or {}).get('audience')
+    if child_keeper or audience in ('parents', 'shared'):
+        out += [m['id'] for m in members if projects._parent(m)]
+    if audience in ('shared', 'private'):
+        out += list(home.get('shared_with') or [])
+    by_id = {m['id']: m for m in members}
+    return [mid for mid in dict.fromkeys(out)
+            if mid in by_id and record_view(kind, row, by_id[mid]) is not None]
 
 
 NEUTRAL_PRACTICE_KEYS = ('member_id', 'color', 'date', 'time_start', 'time_end')

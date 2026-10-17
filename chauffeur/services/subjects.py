@@ -357,8 +357,6 @@ def retarget(sit_kind, sid, new_kind, new_id, actor):
                   'subject_history': history_after_binding(row, new_kind, new_id)}
         update = storage.update_thread if sit_kind == 'thread' else storage.update_mission
         update(sid, fields)
-        from services import project_audience
-        project_audience.narrow_on_bind(sit_kind, situations.load(sit_kind, sid))
         for m in live:
             storage.add_mission_step(m['id'], {
                 'kind': 'note', 'name': 'subject_changed',
@@ -371,8 +369,10 @@ def retarget(sit_kind, sid, new_kind, new_id, actor):
                 proposal = storage.get_action_proposal(pid) if pid else None
                 if proposal and proposal.get('status') == 'proposed':
                     storage.update_action_proposal(pid, {'status': 'dismissed'})
-    situations.bump_rev(sit_kind, sid)
-    situations.request_refresh(sit_kind, sid)
+        situations.bump_rev(sit_kind, sid)
+        situations.request_refresh(sit_kind, sid)
+        from services import project_audience
+        project_audience.narrow_on_bind(sit_kind, situations.load(sit_kind, sid))
     return {'status': 'success', 'message': 'Unlinked.' if not new_kind else f'Now about {new_title}.', 'rev': rev}
 
 

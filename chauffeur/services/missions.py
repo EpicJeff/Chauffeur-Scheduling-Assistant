@@ -1570,17 +1570,17 @@ def _apply_planner_action(mission, res, settings, action, stage_id):
                 storage.update_thread(thread['id'], {'subject_kind': kind, 'subject_id': sid,
                     'subject_rev': int(thread.get('subject_rev') or 0) + 1,
                     'subject_history': subjects.history_after_binding(thread, kind, sid)})
-                from services import project_audience
-                project_audience.narrow_on_bind('thread', storage.get_thread(thread['id']))
+                bound_kind, bound_id = 'thread', thread['id']
             else:
                 storage.update_mission(mid, {'subject_kind': kind, 'subject_id': sid,
                     'subject_rev': int(mission.get('subject_rev') or 0) + 1,
                     'subject_history': subjects.history_after_binding(mission, kind, sid)})
-                from services import project_audience
-                project_audience.narrow_on_bind('mission', storage.get_mission(mid))
+                bound_kind, bound_id = 'mission', mid
             storage.add_mission_step(mid, {'kind': 'note', 'name': 'subject',
                 'result_json': {'kind': kind, 'id': sid, 'title': subjects.title_of(kind, row)}})
             planned.pause_bound_work(mid, subjects.title_of(kind, row))
+            from services import project_audience, situations
+            project_audience.narrow_on_bind(bound_kind, situations.load(bound_kind, bound_id))
         return storage.get_mission(mid)
 
     if action == 'propose':

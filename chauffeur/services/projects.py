@@ -892,8 +892,9 @@ def adopt(kind, record_id, actor, project_id=None):
             if prepared['status'] != 'success':
                 # A body-goal title a child typed, or an owner the actor may not
                 # assign: fall back to the creator as owner, private.
-                prepared = prepare_create({**fields, 'owner_member_id': creator['id'], 'audience': 'private',
-                                                      'shared_with': [creator['id']]}, creator)
+                fallback = {**fields, 'owner_member_id': creator['id'], 'audience': 'private'}
+                fallback.pop('shared_with', None)
+                prepared = prepare_create(fallback, creator)
                 if prepared['status'] != 'success':
                     return None
             project = prepared['project']

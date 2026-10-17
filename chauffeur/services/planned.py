@@ -987,6 +987,7 @@ def _resolve_refs(value, completed):
 
 
 def _bind_created(mid, created):
+    """Bind a created subject; return (kind, id) to narrow after stage bookkeeping."""
     from services import missions
     mission = storage.get_mission(mid)
     kind, pid, _ = missions.subject_of(mission)
@@ -1020,10 +1021,8 @@ def _bind_created(mid, created):
         update(row['id'], {'subject_kind': record['kind'], 'subject_id': record['id'],
                           'subject_rev': int(row.get('subject_rev') or 0) + 1,
                           'subject_history': subjects.history_after_binding(row, record['kind'], record['id'])})
-        from services import project_audience
         bound_kind = 'thread' if mission.get('origin_kind') == 'thread' else 'mission'
-        load = storage.get_thread if bound_kind == 'thread' else storage.get_mission
-        project_audience.narrow_on_bind(bound_kind, load(row['id']))
+        return bound_kind, row['id']
 
 
 def run_stage(mission_id, stage_id, snap, actor):
@@ -1052,6 +1051,7 @@ def run_stage(mission_id, stage_id, snap, actor):
         pause_rev = int(mission.get('project_pause_rev') or 0)
         _settle(mission_id, 'stage', 'Doing it')
         started = _clock()
+    bound = None
     try:
         for row_id in [r['id'] for r in stage['rows']]:
             with storage.db_lock:
@@ -1100,7 +1100,7 @@ def run_stage(mission_id, stage_id, snap, actor):
                 if row['state'] == 'failed':
                     _dismiss_rows({'rows': [row]})
                 else:
-                    _bind_created(mission_id, result.get('created') or [])
+                    bound = _bind_created(mission_id, result.get('created') or []) or bound
             if result.get('budget') is True:
                 break
         with storage.db_lock:
@@ -1135,6 +1135,10 @@ def run_stage(mission_id, stage_id, snap, actor):
     finally:
         with storage.db_lock:
             _active_stages.discard(key)
+            # Finish the rows, stage and claim bookkeeping before narrowing can raise.
+            if bound:
+                from services import project_audience, situations
+                project_audience.narrow_on_bind(bound[0], situations.load(*bound))
 
 
 def reconcile():

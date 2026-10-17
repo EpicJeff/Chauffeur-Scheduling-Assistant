@@ -285,6 +285,86 @@ def scenario_plan_reshape_requires_the_before_rows_audience_authority():
               f'the permitted reshape is saved: {after}')
 
 
+def scenario_child_manual_mission_fallback_uses_the_default_private_list():
+    _fresh()
+    mid = missions.launch('plan the birthday', created_by='kid', subject=('occasion', 'o1'))['mission_id']
+    project = storage.get_project(_wrapper_of_mission(mid))
+    check(project['owner_member_id'] == 'kid' and project['audience'] == 'private',
+          f'the child keeps the fallback wrapper: {project}')
+    check(set(project['shared_with']) == {'kid', 'mom', 'dad'}
+          and _seen(project['id']) == {'kid', 'mom', 'dad'},
+          f'no explicit list was supplied, so both active parents join the child: {project}')
+    check(all(access.record_view('mission', storage.get_mission(mid), dict(m)) == access.FULL
+              for m in (MOM, DAD)), 'the parents can actually read the child-created mission')
+
+
+def scenario_narrowing_errors_preserve_subject_writer_bookkeeping():
+    from unittest.mock import patch
+    from services import threads, planned, project_audience
+
+    def must_raise(action):
+        with patch.object(project_audience, 'narrow_on_bind', side_effect=RuntimeError('narrowing failed')) as narrow:
+            try:
+                action()
+            except RuntimeError as exc:
+                check(str(exc) == 'narrowing failed' and narrow.call_count == 1,
+                      'the narrowing error propagates to the caller')
+            else:
+                check(False, 'narrowing errors must not be swallowed')
+
+    for target_kind in ('thread', 'mission'):
+        _fresh()
+        tid = threads.create(title='Party errands', owner_member_id='mom', created_by='mom')
+        mid = _mission(origin=tid if target_kind == 'thread' else None)
+        sid = tid if target_kind == 'thread' else mid
+        proposal_id = storage.add_action_proposal({'tool': 'add_occasion', 'payload': {}, 'status': 'proposed'})
+        storage.add_mission_step(mid, {'kind': 'proposal', 'name': 'add_occasion',
+                                       'result_json': {'proposal_id': proposal_id}})
+        before_rev = (situations.load(target_kind, sid) or {}).get('rev') or 0
+        refreshed = []
+        with patch.object(situations, 'request_refresh', side_effect=lambda *args: refreshed.append(args)):
+            must_raise(lambda: situations.act(target_kind, sid, 'subject', option_id='subject',
+                       payload={'kind': 'occasion', 'id': 'occ-dad'}, actor=dict(MOM)))
+        check(any(s['name'] == 'subject_changed' for s in storage.get_mission_steps(mid)),
+              f'{target_kind} retarget records the subject-change note before narrowing')
+        check(storage.get_action_proposal(proposal_id)['status'] == 'dismissed',
+              f'{target_kind} retarget invalidates the stale proposal before narrowing')
+        check(situations.load(target_kind, sid)['rev'] > before_rev and refreshed == [(target_kind, sid)],
+              f'{target_kind} retarget bumps and refreshes the situation before narrowing')
+
+    for thread_origin in (False, True):
+        _fresh()
+        from test_planned_missions import _approved
+        mid = _approved(stages=STAGES)
+        if thread_origin:
+            tid = threads.create(title='Party errands', owner_member_id='mom', created_by='mom')
+            storage.update_mission(mid, {'origin_kind': 'thread', 'origin_ref': tid})
+        planned.prepare_next(mid)
+        check(planned.running_work(storage.get_mission(mid)),
+              'the fixture has running work to pause when its subject changes')
+        _plan({'action': 'subject', 'kind': 'occasion', 'id': 'occ-dad'})
+        must_raise(lambda: _step(mid))
+        check(any(s['name'] == 'subject' for s in storage.get_mission_steps(mid)),
+              f'planner subject ({thread_origin=}) records its note before narrowing')
+        check(not planned.running_work(storage.get_mission(mid))
+              and storage.get_mission(mid)['status'] == 'waiting_user',
+              f'planner subject ({thread_origin=}) pauses bound work before narrowing')
+
+    for thread_origin in (False, True):
+        _fresh()
+        mid, stage = _staged()
+        if thread_origin:
+            tid = threads.create(title='Party errands', owner_member_id='mom', created_by='mom')
+            storage.update_mission(mid, {'origin_kind': 'thread', 'origin_ref': tid})
+        must_raise(lambda: planned.run_stage(mid, stage['id'], stage['snapshot'], dict(MOM)))
+        current = storage.get_mission(mid)
+        saved_stage = current['plan']['stages'][0]
+        check(saved_stage['state'] == 'done' and all(r['state'] == 'done' for r in saved_stage['rows']),
+              f'created subject ({thread_origin=}) finishes the rows and stage before narrowing')
+        check(current['status'] == 'running' and (mid, stage['id']) not in planned._active_stages,
+              f'created subject ({thread_origin=}) completes mission bookkeeping and releases the claim')
+
+
 if __name__ == '__main__':
     import sys
     import traceback

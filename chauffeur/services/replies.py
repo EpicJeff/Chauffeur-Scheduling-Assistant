@@ -163,10 +163,13 @@ def _send(thread: dict, entry: dict, reading: Optional[dict]) -> bool:
     sent = False
     for m in _recipients(thread):
         try:
+            view = access.record_view('thread', thread, m)
+            if view is None:
+                continue
             s = _sit.view('thread', thread['id'], m)
             nxt = ((s or {}).get('next_step') or {}).get('label') or ''
             body = (access.neutral_signal_line('thread', thread)
-                    if access.record_view('thread', thread, m) == access.KEEPER else
+                    if view == access.KEEPER else
                     dm_line(thread, entry, reading, nxt))
             _post(storage.get_or_create_dm(argyle['id'], m['id']), argyle, body)
             sent = True
