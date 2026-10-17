@@ -5424,13 +5424,12 @@
             const p = await projectCardView(id).catch(() => null);
             if (!p) { showGlobalAlert('Could not open that project.'); return; }
             if (!p.can_edit_audience || p.body_goal) { showGlobalAlert('Only the owner or a parent can change who sees this project'); return; }
-            const values = myRole() === 'child' ? ['parents', 'shared', 'private'] : ['household', 'parents', 'shared', 'private'];
+            // All four values for everyone (spec §5); the list sent is the one shown.
             window.dispatchEvent(new CustomEvent('chf-audience-sheet-open', {detail: {
-                kind: 'project', title: p.title, values, allowPrivate: true, audience: p.audience,
-                shared_with: p.shared_with || [], members: window.chfAudiencePeople(membersData), locked: [p.owner_member_id],
+                ...window.chfProjectAudience({ownerId: p.owner_member_id, members: membersData, audience: p.audience, shared_with: p.shared_with}),
+                title: p.title,
                 save: async (picked) => {
-                    const body = {audience: picked.audience};
-                    if (picked.shared_with) body.shared_with = picked.shared_with;
+                    const body = {audience: picked.audience, shared_with: picked.shared_with || []};
                     const r = await fetch(`${apiBase}api/projects/${encodeURIComponent(id)}`, {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
                     if (!r.ok) {
                         let msg = 'Could not change who sees this project.';

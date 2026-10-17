@@ -1,23 +1,32 @@
 {# The one people picker (project audiences spec §5), extracted from the Lists
    page's share popover. It draws an audience choice and a member checklist and
-   emits `audience-picked` with {audience, shared_with}; it never decides what a
-   choice means. The SERVER owns each kind's rules (a private list adds the
-   person flipping it, a private project adds its owner, an empty shared project
-   is stored as parents) and every host re-reads the saved row afterwards.
+   emits `audience-picked` with {audience, shared_with}. What it shows ticked is
+   exactly the list it sends: a host never omits the list on a picker save, so
+   the server's no-list default can never differ from the screen. The SERVER
+   still owns each kind's rules and every host re-reads the saved row.
 
    audience_picker(cfg, on_pick)
      cfg      a JS expression, evaluated in the host's scope on every render:
-              {kind, values, allowPrivate, audience, shared_with, members, locked}
+              {kind, values, allowPrivate, audience, shared_with, members,
+               fixed, keepFixed, defaults}
               shared_with: ids or {id, name} rows; members: [{id, name}];
-              locked: ids shown ticked and fixed (a project's owner).
+              fixed: {value: {id: hint}} people who always see it in that mode,
+                drawn ticked and disabled with the hint ("owner", "always");
+              keepFixed: values whose fixed people ARE written into the list
+                (a private project's owner); other values leave them out (a
+                shared project's parents, who see it by role);
+              defaults: {value: [ids]} pre-ticked when that value is chosen with
+                nobody picked by hand (a project's private default list).
+              A project host builds this with chfProjectAudience().
      on_pick  a JS statement run on `audience-picked` ($event.detail).
-   A value change carries the current list, or null when nothing is ticked so
-   the server's own default applies; a tick carries the new list.
+   A value change carries the people picked by hand (never the previous mode's
+   fixed people), or that value's defaults when nobody is; a tick carries the
+   new list. chfAudienceEmit(cfg, value, ids) is the list a host submits.
 
    audience_sheet()       the picker in a sheet with Save, opened by
-                          `chf-audience-sheet-open` {…cfg, title, save(picked)}.
+                          `chf-audience-sheet-open` {...cfg, title, save(picked)}.
                           One per page, at the top level of the host.
-   audience_picker_script()  the two factories; emit once outside any template. #}
+   audience_picker_script()  the factories; emit once outside any template. #}
 
 {% macro audience_picker_script() %}
 <script>
@@ -42,41 +51,70 @@ window.chfAudienceIds = function (list) {
 };
 // People a project list can hold: active, real members. Lists keep their own
 // filter (every non-system member), exactly as the popover always had it.
+window.chfAudienceActive = m => !!(m && m.id && !m.system && m.id !== 'argyle' && (m.status || 'active') === 'active');
 window.chfAudiencePeople = function (members) {
-    return (members || []).filter(m => m && !m.system && m.id !== 'argyle' && (m.status || 'active') === 'active')
-        .map(m => ({id: m.id, name: m.name || ''}));
+    return (members || []).filter(window.chfAudienceActive).map(m => ({id: m.id, name: m.name || ''}));
+};
+// A project's picker config. Mirrors services/projects.py: parents (and the
+// owner) see a shared project by role; a private list always holds the owner,
+// and its no-list default is the owner, plus every active parent for a child.
+window.chfProjectAudience = function ({ownerId, members, audience, shared_with, values}) {
+    const all = (members || []).filter(window.chfAudienceActive);
+    const isChild = m => !!m && (m.role === 'child' || !!m.is_child);
+    const owner = all.find(m => m.id === ownerId);
+    const parents = all.filter(m => m.role === 'parent' && !isChild(m)).map(m => m.id);
+    const shared = {};
+    parents.forEach(id => { shared[id] = 'always'; });
+    if (ownerId) shared[ownerId] = 'owner';
+    return {kind: 'project', values: values || ['household', 'parents', 'shared', 'private'], allowPrivate: true,
+            audience, shared_with: window.chfAudienceIds(shared_with), members: window.chfAudiencePeople(all),
+            fixed: {shared, private: ownerId ? {[ownerId]: 'owner'} : {}}, keepFixed: ['private'],
+            defaults: {private: [ownerId, ...(isChild(owner) ? parents : [])].filter(Boolean)}};
+};
+// The list a host submits for `value`: the hand-picked ids, with that mode's
+// fixed people added when they belong in the list and dropped when they don't.
+window.chfAudienceEmit = function (cfg, value, ids) {
+    const fixed = ((cfg && cfg.fixed) || {})[value] || {};
+    const picked = window.chfAudienceIds(ids).filter(id => !(id in fixed));
+    const out = ((cfg && cfg.keepFixed) || []).includes(value) ? [...Object.keys(fixed), ...picked] : picked;
+    return [...new Set(out)];
 };
 window.chfAudiencePicker = function (cfg) {
     return {
         apName: 'ap-' + Math.random().toString(36).slice(2),
+        get apCfg() { return (typeof cfg === 'function' ? cfg() : cfg) || {}; },
         get ap() {
-            const c = (typeof cfg === 'function' ? cfg() : cfg) || {};
+            const c = this.apCfg;
             const copy = window.chfAudienceCopy[c.kind] || {checklistFor: [], label: {}, note: {}};
             return {kind: c.kind, audience: c.audience || '', ids: window.chfAudienceIds(c.shared_with),
                     values: (c.values || []).filter(v => v !== 'private' || c.allowPrivate !== false),
-                    members: c.members || [], locked: c.locked || [], copy};
+                    members: c.members || [], fixed: ((c.fixed || {})[c.audience || '']) || {}, copy};
         },
         apLabel(v) { return this.ap.copy.label[v] || v; },
         apNote() { return this.ap.copy.note[this.ap.audience] || ''; },
         apShowList() { return this.ap.copy.checklistFor.includes(this.ap.audience); },
-        apLocked(id) { return this.ap.locked.includes(id); },
+        apLocked(id) { return id in this.ap.fixed; },
+        apHint(id) { return this.ap.fixed[id] || ''; },
         apChecked(id) { return this.apLocked(id) || this.ap.ids.includes(id); },
         apPick(v) {
             const c = this.ap;
             if (v === c.audience) return;
-            this.$dispatch('audience-picked', {audience: v, shared_with: c.ids.length ? c.ids : null});
+            let picked = c.ids.filter(id => !(id in c.fixed));
+            const defaults = ((this.apCfg.defaults || {})[v]) || [];
+            if (!picked.length && defaults.length) picked = defaults.slice();
+            this.$dispatch('audience-picked', {audience: v, shared_with: window.chfAudienceEmit(this.apCfg, v, picked)});
         },
         apToggle(id) {
             if (this.apLocked(id)) return;
             const c = this.ap;
             const ids = c.ids.includes(id) ? c.ids.filter(x => x !== id) : [...c.ids, id];
-            this.$dispatch('audience-picked', {audience: c.audience, shared_with: ids});
+            this.$dispatch('audience-picked', {audience: c.audience, shared_with: window.chfAudienceEmit(this.apCfg, c.audience, ids)});
         },
     };
 };
 window.chfAudienceSheet = function () {
     return {
-        asOpen: false, asOpts: {}, asDraft: {audience: '', shared_with: null}, asBusy: false, asError: '',
+        asOpen: false, asOpts: {}, asDraft: {audience: '', shared_with: []}, asBusy: false, asError: '',
         asShow(d) {
             if (!d || typeof d.save !== 'function') return;
             this.asOpts = d; this.asError = ''; this.asBusy = false;
@@ -91,7 +129,8 @@ window.chfAudienceSheet = function () {
             if (this.asBusy) return;
             this.asBusy = true; this.asError = '';
             try {
-                const ok = await this.asOpts.save({audience: this.asDraft.audience, shared_with: this.asDraft.shared_with});
+                const audience = this.asDraft.audience;
+                const ok = await this.asOpts.save({audience, shared_with: window.chfAudienceEmit(this.asOpts, audience, this.asDraft.shared_with)});
                 if (ok !== false) this.asClose();
             } catch (e) { this.asError = (e && e.message) || 'Could not change who sees this.'; }
             finally { this.asBusy = false; }
@@ -127,7 +166,7 @@ window.chfAudienceSheet = function () {
                 <input type="checkbox" :data-audience-member="m.id" :checked="!!apChecked(m.id)" :disabled="!!apLocked(m.id)"
                        @change="apToggle(m.id)" class="accent-pink-500">
                 <span class="text-sm text-gray-200" x-text="m.name"></span>
-                <span class="text-[11px] font-semibold text-gray-400" x-show="apLocked(m.id)">owner</span>
+                <span class="text-[11px] font-semibold text-gray-400" :data-audience-hint="m.id" x-show="apLocked(m.id)" x-text="apHint(m.id)"></span>
             </label>
         </template>
         <p class="text-xs text-gray-500 italic" x-show="!ap.members.length">Nobody else to choose yet.</p>

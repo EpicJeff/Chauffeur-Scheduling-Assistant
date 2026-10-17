@@ -30,8 +30,11 @@ def _seed():
     port = projects.create({'title': 'Learn Portuguese', 'goal': 'Talk with Vó by Christmas', 'done_when': 'a whole call in Portuguese',
                             'audience': 'shared', 'shared_with': ['aunt']}, mom)
     body = projects.create({'title': 'Get down to 185 lbs', 'goal': 'by summer', 'done_when': '185 on the scale'}, mom)
-    check(port['status'] == 'success' and body['status'] == 'success', f"seed projects: {port} {body}")
-    EXTRA['port'], EXTRA['body'] = port['project']['id'], body['project']['id']
+    piano = projects.create({'title': 'Learn piano', 'goal': 'play at the recital', 'done_when': 'the recital'},
+                            storage.get_member('kid'))
+    check(port['status'] == 'success' and body['status'] == 'success' and piano['status'] == 'success',
+          f"seed projects: {port} {body} {piano}")
+    EXTRA['port'], EXTRA['body'], EXTRA['piano'] = port['project']['id'], body['project']['id'], piano['project']['id']
     check(storage.get_project(EXTRA['body']).get('body_goal'), "the weight goal is classified as a body goal")
     argyle = storage.ensure_argyle_member()
     for who in ('mom', 'aunt'):
@@ -40,6 +43,11 @@ def _seed():
         member = storage.get_member(who)
         _post_chat_message(dm, argyle, 'Started a project: Learn Portuguese',
                            card=projects.card(storage.get_project(EXTRA['port']), member, planning='off', reason=''))
+    kid_dm = storage.get_or_create_dm(argyle['id'], 'kid')
+    EXTRA['dm_kid'] = kid_dm['id']
+    _post_chat_message(kid_dm, argyle, 'Started a project: Learn piano',
+                       card=projects.card(storage.get_project(EXTRA['piano']), storage.get_member('kid'), planning='needs_parent',
+                                          reason='Ask a parent to plan it with Argyle.'))
     _post_chat_message(storage.get_or_create_dm(argyle['id'], 'mom'), argyle, 'Started a project: Get down to 185 lbs',
                        card=projects.card(storage.get_project(EXTRA['body']), mom, planning='off', reason=''))
 
@@ -50,6 +58,26 @@ def serve():
     if served is not None:
         storage.update_settings({'auth_enforce': True})
     return served
+
+
+def _get_as(served, who, path):
+    """Status of a GET as `who`, through the member token the phone sends."""
+    import urllib.error
+    import urllib.request
+    req = urllib.request.Request(served.url(path), headers={'X-Member-Token': TOKENS[who]})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
+
+
+def _ticks(scope):
+    """{member id: (checked, disabled, hint)} as the picker draws them."""
+    return scope.locator('[data-audience-picker]').first.evaluate("""el => Object.fromEntries(
+        [...el.querySelectorAll('[data-audience-people] [data-audience-member]')].map(i => [i.dataset.audienceMember,
+            [i.checked, i.disabled, ((el.querySelector(`[data-audience-hint="${i.dataset.audienceMember}"]`) || {}).offsetParent
+                ? el.querySelector(`[data-audience-hint="${i.dataset.audienceMember}"]`).textContent : '')]]))""")
 
 
 def _put(served, list_id):
@@ -154,13 +182,17 @@ def scenario_projects_page_create_and_detail():
                   "the owner is fixed on a private list")
             picker.locator('[data-audience-value="shared"]').check()
             picker.locator('[data-audience-member="aunt"]').check()
-            check(picker.locator('[data-audience-member="mom"]').is_checked() and picker.locator('[data-audience-member="mom"]').is_disabled(),
-                  "the owner shows as always seeing it")
+            ticks = _ticks(form)
+            check(ticks['mom'] == [True, True, 'owner'] and ticks['dad'] == [True, True, 'always'],
+                  f"in shared mode the owner and every parent are ticked, fixed and say why: {ticks}")
+            check(ticks['aunt'] == [True, False, ''] and ticks['kid'] == [False, False, ''] and ticks['gran'] == [False, False, ''],
+                  f"only the chosen people are choices: {ticks}")
             shot(page, 'audience-projects-create')
             with page.expect_response(lambda r: r.request.method == 'POST' and r.url == served.url('api/projects'), timeout=10000) as made:
                 form.locator('[data-create-project]').click()
             body = made.value.request.post_data_json
-            check(body.get('audience') == 'shared' and body.get('shared_with') == ['aunt'], f"the picker's choice is posted: {body}")
+            check(body.get('audience') == 'shared' and body.get('shared_with') == ['aunt'],
+                  f"the picker's choice is posted, parents and owner left to their role: {body}")
             pid = made.value.json()['project']['id']
             row = storage.get_project(pid)
             check(row['audience'] == 'shared' and row['shared_with'] == ['aunt'], f"saved shared with Aunt: {row}")
@@ -177,15 +209,21 @@ def scenario_projects_page_create_and_detail():
             sheet.wait_for(state='visible', timeout=5000)
             check(sheet.locator('[data-audience-value="shared"]').is_checked()
                   and sheet.locator('[data-audience-member="aunt"]').is_checked(), "the sheet opens on the saved choice")
+            check(_ticks(sheet)['dad'] == [True, True, 'always'], "Dad sees a shared project by role")
             sheet.locator('[data-audience-value="private"]').check()
+            ticks = _ticks(sheet)
+            check(ticks['mom'] == [True, True, 'owner'] and ticks['aunt'] == [True, False, ''] and ticks['dad'] == [False, False, '']
+                  and ticks['kid'][0] is False, f"Private starts from the visible picks; Dad is not carried in: {ticks}")
             shot(page, 'audience-projects-sheet')
             with page.expect_response(lambda r: r.request.method == 'PATCH' and r.url == served.url('api/projects/' + pid), timeout=10000) as patched:
                 sheet.locator('[data-audience-save]').click()
-            check(patched.value.request.post_data_json == {'audience': 'private', 'shared_with': ['aunt']},
-                  f"the sheet posts what was chosen: {patched.value.request.post_data_json}")
+            check(patched.value.request.post_data_json == {'audience': 'private', 'shared_with': ['mom', 'aunt']},
+                  f"the sheet posts exactly the ticks shown: {patched.value.request.post_data_json}")
             sheet.wait_for(state='hidden', timeout=5000)
             row = storage.get_project(pid)
-            check(row['audience'] == 'private' and set(row['shared_with']) == {'mom', 'aunt'}, f"the server added the owner: {row}")
+            check(row['audience'] == 'private' and row['shared_with'] == ['mom', 'aunt'], f"saved as shown: {row}")
+            check(_get_as(served, 'dad', 'api/projects/' + pid) == 404 and _get_as(served, 'aunt', 'api/projects/' + pid) == 200,
+                  "Dad, unticked, cannot see it; Aunt, ticked, can")
             page.wait_for_function("() => (document.querySelector('[data-audience-label]') || {}).textContent === 'Only Mom, Aunt Jo'", timeout=5000)
 
             page.goto(served.url('work'), wait_until='load')
@@ -235,9 +273,10 @@ def _open_dm(page, served, who, theme='dark'):
     page.evaluate("(t) => localStorage.setItem('chauffeur_theme', t)", theme)
     page.goto(served.url('app'), wait_until='load')
     page.wait_for_function("() => typeof openChannel === 'function' && typeof membersData !== 'undefined' && membersData.length > 0", timeout=15000)
-    page.locator('#tab-messages').click()
+    if page.locator('#tab-messages').is_visible():
+        page.locator('#tab-messages').click()
     page.evaluate("(id) => openChannel(id)", EXTRA['dm_' + who])
-    card = page.locator(f'[data-project-card="{EXTRA["port"]}"]').last
+    card = page.locator(f'[data-project-card="{EXTRA["piano" if who == "kid" else "port"]}"]').last
     card.wait_for(state='visible', timeout=15000)
     return card
 
@@ -277,26 +316,31 @@ def scenario_the_chat_card():
             sheet = page.locator('[data-audience-sheet][data-open="true"]')
             sheet.wait_for(state='visible', timeout=5000)
             check(sheet.locator('[data-audience-member="aunt"]').is_checked(), "the sheet opens on the saved list")
-            sheet.locator('[data-audience-member="dad"]').check()
+            check(sheet.locator('[data-audience-member="dad"]').is_disabled() and _ticks(sheet)['dad'][2] == 'always',
+                  "a parent cannot be unticked from a shared project")
+            sheet.locator('[data-audience-member="kid"]').check()
             shot(page, 'audience-card-sheet-light')
             with page.expect_response(lambda r: r.request.method == 'PATCH', timeout=10000) as patched:
                 sheet.locator('[data-audience-save]').click()
-            check(patched.value.request.post_data_json == {'audience': 'shared', 'shared_with': ['aunt', 'dad']},
-                  f"the card's sheet posts the choice: {patched.value.request.post_data_json}")
+            check(patched.value.request.post_data_json == {'audience': 'shared', 'shared_with': ['aunt', 'kid']},
+                  f"the card's sheet posts the choice, no parent ids: {patched.value.request.post_data_json}")
             sheet.wait_for(state='hidden', timeout=5000)
             row = storage.get_project(EXTRA['port'])
-            check(row['audience'] == 'shared' and row['shared_with'] == ['aunt', 'dad'], f"saved: {row}")
+            check(row['audience'] == 'shared' and row['shared_with'] == ['aunt', 'kid'], f"saved: {row}")
             # Private from the sheet: the chip re-reads the server's label.
             card.locator('[data-project-choose-people]').click()
             sheet.wait_for(state='visible', timeout=5000)
             sheet.locator('[data-audience-value="private"]').check()
-            with page.expect_response(lambda r: r.request.method == 'PATCH', timeout=10000):
+            with page.expect_response(lambda r: r.request.method == 'PATCH', timeout=10000) as patched:
                 sheet.locator('[data-audience-save]').click()
+            check(patched.value.request.post_data_json == {'audience': 'private', 'shared_with': ['mom', 'aunt', 'kid']},
+                  f"private from shared keeps the visible picks only: {patched.value.request.post_data_json}")
             sheet.wait_for(state='hidden', timeout=5000)
             page.wait_for_function("(id) => [...document.querySelectorAll(`[data-project-card='${id}'] [data-project-audience]`)]"
-                                   ".some(el => el.textContent === 'Only Mom, Aunt Jo, Dad')", arg=EXTRA['port'], timeout=5000)
+                                   ".some(el => el.textContent === 'Only Mom, Aunt Jo, Kate')", arg=EXTRA['port'], timeout=5000)
             row = storage.get_project(EXTRA['port'])
-            check(row['audience'] == 'private' and set(row['shared_with']) == {'mom', 'aunt', 'dad'}, f"saved private: {row}")
+            check(row['audience'] == 'private' and row['shared_with'] == ['mom', 'aunt', 'kid'], f"saved private: {row}")
+            check(_get_as(served, 'dad', 'api/projects/' + EXTRA['port']) == 404, "Dad, never ticked, cannot see it")
             check(not dialogs, f"no browser dialogs: {dialogs}")
             check(_app_errors(served, refused) == [], f"no page errors: {served.errors()} {refused}")
 
@@ -313,7 +357,7 @@ def scenario_the_chat_card():
             page.wait_for_selector(f'[data-project-id="{EXTRA["port"]}"]', timeout=15000)
             page.locator(f'[data-project-id="{EXTRA["port"]}"]').first.click()
             page.wait_for_selector('[data-audience-row]', timeout=10000)
-            check(page.locator('[data-audience-label]').inner_text().strip() == 'Only Mom, Aunt Jo, Dad', "the phone's row reads the saved list")
+            check(page.locator('[data-audience-label]').inner_text().strip() == 'Only Mom, Aunt Jo, Kate', "the phone's row reads the saved list")
             page.locator('[data-audience-change]').click()
             sheet = page.locator('[data-audience-sheet][data-open="true"]')
             sheet.wait_for(state='visible', timeout=5000)
@@ -329,7 +373,85 @@ def scenario_the_chat_card():
         served.stop()
 
 
-SCENARIOS = [scenario_the_lists_share_popover, scenario_projects_page_create_and_detail, scenario_the_chat_card]
+def scenario_a_childs_private_list_is_what_the_picker_shows():
+    """Review fix 1: Private on a child's project pre-ticks the server's default
+    list (the child and every parent); what is ticked is what is saved, so a
+    parent unticked is a parent who cannot see it."""
+    served = serve()
+    if served is None:
+        return
+    try:
+        with served.browser() as page:
+            dialogs = []
+            page.on('dialog', lambda d: (dialogs.append(d.message), d.dismiss()))
+            page.set_viewport_size({'width': 390, 'height': 844})
+            admin(page, served, 'mom')
+
+            # Changing Kate's parents project to Private, Dad unticked.
+            page.goto(served.url('projects?id=prj-bike'), wait_until='load')
+            page.wait_for_selector('[data-audience-change]', timeout=15000)
+            page.locator('[data-audience-change]').click()
+            sheet = page.locator('[data-audience-sheet][data-open="true"]')
+            sheet.wait_for(state='visible', timeout=5000)
+            sheet.locator('[data-audience-value="private"]').check()
+            ticks = _ticks(sheet)
+            check(ticks['kid'] == [True, True, 'owner'] and ticks['mom'][:2] == [True, False] and ticks['dad'][:2] == [True, False]
+                  and ticks['aunt'][0] is False, f"a child's Private pre-ticks the default list: {ticks}")
+            sheet.locator('[data-audience-member="dad"]').uncheck()
+            shot(page, 'audience-child-private-sheet')
+            with page.expect_response(lambda r: r.request.method == 'PATCH', timeout=10000) as patched:
+                sheet.locator('[data-audience-save]').click()
+            check(patched.value.request.post_data_json == {'audience': 'private', 'shared_with': ['kid', 'mom']},
+                  f"the list shown is the list sent: {patched.value.request.post_data_json}")
+            sheet.wait_for(state='hidden', timeout=5000)
+            row = storage.get_project('prj-bike')
+            check(row['audience'] == 'private' and row['shared_with'] == ['kid', 'mom'], f"saved as ticked: {row}")
+            check(_get_as(served, 'dad', 'api/projects/prj-bike') == 404, "Dad, unticked, cannot see Kate's project")
+            check(_get_as(served, 'mom', 'api/projects/prj-bike') == 200 and _get_as(served, 'kid', 'api/projects/prj-bike') == 200,
+                  "Mom and Kate still can")
+            page.wait_for_function("() => (document.querySelector('[data-audience-label]') || {}).textContent === 'Only Kate, Mom'",
+                                   timeout=5000)
+
+            # Creating one for Kate: the same default list, Dad unticked.
+            page.goto(served.url('projects'), wait_until='load')
+            page.wait_for_selector('[data-new-project]', timeout=15000)
+            page.locator('[data-new-project]').click()
+            form = page.locator('form', has=page.locator('[data-create-project]'))
+            form.locator('input[name="title"]').fill('Science fair')
+            form.locator('select[name="owner_member_id"]').select_option('kid')
+            picker = form.locator('[data-create-audience] [data-audience-picker]')
+            check(picker.get_attribute('data-audience') == 'parents', "a child's new project starts with the parents")
+            picker.locator('[data-audience-value="private"]').check()
+            ticks = _ticks(form)
+            check(ticks['kid'] == [True, True, 'owner'] and ticks['mom'][0] and ticks['dad'][0], f"the default list is shown: {ticks}")
+            picker.locator('[data-audience-member="dad"]').uncheck()
+            with page.expect_response(lambda r: r.request.method == 'POST' and r.url == served.url('api/projects'), timeout=10000) as made:
+                form.locator('[data-create-project]').click()
+            body = made.value.request.post_data_json
+            check(body.get('audience') == 'private' and body.get('shared_with') == ['kid', 'mom'], f"created as shown: {body}")
+            pid = made.value.json()['project']['id']
+            check(storage.get_project(pid)['shared_with'] == ['kid', 'mom'], f"saved: {storage.get_project(pid)}")
+            check(_get_as(served, 'dad', 'api/projects/' + pid) == 404, "Dad cannot see the new one either")
+            check(not dialogs, f"no browser dialogs: {dialogs}")
+            check(served.errors() == [], f"no page errors: {served.errors()}")
+
+            # Kate's own chat card offers all four values, Household included.
+            refused = _watch_refusals(page)
+            card = _open_dm(page, served, 'kid')
+            check('Choose people…' in card.inner_text(), f"Kate's card offers Choose people…: {card.inner_text()}")
+            card.locator('[data-project-choose-people]').click()
+            sheet.wait_for(state='visible', timeout=5000)
+            values = sheet.locator('[data-audience-value]').evaluate_all("els => els.map(e => e.value)")
+            check(values == ['household', 'parents', 'shared', 'private'], f"a child gets all four values: {values}")
+            check(sheet.locator('[data-audience-value="parents"]').is_checked(), "on the saved choice")
+            shot(page, 'audience-card-child-sheet')
+            check(_app_errors(served, refused) == [], f"no page errors: {served.errors()} {refused}")
+    finally:
+        served.stop()
+
+
+SCENARIOS = [scenario_the_lists_share_popover, scenario_projects_page_create_and_detail, scenario_the_chat_card,
+             scenario_a_childs_private_list_is_what_the_picker_shows]
 
 if __name__ == "__main__":
     import traceback

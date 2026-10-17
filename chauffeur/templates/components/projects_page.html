@@ -34,7 +34,7 @@
                 </template>
                 <div class="text-xs text-gray-400" data-create-audience>Who can see it
                     <div class="mt-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2">
-                        {{ audience_picker("{kind: 'project', values: audienceValues(), allowPrivate: true, audience: draft.audience, shared_with: draft.shared_with || [], members: people(), locked: [draft.owner_member_id]}", "draft.audience = $event.detail.audience; draft.shared_with = $event.detail.shared_with") }}
+                        {{ audience_picker("audienceCfg(draft.owner_member_id, draft.audience, draft.shared_with)", "draft.audience = $event.detail.audience; draft.shared_with = $event.detail.shared_with") }}
                     </div>
                 </div>
                 <label class="block text-xs text-gray-400">Target date (optional)
@@ -248,7 +248,7 @@ function projectsPage(host = 'admin') {
         showClosed: (() => { try { return localStorage.getItem('chf_projects_show_closed') === '1'; } catch (e) { return false; } })(),
         sproutSection: document.documentElement.dataset.childStage === 'sprout',
         get shownProjects() { return this.sproutSection ? this.projects.filter(p => p.owner_member_id === this.myId) : this.projects; },
-        draft: {title: '', goal: '', done_when: '', audience: 'private', shared_with: null, owner_member_id: '', target_date: ''},
+        draft: {title: '', goal: '', done_when: '', audience: 'private', shared_with: [], owner_member_id: '', target_date: ''},
         headers() {
             const token = window.chfPersonToken ? window.chfPersonToken() : localStorage.getItem('chauffeur_member_token');
             return {'Content-Type': 'application/json', ...(token ? {'X-Member-Token': token} : {})};
@@ -263,18 +263,18 @@ function projectsPage(host = 'admin') {
         isChild() { const m = this.members.find(m => m.id === this.myId); return !!m && (m.role === 'child' || !!m.is_child); },
         isParent() { return !this.isChild() && this.members.some(m => m.id === this.myId && m.role === 'parent'); },
         owners() { return this.members.filter(m => ['parent','adult','child'].includes(m.role) && (m.status || 'active') === 'active' && !m.system); },
-        defaultAudience() { const m = this.members.find(m => m.id === this.draft.owner_member_id); this.draft.audience = m && (m.role === 'child' || m.is_child) ? 'parents' : 'private'; this.draft.shared_with = null; },
-        // The picker's people and choices; what each choice means is the server's (spec §2).
-        people() { return window.chfAudiencePeople(this.members); },
-        audienceValues() { return ['household', 'parents', 'shared', 'private']; },
+        defaultAudience() { const m = this.members.find(m => m.id === this.draft.owner_member_id); this.draft.audience = m && (m.role === 'child' || m.is_child) ? 'parents' : 'private'; this.draft.shared_with = []; },
+        // The picker's config for a project (chfProjectAudience mirrors the
+        // server's list rules); every save sends the list the picker shows.
+        audienceCfg(ownerId, audience, list) {
+            return window.chfProjectAudience({ownerId, members: this.members, audience, shared_with: list});
+        },
         chooseAudience(p) {
             const id = p.id;
             window.dispatchEvent(new CustomEvent('chf-audience-sheet-open', {detail: {
-                kind: 'project', title: p.title, values: this.audienceValues(), allowPrivate: true,
-                audience: p.audience, shared_with: p.shared_with || [], members: this.people(), locked: [p.owner_member_id],
+                ...this.audienceCfg(p.owner_member_id, p.audience, p.shared_with), title: p.title,
                 save: async (picked) => {
-                    const body = {audience: picked.audience};
-                    if (picked.shared_with) body.shared_with = picked.shared_with;
+                    const body = {audience: picked.audience, shared_with: picked.shared_with || []};
                     await this.request('api/projects/' + encodeURIComponent(id), body, 'PATCH');
                     await this.load();   // the saved row, as the server shaped it
                     return true;
@@ -286,7 +286,7 @@ function projectsPage(host = 'admin') {
             if (this.myId !== who) {
                 this.projects = []; this.members = []; this.opened = null; this.hold = null; this.pieces = {}; this.elsewhere = []; this.contacts = []; this.pieceForm = null; this._addressed = false;
                 this.creating = false;
-                this.draft = {title:'', goal:'', done_when:'', audience:'private', shared_with:null, owner_member_id:who, target_date:''};
+                this.draft = {title:'', goal:'', done_when:'', audience:'private', shared_with:[], owner_member_id:who, target_date:''};
             }
             this.myId = who;
             try {
@@ -443,11 +443,13 @@ function projectsPage(host = 'admin') {
             if (this.busy) return;
             this.busy = true; this.error = '';
             try {
-                const body = {...this.draft, target_date: this.draft.target_date || null};
-                if (!body.shared_with) delete body.shared_with;   // no list: the server's default for the owner
+                const d0 = this.draft;
+                // The list the picker shows, always explicit: never the server's no-list default.
+                const body = {...d0, target_date: d0.target_date || null,
+                              shared_with: window.chfAudienceEmit(this.audienceCfg(d0.owner_member_id, d0.audience, d0.shared_with), d0.audience, d0.shared_with)};
                 const d = await this.request('api/projects', body);
                 this.creating = false; this.opened = d.project.id;
-                this.draft = {title:'', goal:'', done_when:'', audience:'private', shared_with:null, owner_member_id:this.myId, target_date:''};
+                this.draft = {title:'', goal:'', done_when:'', audience:'private', shared_with:[], owner_member_id:this.myId, target_date:''};
                 await this.load();
             } catch (e) { this.error = e.message; }
             finally { this.busy = false; }
