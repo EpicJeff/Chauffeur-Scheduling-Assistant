@@ -476,6 +476,14 @@ def migrate_projects_adopt_v2499517():
         logger.info(f"[migrations] projects adopted: {out}")
 
 
+def migrate_project_audiences_v2499():
+    """Audience spec ?3: every project onto the shared model, once per row."""
+    from services import project_audience
+    out = project_audience.convert_all()
+    if out['converted']:
+        logger.info(f"[migrations] project audiences converted: {out}")
+
+
 def migrate_drop_piece_kind_links_v2499():
     """Access rule §10.1: drop cross-project and stale home-kind links only."""
     from services import projects
@@ -583,6 +591,10 @@ async def run_all_migrations():
         migrate_projects_adopt_v2499517()
     except Exception as e:
         logger.error(f"Error adopting records into projects: {e}")
+    try:
+        migrate_project_audiences_v2499()
+    except Exception as e:
+        logger.error(f"Error converting project audiences: {e}")
     try:
         migrate_drop_piece_kind_links_v2499()
     except Exception as e:

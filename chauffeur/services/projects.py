@@ -1,6 +1,5 @@
 """The durable project record, its audience and lifecycle."""
 
-import threading
 import datetime
 import time
 import uuid
@@ -37,39 +36,9 @@ def _parent(member):
     return member.get('role') == 'parent' and not _child(member)
 
 
-_GATE = threading.local()
-
-
-def _wrapped_visible(project, viewer):
-    """A wrapper's title and goal are its record's words (front door §5): it is
-    seen only by someone who may see that record, now, so a subject bound to
-    the record after adoption narrows the wrapper too. Re-entry (a record
-    whose subject is this very project) defers to the outer check."""
-    src = project.get('wrapped_from') or {}
-    kind, rid = src.get('kind'), src.get('id')
-    if kind not in _ADOPT_TABLES or not rid:
-        return True
-    active = getattr(_GATE, 'ids', None)
-    if active is None:
-        active = _GATE.ids = set()
-    if project.get('id') in active:
-        return True
-    active.add(project.get('id'))
-    try:
-        row = _ADOPT_TABLES[kind][0](rid)
-        if row is None:
-            return True     # the record is gone; the project stands on the words it kept
-        from services import access
-        return access.record_visible(kind, row, viewer)
-    finally:
-        active.discard(project.get('id'))
-
-
 def can_see(project, viewer):
     """The owner always; anyone else by the shared audience model (scope.audience_allows)."""
     if not project or not _active(viewer):
-        return False
-    if project.get('wrapped_from') and project.get('audience_rev') != 2 and not _wrapped_visible(project, viewer):
         return False
     if viewer['id'] == project.get('owner_member_id'):
         return True
@@ -104,6 +73,8 @@ def normalize_audience(row, list_given):
         return 'Choose household, parents, shared or private'
     owner_id = row.get('owner_member_id')
     owner = storage.get_member(owner_id) or {}
+    if list_given and not isinstance(row.get('shared_with'), list):
+        return 'Choose people for the list'
     ids = []
     for mid in (row.get('shared_with') or []) if list_given else []:
         if _listable(mid) and mid not in ids:
@@ -199,9 +170,6 @@ def update(project_id, fields, actor):
         if 'body_goal' in fields:
             return _error('Body goals are classified by Chauffeur')
         patch = {key: fields[key] for key in EDITABLE if key in fields}
-        touches = any(k in patch and patch[k] != project.get(k) for k in AUDIENCE_KEYS)
-        if touches and not can_edit_audience(project, actor):
-            return _error('Only the owner or a parent can change who sees this project')
         proposed = {**project, **patch}
         if any(not isinstance(proposed.get(key), str) for key in ('title', 'goal', 'done_when')):
             return _error('Title, goal and done-when must be text')
@@ -214,6 +182,12 @@ def update(project_id, fields, actor):
         if proposed['owner_member_id'] != project['owner_member_id'] and proposed['audience'] in ('private', 'shared') \
                 and proposed['owner_member_id'] not in proposed['shared_with']:
             proposed['shared_with'].append(proposed['owner_member_id'])
+        before = dict(project)
+        normalize_audience(before, project.get('audience_rev') == 2)
+        touches = (any(proposed.get(k) != before.get(k) for k in ('owner_member_id', 'audience'))
+                   or set(proposed['shared_with']) != set(before['shared_with']))
+        if touches and not can_edit_audience(project, actor):
+            return _error('Only the owner or a parent can change who sees this project')
         message = _validate(proposed)
         if message:
             return _error(message)
@@ -879,12 +853,9 @@ def _wrapper_fields(kind, row, actor):
     member = storage.get_member(owner) if owner else None
     if not _active(member or {}):
         member = situations.parent_of_record()
-    voice = bool(row.get('voice_shared') or row.get('requester_provenance'))
-    # Parents saw every thread, mission and program on its own page; the wrapper
-    # keeps them, and the record gate in can_see narrows it to the record.
-    audience = 'household' if voice else 'parents'
+    # adopt derives the audience from the record before creating the wrapper.
     return {'title': title or 'Untitled', 'goal': goal, 'done_when': '', 'owner_member_id': (member or {}).get('id'),
-            'audience': audience}
+            'audience': 'private'}
 
 
 def adopt(kind, record_id, actor, project_id=None):
@@ -903,6 +874,13 @@ def adopt(kind, record_id, actor, project_id=None):
         pid = project_id if project_id and storage.get_project(project_id) else _belongs_to(kind, row)
         if not pid:
             fields = _wrapper_fields(kind, row, actor)
+            from services import project_audience
+            owner_id, audience, listed, retitle = project_audience.derive_for_record(kind, row, fields['owner_member_id'])
+            fields.update(owner_member_id=owner_id, audience=audience, shared_with=listed)
+            if retitle:
+                fields.update(title='Untitled project', goal='')
+            if any(body_goal.is_body_goal(fields.get(key)) for key in ('title', 'goal')):
+                fields.update(audience='private', shared_with=[owner_id])
             owner = storage.get_member(fields['owner_member_id']) or {}
             creator = actor if _active(actor or {}) else (owner if _active(owner) else None)
             if not creator:
@@ -914,7 +892,8 @@ def adopt(kind, record_id, actor, project_id=None):
             if prepared['status'] != 'success':
                 # A body-goal title a child typed, or an owner the actor may not
                 # assign: fall back to the creator as owner, private.
-                prepared = prepare_create({**fields, 'owner_member_id': creator['id'], 'audience': 'private'}, creator)
+                prepared = prepare_create({**fields, 'owner_member_id': creator['id'], 'audience': 'private',
+                                                      'shared_with': [creator['id']]}, creator)
                 if prepared['status'] != 'success':
                     return None
             project = prepared['project']

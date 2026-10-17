@@ -2072,6 +2072,8 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
             storage.update_thread(tid, {'subject_kind': subject_kind, 'subject_id': subject_id,
                                         'subject_rev': (t.get('subject_rev') or 0) + 1,
                                         'subject_history': subjects.history_after_binding(t, subject_kind, subject_id)})
+            from services import project_audience
+            project_audience.narrow_on_bind('thread', storage.get_thread(tid))
     res = _missions.launch(goal, origin_kind='thread', origin_ref=tid, created_by=(acting_member or {}).get('id'), tier='mission')
     if spoken and res.get('mission_id'):
         storage.update_mission(res['mission_id'], {'requester_provenance': voice_context.provenance()})

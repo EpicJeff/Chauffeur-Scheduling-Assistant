@@ -255,6 +255,36 @@ def scenario_a_plans_list_survives_into_a_new_project():
     check(_seen(project['id']) == {'mom', 'aunt', 'kid'}, f"Dad is out: {_seen(project['id'])}")
 
 
+def scenario_plan_reshape_requires_the_before_rows_audience_authority():
+    from services import projects
+    for proposed_owner, listed in (('aunt', ('mom', 'dad', 'aunt', 'kid')), ('mom', ('mom', 'dad', 'aunt'))):
+        _fresh()
+        mid = missions.launch('plan a family gathering', created_by='mom')['mission_id']
+        pid = _wrapper_of_mission(mid)
+        storage.update_project(pid, {'audience': 'private', 'shared_with': ['mom', 'dad', 'aunt', 'kid']})
+        proposal = _plan_project(listed=listed)
+        proposal['owner'] = proposed_owner
+        mission = _drive_to_proposal(mid, proposal)
+        before = storage.get_project(pid)
+        check(projects.can_act(before, dict(AUNT)) and not projects.can_edit_audience(before, dict(AUNT)),
+              'Aunt is listed and can act, but cannot change the audience')
+        rev = mission['plan']['rev']
+        res = situations.act('mission', mid, 'approve_plan', option_id=f'approve_plan:{rev}:approve',
+                             payload={}, actor=dict(AUNT))
+        check(res['status'] == 'refused' and res['message'] == 'Only the owner or a parent can change who sees this project',
+              f'the listed adult cannot take ownership or narrow the list: {res}')
+        check(storage.get_project(pid) == before and storage.get_mission(mid)['plan']['state'] == 'proposed'
+              and not storage.get_mission(mid)['plan'].get('approval'), 'refusal writes no reshape or approval intent')
+        check(projects.can_edit_audience(before, dict(DAD)), 'Dad is a parent who sees the before-row')
+        res = situations.act('mission', mid, 'approve_plan', option_id=f'approve_plan:{rev}:approve',
+                             payload={}, actor=dict(DAD))
+        check(res['status'] == 'success', f'the parent may approve the same proposal: {res}')
+        after = storage.get_project(pid)
+        check(after['owner_member_id'] == proposed_owner and after['audience'] == 'private'
+              and set(after['shared_with']) == set(listed) and not after.get('wrapped_from'),
+              f'the permitted reshape is saved: {after}')
+
+
 if __name__ == '__main__':
     import sys
     import traceback

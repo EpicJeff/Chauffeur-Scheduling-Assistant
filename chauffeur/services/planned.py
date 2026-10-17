@@ -283,6 +283,20 @@ def _project_for_plan(mission, proposed, actor):
         fields['owner_member_id'] = proposed['owner']
     if 'body_goal' in proposed:
         fields['body_goal'] = proposed['body_goal']
+    if home and not projects.can_edit_audience(home, actor):
+        # Judge authority against the current owner, before the proposed shape.
+        candidate = {'owner_member_id': actor['id'], **fields}
+        owner_id = candidate['owner_member_id']
+        owner = (storage.get_member(owner_id) or {}) if isinstance(owner_id, str) else {}
+        candidate.setdefault('audience', 'parents' if projects._child(owner) else 'private')
+        message = projects.normalize_audience(candidate, 'shared_with' in fields)
+        if message:
+            return None, message
+        before = dict(home)
+        projects.normalize_audience(before, home.get('audience_rev') == 2)
+        if (any(candidate.get(k) != before.get(k) for k in ('owner_member_id', 'audience'))
+                or set(candidate['shared_with']) != set(before['shared_with'])):
+            return None, 'Only the owner or a parent can change who sees this project'
     result = projects.prepare_create(fields, actor)
     if home and result.get('project'):
         shaped = {**result['project'], 'id': home['id'], 'reshape': True}
@@ -355,6 +369,8 @@ def _complete_approval(mission, plan):
             row = load(binding['id'])
             if any(row.get(k) != v for k, v in binding['fields'].items()):
                 update(binding['id'], binding['fields'])
+                from services import project_audience
+                project_audience.narrow_on_bind(binding['kind'], load(binding['id']))
     plan['state'] = 'approved'
     missions._close(mid, 'running', plan=plan)
     _settle(mid, 'plan', 'Looks good')
@@ -1004,6 +1020,10 @@ def _bind_created(mid, created):
         update(row['id'], {'subject_kind': record['kind'], 'subject_id': record['id'],
                           'subject_rev': int(row.get('subject_rev') or 0) + 1,
                           'subject_history': subjects.history_after_binding(row, record['kind'], record['id'])})
+        from services import project_audience
+        bound_kind = 'thread' if mission.get('origin_kind') == 'thread' else 'mission'
+        load = storage.get_thread if bound_kind == 'thread' else storage.get_mission
+        project_audience.narrow_on_bind(bound_kind, load(row['id']))
 
 
 def run_stage(mission_id, stage_id, snap, actor):

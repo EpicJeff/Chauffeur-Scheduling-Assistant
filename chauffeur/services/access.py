@@ -152,8 +152,6 @@ def project_visible(project, viewer):
     if not project or not viewer:
         return False
     if is_house(viewer):
-        if project.get('wrapped_from') and project.get('audience_rev') != 2:
-            return projects._wrapped_visible(project, viewer)
         return project.get('audience') in (('household', 'parents', 'shared')
                                            if viewer.get('role') == 'parent' else ('household',))
     return projects.can_see(project, viewer)
