@@ -365,6 +365,99 @@ def scenario_narrowing_errors_preserve_subject_writer_bookkeeping():
               f'created subject ({thread_origin=}) completes mission bookkeeping and releases the claim')
 
 
+def scenario_later_stage_rows_use_the_already_narrowed_project():
+    from unittest.mock import patch
+    from services import planned, projects
+    from test_planned_missions import ROWS
+
+    for thread_origin in (False, True):
+        _fresh()
+        rows = [ROWS[0], {'id': 'r2', 'tool': 'create_thread', 'args': {'title': 'Party arrangements'},
+                         'summary': 'Discuss the party', 'needs': ['r1']}]
+        mid, stage = _staged(rows=rows)
+        if thread_origin:
+            from services import threads
+            tid = threads.create(title='Party errands', owner_member_id='mom', created_by='mom')
+            storage.update_mission(mid, {'origin_kind': 'thread', 'origin_ref': tid})
+        projects.adopt('mission', mid, dict(MOM))
+        pid = _wrapper_of_mission(mid)
+        check(storage.get_project(pid)['audience'] == 'household', 'the wrapper starts household')
+        create = tools.TOOL_HANDLERS['create_thread']
+        created = []
+
+        def create_after_binding(args, actor=None):
+            check(storage.get_project(pid)['audience'] == 'parents',
+                  'the first row narrows the project before the later row executes')
+            result = create(args, actor=actor)
+            thread = storage.get_thread(result['id'])
+            created.append(thread)
+            check(thread['project_id'] == pid
+                  and storage.get_project(thread['project_id'])['audience'] == 'parents',
+                  'the later thread is created inside the already-narrowed home')
+            return result
+
+        with patch.dict(tools.TOOL_HANDLERS, {'create_thread': create_after_binding}):
+            result = planned.run_stage(mid, stage['id'], stage['snapshot'], dict(MOM))
+        check(result['status'] == 'success' and len(created) == 1,
+              f'the stage really creates its later thread: {result}')
+
+
+def scenario_a_narrowing_error_does_not_mask_a_stage_error():
+    from unittest.mock import patch
+    from services import planned, projects, project_audience
+
+    _fresh()
+    mid, stage = _staged()
+    stage_error = ValueError('stage bookkeeping failed')
+    with patch.object(project_audience, 'narrow_on_bind', side_effect=RuntimeError('narrowing failed')), \
+         patch.object(projects, 'on_stage_done', side_effect=stage_error):
+        try:
+            planned.run_stage(mid, stage['id'], stage['snapshot'], dict(MOM))
+        except Exception as exc:
+            check(exc is stage_error, f'the original stage error is preserved: {exc!r}')
+        else:
+            check(False, 'the stage error must propagate')
+    check((mid, stage['id']) not in planned._active_stages, 'the stage claim is still released')
+
+
+def scenario_household_replies_with_no_visible_recipient_age_out():
+    import datetime
+    from unittest.mock import patch
+    from services import threads, replies, watchers
+
+    _fresh()
+    tid = threads.create(title='Old replies', owner_member_id='mom', created_by='mom')
+    check(storage.get_project(_wrapper_of_thread(tid))['audience'] == 'household', 'a household home')
+    now = datetime.datetime.now().replace(hour=12, minute=0, second=0, microsecond=0)
+    old_ts = (now - datetime.timedelta(days=watchers.NOTIFIED_RETENTION_DAYS + 1)).timestamp()
+    for message_id, ts in [('old', old_ts), ('recent', now.timestamp())]:
+        storage.append_thread_history(tid, {'kind': 'received', 'message_id': message_id,
+                                           'text': 'Reply', 'ts': ts, 'dm_pending': True})
+    with patch.object(access, 'record_view', return_value=None), patch.object(replies, '_post') as post:
+        check(replies.flush_pending_dms(now) == 0 and not post.called, 'hidden recipients get no reply')
+    history = {h['message_id']: h for h in storage.get_thread(tid)['history'] if h.get('message_id')}
+    check(not history['old']['dm_pending'] and history['recent']['dm_pending']
+          and history['old']['ts'] == old_ts, 'recipientless household replies age out on their original timestamp')
+
+
+def scenario_private_recipients_include_the_project_owner_and_filter_them():
+    from services import projects, threads
+
+    for audience in ('parents', 'shared', 'private'):
+        _fresh()
+        project = projects.create({'title': 'Aunt coordinates', 'owner_member_id': 'aunt',
+                                   'audience': audience, 'shared_with': ['mom']}, dict(AUNT))['project']
+        tid = threads.create(title='Arrangements', owner_member_id='mom', created_by='mom', project_id=project['id'])
+        # The owner is a project viewer independently of the stored list.
+        if audience == 'private':
+            storage.update_project(project['id'], {'shared_with': ['mom']})
+        check('aunt' in access.private_recipients('thread', storage.get_thread(tid)),
+              f'{audience}: the non-parent project owner receives the record signal')
+        storage.update_thread(tid, {'subject_kind': 'occasion', 'subject_id': 'occ-dad', 'subject_rev': 1})
+        check('aunt' not in access.private_recipients('thread', storage.get_thread(tid)),
+              f'{audience}: project ownership does not bypass the record projection')
+
+
 if __name__ == '__main__':
     import sys
     import traceback

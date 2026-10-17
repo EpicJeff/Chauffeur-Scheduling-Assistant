@@ -987,7 +987,7 @@ def _resolve_refs(value, completed):
 
 
 def _bind_created(mid, created):
-    """Bind a created subject; return (kind, id) to narrow after stage bookkeeping."""
+    """Bind a created subject; return (kind, id) to narrow under the row writer's lock."""
     from services import missions
     mission = storage.get_mission(mid)
     kind, pid, _ = missions.subject_of(mission)
@@ -1051,7 +1051,8 @@ def run_stage(mission_id, stage_id, snap, actor):
         pause_rev = int(mission.get('project_pause_rev') or 0)
         _settle(mission_id, 'stage', 'Doing it')
         started = _clock()
-    bound = None
+    narrowing_error = None
+    stage_error = False
     try:
         for row_id in [r['id'] for r in stage['rows']]:
             with storage.db_lock:
@@ -1100,7 +1101,15 @@ def run_stage(mission_id, stage_id, snap, actor):
                 if row['state'] == 'failed':
                     _dismiss_rows({'rows': [row]})
                 else:
-                    bound = _bind_created(mission_id, result.get('created') or []) or bound
+                    bound = _bind_created(mission_id, result.get('created') or [])
+                    if bound:
+                        from services import project_audience, situations
+                        try:
+                            project_audience.narrow_on_bind(bound[0], situations.load(*bound))
+                        except Exception as exc:
+                            # The row result is saved; finish stage bookkeeping before raising.
+                            if narrowing_error is None:
+                                narrowing_error = exc
             if result.get('budget') is True:
                 break
         with storage.db_lock:
@@ -1132,13 +1141,14 @@ def run_stage(mission_id, stage_id, snap, actor):
                                    if r['state'] == 'failed'), 'Stage could not finish.')
                     projects.on_stage_blocked(mission_id, stage_id, reason)
         return {'status': 'success', 'message': 'Stage done.' if stage['state'] == 'done' else 'Partly done; carry on later.'}
+    except BaseException:
+        stage_error = True
+        raise
     finally:
         with storage.db_lock:
             _active_stages.discard(key)
-            # Finish the rows, stage and claim bookkeeping before narrowing can raise.
-            if bound:
-                from services import project_audience, situations
-                project_audience.narrow_on_bind(bound[0], situations.load(*bound))
+        if narrowing_error is not None and not stage_error:
+            raise narrowing_error
 
 
 def reconcile():

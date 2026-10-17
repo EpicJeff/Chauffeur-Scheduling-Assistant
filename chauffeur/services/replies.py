@@ -199,7 +199,8 @@ def flush_pending_dms(now: datetime.datetime = None) -> int:
         return 0
     posted = 0
     for thread in storage.get_threads(include_closed=False):
-        recipientless = access.restricted(access.home_project(thread)) and not _recipients(thread)
+        recipientless = not any(access.record_view('thread', thread, m) is not None
+                                for m in _recipients(thread))
         for h in list(thread.get('history') or []):
             if h.get('kind') == 'received' and h.get('dm_pending'):
                 from services.watchers import NOTIFIED_RETENTION_DAYS

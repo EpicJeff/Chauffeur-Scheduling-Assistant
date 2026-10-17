@@ -328,6 +328,8 @@ def private_recipients(kind, row):
     members = [m for m in storage.get_all_members() if projects._active(m)]
     out = [keeper] if keeper else []
     audience = (home or {}).get('audience')
+    if audience in ('parents', 'shared', 'private') and home.get('owner_member_id'):
+        out.append(home['owner_member_id'])
     if child_keeper or audience in ('parents', 'shared'):
         out += [m['id'] for m in members if projects._parent(m)]
     if audience in ('shared', 'private'):
