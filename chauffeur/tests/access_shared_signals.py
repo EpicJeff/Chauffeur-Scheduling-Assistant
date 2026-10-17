@@ -312,11 +312,9 @@ def delivery_contract(name):
                 check(r1 and all(s[0] in (['aunt'], ['mom']) for s in r1) and {s[0][0] for s in r1} == {'aunt', 'mom'},
                       f'R1 private page: the keeper and the project list, never Dad: {r1}')
                 r6 = {i for s in sent if seen(s, fx, 'R6') for i in s[0]}
-                check('mom' in r6 and not r6 & {'dad', 'aunt', 'hal', 'pat'},
-                      f'R6 (Kate, a private occasion Dad is off) pages Mom and Kate only: {r6}')
+                check(r6 == {'mom', 'kid'}, f'R6 (Kate, a private occasion Dad is off) pages exactly Mom and Kate: {r6}')
                 r8 = {i for s in sent if seen(s, fx, 'R8') for i in s[0]}
-                check({'mom', 'dad'} <= r8 and not r8 & {'aunt', 'kid', 'hal', 'pat'},
-                      f'R8 (a parents-only subject) pages the parents: {r8}')
+                check(r8 == {'mom', 'dad'}, f'R8 (a parents-only subject) pages exactly the parents: {r8}')
                 check(all('pat' not in s[0] for s in sent), 'Pat never paged')
                 storage.update_thread(fx.ids['R1'], {'next_action_at': '2026-10-15'})
                 sent.clear()
@@ -542,6 +540,22 @@ def round1_shared_contracts():
 
     changes_key('project owner', storage.get_project(fx.projects['mom_private']['id']),
                 storage.update_project, 'owner_member_id', 'aunt')
+    # Audience spec section 4: the list and the conversion stamp are access inputs too.
+    changes_key('project shared_with', storage.get_project(fx.projects['kate_no_dad']['id']),
+                storage.update_project, 'shared_with', ['kid', 'mom', 'dad'])
+    changes_key('project audience_rev', storage.get_project(fx.projects['kate_no_dad']['id']),
+                storage.update_project, 'audience_rev', 99)
+    # A warm board for Dad, where Dad is on Kate's list: take him off with NO other change, and the
+    # next build must neutralize Kate's practice for him.
+    storage.update_project(fx.projects['kate_no_dad']['id'], {'shared_with': ['kid', 'mom', 'dad']})
+    dad = storage.get_member('dad')
+    home_board._CACHE.clear()
+    listed = home_board.build(config, now=NOW, viewer=dad)
+    check(seen(listed, fx, 'R15'), 'Dad, listed, reads Kate practice on his board')
+    storage.update_project(fx.projects['kate_no_dad']['id'], {'shared_with': ['kid', 'mom']})
+    unlisted = home_board.build(config, now=NOW, viewer=dad)
+    check(unlisted is not listed and not seen(unlisted, fx, 'R15') and fx.secret('R15') not in text(unlisted),
+          'removing only Dad from the list invalidates his warm board and neutralizes the practice')
     member = storage.get_member('mom')
     for field in ('is_child', 'system'):
         changes_key('member ' + field, member, storage.update_member, field, True)

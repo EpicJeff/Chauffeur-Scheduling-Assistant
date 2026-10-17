@@ -238,6 +238,144 @@ def scenario_binding_never_touches_a_real_project():
           "only a wrapper narrows; a person's own project keeps the audience they chose")
 
 
+def scenario_wrapper_audience_stays_authoritative_after_the_record_changes():
+    """The converted audience is the project's own: it differs from its record's readers on purpose
+    (narrower and wider), and neither deleting the record nor changing what it is about moves it.
+    A retained live gate fails the wider case, since a missing record used to read as visible."""
+    _fresh()
+    from services import threads
+    # Narrower: the record is open to everyone; the person made the project Mom's alone.
+    tid, pid = _wrapped_thread('mom')
+    storage.update_project(pid, {'audience': 'private', 'shared_with': ['mom']})
+    # Wider: the record is Mom-only (a private occasion), the person made the project household.
+    storage.save_occasion({'id': 'occ-mom', 'title': 'Mom only', 'audience': 'private', 'shared_with': ['mom']})
+    tid2, pid2 = _wrapped_thread('mom', subject_kind='occasion', subject_id='occ-mom')
+    storage.update_project(pid2, {'audience': 'household', 'shared_with': []})
+    for step in ('as is', 'record deleted', 'subject changed', 'converted again'):
+        if step == 'record deleted':
+            storage.delete_thread(tid)
+            storage.delete_thread(tid2)
+        elif step == 'subject changed':
+            storage.save_occasion({'id': 'occ-open', 'title': 'Open', 'audience': 'household'})
+        elif step == 'converted again':
+            _convert()
+        check(_seen(pid) == {'mom'} and not access.project_visible(storage.get_project(pid), access.HOUSE),
+              f"{step}: the narrower project stays Mom's alone: {_seen(pid)}")
+        check(_seen(pid2) == {'mom', 'dad', 'aunt', 'kid'} and access.project_visible(storage.get_project(pid2), access.HOUSE),
+              f"{step}: the wider project stays household for everyone, the house included: {_seen(pid2)}")
+
+
+def scenario_mission_wrapper_converts_by_its_missions_readers():
+    _fresh()
+    from services import projects
+    open_mission = storage.add_mission({'goal': 'Open errand', 'created_by': 'mom', 'status': 'running'})
+    projects.adopt('mission', open_mission, dict(MOM))
+    storage.save_occasion({'id': 'occ-dad', 'title': 'Dad surprise', 'audience': 'private', 'shared_with': ['mom', 'kid']})
+    secret = storage.add_mission({'goal': 'Surprise errand', 'created_by': 'mom', 'status': 'running',
+                                  'subject_kind': 'occasion', 'subject_id': 'occ-dad', 'subject_rev': 1,
+                                  'subject_history': [{'kind': 'occasion', 'id': 'occ-dad'}]})
+    projects.adopt('mission', secret, dict(MOM))
+    for mid in (open_mission, secret):
+        _reset(storage.get_mission(mid)['project_id'])
+    _convert()
+    open_row = storage.get_project(storage.get_mission(open_mission)['project_id'])
+    secret_row = storage.get_project(storage.get_mission(secret)['project_id'])
+    check(open_row['audience'] == 'household', f"an open mission's wrapper is household: {open_row}")
+    check(secret_row['audience'] == 'private' and secret_row['shared_with'] == ['mom'] and 'dad' not in _seen(secret_row['id']),
+          f"a mission about Dad's surprise is Mom's alone: {secret_row}")
+
+
+def scenario_owner_moves_keeper_first_then_parent_then_adult():
+    _fresh()
+    storage.save_occasion({'id': 'occ-ma', 'title': 'Mom and Aunt', 'audience': 'private', 'shared_with': ['mom', 'aunt']})
+    # Keeper first: Aunt keeps the thread, the project was Dad's, Dad is hidden, Mom is a parent in the set.
+    tid, pid = _wrapped_thread('aunt', subject_kind='occasion', subject_id='occ-ma')
+    _reset(pid, owner_member_id='dad')
+    _convert()
+    check(storage.get_project(pid)['owner_member_id'] == 'aunt', f"the record's keeper before any parent: {storage.get_project(pid)}")
+    # Parent before adult: no keeper in the set (the thread has none), Mom and Aunt both read it.
+    tid, pid = _wrapped_thread('', subject_kind='occasion', subject_id='occ-ma')
+    _reset(pid, owner_member_id='dad')
+    _convert()
+    check(storage.get_project(pid)['owner_member_id'] == 'mom', f"a parent before an adult: {storage.get_project(pid)}")
+    # Adult last: only Aunt reads it.
+    storage.save_occasion({'id': 'occ-a', 'title': 'Aunt only', 'audience': 'private', 'shared_with': ['aunt']})
+    tid, pid = _wrapped_thread('', subject_kind='occasion', subject_id='occ-a')
+    _reset(pid, owner_member_id='mom')
+    _convert()
+    row = storage.get_project(pid)
+    check(row['owner_member_id'] == 'aunt' and row['audience'] == 'private' and row['shared_with'] == ['aunt'], f"an adult when no parent can: {row}")
+
+
+def scenario_wrapped_from_is_provenance_only():
+    _fresh()
+    tid, pid = _wrapped_thread('dad')
+    _reset(pid)
+    _convert()
+    row = storage.get_project(pid)
+    check(row['wrapped_from'] == {'kind': 'thread', 'id': tid}, f"conversion keeps the provenance: {row['wrapped_from']}")
+    before = _seen(pid)
+    storage.update_project(pid, {'wrapped_from': None})
+    check(_seen(pid) == before and access.project_visible(storage.get_project(pid), access.HOUSE), "visibility never reads it")
+    storage.update_project(pid, {'wrapped_from': {'kind': 'thread', 'id': 'gone'}})
+    check(_seen(pid) == before, "nor does a dangling one change it")
+
+
+def scenario_a_childs_private_list_is_frozen_once_converted():
+    _fresh()
+    kid = _legacy('kid', 'private', title='Kate diary')
+    _convert()
+    listed = set(storage.get_project(kid)['shared_with'])
+    check(listed == {'kid', 'mom', 'dad'}, f"the child and today's parents: {listed}")
+    storage.update_member('kid', {'role': 'adult', 'is_child': False})
+    storage.add_member({'id': 'step', 'name': 'Step', 'role': 'parent'})
+    _convert()
+    row = storage.get_project(kid)
+    check(set(row['shared_with']) == listed, f"adulthood and a new parent do not edit the list: {row['shared_with']}")
+    members = [dict(MOM), dict(DAD), {'id': 'step', 'name': 'Step', 'role': 'parent'}, {'id': 'kid', 'name': 'Kate', 'role': 'adult'}]
+    check({m['id'] for m in members if _p().can_see(row, m)} == {'mom', 'dad', 'kid'}, "the parents who were on it still see it; a parent added later does not")
+
+
+def scenario_the_numbered_migration_runs_after_adoption():
+    """Runtime: the real async runner, on fixture storage, with its 5 s start-up sleep skipped."""
+    import asyncio
+    from services import migrations
+    check(hasattr(migrations, 'migrate_project_audiences_v2499'), "the migration is named migrate_project_audiences_v2499")
+    _fresh()
+    kid = _legacy('kid', 'private', title='Kate diary')
+    tid, pid = _wrapped_thread('dad')
+    _reset(pid)
+    order = []
+
+    def recording(name):
+        real = getattr(migrations, name)
+
+        def run(*args, **kwargs):
+            order.append(name)
+            return real(*args, **kwargs)
+        return run
+
+    real_sleep = asyncio.sleep
+
+    async def no_wait(delay, *args, **kwargs):
+        return await real_sleep(0)
+    saved = {n: getattr(migrations, n) for n in ('migrate_projects_adopt_v2499517', 'migrate_project_audiences_v2499')}
+    try:
+        for name in saved:
+            setattr(migrations, name, recording(name))
+        migrations.asyncio.sleep = no_wait
+        asyncio.run(migrations.run_all_migrations())
+    finally:
+        migrations.asyncio.sleep = real_sleep
+        for name, fn in saved.items():
+            setattr(migrations, name, fn)
+    check(order == ['migrate_projects_adopt_v2499517', 'migrate_project_audiences_v2499'],
+          f"the audience conversion runs once, after the adoption: {order}")
+    check(storage.get_project(kid).get('audience_rev') == 2 and set(storage.get_project(kid)['shared_with']) == {'kid', 'mom', 'dad'},
+          "and the runner really converted the legacy rows")
+    check(storage.get_project(pid).get("audience_rev") == 2 and storage.get_project(pid)["audience"] == "household", f"wrappers too: {storage.get_project(pid)}")
+
+
 if __name__ == '__main__':
     import sys
     import traceback

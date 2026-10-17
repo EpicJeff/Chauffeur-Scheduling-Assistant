@@ -333,6 +333,16 @@ def write_probe(rid, fx, rkey, col, forced_verb=None):
                 'state': 'doing' if path.endswith('/cancel') else 'todo'}
         storage.update_project(pid, {'steps': [step]})
         path = path.replace('{project_id}', pid).replace('{step_id}', step['id'])
+        if method == 'PATCH':
+            # A supported edit, and proof of it: an accepted write persists, a refused one changes nothing.
+            from harness import check
+            original = storage.get_project(pid)['title']
+            r = request(fx, col, method, path, json={'title': f'Edited by {col}'})
+            outcome = result(r)
+            stored = storage.get_project(pid)['title']
+            check(stored == (f'Edited by {col}' if outcome == F else original),
+                  f'PATCH {col} on {rkey}: outcome {outcome}, stored title {stored!r}')
+            return outcome
         r = request(fx, col, method, path, json={'outcome': 'stop', 'by_date': '2020-01-01'})
         return result(r)
     verb = forced_verb or verb_for(rid)

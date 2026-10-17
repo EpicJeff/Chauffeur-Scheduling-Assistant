@@ -113,8 +113,31 @@ def scenario_payloads():
     card = _p().card(row, dict(AUNT))
     check(card['can_edit_audience'] is False and card['body_goal'] is False
           and {'id': 'aunt', 'name': 'Aunt Jo'} in card['shared_with'], f"card: {card}")
+    check(sorted(e['id'] for e in card['shared_with']) == ['aunt', 'mom'] and all(set(e) == {'id', 'name'} for e in card['shared_with']),
+          f"the card lists exactly the owner and Aunt, each as id and name: {card['shared_with']}")
     view = _p().view(row, dict(MOM))
-    check(view['can_edit_audience'] is True and 'body_goal' in view, f"view: {view}")
+    check(view['can_edit_audience'] is True and view['body_goal'] is False, f"view: {view}")
+    check({'id': 'aunt', 'name': 'Aunt Jo'} in view['shared_with'] and {'id': 'mom', 'name': 'Mom'} in view['shared_with'],
+          f"a normal detail payload names who is listed: {view['shared_with']}")
+    check(_p().view(row, dict(AUNT))['can_edit_audience'] is False, "and a listed adult is told they cannot change it")
+    pinned = _make('mom', MOM, title='Reach 70 kg', audience='private')
+    check(_p().card(storage.get_project(pinned['id']), dict(MOM))['body_goal'] is True
+          and _p().view(storage.get_project(pinned['id']), dict(MOM))['body_goal'] is True, "a body goal says so on both payloads")
+
+
+def scenario_audience_labels():
+    _fresh()
+    shared = storage.get_project(_make('mom', MOM, title='Party', audience='shared', shared_with=['aunt'])['id'])
+    check(_p().card(shared, dict(MOM))['audience_label'] == 'Parents and chosen people', "shared label")
+    listed = storage.get_project(_make('mom', MOM, title='Gift', audience='private', shared_with=['aunt'])['id'])
+    label = _p().card(listed, dict(MOM))['audience_label']
+    check(label.startswith('Only ') and 'Mom' in label and 'Aunt Jo' in label, f"private with more than the owner names them: {label}")
+    alone = storage.get_project(_make('mom', MOM, title='Mine', audience='private')['id'])
+    check(_p().card(alone, dict(MOM))['audience_label'] == 'Private', "private to the owner alone keeps its label")
+    house = storage.get_project(_make('mom', MOM, title='Garage', audience='household')['id'])
+    parents = storage.get_project(_make('mom', MOM, title='Taxes', audience='parents')['id'])
+    check(_p().card(house, dict(MOM))['audience_label'] == 'Household' and _p().card(parents, dict(MOM))['audience_label'] == 'Parents',
+          "the old labels stay")
 
 
 def scenario_child_private_list_beats_parent_bypass():
@@ -154,6 +177,8 @@ def scenario_patch_route_registered():
     from services import access_readers
     rows = [r for r in access_readers.READERS if r[0][1] == 'PATCH' and r[0][2] == '/api/projects/{project_id}']
     check(rows and rows[0][1] == '4.1-signed-in', f"PATCH /api/projects/{{id}} has its own row: {rows}")
+    check(tuple(rows[0][2]) == ('thread', 'mission', 'program'),
+          f"with the three piece kinds, so the matrix runs PATCH cells (empty kinds would run none): {rows[0][2]}")
 
 
 if __name__ == '__main__':
