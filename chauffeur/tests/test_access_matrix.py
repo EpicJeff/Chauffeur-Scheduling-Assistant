@@ -64,11 +64,16 @@ def scenario_every_reader_has_a_probe_or_is_pending():
 
 def scenario_every_probe_matches_the_table():
     only = sys.argv[1] if len(sys.argv) > 1 else ''
-    fx = access_fixture.build()
+    fx, fx_class = None, None
     bad = []
-    for rid, cls, kinds, _check in reg.READERS:
+    for rid, cls, kinds, _check in sorted(reg.READERS, key=lambda r: r[1]):
         if rid not in PROBES or rid in pending_ids() or not cls.startswith(only):
             continue
+        if cls != fx_class:
+            # Write probes may rebuild storage under a class; a fresh fixture
+            # per class keeps one class's rebuilds from stranding the next
+            # class's record ids (full runs only, class runs never noticed).
+            fx, fx_class = access_fixture.build(), cls
         for rkey in TABLE:
             if KIND[rkey] not in kinds:
                 continue
