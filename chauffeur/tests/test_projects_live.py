@@ -11,7 +11,8 @@ test relies on (exact):
     (doing) Argyle step; `[data-step-hold="<id>"]` on a person's step, which
     shows the suggested time and `[data-hold-confirm]` to keep it;
   * `[data-new-project]` opens the New project form: inputs named title, goal,
-    done_when, a select named audience, and `[data-create-project]`;
+    done_when, the shared audience picker (`[data-create-audience] [data-audience-value]`),
+    and `[data-create-project]`;
   * the phone app has a tab `#tab-projects`;
   * an old Programs link opens its piece sheet inside the owning project.
 No browser dialogs anywhere (alert/confirm/prompt).
@@ -155,14 +156,14 @@ def scenario_the_admin_tab():
             page.fill('[name="title"]', 'Garage clear-out')
             page.fill('[name="goal"]', 'park the car inside')
             page.fill('[name="done_when"]', 'the car fits')
-            page.select_option('[name="audience"]', 'household')
+            page.locator('[data-create-audience] [data-audience-value="household"]').check()
             page.locator('[data-create-project]').first.click()
             for _ in range(40):
                 if any(p['title'] == 'Garage clear-out' for p in storage.get_projects()):
                     break
                 page.wait_for_timeout(250)
-            check(any(p['title'] == 'Garage clear-out' and p['created_by'] == 'mom' for p in storage.get_projects()),
-                  "a project created by hand")
+            check(any(p['title'] == 'Garage clear-out' and p['created_by'] == 'mom' and p['audience'] == 'household'
+                      for p in storage.get_projects()), "a project created by hand, for the household as picked")
             check(not dialogs, f"no browser dialogs: {dialogs}")
             page.goto(served.url('programs?id=pr1'), wait_until='load')
             page.wait_for_selector('[data-record-sheet][data-open="true"]', timeout=15000)

@@ -1,0 +1,162 @@
+{# The one people picker (project audiences spec §5), extracted from the Lists
+   page's share popover. It draws an audience choice and a member checklist and
+   emits `audience-picked` with {audience, shared_with}; it never decides what a
+   choice means. The SERVER owns each kind's rules (a private list adds the
+   person flipping it, a private project adds its owner, an empty shared project
+   is stored as parents) and every host re-reads the saved row afterwards.
+
+   audience_picker(cfg, on_pick)
+     cfg      a JS expression, evaluated in the host's scope on every render:
+              {kind, values, allowPrivate, audience, shared_with, members, locked}
+              shared_with: ids or {id, name} rows; members: [{id, name}];
+              locked: ids shown ticked and fixed (a project's owner).
+     on_pick  a JS statement run on `audience-picked` ($event.detail).
+   A value change carries the current list, or null when nothing is ticked so
+   the server's own default applies; a tick carries the new list.
+
+   audience_sheet()       the picker in a sheet with Save, opened by
+                          `chf-audience-sheet-open` {…cfg, title, save(picked)}.
+                          One per page, at the top level of the host.
+   audience_picker_script()  the two factories; emit once outside any template. #}
+
+{% macro audience_picker_script() %}
+<script>
+window.chfAudienceCopy = window.chfAudienceCopy || {
+    list: {
+        checklistFor: ['household', 'private'],
+        label: {household: 'Household', private: '🔒 Private list'},
+        note: {household: 'Everyone in the household already sees this list. Ticking a person hands it to them even when their scope hides lists in general.',
+               private: 'Private: only the people ticked below see this list — nobody else, parents included. Panels never show it.'},
+    },
+    project: {
+        checklistFor: ['shared', 'private'],
+        label: {household: 'Household', parents: 'Parents', shared: 'Parents and chosen people', private: 'Private'},
+        note: {household: 'Everyone at home sees it, the wall included.',
+               parents: 'Parents and the owner see it.',
+               shared: 'Parents, the owner and the people ticked below see it.',
+               private: 'Only the people ticked below see it — a parent too only when ticked. The owner always does.'},
+    },
+};
+window.chfAudienceIds = function (list) {
+    return (list || []).map(x => (x && typeof x === 'object') ? x.id : x).filter(Boolean);
+};
+// People a project list can hold: active, real members. Lists keep their own
+// filter (every non-system member), exactly as the popover always had it.
+window.chfAudiencePeople = function (members) {
+    return (members || []).filter(m => m && !m.system && m.id !== 'argyle' && (m.status || 'active') === 'active')
+        .map(m => ({id: m.id, name: m.name || ''}));
+};
+window.chfAudiencePicker = function (cfg) {
+    return {
+        apName: 'ap-' + Math.random().toString(36).slice(2),
+        get ap() {
+            const c = (typeof cfg === 'function' ? cfg() : cfg) || {};
+            const copy = window.chfAudienceCopy[c.kind] || {checklistFor: [], label: {}, note: {}};
+            return {kind: c.kind, audience: c.audience || '', ids: window.chfAudienceIds(c.shared_with),
+                    values: (c.values || []).filter(v => v !== 'private' || c.allowPrivate !== false),
+                    members: c.members || [], locked: c.locked || [], copy};
+        },
+        apLabel(v) { return this.ap.copy.label[v] || v; },
+        apNote() { return this.ap.copy.note[this.ap.audience] || ''; },
+        apShowList() { return this.ap.copy.checklistFor.includes(this.ap.audience); },
+        apLocked(id) { return this.ap.locked.includes(id); },
+        apChecked(id) { return this.apLocked(id) || this.ap.ids.includes(id); },
+        apPick(v) {
+            const c = this.ap;
+            if (v === c.audience) return;
+            this.$dispatch('audience-picked', {audience: v, shared_with: c.ids.length ? c.ids : null});
+        },
+        apToggle(id) {
+            if (this.apLocked(id)) return;
+            const c = this.ap;
+            const ids = c.ids.includes(id) ? c.ids.filter(x => x !== id) : [...c.ids, id];
+            this.$dispatch('audience-picked', {audience: c.audience, shared_with: ids});
+        },
+    };
+};
+window.chfAudienceSheet = function () {
+    return {
+        asOpen: false, asOpts: {}, asDraft: {audience: '', shared_with: null}, asBusy: false, asError: '',
+        asShow(d) {
+            if (!d || typeof d.save !== 'function') return;
+            this.asOpts = d; this.asError = ''; this.asBusy = false;
+            this.asDraft = {audience: d.audience || '', shared_with: window.chfAudienceIds(d.shared_with)};
+            this.asOpen = true;
+            this.$nextTick(() => this.$refs.asPanel && this.$refs.asPanel.focus());
+        },
+        asCfg() { return {...this.asOpts, audience: this.asDraft.audience, shared_with: this.asDraft.shared_with || []}; },
+        asPicked(p) { this.asDraft = {audience: p.audience, shared_with: p.shared_with}; },
+        asTitle() { return this.asOpts.title ? 'Who sees “' + this.asOpts.title + '”' : 'Who sees this'; },
+        async asSave() {
+            if (this.asBusy) return;
+            this.asBusy = true; this.asError = '';
+            try {
+                const ok = await this.asOpts.save({audience: this.asDraft.audience, shared_with: this.asDraft.shared_with});
+                if (ok !== false) this.asClose();
+            } catch (e) { this.asError = (e && e.message) || 'Could not change who sees this.'; }
+            finally { this.asBusy = false; }
+        },
+        asClose() { this.asOpen = false; this.asOpts = {}; this.asError = ''; },
+        asEscape() {
+            if (!this.asOpen) return;
+            const promptOpen = typeof window.chfPromptOpen === 'function' ? window.chfPromptOpen() :
+                !!document.querySelector('#cc-confirm-modal:not(.hidden), #cc-alert-modal:not(.hidden), #cc-input-modal:not(.hidden), #cc-choice-modal:not(.hidden)');
+            if (!promptOpen) this.asClose();
+        },
+    };
+};
+</script>
+{% endmacro %}
+
+{% macro audience_picker(cfg, on_pick) %}
+<div x-data="chfAudiencePicker(() => ({{ cfg }}))" @audience-picked="{{ on_pick }}" data-audience-picker :data-audience="ap.audience" class="space-y-2">
+    <div class="space-y-0.5" x-show="ap.values.length > 1" role="radiogroup" aria-label="Who can see it">
+        <template x-for="v in ap.values" :key="v">
+            <label class="flex items-center gap-2 py-1 cursor-pointer">
+                <input type="radio" :name="apName" :value="v" :data-audience-value="v" :checked="!!(ap.audience === v)"
+                       @change="apPick(v)" class="accent-pink-500">
+                <span class="text-sm font-bold text-gray-200" x-text="apLabel(v)"></span>
+            </label>
+        </template>
+    </div>
+    <div class="text-xs mb-2" data-audience-note :class="ap.audience === 'private' ? 'text-amber-300/90' : 'text-gray-400'"
+         x-show="apNote()" x-text="apNote()"></div>
+    <div x-show="apShowList()" data-audience-people>
+        <template x-for="m in ap.members" :key="m.id">
+            <label class="flex items-center gap-2 py-1 cursor-pointer" :class="apLocked(m.id) ? 'cursor-default' : ''">
+                <input type="checkbox" :data-audience-member="m.id" :checked="!!apChecked(m.id)" :disabled="!!apLocked(m.id)"
+                       @change="apToggle(m.id)" class="accent-pink-500">
+                <span class="text-sm text-gray-200" x-text="m.name"></span>
+                <span class="text-[11px] font-semibold text-gray-400" x-show="apLocked(m.id)">owner</span>
+            </label>
+        </template>
+        <p class="text-xs text-gray-500 italic" x-show="!ap.members.length">Nobody else to choose yet.</p>
+    </div>
+</div>
+{% endmacro %}
+
+{% macro audience_sheet() %}
+{{ audience_picker_script() }}
+<div x-data="chfAudienceSheet()" x-show="asOpen" x-cloak data-audience-sheet :data-open="asOpen ? 'true' : null"
+     @chf-audience-sheet-open.window="asShow($event.detail)" @keydown.escape.window.capture="asEscape()" @click.self="asClose()"
+     class="pwa-sheet-overlay fixed inset-0 z-[85] bg-black/60 flex items-end sm:items-center justify-center sm:p-4">
+    <div x-ref="asPanel" tabindex="-1" role="dialog" aria-modal="true" :aria-label="asTitle()"
+         class="pwa-sheet w-full sm:max-w-md bg-gray-900 border border-gray-700 rounded-t-2xl sm:rounded-2xl shadow-2xl p-5 max-h-[85dvh] overflow-y-auto outline-none">
+        <div class="pwa-sheet-head flex items-start justify-between gap-3 mb-3">
+            <h2 class="text-lg font-extrabold text-gray-100 min-w-0" x-text="asTitle()"></h2>
+            <button type="button" class="pwa-sheet-close w-8 h-8 shrink-0 rounded-full bg-gray-800 text-white hover:bg-gray-700 font-bold"
+                    data-audience-sheet-close @click="asClose()" aria-label="Close">✕</button>
+        </div>
+        <template x-if="asOpen">
+            {{ audience_picker('asCfg()', 'asPicked($event.detail)') }}
+        </template>
+        <p class="text-xs text-red-300 mt-2" role="status" x-show="asError" x-text="asError"></p>
+        <div class="flex gap-2 justify-end mt-4">
+            <button type="button" data-no @click="asClose()"
+                    class="px-4 py-2 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 text-sm font-bold">Cancel</button>
+            <button type="button" data-yes data-audience-save @click="asSave()" :disabled="!!asBusy"
+                    class="px-4 py-2 rounded-xl bg-teal-700 text-white text-sm font-bold active:bg-teal-800 disabled:opacity-50">Save</button>
+        </div>
+    </div>
+</div>
+{% endmacro %}

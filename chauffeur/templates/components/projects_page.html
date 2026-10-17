@@ -1,5 +1,8 @@
 {# One builder for /work, /projects and the phone app. Hosts own chrome.
-   Programs supplies the disclosure, card, checklist, form and chip vocabulary. #}
+   Programs supplies the disclosure, card, checklist, form and chip vocabulary.
+   Who sees a project is the shared people picker (components/audience_picker.html):
+   inline in the create form, in the audience sheet from the detail page. #}
+{% from 'components/audience_picker.html' import audience_picker, audience_picker_script %}
 <section x-data='projectsPage({{ (projects_host|default("admin"))|tojson }})' x-init="rootEl = $el; load()" @chf-projects-open.window="load()"
          @chf-projects-context.window="sproutSection = $event.detail" x-show="!sproutSection || shownProjects.length > 0"
          @chf-admin-ready.window="load()" class="panel-page w-full max-w-2xl mx-auto px-4 py-6" x-cloak>
@@ -29,11 +32,11 @@
                         </select>
                     </label>
                 </template>
-                <label class="block text-xs text-gray-400">Who can see it
-                    <select name="audience" x-model="draft.audience" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm">
-                        <option value="private">Private</option><option value="parents">Parents</option><option value="household">Household</option>
-                    </select>
-                </label>
+                <div class="text-xs text-gray-400" data-create-audience>Who can see it
+                    <div class="mt-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2">
+                        {{ audience_picker("{kind: 'project', values: audienceValues(), allowPrivate: true, audience: draft.audience, shared_with: draft.shared_with || [], members: people(), locked: [draft.owner_member_id]}", "draft.audience = $event.detail.audience; draft.shared_with = $event.detail.shared_with") }}
+                    </div>
+                </div>
                 <label class="block text-xs text-gray-400">Target date (optional)
                     <input name="target_date" type="date" x-model="draft.target_date" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm">
                 </label>
@@ -104,6 +107,15 @@
                         <h3 class="text-base font-bold text-gray-100" x-text="project.title"></h3>
                         <span class="text-xs font-bold px-1.5 py-0.5 rounded shrink-0" :class="chip(project.state)" x-text="project.state"></span>
                     </div>
+                        <template x-if="project.body_goal || project.can_edit_audience">
+                            <div data-audience-row class="flex items-center justify-between gap-2 text-sm">
+                                <p class="min-w-0 text-gray-300"><span class="text-gray-500">Who sees it: </span><span data-audience-label x-text="project.body_goal ? 'Only you' : project.audience_label"></span></p>
+                                <template x-if="!project.body_goal">
+                                    <button type="button" data-audience-change @click="chooseAudience(project)" :disabled="!!busy"
+                                            class="text-xs font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 shrink-0 disabled:opacity-50">Change</button>
+                                </template>
+                            </div>
+                        </template>
                         <p class="text-sm text-gray-300"><span class="text-gray-500">Goal: </span><span x-text="project.goal"></span></p>
                         <p class="text-sm text-gray-300"><span class="text-gray-500">Done when: </span><span x-text="project.done_when"></span></p>
                         <p class="text-xs text-gray-500" x-show="project.target_date" x-text="project.target_date ? 'Target: ' + project.target_date : ''"></p>
@@ -218,6 +230,7 @@
         </div>
     </template>
 </section>
+{{ audience_picker_script() }}
 <script>
 function projectsPage(host = 'admin') {
     return {
@@ -235,7 +248,7 @@ function projectsPage(host = 'admin') {
         showClosed: (() => { try { return localStorage.getItem('chf_projects_show_closed') === '1'; } catch (e) { return false; } })(),
         sproutSection: document.documentElement.dataset.childStage === 'sprout',
         get shownProjects() { return this.sproutSection ? this.projects.filter(p => p.owner_member_id === this.myId) : this.projects; },
-        draft: {title: '', goal: '', done_when: '', audience: 'private', owner_member_id: '', target_date: ''},
+        draft: {title: '', goal: '', done_when: '', audience: 'private', shared_with: null, owner_member_id: '', target_date: ''},
         headers() {
             const token = window.chfPersonToken ? window.chfPersonToken() : localStorage.getItem('chauffeur_member_token');
             return {'Content-Type': 'application/json', ...(token ? {'X-Member-Token': token} : {})};
@@ -250,14 +263,30 @@ function projectsPage(host = 'admin') {
         isChild() { const m = this.members.find(m => m.id === this.myId); return !!m && (m.role === 'child' || !!m.is_child); },
         isParent() { return !this.isChild() && this.members.some(m => m.id === this.myId && m.role === 'parent'); },
         owners() { return this.members.filter(m => ['parent','adult','child'].includes(m.role) && (m.status || 'active') === 'active' && !m.system); },
-        defaultAudience() { const m = this.members.find(m => m.id === this.draft.owner_member_id); this.draft.audience = m && (m.role === 'child' || m.is_child) ? 'parents' : 'private'; },
+        defaultAudience() { const m = this.members.find(m => m.id === this.draft.owner_member_id); this.draft.audience = m && (m.role === 'child' || m.is_child) ? 'parents' : 'private'; this.draft.shared_with = null; },
+        // The picker's people and choices; what each choice means is the server's (spec §2).
+        people() { return window.chfAudiencePeople(this.members); },
+        audienceValues() { return ['household', 'parents', 'shared', 'private']; },
+        chooseAudience(p) {
+            const id = p.id;
+            window.dispatchEvent(new CustomEvent('chf-audience-sheet-open', {detail: {
+                kind: 'project', title: p.title, values: this.audienceValues(), allowPrivate: true,
+                audience: p.audience, shared_with: p.shared_with || [], members: this.people(), locked: [p.owner_member_id],
+                save: async (picked) => {
+                    const body = {audience: picked.audience};
+                    if (picked.shared_with) body.shared_with = picked.shared_with;
+                    await this.request('api/projects/' + encodeURIComponent(id), body, 'PATCH');
+                    await this.load();   // the saved row, as the server shaped it
+                    return true;
+                }}}));
+        },
         async load() {
             this.loading = true; this.error = '';
             const who = window.chfPersonId ? window.chfPersonId() : localStorage.getItem('chauffeur_member_id') || '';
             if (this.myId !== who) {
                 this.projects = []; this.members = []; this.opened = null; this.hold = null; this.pieces = {}; this.elsewhere = []; this.contacts = []; this.pieceForm = null; this._addressed = false;
                 this.creating = false;
-                this.draft = {title:'', goal:'', done_when:'', audience:'private', owner_member_id:who, target_date:''};
+                this.draft = {title:'', goal:'', done_when:'', audience:'private', shared_with:null, owner_member_id:who, target_date:''};
             }
             this.myId = who;
             try {
@@ -414,9 +443,11 @@ function projectsPage(host = 'admin') {
             if (this.busy) return;
             this.busy = true; this.error = '';
             try {
-                const d = await this.request('api/projects', {...this.draft, target_date: this.draft.target_date || null});
+                const body = {...this.draft, target_date: this.draft.target_date || null};
+                if (!body.shared_with) delete body.shared_with;   // no list: the server's default for the owner
+                const d = await this.request('api/projects', body);
                 this.creating = false; this.opened = d.project.id;
-                this.draft = {title:'', goal:'', done_when:'', audience:'private', owner_member_id:this.myId, target_date:''};
+                this.draft = {title:'', goal:'', done_when:'', audience:'private', shared_with:null, owner_member_id:this.myId, target_date:''};
                 await this.load();
             } catch (e) { this.error = e.message; }
             finally { this.busy = false; }

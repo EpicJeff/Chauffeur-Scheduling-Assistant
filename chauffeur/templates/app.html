@@ -5367,9 +5367,16 @@
         // said; the card lets the person rename it, move its audience, or say
         // it is not a project at all. Its taps are the project's own routes, so
         // a child acts on their own card exactly as on the Projects tab.
+        // Who sees it is the owner's or a parent's call (audience spec §2):
+        // can_edit_audience, not can_edit. A card saved before the field
+        // existed keeps its old gate; the server refuses what it must.
+        function projectCardAudienceGate(card) {
+            return !card.body_goal && !!('can_edit_audience' in card ? card.can_edit_audience : card.can_edit);
+        }
         function renderProjectCard(card) {
             const ladder = [];
-            if (card.can_edit && !card.body_goal) {
+            const canAudience = projectCardAudienceGate(card);
+            if (canAudience) {
                 if (card.audience !== 'private') ladder.push(['private', 'Make private']);
                 if (card.audience !== 'parents') ladder.push(['parents', 'Share with parents']);
                 if (card.audience !== 'household' && myRole() !== 'child') ladder.push(['household', 'Share with the household']);
@@ -5381,11 +5388,12 @@
             const buttons = card.can_edit && card.state === 'active' ? `<div class="flex flex-wrap gap-2 mt-2">${plan}
                 <button onclick="projectCardRename('${pid}')" class="px-3 py-1 rounded-lg text-xs font-semibold bg-gray-700 text-gray-200">Rename</button>
                 ${ladder.map(([a, label]) => `<button onclick="projectCardAudience('${pid}','${a}')" class="px-3 py-1 rounded-lg text-xs font-semibold bg-gray-700 text-gray-200">${label}</button>`).join('')}
+                ${canAudience ? `<button data-project-choose-people onclick="projectCardChoose('${pid}')" class="px-3 py-1 rounded-lg text-xs font-semibold bg-gray-700 text-gray-200">Choose people…</button>` : ''}
                 <button onclick="projectCardDrop('${pid}')" class="px-3 py-1 rounded-lg text-xs font-semibold bg-gray-800 text-gray-400 border border-gray-700">Not a project</button>
             </div>` : '';
             return `<div class="mt-1 px-3 py-2 rounded-xl bg-gray-900 border border-gray-700" data-project-card="${pid}">
                 <div class="flex items-center gap-2"><span class="text-xs uppercase tracking-wide text-teal-300 font-bold">Project</span>
-                    <span class="px-1.5 py-0.5 rounded text-xs bg-gray-800 text-gray-300">${mfEscape(card.audience_label || '')}</span></div>
+                    <span data-project-audience class="px-1.5 py-0.5 rounded text-xs bg-gray-800 text-gray-300">${mfEscape(card.body_goal ? 'Only you' : (card.audience_label || ''))}</span></div>
                 <div class="text-sm text-gray-100 font-semibold mt-1">${mfEscape(card.title || '')}</div>
                 <div class="text-xs text-gray-300 mt-0.5">${mfEscape(card.goal || '')}</div>
                 <div class="text-xs text-gray-500 mt-0.5">${mfEscape(card.owner_label || '')}${card.state !== 'active' ? ' · ' + mfEscape(card.state) : ''}</div>
@@ -5394,6 +5402,45 @@
         async function projectCardPatch(id, body) {
             const r = await fetch(`${apiBase}api/projects/${encodeURIComponent(id)}`, {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
             if (!r.ok) showGlobalAlert('Could not change that project.');
+            else await projectCardRefresh(id);
+        }
+        // A card is a saved message; after a change its chip re-reads the
+        // project as the server now has it.
+        async function projectCardView(id) {
+            const r = await fetch(`${apiBase}api/projects/${encodeURIComponent(id)}`);
+            if (!r.ok) return null;
+            return (await r.json()).project || null;
+        }
+        async function projectCardRefresh(id) {
+            const p = await projectCardView(id).catch(() => null);
+            if (!p) return;
+            document.querySelectorAll(`[data-project-card="${CSS.escape(id)}"] [data-project-audience]`).forEach(el => {
+                el.textContent = p.body_goal ? 'Only you' : (p.audience_label || '');
+            });
+        }
+        // Choose people…: the shared picker in its sheet, fed the project as
+        // the server has it now, not as the card was drawn.
+        async function projectCardChoose(id) {
+            const p = await projectCardView(id).catch(() => null);
+            if (!p) { showGlobalAlert('Could not open that project.'); return; }
+            if (!p.can_edit_audience || p.body_goal) { showGlobalAlert('Only the owner or a parent can change who sees this project'); return; }
+            const values = myRole() === 'child' ? ['parents', 'shared', 'private'] : ['household', 'parents', 'shared', 'private'];
+            window.dispatchEvent(new CustomEvent('chf-audience-sheet-open', {detail: {
+                kind: 'project', title: p.title, values, allowPrivate: true, audience: p.audience,
+                shared_with: p.shared_with || [], members: window.chfAudiencePeople(membersData), locked: [p.owner_member_id],
+                save: async (picked) => {
+                    const body = {audience: picked.audience};
+                    if (picked.shared_with) body.shared_with = picked.shared_with;
+                    const r = await fetch(`${apiBase}api/projects/${encodeURIComponent(id)}`, {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+                    if (!r.ok) {
+                        let msg = 'Could not change who sees this project.';
+                        try { msg = (await r.json()).detail || msg; } catch (e) { /* not JSON */ }
+                        throw new Error(msg);
+                    }
+                    await projectCardRefresh(id);
+                    window.dispatchEvent(new CustomEvent('chf-projects-open'));
+                    return true;
+                }}}));
         }
         async function projectCardRename(id) {
             const title = await promptInput('Rename the project', '');
@@ -10555,6 +10602,8 @@
         }
 
     </script>
+    {% from 'components/audience_picker.html' import audience_sheet %}
+    {{ audience_sheet() }}
 </body>
 
 

@@ -1,6 +1,6 @@
 {# What the admin hosts of the Projects page add around the shared component
    (front door §2-§3): the switched-off notices, the one Projects drawer, the
-   record sheet. Each settings partial sits in a small island of its owning
+   record sheet, the audience sheet. Each settings partial sits in a small island of its owning
    component, so every input saves through the method it always used. The
    phone app never includes this file. #}
 {% from 'components/settings_drawer.html' import settings_drawer, settings_off with context %}
@@ -18,4 +18,6 @@
 <div x-data="programsPage()" x-init="loadSettings()" class="flex flex-col gap-6">{% include 'components/programs_settings.html' %}</div>
 {% endcall %}
 {% include 'components/record_sheet.html' %}
+{% from 'components/audience_picker.html' import audience_sheet %}
+{{ audience_sheet() }}
 {% include 'components/lesson_player.html' %}
