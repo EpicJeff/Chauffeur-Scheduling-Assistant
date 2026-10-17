@@ -16,8 +16,14 @@ def text(out):
     return json.dumps(out, default=str)
 
 
+# Programs whose practice is private: who may read its words. R3 sits in Mom's private
+# project (the child keeper and both parents); R15 in Kate's private project whose
+# explicit list is [Kate, Mom], so Dad is left out (project audiences spec §1).
+PRIVATE_PRACTICE = {'R3': ('mom', 'dad', 'kid'), 'R15': ('mom', 'kid')}
+
+
 def run(fx, key, col, rid):
-    if key not in ('R3', 'R5p') or col == 'pat':
+    if key not in ('R3', 'R5p', 'R15') or col == 'pat':
         return 'skip'  # no other program rows in this fixture; disabled credentials rejected by auth
     if rid[0] == 'reader':
         if col != 'house':
@@ -45,7 +51,7 @@ def run(fx, key, col, rid):
         check(response.status_code == 200, response.text)
         out = response.json()
         check('error' not in out if isinstance(out, dict) else True, text(out))
-        want = col in ('mom', 'dad', 'kid') if key == 'R3' else col in ('mom', 'dad', 'aunt', 'kid', 'house')
+        want = col in PRIVATE_PRACTICE[key] if key in PRIVATE_PRACTICE else col in ('mom', 'dad', 'aunt', 'kid', 'house')
         # Final I4: scope alone never hides an unrestricted home's practice.
         if key == 'R5p' and col == 'hal' and path in ('/api/practice-windows', '/api/schedule'):
             want = True
@@ -80,7 +86,7 @@ def other_route(fx, key, col, rid, ev, cid):
     if col in ('house', 'kid', 'hal', 'aunt') and response.status_code in (401, 403):
         return 'skip'  # preserve pre-existing route/scope gates
     if method in ('PATCH', 'DELETE'):
-        want = col in ('mom', 'dad', 'kid') if key == 'R3' else col in ('mom', 'dad', 'aunt', 'kid')
+        want = col in PRIVATE_PRACTICE[key] if key in PRIVATE_PRACTICE else col in ('mom', 'dad', 'aunt', 'kid')
         check(response.status_code == (200 if want else 404), response.text)
         if not want:
             check(storage.get_protected_commitment(cid)['title'] == fx.title(key), 'refused edit is inert')
@@ -90,7 +96,7 @@ def other_route(fx, key, col, rid, ev, cid):
     check(not (isinstance(payload, dict) and 'error' in payload), str(payload))
     # Some readers have no matching rows (triage ignores practice); a missing
     # title is valid there. No hidden words may reach JSON or an LLM prompt.
-    if key == 'R3' and col not in ('mom', 'dad', 'kid'):
+    if key in PRIVATE_PRACTICE and col not in PRIVATE_PRACTICE[key]:
         check(fx.title(key) not in text((payload, captures)) and fx.secret(key) not in text((payload, captures)),
               f'{rid} {col}: {text((payload, captures))}')
     return 'skip'
@@ -129,7 +135,7 @@ def reader_probe(fx, key, fullname):
             'leg_id': leg, 'status': 'in_progress', 'eta_ts': NOW.timestamp()-600}]))
         stack.enter_context(patch.object(storage, 'mark_drive_status'))
         if module_name.endswith('agent_tools_v2'):
-            query = 'Busy' if key == 'R3' else fx.title(key)
+            query = 'Busy' if key in PRIVATE_PRACTICE else fx.title(key)
             if name == 'get_calendar_events': out = fn(DAY.isoformat(), DAY.isoformat())
             elif name == '_driver_events_for_date': out = fn('driver-mom', DAY)
             elif name == '_find_event_fuzzy': out = fn(query, DAY.isoformat())
@@ -209,7 +215,7 @@ def reader_probe(fx, key, fullname):
                 out = fn()
             proposals = storage.get_proposals()
             check(matcher.called and proposals, 'the real duplicate-annotation path ran')
-            check(proposals[0]['duplicate_of'] == ('Busy' if key == 'R3' else fx.title(key)), str(proposals))
+            check(proposals[0]['duplicate_of'] == ('Busy' if key in PRIVATE_PRACTICE else fx.title(key)), str(proposals))
             delivered.append(proposals)
         elif module_name == 'main':
             if name == '_assist_event_context': out = fn(eid)
@@ -226,7 +232,7 @@ def reader_probe(fx, key, fullname):
         if name not in ('_protected_window',):
             check(view.called or (module_name.endswith('programs') and (record.called or key == 'R5p')),
                   fullname + ' did not reach the calendar access boundary')
-    if key == 'R3':
+    if key in PRIVATE_PRACTICE:
         check(fx.title(key) not in text((out, delivered)) and fx.secret(key) not in text((out, delivered)),
               fullname + ': ' + text((out, delivered))[:2000])
     return 'skip'

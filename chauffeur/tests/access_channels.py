@@ -16,8 +16,11 @@ from services import agent_tools_v2 as tools, agent_router, missions, threads, p
 F, K = 'full', 'keeper'
 EXPECT_CHANNEL = {
     'dm': TABLE,
-    'family': {k: None for k in ('R1', 'R2', 'R3', 'R4', 'R7', 'R10', 'R11')},
-    'mom_aunt': {'R1': K, 'R2': K, 'R3': None, 'R4': None},
+    # Project audiences spec: the family channel holds a child and a helper, so no listed-people
+    # project reaches it. In the Mom and Aunt channel R16 (shared with Aunt) reads in full, while
+    # Kate's R14/R15 (list [Kate, Mom]; Dad and Aunt are off it) read as nothing.
+    'family': {k: None for k in ('R1', 'R2', 'R3', 'R4', 'R7', 'R10', 'R11', 'R14', 'R15', 'R16')},
+    'mom_aunt': {'R1': K, 'R2': K, 'R3': None, 'R4': None, 'R14': None, 'R15': None, 'R16': F},
 }
 
 
@@ -300,6 +303,13 @@ def dm_speaker_record_view():
     check(access.conversation_view(kind, row, fx.viewers['mom'], key) == K,
           'another speaker must not bypass the channel recipient projection')
     check(access.conversation_view(kind, row, access.HOUSE, key) == K, 'id-less caller uses channel projection')
+    # A child's explicit private list leaves Dad out: his own DM, and a DM where a different
+    # speaker is present, get nothing of it, while Mom (listed) and Kate keep their views.
+    kind, row = load(fx, 'R14')
+    check(access.conversation_view(kind, row, fx.viewers['dad'], focus(fx, 'dm', 'dad')) is None,
+          "Dad's own DM must not carry a project his child left him off")
+    check(access.conversation_view(kind, row, fx.viewers['mom'], focus(fx, 'dm', 'mom')) == F, 'listed Mom reads it')
+    check(access.conversation_view(kind, row, fx.viewers['kid'], focus(fx, 'dm', 'kid')) == F, 'Kate reads her own')
     for rkey in ('R6', 'R7'):
         kind, row = load(fx, rkey)
         key = focus(fx, 'dm', 'kid')
@@ -551,7 +561,7 @@ def registry_and_ask_payloads():
     for name in ('list_threads', 'list_programs', 'list_situations', 'list_projects'):
         out = tools.execute_tool(name, {})
         check(out.get('status') == 'success', f'registry {name}: {out}')
-        for rkey in ('R1', 'R2', 'R3', 'R4', 'R7', 'R11'):
+        for rkey in ('R1', 'R2', 'R3', 'R4', 'R7', 'R11', 'R14', 'R15', 'R16'):
             check(observe(out, fx, rkey) is None, f'registry {name}: leaked {rkey}')
     for out in (tools.list_projects(), tools.get_project(fx.projects['household']['id'])):
         check(out['status'] == 'success' and 'Household' in json.dumps(out), 'id-less project reads use HOUSE')

@@ -416,6 +416,41 @@ def scenario_legacy_commitment_projection_and_orphan_writes():
     check(response.status_code == 200 and storage.get_protected_commitment(cid) is None, response.text)
 
 
+def scenario_a_childs_private_list_hides_practice_from_the_parent_it_leaves_out():
+    """R15 is Kate's own program in her private project whose explicit list is [Kate, Mom]
+    (project audiences spec §1): the parent-of-child-keeper bypass yields to the list, so Dad
+    sees a Busy block, gets a neutral push as her driver, and finds nothing by title."""
+    fx = access_fixture.build()
+    event, cid = seed(fx, 'R15')
+    storage.update_member('kid', {'color_code': '#123456'})
+    for col in ('dad', 'aunt'):
+        window = programs.practice_windows(DAY, DAY, viewer=fx.viewers[col])[0]
+        check(set(window) == set(access.NEUTRAL_PRACTICE_KEYS) | {'id', 'title'}, f'{col}: {window}')
+        check(window['title'] == 'Busy' and window['color'] == '#123456', f'{col}: {window}')
+        check(window['id'].startswith('busy-') and fx.ids['R15'] not in window['id'], f'{col}: hashed neutral id')
+    for col in ('mom', 'kid'):
+        owned = programs.practice_windows(DAY, DAY, viewer=fx.viewers[col])[0]
+        check(owned['title'] == fx.title('R15') and owned['steps'] == [fx.secret('R15')], f'{col}: {owned}')
+    view = access.commitment_view(storage.get_protected_commitment(cid), fx.viewers['dad'])
+    check(view['title'] == 'Busy', f"Dad's commitment is neutral: {view}")
+    from services import subjects
+    check(not subjects.find('event', fx.title('R15'), fx.viewers['dad']), 'Dad cannot find her practice by title')
+    check(subjects.find('event', fx.title('R15'), fx.viewers['kid']), 'the child still matches their own practice')
+
+
+def scenario_a_driver_left_off_a_childs_list_gets_a_neutral_push():
+    fx = access_fixture.build()
+    seed(fx, 'R15')
+    storage.update_member('kid', {'driver_id': 'dad-driver'})
+    storage.update_member('dad', {'driver_id': 'dad-driver'})
+    windows = programs.due_practice_pushes(NOW)
+    check(windows, 'a due window really reaches the push entry point')
+    text = json.dumps(windows)
+    check(fx.secret('R15') not in text and fx.title('R15') not in text, 'Dad sees no program words: ' + text)
+    check(windows[0]['title'] == 'Practice time', 'neutral practice push')
+    check(fx.ids['R15'] not in text, 'push tag does not disclose the program id')
+
+
 SCENARIOS = [v for k, v in list(globals().items()) if k.startswith('scenario_')]
 if __name__ == '__main__':
     failed = 0

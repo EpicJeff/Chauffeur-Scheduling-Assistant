@@ -38,7 +38,9 @@ def scenario_a_thread_created_by_hand_gets_a_project():
     t = storage.get_thread(tid)
     p = storage.get_project(t['project_id'])
     check(p and p['title'] == 'Deck permit' and p['goal'] == 'permit approved' and p['owner_member_id'] == 'mom'
-          and p['audience'] == 'parents' and p['state'] == 'active', f"wrapped, parents keep what they saw: {p}")
+          and p['audience'] == 'household' and p['state'] == 'active',
+          f"wrapped; a record open to the house and every adult is born a household wrapper (audience spec rev 3): {p}")
+    check(p.get('audience_rev') == 2, "and it is born converted")
     check(p['pieces'] == [{'kind': 'thread', 'id': tid}], f"the thread is its first piece: {p['pieces']}")
 
 
@@ -48,7 +50,7 @@ def scenario_a_childs_record_gets_a_parents_project():
     pid_prog = programs.create_row({'member_id': 'kid', 'title': 'Learn guitar', 'shape': {'sessions_per_week': 3, 'minutes': 20, 'preferred_days': []},
                                     'phases': [], 'source': {'origin': 'none'}, 'created_by': 'mom'})
     p = storage.get_project(storage.get_program(pid_prog)['project_id'])
-    check(p['owner_member_id'] == 'kid' and p['audience'] == 'parents' and p['title'] == 'Learn guitar', f"a kid's program: {p}")
+    check(p['owner_member_id'] == 'kid' and p['audience'] == 'household' and p['title'] == 'Learn guitar', f"a kid's program: {p}")
 
 
 def scenario_a_thread_origin_mission_joins_the_threads_project():
@@ -128,7 +130,7 @@ def scenario_migration_wraps_every_record_once():
     check(storage.get_project(storage.get_thread(closed)['project_id'])['state'] == 'done', "a done thread is a done project")
     check(storage.get_project(storage.get_mission(ended)['project_id'])['state'] == 'done', "an ended mission is a done project")
     kp = storage.get_project(storage.get_program(prog)['project_id'])
-    check(kp['owner_member_id'] == 'kid' and kp['audience'] == 'parents', f"a kid's program is a parents project: {kp}")
+    check(kp['owner_member_id'] == 'kid' and kp['audience'] == 'household', f"a kid's open program is a household project: {kp}")
     check(len(storage.get_projects()) == 4, f"four projects: {[p['title'] for p in storage.get_projects()]}")
     again = _p().adopt_existing()
     check(again['skipped'] is True and len(storage.get_projects()) == 4, "a second run does nothing")
@@ -140,22 +142,34 @@ def scenario_migration_handles_a_missing_owner():
     tid = storage.add_thread({'title': 'Gutters', 'kind': 'vendor', 'state': 'open', 'owner_member_id': 'gone', 'created_by': 'gone'})
     _p().adopt_existing()
     p = storage.get_project(storage.get_thread(tid)['project_id'])
-    check(p['owner_member_id'] in ('mom', 'dad') and p['audience'] == 'parents', f"the parent of record stands in: {p}")
+    check(p['owner_member_id'] in ('mom', 'dad') and p['audience'] == 'household', f"the parent of record stands in: {p}")
 
 
 
-def scenario_a_wrapper_never_shows_more_than_its_record():
-    """A subject bound after adoption narrows the record; its wrapper narrows with it."""
+def scenario_a_wrapper_is_born_with_its_derived_audience():
+    """The wrapper is born with the audience derived from its record (audience spec section 3, rev 3).
+    A subject bound later narrows it ONCE (project_audience.narrow_on_bind) and never widens it.
+    The real writers are inline storage.update_thread calls, so the test calls narrow_on_bind after
+    writing the subject the way they do."""
     _fresh()
+    from services import project_audience
     tid = threads.create(title='Gift for Kate', owner_member_id='mom', created_by='mom')
     p = storage.get_project(storage.get_thread(tid)['project_id'])
-    from test_subjects import DAD
-    check(_p().can_see(p, dict(DAD)), "Dad sees Mom's plain thread's wrapper, as he saw the thread")
+    from test_subjects import DAD, AUNT, KID
+    check(p['audience'] == 'household' and _p().can_see(p, dict(DAD)), "Dad sees Mom's plain thread's wrapper, as he saw the thread")
     storage.update_thread(tid, {'subject_kind': 'list', 'subject_id': 'l2', 'subject_rev': 1})   # l2: Mom's private list
+    project_audience.narrow_on_bind('thread', storage.get_thread(tid))
     from services import situations
     check(not situations.can_see('thread', storage.get_thread(tid), dict(DAD)), "the fixture: the thread is now Mom's only")
-    check(not _p().can_see(storage.get_project(p['id']), dict(DAD)), "and its wrapper's words go with it")
-    check(_p().can_see(storage.get_project(p['id']), dict(MOM)), "Mom still sees her own")
+    after = storage.get_project(p['id'])
+    check(not _p().can_see(after, dict(DAD)), "binding propagates to the project: Dad no longer sees the wrapper")
+    check(not _p().can_see(after, dict(AUNT)) and not _p().can_see(after, dict(KID)), "nor Aunt or the child")
+    check(_p().can_see(after, dict(MOM)), "Mom still sees her own")
+    storage.update_thread(tid, {'subject_kind': 'list', 'subject_id': 'l1', 'subject_rev': 2})   # l1: a household list
+    project_audience.narrow_on_bind('thread', storage.get_thread(tid))
+    again = storage.get_project(p['id'])
+    check(again['audience'] == after['audience'] and again.get('shared_with') == after.get('shared_with')
+          and not _p().can_see(again, dict(DAD)), "a wider subject never widens the project")
 
 
 def scenario_a_plan_in_a_wrapped_mission_reshapes_its_wrapper():
@@ -193,7 +207,7 @@ SCENARIOS = [scenario_a_thread_created_by_hand_gets_a_project, scenario_a_childs
              scenario_the_plan_route_and_advance_make_no_wrapper, scenario_adopt_is_idempotent_and_never_rewraps,
              scenario_a_planner_row_inside_a_project_joins_it,
              scenario_migration_wraps_every_record_once, scenario_migration_handles_a_missing_owner,
-             scenario_a_wrapper_never_shows_more_than_its_record, scenario_a_plan_in_a_wrapped_mission_reshapes_its_wrapper]
+             scenario_a_wrapper_is_born_with_its_derived_audience, scenario_a_plan_in_a_wrapped_mission_reshapes_its_wrapper]
 
 if __name__ == "__main__":
     import traceback

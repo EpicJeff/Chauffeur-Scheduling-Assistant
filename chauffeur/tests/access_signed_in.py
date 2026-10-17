@@ -73,12 +73,18 @@ def act_expected(rkey, col, verb):
     return value
 
 
+def is_project_write(rid):
+    # PATCH shares its path with the project GET, so the method is part of the identity.
+    return rid[-1] in PROJECT_WRITES or rid[1:] == ('PATCH', '/api/projects/{project_id}')
+
+
 def project_visible(fx, rkey, col):
     # Fixture audiences, independent of production projects.can_see.
     if col == 'pat':
         return False
     if col == 'house':
-        # Household projects, plus the wrapper of a HOUSE-visible thread (§2).
+        # Household projects, plus the wrapper of a record open to the house: it is born
+        # household (project audiences spec §3 rev 3), no longer read through its record.
         return rkey in ('R5t', 'R5p', 'R12', 'R13')
     if rkey in ('R1', 'R2', 'R3', 'R7'):
         return col == 'mom'
@@ -86,6 +92,12 @@ def project_visible(fx, rkey, col):
         return col in ('mom', 'dad') or (rkey == 'R11' and col == 'kid')
     if rkey in ('R6', 'R8'):
         return base(rkey, col) is not None and col in ('mom', 'dad', 'kid')
+    if rkey in ('R14', 'R15'):
+        # Kate's private list is [Kate, Mom]: Dad is a parent left off it, so he sees none of it.
+        return col in ('mom', 'kid')
+    if rkey == 'R16':
+        # `shared`: every parent, the owner, and the list (Aunt). Not the child, not the helper.
+        return col in ('mom', 'dad', 'aunt')
     return True
 
 
@@ -106,7 +118,7 @@ def expected(rid, fx, rkey, col, value):
     if rid not in IDS:
         return value
     path = rid[-1]
-    if path in PROJECT_WRITES:
+    if is_project_write(rid):
         if col == 'house':
             return 'skip'
         if not project_visible(fx, rkey, col):
@@ -116,17 +128,20 @@ def expected(rid, fx, rkey, col, value):
         if col == 'hal':
             return 'FORBIDDEN-NOT-404'
         # A child acts only inside their own project. These fixture projects
-        # belong to Kate for R6/R11; plan/cancel retain their adult role gate.
+        # belong to Kate for R6/R11/R14/R15; plan/cancel retain their adult role gate.
         if col == 'kid':
-            if rkey not in ('R6', 'R11'):
+            if rkey not in ('R6', 'R11', 'R14', 'R15'):
                 return 'FORBIDDEN-NOT-404'
-            return F if path.endswith('/hold') else 'FORBIDDEN-NOT-404'
+            # A child edits their own project (PATCH) and holds time on it; the rest is an adult gate.
+            return F if path.endswith('/hold') or rid[1] == 'PATCH' else 'FORBIDDEN-NOT-404'
         return F
     if rid[0] == 'route' and rid[1] == 'POST' and path in ('/api/threads', '/api/programs'):
         if col == 'pat':
             return None
         if path == '/api/threads' and col in ('kid', 'hal'):
             return 'FORBIDDEN-NOT-404'
+        if path == '/api/programs' and rkey == 'R15' and col == 'kid':
+            return F    # Kate owns that project, so she may start a program in it (a child never starts a thread)
         return F if project_visible(fx, rkey, col) and col in ('mom', 'dad', 'aunt') else 'FORBIDDEN-NOT-404'
     if rid[0] == 'reader':
         if path.endswith('queue_row'):
@@ -213,6 +228,7 @@ IDS = {
     ('route', 'GET', '/api/projects/{project_id}'),
     ('route', 'POST', '/api/projects/{project_id}/pieces'),
     ('route', 'POST', '/api/projects/{project_id}/pieces/remove'),
+    ('route', 'PATCH', '/api/projects/{project_id}'),   # its own row since the audience spec (§4)
     ('route', 'POST', '/api/projects/{project_id}/plan'),
     ('route', 'POST', '/api/projects/{project_id}/steps/{step_id}/cancel'),
     ('route', 'POST', '/api/projects/{project_id}/steps/{step_id}/hold'),
@@ -310,7 +326,7 @@ def write_probe(rid, fx, rkey, col, forced_verb=None):
     fx = access_fixture.build()
     kind, row = load(fx, rkey)
     sid, path, method = row['id'], rid[-1], rid[1]
-    if path in PROJECT_WRITES:
+    if is_project_write(rid):
         pid = row['project_id']
         step = {'id': 'access-project-step', 'title': 'A step', 'needs': [], 'order': 0,
                 'owner': 'argyle' if path.endswith('/cancel') else 'kid',
@@ -452,6 +468,22 @@ def extra_contracts():
         missing = request(fx, col, 'GET', path.format('missing'))
         check(hidden.status_code == missing.status_code == 404 and hidden.json() == missing.json(),
               f'{kind}: hidden must equal missing')
+    # Project audiences (spec §2, edit authority): a listed adult renames but cannot widen, a
+    # parent left off a child's private list cannot even see it, and neither write lands.
+    shared, kate = fx.projects['mom_shared']['id'], fx.projects['kate_no_dad']['id']
+    r = request(fx, 'aunt', 'PATCH', f'/api/projects/{shared}', json={'audience': 'household'})
+    check(r.status_code == 400 and storage.get_project(shared)['audience'] == 'shared', f'listed adult widens: {r.status_code} {r.text}')
+    r = request(fx, 'aunt', 'PATCH', f'/api/projects/{shared}', json={'title': 'Renamed by Aunt'})
+    check(r.status_code == 200 and storage.get_project(shared)['title'] == 'Renamed by Aunt', f'listed adult renames: {r.status_code} {r.text}')
+    for col in ('dad', 'aunt', 'hal'):
+        r = request(fx, col, 'PATCH', f'/api/projects/{kate}', json={'title': 'Hijacked'})
+        check(r.status_code == 404 and storage.get_project(kate)['title'] == 'Kate no Dad', f'{col} PATCH on Kate list: {r.status_code} {r.text}')
+        r = request(fx, col, 'GET', f'/api/projects/{kate}')
+        missing = request(fx, col, 'GET', '/api/projects/missing')
+        check(r.status_code == missing.status_code == 404 and r.json() == missing.json(), f'{col}: hidden must equal missing')
+    r = request(fx, 'dad', 'GET', '/api/projects')
+    check(r.status_code == 200 and 'Kate no Dad' not in r.text and 'Renamed by Aunt' in r.text,
+          f"Dad's project list omits Kate's and keeps the shared one: {r.text[:300]}")
     project = fx.projects['household']['id']
     for method, suffix, body in [('POST', '/pieces', {'kind': 'thread', 'id': fx.ids['R1']}),
                                  ('POST', '/pieces/remove', {'kind': 'thread', 'id': fx.ids['R5t']})]:

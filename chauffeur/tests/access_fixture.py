@@ -31,12 +31,30 @@ def _project(audience, owner, title):
                             'owner_member_id': owner, 'audience': audience}, dict(MOM))['project']
 
 
+def _listed_project(title, owner, audience, shared_with, actor):
+    res = projects.create({'title': title, 'goal': 'g', 'done_when': 'd', 'owner_member_id': owner,
+                           'audience': audience, 'shared_with': shared_with}, dict(actor))
+    assert res['status'] == 'success', f'the fixture needs a {audience} project with a list: {res}'
+    return res['project']
+
+
 def _thread(fx, rkey, owner, project, **extra):
-    tid = threads.create(title=fx.title(rkey), owner_member_id=owner, created_by=owner or 'mom',
-                         project_id=project['id'] if project else None,
-                         next_action=fx.secret(rkey), next_action_at='2020-01-01')
-    if extra:
-        storage.update_thread(tid, extra)
+    if project is None and extra.get('subject_kind'):
+        # A wrapper is born with the audience derived from its record AS IT STANDS (project
+        # audiences spec §3), so a record that carries a private subject must carry it at
+        # adoption. threads.create takes no subject: store the thread whole, then adopt it.
+        creator = owner or 'mom'
+        tid = storage.add_thread({'title': fx.title(rkey), 'goal': '', 'kind': 'project', 'owner_member_id': owner,
+                                  'created_by': creator, 'next_action': fx.secret(rkey),
+                                  'next_action_at': '2020-01-01', **extra})
+        storage.append_thread_history(tid, {'kind': 'opened', 'text': f'Opened: {fx.title(rkey)}', 'who': creator})
+        projects.adopt('thread', tid, storage.get_member(creator))
+    else:
+        tid = threads.create(title=fx.title(rkey), owner_member_id=owner, created_by=owner or 'mom',
+                             project_id=project['id'] if project else None,
+                             next_action=fx.secret(rkey), next_action_at='2020-01-01')
+        if extra:
+            storage.update_thread(tid, extra)
     storage.update_thread(tid, {'status_note': fx.secret(rkey), 'note_source': 'model'})
     fx.ids[rkey] = tid
     return tid
@@ -60,7 +78,7 @@ def _program(fx, rkey, member, project, **extra):
 
 
 def build():
-    """R1–R13 of spec §6. Returns Fx; storage is fresh."""
+    """R1–R13 of spec §6, then R14–R16 of the project audience spec. Returns Fx; storage is fresh."""
     _fresh_projects()
     for m in (HAL, PAT, SIB):
         storage.add_member(dict(m))
@@ -71,6 +89,12 @@ def build():
     kate_private = _project('private', 'kid', 'Kate private')
     fx.projects.update(mom_private=mom_private, mom_parents=mom_parents, household=household,
                        kate_private=kate_private)
+    # Project audiences on the shared model (spec 2026-10-16): `shared` is the parents plus a
+    # list; a child's explicit `private` list may leave a parent out. Both carry the list at
+    # create, since a `shared` project with an empty list is stored as `parents`.
+    mom_shared = _listed_project('Mom shared', 'mom', 'shared', ['aunt'], MOM)
+    kate_no_dad = _listed_project('Kate no Dad', 'kid', 'private', ['kid', 'mom'], KID)
+    fx.projects.update(mom_shared=mom_shared, kate_no_dad=kate_no_dad)
 
     _thread(fx, 'R1', 'aunt', mom_private)
     _mission(fx, 'R2', 'aunt', mom_private)
@@ -103,6 +127,9 @@ def build():
     _thread(fx, 'R12', 'mom', household,
             subject_history=[{'kind': 'trip', 'id': 'ev_parents_trip'}])
     _thread(fx, 'R13', 'dad', None)   # threads.create wraps it (slice 1 invariant)
+    _thread(fx, 'R14', 'kid', kate_no_dad)        # a child's private list leaves Dad out
+    _program(fx, 'R15', 'kid', kate_no_dad)       # ... and so does the child's own program
+    _thread(fx, 'R16', 'mom', mom_shared)         # parents plus Aunt; the child and the helper are out
 
     fx.viewers = {'mom': dict(MOM), 'dad': dict(DAD), 'aunt': dict(AUNT), 'kid': dict(KID),
                   'hal': dict(HAL), 'pat': dict(PAT), 'sib': dict(SIB)}

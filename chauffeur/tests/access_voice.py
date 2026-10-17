@@ -64,6 +64,9 @@ def register(probe):
         def run(fx, rkey, col, name=name):
             fx = access_fixture.build()
             storage.update_thread(fx.ids['R13'], {'title': 'Unrelated wrapper'})
+            # R13's wrapper is a household project now and copies the old title, so a spoken
+            # search for the fragment 'Title R1' would find the project instead (audience spec rev 3).
+            storage.update_project(storage.get_thread(fx.ids['R13'])['project_id'], {'title': 'Unrelated wrapper'})
             for thread in storage.get_threads():
                 storage.update_thread(thread['id'], {'voice_shared': True})
             if name in ('prepare', 'valid', 'intercept'):

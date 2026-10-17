@@ -23,6 +23,12 @@ TABLE = {
     'R10': (F, K, X, X, X, X, X),
     'R11': (F, F, X, X, X, X, X),
     'R12': (F, F, X, X, X, X, X),
+    # Project audiences on the shared model (spec 2026-10-16). R14/R15: a child's private
+    # project whose explicit list leaves Dad out; the parent-of-child-keeper bypass yields to it.
+    'R14': (F, X, X, F, X, X, X),
+    'R15': (F, X, X, F, X, X, X),
+    # R16: a `shared` project is the parents plus its list (Aunt); the child and helper are out.
+    'R16': (F, F, F, X, X, X, X),
 }
 COLS = ('mom', 'dad', 'aunt', 'kid', 'hal', 'pat', 'house')
 # Spec section 7 Acting: visibility is necessary; keeper missions additionally
@@ -33,7 +39,8 @@ ACT = {rkey: {col: F if value is not None else None for col, value in zip(COLS, 
 MISSION_KEEPER_VERBS = frozenset({'ack', 'delete', 'steer', 'drop', 'own'})
 KIND = {'R1': 'thread', 'R2': 'mission', 'R3': 'program', 'R4': 'thread', 'R5t': 'thread',
         'R5p': 'program', 'R6': 'thread', 'R7': 'thread', 'R8': 'thread', 'R10': 'thread',
-        'R11': 'mission', 'R12': 'thread', 'R13': 'thread', 'R9origin': 'thread',
+        'R11': 'mission', 'R12': 'thread', 'R13': 'thread', 'R14': 'thread', 'R15': 'program',
+        'R16': 'thread', 'R9origin': 'thread',
         'R9a': 'mission', 'R9b': 'mission'}
 
 
@@ -59,6 +66,8 @@ def scenario_the_table():
 def scenario_legacy_wrapped_record_is_as_today():
     fx = access_fixture.build()
     kind, rec = load(fx, 'R13')
+    # Dad's plain thread is open to the house and every adult, so its wrapper is born household
+    # (audience spec rev 3: judged by secrecy, not role): nobody gains or loses it.
     for col in ('mom', 'dad', 'aunt', 'house'):
         check(access.record_view(kind, rec, fx.viewers[col]) == 'full', f'R13 {col}')
     check(access.record_view(kind, rec, fx.viewers['kid']) is None, 'R13 kid base')
@@ -69,8 +78,17 @@ def scenario_house_parent_reads_parents_subjects_not_projects():
     fx = access_fixture.build()
     kind, rec = load(fx, 'R8')
     check(access.record_view(kind, rec, access.HOUSE_PARENT) == 'full', 'parents-only subject is HOUSE_PARENT')
+    # Audience spec rev 3: HOUSE_PARENT passes household, parents and shared projects (the shared
+    # model's parent bypass), HOUSE only household, and neither ever opens a private list.
     kind, rec = load(fx, 'R4')
-    check(access.record_view(kind, rec, access.HOUSE_PARENT) is None, 'a parents PROJECT never opens to HOUSE')
+    check(access.record_view(kind, rec, access.HOUSE_PARENT) == 'full', 'a parents PROJECT opens to HOUSE_PARENT')
+    check(access.record_view(kind, rec, access.HOUSE) is None, 'a parents PROJECT never opens to HOUSE')
+    for key in ('R1', 'R14', 'R15'):
+        kind, rec = load(fx, key)
+        check(access.record_view(kind, rec, access.HOUSE_PARENT) is None, f'{key}: a private list never opens to HOUSE_PARENT')
+    kind, rec = load(fx, 'R16')
+    check(access.record_view(kind, rec, access.HOUSE_PARENT) == 'full', 'a shared PROJECT opens to HOUSE_PARENT')
+    check(access.record_view(kind, rec, access.HOUSE) is None, 'a shared PROJECT never opens to HOUSE')
 
 
 def scenario_inactive_keeper_and_viewer():
@@ -136,11 +154,12 @@ def scenario_situations_view_uses_the_rule():
     check(v and fx.secret('R2') not in str(v), f'mission keeper projection: {v}')
 
 
-def scenario_wrapper_project_follows_its_record():
+def scenario_wrapper_project_has_its_own_audience():
     fx = access_fixture.build()
     from services import projects
     wrapper = projects.project_for('thread', fx.ids['R13'])
-    check(access.project_visible(wrapper, access.HOUSE), 'HOUSE sees a wrapper of a household-visible record')
+    check(wrapper['audience'] == 'household' and access.project_visible(wrapper, access.HOUSE),
+          'a wrapper of a record open to the house is born household, by its own audience')
     check(access.project_visible(fx.projects['household'], access.HOUSE), 'HOUSE sees a household project')
     check(not access.project_visible(fx.projects['mom_private'], access.HOUSE), 'HOUSE never sees a private project')
 

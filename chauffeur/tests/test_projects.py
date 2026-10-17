@@ -3,7 +3,8 @@
   * `projects.create(fields, actor) -> {'status', 'project'|'message'}`; a parent
     may create a project for anyone, anyone else only for themselves;
   * audience defaults: an adult's project `private`, a child's `parents`; a
-    child's project is never private from their parents;
+    child's private project with no list includes both parents, and only an
+    explicit list leaves one out (project audiences spec);
   * `projects.can_see` / `projects.can_act` (a child acts only on their own);
   * `projects.update`, `projects.set_state` (active/paused/done/dropped) by
     `can_act` only; `projects.view(project, viewer)` is the viewer's projection;
@@ -67,7 +68,11 @@ def scenario_who_sees_and_who_acts():
     can_see, can_act = _p().can_see, _p().can_act
     check([can_see(private, m) for m in (MOM, DAD, AUNT, KID)] == [True, False, False, False], "private: the owner only")
     check([can_see(kids, m) for m in (MOM, DAD, AUNT, KID)] == [True, True, False, True], "a child's: the child and the parents")
-    check(can_see(kid_private, MOM) and can_see(kid_private, DAD), "a child's project is never private from their parents")
+    check(can_see(kid_private, MOM) and can_see(kid_private, DAD), "a child's private with no list includes both parents")
+    # Project audiences spec: an explicit list is taken as given, which is how a child leaves a parent out.
+    kid_surprise = _make('kid', KID, title='Dad surprise', audience='private', shared_with=['kid', 'mom'])
+    check(can_see(kid_surprise, MOM) and can_see(kid_surprise, KID) and not can_see(kid_surprise, DAD)
+          and not can_see(kid_surprise, AUNT), "a child's explicit list leaves Dad out")
     check(all(can_see(house, m) for m in (MOM, DAD, AUNT, KID)), "household: everyone")
     check(can_act(kids, KID) and can_act(kids, MOM) and not can_act(kids, AUNT), "the owner and a parent act on a child's")
     check(can_act(house, AUNT) and not can_act(house, KID), "an adult who can see it acts; a child only on their own")

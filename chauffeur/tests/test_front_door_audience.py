@@ -26,14 +26,23 @@ def scenario_the_card_follows_the_audience():
 
 
 def scenario_the_wrapped_record_narrows_only():
+    """A wrapper is born with the audience derived from its record (audience spec section 3, rev 3):
+    household for a record open to the house and every adult; a subject bound later narrows it once."""
     _fresh()
-    from services import threads
+    from services import threads, situations, project_audience
     tid = threads.create(title='Pest control', owner_member_id='aunt', created_by='aunt')
     p = storage.get_project(storage.get_thread(tid)['project_id'])
-    check(p['audience'] == 'parents' and _p().can_see(p, dict(MOM)) and not _p().can_see(p, dict(KID)),
-          "an adult's wrapped thread: parents see it (as they saw the thread), a child does not")
-    from services import situations
+    check(p['audience'] == 'household' and _p().can_see(p, dict(MOM)) and _p().can_see(p, dict(AUNT)),
+          "an adult's open thread: its wrapper is household, the parents and its owner see it")
+    check(not situations.can_see('thread', storage.get_thread(tid), dict(KID)), "a child still cannot open the thread itself (piece rule)")
     check(situations.can_see('thread', storage.get_thread(tid), dict(MOM)), "the thread itself is seen exactly as before")
+    # A subject bound to the record afterwards narrows the wrapper once, from the same rule.
+    storage.update_thread(tid, {'subject_kind': 'list', 'subject_id': 'l2', 'subject_rev': 1})   # l2: Mom's private list
+    project_audience.narrow_on_bind('thread', storage.get_thread(tid))
+    after = storage.get_project(p['id'])
+    check(_p().can_see(after, dict(MOM)) and _p().can_see(after, dict(AUNT)), "Mom (the list) and Aunt (the keeper) keep it")
+    check(not _p().can_see(after, dict(DAD)) and not _p().can_see(after, dict(KID)), "Dad and the child do not")
+    check(not situations.can_see('thread', storage.get_thread(tid), dict(DAD)), "the thread itself narrows with its subject")
 
 
 def scenario_the_focus_never_leaks_in_a_shared_channel():

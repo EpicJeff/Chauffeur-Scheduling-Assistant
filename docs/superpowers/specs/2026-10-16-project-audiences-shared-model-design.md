@@ -1,6 +1,6 @@
 # Project audiences on the shared model
 
-**Status:** rev 2 (approved by the user 2026-10-17; rev 2.1 adds the no-list private default), 2026-10-16, Codex adversarial review folded in (14 findings, §9). Prerequisite of the Projects delete slice.
+**Status:** rev 3 (2026-10-17: §3 rewritten after the Task 1 tests found that parents wrappers would restrict records open to every adult and the house; user ruling: wrappers are test data, option A). Rev 2 approved 2026-10-17; rev 2.1 added the no-list private default; 2026-10-16, Codex adversarial review folded in (14 findings, §9). Prerequisite of the Projects delete slice.
 
 ## Why
 
@@ -49,26 +49,26 @@ One validator, `projects.normalize_audience(fields, actor, current=None)`, used 
 
 **Plans carry the list.** The plan proposal whitelist (`planned.py:746`), `RESHAPE` (:257), the preview, the approval intent and replay carry `shared_with` alongside `audience`; the final merged shape is normalized once at approval.
 
-## 3. Migration
+## 3. Migration and wrapper derivation (rev 3)
 
-One numbered migration in `services/migrations.py`, ordered after `migrate_projects_adopt_v2499517`. Each converted row gets `audience_rev: 2`; a row that has it is never touched again, so an interrupted run resumes cleanly and never re-adds a parent a person has since removed.
+**User, 2026-10-17:** existing wrappers are test data only ("everything with a wrapper is just a test thread or mission"), so the migration does not need a frozen snapshot of legacy visibility. Every wrapper, old or new, gets its audience from one rule, `project_audience.derive_for_record(kind, row, owner_id)`:
 
-Legacy visibility is evaluated by a frozen copy of today's `projects.can_see` and `access.project_visible` (with `_wrapped_visible`) kept inside the migration module, evaluated for every row BEFORE any row is written, so derivation never sees half-converted rows.
+- The record is judged by secrecy, not by role (role capability stays at the piece level, Decisions). If the anonymous house reader (`access.HOUSE`) can read the record and every active parent and adult can read it, the wrapper is `household`. Children and helpers then see the project's name but still cannot open a thread or mission (piece-level role rules), and secret records never qualify because the house reader passes only household audiences.
+- Otherwise the viewer set is every active member with a non-None `record_view(kind, row, member, skip_project=True)`; every parent in the set: `parents` (nobody else beyond the owner) or `shared` (with the others); else `private` with the set.
+- If the owner is not in the set, ownership moves to a member of it (the record's keeper first, then a parent, then an adult). An empty set keeps the owner, `private` `[owner]`, and replaces the copied title and goal with "Untitled project".
+- A wrapper whose record is gone: `private` `[owner]`. A body goal: `private` `[owner]` first.
 
+**Binding narrows once.** When a thread, mission or program in a wrapper (`wrapped_from` set) gets a new subject (`subject_kind`/`subject_id`/`subject_history` written by any path), the wrapper is re-derived and its audience replaced only if the derived viewers are a subset of who sees it now. This is the propagation the user asked for ("the visibility should have been propagated to the project"); nothing reads the record live.
+
+**The migration** (one numbered function in `services/migrations.py`, after `migrate_projects_adopt_v2499517`) converts every row without `audience_rev: 2`: plain rows as below, wrappers through `derive_for_record`; each converted row is stamped `audience_rev: 2` and never touched again, so an interrupted run resumes.
 - `household`, `parents`: unchanged, `shared_with` empty.
-- `private`, adult owner: `shared_with = [owner]`.
-- `private`, child owner: `private` with `[child] + every active parent` (exactly today's set). Accepted change: after the child becomes an adult, those parents keep seeing it until the owner narrows the list (today they would lose it); a parent added later is not on it.
-- Body-goal projects: `private`, `[owner]`, before any wrapper rule.
-- Wrappers (`wrapped_from` set): the target set is the members for whom the frozen legacy `can_see` holds, which is today's exact set (record gate AND wrapper audience). Then:
-  - legacy audience `household`, every active member in the set, and the frozen legacy `project_visible(HOUSE)` true: `household`;
-  - every active parent in the set, nobody else beyond the owner: `parents`;
-  - every active parent in the set plus others: `shared` with the others;
-  - otherwise `private` with the set.
-  - If the owner is not in the set (a parent-of-record owner hidden by a subject, `projects.py:834`), ownership moves to a member of the set: the record's keeper first, then a parent, then an adult. If the set is empty, the owner stays, the audience becomes `private` `[owner]`, and the copied title and goal are replaced with "Untitled project" (logged).
-  - Result: no signed-in person sees a wrapper they cannot see today; house readers and spoken surfaces see a wrapper only if it was already `household`.
-- `wrapped_from` stays on the row as provenance only (plan reshape and triage still read it, `planned.py:275/347`, `missions.py:374`); nothing reads it for visibility.
+- `private`, adult owner: `[owner]`. `private`, child owner: `[child] + every active parent` (accepted: survives adulthood; a parent added later is not on it).
 
-New wrappers made after the migration (`adopt`) use the same derivation, live: the set of members who see the new record, intersected with today's `_wrapper_fields` audience (`parents`, or `household` for voice).
+`wrapped_from` stays on the row as provenance (plan reshape and triage still read it); visibility never reads it.
+
+**House readers:** `access.project_visible` passes `household` for `HOUSE`; `HOUSE_PARENT` (the mission engine acting for the parent of record) passes `household`, `parents` and `shared` (the shared model's parent bypass), never a `private` list.
+
+**Recipients:** a thread in a person's private project notifies the project's list (its owner included) as well as the keeper (§4).
 
 ## 4. Readers that change
 

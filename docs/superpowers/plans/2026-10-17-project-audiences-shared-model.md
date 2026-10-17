@@ -4,11 +4,11 @@
 
 **Goal:** A project's own audience (household / parents / shared / private with a `shared_with` list, read through `scope.audience_allows`) decides who sees it; wrapper projects stop borrowing their record's visibility live.
 
-**Architecture:** `projects.can_see` becomes "owner, or `scope.audience_allows(project, 'project', viewer)`". One validator, `projects.normalize_audience`, shapes every write; a separate edit authority (`projects.can_edit_audience`) guards audience, list and owner. A one-time migration converts every row from a frozen copy of today's visibility, stamped per row with `audience_rev: 2`; then `_wrapped_visible` is deleted. The people picker is extracted from the shopping share popover into one component used by lists and projects.
+**Architecture:** `projects.can_see` becomes "owner, or `scope.audience_allows(project, 'project', viewer)`". One validator, `projects.normalize_audience`, shapes every write; a separate edit authority (`projects.can_edit_audience`) guards audience, list and owner. A one-time migration converts every row (wrappers through the same derivation new records use), stamped per row with `audience_rev: 2`; binding a subject onto a wrapped record narrows its wrapper once; then `_wrapped_visible` is deleted. The people picker is extracted from the shopping share popover into one component used by lists and projects.
 
 **Tech Stack:** Python 3.14, FastAPI (`chauffeur/main.py`), TinyDB-shaped storage over SQLite (`services/storage.py`), plain-script tests from `chauffeur/` (`python tests/test_x.py`), Alpine.js templates, Playwright live tests.
 
-**Spec:** `docs/superpowers/specs/2026-10-16-project-audiences-shared-model-design.md` rev 2.1 (approved 2026-10-17). Read it before any task: §1 meaning, §2 writing and edit authority, §3 migration, §4 readers, §5 UI.
+**Spec:** `docs/superpowers/specs/2026-10-16-project-audiences-shared-model-design.md` rev 3 (rev 2 approved 2026-10-17; rev 3 section 3 per the user's ruling that wrappers are test data, option A). Read it before any task: §1 meaning, §2 writing and edit authority, §3 migration, §4 readers, §5 UI.
 
 ## Global Constraints
 
@@ -567,61 +567,25 @@ def _child_private_list(home, kind, row):
 
 **Files:** Create `services/project_audience.py`. Modify `services/projects.py` (`_wrapper_fields`, `adopt`, delete `_wrapped_visible`, `_GATE`, the Task 2 wrapper clause in `can_see`), `services/access.py:141-158` (`restricted`, `project_visible`), `services/migrations.py` (new function after `migrate_projects_adopt_v2499517`, registered after it at :583).
 
-- [ ] **Step 1: `project_audience.py`.**
+- [ ] **Step 1: `project_audience.py`** (spec §3 rev 3: no legacy snapshot; existing wrappers are test data).
 
 ```python
-"""Project audiences on the shared model: the one-time conversion and live wrapper derivation (spec §3)."""
-import threading
-
+"""Project audiences on the shared model: wrapper derivation and the one-time conversion (spec §3 rev 3)."""
 from services import storage
 
 REV = 2
-_LEGACY = threading.local()
 
 
-def legacy_on():
-    return bool(getattr(_LEGACY, 'on', False))
+def _sees(kind, row, member):
+    from services import access
+    return access.record_view(kind, row, member, skip_project=True) is not None
 
 
-def _legacy_can_see(project, viewer):
-    """Frozen copy of pre-v2.499.N projects.can_see, including _wrapped_visible."""
-    from services import projects, access
-    if not project or not projects._active(viewer):
-        return False
-    src = project.get('wrapped_from') or {}
-    if src.get('kind') in projects._ADOPT_TABLES and src.get('id'):
-        row = projects._ADOPT_TABLES[src['kind']][0](src['id'])
-        if row is not None and access.record_view(src['kind'], row, viewer, skip_project=True) is None:
-            return False
-    if viewer['id'] == project.get('owner_member_id'):
-        return True
-    audience = project.get('audience')
-    if audience == 'household':
-        return True
-    if not projects._parent(viewer):
-        return False
-    owner = storage.get_member(project.get('owner_member_id')) or {}
-    return audience == 'parents' or (audience == 'private' and projects._child(owner))
-
-
-def _legacy_house(project):
-    from services import access, projects
-    src = project.get('wrapped_from') or {}
-    if src.get('kind') in projects._ADOPT_TABLES and src.get('id'):
-        row = projects._ADOPT_TABLES[src['kind']][0](src['id'])
-        if row is not None and access.record_view(src['kind'], row, access.HOUSE, skip_project=True) is None:
-            return False
-    return project.get('audience') == 'household'
-
-
-def audience_from_set(viewer_ids, owner_id, house_ok):
+def audience_from_set(viewer_ids, owner_id):
     from services import projects
     members = [m for m in storage.get_all_members() if projects._active(m)]
-    everyone = {m['id'] for m in members}
     parents = {m['id'] for m in members if projects._parent(m)}
     ids = set(viewer_ids) | ({owner_id} if owner_id else set())
-    if house_ok and everyone <= ids:
-        return 'household', []
     if parents <= ids:
         rest = sorted(ids - parents - {owner_id})
         return ('shared', rest) if rest else ('parents', [])
@@ -641,79 +605,82 @@ def _new_owner(kind, row, viewer_ids):
     return None
 
 
-def _convert_plain(project):
+def derive_for_record(kind, row, owner_id):
+    """(owner_id, audience, shared_with, retitle) for a wrapper around this record."""
+    from services import access, projects
+    if row is None:
+        return owner_id, 'private', [owner_id], False
+    members = [m for m in storage.get_all_members() if projects._active(m)]
+    grown = [m for m in members if projects._parent(m) or (m.get('role') == 'adult' and not projects._child(m))]
+    if _sees(kind, row, access.HOUSE) and all(_sees(kind, row, m) for m in grown):
+        return owner_id, 'household', [], False
+    seen = {m['id'] for m in members if _sees(kind, row, m)}
+    if owner_id not in seen:
+        new = _new_owner(kind, row, seen)
+        if not new:
+            return owner_id, 'private', [owner_id], True
+        owner_id = new
+    audience, rest = audience_from_set(seen, owner_id)
+    return owner_id, audience, rest, False
+
+
+def _convert(project):
     from services import projects
+    owner = project.get('owner_member_id')
     if project.get('body_goal'):
-        return {'audience': 'private', 'shared_with': [project['owner_member_id']]}
-    audience = project.get('audience')
-    row = {'audience': audience if audience in projects.AUDIENCES else 'private',
-           'owner_member_id': project.get('owner_member_id'), 'shared_with': None}
+        return {'audience': 'private', 'shared_with': [owner]}
+    src = project.get('wrapped_from') or {}
+    if src.get('kind') in projects._ADOPT_TABLES and src.get('id'):
+        record = projects._ADOPT_TABLES[src['kind']][0](src['id'])
+        new_owner, audience, rest, retitle = derive_for_record(src['kind'], record, owner)
+        patch = {'owner_member_id': new_owner, 'audience': audience, 'shared_with': rest}
+        if retitle:
+            patch.update(title='Untitled project', goal='')
+        return patch
+    row = {'audience': project.get('audience') if project.get('audience') in projects.AUDIENCES else 'private',
+           'owner_member_id': owner, 'shared_with': None}
     projects.normalize_audience(row, False)
     return {'audience': row['audience'], 'shared_with': row['shared_with']}
 
 
-def _plan_wrapper(project):
-    from services import projects
-    src = project['wrapped_from']
-    get = projects._ADOPT_TABLES.get(src.get('kind'), (lambda _id: None,))[0]
-    record = get(src.get('id')) if src.get('id') else None
-    owner = project.get('owner_member_id')
-    if record is None or project.get('body_goal'):
-        return {'audience': 'private', 'shared_with': [owner]}
-    members = [m for m in storage.get_all_members() if projects._active(m)]
-    seen = {m['id'] for m in members if _legacy_can_see(project, m)}
-    patch = {}
-    if owner not in seen:
-        new = _new_owner(src['kind'], record, seen)
-        if new:
-            patch['owner_member_id'] = owner = new
-        else:
-            return {'audience': 'private', 'shared_with': [owner], 'title': 'Untitled project', 'goal': ''}
-    house_ok = project.get('audience') == 'household' and _legacy_house(project)
-    audience, rest = audience_from_set(seen, owner, house_ok)
-    patch.update(audience=audience, shared_with=rest)
-    return patch
-
-
 def convert_all():
-    """Evaluate every unconverted row under legacy visibility first, then write (spec §3)."""
     with storage.db_lock:
         rows = [p for p in storage.get_projects() if p.get('audience_rev') != REV]
-        _LEGACY.on = True
-        try:
-            plans = [(p['id'], _plan_wrapper(p) if p.get('wrapped_from') else _convert_plain(p)) for p in rows]
-        finally:
-            _LEGACY.on = False
-        for pid, patch in plans:
-            storage.update_project(pid, {**patch, 'audience_rev': REV})
-        return {'converted': len(plans), 'skipped': 0}
+        for p in rows:
+            storage.update_project(p['id'], {**_convert(p), 'audience_rev': REV})
+        return {'converted': len(rows), 'skipped': 0}
 
 
-def derive_for_record(kind, row, base_audience, owner_id):
-    """A new wrapper's audience: who sees the record now, within the old wrapper audience."""
-    from services import access, projects
+def narrow_on_bind(kind, row):
+    """A wrapped record got a new subject: narrow its wrapper once, never widen (spec §3 'Binding narrows once')."""
+    from services import projects
+    project = storage.get_project((row or {}).get('project_id'))
+    if not project or not project.get('wrapped_from') or project.get('body_goal'):
+        return
+    new_owner, audience, rest, _ = derive_for_record(kind, row, project.get('owner_member_id'))
+    candidate = {**project, 'owner_member_id': new_owner, 'audience': audience, 'shared_with': rest}
     members = [m for m in storage.get_all_members() if projects._active(m)]
-    seen = {m['id'] for m in members
-            if access.record_view(kind, row, m, skip_project=True) is not None
-            and (base_audience == 'household' or projects._parent(m) or m['id'] == owner_id)}
-    if owner_id not in seen:
-        owner_id = _new_owner(kind, row, seen) or owner_id
-    house_ok = base_audience == 'household' and access.record_view(kind, row, access.HOUSE, skip_project=True) is not None
-    audience, rest = audience_from_set(seen, owner_id, house_ok)
-    return owner_id, audience, rest
+    now = {m['id'] for m in members if projects.can_see(project, m)}
+    after = {m['id'] for m in members if projects.can_see(candidate, m)}
+    if after < now:
+        storage.update_project(project['id'], {'owner_member_id': new_owner, 'audience': audience,
+                                               'shared_with': rest, 'audience_rev': REV})
 ```
 
-`access.project_visible` and `projects.can_see`: while `project_audience.legacy_on()`, delegate to `_legacy_house` / `_legacy_can_see` so subjects that are other projects are judged by legacy rules during the snapshot.
+`narrow_on_bind` is called after every write that sets `subject_kind`/`subject_id`/`subject_history` on a thread, mission or program (find the writers with `grep -n "subject_kind" services/*.py main.py`: subject binding, thread/mission/program updates, plan bindings in `planned.py`).
+
+`access.project_visible` for house readers: `HOUSE` passes `household` only; `HOUSE_PARENT` (the mission engine acting for the parent of record) passes `household`, `parents` and `shared`, never a `private` list.
 
 - [ ] **Step 2: adopt uses `derive_for_record`.** In `projects.adopt`, after `fields = _wrapper_fields(...)`, replace the audience with the derived one and pass the list explicitly:
 
 ```python
-            owner_id, audience, listed = project_audience.derive_for_record(kind, row, fields['audience'],
-                                                                            fields['owner_member_id'])
+            owner_id, audience, listed, retitle = project_audience.derive_for_record(kind, row, fields['owner_member_id'])
             fields.update(owner_member_id=owner_id, audience=audience, shared_with=listed)
+            if retitle:
+                fields.update(title='Untitled project', goal='')
 ```
 
-- [ ] **Step 3: delete the wrapper visibility path.** Remove `_wrapped_visible`, `_GATE`, the wrapper clause in `can_see`; `access.restricted` becomes `bool(project) and project.get('audience') != 'household'`; `access.project_visible` for house readers becomes `project.get('audience') == 'household'` (plus the legacy delegation in Step 1).
+- [ ] **Step 3: delete the wrapper visibility path.** Remove `_wrapped_visible`, `_GATE`, the wrapper clause in `can_see`; `access.restricted` becomes `bool(project) and project.get('audience') != 'household'`; `access.project_visible` for house readers follows Step 1's HOUSE / HOUSE_PARENT rule.
 
 - [ ] **Step 4: migration.** In `services/migrations.py`:
 

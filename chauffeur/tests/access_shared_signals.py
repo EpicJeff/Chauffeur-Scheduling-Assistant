@@ -27,6 +27,15 @@ def fresh():
     return access_fixture.build()
 
 
+def nobody_listed(fx, key):
+    """Make a restricted record truly recipientless: its project's whole list is a disabled member.
+    (A project's own list is a recipient now, audience spec §4, so ownerless alone is not enough.)"""
+    pid = storage.add_project({'title': 'Nobody home', 'goal': 'g', 'done_when': 'd', 'owner_member_id': 'pat',
+                               'audience': 'private', 'shared_with': ['pat'], 'audience_rev': 2, 'state': 'active',
+                               'steps': [], 'pieces': [], 'created_by': 'pat', 'body_goal': False})
+    storage.update_thread(fx.ids[key], {'project_id': pid})
+
+
 def text(value):
     return json.dumps(value, default=str, ensure_ascii=False)
 
@@ -42,7 +51,7 @@ def allowed(key, col, shared=False):
 def seed(fx):
     storage.findings_table.truncate()
     events = []
-    for key in ('R3', 'R5p'):
+    for key in ('R3', 'R5p', 'R15'):
         storage.update_program(fx.ids[key], {
             'shape': {'phases': [{'name': fx.secret(key), 'weeks': 1,
                                   'milestone': fx.secret(key), 'steps': [fx.secret(key)]}]},
@@ -246,16 +255,25 @@ def delivery_contract(name):
             storage.append_thread_history(fx.ids['R1'], {'kind': 'received', 'message_id': 'm',
                                                        'text': fx.secret('R1'), 'dm_pending': True})
             if name == '_recipients':
-                check([m['id'] for m in replies._recipients(load(fx, 'R1'))] == ['aunt'], 'private reply')
+                # R1 sits in Mom's private project: the keeper (Aunt) and the project's list (Mom)
+                # are told, nobody else (audience spec §4).
+                check({m['id'] for m in replies._recipients(load(fx, 'R1'))} == {'aunt', 'mom'}, 'private reply: keeper and list')
+                # Project audiences spec §4: the keeper, a child keeper's parents and the home
+                # project's audience, each filtered by what they may read. Kate's explicit list
+                # leaves Dad out; a shared project reaches the parents and its list.
+                check({m['id'] for m in replies._recipients(load(fx, 'R14'))} == {'kid', 'mom'},
+                      'R14 reply goes to Kate and Mom, never Dad')
+                check({m['id'] for m in replies._recipients(load(fx, 'R16'))} == {'mom', 'dad', 'aunt'},
+                      'R16 reply goes to the parents and the list')
             elif name == 'read':
                 storage.append_thread_history(fx.ids['R1'], {'kind': 'received', 'message_id': 'new',
                                                            'text': fx.secret('R1')})
                 with patch.object(replies, '_now', return_value=NOW):
                     replies.read(fx.ids['R1'], 'new')
-                check([s[0] for s in sent] == [['aunt']], f'reply read: {sent}')
+                check(sorted(s[0] for s in sent) == [['aunt'], ['mom']], f'reply read: {sent}')
             else:
                 replies.flush_pending_dms(NOW)
-                check([s[0] for s in sent] == [['aunt']], f'reply flush: {sent}')
+                check(sorted(s[0] for s in sent) == [['aunt'], ['mom']], f'reply flush: {sent}')
             check(all(fx.secret('R1') not in text((body, card)) for ids, body, card in sent if ids == ['aunt']),
                   'keeper reply DM has no next action or reply words')
         elif name in ('_thread_stalls', '_mission_states', '_program_findings', 'run_watchers',
@@ -277,8 +295,10 @@ def delivery_contract(name):
                     check(create.call_count == 1, 'parent of child keeper retains the watcher hand path')
             fs = watchers._thread_stalls(NOW)
             check(not any(f.subject_id == fx.ids['R1'] for f in fs), 'restricted stall has no household Finding')
-            check(any(f.subject_id == fx.ids['R6'] for f in fs), 'I3 subject-only keeps household path')
-            check(any(f.subject_id == fx.ids['R8'] for f in fs), 'I3 parents subject keeps household path')
+            # A wrapper is a restricted project now (audience spec §1), so a subject-only thread
+            # takes the private path like any restricted one; who is told is asserted below.
+            check(not any(f.subject_id == fx.ids['R6'] for f in fs), 'subject-only R6 has no household Finding')
+            check(not any(f.subject_id == fx.ids['R8'] for f in fs), 'parents-subject R8 has no household Finding')
             if name == '_mission_states':
                 check(not any(f.subject_id == fx.ids['R2'] for f in watchers._mission_states(NOW)), 'private mission')
             if name == '_program_findings':
@@ -289,7 +309,14 @@ def delivery_contract(name):
                 sent.clear()
                 watchers.run_watchers(NOW)
                 r1 = [s for s in sent if seen(s, fx, 'R1')]
-                check(r1 and all(s[0] == ['aunt'] for s in r1), f'R1 private page: {r1}')
+                check(r1 and all(s[0] in (['aunt'], ['mom']) for s in r1) and {s[0][0] for s in r1} == {'aunt', 'mom'},
+                      f'R1 private page: the keeper and the project list, never Dad: {r1}')
+                r6 = {i for s in sent if seen(s, fx, 'R6') for i in s[0]}
+                check('mom' in r6 and not r6 & {'dad', 'aunt', 'hal', 'pat'},
+                      f'R6 (Kate, a private occasion Dad is off) pages Mom and Kate only: {r6}')
+                r8 = {i for s in sent if seen(s, fx, 'R8') for i in s[0]}
+                check({'mom', 'dad'} <= r8 and not r8 & {'aunt', 'kid', 'hal', 'pat'},
+                      f'R8 (a parents-only subject) pages the parents: {r8}')
                 check(all('pat' not in s[0] for s in sent), 'Pat never paged')
                 storage.update_thread(fx.ids['R1'], {'next_action_at': '2026-10-15'})
                 sent.clear()
@@ -371,6 +398,7 @@ def shared_contracts():
         out = house_programs.objects(viewer=fx.viewers[col])
         check(seen(out, fx, 'R3') == (col in ('mom', 'dad', 'kid')), 'I4 private practice')
         check(seen(out, fx, 'R5p'), 'I4 signed-in child keeps household practice')
+        check(seen(out, fx, 'R15') == (col in ('mom', 'kid')), 'R15: Dad is off Kate private list, so are the others')
     # Pre-narrowing cache, warm board cache, and current viewer union (I4).
     raw = storage.get_cached_schedule()
     pid = fx.projects['mom_private']['id']
@@ -406,6 +434,7 @@ def signal_contracts():
     # M3: no recipient leaves notification time untouched, on repeated sweeps.
     fx = fresh()
     storage.update_thread(fx.ids['R1'], {'owner_member_id': ''})
+    nobody_listed(fx, 'R1')
     key = 'thread_stall:' + fx.ids['R1']
     old = (NOW - dt.timedelta(days=1)).timestamp()
     storage.set_app_state('watcher_notified', {key: old})
@@ -446,8 +475,10 @@ def signal_contracts():
     for col in ('mom', 'dad', 'aunt', 'pat'):
         dm = storage.get_or_create_dm(argyle['id'], fx.viewers[col]['id'])
         messages = storage.get_channel_messages(dm['id'])
-        check(seen(messages, fx, 'R1') == (col == 'aunt'), 'R1 stored privately only for Aunt')
+        check(seen(messages, fx, 'R1') == (col in ('aunt', 'mom')), 'R1 stored for its keeper and its project list only')
         check(seen(messages, fx, 'R4') == (col in ('mom', 'dad')), 'R4 stored for both active parents')
+        check(seen(messages, fx, 'R14') == (col == 'mom'), 'R14 stored for Mom, never Dad (Kate left him off)')
+        check(seen(messages, fx, 'R16') == (col in ('mom', 'dad', 'aunt')), 'R16 stored for the parents and Aunt')
         if col == 'aunt':
             check(all(fx.secret(key) not in text(messages) for key in ('R1', 'R2')),
                   'stored keeper DMs contain no next-action or question words')
@@ -592,6 +623,7 @@ def round1_signal_contracts():
 
     fx = fresh()
     storage.update_thread(fx.ids['R1'], {'owner_member_id': ''})
+    nobody_listed(fx, 'R1')
     old_ts = (NOW - dt.timedelta(days=watchers.NOTIFIED_RETENTION_DAYS + 1)).timestamp()
     for mid, ts in [('old', old_ts), ('recent', NOW.timestamp())]:
         storage.append_thread_history(fx.ids['R1'], {'kind': 'received', 'message_id': mid, 'text': fx.secret('R1'),
