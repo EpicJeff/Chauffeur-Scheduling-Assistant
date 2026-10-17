@@ -17,13 +17,13 @@ def text(out):
 
 
 # Programs whose practice is private: who may read its words. R3 sits in Mom's private
-# project (the child keeper and both parents); R15 in Kate's private project whose
-# explicit list is [Kate, Mom], so Dad is left out (project audiences spec §1).
-PRIVATE_PRACTICE = {'R3': ('mom', 'dad', 'kid'), 'R15': ('mom', 'kid')}
+# project (Mom and the child keeper); R15/R17 have explicit [Kate, Mom] lists,
+# owned by Kate/Mom respectively. Dad is left out of all three private homes.
+PRIVATE_PRACTICE = {'R3': ('mom', 'kid'), 'R15': ('mom', 'kid'), 'R17': ('mom', 'kid')}
 
 
 def run(fx, key, col, rid):
-    if key not in ('R3', 'R5p', 'R15') or col == 'pat':
+    if key not in ('R3', 'R5p', 'R15', 'R17') or col == 'pat':
         return 'skip'  # no other program rows in this fixture; disabled credentials rejected by auth
     if rid[0] == 'reader':
         if col != 'house':

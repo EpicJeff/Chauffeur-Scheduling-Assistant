@@ -92,7 +92,7 @@ def project_visible(fx, rkey, col):
         return col in ('mom', 'dad') or (rkey == 'R11' and col == 'kid')
     if rkey in ('R6', 'R8'):
         return base(rkey, col) is not None and col in ('mom', 'dad', 'kid')
-    if rkey in ('R14', 'R15'):
+    if rkey in ('R14', 'R15', 'R17'):
         # Kate's private list is [Kate, Mom]: Dad is a parent left off it, so he sees none of it.
         return col in ('mom', 'kid')
     if rkey == 'R16':
@@ -509,7 +509,7 @@ def extra_contracts():
         r = request(fx, col, 'POST', f"/api/missions/{fx.ids['R2']}/answer", json={'text': 'Try another approach'})
         check(r.status_code == status, f'keeper steering {col}: {r.status_code} {r.text}')
     for action, function in [('log_program_session', 'log_session'), ('reshape_program', 'reshape')]:
-        for col, accepted in [('dad', True), ('aunt', False), ('kid', True)]:
+        for col, accepted in [('mom', True), ('dad', False), ('aunt', False), ('kid', True)]:
             pid = storage.add_action_proposal({'action_type': action, 'payload': {'program_id': fx.ids['R3']},
                                                'summary': 'Practice', 'status': 'proposed', 'requires_admin': False})
             with patch.object(programs, function, return_value={'status': 'success'}) as effect:

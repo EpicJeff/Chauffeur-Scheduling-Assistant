@@ -209,6 +209,7 @@ def scenario_a_plans_list_survives_preview_approval_reshape_and_a_lost_claim():
     from services import planned
     mid = missions.launch('plan the surprise party', created_by='mom')['mission_id']
     home = _wrapper_of_mission(mid)
+    storage.update_project(home, {'audience': 'private', 'shared_with': ['aunt', 'mom']})
     mission = _drive_to_proposal(mid, _plan_project())
     check(mission['plan']['state'] == 'proposed', f"proposed: {mission['plan'].get('state')}")
     _check_preview(mid, {'aunt', 'mom'}, 'wrapper plan')
@@ -227,9 +228,12 @@ def scenario_a_plans_list_survives_preview_approval_reshape_and_a_lost_claim():
         planned._complete_approval = real
     plan = storage.get_mission(mid)['plan']
     check(plan['state'] == 'approving', f"the claim is persisted: {plan['state']}")
-    check(set(plan['approval']['reshape']['shared_with']) == {'aunt', 'mom'} and plan['approval']['reshape']['audience'] == 'private',
-          f"and its intent carries the list: {plan['approval']}")
-    check(storage.get_project(home).get('wrapped_from') and storage.get_project(home)['audience'] == 'household',
+    check(not {'owner_member_id', 'audience', 'shared_with'} & plan['approval']['reshape'].keys(),
+          f"the reshape intent carries content only: {plan['approval']}")
+    # An old persisted reshape may still contain planner-selected people.
+    plan['approval']['reshape'].update(owner_member_id='dad', audience='household', shared_with=[])
+    storage.update_mission(mid, {'plan': plan})
+    check(storage.get_project(home).get('wrapped_from') and storage.get_project(home)['audience'] == 'private',
           "nothing landed on the wrapper yet")
     for round_ in (1, 2):
         planned.reconcile()
@@ -255,7 +259,7 @@ def scenario_a_plans_list_survives_into_a_new_project():
     check(_seen(project['id']) == {'mom', 'aunt', 'kid'}, f"Dad is out: {_seen(project['id'])}")
 
 
-def scenario_plan_reshape_requires_the_before_rows_audience_authority():
+def scenario_plan_approval_cannot_change_wrapper_people_even_for_a_parent():
     from services import projects
     for proposed_owner, listed in (('aunt', ('mom', 'dad', 'aunt', 'kid')), ('mom', ('mom', 'dad', 'aunt'))):
         _fresh()
@@ -269,20 +273,97 @@ def scenario_plan_reshape_requires_the_before_rows_audience_authority():
         check(projects.can_act(before, dict(AUNT)) and not projects.can_edit_audience(before, dict(AUNT)),
               'Aunt is listed and can act, but cannot change the audience')
         rev = mission['plan']['rev']
-        res = situations.act('mission', mid, 'approve_plan', option_id=f'approve_plan:{rev}:approve',
-                             payload={}, actor=dict(AUNT))
-        check(res['status'] == 'refused' and res['message'] == 'Only the owner or a parent can change who sees this project',
-              f'the listed adult cannot take ownership or narrow the list: {res}')
-        check(storage.get_project(pid) == before and storage.get_mission(mid)['plan']['state'] == 'proposed'
-              and not storage.get_mission(mid)['plan'].get('approval'), 'refusal writes no reshape or approval intent')
         check(projects.can_edit_audience(before, dict(DAD)), 'Dad is a parent who sees the before-row')
-        res = situations.act('mission', mid, 'approve_plan', option_id=f'approve_plan:{rev}:approve',
-                             payload={}, actor=dict(DAD))
-        check(res['status'] == 'success', f'the parent may approve the same proposal: {res}')
-        after = storage.get_project(pid)
-        check(after['owner_member_id'] == proposed_owner and after['audience'] == 'private'
-              and set(after['shared_with']) == set(listed) and not after.get('wrapped_from'),
-              f'the permitted reshape is saved: {after}')
+        for actor in (AUNT, DAD):
+            # Each actor approves the same pending plan against the same wrapper.
+            storage.update_project(pid, before)
+            storage.update_mission(mid, mission)
+            res = situations.act('mission', mid, 'approve_plan', option_id=f'approve_plan:{rev}:approve',
+                                 payload={}, actor=dict(actor))
+            check(res['status'] == 'success', f'{actor["id"]} may approve content: {res}')
+            after = storage.get_project(pid)
+            check(all(after[k] == before[k] for k in ('owner_member_id', 'audience', 'shared_with'))
+                  and not after.get('wrapped_from'), f'approval preserves the wrapper people exactly: {after}')
+
+
+def scenario_kates_surprise_wrapper_stays_hidden_from_dad_on_approval_and_replay():
+    from unittest.mock import patch
+    from services import planned, projects
+    for interrupted in (False, True):
+        _fresh()
+        mid = missions.launch('plan Dad surprise', created_by='mom')['mission_id']
+        pid = _wrapper_of_mission(mid)
+        storage.update_project(pid, {'owner_member_id': 'kid', 'audience': 'private',
+                                     'shared_with': ['kid', 'mom']})
+        proposal = _plan_project()
+        proposal.update(owner='kid', audience='private')
+        proposal.pop('shared_with')  # The planner never picks people.
+        mission = _drive_to_proposal(mid, proposal)
+        preview = mission['plan']['project']
+        check(preview['owner'] == 'kid' and preview['shared_with'] == ['kid', 'mom']
+              and preview['audience_label'] == projects.audience_label(storage.get_project(pid)),
+              f'preview names the preserved audience: {preview}')
+        if interrupted:
+            with patch.object(planned, '_complete_approval', side_effect=RuntimeError('lost write')):
+                try:
+                    planned.approve_plan(mid, mission['plan']['rev'], dict(MOM))
+                except RuntimeError:
+                    pass
+            check(storage.get_mission(mid)['plan']['state'] == 'approving', 'a real interrupted claim')
+            planned.reconcile()
+        else:
+            res = planned.approve_plan(mid, mission['plan']['rev'], dict(MOM))
+            check(res['status'] == 'success', f'Mom approves Kate plan: {res}')
+        for replay in (False, True):
+            if replay:
+                planned.reconcile()
+            project = storage.get_project(pid)
+            check(project['owner_member_id'] == 'kid' and project['audience'] == 'private'
+                  and project['shared_with'] == ['kid', 'mom'], f'people preserved exactly: {project}')
+            check(project['steps'] and not projects.view(project, dict(DAD))
+                  and projects.view(project, dict(MOM))['steps'],
+                  f'Dad sees neither project nor steps after approval/replay ({interrupted=}, {replay=})')
+            check(access.record_view('mission', storage.get_mission(mid), dict(DAD)) is None,
+                  'Dad cannot read the reshaped mission either')
+
+
+def scenario_binding_narrows_when_only_the_house_reader_is_lost():
+    from services import threads
+    _fresh()
+    tid = threads.create(title='Family surprise', owner_member_id='kid', created_by='kid')
+    pid = _wrapper_of_thread(tid)
+    before = _seen(pid)
+    check(before == {'mom', 'dad', 'aunt', 'kid'}
+          and access.project_visible(storage.get_project(pid), access.HOUSE), 'starts open to all humans and house')
+    storage.save_occasion({'id': 'all-humans', 'title': 'Family surprise', 'audience': 'shared',
+                           'shared_with': ['aunt', 'kid']})
+    res = situations.act('thread', tid, 'subject', option_id='subject',
+                         payload={'kind': 'occasion', 'id': 'all-humans'}, actor=dict(MOM))
+    check(res['status'] == 'success', f'bound through the real subject writer: {res}')
+    check(_seen(pid) == before and not access.project_visible(storage.get_project(pid), access.HOUSE),
+          'same human viewers, but losing HOUSE still narrows the wrapper')
+
+
+def scenario_plan_preview_renders_the_named_audience_in_the_shared_builder():
+    import json
+    from pathlib import Path
+    import subprocess
+    _fresh()
+    mid = missions.launch('plan Dad surprise', created_by='mom')['mission_id']
+    storage.update_project(_wrapper_of_mission(mid), {'owner_member_id': 'kid', 'audience': 'private',
+                                                      'shared_with': ['kid', 'mom']})
+    mission = _drive_to_proposal(mid, {'title': 'Surprise', 'goal': 'Party', 'done_when': 'Ready',
+                                     'owner': 'kid', 'audience': 'private'})
+    script = """const fs = require('fs'); global.window = {};
+eval(fs.readFileSync('static/situations.js', 'utf8'));
+console.log(window.Situations.planStepperHtml(JSON.parse(fs.readFileSync(0, 'utf8'))));"""
+    result = subprocess.run(['node', '-e', script], input=json.dumps(mission['plan']),
+                            capture_output=True, text=True, encoding='utf-8',
+                            cwd=Path(__file__).resolve().parents[1], timeout=30)
+    check(result.returncode == 0, f'the real JS builder runs: {result.stderr}')
+    label = mission['plan']['project']['audience_label']
+    check(label in result.stdout and 'private' not in result.stdout,
+          f'the preview uses the named audience, not its raw enum: {result.stdout}')
 
 
 def scenario_child_manual_mission_fallback_uses_the_default_private_list():

@@ -51,7 +51,7 @@ def allowed(key, col, shared=False):
 def seed(fx):
     storage.findings_table.truncate()
     events = []
-    for key in ('R3', 'R5p', 'R15'):
+    for key in ('R3', 'R5p', 'R15', 'R17'):
         storage.update_program(fx.ids[key], {
             'shape': {'phases': [{'name': fx.secret(key), 'weeks': 1,
                                   'milestone': fx.secret(key), 'steps': [fx.secret(key)]}]},
@@ -292,7 +292,9 @@ def delivery_contract(name):
                     watchers._post_action_cards({'id': 'dm'}, storage.ensure_argyle_member(), [private], fx.viewers['aunt'])
                     check(not create.called, 'hidden watcher action never becomes a card')
                     watchers._post_action_cards({'id': 'dm'}, storage.ensure_argyle_member(), [private], fx.viewers['dad'])
-                    check(create.call_count == 1, 'parent of child keeper retains the watcher hand path')
+                    check(not create.called, 'unlisted parent of child keeper gets no watcher action card')
+                    watchers._post_action_cards({'id': 'dm'}, storage.ensure_argyle_member(), [private], fx.viewers['mom'])
+                    check(create.call_count == 1, 'listed parent retains the watcher hand path')
             fs = watchers._thread_stalls(NOW)
             check(not any(f.subject_id == fx.ids['R1'] for f in fs), 'restricted stall has no household Finding')
             # A wrapper is a restricted project now (audience spec §1), so a subject-only thread
@@ -394,9 +396,10 @@ def shared_contracts():
     seed(fx)
     for col in ('house', 'mom', 'dad', 'aunt', 'kid'):
         out = house_programs.objects(viewer=fx.viewers[col])
-        check(seen(out, fx, 'R3') == (col in ('mom', 'dad', 'kid')), 'I4 private practice')
+        check(seen(out, fx, 'R3') == (col in ('mom', 'kid')), 'I4 private practice follows Mom private list')
         check(seen(out, fx, 'R5p'), 'I4 signed-in child keeps household practice')
         check(seen(out, fx, 'R15') == (col in ('mom', 'kid')), 'R15: Dad is off Kate private list, so are the others')
+        check(seen(out, fx, 'R17') == (col in ('mom', 'kid')), 'R17: Mom private list also hides Kate practice from Dad')
     # Pre-narrowing cache, warm board cache, and current viewer union (I4).
     raw = storage.get_cached_schedule()
     pid = fx.projects['mom_private']['id']
@@ -630,7 +633,7 @@ def round1_signal_contracts():
         create = stack.enter_context(patch.object(chat_actions, 'create_action_proposal', return_value={'status': 'refused'}))
         watchers.run_watchers(NOW)
         check(any(ids == ['kid'] and seen(body, fx, 'R3') for ids, body, card in sent), 'child keeper gets line')
-        check(create.call_count == 2, 'only two parents receive action proposals')
+        check(create.call_count == 1, 'only Mom, the listed parent, receives an action proposal')
         create.reset_mock()
         watchers._post_action_cards({'id': 'kid'}, storage.ensure_argyle_member(), [private], fx.viewers['kid'])
         check(not create.called, 'child keeper never gets approve card')

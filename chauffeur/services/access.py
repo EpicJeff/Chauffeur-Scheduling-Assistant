@@ -117,15 +117,6 @@ def _is_keeper(kind, row, viewer):
     return bool(person and kid and person['id'] == kid)
 
 
-def _parent_of_child_keeper(kind, row, viewer):
-    from services import projects
-    person = _person(viewer)
-    if not person or not projects._parent(person):
-        return False
-    keeper = _get_member(keeper_id(kind, row))
-    return bool(keeper and projects._child(keeper))
-
-
 def _thread_base(row, viewer):
     return viewer.get('role') in WRITE_ROLES or _is_keeper('thread', row, viewer)
 
@@ -178,12 +169,6 @@ def _subjects_full(kind, row, viewer, home, visited):
     return True
 
 
-def _child_private_list(home, kind, row):
-    """A child's own private list decides who of the parents sees its records (audience spec §1)."""
-    return bool(home and home.get('audience') == 'private'
-                and home.get('owner_member_id') and home.get('owner_member_id') == keeper_id(kind, row))
-
-
 def record_view(kind, row, viewer, *, skip_project=False, _visited=None):
     """'full', 'keeper' or None for one viewer (spec §3)."""
     spec = KINDS.get(kind)
@@ -196,9 +181,7 @@ def record_view(kind, row, viewer, *, skip_project=False, _visited=None):
     visited = set(_visited or ()) | {(kind, row.get('id'))}
     home = home_project(row)
     subjects_ok = _subjects_full(kind, row, viewer, home, visited)
-    layer_ok = (skip_project or not restricted(home)
-                or (_parent_of_child_keeper(kind, row, viewer) and not _child_private_list(home, kind, row))
-                or project_visible(home, viewer))
+    layer_ok = skip_project or not restricted(home) or project_visible(home, viewer)
     if subjects_ok and layer_ok:
         return FULL
     return KEEPER if _is_keeper(kind, row, viewer) else None

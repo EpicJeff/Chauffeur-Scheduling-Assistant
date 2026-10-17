@@ -254,7 +254,7 @@ def _plan_for_change(mid, actor, rev=None):
     return mission, plan, None
 
 
-RESHAPE = ('title', 'goal', 'done_when', 'owner_member_id', 'audience', 'shared_with', 'target_date', 'body_goal', 'audience_rev')
+RESHAPE = ('title', 'goal', 'done_when', 'target_date', 'body_goal', 'audience_rev')
 
 
 def _project_for_plan(mission, proposed, actor):
@@ -267,8 +267,8 @@ def _project_for_plan(mission, proposed, actor):
             return None, 'You cannot edit this project'
         return project, None
     # Every mission lives in a project (front door §1). A person's project is
-    # planned into as it stands; a wrapper made from the record takes the
-    # plan's project as its shape, so approval never makes a second project.
+    # planned into as it stands; a wrapper takes the plan's content while
+    # keeping its people, so approval never makes a second project.
     home = storage.get_project(mission.get('project_id')) if mission.get('project_id') else None
     if home and not projects.can_act(home, actor):
         return None, 'You cannot edit this project'
@@ -283,23 +283,16 @@ def _project_for_plan(mission, proposed, actor):
         fields['owner_member_id'] = proposed['owner']
     if 'body_goal' in proposed:
         fields['body_goal'] = proposed['body_goal']
-    if home and not projects.can_edit_audience(home, actor):
-        # Judge authority against the current owner, before the proposed shape.
-        candidate = {'owner_member_id': actor['id'], **fields}
-        owner_id = candidate['owner_member_id']
-        owner = (storage.get_member(owner_id) or {}) if isinstance(owner_id, str) else {}
-        candidate.setdefault('audience', 'parents' if projects._child(owner) else 'private')
-        message = projects.normalize_audience(candidate, 'shared_with' in fields)
-        if message:
-            return None, message
-        before = dict(home)
-        projects.normalize_audience(before, home.get('audience_rev') == 2)
-        if (any(candidate.get(k) != before.get(k) for k in ('owner_member_id', 'audience'))
-                or set(candidate['shared_with']) != set(before['shared_with'])):
-            return None, 'Only the owner or a parent can change who sees this project'
-    result = projects.prepare_create(fields, actor)
+    if home:
+        # The planner never chooses people. Validate the final merged content
+        # with the wrapper's existing owner and explicit list, not child defaults.
+        fields.update({k: home.get(k) for k in ('owner_member_id', 'audience', 'shared_with')})
+    # No ownership is being assigned on a reshape; its owner validates the
+    # shape after the approver's can_act check above (a listed adult may approve).
+    result = projects.prepare_create(fields, storage.get_member(home['owner_member_id']) if home else actor)
     if home and result.get('project'):
-        shaped = {**result['project'], 'id': home['id'], 'reshape': True}
+        shaped = {**result['project'], **{k: home.get(k) for k in ('owner_member_id', 'audience', 'shared_with')},
+                  'id': home['id'], 'reshape': True}
         if home.get('body_goal'):
             # The pin is permanent (core spec §1): the same adult owner, private.
             if (shaped.get('audience') != 'private' or shaped.get('owner_member_id') != home.get('owner_member_id')
@@ -359,7 +352,10 @@ def _complete_approval(mission, plan):
         if intent.get('reshape'):
             # The wrapper becomes the plan's project, before the binding below
             # makes the record's subject this project.
-            patch.update({**intent['reshape'], 'wrapped_from': None})
+            # Whitelist content even for an intent persisted by an older build:
+            # approval and replay must never replace the wrapper's people.
+            patch.update({k: v for k, v in intent['reshape'].items() if k in RESHAPE})
+            patch['wrapped_from'] = None
         if any(project.get(k) != v for k, v in patch.items()):
             storage.update_project(pid, patch)
         binding = intent.get('binding')
@@ -765,6 +761,7 @@ def planner_action(mid, action):
                 candidate['project'] = {k: project.get(k) for k in keys}
                 if not existing:
                     candidate['project']['owner'] = project['owner_member_id']
+                candidate['project']['audience_label'] = projects.audience_label(project)
             plan = candidate
             plan['state'] = 'proposed'
             storage.update_mission(mid, {'plan': plan})

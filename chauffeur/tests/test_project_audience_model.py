@@ -164,13 +164,20 @@ def scenario_recipients_union_and_filter():
 
 def scenario_plan_carries_the_list():
     from services import planned
-    check('shared_with' in planned.RESHAPE, "plan reshape carries the list")
     _fresh()
     shaped, err = planned._project_for_plan({'id': 'm1', 'subject_kind': None}, {
         'title': 'Party', 'goal': 'g', 'done_when': 'd', 'owner': 'mom',
         'audience': 'private', 'shared_with': ['aunt']}, dict(MOM))
     check(err is None and set((shaped or {}).get('shared_with') or []) == {'aunt', 'mom'},
           f"a proposed list survives into the approval shape: {shaped} {err}")
+    home = _make('mom', MOM, title='Party', audience='household')
+    storage.update_project(home['id'], {'wrapped_from': {'kind': 'mission', 'id': 'm1'}})
+    mission = {'id': 'm1', 'project_id': home['id']}
+    proposal = {'title': 'Party plan', 'goal': 'g', 'done_when': 'd', 'owner': 'aunt',
+                'audience': 'private', 'shared_with': ['aunt']}
+    shaped, err = planned._project_for_plan(mission, proposal, dict(MOM))
+    check(err is None and all(shaped[k] == home[k] for k in ('owner_member_id', 'audience', 'shared_with')),
+          f'a wrapper keeps its own people instead of the proposal list: {shaped} {err}')
 
 
 def scenario_patch_route_registered():

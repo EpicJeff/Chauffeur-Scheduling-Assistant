@@ -277,7 +277,7 @@ window.Situations = (function () {
     const project = plan.project;
     let html = '';
     if (project) {
-      const meta = [project.owner, project.audience, project.target_date].filter(Boolean).join(' · ');
+      const meta = [project.owner, project.audience_label, project.target_date].filter(Boolean).join(' · ');
       html += `<div class="text-xs text-gray-300 mt-2">${esc(project.id ? 'Project' : 'New project')}: ${esc(project.title)}
         <div class="text-gray-400">${esc(project.goal)}</div>
         <div class="text-gray-400">Done when: ${esc(project.done_when)}</div>

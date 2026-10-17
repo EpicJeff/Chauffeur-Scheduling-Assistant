@@ -186,14 +186,15 @@ def scenario_briefing_never_calls_display_only_time_uncovered():
     check('nobody yet' not in json.dumps(out).lower() and 'busy' not in json.dumps(out).lower(), str(out))
 
 
-def scenario_due_push_keeps_title_for_dad_driver():
+def scenario_due_push_hides_title_from_unlisted_dad_driver():
     fx = access_fixture.build()
     seed(fx)
     storage.update_member('kid', {'driver_id': 'dad-driver'})
     storage.update_member('dad', {'driver_id': 'dad-driver'})
     windows = programs.due_practice_pushes(NOW)
-    check(windows and fx.title('R3') in json.dumps(windows), str(windows))
-    check(fx.secret('R3') in json.dumps(windows), 'Dad receives the real practice instructions')
+    check(windows and windows[0]['title'] == 'Practice time', str(windows))
+    check(fx.title('R3') not in json.dumps(windows) and fx.secret('R3') not in json.dumps(windows),
+          'Dad is off Mom private list, so receives no practice words')
 
 
 def scenario_program_lookups_are_once_per_call():
@@ -401,7 +402,7 @@ def scenario_legacy_commitment_projection_and_orphan_writes():
     storage.update_protected_commitment(cid, {'source': None})
     row = storage.get_protected_commitment(cid)
     check(access.commitment_view(row, access.HOUSE)['title'] == 'Busy', 'legacy emitter fallback is central')
-    check(access.commitment_view(row, fx.viewers['dad'])['title'] == fx.title('R3'), 'parent keeps legacy title')
+    check(access.commitment_view(row, fx.viewers['dad'])['title'] == 'Busy', 'unlisted parent gets neutral legacy title')
     with patch.object(access, 'commitment_view', wraps=access.commitment_view) as project:
         watchers._commitment_findings(NOW)
     check(project.called, 'watcher really uses the shared commitment projection')
@@ -449,6 +450,18 @@ def scenario_a_driver_left_off_a_childs_list_gets_a_neutral_push():
     check(fx.secret('R15') not in text and fx.title('R15') not in text, 'Dad sees no program words: ' + text)
     check(windows[0]['title'] == 'Practice time', 'neutral practice push')
     check(fx.ids['R15'] not in text, 'push tag does not disclose the program id')
+
+
+def scenario_moms_private_list_hides_kates_program_practice_from_dad():
+    fx = access_fixture.build()
+    event, cid = seed(fx, 'R17')
+    for col in ('mom', 'kid', 'dad', 'aunt', 'house'):
+        windows = programs.practice_windows(DAY, DAY, viewer=fx.viewers[col])
+        check(windows and (fx.secret('R17') in json.dumps(windows)) == (col in ('mom', 'kid')),
+              f'R17 practice words for {col}: {windows}')
+        view = access.commitment_view(storage.get_protected_commitment(cid), fx.viewers[col])
+        check(view['title'] == (fx.title('R17') if col in ('mom', 'kid') else 'Busy'),
+              f'R17 commitment for {col}: {view}')
 
 
 SCENARIOS = [v for k, v in list(globals().items()) if k.startswith('scenario_')]

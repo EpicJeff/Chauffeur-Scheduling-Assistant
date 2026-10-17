@@ -81,15 +81,15 @@ def convert_all():
 
 def narrow_on_bind(kind, row):
     """A wrapped record got a new subject: narrow its wrapper once, never widen (spec §3 'Binding narrows once')."""
-    from services import projects
+    from services import access, projects
     project = storage.get_project((row or {}).get('project_id'))
     if not project or not project.get('wrapped_from') or project.get('body_goal'):
         return
     new_owner, audience, rest, _ = derive_for_record(kind, row, project.get('owner_member_id'))
     candidate = {**project, 'owner_member_id': new_owner, 'audience': audience, 'shared_with': rest}
-    members = [m for m in storage.get_all_members() if projects._active(m)]
-    now = {m['id'] for m in members if projects.can_see(project, m)}
-    after = {m['id'] for m in members if projects.can_see(candidate, m)}
+    viewers = [m for m in storage.get_all_members() if projects._active(m)] + [access.HOUSE]
+    now = {m['id'] for m in viewers if access.project_visible(project, m)}
+    after = {m['id'] for m in viewers if access.project_visible(candidate, m)}
     if after < now:
         storage.update_project(project['id'], {'owner_member_id': new_owner, 'audience': audience,
                                                'shared_with': rest, 'audience_rev': REV})

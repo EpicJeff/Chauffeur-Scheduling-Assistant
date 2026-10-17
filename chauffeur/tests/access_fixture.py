@@ -78,7 +78,7 @@ def _program(fx, rkey, member, project, **extra):
 
 
 def build():
-    """R1–R13 of spec §6, then R14–R16 of the project audience spec. Returns Fx; storage is fresh."""
+    """R1–R13 of spec §6, then R14–R17 of the project audience spec. Returns Fx; storage is fresh."""
     _fresh_projects()
     for m in (HAL, PAT, SIB):
         storage.add_member(dict(m))
@@ -94,7 +94,8 @@ def build():
     # create, since a `shared` project with an empty list is stored as `parents`.
     mom_shared = _listed_project('Mom shared', 'mom', 'shared', ['aunt'], MOM)
     kate_no_dad = _listed_project('Kate no Dad', 'kid', 'private', ['kid', 'mom'], KID)
-    fx.projects.update(mom_shared=mom_shared, kate_no_dad=kate_no_dad)
+    mom_no_dad = _listed_project('Mom no Dad', 'mom', 'private', ['mom', 'kid'], MOM)
+    fx.projects.update(mom_shared=mom_shared, kate_no_dad=kate_no_dad, mom_no_dad=mom_no_dad)
 
     _thread(fx, 'R1', 'aunt', mom_private)
     _mission(fx, 'R2', 'aunt', mom_private)
@@ -130,6 +131,7 @@ def build():
     _thread(fx, 'R14', 'kid', kate_no_dad)        # a child's private list leaves Dad out
     _program(fx, 'R15', 'kid', kate_no_dad)       # ... and so does the child's own program
     _thread(fx, 'R16', 'mom', mom_shared)         # parents plus Aunt; the child and the helper are out
+    _program(fx, 'R17', 'kid', mom_no_dad)       # Mom's list also leaves Dad out of Kate's program
 
     fx.viewers = {'mom': dict(MOM), 'dad': dict(DAD), 'aunt': dict(AUNT), 'kid': dict(KID),
                   'hal': dict(HAL), 'pat': dict(PAT), 'sib': dict(SIB)}

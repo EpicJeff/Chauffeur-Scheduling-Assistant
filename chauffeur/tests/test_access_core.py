@@ -13,7 +13,7 @@ F, K, X = 'full', 'keeper', None
 TABLE = {
     'R1':  (F, X, K, X, X, X, X),
     'R2':  (F, X, K, X, X, X, X),
-    'R3':  (F, F, X, K, X, X, X),
+    'R3':  (F, X, X, K, X, X, X),
     'R4':  (F, F, X, X, X, X, X),
     'R5t': (F, F, F, X, X, X, F),
     'R5p': (F, F, F, F, X, X, F),
@@ -29,6 +29,8 @@ TABLE = {
     'R15': (F, X, X, F, X, X, X),
     # R16: a `shared` project is the parents plus its list (Aunt); the child and helper are out.
     'R16': (F, F, F, X, X, X, X),
+    # Mom owns this private [Mom, Kate] home; Dad gets no child-keeper exception.
+    'R17': (F, X, X, F, X, X, X),
 }
 COLS = ('mom', 'dad', 'aunt', 'kid', 'hal', 'pat', 'house')
 # Spec section 7 Acting: visibility is necessary; keeper missions additionally
@@ -40,7 +42,7 @@ MISSION_KEEPER_VERBS = frozenset({'ack', 'delete', 'steer', 'drop', 'own'})
 KIND = {'R1': 'thread', 'R2': 'mission', 'R3': 'program', 'R4': 'thread', 'R5t': 'thread',
         'R5p': 'program', 'R6': 'thread', 'R7': 'thread', 'R8': 'thread', 'R10': 'thread',
         'R11': 'mission', 'R12': 'thread', 'R13': 'thread', 'R14': 'thread', 'R15': 'program',
-        'R16': 'thread', 'R9origin': 'thread',
+        'R16': 'thread', 'R17': 'program', 'R9origin': 'thread',
         'R9a': 'mission', 'R9b': 'mission'}
 
 
@@ -108,6 +110,47 @@ def scenario_sibling_is_not_a_parent():
     fx = access_fixture.build()
     kind, rec = load(fx, 'R3')
     check(access.record_view(kind, rec, fx.viewers['sib']) is None, 'a sibling is not a parent of the child keeper')
+
+
+def scenario_moms_private_list_also_decides_for_a_child_keepers_program():
+    fx = access_fixture.build()
+    kind, rec = load(fx, 'R17')
+    check(access.private_recipients(kind, rec) == ['kid', 'mom'],
+          'R17 recipients retain Kate and Mom, never Dad despite being a parent of the keeper')
+    from services import projects
+    project = fx.projects['mom_no_dad']
+    storage.update_project(project['id'], {'steps': [{'id': 'r17-hold', 'title': fx.secret('R17'),
+        'owner': 'kid', 'state': 'todo', 'needs': [], 'order': 0,
+        'hold': {'date': '2026-10-16', 'start': '17:00', 'end': '17:30'}}]})
+    import datetime
+    day = datetime.date(2026, 10, 16)
+    for col in ('mom', 'kid', 'dad', 'house'):
+        holds = projects.calendar_holds(day, day, fx.viewers[col])
+        own = [h for h in holds if h['project_id'] == project['id']]
+        check(own and (fx.secret('R17') in str(own)) == (col in ('mom', 'kid')),
+              f'R17 hold words follow Mom private list for {col}: {own}')
+
+
+def scenario_moms_private_program_signal_dms_only_mom_and_kate():
+    import datetime
+    from unittest.mock import patch
+    from services import watchers, findings
+    import main
+    fx = access_fixture.build()
+    finding = findings.make('r17-private', fx.secret('R17'), subject_type='program', subject_id=fx.ids['R17'])
+    storage.chat_messages_table.truncate()
+    with patch.object(watchers, 'collect_findings', return_value=([finding], [])), \
+         patch.object(watchers, '_prep_kit_findings', return_value=[]), \
+         patch.object(main, '_push_message_event'), patch.object(main, '_fanout_message_notifications'):
+        watchers.run_watchers(datetime.datetime(2026, 10, 16, 17, 0))
+    argyle = storage.ensure_argyle_member()
+    for col in ('mom', 'kid', 'dad', 'aunt'):
+        dm = storage.get_or_create_dm(argyle['id'], col)
+        messages = storage.get_channel_messages(dm['id'])
+        check((fx.secret('R17') in str(messages)) == (col in ('mom', 'kid')),
+              f'R17 real stored DM follows Mom private list for {col}: {messages}')
+        if col in ('dad', 'aunt'):
+            check(not messages, f'{col} receives nothing')
 
 
 def scenario_subject_cycle():
