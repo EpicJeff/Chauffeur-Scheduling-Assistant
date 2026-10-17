@@ -1,6 +1,6 @@
 # Project audiences on the shared model
 
-**Status:** rev 2, 2026-10-16, Codex adversarial review folded in (14 findings, §9). Prerequisite of the Projects delete slice.
+**Status:** rev 2 (approved by the user 2026-10-17; rev 2.1 adds the no-list private default), 2026-10-16, Codex adversarial review folded in (14 findings, §9). Prerequisite of the Projects delete slice.
 
 ## Why
 
@@ -40,6 +40,7 @@ One validator, `projects.normalize_audience(fields, actor, current=None)`, used 
 - `shared_with` keeps only ids of existing, non-archived members, de-duplicated. It is cleared for `household` and `parents`.
 - `private` always contains the owner (added if missing). An owner change adds the new owner to a `private` or `shared` list.
 - `shared` with an empty list after filtering is stored as `parents`.
+- `private` with NO list supplied (the chat card's "Make private", the planner, an API caller) means the owner's default private list: `[owner]` for an adult, `[child] + every active parent` for a child. An explicit list is taken as given (the owner auto-added), which is how a child leaves a parent out.
 - Body goals (`body_goal` set): audience must be `private` with `shared_with == [owner]`, owner an adult; anything else is refused (today's pin, restated).
 
 **Edit authority.** Changing `audience`, `shared_with` or `owner_member_id` is allowed only to the project's CURRENT owner, or a parent who can see the project, judged against the row before the change. An adult who is merely listed (or who passes `can_act`) can edit title, goal and steps but cannot widen the audience or take ownership. The card and detail payloads gain `can_edit_audience` (this rule) and `body_goal`; both surfaces use them instead of `can_edit`.
@@ -56,7 +57,7 @@ Legacy visibility is evaluated by a frozen copy of today's `projects.can_see` an
 
 - `household`, `parents`: unchanged, `shared_with` empty.
 - `private`, adult owner: `shared_with = [owner]`.
-- `private`, child owner: becomes `parents` (exactly today's set: the child and every parent). Accepted change: after the child becomes an adult, parents keep seeing these projects until the owner narrows them (today they would lose them).
+- `private`, child owner: `private` with `[child] + every active parent` (exactly today's set). Accepted change: after the child becomes an adult, those parents keep seeing it until the owner narrows the list (today they would lose it); a parent added later is not on it.
 - Body-goal projects: `private`, `[owner]`, before any wrapper rule.
 - Wrappers (`wrapped_from` set): the target set is the members for whom the frozen legacy `can_see` holds, which is today's exact set (record gate AND wrapper audience). Then:
   - legacy audience `household`, every active member in the set, and the frozen legacy `project_visible(HOUSE)` true: `household`;
@@ -113,4 +114,4 @@ Claude writes the tests first, the picker extraction and UI, the gate, docs, bum
 
 ## 9. Codex review (rev 1 -> rev 2)
 
-1-4: wrapper derivation now starts from today's exact project visibility (record gate AND wrapper audience), keeps house/spoken/hold-title promotion to legacy `household` wrappers only, moves ownership when the owner is outside the set, and gives body goals precedence. 5: the child-keeper parent bypass yields to a child's own private list. 6, 12: edit authority judged against the row before the change; `can_edit_audience` and `body_goal` in the payloads. 7-8: `private_recipients` unions today's candidates with the audience and filters by projection; `replies._send` refuses None. 9: plans carry the list. 10: per-row `audience_rev`, frozen legacy evaluation before any write, ordered after the adopt migration. 11: a child's legacy private becomes `parents` (accepted: survives adulthood); a later parent sees a derived `parents` wrapper (accepted: the project's audience wins). 13: the picker posts choices and the server owns per-kind rules; shopping's additive grants untouched. 14: explicit PATCH register row; fixture and matrix extended.
+1-4: wrapper derivation now starts from today's exact project visibility (record gate AND wrapper audience), keeps house/spoken/hold-title promotion to legacy `household` wrappers only, moves ownership when the owner is outside the set, and gives body goals precedence. 5: the child-keeper parent bypass yields to a child's own private list. 6, 12: edit authority judged against the row before the change; `can_edit_audience` and `body_goal` in the payloads. 7-8: `private_recipients` unions today's candidates with the audience and filters by projection; `replies._send` refuses None. 9: plans carry the list. 10: per-row `audience_rev`, frozen legacy evaluation before any write, ordered after the adopt migration. 11: a child's legacy private becomes a private list of the child and the parents (accepted: survives adulthood); a later parent sees a derived `parents` wrapper (accepted: the project's audience wins). 13: the picker posts choices and the server owns per-kind rules; shopping's additive grants untouched. 14: explicit PATCH register row; fixture and matrix extended.
