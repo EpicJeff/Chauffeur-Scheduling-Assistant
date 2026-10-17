@@ -993,15 +993,17 @@ sending or claiming, and never pass from_member/member_name for them.
                     # member_role is resolved HERE, at dispatch, never taken
                     # from the model — same actor resolution as the other
                     # role-aware tools (family-chat acting_member, else the
-                    # PWA driver's own member; None in admin/voice contexts,
-                    # which mind.visible_insights treats like the wall panel).
+                    # PWA driver's own member).
                     actor = acting_member
                     if actor is None and driver:
                         from services import storage as _st
                         actor = _st.get_member_by_driver_id(driver_id)
                     role = actor.get('role') if (actor or {}).get('id') and not access.is_house(actor) else None
                     if func_name == "list_insights":
-                        res = _atv2.list_insights(acting_member=actor)
+                        # The same audience as calendar reads: the person only
+                        # in a personal conversation, HOUSE in shared channels.
+                        viewer = _atv2.calendar_viewer(actor, focus_key, spoken=source == 'voice')
+                        res = _atv2.list_insights(acting_member=viewer)
                     elif not (_is_admin_member(actor) or actor is None or access.is_house(actor)):
                         res = {'status': 'error', 'message': 'Only a signed-in parent or adult can dismiss this.'}
                     else:
@@ -1027,7 +1029,8 @@ sending or claiming, and never pass from_member/member_name for them.
                     if actor is None and driver:
                         from services import storage as _st
                         actor = _st.get_member_by_driver_id(driver_id)
-                    elif (actor is None or (access.is_house(actor) and source != 'voice')) and not propose_only and source != 'pwa':
+                    elif (actor is None or (access.is_house(actor) and source != 'voice'
+                                           and func_name not in ('search_mail', 'read_mail'))) and not propose_only and source != 'pwa':
                         actor = access.HOUSE if func_name in (
                             'list_situations', 'next_situation', 'explain_situation',
                             'list_projects', 'get_project', 'find_in_chauffeur') else (

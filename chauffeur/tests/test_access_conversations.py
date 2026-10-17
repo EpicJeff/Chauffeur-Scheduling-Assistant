@@ -237,7 +237,7 @@ def scenario_only_the_panel_owner_can_clear_or_delete():
 
 
 def scenario_panel_refuses_person_only_adult_tools_and_person_prompt():
-    from services import agent_tools_v2 as tools, negotiation, trips, occasions
+    from services import agent_tools_v2 as tools, negotiation, trips, occasions, mail_search
     from access_channels import capture_router
     fresh()
     cases = [('ask_deal', {'event_title': 'Soccer'}, 'grown-up'),
@@ -245,10 +245,15 @@ def scenario_panel_refuses_person_only_adult_tools_and_person_prompt():
              ('create_trip', {'title': 'Vacation'}, 'parent or adult'),
              ('answer_occasion_question', {'occasion_id': 'o1', 'key': 'theme', 'value': 'party'}, 'parent or adult'),
              ('launch_mission', {'goal': 'Find available lessons'}, 'parent or adult'),
-             ('search_mail', {'query': 'appointment'}, 'signed-in parent or adult')]
+             ('search_mail', {'query': 'appointment'}, 'signed-in parent or adult'),
+             ('read_mail', {'uid': 1}, 'signed-in parent or adult')]
     for actor in (access.HOUSE, access.HOUSE_PARENT, {'id': 'mom', 'role': 'parent', 'house': True}):
         with patch.object(negotiation, 'start_asks') as send, patch.object(trips, 'create_draft') as create, \
-             patch.object(occasions, 'answer') as answer, patch.object(tools, 'handle_launch_mission') as launch:
+             patch.object(occasions, 'answer') as answer, patch.object(tools, 'handle_launch_mission') as launch, \
+             patch.object(mail_search, 'search', return_value={'status': 'success', 'hits': []}) as search, \
+             patch.object(mail_search, 'read', return_value={
+                 'status': 'success', 'subject': 'Private mail', 'from': 'sender',
+                 'date': '2026-10-16', 'text': 'Private body'}) as read:
             for name, args, refusal in cases:
                 prompt, out = capture_router(actor, 'conv:panel', [{'name': name, 'arguments': args}])
                 check(refusal in str([prompt, out]), f'{name} refuses household actor: {out}')
@@ -257,6 +262,8 @@ def scenario_panel_refuses_person_only_adult_tools_and_person_prompt():
             create.assert_not_called()
             answer.assert_not_called()
             launch.assert_not_called()
+            search.assert_not_called()
+            read.assert_not_called()
         check(not agent_router._is_admin_member(actor), 'house actor cannot pass adult scheduling bridge gate')
         before = storage.get_all_rules()
         capture_router(actor, 'conv:panel', [{'name': 'add_routing_rule', 'arguments': {

@@ -5326,8 +5326,9 @@ _ACCESS_DIGEST = {}
 
 def _access_input_digest():
     stamp = time.monotonic()
-    if stamp - _ACCESS_DIGEST.get('at', float('-inf')) < ACCESS_DIGEST_SECONDS:
-        return _ACCESS_DIGEST['digest']
+    memo = _ACCESS_DIGEST.copy()  # snapshot both fields before invalidation can clear them
+    if stamp - memo.get('at', float('-inf')) < ACCESS_DIGEST_SECONDS:
+        return memo['digest']
     policy = []
     for records, fields in (
             (storage.get_projects(), ('id', 'audience', 'wrapped_from', 'owner_member_id')),

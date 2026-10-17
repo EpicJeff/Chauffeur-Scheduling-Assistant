@@ -62,7 +62,7 @@ Codex's review of revision 1 added four more:
   - P is `storage.get_project(row['project_id'])`. `project_id` is the only membership for threads, missions and programs. Every such record has one (slice 1 invariant).
   - A wrapper project (`wrapped_from` set) is not restricting. Its visibility already defers to the record (`projects._wrapped_visible`).
   - A missing project means no P.
-  - A project's `pieces` list no longer holds threads, missions or programs (§10.1). It keeps links to other kinds (trips, occasions, lists and the rest), and those links never change who sees anything.
+  - A project's `pieces` list no longer LINKS threads, missions or programs from other projects (§10.1). It still holds the native entries `projects.adopt` writes for its own records (they drive its cards), and links to other kinds (trips, occasions, lists and the rest); none of these entries changes who sees anything - `project_id` alone does. (Corrected during the build, 2026-10-16.)
 - **Restricted.** P exists, is not a wrapper, and `P['audience'] in ('private', 'parents')`.
 - **Keeper.** The record's own person: thread `owner_member_id`, mission `created_by`, program `member_id`.
   - The id must be non-empty and the member active (`projects._active`).

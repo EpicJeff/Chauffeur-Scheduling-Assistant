@@ -635,6 +635,22 @@ def digest_memo_window():
         after = home_board.build(config, now=NOW)
         check(after is not first and not seen(after, fx, 'R3'), 'first build after memo window narrows warm board')
         check(all(r.call_count > n for r, n in zip(reads, counts)), 'digest inputs refresh after the window')
+        # Force the interleaving after the timestamp is read, before a warm
+        # digest is returned. This runs the real board and invalidation paths.
+        invalidations = []
+        class InvalidateOnAge:
+            def __rsub__(self, stamp):
+                invalidations.append(True)
+                home_board.invalidate_cache()
+                return 0.0
+        home_board._ACCESS_DIGEST['at'] = InvalidateOnAge()
+        raced = home_board.build(config, now=NOW)
+        check(invalidations == [True], 'invalidation ran during memo age check')
+        check(raced is not after and not seen(raced, fx, 'R3'),
+              'invalidation during memo read rebuilds the board without leaking private words')
+        check('digest' not in home_board._ACCESS_DIGEST, 'invalidation leaves no shared digest memo')
+        home_board.build(config, now=NOW)
+        check('digest' in home_board._ACCESS_DIGEST, 'next build refreshes the invalidated digest')
     home_board.invalidate_cache()
 
 

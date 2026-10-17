@@ -621,11 +621,18 @@ def router_insight_identity_and_panel_dismissal():
     check('Sensitive parent insight' in json.dumps(tools.execute_tool('list_insights', {}, actor=fx.viewers['mom'])),
           'registry forwards the resolved identity too')
     for viewer, key, allowed in ((fx.viewers['mom'], focus(fx, 'dm', 'mom'), True),
+                                  (fx.viewers['mom'], 'conv:admin', True),
+                                  (fx.viewers['mom'], 'conv:pwa', True),
+                                  (fx.viewers['mom'], focus(fx, 'family', 'mom'), False),
+                                  (fx.viewers['mom'], focus(fx, 'mom_aunt', 'mom'), False),
+                                  (fx.viewers['mom'], focus(fx, 'dm', 'dad'), False),
                                   (access.HOUSE, 'conv:panel', False),
                                   (access.HOUSE_PARENT, 'conv:panel', False)):
         prompt, out = capture_router(viewer, key, [{'name': 'list_insights', 'arguments': {}}])
         check(('Sensitive parent insight' in prompt + json.dumps(out)) == allowed,
               'router insight sensitivity follows the resolved person')
+        check('Normal household insight' in prompt + json.dumps(out),
+              'every conversation retains ordinary insights')
     capture_router(access.HOUSE, 'conv:panel', [{'name': 'dismiss_insight', 'arguments': {'insight_id': sensitive}}])
     check(storage.get_mind_insight(sensitive)['state'] == 'active', 'panel cannot dismiss sensitive insight')
     capture_router(access.HOUSE, 'conv:panel', [{'name': 'dismiss_insight', 'arguments': {'insight_id': normal}}])
