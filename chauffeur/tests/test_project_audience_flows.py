@@ -105,6 +105,36 @@ def scenario_a_created_party_binds_and_narrows_the_missions_wrapper():
     check(not access.project_visible(row, access.HOUSE), "and the house no longer reads it")
 
 
+def scenario_a_created_party_on_a_thread_origin_mission_narrows_the_threads_wrapper():
+    """planned._bind_created has two branches (planned.py:999): the mission's own subject, and, for a
+    mission that came from a thread, the THREAD's. This is the second, driven through run_stage."""
+    _fresh()
+    from services import threads, planned
+    from test_planned_missions import _interviewed, _plan_of, ROWS, STAGES
+    tid = threads.create(title='Birthday errands', owner_member_id='mom', created_by='mom')
+    pid = _wrapper_of_thread(tid)
+    check(storage.get_project(pid)['audience'] == 'household' and 'dad' in _seen(pid) and 'aunt' in _seen(pid),
+          "the fixture: the thread's open household wrapper")
+    mid = _mission(created_by='mom', origin=tid)
+    _interviewed(mid, template=None)
+    planned.answer_plan(mid, {'budget': 40}, dict(MOM))
+    _plan({'action': 'plan', 'stages': STAGES})
+    _step(mid)
+    rev = _plan_of(mid)['rev']
+    res = situations.act('mission', mid, 'approve_plan', option_id=f'approve_plan:{rev}:approve', payload={}, actor=dict(MOM))
+    check(res['status'] == 'success', f"approved: {res}")
+    _plan({'action': 'stage', 'stage_id': 's1', 'rows': ROWS})
+    _step(mid)
+    st = _plan_of(mid)['stages'][0]
+    res = situations.act('mission', mid, 'run_stage', option_id=f"run_stage:s1:{st['snapshot']}:approve", payload={}, actor=dict(MOM))
+    check(res['status'] == 'success', f"ran: {res}")
+    thread = storage.get_thread(tid)
+    check(thread['subject_kind'] == 'occasion' and not storage.get_mission(mid).get('subject_kind'),
+          f"the created party became the THREAD's subject, not the mission's: {thread.get('subject_kind')}")
+    check(_seen(pid) == {'mom', 'dad'} and not access.project_visible(storage.get_project(pid), access.HOUSE),
+          f"so the thread's wrapper narrowed to the parents (the party is parents-only): {_seen(pid)} {storage.get_project(pid)}")
+
+
 def scenario_a_person_retargeting_narrows_and_unlinking_never_widens():
     _fresh()
     from services import threads

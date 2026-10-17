@@ -37,9 +37,10 @@ def scenario_normalize_more():
     res = _p().update(sh['id'], {'owner_member_id': 'kid'}, dict(MOM))
     check(res['status'] == 'success' and set(storage.get_project(sh['id'])['shared_with']) == {'aunt', 'kid'},
           f"the new owner is listed in a shared project: {res}")
-    pa = _make('mom', MOM, title='Patch', audience='shared', shared_with=['aunt'])
-    _p().update(pa['id'], {'shared_with': ['aunt', 'aunt', 'ghost']}, dict(MOM))
-    check(storage.get_project(pa['id'])['shared_with'] == ['aunt'], "PATCH filters and de-duplicates")
+    pa = _make('mom', MOM, title='Patch', audience='shared', shared_with=['aunt', 'kid'])
+    res = _p().update(pa['id'], {'shared_with': ['aunt', 'aunt', 'ghost']}, dict(MOM))
+    check(res['status'] == 'success' and storage.get_project(pa['id'])['shared_with'] == ['aunt'],
+          f"PATCH from a different list filters and de-duplicates (and is accepted): {res} {storage.get_project(pa['id'])['shared_with']}")
     _p().update(pa['id'], {'audience': 'shared', 'shared_with': []}, dict(MOM))
     row = storage.get_project(pa['id'])
     check(row['audience'] == 'parents' and row['shared_with'] == [], f"PATCH: an emptied shared list becomes parents: {row}")
@@ -62,10 +63,18 @@ def scenario_normalize_more():
 def scenario_authority_more():
     from services import projects
     _fresh()
+    wanted = {
+        'audience': lambda row: row['audience'] == 'parents' and row['shared_with'] == [] and row['owner_member_id'] == 'mom',
+        'shared_with': lambda row: row['audience'] == 'shared' and set(row['shared_with']) == {'aunt', 'kid'} and row['owner_member_id'] == 'mom',
+        'owner_member_id': lambda row: row['owner_member_id'] == 'dad' and row['audience'] == 'shared' and set(row['shared_with']) == {'aunt', 'dad'},
+    }
     for patch in ({'audience': 'parents'}, {'shared_with': ['aunt', 'kid']}, {'owner_member_id': 'dad'}):
         p = _make('mom', MOM, title='Shared', audience='shared', shared_with=['aunt'])
         res = _p().update(p['id'], patch, dict(DAD))
+        row = storage.get_project(p['id'])
         check(res['status'] == 'success', f"a visible non-owner parent may {patch}: {res}")
+        check(wanted[next(iter(patch))](row), f"and the edit is saved, not just accepted: {patch} -> {_frozen(p['id'])}")
+        check(row['title'] == 'Shared' and row['goal'] == 'hold a conversation', "and nothing else moved")
     p = _make('mom', MOM, title='Shared', audience='shared', shared_with=['aunt'])
     check(_p().can_edit_audience(storage.get_project(p['id']), dict(DAD)), "and the payload flag says so")
     kate = _make('kid', KID, title='Dad surprise', audience='private', shared_with=['kid', 'mom'])

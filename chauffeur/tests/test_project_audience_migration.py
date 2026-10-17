@@ -251,18 +251,54 @@ def scenario_wrapper_audience_stays_authoritative_after_the_record_changes():
     storage.save_occasion({'id': 'occ-mom', 'title': 'Mom only', 'audience': 'private', 'shared_with': ['mom']})
     tid2, pid2 = _wrapped_thread('mom', subject_kind='occasion', subject_id='occ-mom')
     storage.update_project(pid2, {'audience': 'household', 'shared_with': []})
-    for step in ('as is', 'record deleted', 'subject changed', 'converted again'):
-        if step == 'record deleted':
+    for step in ('as is', 'subject changed', 'record deleted', 'converted again'):
+        if step == 'subject changed':
+            # The occasion the wider project's record is about changes under it (Mom loses it, Dad gains it),
+            # and the open record is bound to a household occasion: neither moves a converted project.
+            storage.save_occasion({'id': 'occ-mom', 'title': 'Mom only', 'audience': 'private', 'shared_with': ['dad']})
+            storage.save_occasion({'id': 'occ-open', 'title': 'Open', 'audience': 'household'})
+            storage.update_thread(tid, {'subject_kind': 'occasion', 'subject_id': 'occ-open', 'subject_rev': 1})
+        elif step == 'record deleted':
             storage.delete_thread(tid)
             storage.delete_thread(tid2)
-        elif step == 'subject changed':
-            storage.save_occasion({'id': 'occ-open', 'title': 'Open', 'audience': 'household'})
         elif step == 'converted again':
             _convert()
         check(_seen(pid) == {'mom'} and not access.project_visible(storage.get_project(pid), access.HOUSE),
               f"{step}: the narrower project stays Mom's alone: {_seen(pid)}")
         check(_seen(pid2) == {'mom', 'dad', 'aunt', 'kid'} and access.project_visible(storage.get_project(pid2), access.HOUSE),
               f"{step}: the wider project stays household for everyone, the house included: {_seen(pid2)}")
+
+
+def scenario_subject_history_that_is_stricter_than_the_current_subject_counts():
+    """A record stays as private as anything it was ever about (subject_history), so derivation and
+    narrowing read history, not only the current subject. Here the thread was about Dad's surprise and
+    is now linked to a household occasion: ignoring the history would call it open to everyone."""
+    _fresh()
+    from services import project_audience
+    storage.save_occasion({'id': 'occ-dad', 'title': 'Dad surprise', 'audience': 'private', 'shared_with': ['mom', 'kid']})
+    history = [{'kind': 'occasion', 'id': 'occ-dad'}, {'kind': 'occasion', 'id': 'o2'}]   # o2: a household occasion
+    fields = {'subject_kind': 'occasion', 'subject_id': 'o2', 'subject_rev': 2, 'subject_history': history}
+    # Born: adoption of a record that already carries the history.
+    tid, pid = _wrapped_thread('mom', **fields)
+    row = storage.get_project(pid)
+    check(row['audience'] == 'private' and _seen(pid) == {'mom'} and row.get('audience_rev') == 2,
+          f"adoption honours history: private to the people who may read every subject it was about: {row} {_seen(pid)}")
+    # Converted: an old wrapper over the same record.
+    _reset(pid, audience='household')
+    _convert()
+    check(_seen(pid) == {'mom'} and storage.get_project(pid)['audience'] == 'private', f"conversion honours history too: {storage.get_project(pid)}")
+    # Narrowed: an open wrapper whose record then gets a stricter history alongside a wider current subject.
+    tid2, pid2 = _wrapped_thread('mom')
+    check(storage.get_project(pid2)['audience'] == 'household', "the fixture: an open wrapper")
+    storage.update_thread(tid2, fields)
+    project_audience.narrow_on_bind('thread', storage.get_thread(tid2))
+    check(_seen(pid2) == {'mom'}, f"narrowing honours history: {_seen(pid2)} {storage.get_project(pid2)}")
+    # And a history that is only as strict as the current subject changes nothing.
+    tid3, pid3 = _wrapped_thread('mom')
+    storage.update_thread(tid3, {'subject_kind': 'occasion', 'subject_id': 'o2', 'subject_rev': 1,
+                                 'subject_history': [{'kind': 'occasion', 'id': 'o2'}]})
+    project_audience.narrow_on_bind('thread', storage.get_thread(tid3))
+    check(storage.get_project(pid3)['audience'] == 'household' and 'dad' in _seen(pid3), "an open history leaves the wrapper open")
 
 
 def scenario_mission_wrapper_converts_by_its_missions_readers():
