@@ -254,7 +254,7 @@ def _plan_for_change(mid, actor, rev=None):
     return mission, plan, None
 
 
-RESHAPE = ('title', 'goal', 'done_when', 'owner_member_id', 'audience', 'target_date', 'body_goal')
+RESHAPE = ('title', 'goal', 'done_when', 'owner_member_id', 'audience', 'shared_with', 'target_date', 'body_goal', 'audience_rev')
 
 
 def _project_for_plan(mission, proposed, actor):
@@ -288,7 +288,8 @@ def _project_for_plan(mission, proposed, actor):
         shaped = {**result['project'], 'id': home['id'], 'reshape': True}
         if home.get('body_goal'):
             # The pin is permanent (core spec §1): the same adult owner, private.
-            if shaped.get('audience') != 'private' or shaped.get('owner_member_id') != home.get('owner_member_id'):
+            if (shaped.get('audience') != 'private' or shaped.get('owner_member_id') != home.get('owner_member_id')
+                    or shaped.get('shared_with') != [home.get('owner_member_id')]):
                 return None, 'A body goal stays private to its adult owner'
             shaped['body_goal'] = True
         return shaped, None
@@ -744,7 +745,7 @@ def planner_action(mid, action):
                 # A wrapper to reshape keeps the whole proposed shape, as a new project does.
                 existing = project.get('id') and not project.get('reshape')
                 keys = (('id', 'title', 'goal', 'done_when') if existing else
-                        ('title', 'goal', 'done_when', 'audience', 'target_date'))
+                        ('title', 'goal', 'done_when', 'audience', 'shared_with', 'target_date'))
                 candidate['project'] = {k: project.get(k) for k in keys}
                 if not existing:
                     candidate['project']['owner'] = project['owner_member_id']

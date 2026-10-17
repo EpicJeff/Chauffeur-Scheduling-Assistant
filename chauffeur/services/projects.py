@@ -9,9 +9,10 @@ from copy import deepcopy
 from services import body_goal, storage
 
 
-AUDIENCES = ('private', 'parents', 'household')
+AUDIENCES = ('household', 'parents', 'shared', 'private')
 STATES = ('active', 'paused', 'done', 'dropped')
-EDITABLE = ('title', 'goal', 'done_when', 'owner_member_id', 'audience', 'target_date')
+EDITABLE = ('title', 'goal', 'done_when', 'owner_member_id', 'audience', 'shared_with', 'target_date')
+AUDIENCE_KEYS = ('audience', 'shared_with', 'owner_member_id')
 STEP_STATES = ('todo', 'doing', 'done', 'skipped', 'blocked')
 STEP_EDITABLE = ('title', 'owner', 'needs', 'due_date', 'order', 'goal')
 PIECE_HOME_KINDS = ('thread', 'mission', 'program')   # live in a project through project_id only
@@ -65,20 +66,19 @@ def _wrapped_visible(project, viewer):
 
 
 def can_see(project, viewer):
-    """A child's private project still includes every active parent."""
+    """The owner always; anyone else by the shared audience model (scope.audience_allows)."""
     if not project or not _active(viewer):
         return False
-    if project.get('wrapped_from') and not _wrapped_visible(project, viewer):
+    if project.get('wrapped_from') and project.get('audience_rev') != 2 and not _wrapped_visible(project, viewer):
         return False
     if viewer['id'] == project.get('owner_member_id'):
         return True
-    audience = project.get('audience')
-    if audience == 'household':
-        return True
-    if not _parent(viewer):
-        return False
-    owner = storage.get_member(project.get('owner_member_id')) or {}
-    return audience == 'parents' or (audience == 'private' and _child(owner))
+    from services import scope
+    return scope.audience_allows(project, 'project', viewer)
+
+
+def can_edit_audience(project, viewer):
+    return bool(can_see(project, viewer) and (viewer['id'] == project.get('owner_member_id') or _parent(viewer)))
 
 
 def can_act(project, viewer):
@@ -90,6 +90,36 @@ def can_act(project, viewer):
 
 def _error(message):
     return {'status': 'error', 'message': message}
+
+
+def _listable(mid):
+    m = storage.get_member(mid) if isinstance(mid, str) else None
+    return bool(m and not m.get('system') and mid != 'argyle' and (m.get('status') or 'active') != 'archived')
+
+
+def normalize_audience(row, list_given):
+    """Shape audience + shared_with in place (spec §2); return an error message or None."""
+    audience = row.get('audience')
+    if audience not in AUDIENCES:
+        return 'Choose household, parents, shared or private'
+    owner_id = row.get('owner_member_id')
+    owner = storage.get_member(owner_id) or {}
+    ids = []
+    for mid in (row.get('shared_with') or []) if list_given else []:
+        if _listable(mid) and mid not in ids:
+            ids.append(mid)
+    if audience in ('household', 'parents'):
+        ids = []
+    elif audience == 'private':
+        if not list_given:
+            ids = [owner_id] + ([m['id'] for m in storage.get_all_members() if _parent(m) and _active(m)]
+                                if _child(owner) else [])
+        if owner_id not in ids:
+            ids.insert(0, owner_id)
+    elif audience == 'shared' and not ids:
+        audience = 'parents'
+    row['audience'], row['shared_with'] = audience, list(dict.fromkeys(ids))
+    return None
 
 
 def _validate(row):
@@ -104,8 +134,6 @@ def _validate(row):
     owner = storage.get_member(owner_id)
     if not _active(owner) or owner.get('role') not in ('parent', 'adult', 'child'):
         return 'Choose an active project owner'
-    if row.get('audience') not in AUDIENCES:
-        return 'Choose private, parents or household'
     target_date = row.get('target_date')
     if target_date is not None:
         try:
@@ -114,7 +142,8 @@ def _validate(row):
                 return 'Target date must be YYYY-MM-DD'
         except ValueError:
             return 'Target date must be YYYY-MM-DD'
-    if row.get('body_goal') and (_child(owner) or row['audience'] != 'private'):
+    if row.get('body_goal') and (_child(owner) or row['audience'] != 'private'
+                                 or row.get('shared_with') != [row['owner_member_id']]):
         return 'A body goal must belong to an adult and stay private'
     return None
 
@@ -137,6 +166,10 @@ def prepare_create(fields, actor):
                **{key: fields[key] for key in EDITABLE if key in fields}}
         owner = storage.get_member(row['owner_member_id']) if isinstance(row['owner_member_id'], str) else None
         row.setdefault('audience', 'parents' if _child(owner or {}) else 'private')
+        message = normalize_audience(row, 'shared_with' in fields)
+        if message:
+            return _error(message)
+        row['audience_rev'] = 2
         if any(not isinstance(row.get(key), str) for key in ('title', 'goal', 'done_when')):
             return _error('Title, goal and done-when must be text')
         _classify(row)
@@ -166,10 +199,21 @@ def update(project_id, fields, actor):
         if 'body_goal' in fields:
             return _error('Body goals are classified by Chauffeur')
         patch = {key: fields[key] for key in EDITABLE if key in fields}
+        touches = any(k in patch and patch[k] != project.get(k) for k in AUDIENCE_KEYS)
+        if touches and not can_edit_audience(project, actor):
+            return _error('Only the owner or a parent can change who sees this project')
         proposed = {**project, **patch}
         if any(not isinstance(proposed.get(key), str) for key in ('title', 'goal', 'done_when')):
             return _error('Title, goal and done-when must be text')
         _classify(proposed)
+        list_given = 'shared_with' in patch or (proposed.get('audience') == project.get('audience')
+                                                 and project.get('audience_rev') == 2)
+        message = normalize_audience(proposed, list_given)
+        if message:
+            return _error(message)
+        if proposed['owner_member_id'] != project['owner_member_id'] and proposed['audience'] in ('private', 'shared') \
+                and proposed['owner_member_id'] not in proposed['shared_with']:
+            proposed['shared_with'].append(proposed['owner_member_id'])
         message = _validate(proposed)
         if message:
             return _error(message)
@@ -177,6 +221,7 @@ def update(project_id, fields, actor):
                 and proposed['owner_member_id'] != actor['id'] and not _parent(actor)):
             return _error('Only a parent can assign a project to someone else')
         patch['body_goal'] = proposed['body_goal']
+        patch.update(audience=proposed['audience'], shared_with=proposed['shared_with'], audience_rev=2)
         storage.update_project(project_id, patch)
         return {'status': 'success', 'project': storage.get_project(project_id)}
 
@@ -910,7 +955,25 @@ def adopt_existing():
         return counts
 
 
-AUDIENCE_LABEL = {'private': 'Private', 'parents': 'Parents', 'household': 'Household'}
+AUDIENCE_LABEL = {'private': 'Private', 'parents': 'Parents', 'shared': 'Parents and chosen people',
+                  'household': 'Household'}
+
+
+def audience_label(project):
+    names = [n for n in _listed(project) if n['id'] != project.get('owner_member_id')]
+    if project.get('audience') == 'private' and names:
+        return 'Only ' + ', '.join([(storage.get_member(project['owner_member_id']) or {}).get('name') or 'the owner']
+                                   + [n['name'] for n in names])
+    return AUDIENCE_LABEL.get(project.get('audience'), '')
+
+
+def _listed(project):
+    out = []
+    for mid in project.get('shared_with') or []:
+        m = storage.get_member(mid)
+        if _active(m or {}):
+            out.append({'id': mid, 'name': m.get('name') or ''})
+    return out
 
 
 def needs_plan(project):
@@ -934,7 +997,8 @@ def card(project, viewer, planning='started', reason=''):
     return {'kind': 'project', 'project_id': project['id'], 'title': project.get('title') or '',
             'goal': project.get('goal') or '', 'owner': project.get('owner_member_id'),
             'owner_label': owner.get('name') if _active(owner) else 'Unassigned',
-            'audience': project.get('audience'), 'audience_label': AUDIENCE_LABEL.get(project.get('audience'), ''),
+            'audience': project.get('audience'), 'audience_label': audience_label(project),
+            'shared_with': _listed(project), 'can_edit_audience': can_edit_audience(project, viewer),
             'state': project.get('state'), 'planning': planning, 'reason': reason,
             'can_edit': can_act(project, viewer), 'body_goal': bool(project.get('body_goal'))}
 
@@ -1057,7 +1121,9 @@ def view(project, viewer):
     if not access.project_visible(project, viewer):
         return {}
     result = {key: deepcopy(project.get(key)) for key in
-              ('id', 'title', 'goal', 'done_when', 'owner_member_id', 'audience', 'state', 'target_date')}
+              ('id', 'title', 'goal', 'done_when', 'owner_member_id', 'audience', 'state', 'target_date', 'body_goal')}
+    result.update(audience_label=audience_label(project), shared_with=_listed(project),
+                  can_edit_audience=can_edit_audience(project, viewer))
     result['steps'] = deepcopy(project.get('steps') or [])
     result['can_act'] = can_act(project, viewer)
     for step in result['steps']:

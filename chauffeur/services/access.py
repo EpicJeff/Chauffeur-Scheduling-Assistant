@@ -143,7 +143,7 @@ def home_project(row):
 
 
 def restricted(project):
-    return bool(project) and not project.get('wrapped_from') and project.get('audience') in ('private', 'parents')
+    return bool(project) and project.get('audience') != 'household'
 
 
 def project_visible(project, viewer):
@@ -152,9 +152,10 @@ def project_visible(project, viewer):
     if not project or not viewer:
         return False
     if is_house(viewer):
-        if project.get('wrapped_from'):
+        if project.get('wrapped_from') and project.get('audience_rev') != 2:
             return projects._wrapped_visible(project, viewer)
-        return project.get('audience') == 'household'
+        return project.get('audience') in (('household', 'parents', 'shared')
+                                           if viewer.get('role') == 'parent' else ('household',))
     return projects.can_see(project, viewer)
 
 
@@ -179,6 +180,12 @@ def _subjects_full(kind, row, viewer, home, visited):
     return True
 
 
+def _child_private_list(home, kind, row):
+    """A child's own private list decides who of the parents sees its records (audience spec §1)."""
+    return bool(home and home.get('audience') == 'private'
+                and home.get('owner_member_id') and home.get('owner_member_id') == keeper_id(kind, row))
+
+
 def record_view(kind, row, viewer, *, skip_project=False, _visited=None):
     """'full', 'keeper' or None for one viewer (spec §3)."""
     spec = KINDS.get(kind)
@@ -192,7 +199,7 @@ def record_view(kind, row, viewer, *, skip_project=False, _visited=None):
     home = home_project(row)
     subjects_ok = _subjects_full(kind, row, viewer, home, visited)
     layer_ok = (skip_project or not restricted(home)
-                or _parent_of_child_keeper(kind, row, viewer)
+                or (_parent_of_child_keeper(kind, row, viewer) and not _child_private_list(home, kind, row))
                 or project_visible(home, viewer))
     if subjects_ok and layer_ok:
         return FULL

@@ -1517,10 +1517,16 @@ NOT_ALOUD = "That one is not for a shared speaker; open it on your phone."
 OWN_CHAT = "Ask me about that in your own Argyle chat."
 
 
+def _conversation_reader(viewer):
+    """A room's write authority never supplies private target lookup authority."""
+    viewer = viewer or access.HOUSE
+    return access.HOUSE if access.is_house(viewer) and _mission_context.get() is None else viewer
+
+
 def _conversation_view(kind, row, viewer, focus_key):
     """Piece projections and room sensitivity for Argyle conversations."""
     from services import situations
-    viewer = viewer or access.HOUSE
+    viewer = _conversation_reader(viewer)
     if not row:
         return None
     # HOUSE_PARENT may write household records, but is still a room, not a
@@ -1584,7 +1590,7 @@ def _render_at(kind, row, view, viewer, focus_key=None):
 @access.batch()
 def _conversation_situations(viewer, focus_key, kinds=None, spoken=False):
     from services import situations, storage
-    viewer = viewer or access.HOUSE
+    viewer = _conversation_reader(viewer)
     out = []
     for kind in kinds or situations.KINDS:
         # Enumerate first: the legacy channel rule can be wider than the
@@ -1623,6 +1629,7 @@ def _resolve_situation(ref: str, kind: str = None, viewer: dict = None, focus_ke
     is a room: a sensitive insight is never matched, listed or made the focus
     there, by id or by fragment."""
     from services import situations as _sit, triage as _tri
+    viewer = _conversation_reader(viewer)
     ref = (ref or '').strip()
     if not ref:
         f = _tri.get_focus(focus_key, viewer=viewer or access.HOUSE)
@@ -1856,6 +1863,7 @@ def start_ask(ref: str = '', to_name: str = '', what: str = '', channel: str = '
 def _focus_ask(focus_key: str, acting_member: dict):
     """The focus situation's ONE live ask, or a refusal naming the choice."""
     from services import triage as _tri
+    acting_member = _conversation_reader(acting_member)
     if not _tri.get_focus(focus_key, viewer=acting_member or access.HOUSE):
         return None, NO_FOCUS
     live = _tri.focus_live_asks(focus_key, acting_member)
@@ -1987,7 +1995,7 @@ def start_mission_for(goal: str, title: str = None, acting_member: dict = None, 
     from services.voice_identity import VoiceContext
     spoken = isinstance(voice_context, VoiceContext)
     from services import subjects, situations
-    viewer = voice_context.verified_member() if spoken else acting_member
+    viewer = voice_context.verified_member() if spoken else _conversation_reader(acting_member)
     subject = subjects.load(subject_kind, subject_id) if subject_kind in subjects.KINDS and subject_id else None
     if subject is None or not subjects.visible(subject_kind, subject, viewer, spoken):
         subject_kind = subject_id = None
@@ -3890,7 +3898,7 @@ def add_occasion(title: str, anchor_date: str, kind: str = "gathering",
 def _project_readable(project, actor, focus_key=None, spoken=False):
     from services import projects, subjects
     humans = subjects.channel_humans(focus_key)
-    return (access.project_visible(project, actor or access.HOUSE)
+    return (access.project_visible(project, _conversation_reader(actor))
             and (humans is None or all(access.project_visible(project, m) for m in humans))
             and (not spoken or subjects.spoken_safe('project', project)))
 

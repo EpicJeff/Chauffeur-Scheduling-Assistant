@@ -338,6 +338,7 @@ READERS = [
     ((R, 'GET', '/api/asks/{ask_id}/channels'), '4.1-signed-in', ('thread', 'mission'), 'record_view'),
     ((R, 'POST', '/api/asks/{ask_id}/sent'), '4.1-signed-in', ('thread', 'mission'), 'record_actable'),
     ((R, 'POST', '/api/asks/{ask_id}/withdraw'), '4.1-signed-in', ('thread', 'mission'), 'record_actable'),
+    ((R, 'PATCH', '/api/projects/{project_id}'), '4.1-signed-in', ('thread', 'mission', 'program'), 'projects.can_act; projects.can_edit_audience'),
     ((P, '*', '/api/projects'), 'NONE', (), 'projects.can_see/can_act; project access is unchanged by this spec'),
     ((R, 'POST', '/api/study/trips/{event_id}/locate'), 'NONE', (), 'trip'),
     ((R, 'GET', '/api/household-load'), 'INTERNAL', (),

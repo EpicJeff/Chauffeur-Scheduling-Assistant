@@ -581,6 +581,7 @@ def redact_board(data: dict, viewer: Optional[dict]) -> dict:
 # This supersedes docs/occasion_design.md's `hidden_from` proposal.
 
 AUDIENCE_DEFAULTS = {
+    'project': 'private',
     'trip': 'parents',
     'occasion': 'parents',
     'gift_list': 'parents',      # when it exists — never 'household'
