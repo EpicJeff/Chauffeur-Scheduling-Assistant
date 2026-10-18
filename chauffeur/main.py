@@ -6135,6 +6135,57 @@ def asks_answer(ask_id: str, body: dict = Body(default={}), request: Request = N
 
 # --- Projects: the record, audience and lifecycle ---
 
+def _deletion_for_actor(kind, rid, request):
+    from services import access
+    actor = _piece_viewer(request)
+    row = getattr(storage, 'get_' + kind)(rid) if kind in ('project', 'thread', 'mission', 'program') else None
+    visible = (access.project_visible(row, actor) if kind == 'project'
+               else access.record_visible(kind, row, actor))
+    if not row or row.get('deleting') or not visible:
+        raise HTTPException(status_code=404, detail=f'No such {kind}')
+    return actor
+
+
+def _deletion_response(result):
+    if result.get('status') != 'ok':
+        code = {'refused': 403, 'changed': 409, 'confirmation_required': 400}.get(result.get('status'), 400)
+        raise HTTPException(status_code=code, detail=result.get('message'))
+    return result
+
+
+@app.get("/api/deletion/{kind}/{id}/preview")
+def deletion_preview(kind: str, id: str, request: Request = None):
+    from services import deletion
+    try:
+        actor = _deletion_for_actor(kind, id, request)
+        return _deletion_response(deletion.preview(kind, id, actor))
+    except deletion.Cancelled:
+        raise HTTPException(status_code=404, detail=f'No such {kind}')
+
+
+def _start_deletion(kind, rid, body, request, background_tasks):
+    from services import deletion
+    try:
+        actor = _deletion_for_actor(kind, rid, request)
+        result = _deletion_response(deletion.start(kind, rid, actor, (body or {}).get('token')))
+    except deletion.Cancelled:
+        raise HTTPException(status_code=404, detail=f'No such {kind}')
+    _mind_refresh_if_dirty(result, background_tasks)
+    return result
+
+
+@app.delete("/api/projects/{project_id}")
+def delete_project_route(project_id: str, background_tasks: BackgroundTasks,
+                         body: Optional[dict] = Body(default=None), request: Request = None):
+    return _start_deletion('project', project_id, body, request, background_tasks)
+
+
+@app.delete("/api/programs/{program_id}")
+def delete_program_route(program_id: str, background_tasks: BackgroundTasks,
+                         body: Optional[dict] = Body(default=None), request: Request = None):
+    return _start_deletion('program', program_id, body, request, background_tasks)
+
+
 @app.get("/api/projects")
 def projects_list(request: Request = None):
     from services import access
@@ -6663,16 +6714,11 @@ def missions_answer(mission_id: str, body: dict = Body(default={}),
 
 
 @app.delete("/api/missions/{mission_id}")
-def delete_mission_route(mission_id: str, member_id: Optional[str] = None, request: Request = None):
-    """Delete one mission with its steps and screenshots (services.missions.delete).
-    Parent/adult, by hand only; Argyle has no such tool."""
-    _piece_or_404('mission', mission_id, request, 'delete')
-    _mind_actor(request, member_id)
-    from services import missions as _missions
-    res = _missions.delete(mission_id)
-    if res.get('status') == 'not_found':
-        raise HTTPException(status_code=404, detail="No such mission")
-    return {"status": "success", **res}
+def delete_mission_route(mission_id: str, background_tasks: BackgroundTasks,
+                         body: Optional[dict] = Body(default=None),
+                         member_id: Optional[str] = None, request: Request = None):
+    """A person's confirmed delete, authorized before checking the token."""
+    return _start_deletion('mission', mission_id, body, request, background_tasks)
 
 
 @app.post("/api/missions/{mission_id}/drop")
@@ -7321,16 +7367,11 @@ def advance_thread(thread_id: str, body: dict = Body(default={}), request: Reque
 
 
 @app.delete("/api/threads/{thread_id}")
-def delete_thread_route(thread_id: str, member_id: Optional[str] = None, request: Request = None):
-    """Delete a thread with everything of its own (services.threads.delete).
-    Parent/adult, by hand only; Argyle has no such tool."""
-    _piece_or_404('thread', thread_id, request, 'delete')
-    _mind_actor(request, member_id)
-    from services import threads as _threads
-    res = _threads.delete(thread_id)
-    if res.get('status') == 'not_found':
-        raise HTTPException(status_code=404, detail="No such thread")
-    return {"status": "success", **res}
+def delete_thread_route(thread_id: str, background_tasks: BackgroundTasks,
+                        body: Optional[dict] = Body(default=None),
+                        member_id: Optional[str] = None, request: Request = None):
+    """A person's confirmed delete, authorized before checking the token."""
+    return _start_deletion('thread', thread_id, body, request, background_tasks)
 
 
 @app.post("/api/threads/{thread_id}/close")

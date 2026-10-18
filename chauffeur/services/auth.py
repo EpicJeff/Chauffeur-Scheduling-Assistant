@@ -407,6 +407,7 @@ RULES = [
     # Projects apply the owner's audience and action permissions in the service.
     (ANY, '/api/projects', SIGNED_IN, None),
     (ANY, '/api/projects/*', SIGNED_IN, None),
+    (ANY, '/api/deletion/*', SIGNED_IN, None),
     (ANY, '/api/asks', SIGNED_IN, None),
     (ANY, '/api/asks/*', SIGNED_IN, None),
     # Missions: reads for any signed-in member; launching/approving/answering

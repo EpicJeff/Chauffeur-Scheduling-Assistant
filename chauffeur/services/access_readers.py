@@ -259,6 +259,10 @@ READERS = [
     ]],
     # INTERNAL: function readers found by the register guard (Task 1 Step 9)
     *[((F, name), 'INTERNAL', ('thread', 'mission', 'program'), 'raw (an action or decision; its callers apply the rule)') for name in [
+        'services.deletion.closure',
+        'services.deletion._prepare',
+        'services.deletion._emissions',
+        'services.planned.cancel_for_delete',
         'services.asks.unread',
         'services.chat_actions._skip_occurrence',
         

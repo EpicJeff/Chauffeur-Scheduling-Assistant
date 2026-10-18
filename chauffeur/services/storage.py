@@ -472,6 +472,7 @@ with db_lock:
     assist_history_table = db.table('assist_history')
     household_tasks_table = db.table('household_tasks')
     projects_table = db.table('projects')
+    deletions_table = db.table('deletions')
     threads_table = db.table('threads')
     requests_table = db.table('requests')
     solve_packs_table = db.table('solve_packs')
@@ -3204,6 +3205,38 @@ def expire_stale_requests(now_ts: float = None) -> List[dict]:
 # Work with a deadline and no destination. Task = do something, errand = go
 # somewhere; keeping that line crisp is what keeps "renew the passports" out
 # of the solver's Tuesday.
+
+def get_deletions() -> List[dict]:
+    with db_lock:
+        return [dict(row) for row in deletions_table.all()]
+
+
+def add_deletion(data: dict) -> str:
+    import uuid
+    row = dict(data)
+    row.setdefault('id', uuid.uuid4().hex)
+    with db_lock:
+        deletions_table.insert(row)
+    return row['id']
+
+
+def update_deletion(deletion_id: str, fields: dict) -> bool:
+    with db_lock:
+        return bool(deletions_table.update(fields, Query().id == deletion_id))
+
+
+def delete_deletion(deletion_id: str) -> None:
+    with db_lock:
+        deletions_table.remove(Query().id == deletion_id)
+
+
+def stamp_deleting(kind: str, record_id: str, deletion_id: str) -> bool:
+    """Caller holds the admission transaction; use the ordinary table update path."""
+    tables = {'project': projects_table, 'thread': threads_table,
+              'mission': missions_table, 'program': programs_table}
+    with db_lock:
+        return bool(tables[kind].update({'deleting': deletion_id}, Query().id == record_id))
+
 
 def add_project(data: dict) -> str:
     """Persist a new project, assigning its identity and first revision."""

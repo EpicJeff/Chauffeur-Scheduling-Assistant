@@ -1046,6 +1046,11 @@ _CACHE: dict = {}
 _CACHE_MAX = 8
 
 
+def invalidate_for_deletion():
+    """Task 3 supplies deletion-aware board invalidation and the digest change."""
+    pass
+
+
 def invalidate_cache():
     """A write a board draws — a packing claim — clears every held board, so
     the reload the writer triggers (packing_card's chf-pack-change) rebuilds

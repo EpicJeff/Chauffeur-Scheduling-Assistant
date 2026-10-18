@@ -426,6 +426,24 @@ def drop_stage(mission_id, rev, stage_id, actor):
     return {'status': 'success', 'message': 'Stage left out.'}
 
 
+def cancel_for_delete(mission_id):
+    """Admission already authorized the deletion; stopping needs no plan approval."""
+    with storage.db_lock:
+        mission = storage.get_mission(mission_id) or {}
+        plan = mission.get('plan')
+        if not plan:
+            return
+        plan['state'] = 'stopped'
+        for stage in plan.get('stages', []):
+            _dismiss_rows(stage)
+            if stage.get('state') == 'running':
+                stage.update(state='skipped', outcome='stop')
+        storage.update_mission(mission_id, {'plan': plan})
+        storage.set_app_state(f'mission_steer:{mission_id}', {'text': 'Stopped', 'ts': time.time()})
+        for name in ('plan', 'stage', 'stage_check'):
+            _settle(mission_id, name, 'Stopped')
+
+
 def stop_plan(mission_id, actor):
     with storage.db_lock:
         mission, plan, error = _plan_for_change(mission_id, actor)

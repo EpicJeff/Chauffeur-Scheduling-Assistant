@@ -378,21 +378,9 @@ def note(thread_id: str, text: str, who: str = None, url: str = None) -> bool:
 
 
 def delete(thread_id: str) -> dict:
-    """A person's delete, by hand only (no agent tool): the thread, every
-    mission opened from it (with their steps, asks and screenshots), and its
-    own asks. Cancel-not-delete still holds for the app's own records; this
-    exists for clutter a person wants gone (test runs, duplicates)."""
-    if not storage.get_thread(thread_id):
-        return {'status': 'not_found'}
-    from services import missions as _missions
-    n = 0
-    for m in storage.get_missions():
-        if m.get('origin_kind') == 'thread' and m.get('origin_ref') == thread_id:
-            _missions.delete(m['id'])
-            n += 1
-    storage.delete_asks_for('thread', thread_id)
-    storage.delete_thread(thread_id)
-    return {'status': 'ok', 'missions': n}
+    """Compatibility entry point; a thread and its origin missions share admission."""
+    from services import deletion
+    return deletion.delete('thread', thread_id)
 
 
 def close(thread_id: str, state: str = 'done', who: str = None) -> bool:

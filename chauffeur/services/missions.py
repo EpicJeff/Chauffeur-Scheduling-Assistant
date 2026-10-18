@@ -834,6 +834,8 @@ def _steer_check(mission_id: str, pause_rev=None):
     def check():
         with storage.db_lock:
             mission = storage.get_mission(mission_id) or {}
+            if not mission or mission.get('deleting'):
+                return 'Stopped'
             if (mission.get('paused_by_project')
                     or int(mission.get('project_pause_rev') or 0) != pause_rev):
                 return 'Paused'
@@ -1185,16 +1187,9 @@ def _finish_browse_locked(mission_id: str, step_id: str, report: dict) -> None:
 
 
 def delete(mission_id: str) -> dict:
-    """A person's delete, by hand only (no agent tool): the mission, its
-    steps, its asks and its screenshot folder. The thread it came from stays."""
-    import shutil
-    if not storage.get_mission(mission_id):
-        return {'status': 'not_found'}
-    storage.delete_mission_rows(mission_id)
-    storage.delete_asks_for('mission', mission_id)
-    d = os.path.join(os.path.dirname(storage.DB_PATH), 'browse', mission_id)
-    shutil.rmtree(d, ignore_errors=True)
-    return {'status': 'ok'}
+    """Compatibility entry point; confirmed admission and cleanup share one service."""
+    from services import deletion
+    return deletion.delete('mission', mission_id)
 
 
 def release(mission_id: str, decision: str, actor: dict, ask_id: str = None, approval_context=None) -> dict:
