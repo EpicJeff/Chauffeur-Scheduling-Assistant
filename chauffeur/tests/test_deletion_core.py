@@ -852,10 +852,14 @@ def scenario_routes_and_argyle_never_call_the_legacy_delete_adapters():
     # These adapters have no production callers; keep that invariant explicit.
     for module in (main, agent_tools_v2):
         tree = ast.parse(inspect.getsource(module))
+        aliases = {'threads', 'missions'}
+        aliases.update(alias.asname or alias.name
+                       for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module == 'services'
+                       for alias in node.names if alias.name in ('threads', 'missions'))
         calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
                  and isinstance(n.func, ast.Attribute) and n.func.attr == 'delete'
                  and isinstance(n.func.value, ast.Name)
-                 and n.func.value.id in ('threads', 'missions')]
+                 and n.func.value.id in aliases]
         check(not calls, f'{module.__name__} calls a legacy delete adapter')
 
 

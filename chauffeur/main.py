@@ -5417,10 +5417,11 @@ def list_findings(state: str = 'open', request: Request = None):
     _needs_you_actor(request, None)
     from services import access
     viewer = _piece_viewer(request)
-    if state == 'open':
-        return {"findings": _f.open_findings(viewer=viewer)}
-    return {"findings": [v for f in storage.get_findings(state=state)
-                         if (v := access.finding_view(f, viewer)) is not None]}
+    with access.batch():
+        if state == 'open':
+            return {"findings": _f.open_findings(viewer=viewer)}
+        return {"findings": [v for f in storage.get_findings(state=state)
+                             if (v := access.finding_view(f, viewer)) is not None]}
 
 @app.post("/api/findings/{finding_id}/resolve")
 def resolve_finding(finding_id: str, body: dict = Body(default={}),
@@ -5508,6 +5509,9 @@ def coverage_options_api(event_id: str, request: Request = None):
     from services import coverage_options as _cov
     _needs_you_actor(request, None)
     ev = _resolve_cached_event(event_id)
+    from services import access
+    if access.event_view(ev) is access.GONE:
+        raise HTTPException(status_code=404, detail="Event not found in the current schedule.")
     return _cov.ladder(ev)
 
 @app.post("/api/coverage/{event_id}/ask")
@@ -16564,12 +16568,15 @@ def family_locations(viewer: Optional[str] = None, request: Request = None):
 
 @app.get("/api/channels")
 def list_channels(member_id: str):
+    from services import access
     channels = storage.get_channels_for_member(member_id)
-    unread = storage.get_unread_counts(member_id)
-    for c in channels:
-        msgs = storage.get_channel_messages(c['id'], limit=1)
-        c['last_message'] = msgs[-1] if msgs else None
-        c['unread'] = unread.get(c['id'], 0)
+    resolved = {}
+    with access.batch():
+        unread = storage.get_unread_counts(member_id, resolved=resolved)
+        for c in channels:
+            msgs = storage.get_channel_messages(c['id'], limit=1, resolved=resolved)
+            c['last_message'] = msgs[-1] if msgs else None
+            c['unread'] = unread.get(c['id'], 0)
     # Channels with no messages yet don't get listed (except the family hub):
     # Discuss/Message get-or-create a channel the moment the thread is opened,
     # and an untouched thread must not clutter the whole household's list.

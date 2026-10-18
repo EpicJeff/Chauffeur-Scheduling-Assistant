@@ -464,6 +464,15 @@ def scenario_moms_private_list_hides_kates_program_practice_from_dad():
               f'R17 commitment for {col}: {view}')
 
 
+def scenario_coverage_options_returns_404_for_a_gone_practice():
+    from access_shared_signals import request
+    fx = access_fixture.build()
+    event, _ = seed(fx)
+    storage.update_program(fx.ids['R3'], {'deleting': 'coverage-delete'})
+    response = request(fx, 'mom', 'GET', '/api/coverage/' + event['id'] + '/options')
+    check(response.status_code == 404 and fx.title('R3') not in response.text, response.text)
+
+
 SCENARIOS = [v for k, v in list(globals().items()) if k.startswith('scenario_')]
 if __name__ == '__main__':
     failed = 0

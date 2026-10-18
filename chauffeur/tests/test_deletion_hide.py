@@ -489,6 +489,29 @@ def scenario_the_schedule_is_marked_dirty_at_start_and_refreshed_once_by_cleanup
         check(len(calls) - at_start == 1, f"cleanup refreshes the schedule exactly once: {len(calls) - at_start}")
 
 
+def scenario_commitment_findings_hide_at_start_with_their_program():
+    from services import findings
+    fx = world()
+    ids = {}
+    for key in ('R3', 'R5p'):
+        ids[key] = storage.add_finding({
+            'subject_type': 'commitment', 'subject_id': fx.commitments[key] + ':practice-occurrence',
+            'kind': 'commitment', 'line': fx.title(key) + ' ' + fx.secret(key),
+            'state': 'open', 'identity': 'commitment-proof:' + key})
+    before = http('mom', 'GET', '/api/findings')
+    check(before.status_code == 200 and fx.secret('R5p') in before.text, 'the emitted finding starts visible')
+    start_ok('project', fx.projects['household']['id'], dict(DAD))
+    gone = storage.get_finding(ids['R5p'])
+    for col, viewer in viewers(fx):
+        check(not access.finding_visible(gone, viewer), f'commitment finding hidden for {col}')
+        check(access.finding_view(gone, viewer) is None, f'no commitment projection for {col}')
+        check(not any(f['id'] == gone['id'] for f in findings.open_findings(viewer=viewer)),
+              f'Needs You reader omits it for {col}')
+    after = http('mom', 'GET', '/api/findings')
+    check(after.status_code == 200 and fx.secret('R5p') not in after.text, 'findings API hides the gone program')
+    check(fx.secret('R3') in after.text, 'the surviving program finding stays')
+
+
 SCENARIOS = [v for k, v in list(globals().items()) if k.startswith('scenario_')]
 
 if __name__ == '__main__':

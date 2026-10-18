@@ -209,8 +209,9 @@ def resolve(finding_id: str, how: str, member_id: str = None) -> dict:
 def month_counts(since_ts: float, *, viewer=access.HOUSE) -> dict:
     """Real counts for the digest. Anything we cannot count, we do not say —
     there is no estimated-hours-saved here on purpose."""
-    rows = [r for r in storage.get_findings()
-            if (r.get('created_at') or 0) >= since_ts and access.finding_visible(r, viewer)]
+    with access.batch():
+        rows = [r for r in storage.get_findings()
+                if (r.get('created_at') or 0) >= since_ts and access.finding_visible(r, viewer)]
     out = {'watched': len(rows), 'cleared_themselves': 0, 'one_tap': 0,
            'decided': 0, 'expired': 0, 'still_open': 0}
     for r in rows:

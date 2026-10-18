@@ -564,7 +564,7 @@ def channel_visible(kind: str, row: dict, focus_key: str) -> bool:
 def _legacy_channel_visible(kind, row, humans):
     """Unrestricted pieces keep the channel's original subject-only rule."""
     from services import access, subjects
-    if access.gone(kind, row):
+    if access.gone(kind, row) or not row:
         return False
     return all(
         bool(member)

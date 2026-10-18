@@ -22,9 +22,18 @@ GONE = None
 _cache = ContextVar('access_cache', default=None)
 
 
-def gone(kind, row):
-    """A missing or deletion-stamped record has no readable projection."""
-    return not row or bool(row.get('deleting'))
+def gone(kind, row, *, rid=None):
+    """Explicit deletion, never mere retention pruning (delete spec rev 3.1)."""
+    if row and row.get('deleting'):
+        return True
+    rid = rid if rid is not None else (row or {}).get('id')
+    if not rid:
+        return False
+    def index():
+        return {(kind, rid) for deletion in storage.get_deletions()
+                if deletion.get('state') == 'started'
+                for kind, rid in deletion.get('closure') or []}
+    return (kind, rid) in _memo('open_deletion_ids', index)
 
 
 @contextmanager
@@ -146,7 +155,7 @@ def restricted(project):
 def project_visible(project, viewer):
     """projects.can_see, with a meaning for HOUSE and HOUSE_PARENT (spec §2)."""
     from services import projects
-    if gone('project', project) or not viewer:
+    if gone('project', project) or not project or not viewer:
         return False
     if is_house(viewer):
         return project.get('audience') in (('household', 'parents', 'shared')
@@ -233,7 +242,7 @@ def mission_reader(mission):
 
 def mission_view(mission, kind, row):
     """What a mission's own reads may see (spec §4.4)."""
-    if gone(kind, row) or gone('mission', mission):
+    if gone(kind, row) or not row or not mission or gone('mission', mission):
         return None
     if (kind == 'thread' and mission.get('origin_kind') == 'thread'
             and row.get('id') == mission.get('origin_ref')):
@@ -246,7 +255,7 @@ def mission_view(mission, kind, row):
 
 def channel_view(kind, row, focus_key):
     """The projection every human in a channel may receive (spec §4.3)."""
-    if gone(kind, row):
+    if gone(kind, row) or not row:
         return None
     from services import subjects, situations
     humans = subjects.channel_humans(focus_key)
@@ -293,15 +302,18 @@ def shared_screen_visible(kind, row, viewer):
 
 def finding_visible(finding, viewer):
     """A finding derives its audience from its source record, now (spec §4.8)."""
-    if gone('finding', finding):
+    if gone('finding', finding) or not finding:
         return False
     kind = finding.get('subject_type')
+    if kind == 'commitment':
+        cid = str(finding.get('subject_id') or '').split(':', 1)[0]
+        return commitment_view(storage.get_protected_commitment(cid), viewer) is not GONE
     if kind == 'project':
         return project_visible(_get_project(finding.get('subject_id')), viewer)
     if kind not in KINDS:
         return True
-    row = KINDS[kind].load(finding['subject_id'])
-    return not gone(kind, row) and record_visible(kind, row, viewer)
+    row = KINDS[kind].load(finding.get('subject_id'))
+    return bool(row) and not gone(kind, row) and record_visible(kind, row, viewer)
 
 
 def neutral_signal_line(kind, row):
@@ -312,14 +324,17 @@ def neutral_signal_line(kind, row):
 
 def finding_view(finding, viewer, *, focus_key=NOT_A_CHANNEL):
     """Project source-derived words before a finding leaves a read surface."""
-    if gone('finding', finding):
+    if gone('finding', finding) or not finding:
         return None
     kind = finding.get('subject_type')
+    if kind == 'commitment':
+        cid = str(finding.get('subject_id') or '').split(':', 1)[0]
+        return finding if commitment_view(storage.get_protected_commitment(cid), viewer) is not GONE else None
     if kind == 'project':
         return finding if project_visible(_get_project(finding.get('subject_id')), viewer) else None
     spec = KINDS.get(kind)
     row = spec.load(finding.get('subject_id')) if spec and finding.get('subject_id') else None
-    if spec and gone(kind, row):
+    if spec and (not row or gone(kind, row)):
         return None
     if row is None:
         return finding
@@ -339,7 +354,7 @@ def finding_view(finding, viewer, *, focus_key=NOT_A_CHANNEL):
 
 def private_recipients(kind, row):
     """Who a restricted record's DM-worthy signal goes to (access spec §4.8, audience spec §4)."""
-    if gone(kind, row):
+    if gone(kind, row) or not row:
         return []
     from services import projects
     home = home_project(row)
@@ -366,6 +381,8 @@ def practice_hidden(program, viewer, *, shared=False):
     """Only a restricted home can hide calendar words (scope is not secrecy)."""
     if gone('program', program):
         return True
+    if not program:
+        return False
     if _gone_subject('program', program):
         return not _is_keeper('program', program, viewer)
     visible = shared_screen_visible if shared else record_visible
@@ -395,14 +412,14 @@ def schedule_view(blob, viewer):
         def visible(pid):
             if pid not in programs:
                 row = storage.get_program(pid)
-                programs[pid] = (GONE if gone('program', row) else
+                programs[pid] = (GONE if gone('program', row, rid=pid) else
                                  not practice_hidden(row, HOUSE if is_house(viewer) else viewer))
             return programs[pid]
         events = []
         for ev in blob.get('events') or []:
-            if gone('event', ev):
+            if gone('event', ev) or not ev:
                 continue
-            if ev.get('event_type') == 'project_hold' and gone('project', _get_project(ev.get('project_id'))):
+            if ev.get('event_type') == 'project_hold' and gone('project', _get_project(ev.get('project_id')), rid=ev.get('project_id')):
                 continue
             pid = ((ev.get('practice') or {}).get('program_id')) if ev.get('event_type') == 'practice' else None
             if pid and visible(pid) is GONE:
@@ -425,7 +442,7 @@ def event_view(event, viewer=HOUSE):
 
 def commitment_view(row, viewer=HOUSE, *, programs=None):
     """An emitted reservation follows its program's current audience."""
-    if gone('commitment', row):
+    if gone('commitment', row) or not row:
         return GONE
     source = row.get('source') or {}
     programs = {} if programs is None else programs
@@ -435,7 +452,7 @@ def commitment_view(row, viewer=HOUSE, *, programs=None):
         if pid not in programs:
             programs[pid] = storage.get_program(pid)
         program = programs[pid]
-        if gone('program', program):
+        if gone('program', program, rid=pid):
             return GONE
     if program is None:
         # Legacy emissions can precede the provenance backfill. An orphaned
@@ -466,15 +483,15 @@ def shared_schedule_view(blob, viewer=HOUSE):
         events = []
         neutral_ids = set()
         for event in out.get('events') or []:
-            if gone('event', event):
+            if gone('event', event) or not event:
                 continue
-            if event.get('event_type') == 'project_hold' and gone('project', _get_project(event.get('project_id'))):
+            if event.get('event_type') == 'project_hold' and gone('project', _get_project(event.get('project_id')), rid=event.get('project_id')):
                 continue
             pid = (event.get('practice') or {}).get('program_id')
             if pid:
                 if pid not in visible:
                     row = storage.get_program(pid)
-                    visible[pid] = GONE if gone('program', row) else not practice_hidden(row, viewer, shared=True)
+                    visible[pid] = GONE if gone('program', row, rid=pid) else not practice_hidden(row, viewer, shared=True)
                 if visible[pid] is GONE:
                     continue
                 event = event if visible[pid] else neutral_practice(event)

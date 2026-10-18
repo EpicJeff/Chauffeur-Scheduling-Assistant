@@ -6740,8 +6740,8 @@ def message_visible(message, *, resolved=None):
             return False
         if key not in resolved:
             row = getters[kind](rid)
-            ok = not access.gone(kind, row)
-            if ok and kind in ('ask', 'proposal', 'finding'):
+            ok = not access.gone(kind, row, rid=rid)
+            if ok and row and kind in ('ask', 'proposal', 'finding'):
                 sources = [row.get('source') or {},
                            {'kind': row.get('origin_kind'), 'id': row.get('origin_id')},
                            {'kind': row.get('situation_kind'), 'id': row.get('situation_id')},
@@ -6750,24 +6750,26 @@ def message_visible(message, *, resolved=None):
             resolved[key] = ok
         return resolved[key]
 
-    if access.gone('message', message):
+    if not message:
         return False
     card = message.get('card') or {}
     refs = list(message.get('refs') or [])
     refs += [{'kind': kind, 'id': card.get(kind + '_id')}
              for kind in ('mission', 'thread', 'program', 'project', 'ask', 'proposal')]
-    return all(living(ref.get('kind'), ref.get('id')) for ref in refs)
+    with access.batch():
+        return not access.gone('message', message) and all(living(ref.get('kind'), ref.get('id')) for ref in refs)
 
 
 def get_channel_messages(channel_id: str, after_ts: float = None,
-                         limit: int = 50) -> List[dict]:
+                         limit: int = 50, *, resolved=None) -> List[dict]:
     """Ascending by ts; the LAST `limit` messages (optionally after after_ts)."""
     with db_lock:
         msgs = [dict(m) for m in chat_messages_table.search(Query().channel_id == channel_id)]
     if after_ts is not None:
         msgs = [m for m in msgs if m.get('ts', 0) > after_ts]
-    resolved = {}
-    with db_lock:
+    from services import access
+    resolved = {} if resolved is None else resolved
+    with db_lock, access.batch():
         msgs = [m for m in msgs if message_visible(m, resolved=resolved)]
     msgs.sort(key=lambda m: m.get('ts', 0))
     return msgs[-limit:] if limit else msgs
@@ -6778,21 +6780,23 @@ def set_last_read(channel_id: str, member_id: str, ts: float):
             {'channel_id': channel_id, 'member_id': member_id, 'last_read_ts': ts},
             (Query().channel_id == channel_id) & (Query().member_id == member_id))
 
-def get_unread_counts(member_id: str) -> dict:
+def get_unread_counts(member_id: str, *, resolved=None) -> dict:
     """{channel_id: unread_count} for every channel visible to the member."""
+    from services import access
     with db_lock:
         reads = {r['channel_id']: r.get('last_read_ts', 0)
                  for r in channel_reads_table.search(Query().member_id == member_id)}
     counts = {}
-    resolved = {}
-    for c in get_channels_for_member(member_id):
-        last_read = reads.get(c['id'], 0)
-        with db_lock:
-            msgs = chat_messages_table.search(Query().channel_id == c['id'])
-            counts[c['id']] = sum(
-                1 for m in msgs
-                if m.get('ts', 0) > last_read and m.get('sender_member_id') != member_id
-                and message_visible(m, resolved=resolved))
+    resolved = {} if resolved is None else resolved
+    with access.batch():
+        for c in get_channels_for_member(member_id):
+            last_read = reads.get(c['id'], 0)
+            with db_lock:
+                msgs = chat_messages_table.search(Query().channel_id == c['id'])
+                counts[c['id']] = sum(
+                    1 for m in msgs
+                    if m.get('ts', 0) > last_read and m.get('sender_member_id') != member_id
+                    and message_visible(m, resolved=resolved))
     return counts
 
 def add_telemetry_event(event_data: dict) -> int:

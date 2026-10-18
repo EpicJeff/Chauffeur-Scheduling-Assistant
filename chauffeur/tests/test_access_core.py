@@ -320,6 +320,72 @@ def scenario_batches_index_live_missions_and_reuse_situation_rows():
     check(not steps.called, 'visibility is checked before hydrating an enumerated mission')
 
 
+def scenario_pruned_subjects_and_chat_history_stay_until_explicitly_deleted():
+    from unittest.mock import patch
+    fx = access_fixture.build()
+    tid = fx.ids['R10']
+    targets = [('thread', fx.ids['R1']), ('mission', fx.ids['R2']),
+               ('program', fx.ids['R3']), ('project', fx.projects['mom_private']['id'])]
+    storage.deletions_table.truncate()
+    for kind, rid in targets:
+        getattr(storage, kind + 's_table').remove(storage.Query().id == rid)
+        storage.update_thread(tid, {'subject_kind': kind, 'subject_id': rid, 'subject_history': []})
+        message = {'id': 'old-' + kind, 'card': {kind + '_id': rid}, 'refs': [{'kind': kind, 'id': rid}]}
+        check(not access.gone(kind, None, rid=rid), 'retention alone is not deletion')
+        check(storage.message_visible(message), 'a pruned card/ref keeps its chat history')
+        check(access.record_view('thread', storage.get_thread(tid), fx.viewers['mom']) == 'full',
+              'a pruned subject keeps the previous audience')
+        did = storage.add_deletion({'kind': kind, 'root_id': rid, 'closure': [[kind, rid]], 'state': 'started'})
+        with patch.object(storage, 'get_deletions', wraps=storage.get_deletions) as reads, access.batch():
+            check(access.gone(kind, None, rid=rid) and not storage.message_visible(message), 'open deletion hides absent targets')
+            check(access.record_view('thread', storage.get_thread(tid), fx.viewers['mom']) is None,
+                  'open deletion keeps the survivor private')
+            check(reads.call_count == 1, 'nested readers index open deletions once per batch')
+        storage.delete_deletion(did)
+        # Cleanup flags a matching entry before dropping the deletion row.
+        storage.update_thread(tid, {'subject_history': [{'kind': kind, 'id': rid},
+                                                       {'kind': kind, 'id': rid, 'gone': True}]})
+        check(access.record_view('thread', storage.get_thread(tid), fx.viewers['mom']) is None,
+              'a later flagged duplicate must not be lost')
+        check(access.record_view('thread', storage.get_thread(tid), fx.viewers['dad']) == 'keeper',
+              'the survivor keeper retains the neutral view')
+        storage.update_thread(tid, {'owner_member_id': 'mom'})
+        check(access.record_view('thread', storage.get_thread(tid), fx.viewers['mom']) == 'keeper'
+              and access.record_view('thread', storage.get_thread(tid), fx.viewers['dad']) is None,
+              'a flagged pointer stays closed after the keeper changes')
+        storage.update_thread(tid, {'owner_member_id': 'dad'})
+        storage.update_thread(tid, {'subject_history': [], 'subject_kind': None, 'subject_id': None,
+                                   'subject': {'kind': kind, 'id': rid, 'gone': True}})
+        check(access.record_view('thread', storage.get_thread(tid), fx.viewers['mom']) is None,
+              'a flagged structured subject is also unreadable')
+        storage.update_thread(tid, {'subject': None})
+    for kind, card_key in (('ask', 'ask_id'), ('proposal', 'proposal_id')):
+        check(storage.message_visible({'card': {card_key: 'pruned-ledger'}}), 'pruned ledger cards remain readable')
+    finding = {'subject_type': 'thread', 'subject_id': 'pruned-source'}
+    check(not access.finding_visible(finding, fx.viewers['mom'])
+          and access.finding_view(finding, fx.viewers['mom']) is None, 'missing-source findings still hide')
+
+
+def scenario_channel_list_shares_ref_resolution_across_counts_and_previews():
+    from unittest.mock import patch
+    from access_shared_signals import request
+    fx = access_fixture.build()
+    storage.chat_messages_table.truncate()
+    storage.ensure_family_channel()
+    argyle = storage.ensure_argyle_member()['id']
+    channels = [storage.get_family_channel(), storage.get_or_create_dm(argyle, 'mom')]
+    for n, channel in enumerate(channels):
+        storage.add_chat_message({'id': f'batch-proof-{n}', 'channel_id': channel['id'],
+                                  'sender_member_id': argyle, 'ts': 1, 'body': 'shared-ref proof',
+                                  'refs': [{'kind': 'thread', 'id': fx.ids['R5t']}]})
+    with patch.object(storage, 'get_thread', wraps=storage.get_thread) as refs, \
+         patch.object(storage, 'get_deletions', wraps=storage.get_deletions) as deletions:
+        response = request(fx, 'mom', 'GET', '/api/channels?member_id=mom')
+    check(response.status_code == 200 and response.text.count('shared-ref proof') == 2, response.text)
+    check(refs.call_count == 1 and deletions.call_count == 1,
+          f'one reference load and deletion index across the entire request: {refs.call_count}, {deletions.call_count}')
+
+
 SCENARIOS = [v for k, v in list(globals().items()) if k.startswith('scenario_')]
 if __name__ == '__main__':
     failed = 0

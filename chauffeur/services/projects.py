@@ -39,7 +39,7 @@ def _parent(member):
 def can_see(project, viewer):
     """The owner always; anyone else by the shared audience model (scope.audience_allows)."""
     from services import access
-    if access.gone('project', project) or not _active(viewer):
+    if access.gone('project', project) or not project or not _active(viewer):
         return False
     if viewer['id'] == project.get('owner_member_id'):
         return True

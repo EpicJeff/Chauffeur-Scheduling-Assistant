@@ -167,11 +167,15 @@ def subject_records(kind, row):
     if kind == 'mission' and row.get('origin_kind') == 'thread' and row.get('origin_ref'):
         origin_id = row['origin_ref']
         row = storage.get_thread(origin_id)
-        if access.gone('thread', row):
-            return [('thread', row)]
+        if access.gone('thread', row, rid=origin_id):
+            return [('thread', {'id': origin_id, 'deleting': True})]
+        row = row or {}
     entries = list(row.get('subject_history') or [])
+    if isinstance(row.get('subject'), dict):
+        entries.append(row['subject'])
     if row.get('subject_kind'):
         entries.append({'kind': row['subject_kind'], 'id': row.get('subject_id')})
+    flagged = {(entry.get('kind'), entry.get('id')) for entry in entries if entry.get('gone')}
     seen, records = set(), []
     for entry in entries:
         key = (entry.get('kind'), entry.get('id'))
@@ -179,7 +183,12 @@ def subject_records(kind, row):
             continue
         seen.add(key)
         record = load(*key) if key[0] and key[1] else None
-        if record is not None or key[0] in ('thread', 'mission', 'program', 'project'):
+        # Preserve explicit deletion after cleanup; an ordinary pruned subject
+        # keeps the previous permissive behavior. A synthetic unreadable row
+        # makes every existing subject consumer honor the same restriction.
+        if key in flagged or access.gone(key[0], record, rid=key[1]):
+            record = {'id': key[1], 'deleting': True}
+        if record is not None:
             records.append((key[0], record))
     # A preview has no stored project yet, but its words already have that
     # audience. Read the current proposal each time so revisions can widen it;
