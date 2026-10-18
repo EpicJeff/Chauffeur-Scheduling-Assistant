@@ -1,0 +1,100 @@
+{# The one Delete for a project, thread, mission or program (projects delete spec §7).
+   Every surface that deletes one of these calls window.chfDeleteRecord: the
+   Projects page (admin and phone), its piece cards, the record sheet's thread
+   and mission bodies, and the phone's piece sheet. Same concept, one builder.
+
+   chfDeleteRecord({kind, id, title, apiBase, onDone}) -> Promise of
+       'deleted' | 'cancelled' | 'refused' | 'gone' | 'error'
+     1. GET api/deletion/{kind}/{id}/preview: what goes, and a token.
+     2. One promptConfirm naming every thread, mission and program by title,
+        grouped by kind, ending "Linked trips, lists and events stay."
+     3. DELETE the record's route with {token}.
+   A refusal ("Ask a parent to delete this.") and every other answer the
+   server words are shown verbatim through showGlobalAlert. A `changed` answer
+   (409) is shown, then the preview runs again so the person confirms what is
+   there now. On success the record is already hidden everywhere; onDone()
+   lets the host re-read or step back. Never a browser dialog.
+
+   chfDeleteMessage(items) -> the confirmation's text (exported for tests).
+   record_delete_script() emits the factory; safe to emit more than once. #}
+
+{% macro record_delete_script() %}
+<script>
+(function () {
+    if (window.chfDeleteRecord) return;
+    const ROUTES = {project: 'projects', thread: 'threads', mission: 'missions', program: 'programs'};
+    const GROUPS = [['thread', 'Conversations'], ['mission', 'Argyle’s work'], ['program', 'Programs']];
+    const NOUN = {project: 'project', thread: 'conversation', mission: 'piece of Argyle’s work', program: 'program'};
+    const STAY = 'Linked trips, lists and events stay.';
+
+    window.chfDeleteMessage = function (items) {
+        const blocks = [];
+        for (const [kind, label] of GROUPS) {
+            const titles = (items || []).filter(i => i && i.kind === kind).map(i => '· ' + (i.title || kind));
+            if (titles.length) blocks.push(label + '\n' + titles.join('\n'));
+        }
+        return (blocks.length ? 'These go for good:\n\n' + blocks.join('\n\n') + '\n\n' : '') + STAY;
+    };
+
+    // The wall's promptConfirm (control_center.html) writes its message as
+    // HTML; the phone's escapes it. Titles are people's words, so they go in
+    // as text on both.
+    function asText(message) {
+        if (!document.getElementById('cc-confirm-message')) return message;
+        return message.replace(/[&<>"'*]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '*': '&#42;'}[c]));
+    }
+
+    function headers(json) {
+        const out = json ? {'Content-Type': 'application/json'} : {};
+        try {
+            const token = window.chfPersonToken ? window.chfPersonToken() : '';
+            if (token) out['X-Member-Token'] = token;
+        } catch (e) { /* the page's fetch wrapper still signs it */ }
+        return out;
+    }
+
+    function say(message) {
+        if (typeof window.showGlobalAlert === 'function') window.showGlobalAlert(message);
+        else console.warn(message);
+    }
+
+    async function answer(r) {
+        const data = await r.json().catch(() => ({}));
+        return {status: r.status, ok: r.ok, data, detail: data.detail || data.message || ''};
+    }
+
+    window.chfDeleteRecord = async function ({kind, id, title = '', apiBase, onDone} = {}) {
+        if (!ROUTES[kind] || !id) return 'error';
+        const base = apiBase !== undefined ? apiBase : (window.chfBase !== undefined ? window.chfBase : '');
+        const done = async () => { try { if (onDone) await onDone(); } catch (e) { console.warn(e); } };
+        // A changed project asks again; three looks is plenty for one tap.
+        for (let attempt = 0; attempt < 3; attempt++) {
+            let look;
+            try {
+                look = await answer(await fetch(base + 'api/deletion/' + encodeURIComponent(kind) + '/' + encodeURIComponent(id) + '/preview',
+                                                {headers: headers(false)}));
+            } catch (e) { say('Couldn’t delete that just now.'); return 'error'; }
+            if (look.status === 404) { say('That isn’t here any more.'); await done(); return 'gone'; }
+            if (!look.ok || look.data.status !== 'ok' || !look.data.token) {
+                say(look.detail || 'Couldn’t delete that.');
+                return 'refused';
+            }
+            const heading = title ? 'Delete “' + title + '”?' : 'Delete this ' + NOUN[kind] + '?';
+            const ok = await window.promptConfirm(heading, asText(window.chfDeleteMessage(look.data.items)), 'Delete', 'Keep it');
+            if (!ok) return 'cancelled';
+            let res;
+            try {
+                res = await answer(await fetch(base + 'api/' + ROUTES[kind] + '/' + encodeURIComponent(id),
+                                               {method: 'DELETE', headers: headers(true), body: JSON.stringify({token: look.data.token})}));
+            } catch (e) { say('Couldn’t delete that just now.'); return 'error'; }
+            if (res.ok) { await done(); return 'deleted'; }
+            if (res.status === 409) { say(res.detail || 'This project changed. Look again.'); continue; }
+            if (res.status === 404) { say('That isn’t here any more.'); await done(); return 'gone'; }
+            say(res.detail || 'Couldn’t delete that.');
+            return 'refused';
+        }
+        return 'error';
+    };
+})();
+</script>
+{% endmacro %}

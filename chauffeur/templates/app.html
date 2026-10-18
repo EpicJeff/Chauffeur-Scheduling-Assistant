@@ -1939,7 +1939,72 @@
             // bind() needs the fetched situation to resolve an action's option.
             ctx.lookup = () => s;
             const canNote = ['parent', 'adult'].includes(currentMemberRole());
-            return window.Situations.cardHtml(s, ctx) + (kind === 'thread' ? houseThreadExtras(s, canNote) : '');
+            const missions = kind === 'thread' ? await pieceSheetMissions(id) : '';
+            return window.Situations.cardHtml(s, ctx) + (kind === 'thread' ? houseThreadExtras(s, canNote) : '')
+                + missions + pieceSheetDeleteRow(kind, id, s.title || '');
+        }
+        // Every mission opened from this thread, each with open and Delete
+        // (projects delete spec §7): the same list the admin thread sheet
+        // draws, from the same parent/adult route.
+        const pieceSheetTitles = {};
+        async function pieceSheetMissions(threadId) {
+            if (!['parent', 'adult'].includes(currentMemberRole())) return '';
+            let missions = [];
+            try {
+                const r = await fetch(`${apiBase}api/threads/${encodeURIComponent(threadId)}/missions`);
+                missions = r.ok ? ((await r.json()).missions || []) : [];
+            } catch (e) { missions = []; }
+            if (!missions.length) return '';
+            missions.forEach(m => { pieceSheetTitles[m.id] = m.goal || ''; });
+            return `<div data-thread-missions class="space-y-1.5 pt-2">
+                <div class="text-[11px] font-black uppercase tracking-widest text-gray-500">Argyle’s work</div>
+                ${missions.map(m => `<div data-thread-mission="${mfEscape(m.id)}" class="flex items-start justify-between gap-2 rounded-xl bg-gray-950 border border-gray-800 px-3 py-2">
+                    <div class="min-w-0">
+                        <div class="text-[13px] text-gray-100">${mfEscape(m.goal || '')}</div>
+                        <div class="text-[11px] text-gray-500">${mfEscape(m.status || '')}</div>
+                    </div>
+                    <div class="flex items-center gap-3 shrink-0">
+                        <button type="button" data-thread-mission-open="${mfEscape(m.id)}" class="text-xs font-bold text-teal-300 underline underline-offset-2">Open</button>
+                        <button type="button" data-thread-mission-delete="${mfEscape(m.id)}" class="text-xs font-bold text-red-400 underline underline-offset-2">Delete</button>
+                    </div>
+                </div>`).join('')}
+            </div>`;
+        }
+        // The record's own Delete, for the people the server lets delete a
+        // thread or a mission (parents and adults).
+        function pieceSheetDeleteRow(kind, id, title) {
+            if (!['thread', 'mission'].includes(kind) || !['parent', 'adult'].includes(currentMemberRole())) return '';
+            pieceSheetTitles[id] = title;
+            return `<div class="flex justify-end pt-2">
+                <button type="button" data-piece-sheet-delete="${mfEscape(kind)}:${mfEscape(id)}" class="text-xs font-bold text-red-400 underline underline-offset-2">Delete</button>
+            </div>`;
+        }
+        // Delete through the shared two-step (components/record_delete.html).
+        // A deleted mission re-reads the sheet it was listed in; a deleted
+        // sheet record closes its sheet. Either way the Projects tab re-reads.
+        async function pieceSheetDelete(kind, id) {
+            const sheet = pieceSheet;
+            await window.chfDeleteRecord({kind, id, title: pieceSheetTitles[id] || '', apiBase, onDone: async () => {
+                if (sheet && sheet.detail.kind === kind && sheet.detail.id === id) {
+                    if (pieceSheet === sheet) sheet.close();
+                    window.dispatchEvent(new CustomEvent('chf-projects-open'));
+                } else if (pieceSheet === sheet) {
+                    await refreshPieceSheet();
+                }
+            }});
+        }
+        function wirePieceSheet(body) {
+            body.querySelectorAll('[data-thread-mission-open]').forEach(b => {
+                b.onclick = () => openPieceSheet({kind: 'mission', id: b.dataset.threadMissionOpen,
+                                                  title: pieceSheetTitles[b.dataset.threadMissionOpen] || ''});
+            });
+            body.querySelectorAll('[data-thread-mission-delete]').forEach(b => {
+                b.onclick = () => pieceSheetDelete('mission', b.dataset.threadMissionDelete);
+            });
+            body.querySelectorAll('[data-piece-sheet-delete]').forEach(b => {
+                const [kind, id] = b.dataset.pieceSheetDelete.split(':');
+                b.onclick = () => pieceSheetDelete(kind, id);
+            });
         }
         function pieceSheetCtx(s) {
             return { apiBase, canWrite: ['parent', 'adult'].includes(currentMemberRole()), readOnly: false,
@@ -1975,12 +2040,16 @@
                 body.innerHTML = html || '<p class="text-xs text-gray-500 italic">That isn’t here, or isn’t yours to see.</p>';
                 body.setAttribute('data-piece-sheet', '');
                 if (sheet.detail.kind !== 'program' && window.Situations) window.Situations.bind(body, ctx);
+                wirePieceSheet(body);
                 // Reuse the sheet's green primary style for the card's primary.
                 body.querySelector('button.bg-blue-600')?.setAttribute('data-yes', '');
             }
             if (notifyProjects) window.dispatchEvent(new CustomEvent('chf-projects-open'));
         }
         window.addEventListener('chf-record-sheet-open', (e) => openPieceSheet(e.detail));
+        // This thread sheet lists every mission opened from the thread, so the
+        // Projects tab may fold such a mission into its thread's card (§7).
+        window.chfThreadSheetHistory = true;
 
         // The tap target this arc never had. Everything needed to actually do
         // the session -- which one it is, the lesson to read, the steps, and
@@ -10603,6 +10672,8 @@
     </script>
     {% from 'components/audience_picker.html' import audience_sheet %}
     {{ audience_sheet() }}
+    {% from 'components/record_delete.html' import record_delete_script %}
+    {{ record_delete_script() }}
 </body>
 
 

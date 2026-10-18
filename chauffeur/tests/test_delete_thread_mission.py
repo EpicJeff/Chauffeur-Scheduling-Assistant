@@ -162,7 +162,61 @@ def scenario_the_helpers_delegate_to_the_deletion_service():
           "with their steps, screenshot folders and asks")
 
 
+_NODE_RUN = r"""
+const fs = require('fs');
+const src = fs.readFileSync(process.argv[2], 'utf8');
+const script = src.split('<script>')[1].split('</script>')[0];
+const cases = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+(async () => {
+  const out = {};
+  for (const [name, c] of Object.entries(cases)) {
+    const log = {requests: [], confirms: [], alerts: [], done: 0};
+    const replies = c.replies.slice();
+    const window = {
+      fetch: async (url, init) => {
+        log.requests.push({url, method: (init && init.method) || 'GET', body: init && init.body ? JSON.parse(init.body) : null});
+        const [status, body] = replies.shift();
+        return {ok: status >= 200 && status < 300, status, json: async () => body};
+      },
+      promptConfirm: async (title, message, yes, no) => { log.confirms.push({title, message, yes, no}); return c.confirm.shift(); },
+      showGlobalAlert: (m) => log.alerts.push(m),
+    };
+    const document = {getElementById: (id) => (c.wall && id === 'cc-confirm-message') ? {} : null};
+    new Function('window', 'document', 'fetch', script)(window, document, window.fetch);
+    log.result = await window.chfDeleteRecord({kind: c.kind, id: c.id, title: c.title, apiBase: '', onDone: () => { log.done++; }});
+    out[name] = log;
+  }
+  console.log(JSON.stringify(out));
+})().catch(e => { console.error(e.stack); process.exit(1); });
+"""
+
+
+def _run_delete_helper(cases):
+    """Run the shared Delete (templates/components/record_delete.html) under
+    node with the server's answers stubbed: the critical path actually runs."""
+    import json
+    import shutil
+    import subprocess
+    import tempfile
+    node = shutil.which('node')
+    if not node:
+        print('  skip  node not available')
+        return None
+    with tempfile.TemporaryDirectory() as tmp:
+        run, data = os.path.join(tmp, 'run.js'), os.path.join(tmp, 'cases.json')
+        with open(run, 'w', encoding='utf-8') as f:
+            f.write(_NODE_RUN)
+        with open(data, 'w', encoding='utf-8') as f:
+            json.dump(cases, f)
+        proc = subprocess.run([node, run, os.path.abspath('templates/components/record_delete.html'), data],
+                              capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60)
+    check(proc.returncode == 0, f"the helper threw:\n{proc.stderr[-1500:]}")
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
 def scenario_argyle_has_no_delete_and_the_pages_have_the_buttons():
+    """No agent tool deletes; the thread and mission pages keep their Delete, now the shared
+    two-step (preview, one promptConfirm, DELETE with the token), never a token-less DELETE."""
     from services import agent_tools_v2 as tools
     names = {t['name'] for t in tools.get_available_tools()} | set(tools.TOOL_HANDLERS)
     check(not [n for n in names if 'delete' in n and ('thread' in n or 'mission' in n)], f"no agent tool deletes a thread or a mission: {sorted(names)}")
@@ -170,7 +224,51 @@ def scenario_argyle_has_no_delete_and_the_pages_have_the_buttons():
     mp = open('templates/components/missions_page.html', encoding='utf-8').read()
     check('deleteThread(' in tp and 'showClosed' in tp and 'Show closed' in tp, "the thread page has Delete and the closed toggle")
     check('deleteMission(' in mp, "the missions page has Delete")
-    check('promptConfirm' in tp.split('async deleteThread(')[1][:600] and 'promptConfirm' in mp.split('async deleteMission(')[1][:600], "both confirm first")
+    thread_delete = tp.split('async deleteThread(')[1][:700]
+    mission_delete = mp.split('async deleteMission(')[1][:700]
+    check('chfDeleteRecord' in thread_delete and 'chfDeleteRecord' in mission_delete, "both confirm first, through the shared two-step")
+    check("method: 'DELETE'" not in thread_delete and "method: 'DELETE'" not in mission_delete, "neither sends a DELETE of its own")
+    check('record_delete_script()' in tp and 'record_delete_script()' in mp, "both pages carry the shared helper")
+
+    items = [{'kind': 'thread', 'id': 't1', 'title': 'GE Cafe Dishwasher Repair'},
+             {'kind': 'mission', 'id': 'm1', 'title': 'g1'}, {'kind': 'mission', 'id': 'm2', 'title': 'g2'}]
+    ok = [200, {'status': 'ok', 'token': 'tok-1', 'items': items, 'links': 0}]
+    out = _run_delete_helper({
+        'deleted': {'kind': 'thread', 'id': 't1', 'title': 'GE Cafe Dishwasher Repair', 'confirm': [True],
+                    'replies': [ok, [200, {'status': 'ok'}]]},
+        'kept': {'kind': 'thread', 'id': 't1', 'title': 'GE Cafe Dishwasher Repair', 'confirm': [False], 'replies': [ok]},
+        'changed': {'kind': 'project', 'id': 'p1', 'title': 'Kitchen', 'confirm': [True, True],
+                    'replies': [ok, [409, {'detail': 'This project changed. Look again.'}],
+                                [200, {'status': 'ok', 'token': 'tok-2', 'items': items[:1], 'links': 0}], [200, {'status': 'ok'}]]},
+        'refused': {'kind': 'project', 'id': 'p1', 'title': 'Kitchen', 'confirm': [],
+                    'replies': [[403, {'detail': 'Ask a parent to delete this.'}]]},
+        'wall': {'kind': 'mission', 'id': 'm1', 'title': '<b>g1</b>', 'confirm': [False], 'wall': True,
+                 'replies': [[200, {'status': 'ok', 'token': 't', 'items': [{'kind': 'mission', 'id': 'm1', 'title': '<b>g1</b> **x**'}]}]]},
+    })
+    if out is None:
+        return
+    d = out['deleted']
+    check([r['method'] for r in d['requests']] == ['GET', 'DELETE'] and d['requests'][0]['url'] == 'api/deletion/thread/t1/preview'
+          and d['requests'][1]['url'] == 'api/threads/t1' and d['requests'][1]['body'] == {'token': 'tok-1'},
+          f"preview, then DELETE with the token it handed back: {d['requests']}")
+    msg = d['confirms'][0]['message']
+    check(d['confirms'][0]['title'] == 'Delete “GE Cafe Dishwasher Repair”?' and d['confirms'][0]['yes'] == 'Delete', f"one confirm: {d['confirms']}")
+    check(msg.index('GE Cafe Dishwasher Repair') < msg.index('g1') < msg.index('g2') and msg.endswith('Linked trips, lists and events stay.'),
+          f"titles one per line, grouped by kind, then the linked kinds stay: {msg!r}")
+    check(d['result'] == 'deleted' and d['done'] == 1 and not d['alerts'], f"done once, nothing to say: {d}")
+    k = out['kept']
+    check(k['result'] == 'cancelled' and [r['method'] for r in k['requests']] == ['GET'] and k['done'] == 0, f"Keep it deletes nothing: {k}")
+    c = out['changed']
+    check(c['alerts'] == ['This project changed. Look again.'] and len(c['confirms']) == 2
+          and [r['method'] for r in c['requests']] == ['GET', 'DELETE', 'GET', 'DELETE'] and c['requests'][3]['body'] == {'token': 'tok-2'}
+          and c['requests'][1]['url'] == 'api/projects/p1' and c['result'] == 'deleted',
+          f"changed is said, previewed again, and the new look is what is confirmed: {c}")
+    r = out['refused']
+    check(r['alerts'] == ['Ask a parent to delete this.'] and not r['confirms'] and len(r['requests']) == 1 and r['result'] == 'refused'
+          and r['done'] == 0, f"a refusal is shown verbatim and names nothing: {r}")
+    w = out['wall']
+    check('<b>' not in w['confirms'][0]['message'] and '&lt;b&gt;g1&lt;/b&gt; &#42;&#42;x&#42;&#42;' in w['confirms'][0]['message'],
+          f"the wall's HTML confirm gets people's words as text: {w['confirms'][0]['message']!r}")
 
 
 SCENARIOS = [scenario_deleting_a_thread_takes_everything_of_its_own, scenario_deleting_a_mission_takes_only_itself,

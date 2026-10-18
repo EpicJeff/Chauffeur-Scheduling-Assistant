@@ -6,7 +6,7 @@
    projects.html); the phone draws its own sheet in app.html. #}
 {% set sheet_mode = true %}
 <div x-data="chfRecordSheet()" x-show="rsOpen" x-cloak data-record-sheet :data-kind="rsKind" :data-open="rsOpen ? 'true' : null"
-     @chf-record-sheet-open.window="show($event.detail)" @keydown.escape.window.capture="rsEscape()" @click.self="close()"
+     @chf-record-sheet-open.window="show($event.detail)" @chf-record-sheet-close.window="if (rsOpen) close()" @keydown.escape.window.capture="rsEscape()" @click.self="close()"
      class="fixed inset-0 z-[82] bg-black/40 flex justify-end items-end md:items-stretch">
     <div tabindex="-1" role="dialog" aria-modal="true" :aria-label="rsLabel()"
          :class="rsKind === 'program' ? 'md:w-[48rem]' : 'md:w-[40rem]'"
@@ -24,6 +24,10 @@
     </div>
 </div>
 <script>
+// This host's thread sheet (threads_page in sheet mode) lists every mission
+// opened from the thread, each with open and Delete, so the Projects page may
+// fold such a mission into its thread's card (projects delete spec §7).
+window.chfThreadSheetHistory = true;
 function chfRecordSheet() {
     return {
         rsOpen: false, rsKind: null, rsId: null, rsTitle: '',

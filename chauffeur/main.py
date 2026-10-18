@@ -7374,7 +7374,7 @@ def create_thread(body: dict = Body(default={}), request: Request = None):
 
 @app.get("/api/threads/{thread_id}/missions")
 def thread_missions(thread_id: str, request: Request = None):
-    """The missions opened from this thread, newest first, with their steps —
+    """Every mission opened from this thread, newest first, with their steps —
     the same gate as reading the thread (browse missions §5)."""
     from services import access
     with access.batch():
@@ -7395,7 +7395,9 @@ def thread_missions(thread_id: str, request: Request = None):
         rows.sort(key=lambda m: -(m.get('created_at') or 0))
         for m in rows:
             m['steps'] = storage.get_mission_steps(m['id'])
-        return {"missions": [planned.keeper_view(m, viewer) for m in rows[:5]]}
+        # Every one of them: the thread sheet lists ALL its missions, each
+        # with open and Delete (projects delete spec §7).
+        return {"missions": [planned.keeper_view(m, viewer) for m in rows]}
 
 
 @app.patch("/api/threads/{thread_id}")

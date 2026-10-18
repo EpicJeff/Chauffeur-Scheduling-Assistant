@@ -14,6 +14,7 @@
              x-text or JSON.stringify into x-text — never x-html/innerHTML
              — because a transcript carries raw LLM and thread output. -->
 {% set _sheet = sheet_mode|default(false) %}
+{% from 'components/record_delete.html' import record_delete_script %}
         <div x-data="missionsSettings({{ 'true' if _sheet else 'false' }})" x-init="{{ 'load(); startPolling()' if _sheet else 'load(); loadAdmin(); startPolling()' }}"
             {% if _sheet %}@chf-record-sheet.window="onSheet($event.detail)"{% endif %}
             class="{{ 'px-1 py-1' if _sheet else 'panel-page max-w-2xl mx-auto px-4 py-6' }}" x-cloak>
@@ -146,6 +147,7 @@
             </template>
         </div>
 
+    {{ record_delete_script() }}
     <script>
         function missionsSettings(sheet = false) {
             return {
@@ -446,17 +448,20 @@
                     this.loadAdmin();
                 },
 
+                // Delete is the shared two-step (components/record_delete.html):
+                // preview, one promptConfirm naming it, DELETE with the token.
                 async deleteMission(m) {
-                    const ok = await promptConfirm('Delete this mission?',
-                        'Its steps and screenshots go with it. Drop keeps a record instead.', 'Delete', 'Keep it');
-                    if (!ok) return;
                     this.busy[m.id] = true;
+                    let result = null;
                     try {
-                        const r = await fetch(this.apiBase + `api/missions/${m.id}`, { method: 'DELETE' });
-                        if (!r.ok) { const d = await r.json().catch(() => ({})); showGlobalAlert(d.detail || "Couldn't delete that."); }
-                    } catch (e) { showGlobalAlert("Couldn't delete that."); }
-                    delete this.busy[m.id];
-                    this.loadAdmin();
+                        result = await window.chfDeleteRecord({kind: 'mission', id: m.id, title: m.goal, apiBase: this.apiBase, onDone: () => {
+                            // In the record sheet the mission is gone: close it (the project re-reads on close).
+                            if (this.sheet) window.dispatchEvent(new CustomEvent('chf-record-sheet-close'));
+                        }});
+                    } finally {
+                        delete this.busy[m.id];
+                    }
+                    if (!(this.sheet && ['deleted', 'gone'].includes(result))) this.loadAdmin();
                 },
                 async drop(missionId) {
                     this.busy[missionId] = true;

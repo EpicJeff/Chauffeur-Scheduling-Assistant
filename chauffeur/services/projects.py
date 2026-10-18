@@ -1027,6 +1027,18 @@ def piece_cards(project, viewer, project_view=None):
             card['situation'] = situations.view(kind, sid, viewer)
             if card['situation'] is None:
                 continue
+            # What folding needs (projects delete spec §7): whether this viewer
+            # reads the record in full or as its keeper, and, for a mission
+            # launched from a thread of this same project, that thread's id.
+            from services import access
+            row = storage.get_thread(sid) if kind == 'thread' else storage.get_mission(sid)
+            card['view'] = access.record_view(kind, row, viewer) if viewer is not None else None
+            if kind == 'mission' and (row or {}).get('origin_kind') == 'thread' and row.get('origin_ref'):
+                origin = storage.get_thread(row['origin_ref']) or {}
+                # Only a thread this viewer may read: never an id they cannot see.
+                if (origin.get('project_id') and origin.get('project_id') == project.get('id')
+                        and viewer is not None and access.record_view('thread', origin, viewer) is not None):
+                    card['origin_thread'] = origin['id']
         elif kind == 'program':
             row = storage.get_program(sid) or {}
             phase = (programs.progress(row) or {}).get('phase') or {}

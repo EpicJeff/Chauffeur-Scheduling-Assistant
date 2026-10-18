@@ -3,6 +3,7 @@
    chrome (nav, control_center, hearth) belongs to the HOST page,
    never here. #}
 {% set _sheet = sheet_mode|default(false) %}
+{% from 'components/record_delete.html' import record_delete_script %}
         <div x-data="threadsPage({{ 'true' if _sheet else 'false' }})" x-init="{{ '' if _sheet else 'load()' }}"
             {% if _sheet %}@chf-record-sheet.window="onSheet($event.detail)"{% else %}x-effect="window.chfSetPageTabCount && window.chfSetPageTabCount('threads', groups[0].items.length)"{% endif %}
             class="{{ 'px-1 py-1' if _sheet else 'panel-page max-w-2xl mx-auto px-4 py-6' }}" x-cloak>
@@ -144,11 +145,20 @@
                                             </template>
                                         </div>
 
-                                        <!-- The missions opened from this thread (browse missions §5): the
-                                             shared transcript, fetched when the details open. -->
+                                        <!-- Every mission opened from this thread (browse missions §5;
+                                             projects delete §7: all of them, each with open and Delete):
+                                             the shared transcript, fetched when the details open. -->
                                         <template x-for="mission in (threadMissions[t.id] || [])" :key="mission.id">
-                                            <div class="mt-2 border-t border-gray-800 pt-2 thread-mission">
-                                                <div class="text-[11px] text-gray-500" x-text="'Mission: ' + mission.goal + ' — ' + mission.status"></div>
+                                            <div class="mt-2 border-t border-gray-800 pt-2 thread-mission" :data-thread-mission="mission.id">
+                                                <div class="flex items-start justify-between gap-2">
+                                                    <div class="min-w-0 text-[11px] text-gray-500" x-text="'Mission: ' + mission.goal + ' — ' + mission.status"></div>
+                                                    <div class="flex items-center gap-3 shrink-0">
+                                                        <button type="button" :data-thread-mission-open="mission.id" @click="openThreadMission(mission)"
+                                                            class="text-[11px] font-bold text-teal-300 underline underline-offset-2">Open</button>
+                                                        <button type="button" :data-thread-mission-delete="mission.id" @click="deleteThreadMission(t, mission)"
+                                                            class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-900 text-red-400 border border-red-900/60 active:bg-red-950">Delete</button>
+                                                    </div>
+                                                </div>
                                                 {% include 'components/mission_transcript.html' %}
                                             </div>
                                         </template>
@@ -334,6 +344,7 @@
 
         </div>
 
+    {{ record_delete_script() }}
     <script>
         function threadsPage(sheet = false) {
             return {
@@ -420,7 +431,10 @@
                         const sd2 = sRes2.ok ? await sRes2.json() : { situations: [] };
                         this.situations = sd2.situations || [];
                         this.loadedOnce = true;
-                        this.$nextTick(() => window.Situations.bind(this.$refs.lane, this.cardCtx()));
+                        // Guarded like the missions page: a load started from a
+                        // callback outside Alpine (the shared Delete's onDone)
+                        // finds no $refs, and the lane is already bound.
+                        this.$nextTick(() => { if (this.$refs.lane) window.Situations.bind(this.$refs.lane, this.cardCtx()); });
                     } catch (e) { showGlobalAlert("Couldn't load threads."); }
                     this.refreshOpenMissions();
                 },
@@ -726,18 +740,26 @@
                     } catch (e) { showGlobalAlert("Couldn't save that."); }
                 },
 
+                // Delete is the shared two-step (components/record_delete.html):
+                // the server's preview names the thread and every mission that
+                // goes with it, one promptConfirm, then DELETE with its token.
                 async deleteThread(t) {
-                    const n = (this.threadMissions[t.id] || []).length;
-                    const ok = await promptConfirm('Delete this thread?',
-                        'It goes for good, with ' + (n ? n + ' mission' + (n === 1 ? '' : 's') + ', their steps and screenshots, ' : 'any missions opened from it, ')
-                        + 'and its asks. Drop keeps a record instead.', 'Delete', 'Keep it');
-                    if (!ok) return;
-                    try {
-                        const r = await fetch(this.apiBase + `api/threads/${t.id}`, { method: 'DELETE' });
-                        if (!r.ok) { const d = await r.json().catch(() => ({})); showGlobalAlert(d.detail || "Couldn't delete that."); return; }
+                    await window.chfDeleteRecord({kind: 'thread', id: t.id, title: t.title, apiBase: this.apiBase, onDone: async () => {
                         delete this.detailsOpen[t.id];
-                        await this.load();
-                    } catch (e) { showGlobalAlert("Couldn't delete that."); }
+                        // In the record sheet the thread is gone: close it (the
+                        // project re-reads on close). Elsewhere, re-read the lane.
+                        if (this.sheet) window.dispatchEvent(new CustomEvent('chf-record-sheet-close'));
+                        else await this.load();
+                    }});
+                },
+                async deleteThreadMission(t, m) {
+                    await window.chfDeleteRecord({kind: 'mission', id: m.id, title: m.goal, apiBase: this.apiBase,
+                                                  onDone: () => this.load()});   // load() re-reads the open details' missions
+                },
+                // A thread's mission opens in the record sheet, the one place a
+                // mission is read in full (the old /missions page retired into it).
+                openThreadMission(m) {
+                    window.dispatchEvent(new CustomEvent('chf-record-sheet-open', {detail: {kind: 'mission', id: m.id, title: m.goal || ''}}));
                 },
                 async closeThread(t, state) {
                     const label = state === 'done' ? 'Mark this thread done?' : 'Drop this thread?';
