@@ -566,8 +566,7 @@ def scenario_linked_records_of_every_other_kind_stay():
     for (kind, rid), was in rows.items():
         now = subjects.load(kind, rid)
         check(now is not None, f"the linked {kind} {rid} stays")
-        if kind != 'project':
-            check(json.dumps(now, sort_keys=True, default=str) == was, f"and is untouched: {kind} {rid}")
+        check(json.dumps(now, sort_keys=True, default=str) == was, f"and is untouched: {kind} {rid}")
 
 
 def scenario_the_stop_needs_no_plan_approval_permission():

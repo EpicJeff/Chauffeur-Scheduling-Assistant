@@ -79,6 +79,12 @@ def thread_photo_dir(tid):
     return os.path.join(os.path.dirname(storage.DB_PATH), 'threads', tid)
 
 
+def names_file(entry, tid, name):
+    """The entry records this exact file under threads/<thread id>/ (either path separator)."""
+    text = json.dumps(entry)
+    return f'threads/{tid}/{name}' in text or f'threads\\\\{tid}\\\\{name}' in text
+
+
 def names_path(thread, tid):
     text = json.dumps((thread or {}).get('history') or [])
     return f'threads/{tid}/' in text or f'threads\\\\{tid}\\\\' in text
@@ -579,15 +585,33 @@ def scenario_real_argyle_notices_carry_typed_refs_and_go_with_their_records():
                 patch.object(replies, '_now', lambda: in_window):
             replies.read(gt1, 'ref-1')
         produced['reply'] = (new_messages(since), {('thread', gt1)})
+    named_by = {}
+    for key in GARAGE_KEYS:
+        for word in (fx.title(key), fx.secret(key)):
+            named_by[word] = pair(fx, key)
+
+    def named(message):
+        text = json.dumps({'body': message.get('body'), 'card': message.get('card')}, default=str)
+        return {rec for word, rec in named_by.items() if re.search(re.escape(word) + r'(?!\w)', text)}
     made = []
     for producer, (messages, wanted) in produced.items():
         check(messages, f"{producer}: the producer posted a notice")
-        refs = {(r.get('kind'), r.get('id')) for m in messages for r in (m.get('refs') or [])}
-        check(wanted <= refs, f"{producer}: its notices carry typed refs {sorted(wanted)}: {sorted(refs)}")
-        made += [m['id'] for m in messages if wanted & {(r.get('kind'), r.get('id')) for r in (m.get('refs') or [])}]
+        # Every copy, for every recipient: a mission's or a reply's notices are all about their record; a
+        # consolidated watcher DM is about every Garage record it names.
+        relevant = [m for m in messages if producer != 'watchers' or named(m)]
+        check(relevant, f"{producer}: at least one notice is about the Garage")
+        if producer == 'watchers':
+            check(len({m['channel_id'] for m in relevant}) >= 2, f"watchers: each parent got a copy: {len(relevant)}")
+        for m in relevant:
+            refs = {(r.get('kind'), r.get('id')) for r in (m.get('refs') or [])}
+            need = (named(m) | (wanted if producer != 'watchers' else set()))
+            check(need <= refs, f"{producer}: notice {m['id']} ({(m.get('body') or '')[:60]!r}) carries refs "
+                                f"{sorted(need)}: {sorted(refs)}")
+            made.append(m['id'])
     start_ok('project', garage(fx), dict(MOM))
     finish()
-    check(all(storage.get_chat_message(mid) is None for mid in made), "every notice naming the Garage went, whole")
+    left = [mid for mid in made if storage.get_chat_message(mid) is not None]
+    check(not left, f"every notice about the Garage went, whole: {len(left)} of {len(made)} remain")
 
 
 def scenario_maintenance_runs_on_its_own_two_minute_loop():
@@ -650,12 +674,16 @@ def scenario_a_new_thread_photo_records_its_path_before_its_bytes():
     check(made and all(os.path.dirname(path) == home for path in made),
           f"a new thread photo is saved under threads/<thread id>/ in the data directory ({home}): {made}")
     check(names_path(storage.get_thread(tid), tid), "and the thread's history records where it is")
+    first = len(storage.get_thread(tid).get('history') or [])     # the first photo's entry is excluded below
     real_open, real_io_open = builtins.open, io.open
     seen = {}
 
     def dying_open(file, mode='r', *a, **k):
         if 'w' in str(mode) and str(file).startswith(home):
-            seen['history_at_write'] = names_path(storage.get_thread(tid), tid)
+            name = os.path.basename(str(file))
+            new = (storage.get_thread(tid).get('history') or [])[first:]
+            seen['new_entry_at_write'] = [h for h in new if names_file(h, tid, name)]
+            seen['file'] = name
             handle = real_open(file, mode, *a, **k)
             handle.write(b'half a pho')
             handle.close()
@@ -667,9 +695,12 @@ def scenario_a_new_thread_photo_records_its_path_before_its_bytes():
             threads.add_photo(tid, PNG, 'image/png', 'mom')
         except OSError:
             pass
-    check('history_at_write' in seen, f"the photo's bytes were written under {home}")
-    check(seen['history_at_write'], "its path was already on the thread when the bytes started")
-    check(names_path(storage.get_thread(tid), tid), "and stays recorded after the failed write")
+    check('new_entry_at_write' in seen, f"the photo's bytes were written under {home}")
+    check(len(seen['new_entry_at_write']) == 1,
+          f"a NEW history entry naming this very file ({seen['file']}) was on the thread before its bytes: "
+          f"{seen['new_entry_at_write']}")
+    after = (storage.get_thread(tid).get('history') or [])[first:]
+    check([h for h in after if names_file(h, tid, seen['file'])], "and stays recorded after the failed write")
     start_ok('thread', tid, dict(MOM))
     finish()
     check(not os.path.exists(home), f"deleting the thread removes the half-written photo and its folder: {home}")

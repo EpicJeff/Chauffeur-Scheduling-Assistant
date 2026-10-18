@@ -15,19 +15,23 @@ builds to: the hooked function must stay reached through its module attribute (m
 never captured or imported by name.
   * `chat_actions._execute`  (a build-stage row: create_thread, add_trip_poi)
   * `programs._kit_line`     (program approval)
+  * `programs._emit_commitments`   (approval, right after the claim)
   * `programs.release_commitments` (program resume)
-  * `programs.orphaned_emissions`  (the watchers' program mutation)
+  * `programs.orphaned_emissions`, `programs.weekday_shortfall`  (the watchers' program mutations)
+  * `planned._complete_approval`   (reconcile's replay)
+  * `deletion.check`         (the storage helpers' own check, held between check and write)
 
 Paths with no reachable race at all are pinned at the nearest layer and named for Task 4:
-`planned.reconcile`, program-session append, history-entry update, program claims, lesson
-replacement and the app_voice card update.
+program-session append, history-entry update, lesson replacement and the app_voice card update.
 
   * `deletion.acting_for(kind, id)` registers work for a source and carries it in a context variable
     that `contextvars.copy_context()` transfers; `deletion.active(kind, id)` is True while registered;
     `deletion.check()` raises `deletion.Cancelled` once the source is gone and never outside a worker.
     A check and its local write happen under `storage.db_lock`, which `start` also takes.
   * A worker ends by returning or by raising Cancelled (every leaf of an exception group must be
-    Cancelled). A route whose work hits Cancelled answers exactly as it does for a missing record.
+    Cancelled). A route whose work hits Cancelled answers 404; the one exception is
+    /api/action-proposals/{id}/act, which keeps its missing-proposal reply (200, "That action is no
+    longer available.").
   * Creation is bound at insert, storage refuses children of gone parents, adoption never makes a
     replacement wrapper, queued deliveries re-check just before they go out (push fan-out re-reads the
     stored message; practice pushes and voice timers re-check per delivery).
@@ -258,12 +262,13 @@ def drained(fx, how):
         check(LOAD[kind](rid) is None, f"{how}: {key} is gone once the work has exited")
 
 
-def like_missing(r, who, method, missing_path, how, **kwargs):
-    """A route whose work hit Cancelled answers exactly as it does for a record that never existed."""
-    missing = http(who, method, missing_path, **kwargs)
-    check(r is not None and r.status_code == missing.status_code and r.json() == missing.json(),
-          f"{how}: answered {r.status_code if r is not None else None} {r.text[:160] if r is not None else ''}; "
-          f"a missing record answers {missing.status_code} {missing.text[:160]}")
+NOT_AVAILABLE = {'status': 'error', 'message': 'That action is no longer available.'}
+
+
+def is_404(r, how):
+    """A route whose work hit Cancelled answers 404, shaped like a missing record (never an exception)."""
+    check(r is not None and r.status_code == 404,
+          f"{how}: answered {r.status_code if r is not None else None} {r.text[:160] if r is not None else ''}")
 
 
 def _report(outcome, **kw):
@@ -338,42 +343,57 @@ def scenario_acting_for_registers_carries_and_cancels():
     drained(fx, 'acting_for')
 
 
-def scenario_a_write_under_the_lock_and_the_deletions_admission_are_serialised():
-    """Spec section 5: a check and its local write happen under storage.db_lock together with the
-    deletion's admission (start takes the same lock). A write that holds the lock lands before the
-    deletion is admitted; once admitted, the next write is refused."""
+def scenario_a_checked_write_and_the_deletions_admission_are_atomic():
+    """Spec section 5: "a check and its local write happen under storage.db_lock together with the
+    deletion's admission (start takes the same lock)". The test holds no lock itself. The storage update
+    helper's own `deletion.check()` (reached through the module, the contract Task 4 builds to) passes, and
+    the writer is held right there, between that check and its write, while `start` runs in another
+    request. Either start waits for the helper's lock (the write lands BEFORE admission), or, if start got
+    through, the write must not land after it. A helper that checks outside the lock fails here."""
     fx = late_world()
     d, mid = _d(), fx.ids['GM2']
-    holding, release_lock, admitted, box = threading.Event(), threading.Event(), threading.Event(), {}
+    real_check = d.check
+    gate, box = Gate(), {}
+    writer_ident = {}
+
+    def held_check():
+        real_check()
+        if threading.get_ident() == writer_ident.get('id') and not box.get('gated'):
+            box['gated'] = True
+            gate.wait()                                     # passed the check; not yet written
 
     def writer():
+        writer_ident['id'] = threading.get_ident()
         with d.acting_for('mission', mid):
-            with storage.db_lock:
-                storage.update_mission(mid, {'summary': 'written before the tap'})
-                holding.set()
-                release_lock.wait(15)
-                storage.update_mission(mid, {'summary': 'still before the tap'})
-            admitted.wait(15)
+            storage.update_mission(mid, {'summary': 'the contested write'})
+            box['admitted'].wait(15)
             try:
-                storage.update_mission(mid, {'summary': 'after the tap'})
+                storage.update_mission(mid, {'summary': 'after admission'})
             except d.Cancelled:
                 box['cancelled'] = True
-    w = Worker(writer)
-    if not holding.wait(15):
-        w.done('the lock writer', timeout=1)
-        check(False, "the writer holds the lock")
-    starter = threading.Thread(target=lambda: box.update(start=contextvars.Context().run(
-        start_ok, 'project', garage(fx), dict(MOM))), daemon=True)
-    starter.start()
-    starter.join(0.7)
-    check(starter.is_alive() and 'start' not in box, "start waits for the lock a writer holds")
-    release_lock.set()
-    starter.join(15)
-    check(box.get('start', {}).get('status') == 'ok', f"then it is admitted: {box}")
-    admitted.set()
-    w.done('the lock writer')
-    check(storage.get_mission(mid)['summary'] == 'still before the tap',
-          f"the write after admission never lands: {storage.get_mission(mid)['summary']!r}")
+    box['admitted'] = threading.Event()
+    with patch.object(d, 'check', held_check):
+        w = Worker(writer)
+        if not gate.entered.wait(15):
+            w.done('the checked writer', timeout=1)
+            check(False, "storage's update helper calls deletion.check() before it writes")
+        starter = threading.Thread(target=lambda: box.update(start=contextvars.Context().run(
+            start_ok, 'project', garage(fx), dict(MOM))), daemon=True)
+        starter.start()
+        starter.join(0.7)
+        admitted_during_gate = not starter.is_alive()
+        gate.release()
+        starter.join(15)
+        check(box.get('start', {}).get('status') == 'ok', f"the deletion is admitted: {box.get('start')}")
+        box['admitted'].set()
+        w.done('the checked writer')
+    summary = storage.get_mission(mid)['summary']
+    if admitted_during_gate:
+        check(summary != 'the contested write',
+              "start got in between the helper's check and its write, and the write still landed after admission")
+    else:
+        check(summary == 'the contested write', f"start waited for the helper's lock; the write landed first: {summary!r}")
+    check(summary != 'after admission', f"a write after admission never lands: {summary!r}")
     drained(fx, 'admission')
 
 
@@ -423,13 +443,14 @@ def _run_stage(mid, st):
                           payload={}, actor=dict(MOM))
 
 
-def _hooked(fx, target, name, source, seen):
-    """A pass-through: the first call starts the deletion from another request, then runs the real thing.
-    `source` is the (kind, id) the worker acts for: it must be registered while the hook runs."""
+def _hooked(fx, target, name, source, seen, when=None):
+    """A pass-through: the first call (the first for which `when(*args)` holds) starts the deletion from
+    another request, then runs the real thing. `source` is the (kind, id) the worker acts for: it must be
+    registered while the hook runs."""
     real = getattr(target, name)
 
     def hook(*args, **kwargs):
-        if not seen.get('fired'):
+        if not seen.get('fired') and (when is None or when(*args, **kwargs)):
             seen['fired'] = True
             try:
                 delete_garage(fx)
@@ -605,7 +626,7 @@ def scenario_program_approval_and_resume_finishing_after_start_write_nothing():
                     raise AssertionError(f"{verb}: Cancelled must never escape a route: {exc!r}") from exc
                 r = None
         reached(seen, verb)
-        like_missing(r, 'mom', 'POST', f'/api/programs/{uuid.uuid4().hex}/{verb}', verb, json={})
+        is_404(r, verb)
         check(seen['active'] and seen['maintain']['waiting'] >= 1, f"{verb}: registered, and cleanup waited: {seen}")
         nothing_since(fx, seen['mark'], verb)
         drained(fx, verb)
@@ -628,7 +649,8 @@ def scenario_the_watchers_program_mutation_after_start_writes_nothing():
                                                                   'thread_ids': [fx.ids['GK1']], 'event_ids': []}})
     check(programs.orphaned_emissions(storage.get_program(pid)), "the fixture: the program has orphaned emissions")
     seen = {}
-    with _hooked(fx, programs, 'orphaned_emissions', ('program', pid), seen):
+    with _hooked(fx, programs, 'orphaned_emissions', ('program', pid), seen,
+                 when=lambda row, *a, **k: (row or {}).get('id') == pid):
         try:
             watchers.run_watchers(_in_window())
         except BaseException as exc:      # noqa: BLE001
@@ -642,6 +664,30 @@ def scenario_the_watchers_program_mutation_after_start_writes_nothing():
     check(not [p for p in storage.agent_action_proposals_table.all() if (p.get('payload') or {}).get('program_id') == pid],
           "no re-shape card")
     drained(fx, 'watchers program mutation')
+
+    # The rebaseline: an active program whose preferred evenings went unlogged for weeks would be stretched.
+    # HOOK CONTRACT (Task 4): maybe_rebaseline reads `programs.weekday_shortfall` through the module; the
+    # deletion lands right after it, and the baseline write must not land.
+    fx = late_world()
+    pid = fx.ids['GP1']
+    started = (datetime.date.today() - datetime.timedelta(days=30)).isoformat()
+    storage.update_program(pid, {'state': 'active', 'shape': {'sessions_per_week': 2, 'minutes': 20, 'preferred_days': [0, 2]},
+                                 'phases': [{'name': 'Grade 1', 'weeks': 4, 'what': 'x', 'steps': ['C'], 'milestone': 'm'}],
+                                 'baseline': {'start_date': started, 'rebaselines': 0},
+                                 'emissions': {'commitment_ids': [], 'thread_ids': [fx.ids['GK1']], 'event_ids': []}})
+    check(programs.weekday_shortfall(storage.get_program(pid)), "the fixture: a shortfall to rebaseline")
+    seen = {}
+    with _hooked(fx, programs, 'weekday_shortfall', ('program', pid), seen,
+                 when=lambda row, *a, **k: (row or {}).get('id') == pid):
+        try:
+            watchers.run_watchers(_in_window())
+        except BaseException as exc:      # noqa: BLE001
+            if seen.get('error') is None and not cancelled(exc):
+                raise
+    reached(seen, 'rebaseline')
+    check(seen['active'], f"the rebaseline is registered for its program: {seen}")
+    nothing_since(fx, seen['mark'], 'rebaseline')
+    drained(fx, 'rebaseline')
 
 
 # --- watchers, replies, asks, situation refresh --------------------------------------------------
@@ -786,13 +832,12 @@ def _route(fx, how, method, path, gate, source, **kwargs):
 def scenario_request_driven_thread_draft_research_and_photo_write_nothing():
     fx = late_world()
     tid = fx.ids['GT1']
-    bogus = uuid.uuid4().hex
     # draft: held in the model
     gate = Gate()
     with patch.object(threads, '_pool_call', lambda *a, **k: gate.wait() or {'subject': 'Late', 'body': 'Late words'}):
         r, snap = _route(fx, 'draft', 'POST', f'/api/threads/{tid}/draft', gate, ('thread', tid), json={'intent': 'a quote'})
     nothing_since(fx, snap, 'draft')
-    like_missing(r, 'mom', 'POST', f'/api/threads/{bogus}/draft', 'draft', json={'intent': 'a quote'})
+    is_404(r, 'draft')
     drained(fx, 'draft')
     # research: held in the web research
     fx = late_world()
@@ -804,7 +849,7 @@ def scenario_request_driven_thread_draft_research_and_photo_write_nothing():
         r, snap = _route(fx, 'research', 'POST', f'/api/threads/{tid}/research', gate, ('thread', tid),
                          json={'question': 'How much?'})
     nothing_since(fx, snap, 'research')
-    like_missing(r, 'mom', 'POST', f'/api/threads/{bogus}/research', 'research', json={'question': 'How much?'})
+    is_404(r, 'research')
     drained(fx, 'research')
     # photo: the bytes are stored, then the photo is read by the model; held there
     fx = late_world()
@@ -814,21 +859,20 @@ def scenario_request_driven_thread_draft_research_and_photo_write_nothing():
         r, snap = _route(fx, 'photo', 'POST', f'/api/threads/{tid}/photo', gate, ('thread', tid),
                          files={'file': ('p.png', PNG, 'image/png')})
     nothing_since(fx, snap, 'photo')
-    like_missing(r, 'mom', 'POST', f'/api/threads/{bogus}/photo', 'photo', files={'file': ('p.png', PNG, 'image/png')})
+    is_404(r, 'photo')
     drained(fx, 'photo')
 
 
 def scenario_a_send_checks_before_the_mail_goes_and_discards_an_in_flight_result():
     fx = late_world()
     tid = fx.ids['GT1']
-    bogus = uuid.uuid4().hex
     body = {'subject': 'Quote', 'body': 'Could you quote it?', 'to': 'pest@example.com'}
     gate = BOUNDARY['mail_ready'] = Gate()                  # held before anything leaves
     r, snap = _route(fx, 'send (before)', 'POST', f'/api/threads/{tid}/send', gate, ('thread', tid), json=body)
     check(MAILS == [], f"the check before outgoing mail stops it: {MAILS}")
     nothing_since(fx, snap, 'send (before)')
     BOUNDARY.pop('mail_ready')
-    like_missing(r, 'mom', 'POST', f'/api/threads/{bogus}/send', 'send (before)', json=body)
+    is_404(r, 'send (before)')
     drained(fx, 'send (before)')
 
     fx = late_world()
@@ -839,7 +883,7 @@ def scenario_a_send_checks_before_the_mail_goes_and_discards_an_in_flight_result
     snap['mail'] = list(MAILS)                              # ... and that is all that happens
     nothing_since(fx, snap, 'send (in flight)')
     BOUNDARY.pop('mail_send')
-    like_missing(r, 'mom', 'POST', f'/api/threads/{bogus}/send', 'send (in flight)', json=body)
+    is_404(r, 'send (in flight)')
     drained(fx, 'send (in flight)')
 
 
@@ -856,40 +900,109 @@ def scenario_a_directly_approved_proposal_from_a_gone_mission_inserts_nothing():
     check(INSERTS == [], f"nothing is inserted at Google: {INSERTS}")
     nothing_since(fx, snap, 'proposal')
     BOUNDARY.pop('calendar')
-    like_missing(r, 'mom', 'POST', f'/api/action-proposals/{uuid.uuid4().hex}/act', 'proposal', json={'act': 'approve', 'member_id': 'mom'})
+    check(r.status_code == 200 and r.json() == NOT_AVAILABLE,
+          f"the one exception: this route keeps its missing-proposal reply, exactly: {r.status_code} {r.text[:200]}")
     drained(fx, 'proposal')
 
 
 # --- paths with no outside call: the nearest layer (named for Task 4) --------------------------------
 
-def scenario_planned_reconcile_after_start_writes_nothing():
-    """NEAREST LAYER (Task 4): reconcile has no outside call to be held in. A build stage left `running`
-    by a crashed runner would be marked uncertain with a stage_check ask; after start it must not be."""
+def scenario_a_reconcile_replay_that_the_deletion_overtakes_writes_nothing():
+    """HOOK CONTRACT (Task 4): reconcile replays an interrupted approval (`plan.state == 'approving'`) through
+    `planned._complete_approval`, reached through the module. The plan is live when the replay starts; the
+    deletion is admitted between the replay's read and its writes (on the same thread, in a fresh context:
+    reconcile holds storage.db_lock, which is re-entrant), and the replay must then write nothing."""
     from services import planned
+    from test_planned_missions import _planned_mission, _plan_of
     fx = late_world()
-    mid, st = _staged_in_garage(fx, [{'id': 'r1', 'tool': 'create_list', 'args': {'name': 'Late list'}, 'summary': 'A list'}])
-    plan = storage.get_mission(mid)['plan']
-    plan['stages'][0]['state'] = 'running'
-    plan['stages'][0]['rows'][0]['state'] = 'running'
-    storage.update_mission(mid, {'plan': plan})
-    delete_garage(fx)
-    snap = mark(fx)
-    planned.reconcile()
-    nothing_since(fx, snap, 'reconcile')
-    drained(fx, 'reconcile')
+    mid = _planned_mission()
+    projects.adopt('mission', mid, None, project_id=garage(fx))
+    rev = _plan_of(mid)['rev']
+
+    def lost(*a, **k):
+        raise RuntimeError('the process died before the approval landed')
+    with patch.object(planned, '_complete_approval', lost):
+        try:
+            planned.approve_plan(mid, rev, dict(MOM))
+        except RuntimeError:
+            pass
+    check(_plan_of(mid).get('state') == 'approving', f"the fixture: an approval to replay: {_plan_of(mid).get('state')}")
+    seen = {}
+    real = planned._complete_approval
+
+    def overtaken(mission, plan):
+        if not seen.get('fired'):
+            seen['fired'] = True
+            seen['state_at_replay'] = plan.get('state')
+            seen['start'] = contextvars.Context().run(start_ok, 'project', garage(fx), dict(MOM))
+            seen['mark'] = mark(fx)
+        return real(mission, plan)
+    with patch.object(planned, '_complete_approval', overtaken):
+        try:
+            planned.reconcile()
+        except BaseException as exc:      # noqa: BLE001
+            check(cancelled(exc), f"reconcile ends by returning or by Cancelled, not {exc!r}")
+    check(seen.get('fired') and seen['state_at_replay'] == 'approving', f"the replay had live work: {seen}")
+    check(seen['start'].get('status') == 'ok', "the deletion was admitted mid-replay")
+    nothing_since(fx, seen['mark'], 'reconcile replay')
+    drained(fx, 'reconcile replay')
+
+
+def scenario_a_program_claimed_while_live_writes_nothing_after_the_deletion_lands():
+    """HOOK CONTRACT (Task 4): approve() claims the program (proposed -> approving) while it is live, then
+    emits through `programs._emit_commitments`, reached through the module. The deletion lands between the
+    claim and that write; nothing after the claim may land, and the route answers 404."""
+    import main
+    from services import programs
+    fx = late_world()
+    pid = _program(fx, 'GPC', 'kid', fx.projects['garage'])
+    storage.update_program(pid, {'state': 'proposed', 'shape': {'sessions_per_week': 2, 'minutes': 20, 'preferred_days': []},
+                                 'phases': [{'name': 'Grade 1', 'weeks': 4, 'what': 'Open chords', 'steps': ['C'],
+                                             'milestone': 'm', 'milestone_hit_at': None}],
+                                 'emissions': {'commitment_ids': [], 'thread_ids': [], 'event_ids': []}})
+    seen = {}
+    real = programs._emit_commitments
+
+    def after_the_claim(*a, **k):
+        if not seen.get('fired'):
+            seen['fired'] = True
+            seen['state_at_write'] = (storage.get_program(pid) or {}).get('state')
+            try:
+                delete_garage(fx)
+                seen['active'] = _d().active('program', pid)
+                seen['mark'] = mark(fx)
+            except BaseException as exc:      # noqa: BLE001
+                seen['error'] = exc
+                raise
+        return real(*a, **k)
+    with patch.object(programs, '_emit_commitments', after_the_claim), \
+            patch.object(main, 'trigger_background_refresh', lambda *a, **k: None):
+        try:
+            r = http('mom', 'POST', f'/api/programs/{pid}/approve', json={})
+        except BaseException as exc:      # noqa: BLE001
+            if seen.get('error') is None:
+                raise AssertionError(f"approve: Cancelled must never escape a route: {exc!r}") from exc
+            r = None
+    reached(seen, 'claim')
+    check(seen['state_at_write'] == 'approving', f"the claim landed while the program was live: {seen['state_at_write']}")
+    check(seen['active'], "approval is registered for its program")
+    is_404(r, 'approve after the claim')
+    nothing_since(fx, seen['mark'], 'after the claim')
+    check(not [c for c in storage.get_protected_commitments(include_inactive=True)
+               if (c.get('source') or {}).get('id') == pid], "no commitment of the claimed program was written")
+    drained(fx, 'claim')
 
 
 def scenario_raw_writers_refuse_a_gone_parent():
     """NEAREST LAYER (Task 4): the raw-table writers spec section 5 moves behind checked helpers:
-    program-session append, history-entry update, program claims, lesson replacement."""
+    program-session append, history-entry update, lesson replacement. (Program claims race in their
+    own scenario, through approval.)"""
     from services import programs
     fx = late_world()
     gp1, tid = fx.ids['GP1'], fx.ids['GT1']
     storage.update_program(gp1, {'state': 'active'})
     slot = {'phase_name': 'Grade 1', 'unit_n': 0, 'session_label': ''}
     storage.upsert_program_lesson(gp1, slot, {'scenes': [{'type': 'say', 'text': 'the first script'}]})
-    gpx = _program(fx, 'GPX', 'kid', fx.projects['garage'])
-    storage.update_program(gpx, {'state': 'proposed'})
     entered, go = threading.Event(), threading.Event()
     box = {}
 
@@ -904,8 +1017,7 @@ def scenario_raw_writers_refuse_a_gone_parent():
                             tid, {'kind': 'opened'}, {'text': 'rewritten late'})),
                         ('program session append', lambda: storage.append_program_session(gp1, {'minutes': 5})),
                         ('lesson replacement', lambda: storage.upsert_program_lesson(
-                            gp1, slot, {'scenes': [{'type': 'say', 'text': 'a late script'}]})),
-                        ('program claim', lambda: storage.claim_program(gpx, 'proposed', 'approving'))):
+                            gp1, slot, {'scenes': [{'type': 'say', 'text': 'a late script'}]}))):
                     try:
                         box[name] = write()
                     except d.Cancelled:
@@ -919,7 +1031,6 @@ def scenario_raw_writers_refuse_a_gone_parent():
     go.set()
     w.done('raw writers')
     nothing_since(fx, snap, 'raw writers')
-    check(not box.get('program claim') or box['program claim'] == 'cancelled', f"no claim on a gone program: {box}")
     r = http('kid', 'POST', f'/api/programs/{gp1}/session', json={'minutes': 5})
     check(r.status_code == 404, f"a session logged by hand on a gone program is a 404: {r.status_code}")
     r = http('mom', 'PUT', f'/api/programs/{gp1}/lesson', json={**slot, 'scenes': [{'type': 'say', 'text': 'by hand'}]})

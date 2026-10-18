@@ -431,8 +431,12 @@ def scenario_no_read_surface_leaks_a_gone_record():
         out['house programs'] = json.dumps(house_programs.objects(viewer=fx.viewers['mom']), default=str)
         return out
     seen = {path: leaked(text, words) for path, text in surfaces().items()}
-    check(seen['/api/threads'] and seen['/api/missions/admin'],
-          f"the fixture: Mom's own surfaces name the private records before the delete: {seen}")
+    # Before the delete every surface that draws these records for Mom names them; the elsewhere list and
+    # the boards have nothing of them to draw (Mom sees the project; the practice is on no board yet).
+    quiet = {'/api/projects/elsewhere', '/api/home_board', 'board'}
+    check(all(found for path, found in seen.items() if path not in quiet),
+          f"the fixture: Mom's surfaces name the private records before the delete: "
+          f"{ {path: bool(found) for path, found in seen.items()} }")
     start_ok('project', fx.projects['mom_private']['id'], dict(MOM))
     for path, text in surfaces().items():
         check(not leaked(text, words), f"{path}: names a gone record: {leaked(text, words)}")

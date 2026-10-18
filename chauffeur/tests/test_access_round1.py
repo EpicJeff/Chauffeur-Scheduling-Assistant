@@ -71,7 +71,9 @@ def scenario_photo_only_answers_actable_missions():
         storage.update_mission(mid, {'origin_kind': 'thread', 'origin_ref': tid, 'status': 'waiting_user'})
     before = {mid: storage.get_mission_steps(mid) for mid in (hidden, keeper)}
     png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=')
+    folder = os.path.join(os.path.dirname(storage.DB_PATH), 'threads', tid)
     for col in ('aunt', 'mom'):
+        present = set(os.listdir(folder)) if os.path.isdir(folder) else set()
         with patch.object(model_pools, 'credentials', return_value=('test', 'test-key')), \
              patch.object(model_pools, 'call_pool_json', return_value={'text': 'Serial 12345'}) as model:
             r = request(fx, col, 'POST', f'/api/threads/{tid}/photo',
@@ -79,11 +81,15 @@ def scenario_photo_only_answers_actable_missions():
         check(r.status_code == 200 and r.json()['read'], r.text)
         check(model.call_count == 1, 'photo did not run vision read')
         entry = r.json()['entry']
-        # Projects delete (spec 2026-10-18 §5 step 5): a new thread photo lives under threads/<thread id>/.
-        folder = os.path.join(os.path.dirname(storage.DB_PATH), 'threads', tid)
-        check(os.path.isdir(folder) and os.listdir(folder), 'photo not saved under threads/<thread id>/')
-        check(entry.get('url') and any(h.get('kind') == 'photo' and h.get('url') == entry['url']
-                                       for h in storage.get_thread(tid)['history']),
+        # Projects delete (spec 2026-10-18 section 5 step 5): THIS upload's file lives under threads/<thread id>/.
+        new = sorted(set(os.listdir(folder)) - present) if os.path.isdir(folder) else []
+        check(len(new) == 1, f'{col}: this upload saved exactly one new file under threads/<thread id>/: {new}')
+        with open(os.path.join(folder, new[0]), 'rb') as f:
+            check(f.read() == png, f'{col}: the saved file holds the uploaded bytes')
+        served = request(fx, col, 'GET', entry.get('url') or '/missing')
+        check(served is not None and served.status_code == 200 and served.content == png,
+              f'{col}: the entry URL serves this upload: {entry.get("url")} {served.status_code if served is not None else None}')
+        check(any(h.get('kind') == 'photo' and h.get('url') == entry['url'] for h in storage.get_thread(tid)['history']),
               'photo upload must remain available')
         for mid in (hidden, keeper):
             steps = storage.get_mission_steps(mid)
