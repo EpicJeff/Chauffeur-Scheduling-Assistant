@@ -1126,10 +1126,24 @@ async def ics_sync_loop():
             print(f"ICS sync loop error: {e}")
         await asyncio.sleep(3600)
 
+DELETION_MAINTENANCE_S = 120
+
+
+async def deletion_maintenance_loop():
+    """Run at startup and every two minutes, independently of feature gates."""
+    while True:
+        try:
+            await asyncio.to_thread(deletion.maintain)
+        except Exception:
+            logging.getLogger(__name__).exception('Deletion maintenance failed; will retry')
+        await asyncio.sleep(DELETION_MAINTENANCE_S)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from services import planned
     planned.reconcile()
+    deletion_task = asyncio.create_task(deletion_maintenance_loop())
     task = asyncio.create_task(poll_schedule())
     push_task = asyncio.create_task(push_notification_loop())
     ics_task = asyncio.create_task(ics_sync_loop())
@@ -1139,6 +1153,7 @@ async def lifespan(app: FastAPI):
     migration_task = asyncio.create_task(run_all_migrations())
 
     yield
+    deletion_task.cancel()
     task.cancel()
     push_task.cancel()
     ics_task.cancel()

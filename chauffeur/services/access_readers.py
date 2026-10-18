@@ -262,6 +262,8 @@ READERS = [
         'services.deletion.closure',
         'services.deletion._prepare',
         'services.deletion._emissions',
+        'services.deletion._clean_app_state',
+        'services.deletion._cleanup',
         'services.planned.cancel_for_delete',
         'services.asks.unread',
         'services.chat_actions._skip_occurrence',

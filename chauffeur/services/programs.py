@@ -285,7 +285,7 @@ def finish(program_id: str) -> dict:
             'message': f"{row.get('title')} is finished. The time is back."}
 
 
-def release_commitments(program_id: str) -> int:
+def release_commitments(program_id: str, commitment_ids=None) -> int:
     """Hand the reserved evenings back and stop believing they are ours.
 
     Every exit from a live program goes through here -- pause, done, drop,
@@ -294,19 +294,29 @@ def release_commitments(program_id: str) -> int:
     drive in an evening nothing is using, and nobody can see why.
     """
     row = storage.get_program(program_id)
-    if not row:
+    if not row and commitment_ids is None:
         return 0
-    em = dict(row.get('emissions') or {})
-    ids = list(em.get('commitment_ids') or [])
+    em = dict((row or {}).get('emissions') or {})
+    # Deletion supplies its durable pre-pause snapshot, even if the live row
+    # has since forgotten its emissions. Ordinary callers use the live ids.
+    ids = list(dict.fromkeys(list(em.get('commitment_ids') or [])
+                            + list(commitment_ids or [])))
+    failed = []
     for cid in ids:
         try:
             storage.delete_protected_commitment(cid)
+            if storage.get_protected_commitment(cid) is not None:
+                failed.append(cid)
         except deletion.Cancelled:
             raise
         except Exception as e:
+            failed.append(cid)
             print(f"[programs] could not remove commitment {cid}: {e}")
-    em['commitment_ids'] = []
-    storage.update_program(program_id, {'emissions': em})
+    em['commitment_ids'] = failed
+    if row:
+        storage.update_program(program_id, {'emissions': em})
+    if failed:
+        raise RuntimeError(f"Could not release commitments for {program_id}: {failed}")
     return len(ids)
 
 
