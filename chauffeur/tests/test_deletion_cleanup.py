@@ -553,7 +553,7 @@ def scenario_rf2_a_restart_mid_cleanup_resumes_at_startup_and_stays_hidden():
 def scenario_real_argyle_notices_carry_typed_refs_and_go_with_their_records():
     """Spec section 5 step 1: Argyle's notices carry typed refs from their real producers (the consolidated
     watcher DM, a mission's DM, a reply's DM), so deleting their records deletes them whole."""
-    from services import watchers, replies, model_pools
+    from services import watchers, replies, model_pools, agent_tools_v2
     fx = build()
     missions._post = REAL_POST
     base = storage.get_settings()
@@ -569,6 +569,31 @@ def scenario_real_argyle_notices_carry_typed_refs_and_go_with_their_records():
         since = {m['id'] for m in storage.chat_messages_table.all()}
         watchers.run_watchers(in_window)
         produced['watchers'] = (new_messages(since), {('thread', gt1), ('mission', gm2)})
+        # A commitment's line contains its program's words, despite having a
+        # composite commitment subject rather than a native program subject.
+        pid = fx.ids['GP1']
+        cid = storage.add_protected_commitment({
+            'id': uuid.uuid4().hex, 'member_id': 'kid', 'title': fx.title('GP1'),
+            'days_of_week': [in_window.weekday()], 'time_start': '10:00', 'time_end': '12:00',
+            'active': True, 'needs_coverage': True, 'source': {'kind': 'program', 'id': pid}})
+        start = in_window + datetime.timedelta(hours=1)
+        storage.set_cached_schedule({'events': [{'id': 'ref-drive', 'title': 'School pickup',
+            'start': start.isoformat(), 'end': (start + datetime.timedelta(minutes=30)).isoformat()}],
+            'assignments': {}, 'unassigned': ['ref-drive']})
+        found = watchers._commitment_findings(in_window)
+        check(any(f.subject_id == f'{cid}:ref-drive' and fx.title('GP1') in f.line for f in found),
+              'the real commitment collector names the source program')
+        real_post = agent_tools_v2._post_chat_message
+
+        def commitment_post(channel, sender, body, **kw):
+            check(_d().active('program', pid), 'commitment notices act for their source program')
+            return real_post(channel, sender, body, **kw)
+
+        since = {m['id'] for m in storage.chat_messages_table.all()}
+        with patch.object(watchers, 'collect_findings', lambda now: (watchers._commitment_findings(now), [])), \
+                patch.object(agent_tools_v2, '_post_chat_message', commitment_post):
+            watchers.run_watchers(in_window)
+        produced['commitment watcher'] = (new_messages(since), {('program', pid)})
         since = {m['id'] for m in storage.chat_messages_table.all()}
         storage.update_mission(gm2, {'status': 'running'})
         missions._browse_async = False
@@ -609,6 +634,8 @@ def scenario_real_argyle_notices_carry_typed_refs_and_go_with_their_records():
                                 f"{sorted(need)}: {sorted(refs)}")
             made.append(m['id'])
     start_ok('project', garage(fx), dict(MOM))
+    check(all(not storage.message_visible(storage.get_chat_message(mid)) for mid in made),
+          'every typed notice, including commitment copies, hides immediately')
     finish()
     left = [mid for mid in made if storage.get_chat_message(mid) is not None]
     check(not left, f"every notice about the Garage went, whole: {len(left)} of {len(made)} remain")

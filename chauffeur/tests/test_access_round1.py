@@ -84,6 +84,8 @@ def scenario_photo_only_answers_actable_missions():
         # Projects delete (spec 2026-10-18 section 5 step 5): THIS upload's file lives under threads/<thread id>/.
         new = sorted(set(os.listdir(folder)) - present) if os.path.isdir(folder) else []
         check(len(new) == 1, f'{col}: this upload saved exactly one new file under threads/<thread id>/: {new}')
+        check(entry.get('path') == f'threads/{tid}/{new[0]}' and not os.path.isabs(entry['path']),
+              f'{col}: photo history records the file without exposing the server data path')
         with open(os.path.join(folder, new[0]), 'rb') as f:
             check(f.read() == png, f'{col}: the saved file holds the uploaded bytes')
         served = request(fx, col, 'GET', entry.get('url') or '/missing')

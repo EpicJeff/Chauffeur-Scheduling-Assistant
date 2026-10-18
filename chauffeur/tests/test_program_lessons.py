@@ -368,9 +368,13 @@ def scenario_slot_of():
 
 # --- storage: a lesson lives beside the program, keyed on its slot ---
 
-def _lreset():
+def _lreset(program_ids=('p1', 'p2')):
     from services import storage
     storage.program_lessons_table.truncate()
+    for pid in program_ids:
+        if not storage.get_program(pid):
+            storage.add_program({'id': pid, 'member_id': 'kid',
+                                 'title': 'Play guitar'})
 
 
 def scenario_lesson_roundtrip_by_slot():
@@ -482,7 +486,7 @@ def _window():
 
 def scenario_generated_origin_uses_pool_and_stores():
     from services import storage, program_lessons as pl
-    storage.program_lessons_table.truncate()
+    _lreset(('p9',))
     calls = {}
     def fake_pool(tier, api_key, system, prompt, **kw):
         calls['tier'] = tier
@@ -510,7 +514,7 @@ def scenario_cited_needs_its_page_or_stays_silent():
     """The unit HAS a url and the fetch fails: an outage, and an outage is
     never papered over -- no script, ever, not even a generated one."""
     from services import storage, program_lessons as pl, web
-    storage.program_lessons_table.truncate()
+    _lreset(('p9',))
     w = {**_window(), 'unit_url': 'https://jg.example/s1'}
     orig = web.read_page
     web.read_page = lambda url: None
@@ -537,7 +541,7 @@ def scenario_cited_with_no_url_falls_through_to_generated():
     a page that was never claimed."""
     from services import storage, program_lessons as pl, web
     import services.model_pools as mp
-    storage.program_lessons_table.truncate()
+    _lreset(('p9',))
     calls = {'read_page': 0}
     def spy_read_page(url):
         calls['read_page'] += 1
@@ -566,7 +570,7 @@ def scenario_cited_with_no_url_falls_through_to_generated():
 def scenario_cited_carries_its_source():
     from services import storage, program_lessons as pl, web
     import services.model_pools as mp
-    storage.program_lessons_table.truncate()
+    _lreset(('p9',))
     w = {**_window(), 'unit_url': 'https://jg.example/s1'}
     orig_read, orig_pool = web.read_page, mp.call_pool_json
     web.read_page = lambda url: 'Stage 1: learn G and C. Practice changes.'
@@ -588,7 +592,7 @@ def scenario_cited_carries_its_source():
 def scenario_generation_survives_a_pool_error():
     from services import storage, program_lessons as pl
     import services.model_pools as mp
-    storage.program_lessons_table.truncate()
+    _lreset(('p9',))
     orig = mp.call_pool_json
     mp.call_pool_json = lambda *a, **k: {'error': '429 quota', 'transient': True}
     try:
@@ -606,7 +610,7 @@ def scenario_existing_lesson_skips_before_spending_a_call():
     (or a page fetch) is spent finding out."""
     from services import storage, program_lessons as pl
     import services.model_pools as mp
-    storage.program_lessons_table.truncate()
+    _lreset(('p9',))
     slot = pl.slot_of(_window(), unit_n=1)
     storage.upsert_program_lesson('p9', slot, {
         'origin': 'generated',
@@ -636,7 +640,7 @@ def scenario_a_slot_that_always_fails_stops_costing_a_call():
     and after MAX_ATTEMPTS chargeable failures nothing else is spent."""
     from services import storage, program_lessons as pl
     import services.model_pools as mp
-    storage.program_lessons_table.truncate()
+    _lreset(('p9',))
     calls = {'n': 0}
 
     def fake_pool(*a, **k):
@@ -673,7 +677,7 @@ def scenario_a_transient_failure_is_recorded_but_never_counted():
     exactly the state that has to be legible somewhere."""
     from services import storage, program_lessons as pl
     import services.model_pools as mp
-    storage.program_lessons_table.truncate()
+    _lreset(('p9',))
     calls = {'n': 0}
 
     def fake_pool(*a, **k):
@@ -700,7 +704,7 @@ def scenario_a_hard_pool_error_does_spend_an_attempt():
     looks."""
     from services import storage, program_lessons as pl
     import services.model_pools as mp
-    storage.program_lessons_table.truncate()
+    _lreset(('p9',))
     calls = {'n': 0}
 
     def fake_pool(*a, **k):
@@ -727,7 +731,7 @@ def scenario_a_recorded_failure_never_becomes_a_lesson():
     that asks "is there a lesson": no scenes means the fallback ladder,
     on every surface, exactly as before."""
     from services import storage, program_lessons as pl
-    storage.program_lessons_table.truncate()
+    _lreset(('p9',))
     slot = pl.slot_of(_window(), unit_n=1)
     pl._record_attempt('p9', slot, 'generated', '', 'nothing survived')
     row = storage.get_program_lesson('p9', slot)
@@ -740,7 +744,7 @@ def scenario_a_hand_edit_is_never_bounced_by_a_recorded_failure():
     at attempts, or a slot that failed three times and was then written by
     hand would read as backed-off rather than as done."""
     from services import storage, program_lessons as pl
-    storage.program_lessons_table.truncate()
+    _lreset(('p9',))
     slot = pl.slot_of(_window(), unit_n=1)
     storage.upsert_program_lesson('p9', slot, {
         'origin': 'generated', 'attempts': 99, 'edited': True,
@@ -1258,7 +1262,7 @@ def scenario_generation_offers_the_letter_sounds_it_actually_has():
     """The line has to reach the CALL, not merely exist."""
     from services import storage, program_lessons as pl
     import services.model_pools as mp
-    storage.program_lessons_table.truncate()
+    _lreset(('p9',))
     seen = {}
 
     def fake_pool(tier, api_key, system, prompt, **kw):
@@ -1855,7 +1859,7 @@ def scenario_generation_tells_the_model_who_is_practising():
     that module's own `_who_line` so the two can never drift."""
     from services import storage, program_lessons as pl, programs_curate
     import services.model_pools as mp
-    storage.program_lessons_table.truncate()
+    _lreset(('p9',))
     seen = {}
 
     def fake_pool(tier, api_key, system, prompt, **kw):
@@ -1885,7 +1889,7 @@ def scenario_generation_tells_the_model_what_month_it_is():
     import datetime
     from services import storage, program_lessons as pl
     import services.model_pools as mp
-    storage.program_lessons_table.truncate()
+    _lreset(('p9',))
     seen = {}
 
     def fake_pool(tier, api_key, system, prompt, **kw):
@@ -1909,7 +1913,7 @@ def scenario_a_model_echoing_the_voice_fields_stores_them_clean():
     sanitizer with them intact -- and with a screened one gone."""
     from services import storage, program_lessons as pl
     import services.model_pools as mp
-    storage.program_lessons_table.truncate()
+    _lreset(('p9',))
 
     def fake_pool(tier, api_key, system, prompt, **kw):
         return {'scenes': [

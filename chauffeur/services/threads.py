@@ -627,7 +627,7 @@ def add_photo(thread_id: str, data: bytes, mime: str, who: Optional[str], captio
     path = os.path.join(folder, media_id)
     saved = {'id': media_id, 'url': f'/api/media/{media_id}?thread_id={thread_id}'}
     entry = {'kind': 'photo', 'url': saved['url'], 'media_id': saved['id'], 'text': NOT_READ,
-             'path': path, 'who': who, 'caption': (caption or '').strip()[:200]}
+             'path': f'threads/{thread_id}/{media_id}', 'who': who, 'caption': (caption or '').strip()[:200]}
     with storage.db_lock:
         if not storage.append_thread_history(thread_id, entry):
             return {'status': 'not_found'}

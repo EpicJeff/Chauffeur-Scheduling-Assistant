@@ -1870,50 +1870,55 @@ def tick(now: datetime.datetime = None) -> dict:
     ts = now.timestamp()
 
     for row in storage.get_missions(status='waiting_retry'):
-        with deletion.acting_for('mission', row['id']):
-            if (row.get('retry_at') or 0) <= ts:
-                storage.update_mission(row['id'], {'status': 'running',
-                                                   'retry_at': None})
+        try:
+            with deletion.acting_for('mission', row['id']):
+                if (row.get('retry_at') or 0) <= ts:
+                    storage.update_mission(row['id'], {'status': 'running',
+                                                       'retry_at': None})
+        except deletion.Cancelled:
+            continue
 
 
     # A browse whose thread died (crash, restart) must not strand the mission.
     for row in storage.get_missions(status='browsing'):
-        with deletion.acting_for('mission', row['id']):
-            # One lock for the decision and its writes: a worker's on_attempt (same
-            # lock) either pressed before this (its attempt is pending here and is
-            # verified) or finds the mission no longer browsing and presses nothing.
-            question = None
-            with storage.db_lock:
-                cur = storage.get_mission(row['id']) or {}
-                if cur.get('status') != 'browsing':
-                    continue
-                steps = storage.get_mission_steps(row['id'])
-                b = next((s for s in reversed(steps) if s.get('kind') == 'browse'), None)
-                # Pause restores the browse status, but its old worker may already
-                # have acknowledged cancellation. Its result is never applied;
-                # the planner can now choose how to continue the same work.
-                if not cur.get('paused_by_project') and (b or {}).get('result_json') == {
-                        'outcome': 'cancelled', 'text': 'Paused'}:
-                    _close(row['id'], 'running')
-                    continue
-                if not (b and b.get('result_json') is None and (b.get('ts') or 0) < ts - BROWSE_LOST_S):
-                    continue
-                storage.add_mission_step(row['id'], {'kind': 'note', 'name': 'browse',
-                                                     'result_json': {'note': f'the browse was lost (no result after {BROWSE_LOST_S // 60} minutes)'}})
-                # A dead worker that had pressed: the press may have happened, so
-                # the parent is asked; the mission never just runs on (spec §2).
-                pending = [a for a in attempts_for(row['id']) if a.get('browse_step_id') == b['id'] and a.get('outcome') is None]
-                if pending:
-                    for a in pending:
-                        _write_attempt(a['step_id'], {**a, 'outcome': 'unknown'})
-                    question = _add_verify_ask(row['id'], {**pending[-1], 'outcome': 'unknown'})
-                    storage.update_mission(row['id'], {'status': 'waiting_user'})
-                else:
-                    storage.update_mission(row['id'], {'status': 'running'})
-            if question:
-                _close(row['id'], 'waiting_user')
-                _dm_person(cur, question + VERIFY_TAIL)
-
+        try:
+            with deletion.acting_for('mission', row['id']):
+                # One lock for the decision and its writes: a worker's on_attempt (same
+                # lock) either pressed before this (its attempt is pending here and is
+                # verified) or finds the mission no longer browsing and presses nothing.
+                question = None
+                with storage.db_lock:
+                    cur = storage.get_mission(row['id']) or {}
+                    if cur.get('status') != 'browsing':
+                        continue
+                    steps = storage.get_mission_steps(row['id'])
+                    b = next((s for s in reversed(steps) if s.get('kind') == 'browse'), None)
+                    # Pause restores the browse status, but its old worker may already
+                    # have acknowledged cancellation. Its result is never applied;
+                    # the planner can now choose how to continue the same work.
+                    if not cur.get('paused_by_project') and (b or {}).get('result_json') == {
+                            'outcome': 'cancelled', 'text': 'Paused'}:
+                        _close(row['id'], 'running')
+                        continue
+                    if not (b and b.get('result_json') is None and (b.get('ts') or 0) < ts - BROWSE_LOST_S):
+                        continue
+                    storage.add_mission_step(row['id'], {'kind': 'note', 'name': 'browse',
+                                                         'result_json': {'note': f'the browse was lost (no result after {BROWSE_LOST_S // 60} minutes)'}})
+                    # A dead worker that had pressed: the press may have happened, so
+                    # the parent is asked; the mission never just runs on (spec §2).
+                    pending = [a for a in attempts_for(row['id']) if a.get('browse_step_id') == b['id'] and a.get('outcome') is None]
+                    if pending:
+                        for a in pending:
+                            _write_attempt(a['step_id'], {**a, 'outcome': 'unknown'})
+                        question = _add_verify_ask(row['id'], {**pending[-1], 'outcome': 'unknown'})
+                        storage.update_mission(row['id'], {'status': 'waiting_user'})
+                    else:
+                        storage.update_mission(row['id'], {'status': 'running'})
+                if question:
+                    _close(row['id'], 'waiting_user')
+                    _dm_person(cur, question + VERIFY_TAIL)
+        except deletion.Cancelled:
+            continue
 
     running = sorted(storage.get_missions(status=RUNNABLE),
                      key=lambda r: r.get('created_at') or 0)

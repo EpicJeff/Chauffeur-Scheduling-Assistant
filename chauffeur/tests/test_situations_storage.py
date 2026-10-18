@@ -21,6 +21,8 @@ def _reset():
 
 def scenario_ask_roundtrip():
     _reset()
+    storage.add_finding({'id': 'f1', 'kind': 'driver_unassigned',
+                         'line': 'Kate needs a driver Thursday'})
     aid = storage.add_ask({'situation_kind': 'finding', 'situation_id': 'f1',
                            'to_name': 'Sarah', 'what': 'drive Kate Thursday',
                            'channel': 'text', 'asked_by': 'mom', 'legacy_id': 'old1'})

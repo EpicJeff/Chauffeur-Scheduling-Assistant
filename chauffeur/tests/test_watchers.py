@@ -402,6 +402,87 @@ def scenario_heads_up_clause_survives_a_missing_record():
 
 SCENARIOS += [scenario_heads_up_names_the_next_step_and_the_asks, scenario_heads_up_clause_survives_a_missing_record]
 
+
+def scenario_cancelled_recipient_preserves_delivery_and_continues_the_sweep():
+    _reset()
+    from services import deletion, findings
+    storage.add_member({'id': 'aunt', 'name': 'Aunt', 'role': 'parent'})
+    finding = findings.Finding(key='cancel_recipient:ev1', line='Dentist needs a driver',
+                               kind='unassigned', severity='decide',
+                               subject_type='event', subject_id='ev1')
+    attempted, delivered = [], []
+
+    def post(dm, sender, body, card=None):
+        attempted.append(dm['id'])
+        if len(attempted) == 2:
+            raise deletion.Cancelled('source disappeared before the second DM')
+        delivered.append(body)
+        return {'id': f'm{len(delivered)}'}
+
+    with mock.patch.object(watchers, 'collect_findings', return_value=([finding], [])), \
+         mock.patch.object(watchers, '_prep_kit_findings', return_value=[]), \
+         mock.patch('services.agent_tools_v2._post_chat_message', side_effect=post):
+        n = watchers.run_watchers(now=NOON)
+        check(len(attempted) == 3 and len(delivered) == 2,
+              'a cancelled second recipient does not stop the third recipient')
+        check(n == 1 and finding.key in (storage.get_app_state('watcher_notified') or {}),
+              'the finding delivered before cancellation keeps its persisted marker')
+        n2 = watchers.run_watchers(now=NOON)
+        check(n2 == 0 and len(attempted) == 3,
+              'a later sweep never repeats the successfully delivered heads-up')
+
+
+def scenario_cancelled_action_card_keeps_live_cards_and_filters_later_recipients():
+    _reset()
+    from services import chat_actions, deletion, findings
+    gone_id = storage.add_thread({'title': 'Doomed appointment', 'owner_member_id': 'mom'})
+    live_id = storage.add_thread({'title': 'Live appointment', 'owner_member_id': 'mom'})
+    fresh = [findings.Finding(
+        key=f'card_cancel:{tid}', line=title, kind='thread_stall', severity='decide',
+        subject_type='thread', subject_id=tid,
+        action={'action_type': 'create_event', 'label': title, 'payload': {'title': title}})
+        for tid, title in ((gone_id, 'Doomed appointment'), (live_id, 'Live appointment'))]
+    propose = chat_actions.create_action_proposal
+    proposed, posts = [], []
+
+    def cancel_first_card(action_type, summary, payload, **kwargs):
+        proposed.append(summary)
+        if summary == 'Doomed appointment':
+            # Deletion owns the stamp, outside the worker's write fence.
+            with storage.db_lock:
+                storage.threads_table.update({'deleting': True}, storage.Query().id == gone_id)
+            deletion.check()
+            raise AssertionError('the first card did not carry its source')
+        return propose(action_type, summary, payload, **kwargs)
+
+    try:
+        with mock.patch.object(watchers, 'collect_findings', return_value=(fresh, [])), \
+             mock.patch.object(watchers, '_prep_kit_findings', return_value=[]), \
+             mock.patch.object(chat_actions, 'create_action_proposal', side_effect=cancel_first_card), \
+             mock.patch('services.agent_tools_v2._post_chat_message',
+                        side_effect=lambda dm, sender, body, card=None:
+                            posts.append((body, card)) or {'id': f'm{len(posts)}'}):
+            watchers.run_watchers(now=NOON)
+        check(proposed == ['Doomed appointment', 'Live appointment', 'Live appointment'],
+              f'cancellation skips only its own card; later live cards run: {proposed}')
+        cards = [body for body, card in posts if card]
+        check(cards == ['Live appointment', 'Live appointment'],
+              'live card writes and deliveries are independent of the deleted first source')
+        bodies = [body for body, card in posts if body.startswith('👋')]
+        check(len(bodies) == 2 and 'Doomed appointment' in bodies[0]
+              and 'Doomed appointment' not in bodies[1] and 'Live appointment' in bodies[1],
+              'later recipients receive only findings whose sources still survive')
+        notified = storage.get_app_state('watcher_notified') or {}
+        check(fresh[1].key in notified and fresh[0].key not in notified,
+              'successful surviving findings are deduped without retaining the gone source')
+    finally:
+        storage.delete_thread(gone_id)
+        storage.delete_thread(live_id)
+
+
+SCENARIOS += [scenario_cancelled_recipient_preserves_delivery_and_continues_the_sweep,
+              scenario_cancelled_action_card_keeps_live_cards_and_filters_later_recipients]
+
 if __name__ == "__main__":
     import traceback
     failed = 0

@@ -416,15 +416,24 @@ _private_signals = ContextVar('watcher_private_signals', default=None)
 
 
 def _gone_finding(f):
-    return bool(f.subject_id and f.subject_type in deletion.KINDS
-                and access.gone(f.subject_type, access.KINDS[f.subject_type].load(f.subject_id),
-                                rid=f.subject_id))
+    if f.subject_type == 'commitment' and f.subject_id:
+        if not storage.get_protected_commitment(str(f.subject_id).split(':', 1)[0]):
+            return True
+    return any(access.gone(ref['kind'], getattr(storage, 'get_' + ref['kind'])(ref['id']),
+                           rid=ref['id']) for ref in _finding_refs([f]))
 
 
 def _finding_refs(findings):
-    return [dict(kind=kind, id=rid) for kind, rid in sorted({
-        (f.subject_type, str(f.subject_id)) for f in findings
-        if f.subject_type in deletion.KINDS and f.subject_id})]
+    refs = set()
+    for f in findings:
+        kind, rid = f.subject_type, f.subject_id
+        if kind == 'commitment' and rid:
+            commitment = storage.get_protected_commitment(str(rid).split(':', 1)[0]) or {}
+            source = commitment.get('source') or {}
+            kind, rid = source.get('kind'), source.get('id')
+        if kind in deletion.KINDS and rid:
+            refs.add((kind, str(rid)))
+    return [dict(kind=kind, id=rid) for kind, rid in sorted(refs)]
 
 
 def _household_signals(found):
@@ -1052,13 +1061,16 @@ def run_watchers(now: datetime.datetime = None) -> int:
                 body += "\n\nAsk me for options, or handle it on the dashboard."
                 dm = storage.get_or_create_dm(argyle['id'], parent['id'])
                 _post_chat_message(dm, argyle, body)
-                _post_action_cards(dm, argyle, recipient_findings, parent)
                 sent_keys.update(f.key for f in recipient_findings)
+            # Cards carry their own sources: a cancelled card must not cancel
+            # the consolidated DM's bookkeeping or another living card.
+            _post_action_cards(dm, argyle, recipient_findings, parent)
         except deletion.Cancelled:
-            raise
+            continue
         except Exception as e:
             print(f"[watchers] DM to {parent.get('name')} failed: {e}")
 
+    sent_keys.intersection_update(f.key for f in fresh if not _gone_finding(f))
     if sent_keys:
         for f in fresh:
             if f.key in sent_keys and f.key != '__unclaimed_batch__':
@@ -1119,6 +1131,6 @@ def _post_action_cards(dm, argyle, fresh, parent):
                                    card=res.get('card'))
                 posted += 1
         except deletion.Cancelled:
-            raise
+            continue
         except Exception as e:
             print(f"[watchers] action card failed ({act.get('action_type')}): {e}")

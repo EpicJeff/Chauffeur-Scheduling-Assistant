@@ -9379,7 +9379,7 @@ for _tool in get_available_tools():
 
 
 def execute_tool(name: str, args: dict, actor=None, focus_key=None, mission_id=None) -> dict:
-    from services import budget_guard
+    from services import budget_guard, deletion
     handler = TOOL_HANDLERS.get(name)
     if not handler:
         return {"status": "error", "message": f"Unknown tool {name}"}
@@ -9399,6 +9399,8 @@ def execute_tool(name: str, args: dict, actor=None, focus_key=None, mission_id=N
             context['focus_key'] = focus_key
         return handler(args, **context)
     except budget_guard.BudgetExhausted:
+        raise
+    except deletion.Cancelled:
         raise
     except Exception as e:
         import traceback

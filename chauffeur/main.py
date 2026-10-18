@@ -1228,11 +1228,30 @@ async def _feature_gate(conn: HTTPConnection):
 async def deletion_worker_requests(conn: HTTPConnection):
     """After auth, reserve the source before FastAPI schedules its handler."""
     source = None
+    extra_sources = []
     if conn.scope.get('method') in ('POST', 'PUT'):
         match = re.fullmatch(r'/api/(threads|programs)/([^/]+)/(draft|send|research|photo|approve|resume|session|lesson)',
                              conn.url.path)
         if match:
             source = (match[1][:-1], match[2])
+        elif match := re.fullmatch(r'/api/situations/(thread|mission|program|project|finding|insight)/([^/]+)/act',
+                                  conn.url.path):
+            # Plan approval and stage resume use the situation action rail.
+            source = (match[1], match[2])
+            if match[1] == 'thread':
+                try:
+                    body = await conn.json()
+                except ValueError:
+                    body = {}
+                body = body if isinstance(body, dict) else {}
+                bits = str(body.get('option_id') or '').split(':')
+                if len(bits) >= 3 and bits[1] == 'mission':
+                    extra_sources.append(('mission', bits[2]))
+        elif match := re.fullmatch(r'/api/asks/([^/]+)/answer', conn.url.path):
+            # Answering yes applies the ask in the same request.
+            ask = storage.get_ask(match[1]) or {}
+            if ask.get('situation_kind') and ask.get('situation_id'):
+                source = (ask['situation_kind'], ask['situation_id'])
         elif re.fullmatch(r'/api/action-proposals/[^/]+/act', conn.url.path):
             prop = storage.get_action_proposal(conn.url.path.split('/')[-2]) or {}
             ref = prop.get('source') or {}
@@ -1240,7 +1259,15 @@ async def deletion_worker_requests(conn: HTTPConnection):
             rid = prop.get('origin_id') or ref.get('id')
             if kind in deletion.KINDS and rid:
                 source = (kind, rid)
-    with deletion.acting_for(*source) if source else nullcontext():
+    if source:
+        from services import situations
+        subject = situations._worker_subject(*source)
+        if subject:
+            extra_sources.append(subject)
+    from contextlib import ExitStack
+    with ExitStack() as work:
+        for ref in dict.fromkeys(([source] if source else []) + extra_sources):
+            work.enter_context(deletion.acting_for(*ref))
         yield
 
 
