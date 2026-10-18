@@ -351,15 +351,18 @@ def _mission_row(mid):
 
 class _LockProbe:
     """storage.db_lock for one scenario: the same RLock underneath, plus one observation on the writer
-    thread. At the writer's FIRST full release after its gated check the row is read (did the write land
-    under the lock, before any stamp?), and the writer then yields for a moment, so a helper that drops the
-    lock between its check and its write loses the race to the waiting start every time, not just sometimes."""
+    thread. On the writer's OUTERMOST release after its gated check, the row is read while the lock is
+    still held (did the write land under the lock, before any stamp?); only then is the lock released, and
+    the writer waits for start to finish, so a helper that drops the lock between its check and its write
+    loses the race to the waiting start every time. Depth is counted here, per thread, because the RLock
+    does not say whether a release is its last."""
 
-    def __init__(self, real, is_writer, box, mid):
-        self._real, self._is_writer, self._box, self._mid = real, is_writer, box, mid
+    def __init__(self, real, is_writer, box, mid, start_done):
+        self._real, self._is_writer, self._box, self._mid, self._start_done = real, is_writer, box, mid, start_done
+        self._depth = threading.local()
 
     def __enter__(self):
-        self._real.acquire()
+        self.acquire()
         return self
 
     def __exit__(self, *exc):
@@ -367,13 +370,20 @@ class _LockProbe:
         return False
 
     def acquire(self, *a, **k):
-        return self._real.acquire(*a, **k)
+        got = self._real.acquire(*a, **k)
+        if got:
+            self._depth.n = getattr(self._depth, 'n', 0) + 1
+        return got
 
     def release(self):
+        n = getattr(self._depth, 'n', 0)
+        observe = n == 1 and self._is_writer() and self._box.get('gated') and 'at_release' not in self._box
+        if observe:
+            self._box['at_release'] = _mission_row(self._mid)      # read under the lock, before it is let go
+        self._depth.n = max(0, n - 1)
         self._real.release()
-        if self._is_writer() and self._box.get('gated') and 'at_release' not in self._box and not self._real._is_owned():
-            self._box['at_release'] = _mission_row(self._mid)
-            time.sleep(0.3)
+        if observe:
+            self._start_done.wait(15)                            # start, if it was waiting, goes first now
 
     def __getattr__(self, name):
         return getattr(self._real, name)
@@ -389,7 +399,7 @@ def _contested_write(fx, mid, how, update, entry_check=False, gate_wait=10):
     dropped between the check and the write. Raises AssertionError on any defect."""
     d = _d()
     real_check, gate = d.check, Gate()
-    box, writer_ident, admitted = {}, {}, threading.Event()
+    box, writer_ident, admitted, start_done = {}, {}, threading.Event(), threading.Event()
     before = (storage.get_mission(mid) or {}).get('summary')
 
     def is_writer():
@@ -416,12 +426,13 @@ def _contested_write(fx, mid, how, update, entry_check=False, gate_wait=10):
             attempt('first', 'the contested write')
             admitted.wait(15)
             attempt('second', 'after admission')
-    probe = _LockProbe(storage.db_lock, is_writer, box, mid)
+    probe = _LockProbe(storage.db_lock, is_writer, box, mid, start_done)
     with patch.object(d, 'check', held_check), patch.object(storage, 'db_lock', probe):
         w = Worker(writer)
         try:
             if not gate.entered.wait(gate_wait):
                 admitted.set()
+                start_done.set()
                 w.thread.join(15)
                 check(False, f"{how}: the update helper calls deletion.check() under db_lock, between taking the lock "
                              f"and its write (a check outside the lock, or none, opens no gate): {box}")
@@ -433,6 +444,7 @@ def _contested_write(fx, mid, how, update, entry_check=False, gate_wait=10):
         finally:
             gate.release()
         starter.join(15)
+        start_done.set()
         check(box.get('start', {}).get('status') == 'ok', f"{how}: the deletion is admitted: {box.get('start')}")
         admitted.set()
         w.done(how)
@@ -472,7 +484,8 @@ def scenario_a_checked_write_and_the_deletions_admission_are_atomic():
     Now a check outside the lock opens no gate, so that helper fails the first assertion; the negative control
     below runs exactly that mutant, writing beneath every helper (raw SQL under the lock, so no check at a lower
     layer can rescue it), and requires the failure. A helper that checks under the lock, drops it and re-takes
-    it to write is caught too: the probe makes it lose the race to start, and its write lands on a stamped row."""
+    it to write is caught too: the probe reads the row under the lock at the outermost release, then lets start go
+    first, so that helper's write lands on a stamped row."""
     fx = late_world()
     _contested_write(fx, fx.ids['GM2'], 'the checked writer', storage.update_mission)
     drained(fx, 'admission')
