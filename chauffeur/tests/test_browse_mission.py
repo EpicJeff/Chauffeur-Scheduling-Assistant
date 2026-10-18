@@ -930,7 +930,8 @@ def scenario_free_text_never_answers_a_tap_ask():
     check(res == {'status': 'error', 'message': 'Answer that one with its buttons.'} and storage.get_mission(mid)['status'] == 'waiting_user'
           and not [s for s in storage.get_mission_steps(mid) if s['name'] == 'user_answer'], f"the answer verb itself refuses: {res}")
     src = open('main.py', encoding='utf-8').read()
-    route = src[src.index('def missions_answer'):src.index('def delete_mission_route')]
+    start = src.index('@app.post("/api/missions/{mission_id}/answer")')
+    route = src[start:src.index('\n@app.', start + 1)]     # to the next route decorator, whatever it is
     check('tap_only_ask_pending' in route and 'Answer that one with its buttons.' in route, "POST /answer refuses the same way")
     # A plain question still takes free text.
     _reset()

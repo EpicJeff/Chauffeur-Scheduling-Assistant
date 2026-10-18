@@ -45,6 +45,10 @@ READERS = [
     ((R, 'DELETE', '/api/programs/{program_id}/lesson'), '4.1-signed-in', ('program',), 'record_actable'),
     ((R, 'POST', '/api/programs/lessons/sweep'), '4.1-signed-in', ('program',), 'record_view'),
     ((R, 'GET', '/api/programs/{program_id}/footprint'), '4.1-signed-in', ('program',), 'record_view'),
+    # Projects delete (spec 2026-10-18 §6): the preview names closure titles to whoever may delete;
+    # a program is deleted by its project's owner or a parent who reads it.
+    ((R, 'GET', '/api/deletion/{kind}/{id}/preview'), '4.1-signed-in', ('thread', 'mission', 'program'), 'deletion.preview'),
+    ((R, 'DELETE', '/api/programs/{program_id}'), '4.1-signed-in', ('program',), 'deletion.start'),
     ((R, 'GET', '/api/commitments'), '4.7-calendar', ('program',), 'record_view'),
     # §4.1 situations, asks, projects, findings, proposals, study
     ((R, 'GET', '/api/situations'), '4.1-signed-in', ('thread', 'mission'), 'record_view'),

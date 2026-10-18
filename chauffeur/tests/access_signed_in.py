@@ -19,6 +19,12 @@ import main
 F, K = 'full', 'keeper'
 PROGRAM_VERBS = ('approve', 'session', 'milestone', 'finish', 'reshape', 'pause',
                  'resume', 'drop', 'edit', 'unit')
+TOKEN_REQUIRED = "A confirmation is required."
+PIECE_DELETES = {'/api/threads/{thread_id}': 'thread', '/api/missions/{mission_id}': 'mission',
+                 '/api/programs/{program_id}': 'program'}
+DELETION_PREVIEW = '/api/deletion/{kind}/{id}/preview'
+# Who owns each program's project in access_fixture: Mom private, Household (Dad), Kate no Dad, Mom no Dad.
+PROGRAM_PROJECT_OWNER = {'R3': 'mom', 'R5p': 'dad', 'R15': 'kid', 'R17': 'mom'}
 PROJECT_WRITES = {'/api/projects/{project_id}/plan',
                   '/api/projects/{project_id}/steps/{step_id}/cancel',
                   '/api/projects/{project_id}/steps/{step_id}/hold'}
@@ -114,10 +120,28 @@ def verb_for(rid):
     return 'delete' if method == 'DELETE' else 'edit' if method == 'PATCH' else path.rsplit('/', 1)[-1]
 
 
+def delete_expected(fx, rkey, col):
+    """Spec 2026-10-18 §3: a thread or mission by record_actable(..., 'delete') under the existing
+    parent/adult gate; a program by its project's owner or a parent, provided they read it."""
+    if KIND[rkey] != 'program':
+        return act_expected(rkey, col, 'delete')
+    if base(rkey, col) is None:
+        return None
+    # Fixture knowledge, not storage: read probes rebuild the household under the matrix's fx.
+    owner = PROGRAM_PROJECT_OWNER[rkey]
+    return F if col in ('mom', 'dad') or col == owner else 'FORBIDDEN-NOT-404'
+
+
 def expected(rid, fx, rkey, col, value):
     if rid not in IDS:
         return value
     path = rid[-1]
+    if path == DELETION_PREVIEW:
+        # The preview names titles only, to whoever may delete; a refusal is 403, a hidden record 404.
+        allowed = delete_expected(fx, rkey, col)
+        return K if allowed == F else allowed
+    if rid[1] == 'DELETE' and path in PIECE_DELETES:     # GET /api/missions/{mission_id} shares the path
+        return delete_expected(fx, rkey, col)
     if is_project_write(rid):
         if col == 'house':
             return 'skip'
@@ -215,6 +239,8 @@ IDS = {
     ('route', 'DELETE', '/api/programs/{program_id}/lesson'),
     ('route', 'POST', '/api/programs/lessons/sweep'),
     ('route', 'GET', '/api/programs/{program_id}/footprint'),
+    ('route', 'GET', '/api/deletion/{kind}/{id}/preview'),
+    ('route', 'DELETE', '/api/programs/{program_id}'),
     ('route', 'GET', '/api/situations'),
     ('route', 'GET', '/api/situations/{kind}/{sid}'),
     ('route', 'GET', '/api/subjects/{kind}/{sid}/situations'),
@@ -292,7 +318,7 @@ def read_probe(rid, fx, rkey, col):
     elif path == '/api/action-proposals':
         storage.add_action_proposal({'action_type': 'skip_occurrence', 'summary': fx.secret(rkey),
                                      'status': 'proposed', 'origin_kind': 'mission', 'origin_id': sid})
-    path = path.replace('{kind}', kind).replace('{sid}', sid).replace('{record_id}', sid).replace('{mission_id}', sid).replace('{program_id}', sid).replace('{project_id}', row['project_id'])
+    path = path.replace('{kind}', kind).replace('{sid}', sid).replace('{record_id}', sid).replace('{mission_id}', sid).replace('{program_id}', sid).replace('{project_id}', row['project_id']).replace('{id}', sid)
     with ExitStack() as stack:
         if path.endswith('/footprint'):
             stack.enter_context(patch.object(programs, 'footprint', side_effect=lambda p: p))
@@ -345,6 +371,8 @@ def write_probe(rid, fx, rkey, col, forced_verb=None):
             return outcome
         r = request(fx, col, method, path, json={'outcome': 'stop', 'by_date': '2020-01-01'})
         return result(r)
+    if method == 'DELETE' and path in PIECE_DELETES:
+        return delete_probe(fx, kind, sid, path, col)
     verb = forced_verb or verb_for(rid)
     if rid[0] == 'route-prefix':
         errors = []
@@ -422,6 +450,32 @@ def write_probe(rid, fx, rkey, col, forced_verb=None):
         return None
     if outcome == F and r.json().get('status') in ('error', 'refused', 'not_found'):
         return f'ACTION-NOT-ACCEPTED: {r.text[:160]}'
+    return outcome
+
+
+def delete_probe(fx, kind, sid, path, col):
+    """Spec 2026-10-18 §6: a token-less DELETE is a 400 for whoever may delete (and the table's own
+    403/404 for anyone else); with the token the preview gave, an allowed viewer deletes (200) and the
+    record is hidden at once; a refused one changes nothing."""
+    path = path.replace('{thread_id}', sid).replace('{mission_id}', sid).replace('{program_id}', sid)
+    load_row = {'thread': storage.get_thread, 'mission': storage.get_mission, 'program': storage.get_program}[kind]
+    bare = request(fx, col, 'DELETE', path, json={})
+    preview = request(fx, col, 'GET', f'/api/deletion/{kind}/{sid}/preview')
+    token = preview.json().get('token') if preview is not None and preview.status_code == 200 else 'not-a-token'
+    r = request(fx, col, 'DELETE', path, json={'token': token})
+    outcome = result(r)
+    if outcome == F:
+        if not (bare is not None and bare.status_code == 400 and TOKEN_REQUIRED in bare.text):
+            return f'TOKENLESS-NOT-400: {bare.status_code if bare is not None else None} {bare.text[:120] if bare is not None else ""}'
+        row = load_row(sid)
+        if row is not None and not row.get('deleting'):
+            return 'DELETED-BUT-NOT-HIDDEN'
+    else:
+        if result(bare) != outcome:
+            return f'TOKENLESS-MISMATCH: {result(bare)} vs {outcome}'
+        row = load_row(sid)
+        if row is None or row.get('deleting'):
+            return f'REFUSED-BUT-DELETED: {outcome}'
     return outcome
 
 
