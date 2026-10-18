@@ -44,7 +44,7 @@ Records outside the closure that point at a closure record (a subject or `subjec
 - **A project:** its owner, or a parent who sees it. A device actor (panel, speaker) never qualifies.
 - **A thread or mission (standalone):** `access.record_actable(kind, row, actor, 'delete')`, as today.
 - **A program (standalone, new):** the owner of its project, or a parent, provided the actor can read the program.
-- **Every closure record must be readable by the actor** (`record_view` not None). One that is not refuses the whole delete with "Ask a parent to delete this." and names nothing (Codex r1-3, r1-5, r2-2). So a child owner deletes their own project only when they can see everything in it; parents normally see all of a child's project.
+- **Every closure record must be readable by the actor** (`record_view` not None). One that is not refuses the whole delete with "Ask a parent to delete this." and names nothing (Codex r1-2, r1-3, r1-5). So a child owner deletes their own project only when they can see everything in it; parents normally see all of a child's project.
 - **The token.** `preview` returns the closure's titles and a token: a hash of the canonical confirmation snapshot, the sorted `(kind, id, title)` triples it displayed (Codex r2-N5; threads and programs carry no reliable `rev`). `start` recomputes the closure and refuses with `changed` ("This project changed. Look again.") unless the token matches, so a delete never takes more than the confirmation named (Codex r1-4).
 - Linked kinds need no permission (Codex r1-4).
 
