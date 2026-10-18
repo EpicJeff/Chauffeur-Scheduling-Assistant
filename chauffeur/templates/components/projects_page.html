@@ -238,7 +238,7 @@
                                 </template>
                                 <template x-if="!card.sheet">
                                     <div class="flex items-center justify-between gap-3">
-                                        <a :href="apiBase + card.link" class="text-xs text-blue-400 underline underline-offset-2 min-w-0" x-text="card.title"></a>
+                                        <button type="button" :data-piece-link="card.kind + ':' + card.id" @click="openLink(card)" class="text-xs text-blue-400 underline underline-offset-2 min-w-0 text-left" x-text="card.title"></button>
                                         <template x-if="project.can_act">
                                             <button type="button" :data-piece-remove="card.kind + ':' + card.id" @click="removePiece(project, card)" :disabled="!!busy"
                                                     class="text-xs font-bold text-gray-400 underline underline-offset-2 shrink-0 disabled:opacity-50">Remove</button>
@@ -423,6 +423,8 @@ function projectsPage(host = 'admin') {
             if (!await promptConfirm('Remove “' + (card.title || card.kind) + '”?', 'It stays in Chauffeur. Only its link to this project goes.', 'Remove', 'Keep it')) return;
             if (await this.mutate('api/projects/' + encodeURIComponent(p.id) + '/pieces/remove', {kind: card.kind, id: card.id})) await this.loadPieces(p);
         },
+        // A linked piece opens its own page, as its link always did (buttons only, no anchors).
+        openLink(card) { window.location.href = this.apiBase + card.link; },
         openSheet(kind, id, title, projectId) {
             window.dispatchEvent(new CustomEvent('chf-record-sheet-open', {detail: {kind, id, title: title || '', projectId: projectId || null}}));
         },

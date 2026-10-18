@@ -323,6 +323,14 @@ def scenario_a_piece_delete_and_remove():
         page.wait_for_selector(f'[data-piece="mission:{mid}"]', state='detached', timeout=10000)
         check(_gone('mission', mid) and not _gone('project', pid), "the last Argyle piece goes; the project stays")
 
+        link = page.locator(f'[data-piece-link="list:{lid}"]')
+        check(link.count() == 1 and link.evaluate('el => el.tagName') == 'BUTTON'
+              and page.locator(f'[data-piece="list:{lid}"] a').count() == 0, "the linked piece opens from a button, not an anchor")
+        with page.expect_request(lambda r: r.is_navigation_request(), timeout=10000) as went:
+            link.click()
+        check(went.value.url == served.url('shopping'), f"it opens the same address its link did: {went.value.url}")
+        page.goto(served.url('projects?id=' + pid), wait_until='load')
+        page.wait_for_selector(f'[data-piece-remove="list:{lid}"]', timeout=15000)
         page.locator(f'[data-piece-remove="list:{lid}"]').click()
         title, _ = _admin_confirm(page)
         check(title == 'Remove “Tile shop list”?', f"Remove names what it unlinks: {title}")

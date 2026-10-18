@@ -12,7 +12,7 @@
    A refusal ("Ask a parent to delete this.") and every other answer the
    server words are shown verbatim through showGlobalAlert. A `changed` answer
    (409) is shown, then the preview runs again so the person confirms what is
-   there now. On success the record is already hidden everywhere; onDone()
+   there now, as many times as it changes. On success the record is already hidden everywhere; onDone()
    lets the host re-read or step back. Never a browser dialog.
 
    chfDeleteMessage(items) -> the confirmation's text (exported for tests).
@@ -67,8 +67,9 @@
         if (!ROUTES[kind] || !id) return 'error';
         const base = apiBase !== undefined ? apiBase : (window.chfBase !== undefined ? window.chfBase : '');
         const done = async () => { try { if (onDone) await onDone(); } catch (e) { console.warn(e); } };
-        // A changed project asks again; three looks is plenty for one tap.
-        for (let attempt = 0; attempt < 3; attempt++) {
+        // A changed project asks again, every time: the loop ends only when the
+        // person keeps it, the delete goes through, or the server refuses.
+        for (;;) {
             let look;
             try {
                 look = await answer(await fetch(base + 'api/deletion/' + encodeURIComponent(kind) + '/' + encodeURIComponent(id) + '/preview',
@@ -93,7 +94,6 @@
             say(res.detail || 'Couldn’t delete that.');
             return 'refused';
         }
-        return 'error';
     };
 })();
 </script>

@@ -240,6 +240,11 @@ def scenario_argyle_has_no_delete_and_the_pages_have_the_buttons():
         'changed': {'kind': 'project', 'id': 'p1', 'title': 'Kitchen', 'confirm': [True, True],
                     'replies': [ok, [409, {'detail': 'This project changed. Look again.'}],
                                 [200, {'status': 'ok', 'token': 'tok-2', 'items': items[:1], 'links': 0}], [200, {'status': 'ok'}]]},
+        'changed_thrice': {'kind': 'project', 'id': 'p1', 'title': 'Kitchen', 'confirm': [True, True, True, True],
+                           'replies': [ok, [409, {'detail': 'This project changed. Look again.'}],
+                                       ok, [409, {'detail': 'This project changed. Look again.'}],
+                                       ok, [409, {'detail': 'This project changed. Look again.'}],
+                                       [200, {'status': 'ok', 'token': 'tok-4', 'items': items, 'links': 0}], [200, {'status': 'ok'}]]},
         'refused': {'kind': 'project', 'id': 'p1', 'title': 'Kitchen', 'confirm': [],
                     'replies': [[403, {'detail': 'Ask a parent to delete this.'}]]},
         'wall': {'kind': 'mission', 'id': 'm1', 'title': '<b>g1</b>', 'confirm': [False], 'wall': True,
@@ -263,6 +268,11 @@ def scenario_argyle_has_no_delete_and_the_pages_have_the_buttons():
           and [r['method'] for r in c['requests']] == ['GET', 'DELETE', 'GET', 'DELETE'] and c['requests'][3]['body'] == {'token': 'tok-2'}
           and c['requests'][1]['url'] == 'api/projects/p1' and c['result'] == 'deleted',
           f"changed is said, previewed again, and the new look is what is confirmed: {c}")
+    c3 = out['changed_thrice']
+    check(c3['alerts'] == ['This project changed. Look again.'] * 3 and len(c3['confirms']) == 4
+          and [r['method'] for r in c3['requests']] == ['GET', 'DELETE'] * 4 and c3['requests'][7]['body'] == {'token': 'tok-4'}
+          and c3['result'] == 'deleted' and c3['done'] == 1,
+          f"no cap on looking again: three changes, a fourth look, and it deletes: {c3}")
     r = out['refused']
     check(r['alerts'] == ['Ask a parent to delete this.'] and not r['confirms'] and len(r['requests']) == 1 and r['result'] == 'refused'
           and r['done'] == 0, f"a refusal is shown verbatim and names nothing: {r}")
