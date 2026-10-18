@@ -19,7 +19,7 @@ never captured or imported by name.
   * `programs.release_commitments` (program resume)
   * `programs.orphaned_emissions`, `programs.weekday_shortfall`  (the watchers' program mutations)
   * `planned._complete_approval`   (reconcile's replay)
-  * `deletion.check`         (the storage helpers' own check, held between check and write)
+  * `deletion.check`         (the storage helpers' own check, held under db_lock between check and write)
 
 Paths with no reachable race at all are pinned at the nearest layer and named for Task 4:
 program-session append, history-entry update, lesson replacement and the app_voice card update.
@@ -343,58 +343,158 @@ def scenario_acting_for_registers_carries_and_cancels():
     drained(fx, 'acting_for')
 
 
-def scenario_a_checked_write_and_the_deletions_admission_are_atomic():
-    """Spec section 5: "a check and its local write happen under storage.db_lock together with the
-    deletion's admission (start takes the same lock)". The test holds no lock itself. The storage update
-    helper's own `deletion.check()` (reached through the module, the contract Task 4 builds to) passes, and
-    the writer is held right there, between that check and its write, while `start` runs in another
-    request. Either start waits for the helper's lock (the write lands BEFORE admission), or, if start got
-    through, the write must not land after it. A helper that checks outside the lock fails here."""
-    fx = late_world()
-    d, mid = _d(), fx.ids['GM2']
-    real_check = d.check
-    gate, box = Gate(), {}
-    writer_ident = {}
+def _mission_row(mid):
+    """The mission's row as the table holds it (a raw read: no lock, no view)."""
+    row = storage.missions_table.get(storage.Query().id == mid)
+    return dict(row) if row else None
+
+
+class _LockProbe:
+    """storage.db_lock for one scenario: the same RLock underneath, plus one observation on the writer
+    thread. At the writer's FIRST full release after its gated check the row is read (did the write land
+    under the lock, before any stamp?), and the writer then yields for a moment, so a helper that drops the
+    lock between its check and its write loses the race to the waiting start every time, not just sometimes."""
+
+    def __init__(self, real, is_writer, box, mid):
+        self._real, self._is_writer, self._box, self._mid = real, is_writer, box, mid
+
+    def __enter__(self):
+        self._real.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.release()
+        return False
+
+    def acquire(self, *a, **k):
+        return self._real.acquire(*a, **k)
+
+    def release(self):
+        self._real.release()
+        if self._is_writer() and self._box.get('gated') and 'at_release' not in self._box and not self._real._is_owned():
+            self._box['at_release'] = _mission_row(self._mid)
+            time.sleep(0.3)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def _contested_write(fx, mid, how, update, entry_check=False, gate_wait=10):
+    """One race. A worker's helper `update(mid, fields)` passes `deletion.check()` INSIDE its locked section
+    and is held right there, between that check and its write, while `start` runs in another request.
+    The gate opens only for a check made by the writer thread while it holds storage.db_lock: a check outside
+    the lock (an entry check in acting_for, a helper that checks before taking the lock) opens nothing and
+    fails the first assertion. Then: the write landed under the lock before any stamp (start waited), or
+    start got through and the write was refused; a write after admission never lands; the lock was never
+    dropped between the check and the write. Raises AssertionError on any defect."""
+    d = _d()
+    real_check, gate = d.check, Gate()
+    box, writer_ident, admitted = {}, {}, threading.Event()
+    before = (storage.get_mission(mid) or {}).get('summary')
+
+    def is_writer():
+        return threading.get_ident() == writer_ident.get('id')
 
     def held_check():
         real_check()
-        if threading.get_ident() == writer_ident.get('id') and not box.get('gated'):
+        if is_writer() and not box.get('gated') and storage.db_lock._is_owned():
             box['gated'] = True
-            gate.wait()                                     # passed the check; not yet written
+            gate.wait()                                     # passed the check, under the lock; not yet written
+
+    def attempt(name, summary):
+        try:
+            update(mid, {'summary': summary})
+            box[name] = 'landed'
+        except d.Cancelled:
+            box[name] = 'cancelled'
 
     def writer():
         writer_ident['id'] = threading.get_ident()
         with d.acting_for('mission', mid):
-            storage.update_mission(mid, {'summary': 'the contested write'})
-            box['admitted'].wait(15)
-            try:
-                storage.update_mission(mid, {'summary': 'after admission'})
-            except d.Cancelled:
-                box['cancelled'] = True
-    box['admitted'] = threading.Event()
-    with patch.object(d, 'check', held_check):
+            if entry_check:
+                d.check()                                   # the mutant's entry check, outside any lock
+            attempt('first', 'the contested write')
+            admitted.wait(15)
+            attempt('second', 'after admission')
+    probe = _LockProbe(storage.db_lock, is_writer, box, mid)
+    with patch.object(d, 'check', held_check), patch.object(storage, 'db_lock', probe):
         w = Worker(writer)
-        if not gate.entered.wait(15):
-            w.done('the checked writer', timeout=1)
-            check(False, "storage's update helper calls deletion.check() before it writes")
-        starter = threading.Thread(target=lambda: box.update(start=contextvars.Context().run(
-            start_ok, 'project', garage(fx), dict(MOM))), daemon=True)
-        starter.start()
-        starter.join(0.7)
-        admitted_during_gate = not starter.is_alive()
-        gate.release()
+        try:
+            if not gate.entered.wait(gate_wait):
+                admitted.set()
+                w.thread.join(15)
+                check(False, f"{how}: the update helper calls deletion.check() under db_lock, between taking the lock "
+                             f"and its write (a check outside the lock, or none, opens no gate): {box}")
+            starter = threading.Thread(target=lambda: box.update(start=contextvars.Context().run(
+                start_ok, 'project', garage(fx), dict(MOM))), daemon=True)
+            starter.start()
+            starter.join(1.0)
+            box['admitted_during_gate'] = not starter.is_alive() or bool((_mission_row(mid) or {}).get('deleting'))
+        finally:
+            gate.release()
         starter.join(15)
-        check(box.get('start', {}).get('status') == 'ok', f"the deletion is admitted: {box.get('start')}")
-        box['admitted'].set()
-        w.done('the checked writer')
-    summary = storage.get_mission(mid)['summary']
-    if admitted_during_gate:
-        check(summary != 'the contested write',
-              "start got in between the helper's check and its write, and the write still landed after admission")
+        check(box.get('start', {}).get('status') == 'ok', f"{how}: the deletion is admitted: {box.get('start')}")
+        admitted.set()
+        w.done(how)
+    at = box.get('at_release')
+    check(at is not None, f"{how}: the writer let go of db_lock after its gated check: {box}")
+    landed = at.get('summary') == 'the contested write'
+    if landed:
+        check(not at.get('deleting'), f"{how}: the write landed on a row start had already stamped: the admission "
+                                      f"got between the helper's check and its write: {at}")
+    elif at.get('deleting'):
+        check(box.get('first') == 'cancelled' and box['admitted_during_gate'],
+              f"{how}: start got through while the helper stood between its check and its write, and the write "
+              f"was not refused: {box}")
     else:
-        check(summary == 'the contested write', f"start waited for the helper's lock; the write landed first: {summary!r}")
-    check(summary != 'after admission', f"a write after admission never lands: {summary!r}")
+        check(False, f"{how}: the helper dropped db_lock between its check and its write (when it let go, the row "
+                     f"carried neither the write nor the stamp): {at}")
+    check(not box['admitted_during_gate'] or box.get('first') == 'cancelled',
+          f"{how}: start blocks until the write lands, or the write never lands after start: {box}")
+    summary = (_mission_row(mid) or {}).get('summary')
+    check(summary == ('the contested write' if landed else before), f"{how}: the stored summary is the last one admitted: {summary!r}")
+    check(box.get('second') == 'cancelled' and summary != 'after admission',
+          f"{how}: a write after admission is refused with Cancelled and never lands: {box}")
+
+
+def scenario_a_checked_write_and_the_deletions_admission_are_atomic():
+    """Spec section 5: "a check and its local write happen under storage.db_lock together with the
+    deletion's admission (start takes the same lock)". The test holds no lock itself. The gate opens INSIDE
+    the storage update helper: its `deletion.check()` (reached through the module, the contract Task 4 builds
+    to) is held only when the writer thread already owns db_lock, after the check passed and before the write,
+    while `start` runs in another request. Either start waits for the helper's lock (the write lands BEFORE
+    admission, on an unstamped row), or, if start got through, the write is refused. A write after admission
+    never lands.
+
+    THE MUTANT this retains (Codex re-review of round 3): `acting_for` checks on entry, and the helper checks
+    OUTSIDE the lock, then takes the lock and writes. A gate on the writer's first check opened at the entry
+    check, start was admitted with no lock held, the helper's own check then failed, and the scenario passed.
+    Now a check outside the lock opens no gate, so that helper fails the first assertion; the negative control
+    below runs exactly that mutant, writing beneath every helper (raw SQL under the lock, so no check at a lower
+    layer can rescue it), and requires the failure. A helper that checks under the lock, drops it and re-takes
+    it to write is caught too: the probe makes it lose the race to start, and its write lands on a stamped row."""
+    fx = late_world()
+    _contested_write(fx, fx.ids['GM2'], 'the checked writer', storage.update_mission)
     drained(fx, 'admission')
+
+    fx = late_world()
+    mid, d = fx.ids['GM2'], _d()
+
+    def mutant_update(mission_id, data):
+        d.check()                                            # THE MUTANT: checked first, the lock taken after
+        with storage.db_lock:
+            doc = storage.missions_table.get(storage.Query().id == mission_id)
+            doc.update(data)
+            with storage.missions_table._storage.transaction() as conn:      # beneath every helper, on purpose
+                conn.execute(f'UPDATE "{storage.missions_table.name}" SET data = ? WHERE doc_id = ?',
+                             (json.dumps(doc), doc.doc_id))
+    try:
+        _contested_write(fx, mid, 'the mutant', mutant_update, entry_check=True, gate_wait=3)
+    except AssertionError as exc:
+        check('under db_lock' in str(exc), f"the mutant is caught at the gate, for that reason: {exc}")
+    else:
+        check(False, "the negative control: a helper that checks outside db_lock must fail this scenario")
+    check(_mission_row(mid).get('deleting') is None, "the negative control started no deletion")
 
 
 # --- the browse turn --------------------------------------------------------------------------
