@@ -460,7 +460,13 @@ def _cleanup(row):
             # file it just removed. Keep the media-id traversal guard.
             if not re.fullmatch(r'[a-f0-9]{32}\.(mp4|webm|mov|m4v|jpg|png|webp)', media_id or ''):
                 continue
-            while path := storage.media_read_path(media_id):
+            # Visit every possible copy once. On SMB, an accepted delete may
+            # remain visible until another handle closes (delete-pending).
+            paths = {os.path.join(root, layout, media_id)
+                     for root in storage._media_roots()
+                     for layout in ('', storage._shard(media_id))}
+            paths.add(os.path.join(storage.media_scratch_dir(), media_id))
+            for path in sorted(paths):
                 try:
                     os.remove(path)
                 except FileNotFoundError:
@@ -472,9 +478,9 @@ def _cleanup(row):
     storage.mission_steps_table.remove(lambda s: s.get('mission_id') in ids['mission'])
     for kind in ('mission', 'thread', 'program'):
         getattr(storage, kind + 's_table').remove(lambda r, k=kind: r.get('id') in ids[k])
-    # 8: Only the pass that removes the project requests its cleanup refresh.
+    # 8: Project holds and program commitments both change the schedule.
     removed = storage.projects_table.remove(lambda p: p.get('id') in ids['project'])
-    if removed:
+    if removed or ids['program']:
         import main
         main.trigger_background_refresh()
     # 9: No tombstone. Subsequent passes have nothing to finish.

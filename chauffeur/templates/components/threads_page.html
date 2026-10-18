@@ -134,7 +134,7 @@
                                                     <template x-if="h.kind === 'photo'">
                                                         <div class="mt-1">
                                                             <img class="thread-photo rounded-lg max-h-40 border border-gray-800" alt=""
-                                                                 :src="window.chfAuthUrl ? window.chfAuthUrl(apiBase + 'api/media/' + h.media_id) : (apiBase + 'api/media/' + h.media_id)">
+                                                                 :src="window.Situations.threadPhotoUrl(h, apiBase)">
                                                             <div class="thread-photo-text text-gray-400 mt-0.5" x-text="(h.caption ? h.caption + ' — ' : '') + h.text"></div>
                                                         </div>
                                                     </template>

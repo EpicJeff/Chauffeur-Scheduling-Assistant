@@ -338,6 +338,14 @@ window.Situations = (function () {
     });
   }
 
+  // Thread-owned photos carry their serving query; older photos use the
+  // shared archive. Keep ingress prefixes and let chfAuthUrl append with &.
+  function threadPhotoUrl(h, apiBase) {
+    const url = h.url && h.url.includes('thread_id=')
+      ? apiBase + h.url.replace(/^\//, '') : apiBase + 'api/media/' + h.media_id;
+    return window.chfAuthUrl ? window.chfAuthUrl(url) : url;
+  }
+
   function render(el, list, ctx) {
     ctx = ctx || {};
     el.innerHTML = (list || []).map(s => cardHtml(s, ctx)).join('');
@@ -345,5 +353,5 @@ window.Situations = (function () {
     bind(el, ctx);
   }
 
-  return { VERB_LABELS, verbLabel, cardHtml, planPreviewHtml, planStepperHtml, render, bind, act, ask };
+  return { VERB_LABELS, verbLabel, cardHtml, planPreviewHtml, planStepperHtml, threadPhotoUrl, render, bind, act, ask };
 })();

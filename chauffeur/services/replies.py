@@ -238,7 +238,10 @@ def flush_pending_dms(now: datetime.datetime = None) -> int:
     for thread in storage.get_threads(include_closed=False):
         if access.gone('thread', thread):
             continue
-        posted += _flush_thread(thread, now)
+        try:
+            posted += _flush_thread(thread, now)
+        except deletion.Cancelled:
+            continue
     return posted
 
 

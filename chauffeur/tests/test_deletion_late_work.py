@@ -872,6 +872,48 @@ def scenario_a_reply_read_after_start_records_nothing_and_a_deferred_dm_never_go
     drained(fx, 'deferred DM')
 
 
+def scenario_cancelled_items_do_not_abort_ask_or_reply_sweeps():
+    from services import asks, replies
+    for claimed in (False, True):
+        fx = late_world()
+        ids = []
+        for key in ('GT1', 'R5t'):
+            ids.append(storage.add_ask({'situation_kind': 'thread', 'situation_id': fx.ids[key],
+                'what': 'Tuesday?', 'state': 'yes', 'outcome': 'claimed' if claimed else None, 'claim_ts': 1,
+                'unlocks': {'action_type': 'thread_advance', 'payload': {'thread_id': fx.ids[key],
+                                                                      'next_action': 'Confirm Tuesday'}}}))
+        pending = [storage.get_ask(aid) for aid in ids]
+        delete_garage(fx)
+        # A sweep's snapshot can outlive the source; run the real decorated workers.
+        with patch.object(storage, 'get_asks', lambda **kw: pending):
+            recovered = asks.recover(_in_window())
+        check(recovered == 1 and storage.get_ask(ids[1]).get('outcome') == 'applied'
+              and storage.get_thread(fx.ids['R5t'])['next_action'] == 'Confirm Tuesday',
+              f'claimed={claimed}: the surviving ask is recovered after a cancelled item')
+        drained(fx, 'ask sweep')
+
+    fx = late_world()
+    for key in ('GT1', 'R5t'):
+        storage.append_thread_history(fx.ids[key], {'kind': 'received', 'message_id': 'sweep-' + key,
+            'ts': time.time(), 'text': 'Tuesday works', 'dm_pending': True,
+            'reading': {'answer': 'info', 'summary': 'Tuesday works'}})
+    pending = sorted(storage.get_threads(include_closed=False), key=lambda t: t['id'] != fx.ids['GT1'])
+    real_flush = replies._flush_thread
+
+    def flush_after_delete(thread, now):
+        if thread['id'] == fx.ids['GT1']:
+            delete_garage(fx)  # after gone() but before worker admission
+        return real_flush(thread, now)
+
+    with patch.object(storage, 'get_threads', lambda **kw: pending), \
+            patch.object(replies, '_flush_thread', flush_after_delete):
+        posted = replies.flush_pending_dms(_in_window())
+    check(posted == 1, 'the next thread still delivers its deferred DM after cancellation')
+    survivor = next(h for h in storage.get_thread(fx.ids['R5t'])['history'] if h.get('message_id') == 'sweep-R5t')
+    check(survivor.get('dm_pending') is False, 'the surviving delivery is settled')
+    drained(fx, 'reply sweep')
+
+
 def scenario_an_ask_applied_after_start_changes_nothing():
     """The ask's promised work is approving a create_event proposal, so its effect talks to Google: the
     deletion lands while the effect is held there, and the insert must then be refused."""

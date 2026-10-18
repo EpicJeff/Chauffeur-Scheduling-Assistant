@@ -507,10 +507,13 @@ def recover(now: datetime.datetime = None) -> int:
     now_ts = (now or datetime.datetime.now()).timestamp()
     n = 0
     for a in storage.get_asks(state='yes'):
-        if a.get('outcome') == 'claimed' and now_ts - float(a.get('claim_ts') or 0) > CLAIM_STALE_S:
-            _recover_claim(a['id'])
-            n += 1
-        elif a.get('outcome') is None:
-            apply(a['id'])
-            n += 1
+        try:
+            if a.get('outcome') == 'claimed' and now_ts - float(a.get('claim_ts') or 0) > CLAIM_STALE_S:
+                _recover_claim(a['id'])
+                n += 1
+            elif a.get('outcome') is None:
+                apply(a['id'])
+                n += 1
+        except deletion.Cancelled:
+            continue
     return n

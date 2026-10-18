@@ -45,7 +45,8 @@ from unittest.mock import patch
 
 from harness import check  # noqa: F401
 from access_fixture import _mission
-from test_deletion_core import (_d, build, garage, start_ok, finish, GARAGE_KEYS, pair, LOAD, WORK_DELETED, REAL_POST)
+from test_deletion_core import (_d, build, garage, start_ok, finish, GARAGE_KEYS, pair, LOAD, WORK_DELETED, REAL_POST,
+                                REFRESH_CALLS)
 from test_subjects import MOM
 from services import storage, missions, access, chat_actions, threads, triage, programs
 
@@ -319,6 +320,50 @@ def scenario_the_emissions_snapshot_drives_the_release_even_when_the_row_forgot_
     storage.update_program(fx.ids['GP1'], {'emissions': {'commitment_ids': [], 'thread_ids': [], 'event_ids': []}})
     finish()
     assert_clean(fx, 'snapshot')
+
+
+def scenario_project_and_standalone_program_cleanup_refresh_once():
+    for kind, key in (('project', None), ('program', 'GP1')):
+        fx = rich()
+        start_ok(kind, fx.ids[key] if key else garage(fx), dict(MOM))
+        at_start = len(REFRESH_CALLS)
+        finish()
+        _d().maintain()
+        check(len(REFRESH_CALLS) - at_start == 1,
+              f'{kind}: cleanup refreshes exactly once, including a later empty pass')
+        check(all(storage.get_protected_commitment(cid) is None for cid in fx.commitments),
+              f'{kind}: released commitments before refreshing')
+
+
+def scenario_delete_pending_legacy_photos_visit_each_location_once():
+    fx = rich()
+    name = fx.legacy_media
+    roots = storage._media_roots() + [os.path.join(os.path.dirname(storage.DB_PATH), 'old-media')]
+    paths = {os.path.join(root, layout, name) for root in roots for layout in ('', storage._shard(name))}
+    paths.add(os.path.join(storage.media_scratch_dir(), name))
+    for path in paths:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'wb') as f:
+            f.write(PNG)
+    start_ok('thread', fx.ids['GK1'], dict(MOM))
+    real_remove, visited = os.remove, []
+
+    def delete_pending(path, *args, **kwargs):
+        if os.path.basename(path) == name:
+            visited.append(path)
+            check(len(visited) <= len(paths), 'delete-pending files cannot make cleanup spin')
+            return  # SMB accepted deletion, but isfile() still sees the file.
+        return real_remove(path, *args, **kwargs)
+
+    try:
+        with patch.object(storage, '_media_roots', lambda: roots), patch.object(os, 'remove', delete_pending):
+            finish()
+        check(len(visited) == len(paths) and set(visited) == paths,
+              f'each sharded, flat and scratch copy is visited once: {visited}')
+    finally:
+        for path in paths:
+            if os.path.isfile(path):
+                real_remove(path)
 
 
 def scenario_a_failing_commitment_delete_keeps_its_program_until_it_succeeds():

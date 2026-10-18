@@ -1940,8 +1940,19 @@
             ctx.lookup = () => s;
             const canNote = ['parent', 'adult'].includes(currentMemberRole());
             const missions = kind === 'thread' ? await pieceSheetMissions(id) : '';
+            const photos = kind === 'thread' ? await pieceSheetPhotos(id) : '';
             return window.Situations.cardHtml(s, ctx) + (kind === 'thread' ? houseThreadExtras(s, canNote) : '')
-                + missions + pieceSheetDeleteRow(kind, id, s.title || '');
+                + photos + missions + pieceSheetDeleteRow(kind, id, s.title || '');
+        }
+        async function pieceSheetPhotos(threadId) {
+            if (!['parent', 'adult'].includes(currentMemberRole())) return '';
+            const r = await fetch(`${apiBase}api/threads?include_closed=true`);
+            const row = r.ok ? ((await r.json()).threads || []).find(t => t.id === threadId) : null;
+            return ((row || {}).history || []).filter(h => h.kind === 'photo').map(h => `<div class="mt-1">
+                <img class="thread-photo rounded-lg max-h-40 border border-gray-800" alt=""
+                     src="${mfEscape(window.Situations.threadPhotoUrl(h, apiBase))}">
+                <div class="thread-photo-text text-gray-400 mt-0.5">${mfEscape((h.caption ? h.caption + ' — ' : '') + h.text)}</div>
+            </div>`).join('');
         }
         // Every mission opened from this thread, each with open and Delete
         // (projects delete spec §7): the same list the admin thread sheet
