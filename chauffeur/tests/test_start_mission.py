@@ -4,6 +4,8 @@ import time
 
 from harness import check  # noqa: F401
 from services import storage, threads, missions, triage, situations, agent_tools_v2 as tools, agent_router
+import datetime as _dt
+_SOON = (_dt.date.today() + _dt.timedelta(days=2)).isoformat()  # a next step still ahead, whatever today is
 
 MOM = {'id': 'mom', 'name': 'Mom', 'role': 'parent'}
 KID = {'id': 'kid', 'name': 'Kate', 'role': 'child'}
@@ -147,12 +149,12 @@ def scenario_finish_lands_on_the_thread_with_a_prefilled_next_step():
     mid, tid = res['mission_id'], res['thread_id']
     storage.add_mission_step(mid, {'kind': 'browse', 'name': 'bodewell.com', 'args_json': {}, 'result_json': {'outcome': 'done', 'text': 'x', 'turns': 3}})
     missions._llm = lambda m, s, u, st: {'action': 'finish', 'summary': 'Bodewell can come Tue Oct 20 8-noon; trip charge $114.95.',
-                                         'next_action': 'Book Tue Oct 20, 8-noon ($114.95 trip charge)', 'next_action_at': '2026-10-17'}
+                                         'next_action': 'Book Tue Oct 20, 8-noon ($114.95 trip charge)', 'next_action_at': _SOON}
     missions.step(storage.get_mission(mid))
     t = storage.get_thread(tid)
     last = [h for h in t['history'] if h['kind'] == 'mission'][-1]
     check('$114.95' in last['text'] and last['next_action'].startswith('Book Tue') and last['mission_id'] == mid, f"the note: {last}")
-    check(t['next_action'].startswith('Book Tue') and t['next_action_at'] == '2026-10-17', f"the thread's next step is set: {t['next_action']}")
+    check(t['next_action'].startswith('Book Tue') and t['next_action_at'] == _SOON, f"the thread's next step is set: {t['next_action']}")
     check(SENT and '$114.95' in SENT[-1] and 'Nothing is booked' in SENT[-1] and 'Book Tue' in SENT[-1], f"the DM: {SENT[-1]}")
     s = situations.view('thread', tid, MOM)
     check(s['next_step']['id'] == 'advance:mission' and s['next_step']['label'].startswith('Book Tue')
@@ -254,7 +256,7 @@ def scenario_e2e_get_the_dishwasher_fixed():
         {'action': 'ask_user', 'question': 'Send me a photo of the label inside the door.'},
         {'action': 'browse', 'goal': 'find appointment windows and the trip charge for a dishwasher repair', 'site': 'bodewell.com'},
         {'action': 'finish', 'summary': 'Bodewell can come Tue Oct 20, 8-noon; trip charge $114.95, parts and labor extra.',
-         'next_action': 'Book Tue Oct 20, 8-noon ($114.95 trip charge)', 'next_action_at': '2026-10-17'},
+         'next_action': 'Book Tue Oct 20, 8-noon ($114.95 trip charge)', 'next_action_at': _SOON},
     ]
     missions._llm = lambda m, s, u, st: plan.pop(0)
     # 1. voice opens it

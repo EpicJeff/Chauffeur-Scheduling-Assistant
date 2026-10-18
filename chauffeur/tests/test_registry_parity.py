@@ -25,7 +25,7 @@ Pinned here (Task 1):
 Run from chauffeur/:  python tests/test_registry_parity.py
 """
 from harness import check  # noqa: F401
-from services import storage, missions, situations
+from services import access, storage, missions, situations
 from services import agent_tools_v2 as tools
 from test_mission_subject import _fresh, _plan, _mission, _step, _steps, _thread
 from test_subjects import MOM, DAD, AUNT
@@ -76,13 +76,13 @@ def scenario_a_missions_reads_run_as_its_audience_never_a_person():
     _fresh()
     _thread('Kate surprise party', subject_kind='occasion', subject_id='o1', subject_rev=1)
     _thread('Gift for Kate', subject_kind='list', subject_id='l2', subject_rev=1)
-    check(missions.read_viewer(storage.get_mission(_mission(created_by='mom'))) == {'id': None, 'role': 'adult'},
+    check(missions.read_viewer(storage.get_mission(_mission(created_by='mom'))) == access.HOUSE,
           "an unbound mission reads as any adult")
     bound = _mission(created_by='mom', subject_kind='occasion', subject_id='o1', subject_rev=1)
-    check(missions.read_viewer(storage.get_mission(bound)) == {'id': None, 'role': 'parent'},
+    check(missions.read_viewer(storage.get_mission(bound)) == access.HOUSE_PARENT,
           "a mission about a parents-only occasion reads as any parent")
     house = _mission(created_by='mom', subject_kind='occasion', subject_id='o2', subject_rev=1)
-    check(missions.read_viewer(storage.get_mission(house)) == {'id': None, 'role': 'adult'}, "a household subject reads as any adult")
+    check(missions.read_viewer(storage.get_mission(house)) == access.HOUSE, "a household subject reads as any adult")
     mid = _mission(created_by='mom')
     _plan({'action': 'tool', 'tool': 'list_threads', 'args': {}}, {'action': 'ask_user', 'question': 'ok?'})
     _step(mid)
