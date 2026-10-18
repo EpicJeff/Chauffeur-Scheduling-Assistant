@@ -1,9 +1,8 @@
 """Admission and synchronous cancellation for a person's confirmed deletion.
 
-Visibility, worker call sites and physical cleanup land in the following tasks.
+Workers carry their sources through writes; physical cleanup lands in Task 5.
 No storage imports at module initialization: storage's write fences call check().
 """
-from contextlib import contextmanager
 from contextvars import ContextVar
 from collections import Counter
 from copy import deepcopy
@@ -22,6 +21,7 @@ KINDS = ('project', 'thread', 'mission', 'program')
 _sources = ContextVar('deletion_sources', default=())
 _workers = Counter()
 _workers_lock = threading.RLock()
+_cancelled_at = {}
 
 
 class Cancelled(Exception):
@@ -33,29 +33,61 @@ def _load(kind, rid):
     return getattr(storage, 'get_' + kind)(rid) if kind in KINDS else None
 
 
-@contextmanager
-def acting_for(kind, rid):
-    """Register work for its whole lifetime and carry its source in copied contexts."""
-    key = (kind, rid)
-    with _workers_lock:
-        _workers[key] += 1
-    token = _sources.set(_sources.get() + (key,))
-    try:
-        check()
-        yield
-    finally:
-        _sources.reset(token)
+class acting_for:
+    """Reserve before scheduling; enter in the worker and release after handling.
+
+    A cancelled timer or a failed Thread.start releases its unused reservation
+    with close(). Entered reservations release themselves, even on cancellation.
+    """
+    def __init__(self, kind, rid):
+        self.key = (kind, rid)
+        self.keys = tuple(dict.fromkeys(_sources.get() + (self.key,)))
+        self.token = None
+        self.closed = False
         with _workers_lock:
-            _workers[key] -= 1
-            if not _workers[key]:
-                del _workers[key]
+            _workers.update(self.keys)
+
+    def __enter__(self):
+        self.token = _sources.set(tuple(dict.fromkeys(_sources.get() + self.keys)))
+        try:
+            check()
+        except BaseException:
+            self.__exit__(None, None, None)
+            raise
+        return self
+
+    def __exit__(self, *exc):
+        if self.token is not None:
+            _sources.reset(self.token)
+            self.token = None
+        self.close()
+
+    def close(self):
+        with _workers_lock:
+            if not self.closed:
+                self.closed = True
+                for key in self.keys:
+                    _workers[key] -= 1
+                    if not _workers[key]:
+                        del _workers[key]
+
+    release = close
+
+
+def has_source():
+    return bool(_sources.get())
 
 
 def check():
-    """Raise after a carried source disappears or is admitted for deletion."""
+    """Raise after explicit deletion of a carried source; no-op outside work."""
     for kind, rid in _sources.get():
         row = _load(kind, rid)
-        if not row or row.get('deleting'):
+        # Retention pruning is not deletion. Read the ledger live, rather
+        # than a read-surface cache that may predate admission.
+        from services import storage
+        if (row and row.get('deleting')) or any(
+                d.get('state') == 'started' and [kind, rid] in d.get('closure', [])
+                for d in storage.get_deletions()):
             raise Cancelled(f'{kind} {rid} was deleted')
 
 
@@ -216,6 +248,7 @@ def start(kind, rid, actor, token):
                 'state': 'started', 'emissions': _emissions(records)})
             for k, record_id, _ in records:
                 storage.stamp_deleting(k, record_id, did)
+    _cancelled_at[did] = time.monotonic()
     try:
         _stop(records)
     finally:
@@ -250,4 +283,20 @@ def delete(kind, rid):
 
 def maintain():
     """Task 5 supplies worker-aware cleanup and the orphan pass."""
-    return {'finished': 0, 'waiting': 0, 'orphans': 0}
+    from services import storage
+    waiting = 0
+    for row in storage.get_deletions():
+        if row.get('state') != 'started':
+            continue
+        running = [(kind, rid) for kind, rid in row.get('closure', []) if active(kind, rid)]
+        if not running:
+            continue
+        waiting += 1
+        now = time.monotonic()
+        since = _cancelled_at.setdefault(row['id'], now)
+        if now - since >= 15 * 60:
+            _cancelled_at[row['id']] = now
+            for kind, rid in running:
+                logging.getLogger(__name__).warning('Re-cancelling deletion worker %s %s; still waiting', kind, rid)
+            _stop([(kind, rid, _load(kind, rid) or {}) for kind, rid in running])
+    return {'finished': 0, 'waiting': waiting, 'orphans': 0}

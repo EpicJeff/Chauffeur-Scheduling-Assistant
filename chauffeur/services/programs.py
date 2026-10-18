@@ -17,13 +17,28 @@ import math
 import re
 import time
 import uuid
+from functools import wraps
 
-from services import stages, storage, access
+from services import stages, storage, access, deletion
+
+
+def _program_work(fn):
+    """Keep each program operation registered until its result is handled."""
+    @wraps(fn)
+    def run(program_id, *args, **kwargs):
+        with deletion.acting_for('program', program_id):
+            return fn(program_id, *args, **kwargs)
+    return run
 
 
 def create_row(data: dict, project_id: str = None) -> str:
     """The one door for a new program row: stored, then adopted into its project."""
+    data = dict(data)
+    if project_id is not None:
+        data['project_id'] = project_id
     pid = storage.add_program(data)
+    if not pid:
+        return None
     from services import projects
     projects.adopt('program', pid, storage.get_member(data.get('created_by')) if data.get('created_by') else None,
                    project_id=project_id)
@@ -286,6 +301,8 @@ def release_commitments(program_id: str) -> int:
     for cid in ids:
         try:
             storage.delete_protected_commitment(cid)
+        except deletion.Cancelled:
+            raise
         except Exception as e:
             print(f"[programs] could not remove commitment {cid}: {e}")
     em['commitment_ids'] = []
@@ -383,6 +400,7 @@ def _revert_resume(program_id: str, made: list, slots: list,
                                 'commitment_ids': []}})
 
 
+@_program_work
 def resume(program_id: str) -> dict:
     """Back on — and the reservations come back with it, through the same
     write path `approve()` uses rather than a second one that could drift
@@ -427,6 +445,8 @@ def resume(program_id: str) -> dict:
                                             'paused_at': None,
                                             'paused_slots': [],
                                             'emissions': emissions})
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         _revert_resume(program_id, made, slots, keep)
         return {'status': 'error',
@@ -807,6 +827,13 @@ def practice_windows(start: datetime.date, end: datetime.date,
     return out
 
 
+class _PracticePush(dict):
+    """Keep the delivery source off a recipient's serializable payload."""
+    def __init__(self, payload, program_id):
+        super().__init__(payload)
+        self.source_program_id = program_id
+
+
 def due_practice_pushes(now=None) -> list:
     """Windows that have just started and have not been announced yet.
 
@@ -852,7 +879,7 @@ def due_practice_pushes(now=None) -> list:
                                     for recipient in (recipients or [access.HOUSE])) else {
             **{k: w.get(k) for k in access.NEUTRAL_PRACTICE_KEYS},
             'title': 'Practice time', 'steps': [], 'milestone': '', 'session_label': ''}
-        out.append({**safe, 'push_key': key})
+        out.append(_PracticePush({**safe, 'push_key': key}, w['program_id']))
     return out
 
 
@@ -902,6 +929,8 @@ def _quietly(what: str, fn, *args, **kwargs):
     """
     try:
         return fn(*args, **kwargs)
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         print(f"[programs] revert could not {what}: {e}")
         return None
@@ -965,6 +994,8 @@ def _revert_attempt(program_id: str, emissions: dict,
         for cid in emissions.get('commitment_ids') or []:
             _quietly(f"delete commitment {cid}",
                      storage.delete_protected_commitment, cid)
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         # Unreachable while every call above is wrapped -- which is the point:
         # this is here so a future edit that forgets the wrapper degrades to a
@@ -1035,6 +1066,7 @@ def _emit_commitments(program_id: str, row: dict, slots: list,
     return emissions
 
 
+@_program_work
 def approve(program_id: str, approver_id: str = None, slots: list = None) -> dict:
     """Claim the week. One act, everything the footprint showed.
 
@@ -1101,7 +1133,8 @@ def approve(program_id: str, approver_id: str = None, slots: list = None) -> dic
             tid = storage.add_thread({'title': kit, 'kind': 'project',
                                       'owner_member_id': row['member_id'],
                                       'goal': 'Have what the next phase needs',
-                                      'created_by': approver_id})
+                                      'created_by': approver_id,
+                                      'project_id': row.get('project_id')})
             # The kit thread belongs to the program's project (front door §1).
             from services import projects as _projects
             _projects.adopt('thread', tid, storage.get_member(approver_id) if approver_id else None,
@@ -1121,6 +1154,8 @@ def approve(program_id: str, approver_id: str = None, slots: list = None) -> dic
         storage.update_program(program_id, {
             'state': 'active', 'approved_by': approver_id,
             'emissions': emissions, 'baseline': baseline})
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         # Whatever failed -- a local write, the kit thread, the calendar
         # branch re-raising its own message above, or the state flip itself
@@ -1416,6 +1451,8 @@ def due_session_asks(now=None) -> list:
     for row in storage.get_programs(state='active'):
         try:
             out.extend(due_asks_for(row, now))
+        except deletion.Cancelled:
+            raise
         except Exception as e:
             print(f"[programs] session ask check failed for {row.get('id')}: {e}")
     return out

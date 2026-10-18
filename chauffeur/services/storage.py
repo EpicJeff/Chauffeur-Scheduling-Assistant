@@ -4,8 +4,47 @@ import os
 import json
 import threading
 import time
+from services import deletion
 
 db_lock = threading.RLock()
+
+
+def _admit_child(kind, rid, visiting=frozenset()):
+    """Called under db_lock. No writer may create an orphan child.
+
+    Missing historical references keep their read behaviour; admitting a new
+    child is a different operation and requires an existing, living parent.
+    """
+    getters = {'project': get_project, 'thread': get_thread, 'mission': get_mission,
+               'program': get_program, 'finding': get_finding, 'ask': get_ask,
+               'proposal': get_action_proposal, 'commitment': get_protected_commitment}
+    if not rid or kind not in getters:
+        return True
+    key = (kind, rid)
+    # Commitment findings identify one conflict as <commitment id>:<event>.
+    row = getters[kind](rid.split(':', 1)[0] if kind == 'commitment' else rid)
+    if kind == 'ask' and not row:
+        # Mission cards also name asks in the mission-step ledger. They are
+        # real parents, although they do not live in the standalone asks table.
+        steps = mission_steps_table.search(Query().id == rid)
+        if steps:
+            row = {'situation_kind': 'mission', 'situation_id': steps[0]['mission_id']}
+    gone = (not row or row.get('deleting') or row.get('gone') or key in visiting or any(
+        d.get('state') == 'started' and [kind, rid] in d.get('closure', [])
+        for d in get_deletions()))
+    if not gone and kind in ('finding', 'ask', 'proposal', 'commitment'):
+        refs = [row.get('source') or {},
+                {'kind': row.get('situation_kind'), 'id': row.get('situation_id')},
+                {'kind': row.get('origin_kind'), 'id': row.get('origin_id')},
+                {'kind': row.get('subject_type'), 'id': row.get('subject_id')}]
+        gone = not all(_admit_child(r.get('kind'), r.get('id'), visiting | {key}) for r in refs)
+    if gone:
+        if deletion.has_source():
+            raise deletion.Cancelled(f'{kind} {rid} cannot accept children')
+        import logging
+        logging.getLogger(__name__).info('Refused child of missing or deleted %s %s', kind, rid)
+        return False
+    return True
 
 # CHAUFFEUR_DATA_DIR: test/tooling override so suites run against a temp dir
 # instead of the live data files. Unset in normal operation.
@@ -583,12 +622,14 @@ def migrate_passengers_from_settings():
                 'calendar_ids': [cal_id]
             }
             
+            deletion.check()
             passengers_table.insert(new_passenger)
             existing_hashtags.add(hashtag)
             existing_passengers.append(new_passenger)
             
         # Remove passenger_calendar_ids so we don't migrate again
         settings.pop('passenger_calendar_ids', None)
+        deletion.check()
         settings_table.update(settings, doc_ids=[settings.doc_id])
 
 migrate_passengers_from_settings()
@@ -600,10 +641,12 @@ def migrate_duplicate_rules():
             if r.get('constraint_type') == 'mutually_exclusive':
                 r['constraint_type'] = 'duplicate'
                 r['duplicate_action'] = 'schedule_one'
+                deletion.check()
                 rules_table.update(r, doc_ids=[r.doc_id])
             elif r.get('constraint_type') == 'ignore_mutually_exclusive':
                 r['constraint_type'] = 'duplicate'
                 r['duplicate_action'] = 'schedule_all'
+                deletion.check()
                 rules_table.update(r, doc_ids=[r.doc_id])
 
 migrate_duplicate_rules()
@@ -647,6 +690,7 @@ def ensure_members():
             member.update(overrides)
             if member.get('is_child'):
                 member['role'] = 'child'
+            deletion.check()
             members_table.insert(member)
             by_name.setdefault(member['name'].strip().lower(), member)
             return member
@@ -660,6 +704,7 @@ def ensure_members():
             if existing is not None and not existing.get('driver_id'):
                 # Same-named member without a driving link (e.g. added via
                 # "+ Add a Person" or passenger-first): link, don't duplicate.
+                deletion.check()
                 members_table.update(
                     {'driver_id': d_id, 'can_drive': not d.get('is_disabled', False)},
                     Query().id == existing['id'])
@@ -677,12 +722,14 @@ def ensure_members():
             p_id = p.get('id')
             if not p_id:
                 p_id = _uuid.uuid4().hex
+                deletion.check()
                 passengers_table.update({'id': p_id}, doc_ids=[p.doc_id])
             if p_id in linked_passengers:
                 continue
             name = (p.get('name') or '').strip()
             existing = by_name.get(name.lower()) if name else None
             if existing is not None and not existing.get('passenger_id'):
+                deletion.check()
                 members_table.update({'passenger_id': p_id}, Query().id == existing['id'])
                 existing['passenger_id'] = p_id
             else:
@@ -698,6 +745,7 @@ def ensure_member_roles():
     with db_lock:
         for m in members_table.all():
             if not m.get('role'):
+                deletion.check()
                 members_table.update(
                     {'role': 'child' if m.get('is_child') else 'adult'},
                     doc_ids=[m.doc_id])
@@ -729,6 +777,7 @@ def ensure_member_colors():
                 cals = p.get('calendar_ids') or []
                 if cals:
                     updates['color_code'] = PALETTE[sum(ord(c) for c in cals[0]) % len(PALETTE)]
+            deletion.check()
             members_table.update(updates, doc_ids=[m.doc_id])
 
 ensure_member_colors()
@@ -744,11 +793,13 @@ def _mirror_calendars_to_links(driver_id, passenger_id, cal_ids) -> bool:
     if driver_id:
         for d in drivers_table.search(Query().id == driver_id):
             if (d.get('calendar_ids') or []) != list(cal_ids):
+                deletion.check()
                 drivers_table.update({'calendar_ids': list(cal_ids)}, doc_ids=[d.doc_id])
                 changed = True
     if passenger_id:
         for p in passengers_table.search(Query().id == passenger_id):
             if (p.get('calendar_ids') or []) != list(cal_ids):
+                deletion.check()
                 passengers_table.update({'calendar_ids': list(cal_ids)}, doc_ids=[p.doc_id])
                 changed = True
     return changed
@@ -781,6 +832,7 @@ def ensure_member_calendars():
                     if c and c.strip() and c not in merged:
                         merged.append(c)
             if merged != before:
+                deletion.check()
                 members_table.update({'calendar_ids': merged}, doc_ids=[m.doc_id])
             _mirror_calendars_to_links(member.get('driver_id'),
                                        member.get('passenger_id'), merged)
@@ -803,11 +855,13 @@ def set_member_calendars(member_id: str, cal_ids) -> bool:
             return False
         member = dict(res[0])
         prior = member.get('calendar_ids') or []
+        deletion.check()
         members_table.update({'calendar_ids': clean}, Query().id == member_id)
         moved = _mirror_calendars_to_links(member.get('driver_id'),
                                            member.get('passenger_id'), clean)
         if moved or prior != clean:
             mark_all_daily_schedules_dirty()
+            deletion.check()
             cache_table.truncate()
     return True
 
@@ -819,6 +873,7 @@ def ensure_family_channel():
     with db_lock:
         if chat_channels_table.search(Query().kind == 'family'):
             return
+        deletion.check()
         chat_channels_table.insert({
             'id': _uuid.uuid4().hex,
             'kind': 'family',
@@ -855,6 +910,7 @@ def ensure_argyle_member() -> dict:
             'passenger_id': None,
             'created_at': time.time(),
         }
+        deletion.check()
         members_table.insert(member)
         return member
 
@@ -869,6 +925,7 @@ def stamp_member_on_push_subscriptions():
                 continue
             member = members_table.search(Query().driver_id == sub['driver_id'])
             if member:
+                deletion.check()
                 push_subscriptions_table.update(
                     {'member_id': member[0]['id']}, doc_ids=[sub.doc_id])
 
@@ -879,6 +936,7 @@ def cleanup_corrupted_travel_times():
         with db_lock:
             QueryObj = Query()
             # Remove any cached travel time >= 120 minutes (like the corrupted 999 values)
+            deletion.check()
             distance_cache_table.remove(QueryObj.minutes >= 120)
     except Exception as e:
         print(f"Skipping travel time cleanup due to db lock/file contention: {e}")
@@ -892,23 +950,31 @@ def mark_all_daily_schedules_dirty():
     # ~9s for 71 rows against a 4.4MB db.json - on the request path of every
     # event-config save.
     with db_lock:
+        deletion.check()
         daily_schedules_table.update({'events_hash': 'DIRTY'})
 
 def clear_schedule_caches():
     with db_lock:
+        deletion.check()
         custom_schedules_table.truncate()
+        deletion.check()
         daily_schedules_table.truncate()
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         distance_cache_table.truncate()
         global _distance_mem_cache
         _distance_mem_cache = None
+        deletion.check()
         geocode_cache_table.truncate()
 
 def purge_poisoned_caches():
     # Remove only poisoned entries to avoid wiping thousands of legitimate caches on startup
     try:
         with db_lock:
+            deletion.check()
             distance_cache_table.remove(Query().minutes == 15)
+            deletion.check()
             geocode_cache_table.remove(Query().lat == 0.0)
             global _distance_mem_cache
             _distance_mem_cache = None
@@ -930,6 +996,7 @@ def get_cached_geocode(address: str):
                 return record
             except (ValueError, TypeError):
                 print(f"Deleting corrupt geocode cache entry for: {address} (lat={lat}, lon={lon})")
+                deletion.check()
                 geocode_cache_table.remove(Query().address == address.strip().lower())
         return None
 
@@ -947,6 +1014,7 @@ def set_cached_geocode(address: str, lat: float, lon: float, display_name: str =
         return
 
     with db_lock:
+        deletion.check()
         geocode_cache_table.upsert({
             'address': address.strip().lower(),
             'lat': lat,
@@ -960,6 +1028,7 @@ def delete_cached_geocode(address: str):
     """Purge an address's cached geocode — used when home_location changes so
     the new address always gets a fresh street-level lookup."""
     with db_lock:
+        deletion.check()
         geocode_cache_table.remove(Query().address == address.strip().lower())
 
 def heal_amputated_geocodes() -> int:
@@ -978,9 +1047,12 @@ def heal_amputated_geocodes() -> int:
         for r in geocode_cache_table.all():
             m = re.match(r'^\s*(\d+)\b', r.get('address') or '')
             if m and m.group(1) not in (r.get('display_name') or ''):
+                deletion.check()
                 geocode_cache_table.remove(doc_ids=[r.doc_id])
                 removed += 1
+        deletion.check()
         distance_cache_table.truncate()
+        deletion.check()
         route_geometry_cache_table.truncate()
         _invalidate_schedule_caches()
         return removed
@@ -1042,6 +1114,7 @@ def set_cached_travel_time(origin: str, destination: str, duration_mins: int):
             'timestamp': time.time()
         }
         _distance_mem_cache[(orig_clean, dest_clean)] = row
+        deletion.check()
         distance_cache_table.upsert(row, (QueryObj.origin == orig_clean) & (QueryObj.destination == dest_clean))
 
 def set_cached_travel_times_bulk(entries: List[dict]):
@@ -1072,6 +1145,7 @@ def set_cached_travel_times_bulk(entries: List[dict]):
             # Note: For simplicity and speed in bulk caching, we just append (insert). 
             # We don't upsert because finding and updating thousands of rows individually in TinyDB is slow.
             # The mem cache will use the latest inserted row automatically because it's populated sequentially on init.
+            deletion.check()
             distance_cache_table.insert_multiple(rows_to_insert)
 
 def clear_route_caches():
@@ -1086,8 +1160,11 @@ def clear_route_caches():
     """
     global _distance_mem_cache
     with db_lock:
+        deletion.check()
         distance_cache_table.truncate()
+        deletion.check()
         live_traffic_table.truncate()
+        deletion.check()
         route_geometry_cache_table.truncate()
         _distance_mem_cache = None
         mark_all_daily_schedules_dirty()
@@ -1131,6 +1208,7 @@ def set_cached_day_of_traffic(origin: str, destination: str,
     import time
     with db_lock:
         o, d = origin.strip().lower(), destination.strip().lower()
+        deletion.check()
         live_traffic_table.upsert(
             {'origin': o, 'destination': d,
              'duration_mins': int(duration_mins), 'stage': stage,
@@ -1153,6 +1231,7 @@ def get_cached_route_geometry(origin: str, destination: str, profile: str, max_a
             if time.time() - cached_data.get('timestamp', 0) <= max_age_mins * 60:
                 return cached_data.get('data')
             else:
+                deletion.check()
                 route_geometry_cache_table.remove(doc_ids=[result[0].doc_id])
     return None
 
@@ -1164,6 +1243,7 @@ def set_cached_route_geometry(origin: str, destination: str, profile: str, data:
     dest_clean = destination.strip().lower()
     with db_lock:
         QueryObj = Query()
+        deletion.check()
         route_geometry_cache_table.upsert({
             'origin': orig_clean,
             'destination': dest_clean,
@@ -1186,9 +1266,12 @@ def get_all_drivers() -> List[dict]:
 
 def add_driver(driver_data: dict) -> int:
     with db_lock:
+        deletion.check()
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         doc_id = drivers_table.insert(driver_data)
         ensure_members()
         # A new driving profile links to the person; push their calendars down
@@ -1202,6 +1285,7 @@ def update_driver_fields(driver_id: str, updates: dict) -> bool:
     identity color) — deliberately does NOT invalidate schedule caches,
     since nothing the solver reads changes."""
     with db_lock:
+        deletion.check()
         return bool(drivers_table.update(updates, Query().id == driver_id))
 
 def set_driver_rota_state(driver_id: str, disabled: bool) -> bool:
@@ -1213,19 +1297,25 @@ def set_driver_rota_state(driver_id: str, disabled: bool) -> bool:
     cached schedule leaves every surface quoting a rota the solver no longer
     agrees with. Used when a member is archived (and restored)."""
     with db_lock:
+        deletion.check()
         changed = bool(drivers_table.update({'is_disabled': bool(disabled)},
                                             Query().id == driver_id))
         if changed:
+            deletion.check()
             custom_schedules_table.truncate()
             mark_all_daily_schedules_dirty()
+            deletion.check()
             cache_table.truncate()
         return changed
 
 def delete_driver(doc_id: int):
     with db_lock:
+        deletion.check()
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         drivers_table.remove(doc_ids=[doc_id])
 
 # Passenger CRUD
@@ -1244,11 +1334,14 @@ def get_all_passengers() -> List[dict]:
                 if old_tag and old_tag not in doc['hashtags']:
                     doc['hashtags'].append(old_tag)
                 # Save migration
+                deletion.check()
                 passengers_table.update({'hashtags': doc['hashtags']}, doc_ids=[doc['doc_id']])
                 try:
+                    deletion.check()
                     passengers_table.update(db.table('passengers').update(db.delete('hashtag'), doc_ids=[doc['doc_id']]))
                 except:
                     # Depending on TinyDB version, deleting a field might differ.
+                    deletion.check()
                     passengers_table.update({'hashtag': None}, doc_ids=[doc['doc_id']])
                 
             if 'hashtags' not in doc:
@@ -1265,6 +1358,7 @@ def get_all_conversations() -> List[dict]:
     import time
     with db_lock:
         cutoff = time.time() - (30 * 86400)
+        deletion.check()
         conversations_table.remove(Query().updated_at < cutoff)
         return conversations_table.all()
 
@@ -1294,15 +1388,18 @@ def get_surface_conversation(kind: str, owner: str) -> dict:
 
 def create_conversation(conv_data: dict) -> str:
     with db_lock:
+        deletion.check()
         conversations_table.insert(conv_data)
         return conv_data['id']
 
 def update_conversation(conv_id: str, conv_data: dict) -> None:
     with db_lock:
+        deletion.check()
         conversations_table.update(conv_data, Query().id == conv_id)
 
 def delete_conversation(conv_id: str) -> None:
     with db_lock:
+        deletion.check()
         conversations_table.remove(Query().id == conv_id)
 
 def add_message_to_conversation(conv_id: str, message: dict) -> None:
@@ -1315,6 +1412,7 @@ def add_message_to_conversation(conv_id: str, message: dict) -> None:
                 c['messages'] = []
             c['messages'].append(message)
             c['updated_at'] = time.time()
+            deletion.check()
             conversations_table.update(c, Query().id == conv_id)
         else:
             # Fallback for old behaviour or unknown conv, but ideally we should have a default general conv.
@@ -1322,13 +1420,17 @@ def add_message_to_conversation(conv_id: str, message: dict) -> None:
 
 def clear_chat_history() -> None:
     with db_lock:
+        deletion.check()
         conversations_table.truncate()
 
 def add_passenger(passenger_data: dict) -> int:
     with db_lock:
+        deletion.check()
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         doc_id = passengers_table.insert(passenger_data)
         ensure_members()
         ensure_member_calendars()
@@ -1336,16 +1438,22 @@ def add_passenger(passenger_data: dict) -> int:
 
 def update_passenger(doc_id: int, passenger_data: dict):
     with db_lock:
+        deletion.check()
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         passengers_table.update(passenger_data, doc_ids=[doc_id])
 
 def delete_passenger(doc_id: int):
     with db_lock:
+        deletion.check()
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         passengers_table.remove(doc_ids=[doc_id])
 
 def get_all_cars() -> List[dict]:
@@ -1359,23 +1467,32 @@ def get_all_cars() -> List[dict]:
 
 def add_car(car_data: dict) -> int:
     with db_lock:
+        deletion.check()
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         return cars_table.insert(car_data)
 
 def update_car(doc_id: int, car_data: dict):
     with db_lock:
+        deletion.check()
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         cars_table.update(car_data, doc_ids=[doc_id])
 
 def delete_car(doc_id: int):
     with db_lock:
+        deletion.check()
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         cars_table.remove(doc_ids=[doc_id])
 
 # Family member CRUD (overlay entity; see FamilyMember in models/schemas.py)
@@ -1450,6 +1567,7 @@ def set_member_status(member_id: str, status: str) -> Optional[dict]:
     with db_lock:
         if not members_table.search(Query().id == member_id):
             return None
+        deletion.check()
         members_table.update({'status': status}, Query().id == member_id)
     return get_member(member_id)
 
@@ -1470,14 +1588,17 @@ def get_member_by_passenger_id(passenger_id: str) -> Optional[dict]:
 
 def add_member(member_data: dict) -> int:
     with db_lock:
+        deletion.check()
         return members_table.insert(member_data)
 
 def update_member(member_id: str, member_data: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(members_table.update(member_data, Query().id == member_id))
 
 def delete_member(member_id: str) -> None:
     with db_lock:
+        deletion.check()
         members_table.remove(Query().id == member_id)
 
 def merge_members(keep_id: str, absorb_id: str) -> Optional[dict]:
@@ -1508,7 +1629,9 @@ def merge_members(keep_id: str, absorb_id: str) -> Optional[dict]:
         if merged_cals != (keep.get('calendar_ids') or []):
             updates['calendar_ids'] = merged_cals
         if updates:
+            deletion.check()
             members_table.update(updates, Query().id == keep_id)
+        deletion.check()
         members_table.remove(Query().id == absorb_id)
         keep.update(updates)
         ensure_member_calendars()
@@ -1554,7 +1677,9 @@ def split_member(member_id: str, link: str) -> Optional[dict]:
         clear = {link_field: None}
         if link == 'driver':
             clear['can_drive'] = False
+        deletion.check()
         members_table.update(clear, Query().id == member_id)
+        deletion.check()
         members_table.insert(new)
         ensure_member_calendars()
         return new
@@ -1573,12 +1698,14 @@ def set_member_pin(member_id: str, pin: str) -> bool:
     import os as _os
     salt = _os.urandom(16).hex()
     with db_lock:
+        deletion.check()
         return bool(members_table.update(
             {'pin_hash': _hash_pin(pin, salt), 'pin_salt': salt, 'pin_length': len(pin)},
             Query().id == member_id))
 
 def clear_member_pin(member_id: str) -> bool:
     with db_lock:
+        deletion.check()
         return bool(members_table.update(
             {'pin_hash': None, 'pin_salt': None, 'pin_length': None}, Query().id == member_id))
 
@@ -1591,6 +1718,7 @@ def verify_member_pin(member_id: str, pin: str) -> bool:
     if ok and member.get('pin_length') is None:
         # Backfill only with demonstrated knowledge; a hash cannot reveal length.
         with db_lock:
+            deletion.check()
             members_table.update({'pin_length': len(pin)},
                                  (Query().id == member_id) & (Query().pin_hash == member['pin_hash']))
     return ok
@@ -1619,8 +1747,10 @@ def trust_device(device_id: str, label: str = None, by_member: str = None,
             keep = {'last_seen': now}
             if label:
                 keep['label'] = label
+            deletion.check()
             trusted_devices_table.update(keep, Query().device_id == device_id)
             return {**existing[0], **keep}
+        deletion.check()
         trusted_devices_table.insert(row)
     return row
 
@@ -1649,7 +1779,9 @@ def request_pairing(device_id: str, code: str, ttl_minutes: int = 15,
            # is the thing in front of them, rather than approving a code blind.
            'context': context or {}}
     with db_lock:
+        deletion.check()
         pending_pairings_table.remove(Query().device_id == device_id)
+        deletion.check()
         pending_pairings_table.insert(row)
     return row
 
@@ -1682,6 +1814,7 @@ def approve_pairing(code: str, label: str, by_member: str = None) -> Optional[di
         return None
     token = enrol_device_token(row['device_id'], label, by_member=by_member)
     with db_lock:
+        deletion.check()
         pending_pairings_table.update(
             {'approved_at': time.time(), 'device_token': token, 'label': label},
             Query().device_id == row['device_id'])
@@ -1690,6 +1823,7 @@ def approve_pairing(code: str, label: str, by_member: str = None) -> Optional[di
 
 def clear_pairing(device_id: str) -> None:
     with db_lock:
+        deletion.check()
         pending_pairings_table.remove(Query().device_id == device_id)
 
 
@@ -1706,6 +1840,7 @@ def enrol_device_token(device_id: str, label: str, by_member: str = None) -> str
     token = secrets.token_urlsafe(32)
     trust_device(device_id, label=label, by_member=by_member, kind='panel')
     with db_lock:
+        deletion.check()
         trusted_devices_table.update({'device_token': token, 'kind': 'panel'},
                                      Query().device_id == device_id)
     return token
@@ -1735,6 +1870,7 @@ def get_trusted_devices() -> List[dict]:
 
 def untrust_device(device_id: str) -> None:
     with db_lock:
+        deletion.check()
         trusted_devices_table.remove(Query().device_id == device_id)
 
 
@@ -1746,6 +1882,7 @@ def touch_device(device_id: str) -> None:
     if not device_id:
         return
     with db_lock:
+        deletion.check()
         trusted_devices_table.update({'last_seen': time.time()},
                                      Query().device_id == device_id)
 
@@ -1797,6 +1934,7 @@ def rate_record(key: str, ok: bool) -> None:
         rows = rate_limits_table.search(Query().key == key)
         if ok:
             if rows:
+                deletion.check()
                 rate_limits_table.remove(Query().key == key)
             return
         entry = rows[0] if rows else {'key': key, 'fails': 0, 'trips': 0,
@@ -1809,13 +1947,16 @@ def rate_record(key: str, ok: bool) -> None:
                           _RATE_MAX_SECONDS)
             entry['locked_until'] = time.time() + backoff
         if rows:
+            deletion.check()
             rate_limits_table.update(entry, Query().key == key)
         else:
+            deletion.check()
             rate_limits_table.insert(entry)
 
 
 def rate_clear(key: str) -> None:
     with db_lock:
+        deletion.check()
         rate_limits_table.remove(Query().key == key)
 
 
@@ -1838,6 +1979,7 @@ def set_member_password(member_id: str, password: str) -> bool:
     import os as _os
     salt = _os.urandom(16).hex()
     with db_lock:
+        deletion.check()
         return bool(members_table.update(
             {'password_hash': _hash_password(password, salt),
              'password_salt': salt}, Query().id == member_id))
@@ -1854,6 +1996,7 @@ def verify_member_password(member_id: str, password: str) -> bool:
 
 def clear_member_password(member_id: str) -> bool:
     with db_lock:
+        deletion.check()
         return bool(members_table.update(
             {'password_hash': None, 'password_salt': None}, Query().id == member_id))
 
@@ -1879,6 +2022,7 @@ def create_auth_link(member_id: str, kind: str, ttl_hours: int = 168) -> str:
     import time
     token = secrets.token_urlsafe(32)
     with db_lock:
+        deletion.check()
         auth_links_table.insert({
             'token': token, 'member_id': member_id, 'kind': kind,
             'created_at': time.time(),
@@ -1911,6 +2055,7 @@ def consume_auth_link(token: str) -> Optional[dict]:
     if not link:
         return None
     with db_lock:
+        deletion.check()
         auth_links_table.update({'used_at': time.time()}, Query().token == token)
     return link
 
@@ -1923,6 +2068,7 @@ def invalidate_auth_links(member_id: str, kind: str = None) -> None:
     if kind:
         q = q & (Query().kind == kind)
     with db_lock:
+        deletion.check()
         auth_links_table.update({'used_at': time.time()}, q)
 
 
@@ -1934,12 +2080,14 @@ def create_member_token(member_id: str, house_session: bool = False) -> str:
         row = {'token': token, 'member_id': member_id, 'created_at': time.time()}
         if house_session:
             row.update({'house_session': True, 'expires_at': time.time() + 900})
+        deletion.check()
         member_tokens_table.insert(row)
         # Housekeeping: keep the newest ~20 tokens per member.
         rows = sorted((r for r in member_tokens_table.search(Query().member_id == member_id)
                        if bool(r.get('house_session')) == house_session),
                       key=lambda r: r.get('created_at', 0))
         if len(rows) > 20:
+            deletion.check()
             member_tokens_table.remove(doc_ids=[r.doc_id for r in rows[:len(rows) - 20]])
     return token
 
@@ -1966,12 +2114,14 @@ def get_member_by_token(token: str) -> Optional[dict]:
             # base at deploy time would sign every phone out at once, which
             # is this arc's cardinal sin.
             created = time.time()
+            deletion.check()
             member_tokens_table.update({'created_at': created},
                                        doc_ids=[row.doc_id])
         if (time.time() - created > MEMBER_TOKEN_TTL_SECONDS or
                 (row.get('expires_at') and time.time() >= row['expires_at'])):
             # Expired means GONE, not merely refused — a dead token left in
             # the table would come back to life if the TTL were ever raised.
+            deletion.check()
             member_tokens_table.remove(doc_ids=[row.doc_id])
             return None
     member = get_member(row['member_id'])
@@ -1986,11 +2136,13 @@ def get_member_by_token(token: str) -> Optional[dict]:
 def delete_house_session(token: str) -> None:
     """Lock this shared-screen visit without signing out personal devices."""
     with db_lock:
+        deletion.check()
         member_tokens_table.remove((Query().token == token) &
                                    (Query().house_session == True))
 
 def delete_member_tokens(member_id: str) -> int:
     with db_lock:
+        deletion.check()
         removed = member_tokens_table.remove(Query().member_id == member_id)
     try:
         return len(removed)
@@ -2006,6 +2158,7 @@ def untrust_devices_vouched_by(member_id: str) -> int:
     if not member_id:
         return 0
     with db_lock:
+        deletion.check()
         removed = trusted_devices_table.remove(
             (Query().trusted_by == member_id) & (Query().kind == 'personal'))
     try:
@@ -2048,6 +2201,7 @@ def _chore_maintenance():
         for c in chores_table.all():
             if (c.get('state') == 'verified' and c.get('recurrence') != 'once'
                     and c.get('reopens_on') and c['reopens_on'] <= today):
+                deletion.check()
                 chores_table.update(_chore_reset_fields(c), doc_ids=[c.doc_id])
             elif (c.get('state') == 'claimed' and not c.get('owner')
                     and not c.get('assigned_by') and c.get('claimed_at')
@@ -2056,6 +2210,7 @@ def _chore_maintenance():
                 # owned chore nor one a parent assigned is ever released —
                 # nobody claimed those, so there is no claim to go stale, and
                 # dropping them would quietly undo somebody's decision.
+                deletion.check()
                 chores_table.update({'state': 'open', 'claimed_by': None,
                                      'claimed_at': None, 'rejected_reason': None},
                                     doc_ids=[c.doc_id])
@@ -2077,15 +2232,18 @@ def get_chore(chore_id: str) -> Optional[dict]:
 
 def add_chore(data: dict) -> str:
     with db_lock:
+        deletion.check()
         chores_table.insert(data)
         return data['id']
 
 def update_chore(chore_id: str, data: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(chores_table.update(data, Query().id == chore_id))
 
 def delete_chore(chore_id: str):
     with db_lock:
+        deletion.check()
         chores_table.remove(Query().id == chore_id)
 
 def reopen_chore(chore_id: str) -> str:
@@ -2101,6 +2259,7 @@ def reopen_chore(chore_id: str) -> str:
             return 'missing'
         if res[0].get('state') not in ('verified', 'claimed'):
             return 'not_reopenable'
+        deletion.check()
         chores_table.update(_chore_reset_fields(), Query().id == chore_id)
         return 'ok'
 
@@ -2125,6 +2284,7 @@ def claim_chore(chore_id: str, member_id: str) -> str:
                      and c.get('state') in ('claimed', 'done'))
         if active >= CHORE_CLAIM_CAP:
             return 'cap'
+        deletion.check()
         chores_table.update({'state': 'claimed', 'claimed_by': member_id,
                              'claimed_at': time.time(), 'rejected_reason': None},
                             Query().id == chore_id)
@@ -2141,6 +2301,7 @@ def unclaim_chore(chore_id: str, member_id: str) -> bool:
         # assigned one is a parent's decision — both are theirs to undo.
         if res[0].get('owner') or res[0].get('assigned_by'):
             return False
+        deletion.check()
         chores_table.update({'state': 'open', 'claimed_by': None,
                              'claimed_at': None, 'rejected_reason': None},
                             Query().id == chore_id)
@@ -2153,6 +2314,7 @@ def mark_chore_done(chore_id: str, member_id: str) -> bool:
         if not res or res[0].get('state') != 'claimed' \
                 or res[0].get('claimed_by') != member_id:
             return False
+        deletion.check()
         chores_table.update({'state': 'done', 'done_at': time.time()},
                             Query().id == chore_id)
         return True
@@ -2187,12 +2349,14 @@ def verify_chore(chore_id: str, verifier_member_id: str) -> Optional[dict]:
         updates = {'state': 'verified', 'verified_by': verifier_member_id,
                    'verified_at': time.time(),
                    'reopens_on': _chore_next_reopen(chore.get('recurrence', 'once'))}
+        deletion.check()
         chores_table.update(updates, Query().id == chore_id)
         chore.update(updates)
         awarded = 0
         claimant = members_table.search(Query().id == chore.get('claimed_by'))
         if claimant and claimant[0].get('role') == 'child' and chore.get('points', 0) > 0:
             awarded = int(chore['points'])
+            deletion.check()
             points_ledger_table.insert({
                 'id': _uuid.uuid4().hex,
                 'member_id': chore['claimed_by'],
@@ -2228,6 +2392,7 @@ def reject_chore(chore_id: str, verifier_member_id: str, reason: str) -> Optiona
         res = chores_table.search(Query().id == chore_id)
         if not res or res[0].get('state') != 'done':
             return None
+        deletion.check()
         chores_table.update({'state': 'claimed', 'done_at': None,
                              'rejected_reason': reason or 'Needs another pass'},
                             Query().id == chore_id)
@@ -2280,6 +2445,7 @@ def adjust_points(member_id: str, delta: int, note: str = '',
     import time
     import uuid as _uuid
     with db_lock:
+        deletion.check()
         points_ledger_table.insert({
             'id': _uuid.uuid4().hex,
             'member_id': member_id,
@@ -2310,6 +2476,7 @@ def reset_points(member_id: str = None, by_member_id: str = None) -> dict:
                 denied += 1
         with db_lock:
             released_pledges += len(pool_contributions_table.search(Query().member_id == m['id']))
+            deletion.check()
             pool_contributions_table.remove(Query().member_id == m['id'])
         balance = get_points_balance(m['id'])
         if balance != 0:
@@ -2351,15 +2518,18 @@ def get_kid_task(task_id: str) -> Optional[dict]:
 
 def add_kid_task(data: dict) -> str:
     with db_lock:
+        deletion.check()
         kid_tasks_table.insert(data)
         return data['id']
 
 def update_kid_task(task_id: str, data: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(kid_tasks_table.update(data, Query().id == task_id))
 
 def delete_kid_task(task_id: str):
     with db_lock:
+        deletion.check()
         kid_tasks_table.remove(Query().id == task_id)
 
 # --- School classes (K4d) ---
@@ -2400,6 +2570,7 @@ def ensure_school_class(member_id: str, key: str, label: Optional[str] = None) -
         if res:
             row = dict(res[0])
             if label and not row.get('label'):
+                deletion.check()
                 school_classes_table.update({'label': label}, Q.id == row['id'])
                 row['label'] = label
             return row
@@ -2407,12 +2578,14 @@ def ensure_school_class(member_id: str, key: str, label: Optional[str] = None) -
         color = next((c for c in SCHOOL_CLASS_COLORS if c not in used),
                      SCHOOL_CLASS_COLORS[len(used) % len(SCHOOL_CLASS_COLORS)])
         row = SchoolClass(member_id=member_id, key=key, label=label, color=color).model_dump()
+        deletion.check()
         school_classes_table.insert(row)
         return row
 
 
 def update_school_class(class_id: str, data: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(school_classes_table.update(data, Query().id == class_id))
 
 
@@ -2486,6 +2659,7 @@ def complete_kid_task(task_id: str, done: bool = True) -> Optional[dict]:
         res = kid_tasks_table.search(Query().id == task_id)
         if not res:
             return None
+        deletion.check()
         kid_tasks_table.update({'status': 'done' if done else 'open',
                                 'done_at': _time.time() if done else None},
                                Query().id == task_id)
@@ -2522,8 +2696,10 @@ def set_optional_decision(google_id: str, date: str, decision: str,
     import time as _time
     q = Query()
     with db_lock:
+        deletion.check()
         optional_decisions_table.remove((q.google_id == google_id) & (q.date == date))
         if decision in ('attend', 'skip'):
+            deletion.check()
             optional_decisions_table.insert({
                 'google_id': google_id, 'date': date, 'decision': decision,
                 'decided_by': decided_by, 'ts': _time.time()})
@@ -2532,6 +2708,7 @@ def prune_optional_decisions(before_date: str):
     """Decisions expire with the day — yesterday's 'skip' says nothing about
     next week's occurrence."""
     with db_lock:
+        deletion.check()
         optional_decisions_table.remove(Query().date < before_date)
 
 # --- Event cancellations ---
@@ -2579,6 +2756,7 @@ def add_event_cancellation(rec: dict) -> dict:
     rec.setdefault('ts', _time.time())
     rec.setdefault('restored_at', None)
     with db_lock:
+        deletion.check()
         event_cancellations_table.insert(rec)
     return rec
 
@@ -2591,6 +2769,7 @@ def restore_event_cancellation(google_ids, date: str) -> Optional[dict]:
         return None
     q = Query()
     with db_lock:
+        deletion.check()
         event_cancellations_table.update(
             {'restored_at': _time.time()},
             (q.google_id == rec['google_id']) & (q.date == date))
@@ -2612,8 +2791,10 @@ def set_ride_group_row(google_id: str, date: str, leg: str, group_id: str):
     import time as _time
     q = Query()
     with db_lock:
+        deletion.check()
         ride_groups_table.remove((q.google_id == google_id) & (q.date == date)
                                  & (q.leg == leg))
+        deletion.check()
         ride_groups_table.insert({'google_id': google_id, 'date': date,
                                   'leg': leg, 'group_id': group_id,
                                   'ts': _time.time()})
@@ -2621,11 +2802,13 @@ def set_ride_group_row(google_id: str, date: str, leg: str, group_id: str):
 def remove_ride_group_row(google_id: str, date: str, leg: str):
     q = Query()
     with db_lock:
+        deletion.check()
         ride_groups_table.remove((q.google_id == google_id) & (q.date == date)
                                  & (q.leg == leg))
 
 def prune_ride_groups(before_date: str):
     with db_lock:
+        deletion.check()
         ride_groups_table.remove(Query().date < before_date)
 
 # --- Outside hands (load arc A1) ---
@@ -2650,11 +2833,13 @@ def get_assist_contact(contact_id: str) -> Optional[dict]:
 
 def add_assist_contact(data: dict) -> str:
     with db_lock:
+        deletion.check()
         assist_contacts_table.insert(data)
         return data['id']
 
 def update_assist_contact(contact_id: str, data: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(assist_contacts_table.update(data, Query().id == contact_id))
 
 def delete_assist_contact(contact_id: str):
@@ -2664,7 +2849,9 @@ def delete_assist_contact(contact_id: str):
     here to kill."""
     with db_lock:
         gone = [dict(a) for a in assist_assignments_table.search(Query().contact_id == contact_id)]
+        deletion.check()
         assist_contacts_table.remove(Query().id == contact_id)
+        deletion.check()
         assist_assignments_table.remove(Query().contact_id == contact_id)
     # The history keeps them: deleting a contact removes them from the app, not
     # from what actually happened.
@@ -2699,6 +2886,7 @@ def add_assist_history(row: dict) -> dict:
     import uuid as _uuid
     row = {'id': _uuid.uuid4().hex, 'ts': _time.time(), **row}
     with db_lock:
+        deletion.check()
         assist_history_table.insert(row)
     return row
 
@@ -2718,7 +2906,9 @@ def set_assist_assignment(event_id: str, contact_id: str, note: str = "",
            'note': note or "", 'scope': scope, 'event_date': event_date or '',
            'event_title': event_title or '', 'created_at': _time.time()}
     with db_lock:
+        deletion.check()
         assist_assignments_table.remove(Query().event_id == event_id)
+        deletion.check()
         assist_assignments_table.insert(row)
     add_assist_history({'event_id': event_id, 'contact_id': contact_id,
                         'scope': scope, 'event_date': event_date or '',
@@ -2729,6 +2919,7 @@ def set_assist_assignment(event_id: str, contact_id: str, note: str = "",
 def clear_assist_assignment(event_id: str, actor: str = None) -> bool:
     with db_lock:
         gone = [dict(a) for a in assist_assignments_table.search(Query().event_id == event_id)]
+        deletion.check()
         removed = bool(assist_assignments_table.remove(Query().event_id == event_id))
     for a in gone:
         add_assist_history({'event_id': event_id, 'contact_id': a.get('contact_id'),
@@ -2760,6 +2951,7 @@ def archive_past_assist_assignments(before_date: str) -> int:
     if doomed:
         with db_lock:
             for a in doomed:
+                deletion.check()
                 assist_assignments_table.remove(Query().id == a['id'])
     return len(doomed)
 
@@ -2800,12 +2992,16 @@ def add_protected_commitment(data: dict) -> str:
     # window moves driver availability, and a stale cache would keep placing
     # drives inside the very evening this exists to defend.
     with db_lock:
+        if not (_admit_child((data.get('source') or {}).get('kind'), (data.get('source') or {}).get('id'))):
+            return None
+        deletion.check()
         protected_commitments_table.insert(data)
         _invalidate_schedule_caches()
     return data['id']
 
 def update_protected_commitment(commitment_id: str, data: dict) -> bool:
     with db_lock:
+        deletion.check()
         ok = bool(protected_commitments_table.update(data, Query().id == commitment_id))
         if ok:
             _invalidate_schedule_caches()
@@ -2813,6 +3009,7 @@ def update_protected_commitment(commitment_id: str, data: dict) -> bool:
 
 def delete_protected_commitment(commitment_id: str):
     with db_lock:
+        deletion.check()
         protected_commitments_table.remove(Query().id == commitment_id)
         _invalidate_schedule_caches()
 
@@ -2855,11 +3052,15 @@ def add_finding(data: dict) -> str:
     row = {'id': _uuid.uuid4().hex, 'created_at': time.time(), 'state': 'open',
            **data}
     with db_lock:
+        if not (_admit_child(row.get('subject_type'), row.get('subject_id'))):
+            return None
+        deletion.check()
         findings_table.insert(row)
     return row['id']
 
 def update_finding(finding_id: str, data: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(findings_table.update(data, Query().id == finding_id))
 
 def prune_findings(before_ts: float) -> int:
@@ -2871,6 +3072,7 @@ def prune_findings(before_ts: float) -> int:
                   if f.get('state') != 'open'
                   and (f.get('resolved_at') or f.get('created_at') or 0) < before_ts]
         for fid in doomed:
+            deletion.check()
             findings_table.remove(Query().id == fid)
     return len(doomed)
 
@@ -2880,6 +3082,7 @@ def add_mind_noticing(data: dict) -> str:
     import uuid as _uuid
     row = {'id': _uuid.uuid4().hex, 'ts': time.time(), 'consumed_at': None, **data}
     with db_lock:
+        deletion.check()
         mind_noticings_table.insert(row)
     return row['id']
 
@@ -2898,6 +3101,7 @@ def consume_mind_noticings(ids: List[str]) -> int:
     n = 0
     with db_lock:
         for nid in ids:
+            deletion.check()
             n += len(mind_noticings_table.update({'consumed_at': now},
                                                  Query().id == nid))
     return n
@@ -2908,6 +3112,7 @@ def mark_mind_noticings_checked(ids: List[str]) -> int:
     n = 0
     with db_lock:
         for nid in ids:
+            deletion.check()
             n += len(mind_noticings_table.update({'promoted_checked': True},
                                                  Query().id == nid))
     return n
@@ -2920,11 +3125,13 @@ def add_mind_insight(data: dict) -> str:
            'approach': '', 'snoozed_until': None, 'plan_json': None,
            **data}
     with db_lock:
+        deletion.check()
         mind_insights_table.insert(row)
     return row['id']
 
 def update_mind_insight(insight_id: str, data: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(mind_insights_table.update(data, Query().id == insight_id))
 
 def mutate_mind_insight(insight_id: str, fn) -> bool:
@@ -2944,6 +3151,7 @@ def mutate_mind_insight(insight_id: str, fn) -> bool:
         fields = fn(dict(rows[0]))
         if not fields:
             return False
+        deletion.check()
         return bool(mind_insights_table.update(fields, Query().id == insight_id))
 
 def get_mind_insights(state: str = None) -> List[dict]:
@@ -2989,12 +3197,14 @@ def prune_mind(insights_before_ts: float, noticings_before_ts: float = None) -> 
     with db_lock:
         for r in [dict(x) for x in mind_noticings_table.all()]:
             if (r.get('ts') or 0) < noticings_before_ts:
+                deletion.check()
                 mind_noticings_table.remove(Query().id == r['id'])
                 doomed += 1
         for r in [dict(x) for x in mind_insights_table.all()]:
             if r.get('state') != 'active' \
                     and (r.get('resolved_ts') or r.get('created_ts') or 0) \
                     < insights_before_ts:
+                deletion.check()
                 mind_insights_table.remove(Query().id == r['id'])
                 doomed += 1
     return doomed
@@ -3014,12 +3224,16 @@ def add_mission(data: dict) -> str:
            'finished_at': None, 'plan': None,
            **data}
     with db_lock:
+        if not _admit_child('project', row.get('project_id')):
+            return None
+        deletion.check()
         missions_table.insert(row)
     return row['id']
 
 def update_mission(mission_id: str, data: dict) -> bool:
     data = {**data, 'updated_at': time.time()}
     with db_lock:
+        deletion.check()
         return bool(missions_table.update(data, Query().id == mission_id))
 
 def get_mission(mission_id: str):
@@ -3038,15 +3252,19 @@ def get_missions(status=None) -> List[dict]:
 def add_mission_step(mission_id: str, data: dict) -> str:
     import uuid as _uuid
     with db_lock:
+        if not _admit_child('mission', mission_id):
+            return None
         idx = len(mission_steps_table.search(Query().mission_id == mission_id))
         row = {'id': _uuid.uuid4().hex, 'mission_id': mission_id, 'idx': idx,
                'ts': time.time(), 'kind': 'note', 'name': '',
                'args_json': None, 'result_json': None, **data}
+        deletion.check()
         mission_steps_table.insert(row)
     return row['id']
 
 def update_mission_step(step_id: str, data: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(mission_steps_table.update(data, Query().id == step_id))
 
 def get_mission_steps(mission_id: str) -> List[dict]:
@@ -3064,7 +3282,9 @@ def prune_missions(before_ts: float) -> int:
         doomed = [r['id'] for r in rows if r.get('status') in terminal
                   and (r.get('finished_at') or r.get('created_at') or 0) < before_ts]
         for mid in doomed:
+            deletion.check()
             missions_table.remove(Query().id == mid)
+            deletion.check()
             mission_steps_table.remove(Query().mission_id == mid)
     return len(doomed)
 
@@ -3115,6 +3335,9 @@ def add_ask(data: dict) -> str:
            'nudges_sent': 0, 'sent_at': None, 'answered_at': None, 'answered_by': None,
            'outcome': None, 'applied_at': None, 'unlock_error': None, **data}
     with db_lock:
+        if not (_admit_child(row.get('situation_kind'), row.get('situation_id'))):
+            return None
+        deletion.check()
         asks_table.insert(row)
     return row['id']
 
@@ -3134,6 +3357,7 @@ def get_ask_by_legacy_id(legacy_id: str) -> Optional[dict]:
 
 def update_ask(ask_id: str, data: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(asks_table.update(data, Query().id == ask_id))
 
 def get_asks(situation_kind: str = None, situation_id: str = None, state: str = None,
@@ -3180,11 +3404,13 @@ def get_request(request_id: str) -> Optional[dict]:
 
 def add_request(data: dict) -> str:
     with db_lock:
+        deletion.check()
         requests_table.insert(data)
         return data['id']
 
 def update_request(request_id: str, data: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(requests_table.update(data, Query().id == request_id))
 
 def expire_stale_requests(now_ts: float = None) -> List[dict]:
@@ -3216,17 +3442,20 @@ def add_deletion(data: dict) -> str:
     row = dict(data)
     row.setdefault('id', uuid.uuid4().hex)
     with db_lock:
+        deletion.check()
         deletions_table.insert(row)
     return row['id']
 
 
 def update_deletion(deletion_id: str, fields: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(deletions_table.update(fields, Query().id == deletion_id))
 
 
 def delete_deletion(deletion_id: str) -> None:
     with db_lock:
+        deletion.check()
         deletions_table.remove(Query().id == deletion_id)
 
 
@@ -3248,6 +3477,7 @@ def add_project(data: dict) -> str:
                'origin_mission_id': None, **data,
                'created_at': now, 'updated_at': now, 'rev': 1}
         row.setdefault('id', uuid.uuid4().hex)
+        deletion.check()
         projects_table.insert(row)
         return row['id']
 
@@ -3274,6 +3504,7 @@ def update_project(project_id: str, fields: dict) -> bool:
         patch = {k: v for k, v in fields.items()
                  if k not in ('id', 'created_at', 'created_by', 'rev', 'updated_at')}
         patch.update(updated_at=time.time(), rev=row.get('rev', 0) + 1)
+        deletion.check()
         return bool(projects_table.update(patch, Query().id == project_id))
 
 
@@ -3301,15 +3532,18 @@ def get_household_task(task_id: str) -> Optional[dict]:
 
 def add_household_task(data: dict) -> str:
     with db_lock:
+        deletion.check()
         household_tasks_table.insert(data)
         return data['id']
 
 def update_household_task(task_id: str, data: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(household_tasks_table.update(data, Query().id == task_id))
 
 def delete_household_task(task_id: str):
     with db_lock:
+        deletion.check()
         household_tasks_table.remove(Query().id == task_id)
 
 def _next_due(due_date: str, recurrence: str) -> Optional[str]:
@@ -3357,6 +3591,7 @@ def complete_household_task(task_id: str, done: bool = True,
         patch = {'status': 'done' if done else 'open',
                  'completed_at': _time.time() if done else None,
                  'completed_by': member_id if done else None}
+        deletion.check()
         household_tasks_table.update(patch, Query().id == task_id)
         row.update(patch)
         follow = None
@@ -3367,6 +3602,7 @@ def complete_household_task(task_id: str, done: bool = True,
                 follow.update({'id': _uuid.uuid4().hex, 'due_date': nxt,
                                'status': 'open', 'completed_at': None,
                                'completed_by': None, 'created_at': _time.time()})
+                deletion.check()
                 household_tasks_table.insert(follow)
     if follow:
         row['next_task_id'] = follow['id']
@@ -3384,8 +3620,11 @@ def add_thread(data: dict) -> str:
     from models.schemas import Thread
     with db_lock:
         # Build through Thread model to apply all defaults
+        if not _admit_child('project', data.get('project_id')):
+            return None
         thread = Thread(**data)
         row = thread.model_dump()
+        deletion.check()
         threads_table.insert(row)
         return row['id']
 
@@ -3415,10 +3654,13 @@ def get_threads(state: str = None, owner: str = None, include_closed: bool = Fal
 
 def update_thread(thread_id: str, data: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(threads_table.update(data, Query().id == thread_id))
 
 def append_thread_history(thread_id: str, entry: dict) -> bool:
     with db_lock:
+        if not _admit_child('thread', thread_id):
+            return None
         res = threads_table.search(Query().id == thread_id)
         if not res:
             return False
@@ -3428,6 +3670,7 @@ def append_thread_history(thread_id: str, entry: dict) -> bool:
             entry['ts'] = time.time()
         # Append to history
         row['history'].append(entry)
+        deletion.check()
         threads_table.update({'history': row['history']}, Query().id == thread_id)
         return True
 
@@ -3435,6 +3678,8 @@ def update_thread_history_entry(thread_id: str, match: dict, fields: dict) -> bo
     """Update the first history entry whose keys equal `match` (a reply is
     found by its mail's message_id). Entries have no ids of their own."""
     with db_lock:
+        if not _admit_child('thread', thread_id):
+            return None
         res = threads_table.search(Query().id == thread_id)
         if not res:
             return False
@@ -3443,12 +3688,14 @@ def update_thread_history_entry(thread_id: str, match: dict, fields: dict) -> bo
         for i, h in enumerate(history):
             if all(h.get(k) == v for k, v in (match or {}).items()):
                 history[i] = {**h, **fields}
+                deletion.check()
                 threads_table.update({'history': history}, Query().id == thread_id)
                 return True
     return False
 
 def delete_thread(thread_id: str):
     with db_lock:
+        deletion.check()
         threads_table.remove(Query().id == thread_id)
 
 
@@ -3456,13 +3703,16 @@ def delete_mission_rows(mission_id: str) -> bool:
     """The mission row and its steps. Callers (services.missions.delete) take
     the screenshot folder with it."""
     with db_lock:
+        deletion.check()
         n = len(missions_table.remove(Query().id == mission_id))
+        deletion.check()
         mission_steps_table.remove(Query().mission_id == mission_id)
     return bool(n)
 
 
 def delete_asks_for(situation_kind: str, situation_id: str) -> int:
     with db_lock:
+        deletion.check()
         return len(asks_table.remove((Query().situation_kind == situation_kind) & (Query().situation_id == situation_id)))
 
 # --- Programs: an ambition with a plan attached ---------------------------
@@ -3514,7 +3764,10 @@ def add_program(data: dict) -> str:
     from models.schemas import Program
     _check_program_keys(data)
     with db_lock:
+        if not _admit_child('project', data.get('project_id')):
+            return None
         row = Program(**data).model_dump()
+        deletion.check()
         programs_table.insert(row)
         return row['id']
 
@@ -3539,11 +3792,14 @@ def get_programs(member_id: str = None, state: str = None,
 def update_program(program_id: str, data: dict) -> bool:
     _check_program_keys(data)
     with db_lock:
+        deletion.check()
         return bool(programs_table.update(data, Query().id == program_id))
 
 def append_program_session(program_id: str, entry: dict) -> bool:
     _check_program_keys(entry)
     with db_lock:
+        if not _admit_child('program', program_id):
+            return None
         res = programs_table.search(Query().id == program_id)
         if not res:
             return False
@@ -3551,12 +3807,14 @@ def append_program_session(program_id: str, entry: dict) -> bool:
         entry = {'ts': time.time(), 'minutes': 0, 'source': 'added',
                  'note': '', **entry}
         row['sessions'].append(entry)
+        deletion.check()
         programs_table.update({'sessions': row['sessions']},
                               Query().id == program_id)
         return True
 
 def delete_program(program_id: str):
     with db_lock:
+        deletion.check()
         programs_table.remove(Query().id == program_id)
 
 def claim_program(program_id: str, expected_state: str, new_state: str) -> bool:
@@ -3572,9 +3830,12 @@ def claim_program(program_id: str, expected_state: str, new_state: str) -> bool:
     "mine now" cannot be entered twice.
     """
     with db_lock:
+        if not _admit_child('program', program_id):
+            return None
         rows = programs_table.search(Query().id == program_id)
         if not rows or dict(rows[0]).get('state') != expected_state:
             return False
+        deletion.check()
         return bool(programs_table.update({'state': new_state},
                                           Query().id == program_id))
 
@@ -3609,6 +3870,8 @@ def upsert_program_lesson(program_id: str, slot: dict, data: dict) -> str:
     data = data or {}
     import uuid
     with db_lock:
+        if not _admit_child('program', program_id):
+            return None
         cond = _lesson_query(program_id, slot)
         existing = program_lessons_table.search(cond)
         if existing and existing[0].get('edited') and not data.get('edited'):
@@ -3633,7 +3896,9 @@ def upsert_program_lesson(program_id: str, slot: dict, data: dict) -> str:
                'attempts': int(data.get('attempts') or 0),
                'note': str(data.get('note') or ''),
                'created_at': time.time()}
+        deletion.check()
         program_lessons_table.remove(cond)
+        deletion.check()
         program_lessons_table.insert(row)
         return row['id']
 
@@ -3653,6 +3918,7 @@ def delete_program_lesson(program_id: str, slot: dict) -> bool:
     'there was nothing there'; delete_program_lessons() below answers the
     different question of how many a whole program held."""
     with db_lock:
+        deletion.check()
         gone = program_lessons_table.remove(_lesson_query(program_id, slot))
         return bool(gone)
 
@@ -3669,6 +3935,7 @@ def delete_program_lessons(program_id: str) -> int:
     mean exactly what they meant. Returns how many rows went."""
     with db_lock:
         q = Query()
+        deletion.check()
         gone = program_lessons_table.remove(q.program_id == program_id)
         return len(gone) if isinstance(gone, list) else int(gone or 0)
 
@@ -3692,16 +3959,20 @@ def get_shopping_list(list_id: str) -> Optional[dict]:
 
 def add_shopping_list(data: dict) -> str:
     with db_lock:
+        deletion.check()
         shopping_lists_table.insert(data)
         return data['id']
 
 def update_shopping_list(list_id: str, data: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(shopping_lists_table.update(data, Query().id == list_id))
 
 def delete_shopping_list(list_id: str):
     with db_lock:
+        deletion.check()
         shopping_lists_table.remove(Query().id == list_id)
+        deletion.check()
         shopping_items_table.remove(Query().list_id == list_id)
 
 def ensure_default_shopping_list() -> dict:
@@ -3752,6 +4023,7 @@ def find_open_shopping_item(list_id: str, name: str) -> Optional[dict]:
 
 def add_shopping_item(data: dict) -> str:
     with db_lock:
+        deletion.check()
         shopping_items_table.insert(data)
         return data['id']
 
@@ -3759,10 +4031,12 @@ def update_shopping_item(item_id: str, data: dict) -> bool:
     """The ONLY item write path. Per-item merge, so concurrent edits to
     different items on the same list cannot clobber one another."""
     with db_lock:
+        deletion.check()
         return bool(shopping_items_table.update(data, Query().id == item_id))
 
 def delete_shopping_item(item_id: str):
     with db_lock:
+        deletion.check()
         shopping_items_table.remove(Query().id == item_id)
 
 def check_shopping_item(item_id: str, checked: bool = True,
@@ -3779,6 +4053,7 @@ def check_shopping_item(item_id: str, checked: bool = True,
                  'checked_at': _time.time() if checked else None,
                  'checked_by': by_member_id if checked else None,
                  'checked_provenance': actor_provenance if checked else None}
+        deletion.check()
         shopping_items_table.update(patch, Query().id == item_id)
         out = dict(res[0])
         out.update(patch)
@@ -3827,6 +4102,7 @@ def clear_checked_shopping_items(list_id: str) -> int:
     doomed = [i['id'] for i in get_shopping_items(list_id) if i.get('is_checked')]
     with db_lock:
         for iid in doomed:
+            deletion.check()
             shopping_items_table.remove(Query().id == iid)
     return len(doomed)
 
@@ -3878,15 +4154,18 @@ def find_meal_by_name(name: str) -> Optional[dict]:
 
 def add_meal(data: dict) -> str:
     with db_lock:
+        deletion.check()
         meals_table.insert(data)
         return data['id']
 
 def update_meal(meal_id: str, data: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(meals_table.update(data, Query().id == meal_id))
 
 def delete_meal(meal_id: str):
     with db_lock:
+        deletion.check()
         meals_table.remove(Query().id == meal_id)
 
 def mark_meal_served(meal_id: str, when: float = None) -> Optional[dict]:
@@ -3995,6 +4274,7 @@ def ensure_dish_categories():
                    'with_complete_meal': with_meal, 'is_main': key == 'protein',
                    'order': order,
                    'created_at': time.time()}
+            deletion.check()
             dish_categories_table.insert(rec)
             by_key[key] = rec['id']
             order += 1
@@ -4019,6 +4299,7 @@ def ensure_dish_categories():
                 if cid:
                     patch['category_ids'] = [cid]
             if d.get('id'):
+                deletion.check()
                 dishes_table.update(patch, Query().id == d['id'])
         set_app_state('dish_categories_seeded', True)
 
@@ -4045,6 +4326,7 @@ def get_dish_categories() -> List[dict]:
             for c in rows:
                 want = c['id'] == keep
                 if bool(c.get('is_main')) != want:
+                    deletion.check()
                     dish_categories_table.update({'is_main': want},
                                                  Query().id == c['id'])
                 c['is_main'] = want
@@ -4058,6 +4340,7 @@ def set_main_dish_category(cat_id: str) -> None:
     """Exclusive by construction: flag one, clear the rest."""
     with db_lock:
         for c in dish_categories_table.all():
+            deletion.check()
             dish_categories_table.update({'is_main': c.get('id') == cat_id},
                                          doc_ids=[c.doc_id])
         mark_all_daily_schedules_dirty()
@@ -4069,6 +4352,7 @@ def get_dish_category(cat_id: str) -> Optional[dict]:
 
 def save_dish_category(data: dict) -> dict:
     with db_lock:
+        deletion.check()
         dish_categories_table.upsert(data, Query().id == data['id'])
         mark_all_daily_schedules_dirty()
     return data
@@ -4079,10 +4363,12 @@ def delete_dish_category(cat_id: str) -> int:
     it is, which is visible in the editor rather than silent."""
     touched = 0
     with db_lock:
+        deletion.check()
         dish_categories_table.remove(Query().id == cat_id)
         for d in dishes_table.all():
             ids = d.get('category_ids') or []
             if cat_id in ids:
+                deletion.check()
                 dishes_table.update({'category_ids': [i for i in ids if i != cat_id]},
                                     doc_ids=[d.doc_id])
                 touched += 1
@@ -4142,15 +4428,18 @@ def find_dish_for_reuse(name: str) -> Optional[dict]:
 
 def add_dish(data: dict) -> str:
     with db_lock:
+        deletion.check()
         dishes_table.insert(data)
         return data['id']
 
 def update_dish(dish_id: str, data: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(dishes_table.update(data, Query().id == dish_id))
 
 def delete_dish(dish_id: str):
     with db_lock:
+        deletion.check()
         dishes_table.remove(Query().id == dish_id)
 
 def get_dishes_by_type(dish_type: str, side_type: str = None) -> List[dict]:
@@ -4170,11 +4459,13 @@ def get_plate(date_str: str) -> Optional[dict]:
 
 def save_plate(data: dict) -> dict:
     with db_lock:
+        deletion.check()
         plates_table.upsert(data, Query().date == data['date'])
     return data
 
 def delete_plate(date_str: str):
     with db_lock:
+        deletion.check()
         plates_table.remove(Query().date == date_str)
 
 # --- Meal rules (arc M11) ---
@@ -4195,15 +4486,18 @@ def get_meal_rule(rule_id: str) -> Optional[dict]:
 
 def save_meal_rule(data: dict) -> dict:
     with db_lock:
+        deletion.check()
         meal_rules_table.upsert(data, Query().id == data['id'])
     return data
 
 def update_meal_rule(rule_id: str, patch: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(meal_rules_table.update(patch, Query().id == rule_id))
 
 def delete_meal_rule(rule_id: str):
     with db_lock:
+        deletion.check()
         meal_rules_table.remove(Query().id == rule_id)
 
 
@@ -4219,11 +4513,13 @@ def get_walmart_item(name_key: str) -> Optional[dict]:
 
 def save_walmart_item(data: dict) -> dict:
     with db_lock:
+        deletion.check()
         walmart_items_table.upsert(data, Query().name_key == data['name_key'])
     return data
 
 def delete_walmart_item(name_key: str):
     with db_lock:
+        deletion.check()
         walmart_items_table.remove(Query().name_key == name_key)
 
 def get_walmart_items() -> List[dict]:
@@ -4246,6 +4542,7 @@ def prune_plates(before_date: str) -> int:
     doomed = [p for p in rows if (p.get('date') or '') < before_date]
     with db_lock:
         for p in doomed:
+            deletion.check()
             plates_table.remove(Query().date == p['date'])
     return len(doomed)
 
@@ -4272,11 +4569,13 @@ def get_occasion(occasion_id: str) -> Optional[dict]:
 
 def save_occasion(data: dict) -> dict:
     with db_lock:
+        deletion.check()
         occasions_table.upsert(data, Query().id == data['id'])
     return data
 
 def update_occasion(occasion_id: str, patch: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(occasions_table.update(patch, Query().id == occasion_id))
 
 def delete_occasion(occasion_id: str):
@@ -4284,7 +4583,9 @@ def delete_occasion(occasion_id: str):
     outlive it with their `occasion_id` cleared — the whole point of a context
     object is that nothing lives inside it."""
     with db_lock:
+        deletion.check()
         occasions_table.remove(Query().id == occasion_id)
+        deletion.check()
         occasion_guests_table.remove(Query().occasion_id == occasion_id)
         for table in (errands_table, shopping_lists_table, shopping_items_table):
             table.update({'occasion_id': None}, Query().occasion_id == occasion_id)
@@ -4298,15 +4599,18 @@ def get_occasion_guests(occasion_id: str) -> List[dict]:
 
 def save_occasion_guest(data: dict) -> dict:
     with db_lock:
+        deletion.check()
         occasion_guests_table.upsert(data, Query().id == data['id'])
     return data
 
 def update_occasion_guest(guest_id: str, patch: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(occasion_guests_table.update(patch, Query().id == guest_id))
 
 def delete_occasion_guest(guest_id: str):
     with db_lock:
+        deletion.check()
         occasion_guests_table.remove(Query().id == guest_id)
 
 # --- Leftovers (meals arc M3) ---
@@ -4323,17 +4627,20 @@ def get_leftovers(date_str: str = None) -> List[dict]:
 
 def add_leftover(data: dict) -> str:
     with db_lock:
+        deletion.check()
         leftovers_table.insert(data)
         return data['id']
 
 def delete_leftover(leftover_id: str):
     with db_lock:
+        deletion.check()
         leftovers_table.remove(Query().id == leftover_id)
 
 def clear_leftovers(date_str: str) -> int:
     doomed = [l['id'] for l in get_leftovers(date_str)]
     with db_lock:
         for lid in doomed:
+            deletion.check()
             leftovers_table.remove(Query().id == lid)
     return len(doomed)
 
@@ -4342,22 +4649,28 @@ def prune_leftovers(before_date: str) -> int:
     doomed = [l['id'] for l in get_leftovers() if (l.get('date') or '') < before_date]
     with db_lock:
         for lid in doomed:
+            deletion.check()
             leftovers_table.remove(Query().id == lid)
     return len(doomed)
 
 def add_routine(data: dict) -> str:
     with db_lock:
+        deletion.check()
         routines_table.insert(data)
         return data['id']
 
 def update_routine(routine_id: str, data: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(routines_table.update(data, Query().id == routine_id))
 
 def delete_routine(routine_id: str):
     with db_lock:
+        deletion.check()
         routines_table.remove(Query().id == routine_id)
+        deletion.check()
         routine_checks_table.remove(Query().routine_id == routine_id)
+        deletion.check()
         routine_step_checks_table.remove(Query().routine_id == routine_id)
 
 def _routine_scheduled_on(routine: dict, date_obj) -> bool:
@@ -4390,10 +4703,12 @@ def set_routine_check(routine_id: str, member_id: str, date_str: str, checked: b
             return False
         q = (Query().routine_id == routine_id) & (Query().date_str == date_str)
         if checked:
+            deletion.check()
             routine_checks_table.upsert(
                 {'routine_id': routine_id, 'member_id': member_id,
                  'date_str': date_str, 'ts': time.time()}, q)
         else:
+            deletion.check()
             routine_checks_table.remove(q)
     # ROUTINES FINALLY HAVE A SINK. They have always earned a streak and
     # nothing else -- the complaint the avatar arc opened with -- so this is
@@ -4420,10 +4735,12 @@ def sync_routine_step_rows(routine_id: str, date_str: str, checked: bool):
         routine = routines_table.search(Query().id == routine_id)
         steps = (routine[0].get('steps') or []) if routine else []
         q = (Query().routine_id == routine_id) & (Query().date_str == date_str)
+        deletion.check()
         routine_step_checks_table.remove(q)
         if checked and steps:
             import time
             for s in steps:
+                deletion.check()
                 routine_step_checks_table.insert(
                     {'routine_id': routine_id, 'step_id': s.get('id'),
                      'date_str': date_str, 'ts': time.time()})
@@ -4448,10 +4765,12 @@ def set_routine_step_check(routine_id: str, member_id: str, date_str: str,
         q = ((Query().routine_id == routine_id) & (Query().date_str == date_str)
              & (Query().step_id == step_id))
         if checked:
+            deletion.check()
             routine_step_checks_table.upsert(
                 {'routine_id': routine_id, 'step_id': step_id,
                  'date_str': date_str, 'ts': time.time()}, q)
         else:
+            deletion.check()
             routine_step_checks_table.remove(q)
         done = {r.get('step_id') for r in routine_step_checks_table.search(
             (Query().routine_id == routine_id) & (Query().date_str == date_str))}
@@ -4614,6 +4933,7 @@ def grant_avatar_unlock(member_id: str, item_id: str, source: str = 'grant') -> 
         q = (Query().member_id == member_id) & (Query().item_id == item_id)
         if avatar_unlocks_table.search(q):
             return False
+        deletion.check()
         avatar_unlocks_table.insert({'member_id': member_id, 'item_id': item_id,
                                      'source': source, 'unlocked_at': time.time()})
         return True
@@ -4811,6 +5131,7 @@ def grant_pet_xp(member_id: str, delta: int, reason: str, ref_id: str = None,
         row = {'id': _uuid.uuid4().hex, 'member_id': member_id,
                'delta': delta, 'reason': reason, 'ref_id': ref_id,
                'date_str': date_str, 'note': note, 'ts': time.time()}
+        deletion.check()
         pet_xp_ledger_table.insert(row)
     return delta
 
@@ -5056,6 +5377,7 @@ def create_pet(member_id: str, name: str = '', species: Optional[dict] = None,
         'created_at': time.time(),
     }
     with db_lock:
+        deletion.check()
         pets_table.insert(pet)
     return {'pet': _with_level(pet), 'rejected': rejected}
 
@@ -5086,6 +5408,7 @@ def update_pet(pet_id: str, fields: Optional[dict] = None) -> dict:
             rejected.append('type:%s' % fields['type'])
     if updates:
         with db_lock:
+            deletion.check()
             pets_table.update(updates, Query().id == pet_id)
         pet.update(updates)
     return {'pet': _with_level(pet), 'rejected': rejected}
@@ -5100,6 +5423,7 @@ def retire_pet(pet_id: str, retired: bool = True) -> Optional[dict]:
     if not retired and len(get_pets(pet['member_id'])) >= pet_slots(pet['member_id']):
         return None
     with db_lock:
+        deletion.check()
         pets_table.update({'active': not retired}, Query().id == pet_id)
     pet['active'] = not retired
     return pet
@@ -5166,6 +5490,7 @@ def learn_pet_move(pet_id: str, move_key: str) -> dict:
     known = list(pet.get('known_moves') or [])
     known.append(move_key)
     with db_lock:
+        deletion.check()
         pets_table.update({'known_moves': known}, Query().id == pet_id)
     return {'pet': get_pet(pet_id), 'spent': PET_MOVE_COST}
 
@@ -5188,6 +5513,7 @@ def set_pet_moves(pet_id: str, moves: List[str]) -> dict:
         # Never leave a critter with nothing to do in a fight.
         clean = pet_native_moves(pet)[:4]
     with db_lock:
+        deletion.check()
         pets_table.update({'moves': clean}, Query().id == pet_id)
     return {'pet': get_pet(pet_id), 'rejected': rejected}
 
@@ -5238,6 +5564,7 @@ def set_pet_training(pet_id: str, training: dict) -> dict:
         clean = dict(want)
 
     with db_lock:
+        deletion.check()
         pets_table.update({'training': clean}, Query().id == pet_id)
     return {'pet': get_pet(pet_id), 'budget': budget,
             'spent': sum(clean.values()), 'scaled': scaled}
@@ -5365,6 +5692,7 @@ def run_pet_battle(pet_id: str, opponent: str, seed: int = None) -> dict:
         'created_at': time.time(),
     }
     with db_lock:
+        deletion.check()
         pet_battles_table.insert(row)
     return {'battle': row, 'replay': replay, 'awarded': awarded,
             'capped': bool(capped),
@@ -5438,6 +5766,7 @@ def create_pet_challenge(from_member: str, to_member: str) -> dict:
           'to_member': to_member, 'from_pet': mine['id'], 'to_pet': theirs['id'],
           'state': 'pending', 'battle_id': None, 'created_at': time.time()}
     with db_lock:
+        deletion.check()
         pet_challenges_table.insert(ch)
     return {'challenge': ch}
 
@@ -5453,6 +5782,7 @@ def get_pet_challenges(member_id: str = None, state: str = 'pending') -> List[di
         stale = [c['id'] for c in rows
                  if c.get('state') == 'pending' and (c.get('created_at') or 0) < cutoff]
         if stale:
+            deletion.check()
             pet_challenges_table.update({'state': 'expired'},
                                         Query().id.one_of(stale))
             for c in rows:
@@ -5482,6 +5812,7 @@ def respond_pet_challenge(challenge_id: str, accept: bool,
         return {'error': 'Already answered'}
     if not accept:
         with db_lock:
+            deletion.check()
             pet_challenges_table.update({'state': 'declined',
                                          'decided_at': time.time()},
                                         Query().id == challenge_id)
@@ -5491,6 +5822,7 @@ def respond_pet_challenge(challenge_id: str, accept: bool,
     theirs = pet_combatant_for(ch['to_pet'])
     if not mine or not theirs:
         with db_lock:
+            deletion.check()
             pet_challenges_table.update({'state': 'expired'},
                                         Query().id == challenge_id)
         return {'error': 'One of the critters is gone'}
@@ -5527,7 +5859,9 @@ def respond_pet_challenge(challenge_id: str, accept: bool,
            'capped': bool(capped), 'challenge_id': challenge_id,
            'created_at': time.time()}
     with db_lock:
+        deletion.check()
         pet_battles_table.insert(row)
+        deletion.check()
         pet_challenges_table.update({'state': 'accepted', 'battle_id': row['id'],
                                      'decided_at': time.time()},
                                     Query().id == challenge_id)
@@ -5572,6 +5906,7 @@ def delete_pet(pet_id: str) -> bool:
     """A deliberate act, exposed so the hand path is complete. Nothing in the
     app calls this on its own."""
     with db_lock:
+        deletion.check()
         return bool(pets_table.remove(Query().id == pet_id))
 
 
@@ -5586,15 +5921,18 @@ def get_prep_kits() -> List[dict]:
 
 def add_prep_kit(data: dict) -> str:
     with db_lock:
+        deletion.check()
         prep_kits_table.insert(data)
         return data['id']
 
 def update_prep_kit(kit_id: str, data: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(prep_kits_table.update(data, Query().id == kit_id))
 
 def delete_prep_kit(kit_id: str):
     with db_lock:
+        deletion.check()
         prep_kits_table.remove(Query().id == kit_id)
 
 # --- Daily stats snapshots (weekly family digest) ---
@@ -5603,6 +5941,7 @@ def delete_prep_kit(kit_id: str):
 
 def upsert_daily_stats(date_str: str, data: dict):
     with db_lock:
+        deletion.check()
         daily_stats_table.upsert(data, Query().date == date_str)
 
 def get_daily_stats(date_strs: List[str]) -> List[dict]:
@@ -5620,6 +5959,7 @@ def bump_day_counter(date_str: str, key: str, by: int = 1) -> int:
         res = day_counters_table.search(Query().date == date_str)
         row = dict(res[0]) if res else {'date': date_str}
         row[key] = int(row.get(key) or 0) + by
+        deletion.check()
         day_counters_table.upsert(row, Query().date == date_str)
     return row[key]
 
@@ -5636,6 +5976,7 @@ def prune_day_counters(before_date: str) -> int:
         doomed = [r['date'] for r in day_counters_table.all()
                   if str(r.get('date') or '') < before_date]
         for d in doomed:
+            deletion.check()
             day_counters_table.remove(Query().date == d)
     return len(doomed)
 
@@ -5664,21 +6005,26 @@ def get_rewards() -> List[dict]:
 
 def add_reward(data: dict) -> str:
     with db_lock:
+        deletion.check()
         rewards_table.insert(data)
         return data['id']
 
 def update_reward(reward_id: str, data: dict) -> bool:
     with db_lock:
+        deletion.check()
         ok = bool(rewards_table.update(data, Query().id == reward_id))
         if ok and data.get('pooled') is False:
             # No longer a family goal: outstanding pledges have nothing to
             # fund, release the holds.
+            deletion.check()
             pool_contributions_table.remove(Query().reward_id == reward_id)
         return ok
 
 def delete_reward(reward_id: str):
     with db_lock:
+        deletion.check()
         rewards_table.remove(Query().id == reward_id)
+        deletion.check()
         pool_contributions_table.remove(Query().reward_id == reward_id)
 
 def get_redemptions(member_id: str = None, state: str = None) -> List[dict]:
@@ -5725,6 +6071,7 @@ def request_redemption(reward_id: str, member_id: str) -> str:
         'requested_at': time.time(), 'decided_by': None, 'decided_at': None,
     }
     with db_lock:
+        deletion.check()
         redemptions_table.insert(redemption)
     return redemption['id']
 
@@ -5761,9 +6108,11 @@ def decide_redemption(redemption_id: str, decider_member_id: str, approve: bool,
                    'decided_by': decider_member_id, 'decided_at': time.time()}
         if approve and override:
             updates['overridden'] = True
+        deletion.check()
         redemptions_table.update(updates, Query().id == redemption_id)
         red.update(updates)
         if approve:
+            deletion.check()
             points_ledger_table.insert({
                 'id': _uuid.uuid4().hex, 'member_id': red['member_id'],
                 'delta': -int(red['cost']), 'reason': 'redeem',
@@ -5853,10 +6202,12 @@ def contribute_to_pool(reward_id: str, member_id: str, amount: int):
         q = (Query().reward_id == reward_id) & (Query().member_id == member_id)
         existing = pool_contributions_table.search(q)
         if existing:
+            deletion.check()
             pool_contributions_table.update(
                 {'amount': int(existing[0].get('amount', 0)) + amount,
                  'ts': time.time()}, q)
         else:
+            deletion.check()
             pool_contributions_table.insert({
                 'id': _uuid.uuid4().hex, 'reward_id': reward_id,
                 'member_id': member_id, 'amount': amount, 'ts': time.time(),
@@ -5871,6 +6222,7 @@ def withdraw_pool_pledge(reward_id: str, member_id: str) -> int:
         rows = pool_contributions_table.search(q)
         if not rows:
             return 0
+        deletion.check()
         pool_contributions_table.remove(q)
         return int(rows[0].get('amount', 0))
 
@@ -5879,6 +6231,7 @@ def clear_pool(reward_id: str) -> int:
     pledges were released."""
     with db_lock:
         n = len(pool_contributions_table.search(Query().reward_id == reward_id))
+        deletion.check()
         pool_contributions_table.remove(Query().reward_id == reward_id)
         return n
 
@@ -5915,6 +6268,7 @@ def grant_pool(reward_id: str, decider_member_id: str, force: bool = False,
         for c in status['contributions']:
             if c['amount'] <= 0:
                 continue
+            deletion.check()
             points_ledger_table.insert({
                 'id': _uuid.uuid4().hex, 'member_id': c['member_id'],
                 'delta': -int(c['amount']), 'reason': 'redeem',
@@ -5931,7 +6285,9 @@ def grant_pool(reward_id: str, decider_member_id: str, force: bool = False,
             'parent_covered': max(0, int(status['cost']) - int(status['pledged'])),
             'requested_at': now, 'decided_by': decider_member_id, 'decided_at': now,
         }
+        deletion.check()
         redemptions_table.insert(redemption)
+        deletion.check()
         pool_contributions_table.remove(Query().reward_id == reward_id)
     return redemption, None
 
@@ -5969,6 +6325,7 @@ def get_or_create_dm(member_a: str, member_b: str) -> dict:
             'created_at': time.time(),
             'archived': False,
         }
+        deletion.check()
         chat_channels_table.insert(channel)
         return channel
 
@@ -5987,6 +6344,7 @@ def get_or_create_group(member_ids: List[str], title: str = '') -> dict:
         if res:
             existing = dict(res[0])
             if title and title != existing.get('title'):
+                deletion.check()
                 chat_channels_table.update({'title': title}, Query().id == existing['id'])
                 existing['title'] = title
             return existing
@@ -6001,6 +6359,7 @@ def get_or_create_group(member_ids: List[str], title: str = '') -> dict:
             'created_at': time.time(),
             'archived': False,
         }
+        deletion.check()
         chat_channels_table.insert(channel)
         return channel
 
@@ -6019,6 +6378,7 @@ def get_or_create_event_channel(event_id: str, title: str = '',
             if event_end and event_end != existing.get('event_end'):
                 updates['event_end'] = event_end
             if updates:
+                deletion.check()
                 chat_channels_table.update(updates, Query().id == existing['id'])
                 existing.update(updates)
             return existing
@@ -6033,6 +6393,7 @@ def get_or_create_event_channel(event_id: str, title: str = '',
             'created_at': time.time(),
             'archived': False,
         }
+        deletion.check()
         chat_channels_table.insert(channel)
         return channel
 
@@ -6057,6 +6418,7 @@ def add_channel_member(channel_id: str, member_id: str) -> Optional[dict]:
         ids = list(c.get('member_ids') or [])
         if member_id not in ids:
             ids.append(member_id)
+            deletion.check()
             chat_channels_table.update({'member_ids': ids},
                                        Query().id == channel_id)
             c['member_ids'] = ids
@@ -6070,6 +6432,7 @@ def remove_channel_member(channel_id: str, member_id: str) -> Optional[dict]:
             return None
         c = dict(res[0])
         ids = [i for i in (c.get('member_ids') or []) if i != member_id]
+        deletion.check()
         chat_channels_table.update({'member_ids': ids}, Query().id == channel_id)
         c['member_ids'] = ids
         return c
@@ -6102,6 +6465,7 @@ def get_channels_for_member(member_id: str) -> List[dict]:
                     if end.tzinfo is None:
                         end = end.replace(tzinfo=timezone.utc)
                     if (datetime.now(timezone.utc) - end) > timedelta(days=7):
+                        deletion.check()
                         chat_channels_table.update({'archived': True}, Query().id == c['id'])
                         c['archived'] = True
                 except Exception:
@@ -6502,6 +6866,12 @@ def _delete_media_for_messages(msgs):
 
 def add_chat_message(message: dict) -> dict:
     with db_lock:
+        refs = list(message.get('refs') or [])
+        refs += [{'kind': kind, 'id': (message.get('card') or {}).get(kind + '_id')}
+                 for kind in ('project', 'thread', 'mission', 'program', 'ask', 'proposal')]
+        if not all(_admit_child(ref.get('kind'), ref.get('id')) for ref in refs):
+            return None
+        deletion.check()
         chat_messages_table.insert(message)
         # Retention cap per channel: household chat, not an archive — EXCEPT
         # moments. A photo/clip is the one thing in a family chat nobody wants
@@ -6514,6 +6884,7 @@ def add_chat_message(message: dict) -> dict:
             stale = [m for m in msgs if not m.get('attachment')][:overflow]
             if stale:
                 _delete_media_for_messages(stale)   # defensive; moments never here
+                deletion.check()
                 chat_messages_table.remove(doc_ids=[m.doc_id for m in stale])
         return message
 
@@ -6536,6 +6907,7 @@ def toggle_message_reaction(message_id: str, member_id: str, emoji: str) -> Opti
             reactions[emoji] = ids
         else:
             reactions.pop(emoji, None)
+        deletion.check()
         chat_messages_table.update({'reactions': reactions}, Query().id == message_id)
         msg['reactions'] = reactions
         return msg
@@ -6549,7 +6921,15 @@ def update_chat_message_card(message_id: str, card: dict) -> bool:
     """An interactive card follows its record (an ask's Yes/No buttons follow
     the ledger), so the stored message is rewritten when the record moves."""
     with db_lock:
+        deletion.check()
         return bool(chat_messages_table.update({'card': card}, Query().id == message_id))
+
+
+def update_phone_message_speech(channel_id: str, request_id: str, eligible: bool) -> bool:
+    with db_lock:
+        deletion.check()
+        return bool(chat_messages_table.update({'phone_speech_safe': eligible},
+            (Query().channel_id == channel_id) & (Query().phone_request_id == request_id)))
 
 
 def delete_chat_message(message_id: str) -> Optional[dict]:
@@ -6564,6 +6944,7 @@ def delete_chat_message(message_id: str) -> Optional[dict]:
             return None
         msg = dict(res[0])
         _delete_media_for_messages([msg])
+        deletion.check()
         chat_messages_table.remove(Query().id == message_id)
         return msg
 
@@ -6617,6 +6998,7 @@ def remove_attachment_item(message_id: str, media_id: str) -> Optional[dict]:
         # An album of two that loses one was never an album — collapse to a
         # plain attachment so "one photo" keeps exactly one representation.
         new_att = dict(keep[0]) if len(keep) == 1 else {**keep[0], 'items': keep}
+        deletion.check()
         chat_messages_table.update({'attachment': new_att}, Query().id == message_id)
         for item in gone:
             _delete_media_for_attachment(item)
@@ -6635,6 +7017,7 @@ def edit_chat_message(message_id: str, body: str) -> Optional[dict]:
             return None
         msg = dict(res[0])
         edited_ts = time.time()
+        deletion.check()
         chat_messages_table.update({'body': body, 'edited_ts': edited_ts},
                                    Query().id == message_id)
         msg['body'] = body
@@ -6776,6 +7159,7 @@ def get_channel_messages(channel_id: str, after_ts: float = None,
 
 def set_last_read(channel_id: str, member_id: str, ts: float):
     with db_lock:
+        deletion.check()
         channel_reads_table.upsert(
             {'channel_id': channel_id, 'member_id': member_id, 'last_read_ts': ts},
             (Query().channel_id == channel_id) & (Query().member_id == member_id))
@@ -6801,12 +7185,14 @@ def get_unread_counts(member_id: str, *, resolved=None) -> dict:
 
 def add_telemetry_event(event_data: dict) -> int:
     with db_lock:
+        deletion.check()
         doc_id = telemetry_table.insert(event_data)
         all_events = telemetry_table.all()
         if len(all_events) > 200:
             all_events.sort(key=lambda x: x.get('timestamp', 0))
             excess = len(all_events) - 200
             doc_ids_to_remove = [e.doc_id for e in all_events[:excess]]
+            deletion.check()
             telemetry_table.remove(doc_ids=doc_ids_to_remove)
         return doc_id
 
@@ -6818,6 +7204,7 @@ def get_telemetry_events(limit: int = 50) -> List[dict]:
 
 def clear_telemetry_events():
     with db_lock:
+        deletion.check()
         telemetry_table.truncate()
 
 # Rule CRUD
@@ -6851,6 +7238,7 @@ def get_all_rules() -> List[dict]:
                 needs_update = True
                 
             if needs_update:
+                deletion.check()
                 rules_table.update(doc, doc_ids=[doc['doc_id']])
                 
             rules.append(doc)
@@ -6885,6 +7273,7 @@ def purge_duplicate_rules():
             else:
                 seen.append(r)
         if to_delete:
+            deletion.check()
             rules_table.remove(doc_ids=to_delete)
             
         seen_p = []
@@ -6900,6 +7289,7 @@ def purge_duplicate_rules():
             else:
                 seen_p.append(p)
         if to_delete_p:
+            deletion.check()
             priority_rules_table.remove(doc_ids=to_delete_p)
 
 purge_duplicate_rules()
@@ -6910,23 +7300,32 @@ def add_rule(rule_data: dict) -> int:
             if _is_duplicate_rule(existing, rule_data):
                 return existing.doc_id
                 
+        deletion.check()
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         return rules_table.insert(rule_data)
 
 def update_rule(doc_id: int, rule_data: dict):
     with db_lock:
+        deletion.check()
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         rules_table.update(rule_data, doc_ids=[doc_id])
 
 def delete_rule(doc_id: int):
     with db_lock:
+        deletion.check()
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         rules_table.remove(doc_ids=[doc_id])
 
 # Priority Rule CRUD
@@ -6967,6 +7366,7 @@ def get_all_priority_rules() -> List[dict]:
                 needs_update = True
                 
             if needs_update:
+                deletion.check()
                 priority_rules_table.update(doc, doc_ids=[doc['doc_id']])
                 
             rules.append(doc)
@@ -6978,23 +7378,32 @@ def add_priority_rule(rule_data: dict) -> int:
             if _is_duplicate_rule(existing, rule_data):
                 return existing.doc_id
                 
+        deletion.check()
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         return priority_rules_table.insert(rule_data)
 
 def update_priority_rule(doc_id: int, rule_data: dict):
     with db_lock:
+        deletion.check()
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         priority_rules_table.update(rule_data, doc_ids=[doc_id])
 
 def delete_priority_rule(doc_id: int):
     with db_lock:
+        deletion.check()
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         priority_rules_table.remove(doc_ids=[doc_id])
 
 # Errand Rules CRUD
@@ -7009,23 +7418,32 @@ def get_all_errand_rules() -> List[dict]:
 
 def add_errand_rule(rule_data: dict) -> int:
     with db_lock:
+        deletion.check()
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         return errand_rules_table.insert(rule_data)
 
 def update_errand_rule(doc_id: int, rule_data: dict):
     with db_lock:
+        deletion.check()
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         errand_rules_table.update(rule_data, doc_ids=[doc_id])
 
 def delete_errand_rule(doc_id: int):
     with db_lock:
+        deletion.check()
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         errand_rules_table.remove(doc_ids=[doc_id])
 
 def invalidate_daily_schedule_cache_for_event(event_id: str):
@@ -7033,6 +7451,7 @@ def invalidate_daily_schedule_cache_for_event(event_id: str):
         cache_docs = cache_table.all()
         if not cache_docs:
             mark_all_daily_schedules_dirty()
+            deletion.check()
             custom_schedules_table.truncate()
             return
             
@@ -7051,6 +7470,7 @@ def invalidate_daily_schedule_cache_for_event(event_id: str):
                 
         if not target_events:
             mark_all_daily_schedules_dirty()
+            deletion.check()
             custom_schedules_table.truncate()
             return
             
@@ -7079,8 +7499,10 @@ def invalidate_daily_schedule_cache_for_event(event_id: str):
             entry = daily_schedules_table.get(Query().date_str == date_str)
             if entry:
                 entry['events_hash'] = 'DIRTY'
+                deletion.check()
                 daily_schedules_table.update(entry, doc_ids=[entry.doc_id])
             
+        deletion.check()
         custom_schedules_table.truncate()
 
 # Overrides CRUD
@@ -7112,7 +7534,9 @@ def add_override(override_data: dict) -> int:
         pass
     with db_lock:
         # Overrides are unique per event_id, so remove existing if present
+        deletion.check()
         overrides_table.remove(Query().event_id == override_data['event_id'])
+        deletion.check()
         return overrides_table.insert(override_data)
 
 def delete_override(doc_id: int):
@@ -7122,6 +7546,7 @@ def delete_override(doc_id: int):
     if event_id:
         invalidate_daily_schedule_cache_for_event(event_id)
     with db_lock:
+        deletion.check()
         overrides_table.remove(doc_ids=[doc_id])
 
 def delete_override_by_event(event_id: str):
@@ -7130,6 +7555,7 @@ def delete_override_by_event(event_id: str):
     with db_lock:
         def match_func(val):
             return val == event_id or str(val).startswith(event_id + '_')
+        deletion.check()
         overrides_table.remove(Query().event_id.test(match_func))
 
 
@@ -7143,14 +7569,18 @@ def get_cached_schedule() -> dict:
 
 def set_cached_schedule(schedule_data: dict):
     with db_lock:
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         cache_table.insert(schedule_data)
 
 def set_cached_trips(trips: List[dict]):
     """Snapshot of the assembled trips list (id/title/start/end/location/
     background_url), written whenever /api/trips runs."""
     with db_lock:
+        deletion.check()
         trips_cache_table.truncate()
+        deletion.check()
         trips_cache_table.insert({'trips': trips, 'at': time.time()})
 
 def get_cached_trips() -> dict:
@@ -7160,6 +7590,7 @@ def get_cached_trips() -> dict:
 
 def save_custom_schedule(start_date: str, end_date: str, schedule_data: dict, events_hash: str):
     with db_lock:
+        deletion.check()
         custom_schedules_table.upsert({
             'start_date': start_date,
             'end_date': end_date,
@@ -7180,7 +7611,9 @@ def get_all_custom_schedule_keys():
 
 def clear_custom_schedules():
     with db_lock:
+        deletion.check()
         custom_schedules_table.truncate()
+        deletion.check()
         daily_schedules_table.truncate()
 
 def get_cached_daily_schedule(date_str: str):
@@ -7206,6 +7639,7 @@ def save_cached_daily_schedule(date_str: str, schedule_data: dict, events_hash: 
     v2.353.0. Rows written before then still carry those keys; nothing reads
     them, and they cost a few bytes until the day's hash changes."""
     with db_lock:
+        deletion.check()
         daily_schedules_table.upsert({
             'date_str': date_str,
             'schedule': schedule_data,
@@ -7213,6 +7647,7 @@ def save_cached_daily_schedule(date_str: str, schedule_data: dict, events_hash: 
         }, Query().date_str == date_str)
         
         # Invalidate any custom range caches that might have relied on old daily data
+        deletion.check()
         custom_schedules_table.truncate()
 
 
@@ -7226,6 +7661,7 @@ def save_cached_daily_schedule(date_str: str, schedule_data: dict, events_hash: 
 
 def save_solve_pack(date_str: str, pack: dict):
     with db_lock:
+        deletion.check()
         solve_packs_table.upsert({**pack, 'date': date_str},
                                  Query().date == date_str)
 
@@ -7240,6 +7676,7 @@ def prune_solve_packs(before_date: str) -> int:
         rows = [dict(r) for r in solve_packs_table.all()]
         stale = [r for r in rows if (r.get('date') or '') < before_date]
         for r in stale:
+            deletion.check()
             solve_packs_table.remove(Query().date == r['date'])
         return len(stale)
 
@@ -7253,6 +7690,7 @@ def add_protected_exception(commitment_id: str, date_str: str) -> str:
     with db_lock:
         row = {'commitment_id': str(commitment_id), 'date': str(date_str),
                'created_at': time.time()}
+        deletion.check()
         protected_exceptions_table.upsert(
             row, (Query().commitment_id == str(commitment_id))
                  & (Query().date == str(date_str)))
@@ -7274,6 +7712,7 @@ def get_protected_exceptions(commitment_id: str = None) -> List[dict]:
 
 def add_shift_refusal(series_key: str, title: str = '', member_id: str = None):
     with db_lock:
+        deletion.check()
         shift_refusals_table.upsert(
             {'series_key': str(series_key), 'title': title or '',
              'refused_by': member_id or '', 'refused_at': time.time()},
@@ -7286,6 +7725,7 @@ def get_shift_refusals() -> List[dict]:
 def clear_shift_refusal(series_key: str) -> bool:
     """A flag the app taught itself must be untaught by hand."""
     with db_lock:
+        deletion.check()
         return bool(shift_refusals_table.remove(
             Query().series_key == str(series_key)))
 
@@ -7299,6 +7739,7 @@ def add_deal(data: dict) -> str:
     from models.schemas import Deal
     with db_lock:
         row = Deal(**data).model_dump()
+        deletion.check()
         deals_table.insert(row)
         return row['id']
 
@@ -7322,6 +7763,7 @@ def get_deals(state: str = None, since_ts: float = None,
 
 def update_deal(deal_id: str, data: dict) -> bool:
     with db_lock:
+        deletion.check()
         return bool(deals_table.update(data, Query().id == deal_id))
 
 def claim_deal(deal_id: str, expected_state: str, new_state: str) -> bool:
@@ -7338,6 +7780,7 @@ def claim_deal(deal_id: str, expected_state: str, new_state: str) -> bool:
         rows = deals_table.search(Query().id == deal_id)
         if not rows or dict(rows[0]).get('state') != expected_state:
             return False
+        deletion.check()
         return bool(deals_table.update({'state': new_state},
                                        Query().id == deal_id))
 
@@ -7357,6 +7800,7 @@ def prune_deals(before_ts: float) -> int:
                  if (r.get('created_at') or 0) < before_ts
                  and r.get('state') not in ('draft', 'asking', 'applying')]
         for r in stale:
+            deletion.check()
             deals_table.remove(Query().id == r['id'])
         return len(stale)
 
@@ -7388,9 +7832,12 @@ def get_settings() -> dict:
 
 def update_settings(settings_data: dict):
     with db_lock:
+        deletion.check()
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
+        deletion.check()
         settings_table.truncate()
+        deletion.check()
         settings_table.insert(settings_data)
 
 # API Usage Tracker
@@ -7407,19 +7854,23 @@ def increment_mapbox_usage(month: str, endpoint: str, amount: int = 1):
         res = api_usage_table.search((Query().month == month) & (Query().endpoint == endpoint))
         if res:
             new_count = res[0].get('count', 0) + amount
+            deletion.check()
             api_usage_table.update({'count': new_count}, (Query().month == month) & (Query().endpoint == endpoint))
         else:
+            deletion.check()
             api_usage_table.insert({'month': month, 'endpoint': endpoint, 'count': amount})
 
 def log_api_request(endpoint: str, count: int = 1):
     import time
     with db_lock:
+        deletion.check()
         api_requests_log_table.insert({
             'timestamp': time.time(),
             'endpoint': endpoint,
             'count': count
         })
         three_days_ago = time.time() - (3 * 24 * 3600)
+        deletion.check()
         api_requests_log_table.remove(Query().timestamp < three_days_ago)
 
 def get_rolling_usage(endpoint: str, seconds: int) -> int:
@@ -7448,8 +7899,10 @@ def save_push_subscription(driver_id: str, subscription_info: dict, member_id: s
                'subscription': subscription_info}
         if endpoint:
             row['endpoint'] = endpoint
+            deletion.check()
             push_subscriptions_table.upsert(row, Query().endpoint == endpoint)
         else:
+            deletion.check()
             push_subscriptions_table.upsert(row, Query().driver_id == driver_id)
 
 def delete_push_subscription_by_endpoint(endpoint: str):
@@ -7457,11 +7910,13 @@ def delete_push_subscription_by_endpoint(endpoint: str):
     with db_lock:
         q = Query()
         try:
+            deletion.check()
             push_subscriptions_table.remove(q.endpoint == endpoint)
         except Exception:
             pass
         try:
             # Legacy rows saved before the endpoint column existed
+            deletion.check()
             push_subscriptions_table.remove(q.subscription.endpoint == endpoint)
         except Exception:
             pass
@@ -7485,6 +7940,7 @@ def get_app_state(key: str, default=None):
 
 def set_app_state(key: str, value):
     with db_lock:
+        deletion.check()
         app_state_table.upsert({'key': key, 'value': value}, Query().key == key)
 
 # Drive Status
@@ -7501,6 +7957,7 @@ def mark_drive_status(leg_id: str, status: str, **fields):
         row = dict(existing[0]) if existing else {'leg_id': leg_id}
         row['status'] = status
         row.update(fields)
+        deletion.check()
         drive_status_table.upsert(row, q.leg_id == leg_id)
 
 def get_drive_status(leg_id: str) -> Optional[dict]:
@@ -7537,8 +7994,10 @@ def set_attendance_override(event_id: str, action: str) -> None:
 # --- Pending Notifications ---
 def save_pending_notifications(notifications: List[dict]):
     with db_lock:
+        deletion.check()
         pending_notifications_table.truncate()
         if notifications:
+            deletion.check()
             pending_notifications_table.insert_multiple(notifications)
 
 def get_pending_notifications() -> List[dict]:
@@ -7548,6 +8007,7 @@ def get_pending_notifications() -> List[dict]:
 def mark_notification_fired(notif_id: str):
     with db_lock:
         q = Query()
+        deletion.check()
         pending_notifications_table.update({'fired': True}, q.notif_id == notif_id)
 
 def get_event_config(google_id: str) -> Optional[dict]:
@@ -7563,12 +8023,14 @@ def set_event_config(google_id: str, config_data: dict):
     with db_lock:
         q = Query()
         config_data['google_id'] = google_id
+        deletion.check()
         event_configs_table.upsert(config_data, q.google_id == google_id)
 
 def delete_event_config(google_id: str):
     invalidate_daily_schedule_cache_for_event(google_id)
     with db_lock:
         q = Query()
+        deletion.check()
         event_configs_table.remove(q.google_id == google_id)
 
 # Prep status: the driver's "stuff is in the car" checkoff, keyed by the
@@ -7579,10 +8041,12 @@ def set_prep_confirmed(event_id: str, confirmed: bool, member_id: str = None):
     import time
     with db_lock:
         if confirmed:
+            deletion.check()
             prep_status_table.upsert(
                 {'event_id': event_id, 'confirmed_by': member_id, 'ts': time.time()},
                 Query().event_id == event_id)
         else:
+            deletion.check()
             prep_status_table.remove(Query().event_id == event_id)
 
 def get_confirmed_preps() -> List[str]:
@@ -7605,6 +8069,7 @@ def add_packing_claim(outing_key: str, item_key: str, date_str: str,
     import time
     import uuid as _uuid
     with db_lock:
+        deletion.check()
         packing_claims_table.insert({
             'id': _uuid.uuid4().hex, 'outing_key': str(outing_key),
             'item_key': str(item_key), 'date_str': str(date_str),
@@ -7640,6 +8105,7 @@ def remove_packing_claim(outing_key: str, item_key: str, date_str: str,
             rows = anon or rows
         if not rows:
             return False
+        deletion.check()
         packing_claims_table.remove(Query().id == rows[0]['id'])
         return True
 
@@ -7674,6 +8140,7 @@ def set_roll_call(leg_id: str, member_id: str, aboard) -> dict:
         else:
             roll[str(member_id)] = bool(aboard)
         row['roll_call'] = roll
+        deletion.check()
         drive_status_table.upsert(row, q.leg_id == leg_id)
         return roll
 
@@ -7692,6 +8159,7 @@ def set_member_position(member_id: str, lat: float, lng: float,
                         accuracy=None, ts: float = None, source: str = 'app'):
     import time as _time
     with db_lock:
+        deletion.check()
         member_positions_table.upsert(
             {'member_id': str(member_id), 'latitude': float(lat),
              'longitude': float(lng),
@@ -7707,6 +8175,7 @@ def get_member_position(member_id: str) -> Optional[dict]:
 
 def clear_member_position(member_id: str):
     with db_lock:
+        deletion.check()
         member_positions_table.remove(Query().member_id == str(member_id))
 
 # --- Errands ---
@@ -7722,22 +8191,31 @@ def get_all_errands() -> List[dict]:
 def add_errand(errand_data: dict) -> int:
     with db_lock:
         mark_all_daily_schedules_dirty()
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         custom_schedules_table.truncate()
+        deletion.check()
         return errands_table.insert(errand_data)
 
 def update_errand(doc_id: int, errand_data: dict):
     with db_lock:
         mark_all_daily_schedules_dirty()
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         custom_schedules_table.truncate()
+        deletion.check()
         errands_table.update(errand_data, doc_ids=[doc_id])
 
 def delete_errand(doc_id: int):
     with db_lock:
         mark_all_daily_schedules_dirty()
+        deletion.check()
         cache_table.truncate()
+        deletion.check()
         custom_schedules_table.truncate()
+        deletion.check()
         errands_table.remove(doc_ids=[doc_id])
 
 # --- Trip Metadata ---
@@ -7757,11 +8235,13 @@ def set_trip_metadata(event_id: str, metadata: dict):
     with db_lock:
         from tinydb import Query
         metadata['event_id'] = event_id
+        deletion.check()
         trip_metadata_table.upsert(metadata, Query().event_id == event_id)
 
 def delete_trip_metadata(event_id: str):
     with db_lock:
         from tinydb import Query
+        deletion.check()
         trip_metadata_table.remove(Query().event_id == event_id)
 
 def update_conversation_title(conversation_id: str, title: str):
@@ -7769,6 +8249,7 @@ def update_conversation_title(conversation_id: str, title: str):
         from tinydb import Query
         Conv = Query()
         import time
+        deletion.check()
         conversations_table.update({'title': title, 'updated_at': time.time()}, Conv.id == conversation_id)
 
 
@@ -7793,15 +8274,18 @@ def add_ics_feed(feed: dict) -> str:
     feed.setdefault('last_synced', None)
     feed.setdefault('last_status', 'never synced')
     with db_lock:
+        deletion.check()
         ics_feeds_table.insert(feed)
     return feed['id']
 
 def update_ics_feed(feed_id: str, updates: dict) -> None:
     with db_lock:
+        deletion.check()
         ics_feeds_table.update(updates, Query().id == feed_id)
 
 def delete_ics_feed(feed_id: str) -> None:
     with db_lock:
+        deletion.check()
         ics_feeds_table.remove(Query().id == feed_id)
 
 # --- Email intake: proposals + activity log (services/email_ingest.py) ---
@@ -7814,7 +8298,9 @@ def patch_settings(updates: dict) -> None:
         docs = settings_table.all()
         current = dict(docs[0]) if docs else {}
         current.update(updates)
+        deletion.check()
         settings_table.truncate()
+        deletion.check()
         settings_table.insert(current)
 
 def get_proposals(status: str = None) -> List[dict]:
@@ -7835,11 +8321,13 @@ def add_proposal(proposal: dict) -> str:
     proposal.setdefault('status', 'proposed')
     proposal.setdefault('created_at', time.time())
     with db_lock:
+        deletion.check()
         event_proposals_table.insert(proposal)
     return proposal['id']
 
 def update_proposal(proposal_id: str, updates: dict) -> None:
     with db_lock:
+        deletion.check()
         event_proposals_table.update(updates, Query().id == proposal_id)
 
 
@@ -7854,6 +8342,9 @@ def add_action_proposal(proposal: dict) -> str:
     proposal.setdefault('status', 'proposed')
     proposal.setdefault('created_at', time.time())
     with db_lock:
+        if not (_admit_child((proposal.get('source') or {}).get('kind'), (proposal.get('source') or {}).get('id')) and _admit_child(proposal.get('origin_kind'), proposal.get('origin_id'))):
+            return None
+        deletion.check()
         agent_action_proposals_table.insert(proposal)
     return proposal['id']
 
@@ -7864,6 +8355,7 @@ def get_action_proposal(proposal_id: str) -> Optional[dict]:
 
 def update_action_proposal(proposal_id: str, updates: dict) -> None:
     with db_lock:
+        deletion.check()
         agent_action_proposals_table.update(updates, Query().id == proposal_id)
 
 def get_action_proposals(status: str = None, limit: int = 25) -> List[dict]:
@@ -7890,15 +8382,18 @@ def add_ingest_log(entry: dict, cap: int = 200) -> None:
         if rows:
             last = rows[-1]
             if all(last.get(k) == entry.get(k) for k in ('from', 'subject', 'outcome')):
+                deletion.check()
                 ingest_log_table.update(
                     {'ts': entry['ts'],
                      'count': int(last.get('count') or 1) + 1,
                      'first_ts': last.get('first_ts') or last.get('ts')},
                     doc_ids=[last.doc_id])
                 return
+        deletion.check()
         ingest_log_table.insert(entry)
         if len(rows) + 1 > cap:
             for r in rows[:len(rows) + 1 - cap]:
+                deletion.check()
                 ingest_log_table.remove(doc_ids=[r.doc_id])
 
 def mark_ingest_seen(message_id: str, cap: int = 5000) -> None:
@@ -7908,10 +8403,12 @@ def mark_ingest_seen(message_id: str, cap: int = 5000) -> None:
     with db_lock:
         if ingest_seen_table.search(Query().id == message_id):
             return
+        deletion.check()
         ingest_seen_table.insert({'id': message_id, 'ts': time.time()})
         rows = ingest_seen_table.all()
         if len(rows) > cap:
             for r in sorted(rows, key=lambda r: r.get('ts', 0))[:len(rows) - cap]:
+                deletion.check()
                 ingest_seen_table.remove(Query().id == r['id'])
 
 
@@ -7935,8 +8432,10 @@ def get_ingest_log(limit: int = 50) -> List[dict]:
 # caches exactly like rule mutations do.
 
 def _invalidate_schedule_caches():
+    deletion.check()
     custom_schedules_table.truncate()
     mark_all_daily_schedules_dirty()
+    deletion.check()
     cache_table.truncate()
 
 def get_all_status_protocols() -> List[dict]:
@@ -7954,11 +8453,13 @@ def add_status_protocol(data: dict) -> str:
     data.setdefault('id', uuid.uuid4().hex)
     data.setdefault('created_at', time.time())
     with db_lock:
+        deletion.check()
         status_protocols_table.insert(data)
     return data['id']
 
 def update_status_protocol(protocol_id: str, updates: dict) -> None:
     with db_lock:
+        deletion.check()
         status_protocols_table.update(updates, Query().id == protocol_id)
         _invalidate_schedule_caches()  # need/member changes move driver availability
 
@@ -7966,7 +8467,9 @@ def delete_status_protocol(protocol_id: str) -> None:
     """Deleting a protocol also drops its dated instances — an orphaned
     status day would render as an unexplained blank on kid surfaces."""
     with db_lock:
+        deletion.check()
         status_protocols_table.remove(Query().id == protocol_id)
+        deletion.check()
         status_days_table.remove(Query().protocol_id == protocol_id)
         _invalidate_schedule_caches()
 
@@ -8004,11 +8507,13 @@ def add_status_day(data: dict) -> str:
         q = (Query().date == data.get('date')) & (Query().protocol_id == data.get('protocol_id'))
         existing = status_days_table.search(q)
         if existing:
+            deletion.check()
             status_days_table.update(
                 {'note': data.get('note', ''), 'set_by': data.get('set_by'),
                  'end_date': data.get('end_date'), 'set_at': data['set_at']}, q)
             _invalidate_schedule_caches()  # a span end may have moved
             return dict(existing[0])['id']
+        deletion.check()
         status_days_table.insert(data)
         _invalidate_schedule_caches()
     return data['id']
@@ -8024,6 +8529,7 @@ def delete_status_day(day_id: str) -> Optional[dict]:
         if not res:
             return None
         row = dict(res[0])
+        deletion.check()
         status_days_table.remove(Query().id == day_id)
         if row.get('source') == 'calendar':
             tombs = dict(get_app_state('status_auto_dismissed') or {})
@@ -8075,6 +8581,7 @@ def add_music_favorite(member_id: str, item: dict) -> dict:
             return dict(existing[0])
         row = {'member_id': member_id, 'added_at': _time.time(),
                **_music_item(item)}
+        deletion.check()
         music_favorites_table.insert(row)
         return row
 
@@ -8082,6 +8589,7 @@ def add_music_favorite(member_id: str, item: dict) -> dict:
 def remove_music_favorite(member_id: str, uri: str) -> bool:
     with db_lock:
         q = Query()
+        deletion.check()
         removed = music_favorites_table.remove(
             (q.member_id == member_id) & (q.uri == uri))
     return bool(removed)
@@ -8094,8 +8602,10 @@ def record_music_play(member_id: str, item: dict):
     import time as _time
     with db_lock:
         q = Query()
+        deletion.check()
         music_recent_table.remove(
             (q.member_id == member_id) & (q.uri == item.get('uri')))
+        deletion.check()
         music_recent_table.insert({'member_id': member_id,
                                    'played_at': _time.time(),
                                    **_music_item(item)})
@@ -8103,6 +8613,7 @@ def record_music_play(member_id: str, item: dict):
         overflow = len(rows) - _MUSIC_RECENT_CAP
         if overflow > 0:
             rows.sort(key=lambda r: r.get('played_at', 0))
+            deletion.check()
             music_recent_table.remove(
                 doc_ids=[r.doc_id for r in rows[:overflow]])
 

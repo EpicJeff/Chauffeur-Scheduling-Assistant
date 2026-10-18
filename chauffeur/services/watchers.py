@@ -36,9 +36,10 @@ works, so the collectors read the same as they always did.
 """
 import datetime
 from contextvars import ContextVar
+from contextlib import ExitStack
 import time
 
-from services import access, coverage_options as _coverage, findings as _findings, storage
+from services import access, coverage_options as _coverage, findings as _findings, storage, deletion
 from services.findings import Finding
 
 WATCH_WINDOW_DAYS = 3          # unassigned-event lookahead
@@ -104,6 +105,8 @@ def _negotiate_seed(event_id: str, date_str: str):
                             budget=int(storage.get_settings().get(
                                 'negotiation_sweep_budget',
                                 negotiation.SWEEP_BUDGET)))
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         print(f"[watchers] negotiation failed for {event_id}: {e}")
 
@@ -192,6 +195,8 @@ def _unassigned_findings(now: datetime.datetime):
             continue
         try:
             rung = _coverage.ladder(ev, cache, now)
+        except deletion.Cancelled:
+            raise
         except Exception as e:
             print(f"[watchers] coverage ladder failed for {ev_id}: {e}")
             rung = None
@@ -297,6 +302,8 @@ def _supply_deadline_findings(now: datetime.datetime):
     try:
         from services import shopping as _shop
         rows = _shop.deadline_findings(now.date())
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         print(f"[watchers] supply deadline check failed: {e}")
         return []
@@ -332,6 +339,8 @@ def _prep_kit_findings(now_ts: float):
         if not titles:
             return []
         kits = prep_kits.suggest_kits(sorted(titles), tier='background')
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         print(f"[watchers] prep-kit suggest skipped: {e}")
         return []
@@ -406,6 +415,18 @@ SCANNED_KINDS = ('unassigned', 'optional_skip', 'proposal', 'chore_verify',
 _private_signals = ContextVar('watcher_private_signals', default=None)
 
 
+def _gone_finding(f):
+    return bool(f.subject_id and f.subject_type in deletion.KINDS
+                and access.gone(f.subject_type, access.KINDS[f.subject_type].load(f.subject_id),
+                                rid=f.subject_id))
+
+
+def _finding_refs(findings):
+    return [dict(kind=kind, id=rid) for kind, rid in sorted({
+        (f.subject_type, str(f.subject_id)) for f in findings
+        if f.subject_type in deletion.KINDS and f.subject_id})]
+
+
 def _household_signals(found):
     """Restricted signals never become household findings (§4.8).
 
@@ -414,6 +435,8 @@ def _household_signals(found):
     """
     public = []
     for f in found:
+        if _gone_finding(f):
+            continue
         spec = access.KINDS.get(f.subject_type)
         row = spec.load(f.subject_id) if spec else None
         if row and access.restricted(access.home_project(row)):
@@ -582,39 +605,42 @@ def _program_findings(now: datetime.datetime):
 
     for row in storage.get_programs(state='active'):
         try:
-            gone = _prog.orphaned_emissions(row)
-            if gone:
-                _prog.forget_emissions(row['id'], gone)
-                # The offer in the sentence has to be one the app can actually
-                # perform. It asked "want it back, or shall I re-shape the
-                # week?" carrying no action and with no endpoint behind it --
-                # and `forget_emissions` had just erased the ids, so even a
-                # hand-restored commitment could never re-link and the program
-                # became an active zombie that still re-baselined every
-                # fortnight. `reshape` returns it to `proposed` so the
-                # existing approve path can rebuild the footprint, which also
-                # keeps the promise that nothing is silently re-created: a
-                # person still sees the whole footprint and taps.
-                out.append(Finding(
-                    key=f"program_drift:{row['id']}",
-                    line=(f"📅 {row.get('title')}: that practice time isn't on "
-                          f"the calendar any more, so it isn't reserved. "
-                          f"Re-shape the week and I'll put the footprint back "
-                          f"up for approval."),
-                    kind='program_drift', severity='decide', dm=True,
-                    subject_type='program', subject_id=str(row['id']),
-                    action={'label': 'Re-shape the week',
-                            'action_type': 'reshape_program',
-                            'payload': {'program_id': row['id']}}))
-                continue
-            bent = _prog.maybe_rebaseline(row, now)
-            if bent:
-                day = _eaten_days(bent)
-                out.append(Finding(
-                    key=f"program_rebaseline:{row['id']}:{bent['baseline']['rebaselines']}",
-                    line=_rebaseline_line(row.get('title'), day, bent),
-                    kind='program_rebaseline', severity='fyi', dm=True,
-                    subject_type='program', subject_id=str(row['id'])))
+            with deletion.acting_for('program', row['id']):
+                gone = _prog.orphaned_emissions(row)
+                if gone:
+                    _prog.forget_emissions(row['id'], gone)
+                    # The offer in the sentence has to be one the app can actually
+                    # perform. It asked "want it back, or shall I re-shape the
+                    # week?" carrying no action and with no endpoint behind it --
+                    # and `forget_emissions` had just erased the ids, so even a
+                    # hand-restored commitment could never re-link and the program
+                    # became an active zombie that still re-baselined every
+                    # fortnight. `reshape` returns it to `proposed` so the
+                    # existing approve path can rebuild the footprint, which also
+                    # keeps the promise that nothing is silently re-created: a
+                    # person still sees the whole footprint and taps.
+                    out.append(Finding(
+                        key=f"program_drift:{row['id']}",
+                        line=(f"📅 {row.get('title')}: that practice time isn't on "
+                              f"the calendar any more, so it isn't reserved. "
+                              f"Re-shape the week and I'll put the footprint back "
+                              f"up for approval."),
+                        kind='program_drift', severity='decide', dm=True,
+                        subject_type='program', subject_id=str(row['id']),
+                        action={'label': 'Re-shape the week',
+                                'action_type': 'reshape_program',
+                                'payload': {'program_id': row['id']}}))
+                    continue
+                bent = _prog.maybe_rebaseline(row, now)
+                if bent:
+                    day = _eaten_days(bent)
+                    out.append(Finding(
+                        key=f"program_rebaseline:{row['id']}:{bent['baseline']['rebaselines']}",
+                        line=_rebaseline_line(row.get('title'), day, bent),
+                        kind='program_rebaseline', severity='fyi', dm=True,
+                        subject_type='program', subject_id=str(row['id'])))
+        except deletion.Cancelled:
+            raise
         except Exception as e:
             print(f"[watchers] program check failed for {row.get('id')}: {e}")
     return _household_signals(out)
@@ -716,6 +742,8 @@ def _commitment_findings(now: datetime.datetime):
                         subject_type='commitment', subject_id=f"{pc['id']}:{ev_id}",
                         due_at=start.timestamp()))
         return out
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         print(f"[watchers] commitment findings failed: {e}")
         return []
@@ -772,6 +800,8 @@ def _care_gap_findings(now: datetime.datetime):
                 subject_id=f"{gap['date']}:{gap['kind']}",
                 due_at=datetime.datetime.combine(d, datetime.time.max).timestamp()))
         return out
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         print(f"[watchers] care-gap findings failed: {e}")
         return []
@@ -793,6 +823,8 @@ def _stage_findings(now: datetime.datetime):
                 kind='stage', severity='decide', subject_type='member',
                 subject_id=f"{p['member_id']}:{p['to']}"))
         return out
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         print(f"[watchers] stage findings failed: {e}")
         return []
@@ -889,6 +921,8 @@ def _heads_up_line(f, viewer=access.HOUSE) -> str:
             out += ' (' + '; '.join(f"asked {a.get('to_name')} by {a.get('channel')}, {said[a['state']]}"
                                     for a in asks[-3:]) + ')'
         return out
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         print(f"[watchers] heads-up clause failed: {e}")
         return fallback
@@ -912,6 +946,8 @@ def run_watchers(now: datetime.datetime = None) -> int:
     try:
         from services import replies as _replies
         _replies.flush_pending_dms(now)
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         print(f"[watchers] reply DM flush failed: {e}")
     settings = storage.get_settings() or {}
@@ -930,6 +966,9 @@ def run_watchers(now: datetime.datetime = None) -> int:
         findings.append(_unclaimed_batch(unclaimed))
     findings += _prep_kit_findings(now_ts)
 
+    findings = [f for f in findings if not _gone_finding(f)]
+    private = [f for f in private if not _gone_finding(f)]
+
     # Records first, so a finding that resolved itself is closed even on a
     # sweep that posts nothing.
     scanned = set(SCANNED_KINDS)
@@ -937,6 +976,8 @@ def run_watchers(now: datetime.datetime = None) -> int:
         scanned.add('prep_suggest')
     try:
         _findings.reconcile(findings, scanned, now_ts, seen_only=private)
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         print(f"[watchers] finding reconcile failed: {e}")
     # A yes whose applying was interrupted between claim and completion is
@@ -944,6 +985,8 @@ def run_watchers(now: datetime.datetime = None) -> int:
     try:
         from services import asks as _asks
         _asks.recover(now)
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         print(f"[watchers] ask recovery failed: {e}")
 
@@ -965,7 +1008,7 @@ def run_watchers(now: datetime.datetime = None) -> int:
         return bool(row and (row.get('state') in ('dismissed', 'in_hand')
                              or (row.get('snoozed_until') or 0) > now_ts))
     fresh = [f for f in findings + private
-             if f.dm and f.key not in notified and not _settled(f)]
+             if f.dm and not _gone_finding(f) and f.key not in notified and not _settled(f)]
     if not fresh:
         storage.set_app_state('watcher_notified', notified)
         return 0
@@ -985,6 +1028,7 @@ def run_watchers(now: datetime.datetime = None) -> int:
             recipients.setdefault(mid, []).append(f)
 
     from services.agent_tools_v2 import _post_chat_message
+    from services import agent_tools_v2 as _agent_tools
     argyle = storage.ensure_argyle_member()
     sent_keys = set()
     for mid, recipient_findings in recipients.items():
@@ -992,15 +1036,26 @@ def run_watchers(now: datetime.datetime = None) -> int:
         if not parent or not access._active(parent):
             continue
         try:
-            lines = []
-            for f in recipient_findings:
-                lines.append(_heads_up_line(f, parent))
-            body = "👋 Heads-up — needs a look:\n" + "\n".join(f"• {line}" for line in lines)
-            body += "\n\nAsk me for options, or handle it on the dashboard."
-            dm = storage.get_or_create_dm(argyle['id'], parent['id'])
-            _post_chat_message(dm, argyle, body)
-            _post_action_cards(dm, argyle, recipient_findings, parent)
-            sent_keys.update(f.key for f in recipient_findings)
+            recipient_findings = [f for f in recipient_findings if not _gone_finding(f)]
+            if not recipient_findings:
+                continue
+            refs = _finding_refs(recipient_findings)
+            with ExitStack() as work:
+                for ref in refs:
+                    work.enter_context(deletion.acting_for(ref['kind'], ref['id']))
+                token = _agent_tools._message_refs.set(tuple(refs))
+                work.callback(_agent_tools._message_refs.reset, token)
+                lines = []
+                for f in recipient_findings:
+                    lines.append(_heads_up_line(f, parent))
+                body = "👋 Heads-up — needs a look:\n" + "\n".join(f"• {line}" for line in lines)
+                body += "\n\nAsk me for options, or handle it on the dashboard."
+                dm = storage.get_or_create_dm(argyle['id'], parent['id'])
+                _post_chat_message(dm, argyle, body)
+                _post_action_cards(dm, argyle, recipient_findings, parent)
+                sent_keys.update(f.key for f in recipient_findings)
+        except deletion.Cancelled:
+            raise
         except Exception as e:
             print(f"[watchers] DM to {parent.get('name')} failed: {e}")
 
@@ -1031,6 +1086,7 @@ def _post_action_cards(dm, argyle, fresh, parent):
     """
     from services import chat_actions
     from services.agent_tools_v2 import _post_chat_message
+    from services import agent_tools_v2 as _agent_tools
     if not parent or parent.get('role') != 'parent' or not access._active(parent):
         return
     posted = 0
@@ -1043,16 +1099,26 @@ def _post_action_cards(dm, argyle, fresh, parent):
             view = access.record_view(f.subject_type, row, parent)
             if view is None or (view == access.KEEPER and f.subject_type != 'program'):
                 continue
+        if _gone_finding(f):
+            continue
         act = f.action
         try:
-            res = chat_actions.create_action_proposal(
-                act['action_type'], act.get('label') or act['action_type'],
-                act.get('payload') or {}, created_by_member_id=argyle.get('id'))
-            if res.get('status') != 'success':
-                continue
-            storage.update_action_proposal(res['proposal_id'], {'channel_id': dm['id']})
-            _post_chat_message(dm, argyle, act.get('label') or 'Suggested',
-                               card=res.get('card'))
-            posted += 1
+            with ExitStack() as work:
+                refs = _finding_refs([f])
+                for ref in refs:
+                    work.enter_context(deletion.acting_for(ref['kind'], ref['id']))
+                token = _agent_tools._message_refs.set(tuple(refs))
+                work.callback(_agent_tools._message_refs.reset, token)
+                res = chat_actions.create_action_proposal(
+                    act['action_type'], act.get('label') or act['action_type'],
+                    act.get('payload') or {}, created_by_member_id=argyle.get('id'))
+                if res.get('status') != 'success':
+                    continue
+                storage.update_action_proposal(res['proposal_id'], {'channel_id': dm['id']})
+                _post_chat_message(dm, argyle, act.get('label') or 'Suggested',
+                                   card=res.get('card'))
+                posted += 1
+        except deletion.Cancelled:
+            raise
         except Exception as e:
             print(f"[watchers] action card failed ({act.get('action_type')}): {e}")

@@ -473,7 +473,7 @@ def commitment_view(row, viewer=HOUSE, *, programs=None):
         if pid not in programs:
             programs[pid] = storage.get_program(pid)
         program = programs[pid]
-        if gone('program', program, rid=pid):
+        if program is None or gone('program', program, rid=pid):
             return GONE
     if program is None:
         # Legacy emissions can precede the provenance backfill. An orphaned

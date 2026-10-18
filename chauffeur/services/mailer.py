@@ -84,9 +84,11 @@ def from_address_warning(settings: dict = None) -> Optional[str]:
 def send(to: str, subject: str, body: str, settings: dict = None) -> dict:
     """Best effort. Returns {'sent': bool, 'reason': str|None}.
 
-    Never raises: every caller has a fallback that is better than a 500 — the
+    Cancellation propagates; other errors use the fallback. Every caller has a fallback that is better than a 500 — the
     copyable link — and an invite failing to send is not a reason for the
     parent's click to look broken."""
+    from services import deletion
+    deletion.check()
     if not valid_email(to):
         return {'sent': False, 'reason': 'no valid address'}
     if not configured(settings):
@@ -108,8 +110,12 @@ def send(to: str, subject: str, body: str, settings: dict = None) -> dict:
             if cfg['port'] != 465:
                 server.starttls()
             server.login(cfg['user'], cfg['password'])
+            deletion.check()
             server.send_message(msg)
+            deletion.check()
         return {'sent': True, 'reason': None}
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         logger.error(f"Mail send failed to {to}: {e}")
         return {'sent': False, 'reason': str(e)}

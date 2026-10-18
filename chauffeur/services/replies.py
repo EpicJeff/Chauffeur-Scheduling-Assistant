@@ -10,11 +10,13 @@ once, inside the watcher's waking window.
 Boundaries: never import a DM reader, never read gift records.
 """
 import datetime
+from contextvars import ContextVar
+import functools
 import logging
 import time
 from typing import Optional
 
-from services import storage, access
+from services import storage, access, deletion
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +24,18 @@ ANSWERS = ('yes', 'no', 'question', 'info', 'unclear')
 CAP_READS_DEFAULT = 40
 READ_TIMEOUT_S = 20
 REPLY_CHARS = 1500
+_notice_refs = ContextVar('reply_notice_refs', default=())
+
+
+def _thread_work(fn):
+    @functools.wraps(fn)
+    def run(thread, *args, **kwargs):
+        tid = thread.get('id') if isinstance(thread, dict) else thread
+        with deletion.acting_for('thread', tid):
+            result = fn(thread, *args, **kwargs)
+            deletion.check()
+            return result
+    return run
 
 READ_SYSTEM = (
     "You read ONE email reply that a family received from somebody outside "
@@ -72,6 +86,8 @@ def _classify(thread: dict, entry: dict, ask: Optional[dict], settings: dict) ->
     try:
         res = _pool_call('interactive', api_key, READ_SYSTEM, prompt, timeout_s=READ_TIMEOUT_S,
                          background=True, workflow=INTAKE_WORKFLOW)
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         logger.warning(f"[replies] reading failed: {e}")
         return None
@@ -84,6 +100,7 @@ def _classify(thread: dict, entry: dict, ask: Optional[dict], settings: dict) ->
     return {'answer': answer, 'summary': summary, 'ts': time.time(), 'source': 'argyle'}
 
 
+@_thread_work
 def read(thread_id: str, message_id: str) -> Optional[dict]:
     """Read the reply filed as `message_id` on this thread, once. Returns the
     reading, or None when nothing was read (no key, cap, failure, already
@@ -123,9 +140,9 @@ def _now() -> datetime.datetime:
     return datetime.datetime.now()
 
 
-def _post(dm: dict, argyle: dict, body: str, card: dict = None) -> dict:
+def _post(dm: dict, argyle: dict, body: str, card: dict = None, refs: list = None) -> dict:
     from services.agent_tools_v2 import _post_chat_message
-    return _post_chat_message(dm, argyle, body, card=card)
+    return _post_chat_message(dm, argyle, body, card=card, refs=refs or list(_notice_refs.get()))
 
 
 def _in_window(now: datetime.datetime) -> bool:
@@ -157,6 +174,7 @@ def _recipients(thread: dict) -> list:
             and access._active(m) and access.record_visible('thread', thread, m)]
 
 
+@_thread_work
 def _send(thread: dict, entry: dict, reading: Optional[dict]) -> bool:
     from services import situations as _sit
     argyle = storage.ensure_argyle_member()
@@ -167,12 +185,31 @@ def _send(thread: dict, entry: dict, reading: Optional[dict]) -> bool:
             if view is None:
                 continue
             s = _sit.view('thread', thread['id'], m)
-            nxt = ((s or {}).get('next_step') or {}).get('label') or ''
+            next_step = (s or {}).get('next_step') or {}
+            nxt = next_step.get('label') or ''
             body = (access.neutral_signal_line('thread', thread)
                     if view == access.KEEPER else
                     dm_line(thread, entry, reading, nxt))
-            _post(storage.get_or_create_dm(argyle['id'], m['id']), argyle, body)
+            refs = [{'kind': 'thread', 'id': thread['id']}]
+            history = [h for h in thread.get('history') or [] if h.get('kind') != 'drafted']
+            if view != access.KEEPER and nxt:
+                # Live mission options are forwarded as verb:mission:id:...
+                # and may lead even after the received entry was appended.
+                bits = (next_step.get('id') or '').split(':')
+                mid = bits[2] if len(bits) >= 3 and bits[1] == 'mission' else None
+                if not mid and history and history[-1].get('kind') == 'mission':
+                    mid = history[-1].get('mission_id')
+                if mid:
+                    refs.append({'kind': 'mission', 'id': mid})
+            deletion.check()
+            token = _notice_refs.set(tuple(refs))
+            try:
+                _post(storage.get_or_create_dm(argyle['id'], m['id']), argyle, body)
+            finally:
+                _notice_refs.reset(token)
             sent = True
+        except deletion.Cancelled:
+            raise
         except Exception as e:
             logger.warning(f"[replies] DM to {m.get('name')} failed: {e}")
     return sent
@@ -199,15 +236,24 @@ def flush_pending_dms(now: datetime.datetime = None) -> int:
         return 0
     posted = 0
     for thread in storage.get_threads(include_closed=False):
-        recipientless = not any(access.record_view('thread', thread, m) is not None
+        if access.gone('thread', thread):
+            continue
+        posted += _flush_thread(thread, now)
+    return posted
+
+
+@_thread_work
+def _flush_thread(thread, now):
+    posted = 0
+    recipientless = not any(access.record_view('thread', thread, m) is not None
                                 for m in _recipients(thread))
-        for h in list(thread.get('history') or []):
-            if h.get('kind') == 'received' and h.get('dm_pending'):
-                from services.watchers import NOTIFIED_RETENTION_DAYS
-                if recipientless and h.get('ts') and h['ts'] < now.timestamp() - NOTIFIED_RETENTION_DAYS * 86400:
-                    storage.update_thread_history_entry(thread['id'], {'message_id': h.get('message_id')}, {'dm_pending': False})
-                    continue
-                if _send(thread, h, h.get('reading')):
-                    storage.update_thread_history_entry(thread['id'], {'message_id': h.get('message_id')}, {'dm_pending': False})
-                    posted += 1
+    for h in list(thread.get('history') or []):
+        if h.get('kind') == 'received' and h.get('dm_pending'):
+            from services.watchers import NOTIFIED_RETENTION_DAYS
+            if recipientless and h.get('ts') and h['ts'] < now.timestamp() - NOTIFIED_RETENTION_DAYS * 86400:
+                storage.update_thread_history_entry(thread['id'], {'message_id': h.get('message_id')}, {'dm_pending': False})
+                continue
+            if _send(thread, h, h.get('reading')):
+                storage.update_thread_history_entry(thread['id'], {'message_id': h.get('message_id')}, {'dm_pending': False})
+                posted += 1
     return posted

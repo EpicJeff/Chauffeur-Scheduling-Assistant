@@ -2012,7 +2012,7 @@ function lessonPlayer() {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({room: this.room, minutes: mins,
-                                              text: s.announce}),
+                                              text: s.announce, program_id: this.w.program_id}),
                     }).catch(() => {});
                 } catch (e) { /* the on-screen countdown still runs */ }
             }

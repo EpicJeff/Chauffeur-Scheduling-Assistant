@@ -870,12 +870,28 @@ def adopt(kind, record_id, actor, project_id=None):
     that has a project keeps it, even a dropped one (reopening is an act)."""
     get, update = _ADOPT_TABLES[kind]
     with storage.db_lock:
+        from services import access, deletion
+        deletion.check()
         row = get(record_id)
         if not row:
             return None
-        if row.get('project_id') and storage.get_project(row['project_id']):
-            return row['project_id']
-        pid = project_id if project_id and storage.get_project(project_id) else _belongs_to(kind, row)
+        home_id = row.get('project_id')
+        home = storage.get_project(home_id) if home_id else None
+        target = storage.get_project(project_id) if project_id else None
+        if (access.gone(kind, row) or
+                (home_id and access.gone('project', home, rid=home_id)) or
+                (project_id and (not target or access.gone('project', target)))):
+            if deletion.has_source():
+                raise deletion.Cancelled(f'{kind} {record_id} or its project was deleted')
+            return None
+        # Creation now binds the home in the initial insert. Adoption still
+        # records its native piece card, including for an already bound row.
+        pid = (home_id if home else
+               project_id if target else _belongs_to(kind, row))
+        if pid and access.gone('project', storage.get_project(pid), rid=pid):
+            if deletion.has_source():
+                raise deletion.Cancelled(f'project {pid} was deleted')
+            return None
         if not pid:
             fields = _wrapper_fields(kind, row, actor)
             from services import project_audience
@@ -905,7 +921,8 @@ def adopt(kind, record_id, actor, project_id=None):
             project['state'] = _state_for(kind, row)
             project['wrapped_from'] = {'kind': kind, 'id': record_id}
             pid = storage.add_project(project)
-        update(record_id, {'project_id': pid})
+        if row.get('project_id') != pid:
+            update(record_id, {'project_id': pid})
         project = storage.get_project(pid)
         pieces = project.get('pieces') or []
         if not any(p.get('kind') == kind and p.get('id') == record_id for p in pieces):

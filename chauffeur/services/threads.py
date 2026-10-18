@@ -47,13 +47,27 @@ outbound email, and it happens in a different function than the one that
 proposed the words.
 """
 import datetime
+import functools
+import os
 import re
 import time
+import uuid
 from typing import Dict, List, Optional
 
-from services import storage
+from services import storage, deletion
 
 STALL_DAYS_DEFAULT = 7
+
+
+def _thread_work(fn):
+    """Keep request work registered until its result has been handled."""
+    @functools.wraps(fn)
+    def run(thread_id, *args, **kwargs):
+        with deletion.acting_for('thread', thread_id):
+            result = fn(thread_id, *args, **kwargs)
+            deletion.check()
+            return result
+    return run
 
 
 def _pool_call(tier, api_key, system, prompt, **kw):
@@ -101,6 +115,7 @@ def _draft_context(thread: dict, intent: str = '') -> str:
     return '\n'.join(lines)
 
 
+@_thread_work
 def draft_message(thread_id: str, intent: str = '', *, viewer: Optional[dict] = None) -> dict:
     """Ask the model for a `{subject, body}` proposal and stop there.
 
@@ -147,6 +162,7 @@ def draft_message(thread_id: str, intent: str = '', *, viewer: Optional[dict] = 
             'intent': (intent or '').strip()}
 
 
+@_thread_work
 def send_drafted(thread_id: str, subject: str, body: str, to: str,
                   who: str = None, intent: str = '') -> dict:
     """Send exactly what is passed in — the client's editable box at the
@@ -177,7 +193,9 @@ def send_drafted(thread_id: str, subject: str, body: str, to: str,
     if not to or not body:
         return {'status': 'error', 'reason': 'nothing to send'}
 
+    deletion.check()
     result = mailer.send(to, subject, body, settings=settings)
+    deletion.check()
     if not result.get('sent'):
         return {'status': 'error', 'reason': result.get('reason')}
 
@@ -207,6 +225,7 @@ def _web_research(question: str) -> dict:
     return web.research(question)
 
 
+@_thread_work
 def research(thread_id: str, question: str) -> dict:
     """Ask a practical question on this thread's behalf and — only when
     `services.web.research` actually answered it — log the answer with its
@@ -319,7 +338,10 @@ def create(title: str, owner_member_id: str = None, goal: str = '',
         'next_action_at': _clean_next_action_at(next_action_at),
         'created_by': created_by,
         'idem': idem,
+        'project_id': project_id,
     })
+    if not thread_id:
+        return None
     storage.append_thread_history(thread_id, {
         'kind': 'opened',
         'text': f'Opened: {title}',
@@ -581,6 +603,8 @@ def read_photo(thread_id: str, media_id: str, data: bytes, mime: str) -> Optiona
     try:
         res = _pool_call('vision', api_key, PHOTO_SYSTEM, prompt, timeout_s=60,
                          images=[{'mime': mime or 'image/jpeg', 'b64': base64.b64encode(data).decode()}])
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         print(f"[threads] photo read failed: {e}")
         return None
@@ -588,18 +612,29 @@ def read_photo(thread_id: str, media_id: str, data: bytes, mime: str) -> Optiona
     return ' '.join(str(text).split())[:2000] if text else None
 
 
+@_thread_work
 def add_photo(thread_id: str, data: bytes, mime: str, who: Optional[str], caption: str = '') -> dict:
-    """Store the image beside moments, log it on the thread, read it once,
+    """Record the exact file before writing it, read it once,
     and answer a mission waiting on THIS thread with the transcription."""
     thread = storage.get_thread(thread_id)
     if not thread:
         return {'status': 'not_found'}
-    saved = storage.save_photo_bytes(data, mime)
-    if not saved:
+    ext = storage._PHOTO_EXT_BY_MIME.get((mime or '').lower().split(';')[0])
+    if not ext or not data:
         return {'status': 'error', 'reason': 'unsupported image'}
+    media_id = uuid.uuid4().hex + ext
+    folder = os.path.join(os.path.dirname(storage.DB_PATH), 'threads', thread_id)
+    path = os.path.join(folder, media_id)
+    saved = {'id': media_id, 'url': f'/api/media/{media_id}?thread_id={thread_id}'}
     entry = {'kind': 'photo', 'url': saved['url'], 'media_id': saved['id'], 'text': NOT_READ,
-             'who': who, 'caption': (caption or '').strip()[:200]}
-    storage.append_thread_history(thread_id, entry)
+             'path': path, 'who': who, 'caption': (caption or '').strip()[:200]}
+    with storage.db_lock:
+        if not storage.append_thread_history(thread_id, entry):
+            return {'status': 'not_found'}
+        deletion.check()
+        os.makedirs(folder, exist_ok=True)
+        with open(path, 'wb') as photo:
+            photo.write(data)
     text = read_photo(thread_id, saved['id'], data, mime)
     if text:
         storage.update_thread_history_entry(thread_id, {'media_id': saved['id']}, {'text': text})

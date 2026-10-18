@@ -832,9 +832,13 @@ def _resolve_actor(sender_driver_id: str = None, member_name: str = None):
                   "message": "I need to know who this is from — tell me your name (for example: \"this is Mom\")."}
 
 
+_message_refs = ContextVar('argyle_message_refs', default=())
+
+
 def _post_chat_message(channel: dict, sender: dict, body: str, card: dict = None,
                        context: dict = None, phone_request_id: str = None,
-                       phone_speech_safe: bool = None, argyle_pending_question: bool = None) -> dict:
+                       phone_speech_safe: bool = None, argyle_pending_question: bool = None,
+                       refs: list = None) -> dict:
     """Store a chat message and fire the same SSE + push fan-out as the
     /api/channels POST endpoint. main is lazily imported (it is the running
     app module); in tests it is absent and fan-out is skipped silently.
@@ -842,7 +846,7 @@ def _post_chat_message(channel: dict, sender: dict, body: str, card: dict = None
     from models.schemas import ChatMessage
     from services import storage
     message = ChatMessage(channel_id=channel['id'], sender_member_id=sender['id'],
-                          body=body, card=card, context=context).model_dump()
+                          body=body, card=card, context=context, refs=list(_message_refs.get()) if refs is None else refs).model_dump()
     # Internal fields are separate from client-authored message context.
     if phone_request_id is not None:
         message['phone_request_id'] = phone_request_id
@@ -850,15 +854,18 @@ def _post_chat_message(channel: dict, sender: dict, body: str, card: dict = None
         message['phone_speech_safe'] = phone_speech_safe
     if argyle_pending_question is not None:
         message['argyle_pending_question'] = argyle_pending_question
-    storage.add_chat_message(message)
+    if not storage.add_chat_message(message):
+        return None
     storage.set_last_read(channel['id'], sender['id'], message['ts'])
     try:
         import main as _main
         recipients = channel.get('member_ids') if channel.get('kind') in ('dm', 'group') else None
         _main._push_message_event(channel['id'], recipients)
         import threading
-        threading.Thread(target=_main._fanout_message_notifications,
-                         args=(channel, message), daemon=True).start()
+        from contextvars import copy_context
+        ctx = copy_context()
+        threading.Thread(target=ctx.run,
+                         args=(_main._fanout_message_notifications, channel, message), daemon=True).start()
     except Exception as e:
         print(f"Agent message fan-out skipped: {e}")
     return message

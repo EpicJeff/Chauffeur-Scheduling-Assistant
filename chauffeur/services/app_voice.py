@@ -195,10 +195,7 @@ def run(turn, worker):
     reply = result.get('message') or 'I could not finish that request. Try again or use text.'
     eligible = turn.audible(result)
     if not turn.credential:
-        from tinydb import Query
-        with storage.db_lock:
-            storage.chat_messages_table.update({'phone_speech_safe': eligible},
-                (Query().channel_id == turn.channel['id']) & (Query().phone_request_id == turn.id))
+        storage.update_phone_message_speech(turn.channel['id'], turn.id, eligible)
     speech = reply[:1200] if eligible else DISPLAY_ONLY
     if turn.credential:
         speech = 'Use the PIN control on your screen.'

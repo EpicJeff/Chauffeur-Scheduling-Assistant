@@ -338,6 +338,7 @@ class ChatMessage(BaseModel):
     # (avatar precedent, bigger). Video stays out of v1.
     attachment: Optional[dict] = None
     card: Optional[dict] = None  # interactive card (e.g. action_proposal) rendered in chat
+    refs: List[Dict[str, str]] = Field(default_factory=list)
     # Family-network S12 (§6A): {kind:'drive', event_id, leg_id, label}. The
     # container is the durable thing (the helper↔parent DM persists); a drive
     # lasts forty minutes — so a drive is never a channel, only CONTEXT on a

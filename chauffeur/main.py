@@ -75,13 +75,13 @@ def ensure_vapid_keys():
 ensure_vapid_keys()
 
 from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, Car, FamilyMember, TelemetryEvent, Errand, ErrandRule, StatusTier, StatusProtocol, StatusDay, AssistContact, AssistAssignment, HouseholdTask, ProtectedCommitment
-from services import storage, calendar, maps
+from services import storage, calendar, maps, deletion
 from services import assist as _assist_svc
 from solver import matcher
 from fastapi.templating import Jinja2Templates
 from fastapi import Request
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from fastapi.responses import RedirectResponse
 from fastapi.encoders import jsonable_encoder
 import os
@@ -132,6 +132,18 @@ async def poll_schedule():
 # handful of Google searches — the point is that the snapshot cannot go
 # indefinitely stale, not that it is fresh to the minute.
 TRIPS_SNAPSHOT_MAX_AGE = 3600
+
+
+def _program_delivery_gone(program_id):
+    from services import access
+    return bool(program_id and access.gone('program', storage.get_program(program_id), rid=program_id))
+
+
+def _deliver_lesson_wait(reservation, entry):
+    from services import announce
+    with reservation or nullcontext():
+        deletion.check()
+        return announce.announce(entry.get('room') or '', entry.get('text') or '')
 
 
 def refresh_trips_snapshot():
@@ -201,24 +213,30 @@ async def push_notification_loop():
             try:
                 from services import programs as _prog_push
                 due = await asyncio.to_thread(_prog_push.due_practice_pushes)
-                sent = []
                 for w in due:
-                    member = storage.get_member(w.get('member_id')) or {}
-                    drv = member.get('driver_id')
-                    body = ' · '.join(w.get('steps') or []) or w.get('milestone') or ''
-                    # Which session it is, where a phase deals more than one.
-                    # The steps below already differ; without the label the
-                    # push looks like the plan changed its mind.
-                    named = w['title'] + (f" · {w['session_label']}"
-                                          if w.get('session_label') else '')
-                    if drv:
-                        send_push(drv, subs,
-                                  f"{named} — {w['time_start']}",
-                                  body or 'Practice time.', f"practice_{w['push_key']}",
-                                  actions=[])
-                    sent.append(w['push_key'])
-                if sent:
-                    await asyncio.to_thread(_prog_push.mark_practice_pushed, sent)
+                    pid = getattr(w, 'source_program_id', None) or w.get('program_id')
+                    if _program_delivery_gone(pid):
+                        continue
+                    try:
+                        with deletion.acting_for('program', pid) if pid else nullcontext():
+                            member = storage.get_member(w.get('member_id')) or {}
+                            drv = member.get('driver_id')
+                            body = ' · '.join(w.get('steps') or []) or w.get('milestone') or ''
+                            # Which session it is, where a phase deals more than one.
+                            # The steps below already differ; without the label the
+                            # push looks like the plan changed its mind.
+                            named = w['title'] + (f" · {w['session_label']}"
+                                                  if w.get('session_label') else '')
+                            if drv:
+                                deletion.check()
+                                send_push(drv, subs,
+                                          f"{named} — {w['time_start']}",
+                                          body or 'Practice time.', f"practice_{w['push_key']}",
+                                          actions=[])
+                            deletion.check()
+                            _prog_push.mark_practice_pushed([w['push_key']])
+                    except deletion.Cancelled:
+                        continue
             except Exception as pe:
                 print(f"Practice window push error: {pe}")
 
@@ -231,12 +249,18 @@ async def push_notification_loop():
             # a restart because the queue is persisted rather than held in
             # this process.
             try:
-                from services import (announce as _wait_announce,
-                                      program_lessons as _wait_lessons)
+                from services import program_lessons as _wait_lessons
                 for _w in await asyncio.to_thread(_wait_lessons.due_wait_announces):
-                    await asyncio.to_thread(_wait_announce.announce,
-                                            _w.get('room') or '',
-                                            _w.get('text') or '')
+                    if _program_delivery_gone(_w.get('program_id')):
+                        continue
+                    reservation = deletion.acting_for('program', _w['program_id']) if _w.get('program_id') else None
+                    try:
+                        await asyncio.to_thread(_deliver_lesson_wait, reservation, _w)
+                    except deletion.Cancelled:
+                        continue
+                    finally:
+                        if reservation:
+                            reservation.close()
             except Exception as we:
                 print(f"Lesson wait announce error: {we}")
 
@@ -1201,8 +1225,36 @@ async def _feature_gate(conn: HTTPConnection):
         raise HTTPException(status_code=refused[0], detail=refused[1])
 
 
+async def deletion_worker_requests(conn: HTTPConnection):
+    """After auth, reserve the source before FastAPI schedules its handler."""
+    source = None
+    if conn.scope.get('method') in ('POST', 'PUT'):
+        match = re.fullmatch(r'/api/(threads|programs)/([^/]+)/(draft|send|research|photo|approve|resume|session|lesson)',
+                             conn.url.path)
+        if match:
+            source = (match[1][:-1], match[2])
+        elif re.fullmatch(r'/api/action-proposals/[^/]+/act', conn.url.path):
+            prop = storage.get_action_proposal(conn.url.path.split('/')[-2]) or {}
+            ref = prop.get('source') or {}
+            kind = prop.get('origin_kind') or ref.get('kind')
+            rid = prop.get('origin_id') or ref.get('id')
+            if kind in deletion.KINDS and rid:
+                source = (kind, rid)
+    with deletion.acting_for(*source) if source else nullcontext():
+        yield
+
+
 app = FastAPI(title="Family Driver Graph Scheduler", lifespan=lifespan,
-              dependencies=[Depends(_auth_guard), Depends(_feature_gate)])
+              dependencies=[Depends(_auth_guard), Depends(_feature_gate),
+                            Depends(deletion_worker_requests)])
+
+
+@app.exception_handler(deletion.Cancelled)
+async def deleted_work_response(request: Request, exc):
+    if re.fullmatch(r'/api/action-proposals/[^/]+/act', request.url.path):
+        return JSONResponse({'status': 'error', 'message': 'That action is no longer available.'})
+    return JSONResponse({'detail': 'Not found'}, status_code=404)
+
 
 # Gzip, selectively. Single-shot texty responses compress (~97% off state
 # JSON, measured); anything streaming — the SSE and ndjson endpoints — passes
@@ -7444,10 +7496,22 @@ async def thread_photo(thread_id: str, file: UploadFile = File(...), caption: st
         raise HTTPException(status_code=400, detail="The image is empty or over 15 MB")
     from services import threads as _threads
     # The vision read takes seconds: off the loop, so the panels keep being served.
-    res = await asyncio.to_thread(_threads.add_photo, thread_id, data, mime, (actor or {}).get('id'), caption)
+    with deletion.acting_for('thread', thread_id):
+        res = await asyncio.to_thread(_threads.add_photo, thread_id, data, mime, (actor or {}).get('id'), caption)
     if res.get('status') != 'ok':
         raise HTTPException(status_code=400, detail=res.get('reason') or 'could not store the photo')
     return res
+
+
+def _thread_photo_path(thread_id: str, media_id: str, request: Request):
+    _piece_or_404('thread', thread_id, request)
+    row = storage.get_thread(thread_id)
+    root = os.path.realpath(os.path.join(os.path.dirname(storage.DB_PATH), 'threads', thread_id))
+    path = os.path.realpath(os.path.join(root, media_id))
+    if (os.path.dirname(path) != root or not os.path.isfile(path)
+            or not any(h.get('media_id') == media_id for h in (row or {}).get('history', []))):
+        raise HTTPException(status_code=404, detail='Photo not found')
+    return path
 
 
 @app.post("/api/threads/{thread_id}/send")
@@ -8261,7 +8325,10 @@ def lesson_wait_api(body: dict = Body(default={})):
     if _pl._screened(text, 'generated'):
         raise HTTPException(status_code=400,
                             detail="That is not something this app says out loud.")
-    entry = _pl.arm_wait_announce(room, text, minutes)
+    program_id = str((body or {}).get('program_id') or '')
+    if _program_delivery_gone(program_id):
+        raise HTTPException(status_code=404, detail='Not found')
+    entry = _pl.arm_wait_announce(room, text, minutes, program_id=program_id)
     return {'status': 'armed', 'fire_ts': entry['fire_ts']}
 
 
@@ -10490,6 +10557,12 @@ def _moment_push_phrase(att: dict) -> str:
     return part(photos or clips, 'photo' if photos else 'clip',
                 'photos' if photos else 'clips')
 
+def _notification_message_current(message):
+    if message.get('id') and message.get('channel_id'):
+        message = storage.get_chat_message(message['id'])
+    return storage.message_visible(message)
+
+
 def _fanout_message_notifications(channel, message):
     """Web push + HA notify to every recipient except the sender. A member
     with both configured gets both (accepted v1 tradeoff, no dedupe)."""
@@ -10555,10 +10628,14 @@ def _fanout_message_notifications(channel, message):
             if _fd.in_member_quiet_hours(m):
                 continue
             lanes = m.get('notify_lanes') or 'all'
+            if not _notification_message_current(message):
+                return
             if lanes in ('all', 'push'):
                 send_push_to_member(m['id'], title, body, path)
             svc = m.get('notify_service') if lanes in ('all', 'ha') else None
             if svc:
+                if not _notification_message_current(message):
+                    return
                 svc_name = svc.split('.', 1)[1] if '.' in svc else svc
                 payload = {"title": title, "message": body}
                 if base:
@@ -17562,7 +17639,9 @@ def serve_media_file(media_id: str, request: Request):
     """Range-aware media serving — iOS Safari refuses to play video without
     byte-range support, and Starlette's FileResponse can't be relied on for
     it across versions, so the 206 path is explicit."""
-    path = storage.media_file_path(media_id)
+    thread_id = request.query_params.get('thread_id')
+    path = (_thread_photo_path(thread_id, media_id, request) if thread_id
+            else storage.media_file_path(media_id))
     if not path:
         raise HTTPException(status_code=404, detail="Media not found")
     size = os.path.getsize(path)

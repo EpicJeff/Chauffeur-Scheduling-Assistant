@@ -9,6 +9,9 @@ Boundaries (same as the Mind's, enforced by tests on this file's source):
 never import a DM accessor, never read gift records.
 """
 from services import access
+import contextvars
+import functools
+from contextlib import ExitStack
 import datetime
 import json
 import logging
@@ -16,7 +19,7 @@ import threading
 import time
 from typing import List, Optional
 
-from services import storage
+from services import storage, deletion
 
 logger = logging.getLogger(__name__)
 
@@ -1125,6 +1128,34 @@ def _write_fallback(kind, sid, row):
                         'note_source': 'fallback'})
 
 
+def _worker_subject(kind, sid):
+    """A finding's work follows its native subject, including program holds."""
+    if kind != 'finding':
+        return None
+    finding = storage.get_finding(sid) or {}
+    skind, source_id = finding.get('subject_type'), finding.get('subject_id')
+    if skind == 'commitment' and source_id:
+        commitment = storage.get_protected_commitment(str(source_id).split(':', 1)[0]) or {}
+        source = commitment.get('source') or {}
+        skind, source_id = source.get('kind'), source.get('id')
+    return (skind, source_id) if skind in deletion.KINDS and source_id else None
+
+
+def _source_work(fn):
+    @functools.wraps(fn)
+    def run(kind, sid, *args, **kwargs):
+        with ExitStack() as work:
+            work.enter_context(deletion.acting_for(kind, sid))
+            subject = _worker_subject(kind, sid)
+            if subject:
+                work.enter_context(deletion.acting_for(*subject))
+            result = fn(kind, sid, *args, **kwargs)
+            deletion.check()
+            return result
+    return run
+
+
+@_source_work
 def refresh(kind: str, sid: str) -> dict:
     """One call, synchronous. Captures rev first; a result for an older rev is
     thrown away. Writing the note never bumps rev."""
@@ -1145,6 +1176,8 @@ def refresh(kind: str, sid: str) -> dict:
     try:
         res = _pool_call('interactive', api_key, NOTE_SYSTEM, _facts(kind, row),
                          timeout_s=NOTE_TIMEOUT_S, background=True, workflow='situations.note')
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         logger.warning(f"[situations] note call failed for {kind}/{sid}: {e}")
         res = None
@@ -1178,35 +1211,72 @@ def request_refresh(kind: str, sid: str) -> None:
         # Tests: no timer thread, no race with flush_refreshes.
         _run_pending(key)
         return
+    subject = _worker_subject(kind, sid)
     with _pending_lock:
         old = _pending.pop(key, None)
         if old:
             old.cancel()
-        t = threading.Timer(REFRESH_DELAY_S, _run_pending, args=(key,))
+            _release_refresh(old._deletion_reservation)
+        reservation = deletion.acting_for(kind, sid)
+        reservation._refresh_sources = []
+        if subject:
+            reservation._refresh_sources.append(deletion.acting_for(*subject))
+        context = contextvars.copy_context()
+        t = threading.Timer(REFRESH_DELAY_S, context.run, args=(_run_pending, key, reservation))
+        t._deletion_reservation = reservation
         t.daemon = True
         _pending[key] = t
-        t.start()
+        try:
+            t.start()
+        except BaseException:
+            _pending.pop(key, None)
+            _release_refresh(reservation)
+            raise
 
 
-def _run_pending(key):
+def _release_refresh(reservation):
+    reservation.release()
+    for source in getattr(reservation, '_refresh_sources', []):
+        source.release()
+
+
+def _run_pending(key, reservation=None):
     with _pending_lock:
-        _pending.pop(key, None)
+        if reservation is not None:
+            if reservation.closed or getattr(reservation, '_refresh_started', False):
+                return
+            reservation._refresh_started = True
+        pending = _pending.get(key)
+        if pending is not None and (reservation is None or pending._deletion_reservation is reservation):
+            _pending.pop(key, None)
     try:
-        refresh(*key)
+        with ExitStack() as work:
+            reservation = reservation or deletion.acting_for(*key)
+            # Register all sources before scheduling, then carry them together
+            # in the timer's copied context for its whole result lifetime.
+            for source in [reservation] + getattr(reservation, '_refresh_sources', []):
+                work.enter_context(source)
+            refresh(*key)
+    except deletion.Cancelled:
+        # A timer has no request to return a 404 to; discard its result.
+        return
     except Exception as e:
         logger.warning(f"[situations] refresh failed for {key}: {e}")
+    finally:
+        if reservation:
+            _release_refresh(reservation)
 
 
 def flush_refreshes() -> int:
     """Tests only: run everything pending now, on this thread."""
     with _pending_lock:
-        keys = list(_pending)
-        for t in _pending.values():
+        pending = list(_pending.items())
+        for _, t in pending:
             t.cancel()
         _pending.clear()
-    for key in keys:
-        _run_pending(key)
-    return len(keys)
+    for key, t in pending:
+        _run_pending(key, t._deletion_reservation)
+    return len(pending)
 
 
 def touched(kind: str, sid: str) -> None:

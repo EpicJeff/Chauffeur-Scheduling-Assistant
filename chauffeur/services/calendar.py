@@ -3,6 +3,7 @@ import os
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from models.schemas import Event
+from services import deletion
 
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 CREDENTIALS_FILE = os.path.join(os.path.dirname(__file__), '..', 'credentials.json')
@@ -36,6 +37,8 @@ def get_calendar_service():
                         if raw_sa_json:
                             sa_info = json.loads(raw_sa_json)
                             creds = Credentials.from_service_account_info(sa_info, scopes=SCOPES)
+                    except deletion.Cancelled:
+                        raise
                     except Exception as e:
                         print(f"Failed to load credentials from HA options.json: {e}")
 
@@ -123,6 +126,8 @@ def _fetch_single_calendar(cal_id, time_min, time_max):
                 break
         _clear_unreadable_calendar(cal_id)
         return cal_id, events
+    except deletion.Cancelled:
+        raise
     except Exception as ex:
         print(f"Error fetching from calendar {cal_id}: {ex}")
         if _is_unreadable(ex):
@@ -281,10 +286,14 @@ def get_calendar_metadata(calendar_ids: list[str]) -> dict:
             try:
                 cal = local_service.calendars().get(calendarId=cal_id).execute()
                 summary = cal.get("summary")
+            except deletion.Cancelled:
+                raise
             except Exception as ex:
                 try:
                     cal = local_service.calendarList().get(calendarId=cal_id).execute()
                     summary = cal.get("summary")
+                except deletion.Cancelled:
+                    raise
                 except Exception as ex2:
                     summary = None
                     
@@ -357,6 +366,8 @@ def get_event_dates(event_id: str):
             end_dt = datetime.datetime.fromisoformat(end_str)
             
         return start_dt, end_dt
+    except deletion.Cancelled:
+        raise
     except Exception as ex:
         print(f"Error fetching event dates for {event_id}: {ex}")
         return None, None
@@ -391,6 +402,8 @@ def update_event_details(source_event_ids: list[str], details: dict, strict: boo
             base_c_id, base_e_id = next(iter(current_cals.items()))
             try:
                 base_event = service.events().get(calendarId=base_c_id, eventId=base_e_id).execute()
+            except deletion.Cancelled:
+                raise
             except Exception as ex:
                 print(f"Error fetching base event for cloning: {ex}")
                 
@@ -400,6 +413,8 @@ def update_event_details(source_event_ids: list[str], details: dict, strict: boo
             try:
                 service.events().delete(calendarId=c_id, eventId=e_id).execute()
                 print(f"Removed guest event from {c_id}")
+            except deletion.Cancelled:
+                raise
             except Exception as ex:
                 print(f"Error removing event from {c_id}: {ex}")
                 
@@ -419,8 +434,12 @@ def update_event_details(source_event_ids: list[str], details: dict, strict: boo
             
             for c_id in cals_to_add:
                 try:
+                    deletion.check()
                     service.events().insert(calendarId=c_id, body=new_event).execute()
+                    deletion.check()
                     print(f"Added guest event to {c_id}")
+                except deletion.Cancelled:
+                    raise
                 except Exception as ex:
                     print(f"Error adding event to {c_id}: {ex}")
                     
@@ -442,6 +461,8 @@ def update_event_details(source_event_ids: list[str], details: dict, strict: boo
                 event['end'] = {'dateTime': details['end']}
                 
             service.events().update(calendarId=cal_id, eventId=original_id, body=event).execute()
+        except deletion.Cancelled:
+            raise
         except Exception as ex:
             print(f"Error updating details for {cal_id}: {ex}")
             failures.append(str(ex))
@@ -459,6 +480,8 @@ def write_event_color(calendar_id: str, event_id: str, color_id: str):
         event = service.events().get(calendarId=calendar_id, eventId=original_id).execute()
         event['colorId'] = color_id
         service.events().update(calendarId=calendar_id, eventId=original_id, body=event).execute()
+    except deletion.Cancelled:
+        raise
     except Exception as ex:
         print(f"Error updating color for {event_id}: {ex}")
 
@@ -495,8 +518,12 @@ def create_event(calendar_id: str, title: str, start: str, end: str, location: s
     from services import tz as _tz
     _tz.stamp(event_body, calendar_id)
     try:
+        deletion.check()
         created_event = service.events().insert(calendarId=calendar_id, body=event_body).execute()
+        deletion.check()
         return created_event.get('id')
+    except deletion.Cancelled:
+        raise
     except Exception as ex:
         print(f"Error creating event in {calendar_id}: {ex}")
         return None
@@ -515,6 +542,8 @@ def get_calendar_timezone(calendar_id: str):
     try:
         service = get_calendar_service()
         tz = service.calendars().get(calendarId=calendar_id).execute().get('timeZone')
+    except deletion.Cancelled:
+        raise
     except Exception as ex:
         print(f"Error fetching timezone for {calendar_id}: {ex}")
         return None
@@ -529,8 +558,12 @@ def insert_event(calendar_id: str, body: dict):
     from services import tz as _tz
     _tz.stamp(body, calendar_id)
     try:
+        deletion.check()
         created = service.events().insert(calendarId=calendar_id, body=body).execute()
+        deletion.check()
         return created.get('id')
+    except deletion.Cancelled:
+        raise
     except Exception as ex:
         print(f"Error inserting event in {calendar_id}: {ex}")
         return None
@@ -543,6 +576,8 @@ def patch_event(calendar_id: str, event_id: str, body: dict) -> bool:
     try:
         service.events().patch(calendarId=calendar_id, eventId=event_id, body=body).execute()
         return True
+    except deletion.Cancelled:
+        raise
     except Exception as ex:
         print(f"Error patching event {event_id} in {calendar_id}: {ex}")
         return False
@@ -567,6 +602,8 @@ def list_tagged_events(calendar_id: str, prop_key: str, prop_value: str):
             if not page_token:
                 break
         return events
+    except deletion.Cancelled:
+        raise
     except Exception as ex:
         print(f"Error listing tagged events in {calendar_id}: {ex}")
         return None
@@ -578,6 +615,8 @@ def remove_event(calendar_id: str, event_id: str) -> bool:
     try:
         service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
         return True
+    except deletion.Cancelled:
+        raise
     except Exception as ex:
         status = getattr(getattr(ex, 'resp', None), 'status', None)
         if status in (404, 410):
@@ -594,6 +633,8 @@ def delete_event(calendar_id: str, event_id: str):
     try:
         service.events().delete(calendarId=calendar_id, eventId=original_id).execute()
         return True
+    except deletion.Cancelled:
+        raise
     except Exception as ex:
         if getattr(getattr(ex, 'resp', None), 'status', None) in (404, 410):
             return True

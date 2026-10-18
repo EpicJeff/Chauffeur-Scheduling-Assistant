@@ -399,6 +399,11 @@ READERS = [
         'services.programs.orphaned_emissions', 'services.access']],
 ]
 
+# Source validation and protected media resolution are internal boundaries.
+READERS += [((F, name), 'INTERNAL', (), 'internal') for name in (
+    'main._program_delivery_gone', 'main._thread_photo_path',
+    'main.deletion_worker_requests', 'services.program_lessons.due_wait_announces')]
+
 # Whole route families that read no piece's words.
 NONE_PREFIXES = ['/api/trip', '/api/music', '/api/house/facades', '/api/house/neighborhood',
                  '/api/house/session', '/api/lessons/', '/api/coverage', '/api/negotiation',

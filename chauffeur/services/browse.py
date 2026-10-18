@@ -16,7 +16,7 @@ import urllib.request
 from typing import Optional
 from urllib.parse import urlparse
 
-from services import storage
+from services import storage, deletion
 
 logger = logging.getLogger(__name__)
 
@@ -1433,7 +1433,9 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
     consent = dict(consent or {})
     consent.setdefault('captcha', bool(settings.get('missions_captcha_attempts')))
     out_dir = out_dir or os.path.join(os.path.dirname(storage.DB_PATH), 'browse', 'adhoc')
-    os.makedirs(out_dir, exist_ok=True)
+    with storage.db_lock:
+        deletion.check()
+        os.makedirs(out_dir, exist_ok=True)
     t0 = time.time()
     report = {'outcome': 'error', 'text': '', 'learned': {}, 'stopped_at': start_url or '', 'wanted_fields': [],
               'turns': 0, 'actions': 0, 'tokens_in': 0, 'tokens_out': 0, 'seconds': 0.0, 'screenshots': [], 'filled': {},
@@ -1468,6 +1470,8 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
         return finish('refused', f'not enough room for a browser right now ({mem} MB free)')
     try:
         pw, browser = _launch()
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         return finish('refused', f'no browser on this box ({str(e)[:100]})')
     allowed = {_domain(f'http://{site}' if '://' not in site else site)}
@@ -1496,6 +1500,8 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
             loc = r.headers.get('location', '')
             if 300 <= r.status < 400 and loc.startswith('http') and _domain(r.url) in allowed:
                 allowed.add(_domain(loc))
+        except deletion.Cancelled:
+            raise
         except Exception:
             pass
 
@@ -1560,6 +1566,8 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                        'pressed_at': time.time(), 'outcome': None, 'text': ''}
                 try:
                     ok = bool(on_attempt(rec)) if on_attempt else True
+                except deletion.Cancelled:
+                    raise
                 except Exception as e:
                     logger.warning(f"[browse] on_attempt failed: {e}")
                     ok = False
@@ -1606,10 +1614,14 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
             popups.clear()
             try:
                 new.wait_for_load_state('domcontentloaded', timeout=10000)
+            except deletion.Cancelled:
+                raise
             except Exception:
                 pass
             try:
                 new.wait_for_timeout(500)
+            except deletion.Cancelled:
+                raise
             except Exception:
                 pass
             page = new
@@ -1630,8 +1642,10 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
         page.wait_for_timeout(800)
         shot = page.screenshot(type='png')
         report['screenshots'].append(os.path.join(out_dir, 'turn_00.png'))
-        with open(report['screenshots'][-1], 'wb') as f:
-            f.write(shot)
+        with storage.db_lock:
+            deletion.check()
+            with open(report['screenshots'][-1], 'wb') as f:
+                f.write(shot)
         given = ', '.join(f"{k}={v}" for k, v in released.items()) or 'nothing'
         holds = ', '.join(f for f in CONTACT_FIELDS if f in card)
         prompt = (f"GOAL: {goal}\nSITE: {site}\nValues you may enter: {given}.\n"
@@ -1724,6 +1738,8 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                         try:
                             ctl['handle'].click()
                             page.wait_for_timeout(900)
+                        except deletion.Cancelled:
+                            raise
                         except Exception as e:
                             logger.warning(f"[browse] link click failed: {e}")
                         report['actions'] += 1
@@ -1737,8 +1753,10 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                             return stop
                         shot = page.screenshot(type='png')
                         p = os.path.join(out_dir, f'turn_{turn:02d}.png')
-                        with open(p, 'wb') as f:
-                            f.write(shot)
+                        with storage.db_lock:
+                            deletion.check()
+                            with open(p, 'wb') as f:
+                                f.write(shot)
                         report['screenshots'].append(p)
                         contents.append({'role': 'user', 'parts': [{'text': f"'{want}' is {door}: pressed it, now at {page.url}. SUBMIT: is only for a control that books, submits, confirms, reserves, sends or applies. Carry on with the goal."}, {'image': shot}]})
                         continue
@@ -1754,6 +1772,8 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                     try:
                         ctl['handle'].click()
                         page.wait_for_timeout(900)
+                    except deletion.Cancelled:
+                        raise
                     except Exception as e:
                         logger.warning(f"[browse] approved SUBMIT: click failed: {e}")
                     report['actions'] += 1
@@ -1764,8 +1784,10 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                     line['url'] = page.url
                     shot = page.screenshot(type='png')
                     p = os.path.join(out_dir, f'turn_{turn:02d}.png')
-                    with open(p, 'wb') as f:
-                        f.write(shot)
+                    with storage.db_lock:
+                        deletion.check()
+                        with open(p, 'wb') as f:
+                            f.write(shot)
                     report['screenshots'].append(p)
                     stop = page_checks(_scan(page))
                     if stop:
@@ -1801,6 +1823,8 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                             clip_shot = page.screenshot(type='png', clip={'x': x1, 'y': y1, 'width': max(1, x2 - x1), 'height': max(1, y2 - y1)})
                             if _in_scroll_box(page, (x1 + x2) / 2, (y1 + y2) / 2):
                                 box_note = {'scroll_box': True, 'hint': 'this region is inside a scrolling box: scroll with the pointer over it to see more'}
+                        except deletion.Cancelled:
+                            raise
                         except Exception as e:
                             logger.warning(f"[browse] zoom clip failed: {e}")
                     label = name + (': ' + reason[:60] if name == 'refuse' else (' (zoom)' if clip_shot is not None else ''))
@@ -1908,6 +1932,8 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                         pressed = True
                         _activate(page, 'click_at', args)
                         line['action'] = f"press '{report['attempt']['button']}' (approved, ask {str(report['attempt']['ask_id'])[:8]})"
+                    except deletion.Cancelled:
+                        raise
                     except Exception as e:
                         res = {'error': str(e)[:160]}
                 elif enter and is_type:
@@ -1917,6 +1943,8 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                         _act(page, name, {**args, 'press_enter': False})
                     except _Refused as e:
                         typed_ok, res = False, {'error': str(e)}
+                    except deletion.Cancelled:
+                        raise
                     except Exception:
                         pass
                     if typed_ok:
@@ -1937,6 +1965,8 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                             else:
                                 page.keyboard.press('Enter')
                                 page.wait_for_timeout(900)
+                        except deletion.Cancelled:
+                            raise
                         except Exception as e:
                             res = {'error': str(e)[:160]}
                 else:
@@ -1969,6 +1999,8 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                             line['action'] = f"press '{report['attempt']['button']}' (approved, ask {str(report['attempt']['ask_id'])[:8]})"
                         else:
                             _act(page, name, args)
+                    except deletion.Cancelled:
+                        raise
                     except Exception as e:
                         res = {'error': str(e)[:160]}
                 report['actions'] += 1
@@ -2005,8 +2037,10 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                     before_conf = _is_confirmation(scan)
                 shot = page.screenshot(type='png')
                 p = os.path.join(out_dir, f'turn_{turn:02d}_{i_call}.png')
-                with open(p, 'wb') as f:
-                    f.write(shot)
+                with storage.db_lock:
+                    deletion.check()
+                    with open(p, 'wb') as f:
+                        f.write(shot)
                 report['screenshots'].append(p)
                 results.append((name, args, {'url': page.url, 'page': _inventory(page), **res}, shot))
             if calls and all((c.get('name') or '') in ('look', 'refuse') for c in calls):
@@ -2017,6 +2051,8 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
                 idle_turns = 0
             contents.append({'role': 'user', 'function_responses': [(n, r, sh) for n, a, r, sh in results]})
         return finish('capped', f"stopped after {caps['turns']} turns")
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         logger.warning(f"[browse] run failed: {e}")
         return finish('error', str(e)[:200])
@@ -2024,5 +2060,7 @@ def run(goal: str, site: str, released: dict, consent: dict, caps: dict = None, 
         try:
             browser.close()
             pw.stop()
+        except deletion.Cancelled:
+            raise
         except Exception:
             pass

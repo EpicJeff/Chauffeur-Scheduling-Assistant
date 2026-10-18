@@ -6,7 +6,7 @@ import time
 from copy import deepcopy
 from contextlib import nullcontext
 
-from services import storage, subjects, missions
+from services import storage, subjects, missions, deletion
 
 _clock = time.monotonic
 # A tick may run while a foreground approval is executing. Only orphaned
@@ -372,6 +372,7 @@ def _complete_approval(mission, plan):
     _settle(mid, 'plan', 'Looks good')
 
 
+@missions._mission_work
 def approve_plan(mission_id, rev, actor):
     from services import missions
     with storage.db_lock:
@@ -564,6 +565,7 @@ def can_resume_stage(stage):
                    for r in stage.get('rows', [])))
 
 
+@missions._mission_work
 def resume_stage(mission_id, stage_id, snap, actor):
     from services import missions
     with storage.db_lock:
@@ -1040,6 +1042,7 @@ def _bind_created(mid, created):
         return bound_kind, row['id']
 
 
+@missions._mission_work
 def run_stage(mission_id, stage_id, snap, actor):
     from services import missions, chat_actions, budget_guard, projects
     key = (mission_id, stage_id)
@@ -1103,6 +1106,8 @@ def run_stage(mission_id, stage_id, snap, actor):
                         result = chat_actions.run_row(row['proposal_id'], actor, row.get('idem'))
             except budget_guard.BudgetExhausted:
                 result = {'status': 'error', 'message': "the day's limit", 'created': [], 'budget': True}
+            except deletion.Cancelled:
+                raise
             except Exception as exc:
                 result = {'status': 'error', 'message': str(exc), 'created': []}
             if result.get('budget') is True:
@@ -1121,6 +1126,8 @@ def run_stage(mission_id, stage_id, snap, actor):
                         from services import project_audience, situations
                         try:
                             project_audience.narrow_on_bind(bound[0], situations.load(*bound))
+                        except deletion.Cancelled:
+                            raise
                         except Exception as exc:
                             # The row result is saved; finish stage bookkeeping before raising.
                             if narrowing_error is None:
@@ -1168,12 +1175,15 @@ def run_stage(mission_id, stage_id, snap, actor):
 
 def reconcile():
     """A lost claim is evidence to check, never permission to repeat a write."""
-    from services import projects
+    from services import projects, access
     with storage.db_lock:
         for mission in storage.get_missions():
+            if access.gone('mission', mission):
+                continue
             plan = mission.get('plan') or {}
             if plan.get('state') == 'approving':
-                _complete_approval(mission, plan)
+                with deletion.acting_for('mission', mission['id']):
+                    _complete_approval(mission, plan)
         waiting_projects = {missions.subject_of(m)[1] for m in storage.get_missions(status='waiting_step')
                             if missions.subject_of(m)[0] == 'project'}
         for pid in waiting_projects:
@@ -1182,26 +1192,29 @@ def reconcile():
             if project.get('state') == 'active':
                 projects.advance(project['id'])
         for mission in storage.get_missions():
-            plan = mission.get('plan') or {}
-            if plan.get('state') in ('stopped', 'done'):
+            if access.gone('mission', mission):
                 continue
-            changed, uncertain = False, []
-            for stage in plan.get('stages', []):
-                if stage['kind'] == 'work':
-                    continue  # The normal persisted planner loop resumes work after restart.
-                if stage['state'] != 'running' or (mission['id'], stage['id']) in _active_stages:
+            with deletion.acting_for('mission', mission['id']):
+                plan = mission.get('plan') or {}
+                if plan.get('state') in ('stopped', 'done'):
                     continue
-                for row in stage.get('rows', []):
-                    if row['state'] == 'running':
-                        row['state'] = 'uncertain'
-                        if row.get('proposal_id'):
-                            storage.update_action_proposal(row['proposal_id'], {'status': 'uncertain'})
-                        uncertain.append({'stage_id': stage['id'], 'row_id': row['id'], 'summary': row.get('summary')})
-                stage['state'] = 'uncertain'
-                if mission.get('paused_by_project'):
-                    stage['paused_by_project'] = True
-                changed = True
-            if changed:
-                storage.update_mission(mission['id'], {'plan': plan})
-                if not mission.get('paused_by_project'):
-                    _ask(mission['id'], 'stage_check', 'Please check what happened before carrying on.', rows=uncertain)
+                changed, uncertain = False, []
+                for stage in plan.get('stages', []):
+                    if stage['kind'] == 'work':
+                        continue  # The normal persisted planner loop resumes work after restart.
+                    if stage['state'] != 'running' or (mission['id'], stage['id']) in _active_stages:
+                        continue
+                    for row in stage.get('rows', []):
+                        if row['state'] == 'running':
+                            row['state'] = 'uncertain'
+                            if row.get('proposal_id'):
+                                storage.update_action_proposal(row['proposal_id'], {'status': 'uncertain'})
+                            uncertain.append({'stage_id': stage['id'], 'row_id': row['id'], 'summary': row.get('summary')})
+                    stage['state'] = 'uncertain'
+                    if mission.get('paused_by_project'):
+                        stage['paused_by_project'] = True
+                    changed = True
+                if changed:
+                    storage.update_mission(mission['id'], {'plan': plan})
+                    if not mission.get('paused_by_project'):
+                        _ask(mission['id'], 'stage_check', 'Please check what happened before carrying on.', rows=uncertain)

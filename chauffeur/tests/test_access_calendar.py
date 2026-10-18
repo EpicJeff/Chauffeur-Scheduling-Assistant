@@ -409,7 +409,8 @@ def scenario_legacy_commitment_projection_and_orphan_writes():
     storage.update_protected_commitment(cid, {'source': {'kind': 'program', 'id': 'gone-program'}})
     storage.update_program(fx.ids['R3'], {'emissions': {}})
     response = request(fx, 'dad', 'GET', '/api/commitments')
-    check(response.status_code == 200 and fx.title('R3') in response.text, 'orphan has no source audience')
+    check(response.status_code == 200 and all(word not in response.text for word in
+          (fx.title('R3'), cid, 'Busy')), 'orphan commitment is absent without title, id or Busy')
     with patch.object(main, 'trigger_background_refresh'):
         response = request(fx, 'dad', 'PATCH', '/api/commitments/' + cid, json={'title': 'Edited orphan'})
         check(response.status_code == 200 and storage.get_protected_commitment(cid)['title'] == 'Edited orphan', response.text)

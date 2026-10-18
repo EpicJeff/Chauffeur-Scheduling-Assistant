@@ -12,6 +12,9 @@ events from email) — these carry a typed *action* over the scheduler.
 import logging
 import re
 from typing import Dict, Any, Optional
+from contextlib import nullcontext
+from functools import wraps
+from services import deletion
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +190,9 @@ def _create_event(payload: dict) -> dict:
         body["location"] = maps.resolve_routable_location(payload["location"])
     if payload.get("description"):
         body["description"] = payload["description"]
+    deletion.check()
     gid = gcal.insert_event(calendar_id, body)
+    deletion.check()
     if not gid:
         return {"status": "error",
                 "message": f"The calendar rejected the event — check that '{calendar_id}' "
@@ -424,6 +429,8 @@ def run_row(proposal_id, approver, idem):
             result = {'status': 'error', 'message': "the day's limit", 'created': [], 'budget': True}
     except budget_guard.BudgetExhausted:
         result = {'status': 'error', 'message': "the day's limit", 'created': [], 'budget': True}
+    except deletion.Cancelled:
+        raise
     except Exception as exc:
         result = {'status': 'error', 'message': str(exc), 'created': []}
     storage.update_action_proposal(proposal_id, {
@@ -432,6 +439,21 @@ def run_row(proposal_id, approver, idem):
     return result
 
 
+def _proposal_work(function):
+    @wraps(function)
+    def run(proposal_id, *args, **kwargs):
+        from services import storage
+        prop = storage.get_action_proposal(proposal_id) or {}
+        source = prop.get('source') or {}
+        kind = prop.get('origin_kind') or source.get('kind')
+        rid = prop.get('origin_id') or source.get('id')
+        context = deletion.acting_for(kind, rid) if kind in deletion.KINDS and rid else nullcontext()
+        with context:
+            return function(proposal_id, *args, **kwargs)
+    return run
+
+
+@_proposal_work
 def act_on_proposal(proposal_id: str, act: str, approver_member: Optional[dict]) -> Dict[str, Any]:
     """Approve or dismiss a proposal. Returns {status, message, card, schedule_dirty}."""
     from services import storage

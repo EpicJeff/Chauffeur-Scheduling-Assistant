@@ -34,9 +34,10 @@ Three rules keep it honest:
   violation of the dismissal.
 """
 import time
+from contextlib import nullcontext
 from typing import NamedTuple, Optional
 
-from services import storage, access
+from services import storage, access, deletion
 
 # Resolved rows are kept long enough to answer "what happened this month" for
 # the digest, and no longer. Open rows are never pruned.
@@ -101,6 +102,11 @@ def open_findings(severity: str = None, include_in_hand: bool = False, *, viewer
     return rows
 
 
+def _subject_work(kind, rid):
+    return (deletion.acting_for(kind, rid)
+            if kind in deletion.KINDS and rid else nullcontext())
+
+
 def reconcile(found, scanned_kinds, now_ts: float = None, *, seen_only=()) -> dict:
     """Fold this sweep's findings into the record table.
 
@@ -119,58 +125,68 @@ def reconcile(found, scanned_kinds, now_ts: float = None, *, seen_only=()) -> di
 
     opened = reopened = 0
     for ident, f in seen.items():
-        existing = storage.get_finding_by_identity(ident)
-        fp = fingerprint(f)
-        if existing and existing.get('state') in ('open', 'in_hand'):
-            # Keep the sentence current — a deadline slips, a count changes —
-            # without touching created_at, which is how long this has been true.
-            storage.update_finding(existing['id'], {
-                'line': f.line, 'severity': f.severity, 'due_at': f.due_at,
-                'proposal_id': f.proposal_id or existing.get('proposal_id'),
-                'fingerprint': fp, 'last_seen_at': now_ts})
+        try:
+            with _subject_work(f.subject_type, f.subject_id):
+                existing = storage.get_finding_by_identity(ident)
+                fp = fingerprint(f)
+                if existing and existing.get('state') in ('open', 'in_hand'):
+                    # Keep the sentence current — a deadline slips, a count changes —
+                    # without touching created_at, which is how long this has been true.
+                    storage.update_finding(existing['id'], {
+                        'line': f.line, 'severity': f.severity, 'due_at': f.due_at,
+                        'proposal_id': f.proposal_id or existing.get('proposal_id'),
+                        'fingerprint': fp, 'last_seen_at': now_ts})
+                    continue
+                if existing and existing.get('state') == 'dismissed':
+                    if not existing.get('fingerprint'):
+                        # Dismissed before fingerprints existed: adopt this one
+                        # silently. The migration itself never reopens anything.
+                        storage.update_finding(existing['id'], {'fingerprint': fp})
+                        continue
+                    if existing['fingerprint'] == fp:
+                        continue       # settled; the words may differ, the subject does not
+                    reopened += 1
+                new_id = storage.add_finding({
+                    'identity': ident, 'kind': f.kind, 'severity': f.severity,
+                    'line': f.line, 'subject_type': f.subject_type,
+                    'subject_id': f.subject_id, 'due_at': f.due_at,
+                    'proposal_id': f.proposal_id, 'fingerprint': fp,
+                    'created_at': now_ts, 'last_seen_at': now_ts, 'state': 'open'})
+                if not new_id:
+                    continue
+                opened += 1
+                from services import situations as _sit
+                _sit.touched('finding', new_id)
+        except deletion.Cancelled:
             continue
-        if existing and existing.get('state') == 'dismissed':
-            if not existing.get('fingerprint'):
-                # Dismissed before fingerprints existed: adopt this one
-                # silently. The migration itself never reopens anything.
-                storage.update_finding(existing['id'], {'fingerprint': fp})
-                continue
-            if existing['fingerprint'] == fp:
-                continue       # settled; the words may differ, the subject does not
-            reopened += 1
-        new_id = storage.add_finding({
-            'identity': ident, 'kind': f.kind, 'severity': f.severity,
-            'line': f.line, 'subject_type': f.subject_type,
-            'subject_id': f.subject_id, 'due_at': f.due_at,
-            'proposal_id': f.proposal_id, 'fingerprint': fp,
-            'created_at': now_ts, 'last_seen_at': now_ts, 'state': 'open'})
-        opened += 1
-        from services import situations as _sit
-        _sit.touched('finding', new_id)
 
     closed = expired = 0
     for row in storage.get_findings(state='open') + storage.get_findings(state='in_hand'):
-        if row.get('identity') in observed:
+        try:
+            with _subject_work(row.get('subject_type'), row.get('subject_id')):
+                if row.get('identity') in observed:
+                    continue
+                if row.get('kind') not in scanned:
+                    # This sweep did not ask the question, so it cannot answer it.
+                    due = row.get('due_at')
+                    if due and due < now_ts:
+                        storage.update_finding(row['id'], {'state': 'expired',
+                                                           'resolved_at': now_ts,
+                                                           'resolved_by': 'expiry'})
+                        expired += 1
+                    continue
+                due = row.get('due_at')
+                if due and due < now_ts:
+                    storage.update_finding(row['id'], {'state': 'expired',
+                                                       'resolved_at': now_ts,
+                                                       'resolved_by': 'expiry'})
+                    expired += 1
+                    continue
+                storage.update_finding(row['id'], {'state': 'done', 'resolved_at': now_ts,
+                                                   'resolved_by': 'auto'})
+                closed += 1
+        except deletion.Cancelled:
             continue
-        if row.get('kind') not in scanned:
-            # This sweep did not ask the question, so it cannot answer it.
-            due = row.get('due_at')
-            if due and due < now_ts:
-                storage.update_finding(row['id'], {'state': 'expired',
-                                                   'resolved_at': now_ts,
-                                                   'resolved_by': 'expiry'})
-                expired += 1
-            continue
-        due = row.get('due_at')
-        if due and due < now_ts:
-            storage.update_finding(row['id'], {'state': 'expired',
-                                               'resolved_at': now_ts,
-                                               'resolved_by': 'expiry'})
-            expired += 1
-            continue
-        storage.update_finding(row['id'], {'state': 'done', 'resolved_at': now_ts,
-                                           'resolved_by': 'auto'})
-        closed += 1
 
     try:
         storage.prune_findings(now_ts - RETENTION_DAYS * 86400)

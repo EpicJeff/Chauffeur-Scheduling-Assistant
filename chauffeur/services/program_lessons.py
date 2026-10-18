@@ -16,6 +16,10 @@ the scene and vanish; the only persisted outcome anywhere is the session
 log, and it lives in services/programs.py.
 """
 import re
+from functools import wraps
+from contextlib import nullcontext
+
+from services import deletion
 
 MAX_SCENES = 12
 MAX_TEXT = 280
@@ -232,6 +236,8 @@ def phoneme_keys() -> frozenset:
                       encoding='utf-8') as f:
                 data = json.load(f) or {}
             _PHONEME_KEYS = frozenset((data.get('phonemes') or {}).keys())
+        except deletion.Cancelled:
+            raise
         except Exception as e:
             print(f"[lessons] no phoneme manifest ({e}); cards stay silent")
             _PHONEME_KEYS = frozenset()
@@ -737,14 +743,14 @@ def sanitize_script(scenes: list, origin: str, _depth: int = 0) -> list:
 # restart between the arming and the firing loses nothing, while a program
 # row would have turned an armed timer into a fact about somebody's plan.
 #
-# The queue holds a plain list of {fire_ts, room, text}. No id, no program,
-# no person: a fired entry is a sentence and a room, and there is nothing
-# in it to read as a record of anyone.
+# The queue carries its source program solely to cancel delivery when that
+# program is deleted. It records no outcome or progress in the program.
 
 WAIT_STATE_KEY = 'lesson_wait_announces'
 
 
-def arm_wait_announce(room: str, text: str, minutes: int, now_ts=None) -> dict:
+def arm_wait_announce(room: str, text: str, minutes: int, now_ts=None,
+                      program_id: str = None) -> dict:
     """Queue one call into a room, `minutes` from now.
 
     Pruned on every write rather than on a schedule of its own: the queue
@@ -753,25 +759,27 @@ def arm_wait_announce(room: str, text: str, minutes: int, now_ts=None) -> dict:
     list cannot grow across an app that never fires anything (every panel
     unreachable, HA down for a week).
     """
-    import time
-    from services import storage
-    now_ts = float(now_ts if now_ts is not None else time.time())
-    mins = max(1, min(MAX_WAIT_MINUTES, _to_int(minutes) or 0))
-    entry = {'fire_ts': now_ts + mins * 60,
-             'room': str(room or '')[:60],
-             'text': _clean_text(text, MAX_WAIT_ANNOUNCE)}
-    queue = storage.get_app_state(WAIT_STATE_KEY) or []
-    if not isinstance(queue, list):
-        queue = []
-    queue = [e for e in queue
-             if isinstance(e, dict)
-             and float(e.get('fire_ts') or 0) > now_ts - WAIT_STALE_S]
-    queue.append(entry)
-    # Newest wins when the cap bites: an overflowing queue is a bug
-    # somewhere upstream, and the sentence a person just asked for is more
-    # likely to matter than one from an hour ago that never fired.
-    storage.set_app_state(WAIT_STATE_KEY, queue[-MAX_WAIT_QUEUE:])
-    return entry
+    with (deletion.acting_for('program', program_id) if program_id else nullcontext()):
+        import time
+        from services import storage
+        now_ts = float(now_ts if now_ts is not None else time.time())
+        mins = max(1, min(MAX_WAIT_MINUTES, _to_int(minutes) or 0))
+        entry = {'fire_ts': now_ts + mins * 60,
+                 'room': str(room or '')[:60],
+                 'text': _clean_text(text, MAX_WAIT_ANNOUNCE),
+                 'program_id': program_id}
+        queue = storage.get_app_state(WAIT_STATE_KEY) or []
+        if not isinstance(queue, list):
+            queue = []
+        queue = [e for e in queue
+                 if isinstance(e, dict)
+                 and float(e.get('fire_ts') or 0) > now_ts - WAIT_STALE_S]
+        queue.append(entry)
+        # Newest wins when the cap bites: an overflowing queue is a bug
+        # somewhere upstream, and the sentence a person just asked for is more
+        # likely to matter than one from an hour ago that never fired.
+        storage.set_app_state(WAIT_STATE_KEY, queue[-MAX_WAIT_QUEUE:])
+        return entry
 
 
 def due_wait_announces(now_ts=None) -> list:
@@ -788,7 +796,7 @@ def due_wait_announces(now_ts=None) -> list:
     behind it.
     """
     import time
-    from services import storage
+    from services import storage, access
     now_ts = float(now_ts if now_ts is not None else time.time())
     try:
         queue = storage.get_app_state(WAIT_STATE_KEY) or []
@@ -797,6 +805,8 @@ def due_wait_announces(now_ts=None) -> list:
         due, keep = [], []
         for e in queue:
             if not isinstance(e, dict):
+                continue
+            if e.get('program_id') and access.gone('program', storage.get_program(e['program_id']), rid=e['program_id']):
                 continue
             ts = float(e.get('fire_ts') or 0)
             if ts > now_ts:
@@ -807,6 +817,8 @@ def due_wait_announces(now_ts=None) -> list:
         if len(keep) != len(queue):
             storage.set_app_state(WAIT_STATE_KEY, keep)
         return due
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         print(f"[lessons] wait queue read failed: {e}")
         return []
@@ -1062,10 +1074,21 @@ def _record_attempt(program_id: str, slot: dict, origin: str, source_url: str,
             'attempts': int(existing.get('attempts') or 0) + (1 if counts else 0),
             'note': _clean_text(note, MAX_SHORT_TEXT),
             'model': existing.get('model') or ''})
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         print(f"[lessons] could not record a failed attempt: {e}")
 
 
+def _lesson_work(fn):
+    @wraps(fn)
+    def run(program, *args, **kwargs):
+        with deletion.acting_for('program', program['id']):
+            return fn(program, *args, **kwargs)
+    return run
+
+
+@_lesson_work
 def generate_for(program: dict, window: dict, unit: dict, settings: dict):
     """One slot's lesson, written and stored — or nothing, quietly.
 
@@ -1101,7 +1124,7 @@ def generate_for(program: dict, window: dict, unit: dict, settings: dict):
     huge, slow gemma quota first and leaves the fast lite models free for
     whoever actually is waiting, elsewhere.
 
-    Never raises. Any failure -- a malformed program row, an exhausted
+    Apart from deletion.Cancelled, failures -- a malformed program row, an exhausted
     model pool, a page that will not load -- comes back as a printed line
     and a None, so a sweep calling this in a loop never needs a
     try/except of its own.
@@ -1161,6 +1184,8 @@ def generate_for(program: dict, window: dict, unit: dict, settings: dict):
         return storage.upsert_program_lesson(program['id'], slot, {
             'origin': origin, 'source_url': source_url, 'scenes': scenes,
             'model': res.get('_model') or ''}) or None
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         print(f"[lessons] generate failed for "
               f"{(program or {}).get('id')}: {e}")
@@ -1256,7 +1281,7 @@ def generate_due(now=None, limit: int = MAX_SLOTS_PER_PASS,
     already pinned to that scan, is untouched. The 300s loop never passes
     it.
 
-    Never raises -- literally, not merely by the convention every
+    Apart from deletion.Cancelled, never raises -- as with every
     function in this module follows. `generate_for` already promises that
     per slot, but the settings reads, `practice_windows` and
     `storage.get_programs` do not promise it of themselves, and three
@@ -1290,6 +1315,8 @@ def generate_due(now=None, limit: int = MAX_SLOTS_PER_PASS,
             if generate_for(row, w, unit, settings):
                 wrote += 1
         return wrote
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         print(f"[lessons] sweep failed: {e}")
         return 0
@@ -1396,6 +1423,8 @@ def sweep_report(now=None, start_offset: int = 0, days: int = 3,
                     skipped += 1
             slots.append(entry)
         return {'wrote': wrote, 'skipped': skipped, 'slots': slots}
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         print(f"[lessons] sweep report failed: {e}")
         return {'wrote': 0, 'skipped': 0, 'slots': []}

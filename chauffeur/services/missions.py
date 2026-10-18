@@ -18,10 +18,26 @@ import re
 import threading
 import time
 from contextlib import nullcontext
+from contextvars import ContextVar, copy_context
+from functools import wraps
 
-from services import storage, model_pools
+from services import storage, model_pools, deletion
 
 logger = logging.getLogger(__name__)
+_notice_refs = ContextVar('mission_notice_refs', default=())
+
+
+def _mission_work(function):
+    """Keep a mission registered until its synchronous result is handled."""
+    first_arg = function.__code__.co_varnames[0]
+    @wraps(function)
+    def run(*args, **kwargs):
+        mission = args[0] if args else kwargs[first_arg]
+        mid = mission['id'] if isinstance(mission, dict) else mission
+        with deletion.acting_for('mission', mid):
+            return function(*args, **kwargs)
+    return run
+
 
 # Shared lifecycle groups: live work, engine work, and questions for a person.
 LIVE = ('running', 'browsing', 'waiting_user', 'waiting_retry', 'waiting_step')
@@ -129,6 +145,8 @@ def _family_context(settings: dict) -> str:
     try:
         members = [m for m in storage.get_all_members()
                    if not m.get('system') and (m.get('status') or 'active') == 'active']
+    except deletion.Cancelled:
+        raise
     except Exception:
         members = []
     if members:
@@ -227,6 +245,8 @@ def _system_prompt(now: datetime.datetime, settings: dict = None, mission: dict 
 def _compact(value, limit=900):
     try:
         s = json.dumps(value) if not isinstance(value, str) else value
+    except deletion.Cancelled:
+        raise
     except Exception:
         s = str(value)
     return s[:limit] + ('…' if len(s) > limit else '')
@@ -338,7 +358,10 @@ _browse = _browse_live
 
 def _post(dm, argyle, body, card=None):
     from services.agent_tools_v2 import _post_chat_message
-    return _post_chat_message(dm, argyle, body, card=card)
+    refs = list(_notice_refs.get())
+    if ((card or {}).get('project') or {}).get('id'):
+        refs.append({'kind': 'project', 'id': card['project']['id']})
+    return _post_chat_message(dm, argyle, body, card=card, refs=refs)
 
 
 def ask_card(mission: dict) -> dict | None:
@@ -397,6 +420,8 @@ def _card_moved(message: dict) -> None:
         channel = storage.get_channel(message.get('channel_id')) or {}
         recipients = channel.get('member_ids') if channel.get('kind') in ('dm', 'group') else None
         _main._push_message_event(message.get('channel_id'), recipients)
+    except deletion.Cancelled:
+        raise
     except Exception:
         pass
 
@@ -414,8 +439,12 @@ def settle_ask_cards(mission_id, ask_id, outcome: str) -> None:
                         storage.update_chat_message_card(message_id, {
                             **card, 'state': 'answered', 'outcome': outcome, 'options': []})
                         _card_moved(storage.get_chat_message(message_id) or {})
+            except deletion.Cancelled:
+                raise
             except Exception as e:
                 logger.warning(f"[missions] card settlement failed: {e}")
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         logger.warning(f"[missions] card settlement failed: {e}")
 
@@ -484,6 +513,19 @@ def _done_card(mission: dict) -> dict:
 def _dm_person(mission: dict, text: str) -> None:
     """One message to whoever started the mission (the parents when nobody
     did), in their Argyle DM. Never raises."""
+    refs = [{'kind': 'mission', 'id': mission['id']}]
+    if mission.get('origin_kind') == 'thread' and mission.get('origin_ref'):
+        refs.append({'kind': 'thread', 'id': mission['origin_ref']})
+    if mission.get('subject_kind') in deletion.KINDS and mission.get('subject_id'):
+        refs.append({'kind': mission['subject_kind'], 'id': mission['subject_id']})
+    for stage in (mission.get('plan') or {}).get('stages') or []:
+        for row in stage.get('rows') or []:
+            for created in (row.get('result') or {}).get('created') or []:
+                if created.get('kind') in deletion.KINDS and created.get('id'):
+                    ref = {'kind': created['kind'], 'id': created['id']}
+                    if ref not in refs:
+                        refs.append(ref)
+    token = _notice_refs.set(tuple(refs))
     try:
         steps = storage.get_mission_steps(mission['id'])
         newest = next((s for s in reversed(steps) if s.get('kind') == 'ask'), None)
@@ -526,8 +568,12 @@ def _dm_person(mission: dict, text: str) -> None:
                     ids.append(message['id'])
                     # Keep delivery metadata out of the result hashed by voice approval.
                     storage.update_mission_step(asked['id'], {'chat_message_ids': ids})
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         logger.warning(f"[missions] DM failed: {e}")
+    finally:
+        _notice_refs.reset(token)
 
 
 def _released_for(mission: dict, site: str) -> dict:
@@ -834,7 +880,8 @@ def _steer_check(mission_id: str, pause_rev=None):
     def check():
         with storage.db_lock:
             mission = storage.get_mission(mission_id) or {}
-            if not mission or mission.get('deleting'):
+            from services import access
+            if not mission or access.gone('mission', mission):
                 return 'Stopped'
             if (mission.get('paused_by_project')
                     or int(mission.get('project_pause_rev') or 0) != pause_rev):
@@ -1003,6 +1050,7 @@ def verify(mission_id: str, ask_id: str, outcome: str, actor: dict, detail: str 
     return {'status': 'success', 'message': said}
 
 
+@_mission_work
 def start_browse(mission: dict, goal: str, site: str, start_url: str = None, released: dict = None, approved: dict = None) -> str:
     """Add the browse step, park the mission in `browsing`, run the runner in
     a daemon thread (inline in tests). Returns the step id, or '' when the
@@ -1044,22 +1092,35 @@ def start_browse(mission: dict, goal: str, site: str, start_url: str = None, rel
               approved=approved, on_attempt=_on_attempt_for(mid, sid),
               should_stop=_steer_check(mid, args['project_pause_rev']))
 
+    # Reserve before scheduling: cleanup must see a queued daemon too.
+    reservation = deletion.acting_for('mission', mid)
+    context = copy_context()
+
     def work():
-        try:
-            report = _browse(**kw)
-        except Exception as e:
-            report = {'outcome': 'error', 'text': str(e)[:200], 'learned': {}, 'stopped_at': start_url or site, 'wanted_fields': [],
-                      'turns': 0, 'tokens_in': 0, 'tokens_out': 0, 'seconds': 0, 'screenshots': [], 'filled': {},
-                      'submit': None, 'attempt': None, 'changed': [], 'attempts_extra': []}
-        finish_browse(mid, sid, report)
+        with reservation:
+            try:
+                report = _browse(**kw)
+            except deletion.Cancelled:
+                raise
+            except Exception as e:
+                report = {'outcome': 'error', 'text': str(e)[:200], 'learned': {}, 'stopped_at': start_url or site, 'wanted_fields': [],
+                          'turns': 0, 'tokens_in': 0, 'tokens_out': 0, 'seconds': 0, 'screenshots': [], 'filled': {},
+                          'submit': None, 'attempt': None, 'changed': [], 'attempts_extra': []}
+            deletion.check()
+            finish_browse(mid, sid, report)
 
     if _browse_async:
-        threading.Thread(target=work, daemon=True).start()
+        try:
+            threading.Thread(target=context.run, args=(work,), daemon=True).start()
+        except BaseException:
+            reservation.close()
+            raise
     else:
-        work()
+        context.run(work)
     return sid
 
 
+@_mission_work
 def finish_browse(mission_id: str, step_id: str, report: dict) -> None:
     # Applying a report and cancelling its stage share the same lock, so a
     # cancellation cannot land between the live check and a new ask/DM.
@@ -1370,6 +1431,7 @@ def _land_finish(mission: dict, res: dict) -> None:
     _sit.touched('thread', tid)
 
 
+@_mission_work
 def step(mission: dict) -> dict:
     """Advance ONE step. Returns the fresh mission row. All state transitions
     live here so tick() stays a scheduler and tests drive this directly."""
@@ -1761,21 +1823,29 @@ def launch(goal: str, origin_kind: str = 'manual', origin_ref=None,
     if not _bump_call('launch', cap):
         return {'status': 'capped',
                 'message': f"That's {cap} missions today — the cap resets tomorrow."}
-    mid = storage.add_mission({'goal': goal, 'origin_kind': origin_kind,
-                               'origin_ref': origin_ref, 'created_by': created_by,
-                               'tier': tier})
-    if subject and subject[0] and subject[1]:
-        from services import subjects
-        storage.update_mission(mid, {'subject_kind': subject[0], 'subject_id': subject[1], 'subject_rev': 1,
-                                     'subject_history': subjects.history_after_binding({}, subject[0], subject[1])})
     from services import projects
     actor = storage.get_member(created_by) if created_by else None
-    thread = storage.get_thread(origin_ref) if origin_kind == 'thread' and origin_ref else None
-    if thread:
-        # Origin context is private to its thread's home. Ignore a caller's
-        # different project rather than seed that context into a wider home.
-        project_id = projects.adopt('thread', thread['id'], actor)
-    projects.adopt('mission', mid, actor, project_id=project_id)
+    with storage.db_lock:
+        thread = storage.get_thread(origin_ref) if origin_kind == 'thread' and origin_ref else None
+        if origin_kind == 'thread':
+            from services import access
+            if not thread or access.gone('thread', thread):
+                return {'status': 'not_found', 'message': 'That thread is no longer available.'}
+        if thread:
+            # Bind the origin's home before insertion; it cannot briefly exist
+            # outside the project whose deletion owns it.
+            project_id = projects.adopt('thread', thread['id'], actor)
+        fields = {'goal': goal, 'origin_kind': origin_kind,
+                  'origin_ref': origin_ref, 'created_by': created_by,
+                  'tier': tier, 'project_id': project_id}
+        if subject and subject[0] and subject[1]:
+            from services import subjects
+            fields.update(subject_kind=subject[0], subject_id=subject[1], subject_rev=1,
+                          subject_history=subjects.history_after_binding({}, subject[0], subject[1]))
+        mid = storage.add_mission(fields)
+        if not mid:
+            return {'status': 'not_found', 'message': 'That project is no longer available.'}
+        projects.adopt('mission', mid, actor, project_id=project_id)
     if origin_kind == 'thread' and origin_ref:
         if thread:
             _seed_thread_context(mid, thread)
@@ -1800,46 +1870,50 @@ def tick(now: datetime.datetime = None) -> dict:
     ts = now.timestamp()
 
     for row in storage.get_missions(status='waiting_retry'):
-        if (row.get('retry_at') or 0) <= ts:
-            storage.update_mission(row['id'], {'status': 'running',
-                                               'retry_at': None})
+        with deletion.acting_for('mission', row['id']):
+            if (row.get('retry_at') or 0) <= ts:
+                storage.update_mission(row['id'], {'status': 'running',
+                                                   'retry_at': None})
+
 
     # A browse whose thread died (crash, restart) must not strand the mission.
     for row in storage.get_missions(status='browsing'):
-        # One lock for the decision and its writes: a worker's on_attempt (same
-        # lock) either pressed before this (its attempt is pending here and is
-        # verified) or finds the mission no longer browsing and presses nothing.
-        question = None
-        with storage.db_lock:
-            cur = storage.get_mission(row['id']) or {}
-            if cur.get('status') != 'browsing':
-                continue
-            steps = storage.get_mission_steps(row['id'])
-            b = next((s for s in reversed(steps) if s.get('kind') == 'browse'), None)
-            # Pause restores the browse status, but its old worker may already
-            # have acknowledged cancellation. Its result is never applied;
-            # the planner can now choose how to continue the same work.
-            if not cur.get('paused_by_project') and (b or {}).get('result_json') == {
-                    'outcome': 'cancelled', 'text': 'Paused'}:
-                _close(row['id'], 'running')
-                continue
-            if not (b and b.get('result_json') is None and (b.get('ts') or 0) < ts - BROWSE_LOST_S):
-                continue
-            storage.add_mission_step(row['id'], {'kind': 'note', 'name': 'browse',
-                                                 'result_json': {'note': f'the browse was lost (no result after {BROWSE_LOST_S // 60} minutes)'}})
-            # A dead worker that had pressed: the press may have happened, so
-            # the parent is asked; the mission never just runs on (spec §2).
-            pending = [a for a in attempts_for(row['id']) if a.get('browse_step_id') == b['id'] and a.get('outcome') is None]
-            if pending:
-                for a in pending:
-                    _write_attempt(a['step_id'], {**a, 'outcome': 'unknown'})
-                question = _add_verify_ask(row['id'], {**pending[-1], 'outcome': 'unknown'})
-                storage.update_mission(row['id'], {'status': 'waiting_user'})
-            else:
-                storage.update_mission(row['id'], {'status': 'running'})
-        if question:
-            _close(row['id'], 'waiting_user')
-            _dm_person(cur, question + VERIFY_TAIL)
+        with deletion.acting_for('mission', row['id']):
+            # One lock for the decision and its writes: a worker's on_attempt (same
+            # lock) either pressed before this (its attempt is pending here and is
+            # verified) or finds the mission no longer browsing and presses nothing.
+            question = None
+            with storage.db_lock:
+                cur = storage.get_mission(row['id']) or {}
+                if cur.get('status') != 'browsing':
+                    continue
+                steps = storage.get_mission_steps(row['id'])
+                b = next((s for s in reversed(steps) if s.get('kind') == 'browse'), None)
+                # Pause restores the browse status, but its old worker may already
+                # have acknowledged cancellation. Its result is never applied;
+                # the planner can now choose how to continue the same work.
+                if not cur.get('paused_by_project') and (b or {}).get('result_json') == {
+                        'outcome': 'cancelled', 'text': 'Paused'}:
+                    _close(row['id'], 'running')
+                    continue
+                if not (b and b.get('result_json') is None and (b.get('ts') or 0) < ts - BROWSE_LOST_S):
+                    continue
+                storage.add_mission_step(row['id'], {'kind': 'note', 'name': 'browse',
+                                                     'result_json': {'note': f'the browse was lost (no result after {BROWSE_LOST_S // 60} minutes)'}})
+                # A dead worker that had pressed: the press may have happened, so
+                # the parent is asked; the mission never just runs on (spec §2).
+                pending = [a for a in attempts_for(row['id']) if a.get('browse_step_id') == b['id'] and a.get('outcome') is None]
+                if pending:
+                    for a in pending:
+                        _write_attempt(a['step_id'], {**a, 'outcome': 'unknown'})
+                    question = _add_verify_ask(row['id'], {**pending[-1], 'outcome': 'unknown'})
+                    storage.update_mission(row['id'], {'status': 'waiting_user'})
+                else:
+                    storage.update_mission(row['id'], {'status': 'running'})
+            if question:
+                _close(row['id'], 'waiting_user')
+                _dm_person(cur, question + VERIFY_TAIL)
+
 
     running = sorted(storage.get_missions(status=RUNNABLE),
                      key=lambda r: r.get('created_at') or 0)

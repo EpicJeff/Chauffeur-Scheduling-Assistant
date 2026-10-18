@@ -9,11 +9,13 @@ ask; a draft is copied and sent by the person. A Chauffeur ask is a DM from
 the asker with Yes/No buttons.
 """
 import datetime
+import functools
+from contextlib import ExitStack
 import logging
 import time
 from typing import Optional
 
-from services import storage
+from services import storage, deletion
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,26 @@ FINAL_OUTCOMES = ('applied', 'superseded', 'stale', 'failed', 'manual')
 CLAIM_STALE_S = 60
 CAP_DRAFTS_DEFAULT = 40
 WRITE_ROLES = ('parent', 'adult')
+
+
+def _ask_work(fn):
+    """An ask's effects belong to the situation that asked for them."""
+    @functools.wraps(fn)
+    def run(ask_id, *args, **kwargs):
+        ask = storage.get_ask(ask_id) or {}
+        kind, sid = ask.get('situation_kind'), ask.get('situation_id')
+        if not kind or not sid:
+            return fn(ask_id, *args, **kwargs)
+        with ExitStack() as work:
+            work.enter_context(deletion.acting_for(kind, sid))
+            from services import situations
+            subject = situations._worker_subject(kind, sid)
+            if subject:
+                work.enter_context(deletion.acting_for(*subject))
+            result = fn(ask_id, *args, **kwargs)
+            deletion.check()
+            return result
+    return run
 
 DRAFT_SYSTEM = (
     "You draft a short message a parent will send THEMSELVES, in their own "
@@ -379,6 +401,7 @@ def _siblings(ask: dict) -> list:
     return [a for a in same if a['id'] != ask['id']]
 
 
+@_ask_work
 def apply(ask_id: str) -> dict:
     """Claim under the lock, run the effect outside it, record the outcome.
     Idempotent: an ask already applied returns its outcome; a claim is taken
@@ -413,6 +436,8 @@ def apply(ask_id: str) -> dict:
         storage.update_ask(ask_id, {'outcome': 'claimed', 'claim_ts': time.time()})
     try:
         _effect(storage.get_ask(ask_id))
+    except deletion.Cancelled:
+        raise
     except Exception as e:
         logger.warning(f"[asks] effect failed for {ask_id}: {e}")
         storage.update_ask(ask_id, {'outcome': 'failed', 'unlock_error': str(e)[:300], 'applied_at': time.time()})
@@ -459,6 +484,23 @@ def _effect(ask: dict) -> None:
     raise RuntimeError(f"unknown unlock {kind}")
 
 
+@_ask_work
+def _recover_claim(ask_id):
+    a = storage.get_ask(ask_id)
+    if not a:
+        return
+    try:
+        _effect(a)
+        storage.update_ask(a['id'], {'outcome': 'applied', 'applied_at': time.time()})
+    except deletion.Cancelled:
+        raise
+    except Exception as e:
+        storage.update_ask(a['id'], {'outcome': 'failed', 'unlock_error': str(e)[:300],
+                                     'applied_at': time.time()})
+    _refresh_card(storage.get_ask(a['id']))
+    _touch(a.get('situation_kind'), a.get('situation_id'))
+
+
 def recover(now: datetime.datetime = None) -> int:
     """A claim older than CLAIM_STALE_S was interrupted between claim and
     completion. Finish it (the effect is idempotent) or record failed."""
@@ -466,14 +508,7 @@ def recover(now: datetime.datetime = None) -> int:
     n = 0
     for a in storage.get_asks(state='yes'):
         if a.get('outcome') == 'claimed' and now_ts - float(a.get('claim_ts') or 0) > CLAIM_STALE_S:
-            try:
-                _effect(a)
-                storage.update_ask(a['id'], {'outcome': 'applied', 'applied_at': time.time()})
-            except Exception as e:
-                storage.update_ask(a['id'], {'outcome': 'failed', 'unlock_error': str(e)[:300],
-                                             'applied_at': time.time()})
-            _refresh_card(storage.get_ask(a['id']))
-            _touch(a.get('situation_kind'), a.get('situation_id'))
+            _recover_claim(a['id'])
             n += 1
         elif a.get('outcome') is None:
             apply(a['id'])
