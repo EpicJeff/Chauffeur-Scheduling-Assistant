@@ -9,6 +9,7 @@ from collections import Counter
 from copy import deepcopy
 import hashlib
 import json
+import logging
 import threading
 import time
 import uuid
@@ -108,7 +109,7 @@ def _prepare(kind, rid, actor):
         return None, _refused()
     root = _load(kind, rid)
     if not root or root.get('deleting'):
-        return None, _refused()
+        return None, {'status': 'gone', 'message': f'No such {kind}'}
     if kind == 'project':
         allowed = projects.can_see(root, actor) and (
             actor['id'] == root.get('owner_member_id') or projects._parent(actor))
@@ -176,15 +177,18 @@ def _stop(records):
     token = _sources.set(())
     try:
         for kind, rid, row in records:
-            if kind == 'mission':
-                planned.cancel_for_delete(rid)
-                if row.get('status') == 'browsing':
-                    storage.set_app_state(f'mission_steer:{rid}', {'text': 'Stopped', 'ts': time.time()})
-                if row.get('status') in missions.LIVE:
-                    storage.update_mission(rid, {'status': 'dropped', 'finished_at': time.time()})
-            elif kind == 'program':
-                # Ordinary pause releases commitments; deletion retains them for cleanup.
-                storage.update_program(rid, {'state': 'paused'})
+            try:
+                if kind == 'mission':
+                    planned.cancel_for_delete(rid)
+                    if row.get('status') == 'browsing':
+                        storage.set_app_state(f'mission_steer:{rid}', {'text': 'Stopped', 'ts': time.time()})
+                    if row.get('status') in missions.LIVE:
+                        storage.update_mission(rid, {'status': 'dropped', 'finished_at': time.time()})
+                elif kind == 'program' and row.get('state') == 'active':
+                    # Ordinary pause releases commitments; deletion retains them for cleanup.
+                    storage.update_program(rid, {'state': 'paused'})
+            except Exception:
+                logging.getLogger(__name__).exception('Deletion could not stop %s %s', kind, rid)
     finally:
         _sources.reset(token)
 
@@ -195,6 +199,10 @@ def start(kind, rid, actor, token):
         with storage.db.transaction():
             prepared, error = _prepare(kind, rid, actor)
             if error:
+                # Keep start's existing refused/changed service contract for a
+                # repeated tap, while letting HTTP distinguish a gone root.
+                if error['status'] == 'gone':
+                    return {**error, 'status': 'refused', 'reason': 'gone'}
                 return error
             if not token:
                 return {'status': 'confirmation_required', 'message': TOKEN_REQUIRED}
@@ -208,9 +216,13 @@ def start(kind, rid, actor, token):
                 'state': 'started', 'emissions': _emissions(records)})
             for k, record_id, _ in records:
                 storage.stamp_deleting(k, record_id, did)
-    _stop(records)
-    home_board.invalidate_for_deletion()
-    storage.mark_all_daily_schedules_dirty()
+    try:
+        _stop(records)
+    finally:
+        try:
+            home_board.invalidate_for_deletion()
+        finally:
+            storage.mark_all_daily_schedules_dirty()
     return {'status': 'ok', 'deletion_id': did, 'schedule_dirty': True}
 
 
@@ -223,7 +235,7 @@ def delete(kind, rid):
     from services import storage
     with storage.db_lock:
         row = _load(kind, rid)
-        if not row:
+        if not row or row.get('deleting'):
             return {'status': 'not_found'}
         home = storage.get_project(row.get('project_id')) or {}
         preferred = (home.get('owner_member_id'), row.get('owner_member_id'), row.get('created_by'))

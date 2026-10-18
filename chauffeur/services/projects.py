@@ -38,7 +38,8 @@ def _parent(member):
 
 def can_see(project, viewer):
     """The owner always; anyone else by the shared audience model (scope.audience_allows)."""
-    if not project or not _active(viewer):
+    from services import access
+    if access.gone('project', project) or not _active(viewer):
         return False
     if viewer['id'] == project.get('owner_member_id'):
         return True
@@ -295,7 +296,10 @@ def _hold_interval(hold):
 
 
 def _confirmed_holds(start, end):
+    from services import access
     for project in storage.get_projects():
+        if access.gone('project', project):
+            continue
         for step in project.get('steps') or []:
             hold = step.get('hold')
             if step.get('owner') in (None, 'argyle') or not hold:

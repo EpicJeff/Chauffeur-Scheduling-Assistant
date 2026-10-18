@@ -692,7 +692,7 @@ def _practice_windows(start: datetime.date, end: datetime.date,
             if c.get('active')}
     out = []
     for row in storage.get_programs(member_id=member_id):
-        if row.get('state') != 'active':
+        if access.gone('program', row) or row.get('state') != 'active':
             # Paused and proposed programs hold no time: pause releases the
             # commitments outright, and a proposal has never claimed any.
             continue
@@ -792,7 +792,9 @@ def practice_windows(start: datetime.date, end: datetime.date,
             pid = window['program_id']
             if pid not in visible:
                 row = storage.get_program(pid)
-                visible[pid] = not access.practice_hidden(row, viewer)
+                visible[pid] = access.GONE if access.gone('program', row) else not access.practice_hidden(row, viewer)
+            if visible[pid] is access.GONE:
+                continue
             if visible[pid]:
                 out.append(window)
             else:

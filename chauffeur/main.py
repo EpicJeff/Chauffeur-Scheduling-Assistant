@@ -988,6 +988,8 @@ def flush_assignment_notifications():
         old_d = entry.get("first_old")
         new_d = entry.get("last_new")
         ev = access.event_view(entry.get("ev") or {})
+        if ev is access.GONE:
+            continue
         if old_d == new_d:
             continue  # churned back within the run — no net change
         try:
@@ -5351,7 +5353,8 @@ def list_commitments(member_id: Optional[str] = None, request: Request = None):
     viewer = _piece_viewer(request)
     programs = {}
     with access.batch():
-        rows = [dict(access.commitment_view(r, viewer, programs=programs)) for r in rows]
+        rows = [view for r in rows
+                if (view := access.commitment_view(r, viewer, programs=programs)) is not access.GONE]
     for r in rows:
         r['member_name'] = names.get(r.get('member_id'))
     return rows
@@ -6148,7 +6151,9 @@ def _deletion_for_actor(kind, rid, request):
 
 def _deletion_response(result):
     if result.get('status') != 'ok':
-        code = {'refused': 403, 'changed': 409, 'confirmation_required': 400}.get(result.get('status'), 400)
+        code = {'gone': 404, 'refused': 403, 'changed': 409, 'confirmation_required': 400}.get(result.get('status'), 400)
+        if result.get('reason') == 'gone':
+            code = 404
         raise HTTPException(status_code=code, detail=result.get('message'))
     return result
 
@@ -10486,6 +10491,12 @@ def _fanout_message_notifications(channel, message):
     with both configured gets both (accepted v1 tradeoff, no dedupe)."""
     from services import ha_api
     try:
+        # Queued stored messages carry both ids; transient notification
+        # envelopes also use this helper and need no storage round trip.
+        if message.get('id') and message.get('channel_id'):
+            message = storage.get_chat_message(message['id'])
+        if not storage.message_visible(message):
+            return
         sender = storage.get_member(message['sender_member_id']) or {}
         sender_name = sender.get('name', 'Family')
         kind = channel.get('kind')
@@ -15689,6 +15700,8 @@ def _notify_kids_driver_changes(buffered, now=None):
     for ev_id, entry in buffered.items():
         old_d, new_d = entry.get("first_old"), entry.get("last_new")
         ev = access.event_view(entry.get("ev") or {})
+        if ev is access.GONE:
+            continue
         if old_d == new_d or not new_d or str(new_d).startswith("ghost_"):
             continue
         try:

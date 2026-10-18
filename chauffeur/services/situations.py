@@ -519,10 +519,10 @@ def _subject_visible(kind: str, record: dict, viewer: Optional[dict], visited=No
     if kind in ('project', 'proposed_project'):
         from services import access
         return access.project_visible(record, viewer)
-    if kind == 'thread':
+    if kind in ('thread', 'mission'):
         # Ownership keeps only the top-level row, never a subject's contents.
         from services import access
-        return access.record_view('thread', record, viewer) == access.FULL
+        return access.record_view(kind, record, viewer) == access.FULL
     return subjects.visible(kind, record, viewer)
 
 
@@ -563,8 +563,10 @@ def channel_visible(kind: str, row: dict, focus_key: str) -> bool:
 
 def _legacy_channel_visible(kind, row, humans):
     """Unrestricted pieces keep the channel's original subject-only rule."""
-    from services import subjects
-    return bool(row) and all(
+    from services import access, subjects
+    if access.gone(kind, row):
+        return False
+    return all(
         bool(member)
         and all(_subject_visible(k, record, member) for k, record in subjects.subject_records(kind, row))
         for member in humans)

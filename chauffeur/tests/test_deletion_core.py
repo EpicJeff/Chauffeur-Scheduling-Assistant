@@ -822,6 +822,43 @@ def scenario_argyle_has_no_delete_tool():
     _d()   # the service exists
 
 
+def scenario_routes_and_argyle_never_call_the_legacy_delete_adapters():
+    from unittest.mock import patch
+    from services import threads, agent_tools_v2
+    import ast
+    import inspect
+    import main
+
+    # Exercise the HTTP deletes with adapters that explode if reached.
+    fx = build()
+    with patch.object(threads, 'delete', side_effect=AssertionError('legacy thread delete reached')), \
+         patch.object(missions, 'delete', side_effect=AssertionError('legacy mission delete reached')):
+        for kind, key in (('thread', 'GTL'), ('mission', 'GM2')):
+            rid = fx.ids[key]
+            token = preview_ok(kind, rid, dict(MOM))['token']
+            response = http('mom', 'DELETE', f'/api/{kind}s/{rid}', json={'token': token})
+            check(response.status_code == 200, response.text)
+
+    for kind, key, adapter in (('thread', 'GTL', threads.delete), ('mission', 'GM2', missions.delete)):
+        rid = fx.ids[key]
+        check(adapter(rid)['status'] == 'not_found', 'an already-stamped legacy root is not_found')
+        check(_d()._prepare(kind, rid, dict(MOM))[1]['status'] == 'gone', 'admission distinguishes a gone root')
+        # Model a deletion landing after the route's initial visibility check.
+        with patch.object(main, '_deletion_for_actor', return_value=dict(MOM)):
+            response = http('mom', 'DELETE', f'/api/{kind}s/{rid}', json={'token': 'old'})
+        check(response.status_code == 404, 'a gone root racing admission maps to 404')
+
+    # Neither routes nor the Argyle registry may introduce a legacy caller.
+    # These adapters have no production callers; keep that invariant explicit.
+    for module in (main, agent_tools_v2):
+        tree = ast.parse(inspect.getsource(module))
+        calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                 and isinstance(n.func, ast.Attribute) and n.func.attr == 'delete'
+                 and isinstance(n.func.value, ast.Name)
+                 and n.func.value.id in ('threads', 'missions')]
+        check(not calls, f'{module.__name__} calls a legacy delete adapter')
+
+
 SCENARIOS = [v for k, v in list(globals().items()) if k.startswith('scenario_')]
 
 if __name__ == '__main__':

@@ -90,7 +90,9 @@ def _protected_window(member_id, ev_start):
         w_start = ev_start.replace(hour=sh, minute=sm, second=0, microsecond=0)
         w_end = ev_start.replace(hour=eh, minute=em, second=0, microsecond=0)
         if w_start <= ev_start <= w_end:
-            return access.commitment_view(pc)
+            view = access.commitment_view(pc)
+            if view is not access.GONE:
+                return view
     return None
 
 
@@ -214,6 +216,8 @@ def ladder(ev, cache=None, now=None) -> dict:
     """
     cache = access.cached_schedule(blob=cache)
     ev = access.event_view(ev)
+    if ev is access.GONE:
+        return {'tier': 0, 'line': '', 'reasons': [], 'driver': None, 'contacts': [], 'actions': []}
     now = now or datetime.datetime.now()
     title = ev.get('title') or 'Event'
     start = _parse(ev.get('start'))

@@ -112,6 +112,8 @@ def _notify(ev, reason: str, restored: bool) -> None:
     try:
         import main as _m
         ev = access.event_view(ev if isinstance(ev, dict) else ev.model_dump(mode='json'))
+        if ev is access.GONE:
+            return
         get = ev.get if isinstance(ev, dict) else lambda k, d=None: getattr(ev, k, d)
         ev_id = str(get('id') or '')
         title = strip_cancel_prefix(_title_of(ev))

@@ -670,6 +670,8 @@ def _commitment_findings(now: datetime.datetime):
         programs = {}
         for pc in storage.get_protected_commitments():
             pc = access.commitment_view(pc, access.HOUSE, programs=programs)
+            if pc is access.GONE:
+                continue
             member = members.get(pc.get('member_id')) or {}
             drv = member.get('driver_id')
             days = set(pc.get('days_of_week') or [])

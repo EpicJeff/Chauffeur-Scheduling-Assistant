@@ -107,6 +107,8 @@ def _rows(kind):
 
 def load(kind, sid):
     """Load a raw record; trips use the calendar event id as their subject id."""
+    if kind in ('thread', 'mission', 'program', 'project'):
+        return access._memo(('subject', kind, sid), lambda: getattr(storage, 'get_' + kind)(sid))
     return next((row for row in _rows(kind) if str(row.get('id')) == str(sid)), None)
 
 
@@ -163,7 +165,10 @@ def subject_records(kind, row):
         mission = situations._thread_mission(row) or {}
         proposed = (mission.get('plan') or {}).get('project')
     if kind == 'mission' and row.get('origin_kind') == 'thread' and row.get('origin_ref'):
-        row = storage.get_thread(row['origin_ref']) or {}
+        origin_id = row['origin_ref']
+        row = storage.get_thread(origin_id)
+        if access.gone('thread', row):
+            return [('thread', row)]
     entries = list(row.get('subject_history') or [])
     if row.get('subject_kind'):
         entries.append({'kind': row['subject_kind'], 'id': row.get('subject_id')})
@@ -174,7 +179,7 @@ def subject_records(kind, row):
             continue
         seen.add(key)
         record = load(*key) if key[0] and key[1] else None
-        if record is not None:
+        if record is not None or key[0] in ('thread', 'mission', 'program', 'project'):
             records.append((key[0], record))
     # A preview has no stored project yet, but its words already have that
     # audience. Read the current proposal each time so revisions can widen it;
@@ -536,6 +541,8 @@ def _occasion_context(row, viewer, spoken, facet):
 
 def _event_context(row, viewer, spoken, facet):
     row = access.event_view(row, access.HOUSE if spoken else viewer)
+    if row is access.GONE:
+        return None
     assignments = (storage.get_cached_schedule() or {}).get('assignments') or {}
     driver_id = assignments.get(row['id'])
     driver_name = next((driver.get('name') for driver in storage.get_all_drivers()

@@ -269,6 +269,8 @@ def candidates(pack: dict, seed_event_id: str, assignments: dict = None) -> list
                 continue
             for raw_pc in storage.get_protected_commitments(member_id=member['id']):
                 pc = access.commitment_view(raw_pc)
+                if pc is access.GONE:
+                    continue
                 if str(pc.get('id')) != str(b.get('commitment_id') or ''):
                     continue
                 if str(pc.get('id')) not in (pack.get('protected_rule_index') or {}):

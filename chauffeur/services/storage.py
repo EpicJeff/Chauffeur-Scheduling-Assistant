@@ -6719,6 +6719,46 @@ def count_event_moments_since(since_ts: float) -> int:
                    and (m.get('ts') or 0) > since_ts)
 
 
+def message_visible(message, *, resolved=None):
+    """One deletion predicate for history, previews, counts and queued delivery.
+
+    `resolved` belongs to one read: every distinct typed reference is loaded
+    once, including an ask/proposal's source chain. A mixed message disappears
+    whole when any reference is gone.
+    """
+    from services import access
+    resolved = {} if resolved is None else resolved
+
+    def living(kind, rid, visiting=frozenset()):
+        key = (kind, rid)
+        getters = {'thread': get_thread, 'mission': get_mission,
+                   'program': get_program, 'project': get_project,
+                   'ask': get_ask, 'proposal': get_action_proposal, 'finding': get_finding}
+        if kind not in getters or not rid:
+            return True
+        if key in visiting:
+            return False
+        if key not in resolved:
+            row = getters[kind](rid)
+            ok = not access.gone(kind, row)
+            if ok and kind in ('ask', 'proposal', 'finding'):
+                sources = [row.get('source') or {},
+                           {'kind': row.get('origin_kind'), 'id': row.get('origin_id')},
+                           {'kind': row.get('situation_kind'), 'id': row.get('situation_id')},
+                           {'kind': row.get('subject_type'), 'id': row.get('subject_id')}]
+                ok = all(living(s.get('kind'), s.get('id'), visiting | {key}) for s in sources)
+            resolved[key] = ok
+        return resolved[key]
+
+    if access.gone('message', message):
+        return False
+    card = message.get('card') or {}
+    refs = list(message.get('refs') or [])
+    refs += [{'kind': kind, 'id': card.get(kind + '_id')}
+             for kind in ('mission', 'thread', 'program', 'project', 'ask', 'proposal')]
+    return all(living(ref.get('kind'), ref.get('id')) for ref in refs)
+
+
 def get_channel_messages(channel_id: str, after_ts: float = None,
                          limit: int = 50) -> List[dict]:
     """Ascending by ts; the LAST `limit` messages (optionally after after_ts)."""
@@ -6726,6 +6766,9 @@ def get_channel_messages(channel_id: str, after_ts: float = None,
         msgs = [dict(m) for m in chat_messages_table.search(Query().channel_id == channel_id)]
     if after_ts is not None:
         msgs = [m for m in msgs if m.get('ts', 0) > after_ts]
+    resolved = {}
+    with db_lock:
+        msgs = [m for m in msgs if message_visible(m, resolved=resolved)]
     msgs.sort(key=lambda m: m.get('ts', 0))
     return msgs[-limit:] if limit else msgs
 
@@ -6741,13 +6784,15 @@ def get_unread_counts(member_id: str) -> dict:
         reads = {r['channel_id']: r.get('last_read_ts', 0)
                  for r in channel_reads_table.search(Query().member_id == member_id)}
     counts = {}
+    resolved = {}
     for c in get_channels_for_member(member_id):
         last_read = reads.get(c['id'], 0)
         with db_lock:
             msgs = chat_messages_table.search(Query().channel_id == c['id'])
             counts[c['id']] = sum(
                 1 for m in msgs
-                if m.get('ts', 0) > last_read and m.get('sender_member_id') != member_id)
+                if m.get('ts', 0) > last_read and m.get('sender_member_id') != member_id
+                and message_visible(m, resolved=resolved))
     return counts
 
 def add_telemetry_event(event_data: dict) -> int:

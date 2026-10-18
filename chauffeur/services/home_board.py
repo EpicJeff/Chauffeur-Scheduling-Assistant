@@ -1047,8 +1047,8 @@ _CACHE_MAX = 8
 
 
 def invalidate_for_deletion():
-    """Task 3 supplies deletion-aware board invalidation and the digest change."""
-    pass
+    """Drop warm payloads before a confirmed deletion returns."""
+    invalidate_cache()
 
 
 def invalidate_cache():
@@ -5336,14 +5336,14 @@ def _access_input_digest():
         return memo['digest']
     policy = []
     for records, fields in (
-            (storage.get_projects(), ('id', 'audience', 'shared_with', 'audience_rev', 'wrapped_from', 'owner_member_id')),
+            (storage.get_projects(), ('id', 'deleting', 'audience', 'shared_with', 'audience_rev', 'wrapped_from', 'owner_member_id')),
             (storage.get_all_members(), ('id', 'role', 'status', 'is_child', 'system')),
             (storage.get_programs(include_finished=True),
-             ('id', 'project_id', 'member_id', 'subject_kind', 'subject_id', 'subject_history')),
+             ('id', 'deleting', 'project_id', 'member_id', 'subject_kind', 'subject_id', 'subject_history')),
             (storage.get_threads(include_closed=True),
-             ('id', 'project_id', 'owner_member_id', 'subject_kind', 'subject_id', 'subject_history')),
+             ('id', 'deleting', 'project_id', 'owner_member_id', 'subject_kind', 'subject_id', 'subject_history')),
             (storage.get_missions(),
-             ('id', 'project_id', 'created_by', 'subject_kind', 'subject_id', 'subject_history'))):
+             ('id', 'deleting', 'project_id', 'created_by', 'subject_kind', 'subject_id', 'subject_history'))):
         policy.append([[r.get(k) for k in fields] for r in sorted(records, key=lambda r: r['id'])])
     digest = hashlib.sha256(json.dumps(policy, sort_keys=True).encode('utf-8')).hexdigest()
     _ACCESS_DIGEST.update(at=stamp, digest=digest)
