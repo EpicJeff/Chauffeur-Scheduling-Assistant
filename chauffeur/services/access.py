@@ -306,8 +306,7 @@ def finding_visible(finding, viewer):
         return False
     kind = finding.get('subject_type')
     if kind == 'commitment':
-        cid = str(finding.get('subject_id') or '').split(':', 1)[0]
-        return commitment_view(storage.get_protected_commitment(cid), viewer) is not GONE
+        return _commitment_finding_visible(finding, viewer)
     if kind == 'project':
         return project_visible(_get_project(finding.get('subject_id')), viewer)
     if kind not in KINDS:
@@ -328,8 +327,7 @@ def finding_view(finding, viewer, *, focus_key=NOT_A_CHANNEL):
         return None
     kind = finding.get('subject_type')
     if kind == 'commitment':
-        cid = str(finding.get('subject_id') or '').split(':', 1)[0]
-        return finding if commitment_view(storage.get_protected_commitment(cid), viewer) is not GONE else None
+        return finding if _commitment_finding_visible(finding, viewer) else None
     if kind == 'project':
         return finding if project_visible(_get_project(finding.get('subject_id')), viewer) else None
     spec = KINDS.get(kind)
@@ -440,6 +438,29 @@ def event_view(event, viewer=HOUSE):
     return events[0] if events else GONE
 
 
+def _commitment_emitter(row):
+    def emitters():
+        out = {}
+        for program in storage.get_programs(include_finished=True):
+            for cid in (program.get('emissions') or {}).get('commitment_ids') or []:
+                out.setdefault(cid, program)
+        return out
+    return _memo('commitment_emitters', emitters).get(row.get('id'))
+
+
+def _commitment_finding_visible(finding, viewer):
+    """A Busy reservation never grants access to its program's finding words."""
+    cid = str(finding.get('subject_id') or '').split(':', 1)[0]
+    row = storage.get_protected_commitment(cid)
+    if not row or gone('commitment', row):
+        return False
+    source = row.get('source') or {}
+    if source.get('kind') == 'program':
+        return record_visible('program', storage.get_program(source.get('id')), viewer)
+    program = _commitment_emitter(row)
+    return program is None or record_visible('program', program, viewer)
+
+
 def commitment_view(row, viewer=HOUSE, *, programs=None):
     """An emitted reservation follows its program's current audience."""
     if gone('commitment', row) or not row:
@@ -457,13 +478,7 @@ def commitment_view(row, viewer=HOUSE, *, programs=None):
     if program is None:
         # Legacy emissions can precede the provenance backfill. An orphaned
         # commitment with no source can still be tied to its emitter.
-        def emitters():
-            out = {}
-            for program in storage.get_programs(include_finished=True):
-                for cid in (program.get('emissions') or {}).get('commitment_ids') or []:
-                    out.setdefault(cid, program)
-            return out
-        program = _memo('commitment_emitters', emitters).get((row or {}).get('id'))
+        program = _commitment_emitter(row)
     if program and gone('program', program):
         return GONE
     if program and not record_visible('program', program, viewer):

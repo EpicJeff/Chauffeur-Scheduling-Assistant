@@ -500,6 +500,21 @@ def scenario_commitment_findings_hide_at_start_with_their_program():
             'state': 'open', 'identity': 'commitment-proof:' + key})
     before = http('mom', 'GET', '/api/findings')
     check(before.status_code == 200 and fx.secret('R5p') in before.text, 'the emitted finding starts visible')
+    private = storage.get_finding(ids['R3'])
+    for col, viewer in viewers(fx):
+        allowed = col in ('mom', 'kid')
+        check(access.finding_visible(private, viewer) == allowed, f'private commitment finding audience for {col}')
+        check((access.finding_view(private, viewer) is not None) == allowed,
+              f'private commitment finding words require program access for {col}')
+        check(any(f['id'] == private['id'] for f in findings.open_findings(viewer=viewer)) == allowed,
+              f'Needs You applies the source program audience for {col}')
+    for who in ('mom', 'dad', 'aunt'):
+        response = http(who, 'GET', '/api/findings')
+        check(response.status_code == 200, response.text)
+        check(any(f['id'] == private['id'] for f in response.json()['findings']) == (who == 'mom'),
+              f'findings API applies the source program audience for {who}')
+        if who != 'mom':
+            check(fx.secret('R3') not in response.text, f'no private program words for {who}')
     start_ok('project', fx.projects['household']['id'], dict(DAD))
     gone = storage.get_finding(ids['R5p'])
     for col, viewer in viewers(fx):
