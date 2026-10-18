@@ -332,6 +332,159 @@ def scenario_a_survivor_whose_owner_changes_keeps_failing_closed():
           f"the new owner keeps it, at the keeper view, with no lockout error: {views}")
 
 
+def scenario_a_finding_whose_subject_is_missing_is_hidden():
+    """Gone is missing OR stamped (spec section 4 step 3): today's permissive missing-subject branch goes."""
+    fx = world()
+    start_ok('project', fx.projects['mom_private']['id'], dict(MOM))
+    finish()
+    # Raw rows, as a racing writer or old data would leave them (storage refuses them; the orphan pass
+    # would collect them; until then no reader may show them).
+    storage.findings_table.insert({'id': 'never', 'subject_type': 'thread', 'subject_id': 'a-thread-that-never-existed',
+                                   'kind': 'x', 'line': 'orphan words', 'state': 'open', 'identity': 'x:never'})
+    never = 'never'
+    check(storage.get_thread(fx.ids['R1']) is None, "the fixture: R1 is removed outright")
+    leftover = storage.findings_table.insert({'id': 'leftover-r1', 'subject_type': 'thread', 'subject_id': fx.ids['R1'],
+                                              'kind': 'x', 'line': fx.secret('R1'), 'state': 'open', 'identity': 'x:r1'})
+    check(leftover, "the fixture: a finding a racing writer left on the removed thread")
+    for fid in (never, 'leftover-r1'):
+        finding = storage.get_finding(fid)
+        for col, viewer in viewers(fx):
+            check(not access.finding_visible(finding, viewer), f"finding_visible {fid} {col}: a missing subject hides it")
+            check(access.finding_view(finding, viewer) is None, f"finding_view {fid} {col}: a missing subject hides it")
+
+
+# --- the fail-closed pointer, for every target kind, pointer kind and survivor kind ------------------
+
+def _pointer_matrix_world():
+    """Survivors in Household pointing at each kind of record in Mom's private project.
+
+    Thread PT-* (Dad keeps it) and mission PM-* (Dad started it), each by subject or by subject history,
+    at R1 (thread), R2 (mission), R3 (program) and the project itself."""
+    fx = world()
+    house = fx.projects['household']
+    targets = {'thread': fx.ids['R1'], 'mission': fx.ids['R2'], 'program': fx.ids['R3'],
+               'project': fx.projects['mom_private']['id']}
+    keys = []
+    for tkind, tid in targets.items():
+        for via in ('subject', 'history'):
+            extra = ({'subject_kind': tkind, 'subject_id': tid} if via == 'subject'
+                     else {'subject_history': [{'kind': tkind, 'id': tid}]})
+            _thread(fx, f'PT-{tkind}-{via}', 'dad', house, **extra)
+            _mission(fx, f'PM-{tkind}-{via}', 'dad', house, **extra)
+            keys += [('thread', f'PT-{tkind}-{via}'), ('mission', f'PM-{tkind}-{via}')]
+    return fx, keys
+
+
+def _view_all(fx, kind, key):
+    row = LOAD[kind](fx.ids[key])
+    return {col: access.record_view(kind, row, v) for col, v in viewers(fx)}
+
+
+def _keeper_only(fx, keys, before, keeper, stage):
+    for kind, key in keys:
+        after = _view_all(fx, kind, key)
+        want = {col: ('keeper' if col == keeper else None) for col in after}
+        check(after == want, f"{stage} {key}: readable only by {keeper}, at the keeper view: {after}")
+        if before:
+            for col in after:
+                check(RANK[after[col]] <= RANK[before[key][col]], f"{stage} {key} {col}: never widening")
+
+
+def scenario_fail_closed_for_every_target_kind_pointer_kind_and_survivor_kind():
+    fx, keys = _pointer_matrix_world()
+    before = {key: _view_all(fx, kind, key) for kind, key in keys}
+    check(all(before[key]['mom'] == 'full' for _, key in keys), f"the fixture: Mom reads every survivor in full: {before}")
+    start_ok('project', fx.projects['mom_private']['id'], dict(MOM))
+    _keeper_only(fx, keys, before, 'dad', 'after start')
+    finish()
+    for tkind, rid in (('thread', fx.ids['R1']), ('mission', fx.ids['R2']), ('program', fx.ids['R3'])):
+        check(LOAD[tkind](rid) is None, f"the fixture: the {tkind} target is removed outright")
+    _keeper_only(fx, keys, before, 'dad', 'after cleanup')
+    for kind, key in keys:
+        storage.update_thread(fx.ids[key], {'owner_member_id': 'mom'}) if kind == 'thread' else \
+            storage.update_mission(fx.ids[key], {'created_by': 'mom'})
+    _keeper_only(fx, keys, None, 'mom', 'after the owner changed')
+
+
+# --- every read surface, and the requirements no primitive shows ------------------------------------
+
+READ_SURFACES = ('/api/threads', '/api/situations', '/api/subjects/search?q=Title', '/api/missions/admin',
+                 '/api/programs', '/api/action-proposals', '/api/projects/elsewhere', '/api/projects',
+                 '/api/findings', '/api/home_board')
+
+
+def scenario_no_read_surface_leaks_a_gone_record():
+    from services import home_board, house_programs
+    fx = world()
+    storage.add_action_proposal({'action_type': 'skip_occurrence', 'summary': fx.secret('R2'), 'status': 'proposed',
+                                 'origin_kind': 'mission', 'origin_id': fx.ids['R2']})
+    words = words_of(fx, CLOSURE)
+
+    def surfaces():
+        out = {}
+        for path in READ_SURFACES:
+            r = http('mom', 'GET', path)
+            check(r.status_code == 200, f"{path} answers Mom: {r.status_code} {r.text[:160]}")
+            out[path] = r.text
+        home_board._CACHE.clear()
+        out['board'] = json.dumps(home_board.build(None, now=NOW, viewer=fx.viewers['mom']), default=str)
+        out['house programs'] = json.dumps(house_programs.objects(viewer=fx.viewers['mom']), default=str)
+        return out
+    seen = {path: leaked(text, words) for path, text in surfaces().items()}
+    check(seen['/api/threads'] and seen['/api/missions/admin'],
+          f"the fixture: Mom's own surfaces name the private records before the delete: {seen}")
+    start_ok('project', fx.projects['mom_private']['id'], dict(MOM))
+    for path, text in surfaces().items():
+        check(not leaked(text, words), f"{path}: names a gone record: {leaked(text, words)}")
+
+
+def scenario_the_board_digest_reads_the_stamp():
+    from unittest.mock import patch
+    from services import home_board
+    fx = world()
+    with patch.object(home_board, 'ACCESS_DIGEST_SECONDS', 0):
+        before = home_board._access_input_digest()
+        storage.update_thread(fx.ids['R5t'], {'deleting': 'a-deletion-id'})
+        check(home_board._access_input_digest() != before, "`deleting` is an input of the board's access digest")
+
+
+def scenario_a_chat_read_resolves_its_distinct_refs_in_one_batch():
+    from unittest.mock import patch
+    fx = world()
+    dm, argyle = fx.dm['mom'], storage.ensure_argyle_member()['id']
+    refs = [{'kind': 'thread', 'id': fx.ids['R5t']}, {'kind': 'mission', 'id': fx.ids['R9b']},
+            {'kind': 'program', 'id': fx.ids['R5p']}]
+    base = time.time() - 1000
+    for i in range(30):
+        _msg(dm, argyle, f'note {i}', base + i, refs=[refs[i % 3]], card={'kind': 'mission_ask', 'mission_id': fx.ids['R9b']})
+    loads = []
+    getters = {name: getattr(storage, name) for name in ('get_thread', 'get_mission', 'get_program', 'get_project')}
+
+    def counted(name):
+        return lambda rid, *a, **k: loads.append((name, rid)) or getters[name](rid, *a, **k)
+    with patch.multiple(storage, **{name: counted(name) for name in getters}):
+        msgs = storage.get_channel_messages(dm['id'])
+    check(len(msgs) == 30, f"all thirty survive: {len(msgs)}")
+    check(len(loads) <= 3, f"three distinct refs are resolved once each, not once per message: {len(loads)} loads")
+
+
+def scenario_the_schedule_is_marked_dirty_at_start_and_refreshed_once_by_cleanup():
+    from unittest.mock import patch
+    import main
+    fx = world()
+    calls = []
+    pid = fx.projects['mom_private']['id']
+    with patch.object(main, 'trigger_background_refresh', lambda *a, **k: calls.append((a, k))):
+        preview = http('mom', 'GET', f'/api/deletion/project/{pid}/preview')
+        check(preview.status_code == 200, f"the preview route: {preview.status_code} {preview.text[:160]}")
+        r = http('mom', 'DELETE', f'/api/projects/{pid}', json={'token': preview.json()['token']})
+        check(r.status_code == 200, f"deleted: {r.status_code} {r.text[:200]}")
+        check(len(calls) >= 1, "the tap marks the schedule dirty (a refresh is requested)")
+        at_start = len(calls)
+        finish()
+        check(len(calls) - at_start == 1, f"cleanup refreshes the schedule exactly once: {len(calls) - at_start}")
+
+
 SCENARIOS = [v for k, v in list(globals().items()) if k.startswith('scenario_')]
 
 if __name__ == '__main__':

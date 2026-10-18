@@ -42,7 +42,7 @@ from harness import check  # noqa: F401  (isolates CHAUFFEUR_DATA_DIR)
 import access_fixture
 from access_fixture import _thread, _mission, _program, HAL, PAT, SIB
 from test_subjects import MOM, DAD, AUNT, KID
-from services import storage, projects, access, missions
+from services import storage, projects, access, missions, situations
 
 ASK_A_PARENT = "Ask a parent to delete this."
 CHANGED = "This project changed. Look again."
@@ -118,7 +118,8 @@ def build():
 
 
 KIND = {'GT1': 'thread', 'GM1': 'mission', 'GM2': 'mission', 'GP1': 'program', 'GK1': 'thread',
-        'GKM': 'mission', 'GTL': 'thread', 'SA1': 'thread', 'SA2': 'mission', 'R5s': 'program'}
+        'GKM': 'mission', 'GTL': 'thread', 'SA1': 'thread', 'SA2': 'mission', 'R5s': 'program',
+        'AT1': 'thread', 'AP1': 'program'}
 LOAD = {'thread': storage.get_thread, 'mission': storage.get_mission, 'program': storage.get_program,
         'project': storage.get_project}
 
@@ -157,15 +158,25 @@ def stamped():
     return rows
 
 
-def untouched(fx, keys, project_ids=(), how=''):
-    """Nothing stamped, no deletions row, every named record still there."""
+SNAPSHOT_TABLES = ('threads', 'missions', 'mission_steps', 'programs', 'projects', 'asks', 'findings',
+                   'agent_action_proposals', 'protected_commitments', 'protected_exceptions', 'program_lessons',
+                   'chat_messages', 'trip_metadata', 'deletions')
+
+
+def snapshot():
+    """Every row a refused or late action could touch, compared in full (never ids or counts)."""
+    return {name: sorted(json.dumps(dict(r), sort_keys=True, default=str) for r in storage.db.table(name).all())
+            for name in SNAPSHOT_TABLES}
+
+
+def untouched(before, how):
+    """Nothing written at all since `before`: no stamp, no deletions row, no changed payload."""
     check(stamped() == [], f"{how}: nothing is stamped: {stamped()}")
-    check(storage.get_deletions() == [], f"{how}: no deletions row: {storage.get_deletions()}")
-    for key in keys:
-        kind, rid = pair(fx, key)
-        check(LOAD[kind](rid) is not None, f"{how}: {key} is still there")
-    for pid in project_ids:
-        check(storage.get_project(pid) is not None, f"{how}: project {pid} is still there")
+    after = snapshot()
+    for name in SNAPSHOT_TABLES:
+        if after[name] != before[name]:
+            was, now = set(before[name]) - set(after[name]), set(after[name]) - set(before[name])
+            check(False, f"{how}: {name} changed:\n  was {sorted(was)[:2]}\n  now {sorted(now)[:2]}")
 
 
 def in_fresh_context(fn, *args, timeout=30, **kwargs):
@@ -309,13 +320,14 @@ def scenario_the_owner_and_a_parent_who_sees_it_may_delete_a_project():
 def scenario_no_other_adult_child_helper_disabled_member_or_device_may_delete_a_project():
     for actor in (AUNT, KID, HAL, PAT, SIB, access.HOUSE, access.HOUSE_PARENT):
         fx = build()
+        before = snapshot()
         who = actor.get('id') or ('house-parent' if actor.get('role') == 'parent' else 'house')
         res = _d().preview('project', garage(fx), dict(actor))
         check(res.get('status') == 'refused' and not res.get('token'), f"{who} may not delete the Garage: {res}")
         token = preview_ok('project', garage(fx), dict(MOM))['token']
         res = _d().start('project', garage(fx), dict(actor), token)
         check(res.get('status') == 'refused', f"{who} cannot start it with somebody else's token: {res}")
-        untouched(fx, GARAGE_KEYS, [garage(fx)], who)
+        untouched(before, who)
 
 
 def scenario_a_child_owner_deletes_her_own_project_when_she_can_read_all_of_it():
@@ -330,6 +342,7 @@ def scenario_a_child_owner_deletes_her_own_project_when_she_can_read_all_of_it()
 def scenario_a_closure_record_the_actor_cannot_read_refuses_and_names_nothing():
     fx = build()
     pid = fx.projects['kate_private']['id']       # Kate's project holds Mom's mission R11, unreadable to Kate
+    before = snapshot()
     res = _d().preview('project', pid, dict(KID))
     check(res == {'status': 'refused', 'message': ASK_A_PARENT} or
           (res.get('status') == 'refused' and res.get('message') == ASK_A_PARENT and not res.get('items')),
@@ -339,7 +352,7 @@ def scenario_a_closure_record_the_actor_cannot_read_refuses_and_names_nothing():
     res = _d().start('project', pid, dict(KID), token)
     check(res.get('status') == 'refused' and res.get('message') == ASK_A_PARENT, f"start refuses the same way: {res}")
     check(not leaked(res, words_of(fx, ['R11'])), f"naming nothing: {res}")
-    untouched(fx, ['R11'], [pid], 'the refused child')
+    untouched(before, 'the refused child')
     check(_d().start('project', pid, dict(MOM), token)['status'] == 'ok', "a parent who sees it all deletes it")
 
 
@@ -360,28 +373,31 @@ def scenario_no_hidden_title_in_a_preview_or_a_refusal():
     fx = build()
     hidden = words_of(fx, ['R1', 'R2', 'R3', 'R7', 'R9origin', 'R9a']) + ['Mom private']
     pid = fx.projects['mom_private']['id']
+    before = snapshot()
     for actor in (DAD, AUNT, KID, access.HOUSE):
         res = _d().preview('project', pid, dict(actor))
         check(res.get('status') == 'refused' and not leaked(res, hidden), f"{actor.get('id')}: {res}")
         res = _d().start('project', pid, dict(actor), 'a-guessed-token')
         check(res.get('status') in ('refused', 'changed') and not leaked(res, hidden), f"{actor.get('id')}: {res}")
-    untouched(fx, ['R1', 'R2', 'R3', 'R7', 'R9origin', 'R9a'], [pid], 'refused strangers')
+    untouched(before, 'refused strangers')
 
 
 def scenario_a_token_for_a_closure_that_moved_answers_changed_and_deletes_nothing():
     fx = build()
     token = preview_ok('project', garage(fx), dict(MOM))['token']
     storage.update_thread(fx.ids['GT1'], {'title': 'Garage, renamed'})
+    before = snapshot()
     res = _d().start('project', garage(fx), dict(MOM), token)
     check(res == {'status': 'changed', 'message': CHANGED} or
           (res.get('status') == 'changed' and res.get('message') == CHANGED), f"a renamed piece: {res}")
-    untouched(fx, GARAGE_KEYS, [garage(fx)], 'renamed')
+    untouched(before, 'renamed')
     token = preview_ok('project', garage(fx), dict(MOM))['token']
     threads_create = _thread(fx, 'GLATE', 'mom', fx.projects['garage'])
     check(threads_create, "a new thread joins the Garage after the preview")
+    before = snapshot()
     res = _d().start('project', garage(fx), dict(MOM), token)
     check(res.get('status') == 'changed' and res.get('message') == CHANGED, f"a piece added after the preview: {res}")
-    untouched(fx, GARAGE_KEYS, [garage(fx)], 'grown')
+    untouched(before, 'grown')
     fresh = preview_ok('project', garage(fx), dict(MOM))
     check(fx.ids['GLATE'] in {i['id'] for i in fresh['items']}, "looking again names the new piece")
     check(_d().start('project', garage(fx), dict(MOM), fresh['token'])['status'] == 'ok', "and the new token deletes")
@@ -410,39 +426,36 @@ class Crash(Exception):
 
 
 def crash_on_stamp(n):
-    """Patch the table writers so the n-th write carrying a `deleting` stamp raises."""
+    """The n-th stamp write raises. Counted once, at `SqliteTable.update` (upsert persists through it),
+    and before raising it proves the earlier stamps really landed inside the open transaction."""
     from services import storage_sqlite
-    seen = {'stamps': 0}
-    real_update, real_upsert = storage_sqlite.SqliteTable.update, storage_sqlite.SqliteTable.upsert
+    seen = {'stamps': 0, 'prior_persisted': None}
+    real_update = storage_sqlite.SqliteTable.update
 
-    def stamp(fields):
+    def update(self, fields, cond=None, doc_ids=None):
         if isinstance(fields, dict) and fields.get('deleting'):
             seen['stamps'] += 1
             if seen['stamps'] == n:
+                seen['prior_persisted'] = len(stamped())    # same connection: sees the uncommitted stamps
                 raise Crash(f'the process died at stamp {n}')
-
-    def update(self, fields, cond=None, doc_ids=None):
-        stamp(fields)
         return real_update(self, fields, cond=cond, doc_ids=doc_ids)
-
-    def upsert(self, document, cond):
-        stamp(document)
-        return real_upsert(self, document, cond)
-    return patch.multiple(storage_sqlite.SqliteTable, update=update, upsert=upsert), seen
+    return patch.object(storage_sqlite.SqliteTable, 'update', update), seen
 
 
 def scenario_start_is_one_transaction():
     fx = build()
     token = preview_ok('project', garage(fx), dict(MOM))['token']
+    before = snapshot()
     patcher, seen = crash_on_stamp(2)
     with patcher:
         try:
             res = _d().start('project', garage(fx), dict(MOM), token)
         except Crash:
             res = 'raised'
-    check(seen['stamps'] >= 2, f"the crash was injected after the first stamp: {seen}")
+    check(seen['stamps'] == 2 and seen['prior_persisted'] and seen['prior_persisted'] >= 1,
+          f"the crash came after a first stamp had really been written: {seen}")
     check(res == 'raised' or res.get('status') != 'ok', f"a crashed start does not claim success: {res}")
-    untouched(fx, GARAGE_KEYS, [garage(fx)], 'crashed start')
+    untouched(before, 'crashed start')
     check(access.project_visible(storage.get_project(garage(fx)), dict(MOM)), "the project is still Mom's to see")
     check(_d().start('project', garage(fx), dict(MOM), token)['status'] == 'ok', "the same tap again works")
 
@@ -455,19 +468,139 @@ def scenario_starting_stops_the_work_and_snapshots_emissions_before_the_pause():
     cid = storage.add_protected_commitment({'id': uuid.uuid4().hex, 'member_id': 'kid', 'title': 'Practice',
                                             'days_of_week': [1], 'time_start': '17:00', 'time_end': '17:30',
                                             'active': True, 'source': {'kind': 'program', 'id': gp1}})
-    storage.add_protected_exception(cid, '2027-01-05')
+    exc = storage.add_protected_exception(cid, '2027-01-05')
     fid = storage.add_finding({'subject_type': 'commitment', 'subject_id': f'{cid}:ev1', 'kind': 'commitment',
                                'line': 'x', 'state': 'open', 'identity': f'commitment:{cid}:ev1'})
-    storage.update_program(gp1, {'emissions': {'commitment_ids': [cid], 'thread_ids': [fx.ids['GK1']], 'event_ids': []}})
+    cid2 = storage.add_protected_commitment({'id': uuid.uuid4().hex, 'member_id': 'kid', 'title': 'Practice',
+                                             'days_of_week': [3], 'time_start': '17:00', 'time_end': '17:30',
+                                             'active': True, 'source': {'kind': 'program', 'id': gp1}})
+    exc2 = storage.add_protected_exception(cid2, '2027-01-07')
+    fid2 = storage.add_finding({'subject_type': 'commitment', 'subject_id': f'{cid2}:ev2', 'kind': 'commitment',
+                                'line': 'y', 'state': 'open', 'identity': f'commitment:{cid2}:ev2'})
+    storage.update_program(gp1, {'emissions': {'commitment_ids': [cid, cid2], 'thread_ids': [fx.ids['GK1']],
+                                               'event_ids': []}})
     start_ok('project', garage(fx), dict(MOM))
     check(storage.get_mission(gm2)['status'] == 'dropped', f"a live mission closes as dropped: {storage.get_mission(gm2)['status']}")
     steer = storage.get_app_state(f'mission_steer:{gm2}') or {}
     check(steer.get('text'), f"a browse gets its stop flag: {steer}")
     check(storage.get_program(gp1)['state'] == 'paused', "the program pauses")
-    check(storage.get_protected_commitment(cid) is not None,
+    check(storage.get_protected_commitment(cid) is not None and storage.get_protected_commitment(cid2) is not None,
           "pausing for a delete does not release: cleanup releases from the snapshot")
     snap = json.dumps(storage.get_deletions()[0].get('emissions'), default=str)
-    check(cid in snap and fid in snap, f"the deletion row snapshotted the commitment and its finding: {snap}")
+    for what in (cid, cid2, exc, exc2, fid, fid2):
+        check(what in snap, f"the deletion row snapshotted every commitment, exception id ({exc}) and finding: "
+                            f"{what} missing from {snap}")
+    check(missions._steer_check(gm2)() == 'Stopped', "the browse's steer check reads Stopped")
+    check(missions._steer_check(gm2)() == 'Stopped', "and still does once the flag is consumed: the mission is gone")
+
+
+def scenario_a_token_survives_everything_the_confirmation_did_not_show():
+    """The token is the sorted (kind, id, title) snapshot: edits it never showed leave it valid."""
+    fx = build()
+    token = preview_ok('project', garage(fx), dict(MOM))['token']
+    storage.update_thread(fx.ids['GT1'], {'next_action': 'Call the haulers', 'status_note': 'moved on'})
+    storage.update_mission(fx.ids['GM2'], {'summary': 'a new summary', 'status_note': 'later'})
+    storage.update_program(fx.ids['GP1'], {'starting_point': 'a different start', 'shape': {'minutes': 30}})
+    trip = storage.get_trip_metadata('ev_disney')
+    storage.set_trip_metadata('ev_disney', dict(trip, title='Disney World, renamed'))   # a linked record's edit
+    row = storage.get_project(garage(fx))
+    storage.update_project(garage(fx), {'pieces': list(reversed(row['pieces'])), 'goal': 'a new goal'})
+    for key, when in (('GTL', 1.0), ('GT1', 2.0), ('GK1', 3.0)):                     # enumeration order moves
+        storage.update_thread(fx.ids[key], {'created_at': when})
+    res = _d().start('project', garage(fx), dict(MOM), token)
+    check(res.get('status') == 'ok', f"none of that was on the confirmation, so the token holds: {res}")
+
+
+def scenario_renaming_a_mission_or_a_program_moves_the_token():
+    for kind, key, fields in (('mission', 'GM1', {'goal': 'Renamed mission'}),
+                              ('program', 'GP1', {'title': 'Renamed program'})):
+        fx = build()
+        token = preview_ok('project', garage(fx), dict(MOM))['token']
+        getattr(storage, f'update_{kind}')(fx.ids[key], fields)
+        before = snapshot()
+        res = _d().start('project', garage(fx), dict(MOM), token)
+        check(res.get('status') == 'changed' and res.get('message') == CHANGED, f"a renamed {kind}: {res}")
+        untouched(before, f'renamed {kind}')
+
+
+def _garden(fx):
+    """A household project owned by Aunt, an adult who is not a parent, with her thread and program."""
+    garden = projects.create({'title': 'Garden', 'goal': 'g', 'done_when': 'd', 'owner_member_id': 'aunt',
+                              'audience': 'household'}, dict(AUNT))
+    check(garden['status'] == 'success', f"the fixture: Aunt's own project: {garden}")
+    garden = garden['project']
+    _thread(fx, 'AT1', 'aunt', garden)
+    _program(fx, 'AP1', 'aunt', garden)
+    return garden
+
+
+def scenario_an_adult_owner_who_is_not_a_parent_deletes_her_project_and_its_program():
+    fx = build()
+    garden = _garden(fx)
+    res = preview_ok('program', fx.ids['AP1'], dict(AUNT))
+    check([i['id'] for i in res['items']] == [fx.ids['AP1']], f"her program alone: {res}")
+    check(_d().start('program', fx.ids['AP1'], dict(AUNT), res['token'])['status'] == 'ok',
+          "she deletes the program as its project's owner")
+    finish()
+    check(storage.get_program(fx.ids['AP1']) is None and storage.get_project(garden['id']) is not None, "the program went")
+    res = preview_ok('project', garden['id'], dict(AUNT))
+    check({i['id'] for i in res['items']} == {fx.ids['AT1']}, f"what is left of it: {res}")
+    check(_d().start('project', garden['id'], dict(AUNT), res['token'])['status'] == 'ok', "and then the project")
+    finish()
+    check(storage.get_project(garden['id']) is None and storage.get_thread(fx.ids['AT1']) is None, "all of it is gone")
+
+
+def scenario_linked_records_of_every_other_kind_stay():
+    from services import subjects
+    fx = build()
+    links = [('occasion', 'o2'), ('member', 'kid'), ('contact', 'c1'), ('list', 'l1'), ('event', 'e1'),
+             ('project', fx.projects['survivor']['id'])]
+    for kind, rid in links:
+        res = projects.add_piece(garage(fx), kind, rid, dict(MOM))
+        check(res['status'] == 'success', f"the fixture links a {kind}: {res}")
+    preview = preview_ok('project', garage(fx), dict(MOM))
+    check(preview['links'] == 1 + len(links), f"every linked record is counted, never named for deletion: {preview}")
+    rows = {(kind, rid): json.dumps(subjects.load(kind, rid), sort_keys=True, default=str) for kind, rid in links}
+    _d().start('project', garage(fx), dict(MOM), preview['token'])
+    finish()
+    for (kind, rid), was in rows.items():
+        now = subjects.load(kind, rid)
+        check(now is not None, f"the linked {kind} {rid} stays")
+        if kind != 'project':
+            check(json.dumps(now, sort_keys=True, default=str) == was, f"and is untouched: {kind} {rid}")
+
+
+def scenario_the_stop_needs_no_plan_approval_permission():
+    """Spec section 4 step 4: the stop is authorized by the delete check, not by plan approval."""
+    from services import planned
+    from test_planned_missions import _planned_mission, _plan_of
+    from test_mission_subject import _step
+    fx = build()
+    garden = _garden(fx)
+    mid = _planned_mission()
+    rev = _plan_of(mid)['rev']
+    situations.act('mission', mid, 'approve_plan', option_id=f'approve_plan:{rev}:drop:s1', payload={}, actor=dict(MOM))
+    rev = _plan_of(mid)['rev']
+    situations.act('mission', mid, 'approve_plan', option_id=f'approve_plan:{rev}:approve', payload={}, actor=dict(MOM))
+    _step(mid)
+    storage.update_mission(mid, {'created_by': 'aunt', 'subject_kind': 'occasion', 'subject_id': 'occ-parents'})
+    projects.adopt('mission', mid, None, project_id=garden['id'])
+    mission = storage.get_mission(mid)
+    check(any(st['state'] == 'running' for st in _plan_of(mid)['stages']), "the fixture: a running work stage")
+    check(access.record_view('mission', mission, dict(AUNT)) == 'keeper' and not planned.may_approve(mission, dict(AUNT)),
+          "the fixture: Aunt keeps the mission but may not approve its plan (a parents-only subject)")
+    before = snapshot()
+    refused = planned.stop_plan(mid, dict(AUNT))
+    check(refused.get('status') != 'success', f"Aunt's ordinary Stop is refused: {refused}")
+    untouched(before, "Aunt's refused Stop")
+    start_ok('project', garden['id'], dict(AUNT))
+    mission = storage.get_mission(mid)
+    plan = mission['plan']
+    check(plan['state'] == 'stopped' and not [st for st in plan['stages'] if st['state'] == 'running'],
+          f"the delete stops the plan and its running stage: {plan['state']} {[st['state'] for st in plan['stages']]}")
+    check(mission['status'] == 'dropped', f"and closes the mission as dropped: {mission['status']}")
+    storage.set_app_state(f'mission_steer:{mid}', {})          # whatever flag there was, consumed
+    check(missions._steer_check(mid)() == 'Stopped', "a gone mission's steer check reads Stopped")
 
 
 # --- Review Focus 1, 3, 4 ---------------------------------------------------------------------
@@ -509,9 +642,10 @@ def scenario_rf3_a_person_disabled_between_preview_and_start_is_refused():
     fx = build()
     token = preview_ok('project', garage(fx), dict(MOM))['token']
     storage.update_member('mom', {'status': 'disabled'})
+    before = snapshot()
     res = _d().start('project', garage(fx), dict(MOM), token)       # the caller's stale dict still says active
     check(res.get('status') == 'refused', f"start re-reads the actor: {res}")
-    untouched(fx, GARAGE_KEYS, [garage(fx)], 'disabled actor')
+    untouched(before, 'disabled actor')
 
 
 def _big_project():
@@ -548,7 +682,8 @@ def scenario_rf4_a_project_with_fifty_pieces_starts_in_one_quick_transaction_and
             _d().start('project', pid, dict(MOM), token)
         except Crash:
             pass
-    check(seen['stamps'] >= len(ids), f"the crash landed late in the stamping: {seen}")
+    check(seen['stamps'] == len(ids) and (seen['prior_persisted'] or 0) >= len(ids) - 1,
+          f"the crash landed late in the stamping, after the others had been written: {seen}")
     check(stamped() == [] and storage.get_deletions() == [], f"a crash late in the stamping leaves nothing: {stamped()[:3]}")
     t0 = time.monotonic()
     res = _d().start('project', pid, dict(MOM), token)
@@ -620,25 +755,42 @@ def scenario_deleting_the_last_piece_leaves_the_project():
 
 def scenario_the_routes_preview_delete_refuse_and_hide():
     fx = build()
+    before = snapshot()
     r = http('mom', 'GET', f"/api/deletion/project/{garage(fx)}/preview")
     check(r.status_code == 200 and r.json().get('status') == 'ok', f"preview: {r.status_code} {r.text[:200]}")
     token = r.json()['token']
     check({i['id'] for i in r.json()['items'] if i['kind'] in PIECE_KINDS} == {fx.ids[k] for k in GARAGE_KEYS},
           "the route previews what the service does")
     hidden = http('dad', 'GET', f"/api/deletion/project/{fx.projects['mom_private']['id']}/preview")
-    check(hidden.status_code in (403, 404) and not leaked(hidden.text, words_of(fx, ['R1', 'R2', 'R3'])),
-          f"a project Dad cannot see: {hidden.status_code} {hidden.text[:200]}")
+    check(hidden.status_code == 404 and not leaked(hidden.text, words_of(fx, ['R1', 'R2', 'R3', 'R7'])),
+          f"a project Dad cannot see previews as a 404, never a 403 that admits it exists: "
+          f"{hidden.status_code} {hidden.text[:200]}")
     r = http('dad', 'DELETE', f"/api/projects/{fx.projects['mom_private']['id']}", json={'token': token})
     check(r.status_code == 404, f"a project the actor cannot see is a 404: {r.status_code} {r.text[:200]}")
+    refusal = _d().preview('project', garage(fx), dict(AUNT))['message']
+    r = http('aunt', 'GET', f"/api/deletion/project/{garage(fx)}/preview")
+    check(r.status_code == 403 and r.json().get('detail') == refusal,
+          f"a visible project Aunt may not delete: 403 with the service's own words: {r.status_code} {r.text[:200]}")
     r = http('aunt', 'DELETE', f"/api/projects/{garage(fx)}", json={'token': token})
-    check(r.status_code == 403, f"a refusal is a 403 with its message: {r.status_code} {r.text[:200]}")
+    check(r.status_code == 403 and r.json().get('detail') == refusal,
+          f"a refusal is a 403 with exactly its message ({refusal!r}): {r.status_code} {r.text[:200]}")
+    kates = fx.projects['kate_private']['id']
+    r = http('kid', 'GET', f"/api/deletion/project/{kates}/preview")
+    check(r.status_code == 403 and r.json().get('detail') == ASK_A_PARENT,
+          f"Kate's own project holding a mission she cannot read: {r.status_code} {r.text[:200]}")
+    mom_token = http('mom', 'GET', f"/api/deletion/project/{kates}/preview").json()['token']
+    r = http('kid', 'DELETE', f"/api/projects/{kates}", json={'token': mom_token})
+    check(r.status_code == 403 and r.json().get('detail') == ASK_A_PARENT and not leaked(r.text, words_of(fx, ['R11'])),
+          f"and her DELETE says the same, naming nothing: {r.status_code} {r.text[:200]}")
     r = http('mom', 'DELETE', f"/api/projects/{garage(fx)}", json={})
-    check(r.status_code == 400 and TOKEN_REQUIRED in r.text and stamped() == [],
+    check(r.status_code == 400 and r.json().get('detail') == TOKEN_REQUIRED,
           f"no token is a 400 that deletes nothing: {r.status_code} {r.text[:200]}")
+    untouched(before, 'refused routes')
     storage.update_thread(fx.ids['GT1'], {'title': 'moved'})
+    before = snapshot()
     r = http('mom', 'DELETE', f"/api/projects/{garage(fx)}", json={'token': token})
-    check(r.status_code == 409 and CHANGED in r.text, f"a moved closure is a 409: {r.status_code} {r.text[:200]}")
-    untouched(fx, GARAGE_KEYS, [garage(fx)], 'refused routes')
+    check(r.status_code == 409 and r.json().get('detail') == CHANGED, f"a moved closure is a 409: {r.status_code} {r.text[:200]}")
+    untouched(before, 'a moved closure')
     token = http('mom', 'GET', f"/api/deletion/project/{garage(fx)}/preview").json()['token']
     r = http('mom', 'DELETE', f"/api/projects/{garage(fx)}", json={'token': token})
     check(r.status_code == 200, f"the owner deletes: {r.status_code} {r.text[:200]}")

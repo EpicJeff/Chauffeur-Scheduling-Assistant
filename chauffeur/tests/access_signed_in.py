@@ -464,6 +464,8 @@ def delete_probe(fx, kind, sid, path, col):
     token = preview.json().get('token') if preview is not None and preview.status_code == 200 else 'not-a-token'
     r = request(fx, col, 'DELETE', path, json={'token': token})
     outcome = result(r)
+    if outcome == F and r.json().get('status') in ('error', 'refused', 'not_found'):
+        return f'ACTION-NOT-ACCEPTED: {r.text[:160]}'       # the same negative write_probe applies
     if outcome == F:
         if not (bare is not None and bare.status_code == 400 and TOKEN_REQUIRED in bare.text):
             return f'TOKENLESS-NOT-400: {bare.status_code if bare is not None else None} {bare.text[:120] if bare is not None else ""}'

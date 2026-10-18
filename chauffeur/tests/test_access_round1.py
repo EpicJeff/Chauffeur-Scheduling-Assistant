@@ -1,5 +1,6 @@
 """Task 3 review regressions: HTTP handlers and real services, only model I/O mocked."""
 import base64
+import os
 import traceback
 from unittest.mock import patch
 
@@ -78,8 +79,11 @@ def scenario_photo_only_answers_actable_missions():
         check(r.status_code == 200 and r.json()['read'], r.text)
         check(model.call_count == 1, 'photo did not run vision read')
         entry = r.json()['entry']
-        check(storage.media_file_path(entry['media_id']), 'photo not saved')
-        check(any(h.get('media_id') == entry['media_id'] for h in storage.get_thread(tid)['history']),
+        # Projects delete (spec 2026-10-18 §5 step 5): a new thread photo lives under threads/<thread id>/.
+        folder = os.path.join(os.path.dirname(storage.DB_PATH), 'threads', tid)
+        check(os.path.isdir(folder) and os.listdir(folder), 'photo not saved under threads/<thread id>/')
+        check(entry.get('url') and any(h.get('kind') == 'photo' and h.get('url') == entry['url']
+                                       for h in storage.get_thread(tid)['history']),
               'photo upload must remain available')
         for mid in (hidden, keeper):
             steps = storage.get_mission_steps(mid)

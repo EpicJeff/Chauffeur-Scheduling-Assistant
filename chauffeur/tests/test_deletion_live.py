@@ -11,8 +11,12 @@ Scenarios to write (each screenshot in light and dark at phone width, inspected)
     Remove (every other linked kind: projects.remove_piece, unlink only);
   * folding when the thread card renders: a mission launched from a thread in the same project sits
     inside that thread's card, with its open and Delete;
-  * standalone fallback for a keeper-only viewer, and for a mission whose thread piece is missing;
-  * the phone thread sheet lists every mission (no five cap), each with open and Delete;
+  * standalone fallback for a keeper-only viewer, for a mission whose thread piece is missing, and on a
+    phone surface that has no mission history for that thread: the mission keeps its own card there;
+  * the phone thread sheet fetches the thread's mission history and lists every mission (no five cap),
+    each with open and Delete;
+  * the admin thread sheet lists ALL of a thread's missions (the five cap at main.py's
+    /api/threads/{thread_id}/missions removed), each with open and Delete;
   * a child owner gets "Ask a parent to delete this." when the project holds something she cannot see;
   * after a `changed` answer the UI shows showGlobalAlert and previews again; no browser dialogs.
 

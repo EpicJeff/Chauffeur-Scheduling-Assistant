@@ -19,16 +19,25 @@ before parents, each step idempotent by id:
      keys (mission_steer, triage focus, watcher-notified, practice-pushed);
   7-9. steps, missions, threads, programs, the project row, and the deletion row itself.
 
-Also: an interruption after each step, re-run, converges; the orphan pass removes what a racing
-writer left (a late screenshot); maintenance runs with watchers off; Review Focus 2 (a restart while
-a deletion is half done: startup maintenance resumes and finishes, the project hidden throughout).
+Also: an interruption at every table write and file removal of a clean run, re-run, converges, and
+the clean run removes children before parents; real Argyle notices carry typed refs and go with their
+records; new thread photos live in threads/<thread id>/ under the data directory, their path recorded
+before the bytes; the orphan pass removes what a racing writer left (a late screenshot); maintenance
+runs on its own two-minute loop (`main.deletion_maintenance_loop`, `main.DELETION_MAINTENANCE_S`,
+started by the lifespan) with watchers off; Review Focus 2 (a restart while a deletion is half done:
+startup maintenance resumes and finishes, the project hidden throughout).
 
 Run from chauffeur/:  python tests/test_deletion_cleanup.py
 """
+import asyncio
+import builtins
+import datetime
 import hashlib
+import io
 import json
 import os
 import re
+import shutil
 import time
 import traceback
 import uuid
@@ -65,6 +74,16 @@ def _roots():
     return [os.path.dirname(storage.DB_PATH)] + list(storage._media_roots())
 
 
+def thread_photo_dir(tid):
+    """Spec section 5 step 5: new thread photos live under threads/<thread id>/ (beside browse/<mission id>/)."""
+    return os.path.join(os.path.dirname(storage.DB_PATH), 'threads', tid)
+
+
+def names_path(thread, tid):
+    text = json.dumps((thread or {}).get('history') or [])
+    return f'threads/{tid}/' in text or f'threads\\\\{tid}\\\\' in text
+
+
 def rich():
     """The Garage world with something attached at every step of section 5."""
     fx = build()
@@ -93,6 +112,7 @@ def rich():
                                                               {'kind': 'trip', 'id': 'ev_disney'}]
     storage.update_project(survivor['id'], {'steps': steps, 'origin_mission_id': fx.ids['GSM'], 'pieces': pieces,
                                             'wrapped_from': {'kind': 'mission', 'id': fx.ids['GSM']}})
+    fx.mine_step = next(s for s in storage.get_project(survivor['id'])['steps'] if s['id'] == 'st-mine')
     r5p = storage.get_program(fx.ids['R5p'])
     storage.update_program(fx.ids['R5p'], {'emissions': {'commitment_ids': [], 'event_ids': [],
                                                          'thread_ids': [fx.ids['GT1'], fx.ids['R5t']]}})
@@ -155,6 +175,7 @@ def rich():
     check(added.get('status') == 'ok', f"the fixture adds a photo to GT1: {added}")
     fx.new_photo_files = _files_under(*_roots()) - before
     check(fx.new_photo_files, "the fixture: the photo is a file")
+
     legacy = storage.save_photo_bytes(PNG, 'image/png')
     storage.append_thread_history(ids['GK1'], {'kind': 'photo', 'media_id': legacy['id'], 'url': legacy['url'],
                                                'text': 'old photo', 'who': 'mom', 'ts': time.time()})
@@ -239,8 +260,7 @@ def assert_clean(fx, how):
     check(steps['st-open']['state'] == 'blocked' and WORK_DELETED in json.dumps(steps['st-open']),
           f"{how}: the unfinished step is blocked with '{WORK_DELETED}': {steps['st-open']}")
     check(steps['st-done']['state'] == 'done', f"{how}: a finished step stays finished: {steps['st-done']}")
-    check(steps['st-mine'] == {**steps['st-mine'], 'title': 'Call the bakery', 'owner': 'mom', 'state': 'todo'},
-          f"{how}: a person's own step is untouched")
+    check(steps['st-mine'] == fx.mine_step, f"{how}: a person's own step is untouched: {steps['st-mine']}")
     check(not survivor.get('origin_mission_id') and not survivor.get('wrapped_from'), f"{how}: provenance pointers cleared")
     check(not [p for p in survivor['pieces'] if p['id'] in closure] and any(p['id'] == 'ev_disney' for p in survivor['pieces']),
           f"{how}: the closure's pieces entry goes, the rest stays: {survivor['pieces']}")
@@ -277,8 +297,11 @@ def assert_clean(fx, how):
 def scenario_after_maintain_nothing_of_the_closure_remains():
     fx = rich()
     start_ok('project', garage(fx), dict(MOM))
-    out = finish()
-    check(out['finished'] >= 1 or storage.get_deletions() == [], f"maintain reports it finished: {out}")
+    finished, passes = 0, 0
+    while storage.get_deletions() and passes < 30:
+        finished += _d().maintain()['finished']
+        passes += 1
+    check(finished == 1, f"maintain reports the one deletion finished, once, over {passes} passes: {finished}")
     assert_clean(fx, 'one pass')
 
 
@@ -313,68 +336,136 @@ def scenario_a_failing_commitment_delete_keeps_its_program_until_it_succeeds():
     assert_clean(fx, 'after the retry')
 
 
-def _counted_writes():
-    """Count the table writes one clean maintain() makes (removes and updates)."""
-    from services import storage_sqlite
-    seen = {'n': 0}
-    real_remove, real_update = storage_sqlite.SqliteTable.remove, storage_sqlite.SqliteTable.update
-
-    def remove(self, cond=None, doc_ids=None):
-        seen['n'] += 1
-        return real_remove(self, cond=cond, doc_ids=doc_ids)
-
-    def update(self, fields, cond=None, doc_ids=None):
-        seen['n'] += 1
-        return real_update(self, fields, cond=cond, doc_ids=doc_ids)
-    return patch.multiple(storage_sqlite.SqliteTable, remove=remove, update=update), seen
-
-
 class Interrupted(BaseException):
     """A process killed mid-step (BaseException: no handler may swallow a kill)."""
 
 
-def _interrupt_at(n):
+FS_REMOVERS = ((shutil, 'rmtree'), (os, 'remove'), (os, 'unlink'), (os, 'rmdir'))
+
+
+def _instrumented(on_op):
+    """Every table write (remove, update) and every file removal of cleanup goes through on_op(kind, name)
+    first. Cleanup is held to these doors: a file removed some other way escapes the interruption test."""
     from services import storage_sqlite
-    seen = {'n': 0}
     real_remove, real_update = storage_sqlite.SqliteTable.remove, storage_sqlite.SqliteTable.update
 
-    def bump():
-        seen['n'] += 1
-        if seen['n'] == n:
-            raise Interrupted(f'killed at write {n}')
-
     def remove(self, cond=None, doc_ids=None):
-        bump()
+        on_op('table-remove', self.name)
         return real_remove(self, cond=cond, doc_ids=doc_ids)
 
     def update(self, fields, cond=None, doc_ids=None):
-        bump()
+        on_op('table-update', self.name)
         return real_update(self, fields, cond=cond, doc_ids=doc_ids)
-    return patch.multiple(storage_sqlite.SqliteTable, remove=remove, update=update)
+    stack = [patch.multiple(storage_sqlite.SqliteTable, remove=remove, update=update)]
+    for module, name in FS_REMOVERS:
+        real = getattr(module, name)
+
+        def fs(*a, _real=real, _name=name, **k):
+            on_op('file', _name)
+            return _real(*a, **k)
+        stack.append(patch.object(module, name, fs))
+    return stack
+
+
+class _Stack:
+    def __init__(self, patches):
+        self.patches = patches
+
+    def __enter__(self):
+        for p in self.patches:
+            p.start()
+        return self
+
+    def __exit__(self, *exc):
+        for p in reversed(self.patches):
+            p.stop()
+
+
+def _order_checker(fx, violations):
+    """Children before parents (spec section 5): checked at the first removal from each parent table."""
+    closure = set(fx.closure.values())
+    gone_missions = [i for k, i in fx.closure.items() if k in ('GM1', 'GM2', 'GKM', 'GSM', 'GHM')]
+    gone_threads = [fx.ids[k] for k in ('GT1', 'GK1', 'GTL')]
+    checked = set()
+
+    def chat_copies_gone():
+        return all(storage.get_chat_message(m) is None for m in fx.gone_msgs)
+
+    def asks_gone():
+        return all(storage.get_ask(a) is None for a in fx.ledger['asks'])
+
+    def rule(table):
+        if table in ('asks', 'agent_action_proposals'):
+            return chat_copies_gone(), 'chat copies before ledgers'
+        if table == 'findings':
+            return asks_gone(), 'asks before findings'
+        if table == 'missions':
+            return (not any(storage.get_mission_steps(m) for m in gone_missions)
+                    and chat_copies_gone() and asks_gone()
+                    and all(storage.get_protected_commitment(c) is None for c in fx.commitments)
+                    and 'Its work was deleted.' in json.dumps(storage.get_project(fx.projects['survivor']['id']))), \
+                'steps, ledgers, emissions and survivors before mission rows'
+        if table == 'threads':
+            return (all(storage.get_mission(m) is None for m in gone_missions)
+                    and storage.media_file_path(fx.legacy_media) is None), 'missions and thread photos before thread rows'
+        if table == 'programs':
+            return all(storage.get_thread(t) is None for t in gone_threads), 'thread rows before program rows'
+        if table == 'projects':
+            return all(LOAD[k](i) is None for k, i in (pair(fx, key) for key in GARAGE_KEYS)), 'pieces before the project'
+        return True, ''
+
+    def on_op(kind, name):
+        if kind != 'table-remove' or name in checked or not closure:
+            return
+        if not storage.get_deletions():
+            return                                         # the orphan pass, after the deletion finished
+        checked.add(name)
+        ok, why = rule(name)
+        if not ok:
+            violations.append(f'{why} (first removal from {name})')
+    return on_op
 
 
 def scenario_an_interruption_after_each_step_re_run_converges():
     fx = rich()
     start_ok('project', garage(fx), dict(MOM))
-    counter, seen = _counted_writes()
-    with counter:
+    ops, violations = [], []
+    order = _order_checker(fx, violations)
+
+    def record(kind, name):
+        ops.append((kind, name))
+        order(kind, name)
+    with _Stack(_instrumented(record)):
         finish()
-    total = seen['n']
-    check(total > 5, f"the clean run made its writes: {total}")
+    total = len(ops)
+    check(total > 5 and any(kind == 'file' for kind, _ in ops),
+          f"the clean run wrote through the table helpers and removed files through shutil/os: {ops[:20]}")
+    check(not violations, f"children go before parents: {violations}")
     assert_clean(fx, 'reference run')
-    stride = max(1, total // 60)          # every write when there are few; an even spread of 60 otherwise
+    stride = max(1, total // 200)          # every write and file removal (sampled only past two hundred)
     for n in range(1, total + 1, stride):
         fx = rich()
         start_ok('project', garage(fx), dict(MOM))
-        with _interrupt_at(n):
-            try:
-                _d().maintain()
-            except Interrupted:
-                pass
+        seen = {'n': 0, 'fired': None}
+
+        def kill(kind, name, _seen=seen, _n=n):
+            _seen['n'] += 1
+            if _seen['n'] == _n:
+                _seen['fired'] = (kind, name)
+                raise Interrupted(f'killed at operation {_n} ({kind} {name})')
+        with _Stack(_instrumented(kill)):
+            for _ in range(30):                          # as many passes as it takes to reach operation n
+                try:
+                    _d().maintain()
+                except Interrupted:
+                    break
+                if not storage.get_deletions():
+                    break
+        check(seen['fired'], f"operation {n} of {total} was really interrupted ({seen['n']} reached)")
         check(not access.project_visible(storage.get_project(garage(fx)) or {}, dict(MOM)),
-              f"killed at write {n}: still hidden")
+              f"killed at operation {n}: still hidden")
         finish()
-        assert_clean(fx, f"killed at write {n} of {total}, then re-run")
+        assert_clean(fx, f"killed at operation {n} of {total} ({seen['fired']}), then re-run")
 
 
 def scenario_the_orphan_pass_removes_what_a_racing_writer_left():
@@ -425,11 +516,18 @@ def scenario_rf2_a_restart_mid_cleanup_resumes_at_startup_and_stays_hidden():
     base = storage.get_settings()
     storage.get_settings = (lambda s: (lambda: dict(s)))(dict(base, proactive_watchers_enabled=False))
     start_ok('project', garage(fx), dict(MOM))
-    with _interrupt_at(4):
+    seen = {'n': 0}
+
+    def kill(kind, name):
+        seen['n'] += 1
+        if seen['n'] == 4:
+            raise Interrupted('killed mid-cleanup')
+    with _Stack(_instrumented(kill)):
         try:
             _d().maintain()
         except Interrupted:
             pass
+    check(seen['n'] >= 4, f"the kill landed mid-cleanup: {seen}")
     check(storage.get_deletions(), "the deletion is half done")
     for viewer in (dict(MOM), access.HOUSE, access.HOUSE_PARENT):
         check(not access.project_visible(storage.get_project(garage(fx)) or {}, viewer), "hidden while half done")
@@ -444,6 +542,137 @@ def scenario_rf2_a_restart_mid_cleanup_resumes_at_startup_and_stays_hidden():
                 time.sleep(0.2)
     check(storage.get_deletions() == [], "startup maintenance resumed and finished it")
     assert_clean(fx, 'after the restart')
+
+
+def scenario_real_argyle_notices_carry_typed_refs_and_go_with_their_records():
+    """Spec section 5 step 1: Argyle's notices carry typed refs from their real producers (the consolidated
+    watcher DM, a mission's DM, a reply's DM), so deleting their records deletes them whole."""
+    from services import watchers, replies, model_pools
+    fx = build()
+    missions._post = REAL_POST
+    base = storage.get_settings()
+    storage.get_settings = (lambda s: (lambda: dict(s)))(dict(base, llm_gemini_api_key='k', missions_enabled=True,
+                                                          proactive_watchers_enabled=True))
+    gt1, gm2 = fx.ids['GT1'], fx.ids['GM2']
+    in_window = datetime.datetime.combine(datetime.date.today(), datetime.time(10, 0))
+
+    def new_messages(since):
+        return [m for m in storage.chat_messages_table.all() if m['id'] not in since]
+    produced = {}
+    with patch.object(model_pools, 'call_pool_json', lambda *a, **k: {'error': 'no model in tests'}):
+        since = {m['id'] for m in storage.chat_messages_table.all()}
+        watchers.run_watchers(in_window)
+        produced['watchers'] = (new_messages(since), {('thread', gt1), ('mission', gm2)})
+        since = {m['id'] for m in storage.chat_messages_table.all()}
+        storage.update_mission(gm2, {'status': 'running'})
+        missions._browse_async = False
+        missions._browse = lambda **kw: {'outcome': 'needs_release', 'text': 'needs', 'learned': {}, 'stopped_at': 'x',
+                                         'wanted_fields': ['first_name'], 'turns': 1, 'tokens_in': 1, 'tokens_out': 1,
+                                         'seconds': 1.0, 'screenshots': [], 'filled': {}}
+        missions._llm = lambda m, s_, u, st: {'action': 'browse', 'goal': 'find a slot', 'site': 'bodewell.com'}
+        missions.step(storage.get_mission(gm2))
+        produced['mission'] = (new_messages(since), {('mission', gm2)})
+        since = {m['id'] for m in storage.chat_messages_table.all()}
+        storage.append_thread_history(gt1, {'kind': 'received', 'message_id': 'ref-1', 'ts': time.time(), 'who': None,
+                                            'text': 'Received from Pest Co: Tuesday works'})
+        with patch.object(replies, '_pool_call', lambda *a, **k: {'answer': 'info', 'summary': 'Tuesday works'}), \
+                patch.object(replies, '_now', lambda: in_window):
+            replies.read(gt1, 'ref-1')
+        produced['reply'] = (new_messages(since), {('thread', gt1)})
+    made = []
+    for producer, (messages, wanted) in produced.items():
+        check(messages, f"{producer}: the producer posted a notice")
+        refs = {(r.get('kind'), r.get('id')) for m in messages for r in (m.get('refs') or [])}
+        check(wanted <= refs, f"{producer}: its notices carry typed refs {sorted(wanted)}: {sorted(refs)}")
+        made += [m['id'] for m in messages if wanted & {(r.get('kind'), r.get('id')) for r in (m.get('refs') or [])}]
+    start_ok('project', garage(fx), dict(MOM))
+    finish()
+    check(all(storage.get_chat_message(mid) is None for mid in made), "every notice naming the Garage went, whole")
+
+
+def scenario_maintenance_runs_on_its_own_two_minute_loop():
+    """`main.deletion_maintenance_loop()` (started by the lifespan) runs `deletion.maintain()` every
+    `main.DELETION_MAINTENANCE_S` (120) seconds, whatever the watcher, notification and feature switches say,
+    so a deletion started later is serviced by a later pass."""
+    from fastapi.testclient import TestClient
+    import main
+    fx = rich()
+    base = storage.get_settings()
+    storage.get_settings = (lambda s: (lambda: dict(s)))(dict(base, proactive_watchers_enabled=False, missions_enabled=False,
+                                                          programs_enabled=False, tomorrow_digest_enabled=False,
+                                                          kid_digest_enabled=False, weekly_digest_enabled=False))
+    check(main.DELETION_MAINTENANCE_S == 120, "two minutes")
+    later = _mission(fx, 'LOOPM', 'mom', fx.projects['survivor'])
+    start_ok('project', garage(fx), dict(MOM))
+    slept, box = [], {}
+
+    class _Stop(BaseException):
+        pass
+
+    async def clock(seconds, *a, **k):
+        slept.append(seconds)
+        if len(slept) == 1:
+            box['later'] = start_ok('mission', later, dict(MOM))     # started while the loop sleeps
+        if len(slept) >= 4:
+            raise _Stop()
+    with patch.object(main.asyncio, 'sleep', clock):
+        try:
+            asyncio.run(main.deletion_maintenance_loop())
+        except _Stop:
+            pass
+    check(slept and all(s == main.DELETION_MAINTENANCE_S for s in slept), f"it sleeps two minutes between passes: {slept}")
+    check(storage.get_deletions() == [] and storage.get_mission(later) is None and storage.get_project(garage(fx)) is None,
+          f"both deletions were serviced by its passes: {storage.get_deletions()}")
+    started = []
+
+    async def recorder():
+        started.append(True)
+    with patch.object(main, 'deletion_maintenance_loop', recorder), \
+            patch.object(main, 'trigger_background_refresh', lambda *a, **k: None):
+        with TestClient(main.app):
+            deadline = time.monotonic() + 10
+            while not started and time.monotonic() < deadline:
+                time.sleep(0.1)
+    check(started, "the lifespan starts the maintenance loop")
+
+
+def scenario_a_new_thread_photo_records_its_path_before_its_bytes():
+    """Spec section 5 step 5: new thread photos live under threads/<thread id>/ in the data directory; the
+    path is recorded before the bytes are written, so a write that dies half way still leaves cleanup
+    something to find, and deleting the thread removes it all."""
+    fx = build()
+    tid = fx.ids['GT1']
+    home = thread_photo_dir(tid)
+    before = _files_under(*_roots())
+    with patch.object(threads, 'read_photo', lambda *a, **k: None):
+        threads.add_photo(tid, PNG, 'image/png', 'mom')
+    made = _files_under(*_roots()) - before
+    check(made and all(os.path.dirname(path) == home for path in made),
+          f"a new thread photo is saved under threads/<thread id>/ in the data directory ({home}): {made}")
+    check(names_path(storage.get_thread(tid), tid), "and the thread's history records where it is")
+    real_open, real_io_open = builtins.open, io.open
+    seen = {}
+
+    def dying_open(file, mode='r', *a, **k):
+        if 'w' in str(mode) and str(file).startswith(home):
+            seen['history_at_write'] = names_path(storage.get_thread(tid), tid)
+            handle = real_open(file, mode, *a, **k)
+            handle.write(b'half a pho')
+            handle.close()
+            raise OSError('the disk filled up mid-write')
+        return real_open(file, mode, *a, **k)
+    with patch.object(threads, 'read_photo', lambda *a, **k: None), \
+            patch.object(builtins, 'open', dying_open), patch.object(io, 'open', dying_open):
+        try:
+            threads.add_photo(tid, PNG, 'image/png', 'mom')
+        except OSError:
+            pass
+    check('history_at_write' in seen, f"the photo's bytes were written under {home}")
+    check(seen['history_at_write'], "its path was already on the thread when the bytes started")
+    check(names_path(storage.get_thread(tid), tid), "and stays recorded after the failed write")
+    start_ok('thread', tid, dict(MOM))
+    finish()
+    check(not os.path.exists(home), f"deleting the thread removes the half-written photo and its folder: {home}")
 
 
 SCENARIOS = [v for k, v in list(globals().items()) if k.startswith('scenario_')]

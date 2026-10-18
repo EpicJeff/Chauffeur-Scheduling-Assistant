@@ -134,6 +134,34 @@ def scenario_the_routes_are_parent_only_and_need_a_confirmation():
     check(storage.get_thread(tid) is None and storage.get_mission(m1) is None, "and after cleanup nothing is left")
 
 
+def scenario_the_helpers_delegate_to_the_deletion_service():
+    """threads.delete(thread_id) and missions.delete(mission_id) keep their signatures and become thin
+    calls into services.deletion: a missing record is {'status': 'not_found'}; an existing one starts a
+    deletion (hidden at once) and is gone with everything of its own after maintain()."""
+    _reset()
+    tid, m1, m2, other = _seed()
+    d1 = missions.browse_dir(m1)
+    storage.add_ask({'situation_kind': 'thread', 'situation_id': tid, 'to_name': 'Pest Co', 'state': 'sent', 'what': 'x'})
+    check(threads.delete('nope') == {'status': 'not_found'}, "a missing thread is honest")
+    check(missions.delete('nope') == {'status': 'not_found'}, "a missing mission is honest")
+    res = missions.delete(other)
+    check(res.get('status') == 'ok', f"the mission helper starts a deletion: {res}")
+    rows = [r for r in storage.get_deletions() if r['kind'] == 'mission' and r['root_id'] == other]
+    check(len(rows) == 1 and storage.get_mission(other).get('deleting') == rows[0]['id'],
+          f"through the deletion service: a deletions row, and the mission stamped at once: {storage.get_deletions()}")
+    res = threads.delete(tid)
+    check(res.get('status') == 'ok', f"the thread helper starts a deletion: {res}")
+    rows = [r for r in storage.get_deletions() if r['kind'] == 'thread' and r['root_id'] == tid]
+    check(len(rows) == 1 and {tuple(x)[1] for x in rows[0]['closure']} >= {tid, m1, m2},
+          f"its closure is the thread and both its missions: {rows}")
+    check(access.record_view('thread', storage.get_thread(tid), dict(MOM)) is None, "hidden at once")
+    _maintain()
+    check(storage.get_thread(tid) is None and storage.get_mission(m1) is None and storage.get_mission(m2) is None
+          and storage.get_mission(other) is None, "all gone after maintain()")
+    check(not storage.get_mission_steps(m1) and not os.path.exists(d1) and not asks.asks_for('thread', tid),
+          "with their steps, screenshot folders and asks")
+
+
 def scenario_argyle_has_no_delete_and_the_pages_have_the_buttons():
     from services import agent_tools_v2 as tools
     names = {t['name'] for t in tools.get_available_tools()} | set(tools.TOOL_HANDLERS)
@@ -147,6 +175,7 @@ def scenario_argyle_has_no_delete_and_the_pages_have_the_buttons():
 
 SCENARIOS = [scenario_deleting_a_thread_takes_everything_of_its_own, scenario_deleting_a_mission_takes_only_itself,
              scenario_the_routes_are_parent_only_and_need_a_confirmation,
+             scenario_the_helpers_delegate_to_the_deletion_service,
              scenario_argyle_has_no_delete_and_the_pages_have_the_buttons]
 
 if __name__ == "__main__":
