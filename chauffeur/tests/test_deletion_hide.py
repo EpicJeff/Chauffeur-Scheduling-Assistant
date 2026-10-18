@@ -28,7 +28,7 @@ from harness import check  # noqa: F401
 import access_fixture
 from access_fixture import _thread, _mission, _program
 from test_subjects import MOM, DAD
-from test_deletion_core import start_ok, finish, http, leaked, words_of, reset_ledgers, REAL_POST, pair, LOAD
+from test_deletion_core import start_ok, finish, http, leaked, words_of, reset_ledgers, REAL_POST, pair, LOAD, REFRESH_CALLS
 from services import storage, projects, access, missions
 
 CLOSURE = ('R1', 'R2', 'R3', 'R7', 'R9origin', 'R9a')        # everything homed in Mom's private project
@@ -473,20 +473,17 @@ def scenario_a_chat_read_resolves_its_distinct_refs_in_one_batch():
 
 
 def scenario_the_schedule_is_marked_dirty_at_start_and_refreshed_once_by_cleanup():
-    from unittest.mock import patch
-    import main
     fx = world()
-    calls = []
     pid = fx.projects['mom_private']['id']
-    with patch.object(main, 'trigger_background_refresh', lambda *a, **k: calls.append((a, k))):
-        preview = http('mom', 'GET', f'/api/deletion/project/{pid}/preview')
-        check(preview.status_code == 200, f"the preview route: {preview.status_code} {preview.text[:160]}")
-        r = http('mom', 'DELETE', f'/api/projects/{pid}', json={'token': preview.json()['token']})
-        check(r.status_code == 200, f"deleted: {r.status_code} {r.text[:200]}")
-        check(len(calls) >= 1, "the tap marks the schedule dirty (a refresh is requested)")
-        at_start = len(calls)
-        finish()
-        check(len(calls) - at_start == 1, f"cleanup refreshes the schedule exactly once: {len(calls) - at_start}")
+    preview = http('mom', 'GET', f'/api/deletion/project/{pid}/preview')
+    check(preview.status_code == 200, f"the preview route: {preview.status_code} {preview.text[:160]}")
+    r = http('mom', 'DELETE', f'/api/projects/{pid}', json={'token': preview.json()['token']})
+    check(r.status_code == 200, f"deleted: {r.status_code} {r.text[:200]}")
+    check(len(REFRESH_CALLS) >= 1, "the tap marks the schedule dirty (a refresh is requested)")
+    at_start = len(REFRESH_CALLS)
+    finish()
+    check(len(REFRESH_CALLS) - at_start == 1,
+          f"cleanup refreshes the schedule exactly once: {len(REFRESH_CALLS) - at_start}")
 
 
 def scenario_commitment_findings_hide_at_start_with_their_program():

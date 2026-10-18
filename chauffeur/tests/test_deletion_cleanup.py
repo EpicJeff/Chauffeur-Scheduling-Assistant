@@ -492,7 +492,7 @@ def scenario_the_orphan_pass_removes_what_a_racing_writer_left():
     storage.program_lessons_table.insert({'id': uuid.uuid4().hex, 'program_id': gp1, 'phase_name': 'late', 'unit_n': 0,
                                           'session_label': '', 'scenes': []})
     storage.set_app_state(f'mission_steer:{gm2}', {'text': 'late'})
-    out = _d().maintain()
+    out = _d().maintain(force_orphans=True)  # explicitly sweep the newly injected race leftovers
     check(out['orphans'] >= 1, f"the orphan pass reports what it removed: {out}")
     check(not os.path.exists(late_dir), "the late screenshot and its folder are gone")
     check(not storage.get_mission_steps(gm2), "the orphan step is gone")

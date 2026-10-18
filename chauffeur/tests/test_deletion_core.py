@@ -31,6 +31,7 @@ is where the one-transaction scenario injects its crash.
 Run from chauffeur/:  python tests/test_deletion_core.py
 """
 import contextvars
+import atexit
 import json
 import threading
 import time
@@ -53,6 +54,26 @@ TOKEN_REQUIRED = "A confirmation is required."      # a DELETE with no token: 40
 REAL_POST = missions._post          # the fixtures stub it; deletion tests watch real DMs
 PIECE_KINDS = ('thread', 'mission', 'program')
 GARAGE_KEYS = ('GT1', 'GM1', 'GM2', 'GP1', 'GK1', 'GKM', 'GTL')
+REFRESH_CALLS = []
+_refresh_patch = None
+
+
+def isolate_refresh(*, reset=False):
+    """Keep real solver threads out of every deletion fixture's lifetime.
+
+    The counting no-op stays installed until process exit, including after
+    finish(), so a scenario cannot leave background writes for the next one.
+    Individual tests may still nest their own refresh probes.
+    """
+    global _refresh_patch
+    if _refresh_patch is None:
+        import main
+        _refresh_patch = patch.object(main, 'trigger_background_refresh',
+                                     lambda *a, **k: REFRESH_CALLS.append((a, k)))
+        _refresh_patch.start()
+        atexit.register(_refresh_patch.stop)
+    if reset:
+        REFRESH_CALLS.clear()
 
 
 def _d():
@@ -65,6 +86,7 @@ def _d():
 
 def reset_ledgers():
     """Tables the access fixture leaves alone, emptied so no scenario reads another's rows."""
+    isolate_refresh(reset=True)
     for table in (storage.asks_table, storage.findings_table, storage.agent_action_proposals_table,
                   storage.protected_commitments_table, storage.protected_exceptions_table,
                   storage.program_lessons_table):
@@ -85,6 +107,7 @@ def build():
     the project) and SA2 (a Household mission whose subject is the project).
     Survivor (household, owner Mom) is an untouched project of its own.
     """
+    isolate_refresh()
     fx = access_fixture.build()
     reset_ledgers()
     missions._post = REAL_POST
@@ -215,6 +238,7 @@ def start_ok(kind, rid, actor):
 
 def finish(passes=30):
     """maintain() until no deletion is left (cleanup may take several passes, Review Focus 4)."""
+    isolate_refresh()
     out = None
     for _ in range(passes):
         out = _d().maintain()

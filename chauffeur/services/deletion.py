@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import threading
 import time
@@ -24,6 +25,8 @@ _sources = ContextVar('deletion_sources', default=())
 _workers = Counter()
 _workers_lock = threading.RLock()
 _cancelled_at = {}
+ORPHAN_MAINTENANCE_S = 3600
+_orphan_checked_at = None
 
 
 class Cancelled(Exception):
@@ -287,7 +290,7 @@ def _names(ref, keys):
     return isinstance(ref, dict) and (ref.get('kind'), ref.get('id')) in keys
 
 
-def _clean_app_state(missing):
+def _clean_app_state(missing, program_ids=None):
     """Prune only deletion-owned markers; keep unrelated application state.
 
     missing(kind, id) means closure membership during cleanup, and actual
@@ -295,13 +298,14 @@ def _clean_app_state(missing):
     """
     from services import programs, storage, triage
     changed = 0
-    programs_alive = {p['id'] for p in storage.get_programs(include_finished=True)
-                      if not missing('program', p['id'])}
+    if program_ids is None:
+        program_ids = {p['id'] for p in storage.get_programs(include_finished=True)}
+    programs_alive = {pid for pid in program_ids if not missing('program', pid)}
     push_keys = programs_alive | {hashlib.sha1(p.encode()).hexdigest()[:12] for p in programs_alive}
     for row in storage.app_state_table.all():
         key, value = row['key'], row.get('value')
         if key.startswith('mission_steer:') and missing('mission', key.split(':', 1)[1]):
-            changed += len(storage.app_state_table.remove(storage.Query().key == key))
+            changed += len(storage.app_state_table.remove(doc_ids=[row.doc_id]))
             continue
         new = value
         if key == triage.FOCUS_KEY and isinstance(value, dict):
@@ -320,7 +324,7 @@ def _clean_app_state(missing):
         elif key == programs.PUSH_STATE_KEY and isinstance(value, list):
             new = [v for v in value if v.split('|', 1)[0] in push_keys]
         if new != value:
-            storage.app_state_table.update({'value': new}, storage.Query().key == key)
+            storage.app_state_table.update({'value': new}, doc_ids=[row.doc_id])
             changed += 1
     return changed
 
@@ -422,12 +426,13 @@ def _cleanup(row):
     # 1: Gather ledger ids first. Delete an entire mixed message, never edit it.
     aids.update(s['id'] for s in storage.mission_steps_table.all()
                 if s.get('kind') == 'ask' and s.get('mission_id') in ids['mission'])
+    resolved = {}
     def copied(message):
         card = message.get('card') or {}
         return (any(card.get(kind + '_id') in ids[kind] for kind in KINDS)
                 or card.get('ask_id') in aids or card.get('proposal_id') in pids
                 or any(_names(ref, keys) for ref in message.get('refs') or [])
-                or not storage.message_visible(message))
+                or not storage.message_visible(message, resolved=resolved))
     from services import access
     with access.batch():
         storage.chat_messages_table.remove(copied)
@@ -451,9 +456,11 @@ def _cleanup(row):
     for tid in ids['thread']:
         for entry in (storage.get_thread(tid) or {}).get('history') or []:
             media_id = entry.get('media_id')
-            if not media_id:
+            # Read without poster generation; cleanup must never recreate the
+            # file it just removed. Keep the media-id traversal guard.
+            if not re.fullmatch(r'[a-f0-9]{32}\.(mp4|webm|mov|m4v|jpg|png|webp)', media_id or ''):
                 continue
-            while path := storage.media_file_path(media_id):
+            while path := storage.media_read_path(media_id):
                 try:
                     os.remove(path)
                 except FileNotFoundError:
@@ -478,7 +485,8 @@ def _cleanup(row):
 def _orphans():
     from services import storage
     parents = {kind: {r['id'] for r in getattr(storage, kind + 's_table').all()} for kind in KINDS}
-    parents['finding'] = {r['id'] for r in storage.findings_table.all()}
+    findings = storage.findings_table.all()
+    parents['finding'] = {r['id'] for r in findings}
     parents['commitment'] = {r['id'] for r in storage.protected_commitments_table.all()}
     def missing(kind, rid):
         if kind == 'commitment':
@@ -486,43 +494,59 @@ def _orphans():
         return kind in parents and bool(rid) and rid not in parents[kind]
     count = 0
     # Remove asks before findings, including asks about orphaned findings.
-    orphan_findings = {f['id'] for f in storage.findings_table.all()
+    orphan_findings = {f['id'] for f in findings
                        if missing(f.get('subject_type'), f.get('subject_id'))}
-    count += len(storage.asks_table.remove(lambda a:
+    def remove_matches(table, rows, predicate):
+        doc_ids = [r.doc_id for r in rows if predicate(r)]
+        return len(table.remove(doc_ids=doc_ids)) if doc_ids else 0
+    count += remove_matches(storage.asks_table, storage.asks_table.all(), lambda a:
         missing(a.get('situation_kind'), a.get('situation_id'))
-        or (a.get('situation_kind') == 'finding' and a.get('situation_id') in orphan_findings)))
-    count += len(storage.findings_table.remove(lambda f: f.get('id') in orphan_findings))
-    count += len(storage.mission_steps_table.remove(lambda s: missing('mission', s.get('mission_id'))))
-    count += len(storage.program_lessons_table.remove(lambda l: missing('program', l.get('program_id'))))
+        or (a.get('situation_kind') == 'finding' and a.get('situation_id') in orphan_findings))
+    count += remove_matches(storage.findings_table, findings, lambda f: f.get('id') in orphan_findings)
+    parents['finding'].difference_update(orphan_findings)
+    count += remove_matches(storage.mission_steps_table, storage.mission_steps_table.all(),
+                            lambda s: missing('mission', s.get('mission_id')))
+    count += remove_matches(storage.program_lessons_table, storage.program_lessons_table.all(),
+                            lambda l: missing('program', l.get('program_id')))
     for folder, kind in (('browse', 'mission'), ('threads', 'thread')):
         root = os.path.join(os.path.dirname(storage.DB_PATH), folder)
         if not os.path.isdir(root):
             continue
         for rid in os.listdir(root):
+            if not re.fullmatch(r'[a-fA-F0-9]{32}', rid):
+                continue
             path = os.path.join(root, rid)
             if os.path.isdir(path) and missing(kind, rid):
                 _remove_folder(path)
                 count += 1
-    count += _clean_app_state(missing)
+    count += _clean_app_state(missing, program_ids=parents['program'])
     return count
 
 
-def maintain():
-    """Wait for registered workers, finish idle deletions, then sweep orphans."""
+def maintain(*, force_orphans=False):
+    """Finish idle deletions; sweep orphans at startup, after completion or hourly.
+
+    Explicit callers/tests can request an immediate orphan sweep with
+    force_orphans=True after creating an orphan between scheduled sweeps.
+    """
     from services import storage
     # Maintenance owns its writes even if invoked by a source that was deleted.
     token = _sources.set(())
     try:
         with storage.db_lock:
-            return _maintain_locked()
+            return _maintain_locked(force_orphans=force_orphans)
     finally:
         _sources.reset(token)
 
 
-def _maintain_locked():
+def _maintain_locked(*, force_orphans=False):
+    global _orphan_checked_at
     from services import storage
     waiting, finished = 0, 0
-    for row in storage.get_deletions():
+    # COUNT on the tiny ledger avoids scanning/decoding any tables on an idle
+    # tick whose hourly orphan sweep is not due.
+    rows = storage.get_deletions() if len(storage.deletions_table) else []
+    for row in rows:
         if row.get('state') != 'started':
             continue
         running = [(kind, rid) for kind, rid in row.get('closure', []) if active(kind, rid)]
@@ -541,4 +565,10 @@ def _maintain_locked():
             for kind, rid in running:
                 logging.getLogger(__name__).warning('Re-cancelling deletion worker %s %s; still waiting', kind, rid)
             _stop([(kind, rid, _load(kind, rid) or {}) for kind, rid in running])
-    return {'finished': finished, 'waiting': waiting, 'orphans': _orphans()}
+    orphans = 0
+    now = time.monotonic()
+    if (force_orphans or finished or _orphan_checked_at is None
+            or now - _orphan_checked_at >= ORPHAN_MAINTENANCE_S):
+        _orphan_checked_at = now
+        orphans = _orphans()
+    return {'finished': finished, 'waiting': waiting, 'orphans': orphans}

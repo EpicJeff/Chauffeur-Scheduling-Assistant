@@ -1131,11 +1131,14 @@ DELETION_MAINTENANCE_S = 120
 
 async def deletion_maintenance_loop():
     """Run at startup and every two minutes, independently of feature gates."""
+    startup = True
     while True:
         try:
-            await asyncio.to_thread(deletion.maintain)
+            await asyncio.to_thread(deletion.maintain, force_orphans=startup)
         except Exception:
             logging.getLogger(__name__).exception('Deletion maintenance failed; will retry')
+        finally:
+            startup = False
         await asyncio.sleep(DELETION_MAINTENANCE_S)
 
 
@@ -8738,7 +8741,10 @@ def drop_program(program_id: str, background_tasks: BackgroundTasks = None,
     # never did, so a dropped program stopped believing in windows that were
     # really gone only by virtue of nothing reading it again.
     was_proposed = row.get('state') == 'proposed'
-    released = _prog.release_commitments(program_id)
+    try:
+        released = _prog.release_commitments(program_id)
+    except RuntimeError:
+        return {'status': 'error', 'message': _prog.RELEASE_ERROR}
     storage.update_program(program_id, {'state': 'dropped',
                                         'finished_at': _t.time()})
     # A proposal never claimed anything, so "the time is back" would be a

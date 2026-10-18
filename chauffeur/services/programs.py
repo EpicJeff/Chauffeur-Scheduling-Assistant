@@ -246,19 +246,22 @@ def mark_milestone(program_id: str, phase_name: str) -> dict:
         phases.append(ph)
     if not found:
         return {'status': 'error', 'message': "I can't find that milestone."}
-    storage.update_program(program_id, {'phases': phases})
     # The last milestone IS done -- that is the design's own definition, and
     # without this the only exit from a finished plan was a button reading
     # "Dropped. The time is back." Reaching the end of a plan must not be
     # indistinguishable from abandoning it, and a program nobody can finish
     # keeps its practice windows and keeps asking "did it happen?" forever.
     if not any(not ph.get('milestone_hit_at') for ph in phases):
-        released = release_commitments(program_id)
-        storage.update_program(program_id, {'state': 'done',
+        try:
+            released = release_commitments(program_id)
+        except RuntimeError:
+            return {'status': 'error', 'message': RELEASE_ERROR}
+        storage.update_program(program_id, {'phases': phases, 'state': 'done',
                                             'finished_at': time.time()})
         return {'status': 'success', 'schedule_dirty': bool(released),
                 'message': f"🎉 {row.get('title')}: {phase_name} done — "
                            f"that's the last one. The whole program is done."}
+    storage.update_program(program_id, {'phases': phases})
     return {'status': 'success',
             'message': f"🎉 {row.get('title')}: {phase_name} done."}
 
@@ -278,11 +281,17 @@ def finish(program_id: str) -> dict:
     if row.get('state') in ('done', 'dropped'):
         return {'status': 'error',
                 'message': f"That program is already {row.get('state')}."}
-    released = release_commitments(program_id)
+    try:
+        released = release_commitments(program_id)
+    except RuntimeError:
+        return {'status': 'error', 'message': RELEASE_ERROR}
     storage.update_program(program_id, {'state': 'done',
                                         'finished_at': time.time()})
     return {'status': 'success', 'schedule_dirty': bool(released),
             'message': f"{row.get('title')} is finished. The time is back."}
+
+
+RELEASE_ERROR = "Couldn't release all practice times. Please try again."
 
 
 def release_commitments(program_id: str, commitment_ids=None) -> int:
@@ -369,7 +378,10 @@ def pause(program_id: str) -> dict:
                 'message': f"That program is {row.get('state')} — only an "
                            f"active program can be paused."}
     slots = emitted_slots(row)
-    released = release_commitments(program_id)
+    try:
+        released = release_commitments(program_id)
+    except RuntimeError:
+        return {'status': 'error', 'message': RELEASE_ERROR}
     storage.update_program(program_id, {'state': 'paused',
                                         'paused_at': time.time(),
                                         'paused_slots': slots})
@@ -443,7 +455,10 @@ def resume(program_id: str) -> dict:
         slots = propose_slots(row.get('member_id'), row.get('shape') or {})
     # Whatever is still standing goes before anything new is written, so
     # re-emitting can never double-claim an evening the row already holds.
-    release_commitments(program_id)
+    try:
+        release_commitments(program_id)
+    except RuntimeError:
+        return {'status': 'error', 'message': RELEASE_ERROR}
     row = storage.get_program(program_id) or row
     emissions = dict(row.get('emissions') or {})
     emissions['commitment_ids'] = []
@@ -489,7 +504,10 @@ def reshape(program_id: str) -> dict:
         return {'status': 'error',
                 'message': f"That program is {row.get('state')} — there's "
                            f"nothing to re-shape."}
-    released = release_commitments(program_id)
+    try:
+        released = release_commitments(program_id)
+    except RuntimeError:
+        return {'status': 'error', 'message': RELEASE_ERROR}
     storage.update_program(program_id, {'state': 'proposed',
                                         'paused_at': None, 'paused_slots': []})
     return {'status': 'success', 'schedule_dirty': bool(released),
