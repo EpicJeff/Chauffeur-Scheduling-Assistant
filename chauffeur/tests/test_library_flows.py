@@ -635,9 +635,12 @@ def scenario_voice_uses_a_single_match_and_says_so_later():
 
 
 def scenario_a_queued_voice_notice_is_not_delivered_once_its_run_is_gone():
-    """The notice is stored and queued while its run exists; the run is deleted; delivery is released.
-    Only the delivery path's own re-check can stop it now."""
-    from services import deletion
+    """The notice is stored and queued while its run exists; the run's deletion is admitted; delivery
+    is released BEFORE cleanup, while the notice row is still stored and the run row still exists but
+    reads gone. Only the delivery path's own gone-ref re-check can stop it there: the reload finds the
+    row, and a visibility check that skips references would push. Released again after cleanup (the
+    notice row removed with the run), it still says nothing."""
+    from services import access, deletion
     held = []
     with _held(held):
         mid, run_id = _voice_until_the_stage_ran()
@@ -649,13 +652,24 @@ def scenario_a_queued_voice_notice_is_not_delivered_once_its_run_is_gone():
     preview = deletion.preview('program', run_id, dict(MOM))
     check(preview['status'] == 'ok', f'preview: {preview}')
     check(deletion.start('program', run_id, dict(MOM), preview['token'])['status'] == 'ok', 'the run is deleted')
+    # Admitted, not cleaned up: the queued copy is still stored and the run row is still there.
+    notice_id = queued[0][1]['id']
+    check(storage.get_chat_message(notice_id) is not None and len(_raw_notices()) == 1,
+          f'before cleanup the queued notice is still stored: {_raw_notices()}')
+    run = storage.get_program(run_id)
+    check(run is not None and access.gone('program', run, rid=run_id),
+          f'and its run still has a row but reads gone: {run}')
+    sent = _release(queued)
+    check(not sent, f'released before cleanup: no push and no HA notify about a run that is gone: {sent}')
+    check(not _notices() and not storage.message_visible(storage.get_chat_message(notice_id)),
+          f'and the stored notice is not visible: {_raw_notices()}')
     for _ in range(5):
         deletion.maintain()
-    check(storage.get_program(run_id) is None, 'gone before delivery is released')
+    check(storage.get_program(run_id) is None, 'gone after cleanup')
     sent = _release(queued)
-    check(not sent, f'no push and no HA notify about a run that is gone: {sent}')
+    check(not sent, f'released after cleanup: still no push and no HA notify: {sent}')
     check(not _notices() and all(not storage.message_visible(m) for m in _raw_notices()),
-          f'and the stored notice is not visible: {_raw_notices()}')
+          f'and no stored notice is visible: {_raw_notices()}')
 
 
 def scenario_a_voice_notice_is_suppressed_once_its_run_is_gone():
