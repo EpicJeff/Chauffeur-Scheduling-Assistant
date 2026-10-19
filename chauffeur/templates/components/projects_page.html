@@ -10,9 +10,10 @@
    host's thread sheet lists its missions; otherwise it keeps its own card. #}
 {% from 'components/audience_picker.html' import audience_picker, audience_picker_script %}
 {% from 'components/record_delete.html' import record_delete_script %}
+{% from 'components/library_card.html' import library_profile_fields, library_script %}
 <section x-data='projectsPage({{ (projects_host|default("admin"))|tojson }})' x-init="rootEl = $el; load()" @chf-projects-open.window="load()"
          @chf-projects-context.window="sproutSection = $event.detail" x-show="!sproutSection || shownProjects.length > 0"
-         @chf-admin-ready.window="load()" class="panel-page w-full max-w-2xl mx-auto px-4 py-6" x-cloak>
+         @chf-admin-ready.window="load()" @chf-project-open.window="openById($event.detail && $event.detail.id)" class="panel-page w-full max-w-2xl mx-auto px-4 py-6" x-cloak>
     <h2 class="panel-page-title">Projects</h2>
     <p class="text-xs text-gray-500 italic px-1" x-show="loading">Loading projects…</p>
     <p class="text-xs text-gray-500 italic px-1" x-show="error" x-text="error" role="status"></p>
@@ -217,12 +218,30 @@
                                     </div>
                                 </template>
                                 <template x-if="card.kind === 'program'">
-                                    <div class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
+                                    <div data-run-card class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
                                         <div class="flex items-start justify-between gap-2">
                                             <span class="text-sm font-bold text-gray-100" x-text="card.title"></span>
                                             <span class="text-xs font-bold px-1.5 py-0.5 rounded shrink-0" :class="chip(card.program.state)" x-text="card.program.state"></span>
                                         </div>
-                                        <p class="text-xs text-gray-400 mt-1" x-show="card.program.phase" x-text="card.program.phase"></p>
+                                        <!-- The run reads its library program: a button to it, and the
+                                             current lesson by name under its phase -- never a count. -->
+                                        <template x-if="!card.program.unresolved && card.program.library_id">
+                                            <button type="button" data-library-link :data-library-id="card.program.library_id" @click="chfLibrary.open(card.program.library_id)"
+                                                    class="block text-left text-xs font-semibold text-teal-300 underline underline-offset-2 mt-1"
+                                                    x-text="'from the library: ' + card.program.library_title"></button>
+                                        </template>
+                                        <p data-current-lesson class="text-xs text-gray-400 mt-1" x-show="lessonLine(card)" x-text="lessonLine(card)"></p>
+                                        <p data-ready-to-judge class="text-xs text-blue-300 mt-1" x-show="card.program.ready_to_judge"
+                                           x-text="'ready to judge: ' + (card.program.ready_to_judge || '')"></p>
+                                        <template x-if="card.program.unresolved">
+                                            <div data-run-unresolved class="mt-1 space-y-1.5">
+                                                <p class="text-xs text-gray-400">Pick a program to carry on, or delete this run.</p>
+                                                <template x-if="canRebind(project, card)">
+                                                    <button type="button" data-run-rebind @click="rebind(project, card)" :disabled="!!busy"
+                                                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 disabled:opacity-50">Pick a program</button>
+                                                </template>
+                                            </div>
+                                        </template>
                                         <p class="text-xs text-blue-300 mt-1" x-show="card.program.state === 'proposed'">Proposed: see its week and approve it here.</p>
                                         <template x-if="card.sheet">
                                             <div class="flex justify-end gap-4 mt-1">
@@ -272,6 +291,7 @@
 </section>
 {{ audience_picker_script() }}
 {{ record_delete_script() }}
+{{ library_script() }}
 <script>
 function projectsPage(host = 'admin') {
     return {
@@ -281,7 +301,8 @@ function projectsPage(host = 'admin') {
         emptyPieceForm: {title: '', goal: '', thread_kind: 'vendor', owner_member_id: '', contact_id: '',
                          counterparty_name: '', counterparty_email: '', next_action: '', next_action_at: '',
                          tier: 'mission', for_member_id: '', starting_point: '', sessions_per_week: 3, minutes: 25,
-                         preferred_days: [], target_date: ''},
+                         preferred_days: [], target_date: '', library: [], bands: [], memberBands: {}, libraryLoaded: false,
+                         making: false, age_band: 'any', assumes: ''},
         // Alpine can evaluate form bindings once more while their x-if tears down.
         get pieceDraft() { return this.pieceForm || this.emptyPieceForm; },
         programsOnly: new URLSearchParams(location.search).get('lane') === 'programs',
@@ -468,7 +489,48 @@ function projectsPage(host = 'admin') {
             this.pieceForm = {projectId: p.id, kind: pick, title: '', goal: '', thread_kind: 'vendor', owner_member_id: this.myId,
                               contact_id: '', counterparty_name: '', counterparty_email: '', next_action: '', next_action_at: '',
                               tier: 'mission', for_member_id: this.myId, starting_point: '', sessions_per_week: 3, minutes: 25,
-                              preferred_days: [], target_date: ''};
+                              preferred_days: [], target_date: '', library: [], bands: [], memberBands: {}, libraryLoaded: false,
+                              making: false, age_band: 'any', assumes: ''};
+            if (pick === 'program') await this.loadLibrary();
+        },
+        // Add a piece -> Program: the library first (archived programs never
+        // offered), "Make a new one" at the bottom for adults and parents.
+        async loadLibrary() {
+            const form = this.pieceForm;
+            try {
+                const d = await this.request('api/library?include_archived=false');
+                if (this.pieceForm !== form) return;
+                form.library = d.programs || []; form.bands = d.age_bands || []; form.memberBands = d.member_bands || {};
+                form.age_band = this.libraryBand(form.for_member_id);
+            } catch (e) { if (this.pieceForm === form) this.error = e.message; }
+            finally { if (this.pieceForm === form) form.libraryLoaded = true; }
+        },
+        libraryBand(memberId) { return ((this.pieceForm || {}).memberBands || {})[memberId] || 'any'; },
+        forName() { return this.memberName((this.pieceForm || {}).for_member_id || this.myId) || 'their'; },
+        async pickLibrary(lp) {
+            const f = this.pieceForm;
+            if (!f || this.busy) return;
+            const project = this.detail;
+            const body = {library_id: lp.id, for_member_id: f.for_member_id || this.myId, member_id: this.myId || null,
+                          preferred_days: f.preferred_days, target_date: f.target_date || null, project_id: f.projectId};
+            if (await this.mutate('api/programs', body)) { this.pieceForm = null; if (project) await this.loadPieces(project); }
+        },
+        // The run card's current lesson by name under its phase ("Scales · Foundations").
+        lessonLine(card) {
+            const program = card.program || {};
+            const title = (program.current_lesson || {}).title || '';
+            if (program.unresolved || !title) return '';
+            return program.phase && program.phase !== title ? title + ' · ' + program.phase : title;
+        },
+        canRebind(p, card) { return !!this.myId && (p.can_act || (card.program || {}).member_id === this.myId); },
+        async rebind(p, card) {
+            if (await window.chfLibrary.rebind(card.id, this.myId, this.headers())) await this.loadPieces(p);
+        },
+        async openById(id) {
+            if (!id) return;
+            if (!this.projects.some(p => p.id === id)) await this.load();
+            const p = this.projects.find(p => p.id === id);
+            if (p) await this.open(p);
         },
         togglePieceDay(d) { if (!this.pieceForm) return; const days = this.pieceForm.preferred_days; const i = days.indexOf(d); if (i === -1) days.push(d); else days.splice(i, 1); },
         async pickExisting(p) {
@@ -495,8 +557,10 @@ function projectsPage(host = 'admin') {
                 : f.kind === 'mission'
                 ? {goal: f.goal.trim(), tier: f.tier, project_id: f.projectId}
                 : {title: f.title.trim(), for_member_id: f.for_member_id || this.myId, member_id: this.myId || null,
+                   age_band: f.age_band || 'any', assumes: (f.assumes || '').trim(),
                    starting_point: f.starting_point.trim(), sessions_per_week: f.sessions_per_week || 3, minutes: f.minutes || 25,
                    preferred_days: f.preferred_days, target_date: f.target_date || null, project_id: f.projectId};
+            if (f.kind === 'program' && !f.making) return;
             const path = {thread: 'api/threads', mission: 'api/missions/launch', program: 'api/programs'}[f.kind];
             if (await this.mutate(path, body)) { this.pieceForm = null; if (project) await this.loadPieces(project); }
         },

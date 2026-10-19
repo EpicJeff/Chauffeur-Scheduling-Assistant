@@ -255,6 +255,8 @@ RULES = [
     (ANY, '/programs', ANYONE, None),
     # Projects share the public shell; /api/projects* requires a signed-in member.
     (ANY, '/projects', ANYONE, None),
+    # The program library page: a public shell; /api/library* requires a signed-in member.
+    (ANY, '/library', ANYONE, None),
 
     # FastAPI's generated docs. Found UNCLASSIFIED by the S1 test, which is
     # the first thing it caught and on its own worth the file: `/docs` is a

@@ -240,9 +240,12 @@
             async loadWindowLesson(w) {
                 if (!w || !w.program_id) return;
                 try {
-                    const qs = new URLSearchParams({ phase_name: w.phase_name || '',
-                                                     unit_n: w.unit_n || 0,
-                                                     session_label: w.session_label || '' });
+                    // Stable lesson identity when the window carries it.
+                    const qs = new URLSearchParams(w.lesson_id
+                        ? { lesson_id: w.lesson_id, variant_label: w.variant_label || '' }
+                        : { phase_name: w.phase_name || '',
+                            unit_n: w.unit_n || 0,
+                            session_label: w.session_label || '' });
                     const r = await fetch(`${apiBase}api/programs/${w.program_id}/lesson-scenes?${qs}`);
                     if (r.ok) w._lesson = (await r.json()).lesson || null;
                 } catch (e) { /* plain steps, which is never a blocked session */ }

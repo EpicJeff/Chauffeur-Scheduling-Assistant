@@ -259,7 +259,9 @@ def scenario_the_wall_reads_the_slot_key_off_the_window():
     from, so one evening can never name two rungs."""
     from services import programs
     import inspect
-    src = inspect.getsource(programs.practice_windows)
+    # The window rows are built in _practice_windows since the program
+    # library split; practice_windows filters them for the reader.
+    src = inspect.getsource(programs.practice_windows) + inspect.getsource(programs._practice_windows)
     check("'unit_n': int(unit.get('n') or 0)" in src,
           "the practice window carries its own rung")
     for page in ('app.html', 'components/programs_card.html'):
@@ -1100,7 +1102,9 @@ def scenario_sweep_report_play_tap_only_on_rows_that_wrote_something():
     report's -- has nothing this tap promises to show. Scoped to the
     sweep-report's own row template, bounded by its closing tag."""
     import re
-    src = _read('components/programs_page.html')
+    # The forced-sweep report moved into the Programs settings drawer
+    # (components/programs_settings.html) with the Projects drawer.
+    src = _read('components/programs_page.html') + _read('components/programs_settings.html')
     m = re.search(
         r'<template x-for="\(slot, idx\) in \(sweepReport \? sweepReport\.slots : \[\]\)"'
         r'[\s\S]*?</template>', src)
@@ -1280,7 +1284,9 @@ def scenario_start_practice_session_carries_the_practice_windows_own_unit_n():
     import re
     from services import programs
     import inspect
-    src = inspect.getsource(programs.practice_windows)
+    # The window rows are built in _practice_windows since the program
+    # library split; practice_windows filters them for the reader.
+    src = inspect.getsource(programs.practice_windows) + inspect.getsource(programs._practice_windows)
     check("'unit_n': int(unit.get('n') or 0)" in src,
           "the practice window carries its own rung")
     check("'logged': _already_logged(row, day)" in src,

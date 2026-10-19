@@ -442,6 +442,13 @@
             {% set projects_host = 'phone' %}
             {% include 'components/projects_page.html' %}
         </div>
+        <!-- The program library's phone home (More -> Library): the admin
+             page's own builder, components/library_page.html. -->
+        <div id="library-container" class="flex-1 flex-col min-h-0 overflow-y-auto" style="display: none">
+            {% set library_host = 'phone' %}
+            <script>window.chfLibraryHost = 'phone';</script>
+            {% include 'components/library_page.html' %}
+        </div>
         <!-- Bottom Tab Bar -->
         <div id="pwa-tab-bar" role="navigation" aria-label="Main navigation" class="flex bg-gray-900 border-t border-gray-800 shrink-0 z-10 shadow-nav"
             style="padding-bottom: env(safe-area-inset-bottom)">
@@ -870,6 +877,8 @@
             applyViewVisibility();
             if (view === 'projects') {
                 window.dispatchEvent(new CustomEvent('chf-projects-open'));
+            } else if (view === 'library') {
+                window.dispatchEvent(new CustomEvent('chf-library-open', {detail: {}}));
             } else if (view === 'messages') {
                 fetchChannels();
             } else if (view === 'map') {
@@ -884,7 +893,7 @@
                 fetchHouseThreads();
             } else if (view === 'music') {
                 if (musicWidgetStarted && typeof mwRefresh === 'function') mwRefresh();
-            } else if (view !== 'more') {
+            } else if (view !== 'more' && view !== 'library') {
                 buildTimeline();
                 if (view === 'family') { fetchProposals(); fetchMind(); }
             }
@@ -899,9 +908,11 @@
             const isMusic = currentView === 'music';
             const isChores = currentView === 'chores';
             const isProjects = currentView === 'projects';
-            const isTimeline = !isProjects && !isMessages && !isMap && !isMyDay && !isMusic && !isChores && currentView !== 'more';
+            const isLibrary = currentView === 'library';
+            const isTimeline = !isProjects && !isLibrary && !isMessages && !isMap && !isMyDay && !isMusic && !isChores && currentView !== 'more';
             pwaSyncShell();
             document.getElementById('projects-container').style.display = isProjects ? 'flex' : 'none';
+            document.getElementById('library-container').style.display = isLibrary ? 'flex' : 'none';
             document.getElementById('chores-container').style.display = isChores ? 'flex' : 'none';
             document.getElementById('days-container').style.display = isTimeline ? 'flex' : 'none';
             const nav = document.getElementById('day-nav');
@@ -1062,6 +1073,8 @@
                 localStorage.setItem('chauffeur_view', currentView);
             }
             window.dispatchEvent(new CustomEvent('chf-projects-open'));
+            // A reload that lands back on the library home loads it.
+            if (currentView === 'library') window.dispatchEvent(new CustomEvent('chf-library-open', {detail: {}}));
             updateTabBar();
             applyViewVisibility();
             applyKidShell();
@@ -1498,18 +1511,39 @@
                     ${shown.label ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300">${mfEscape(shown.label)}</span>` : ''}
                     <ul class="${shown.label ? 'mt-1' : ''} space-y-0.5">${stepLines(shown.steps.slice(0, 8))}</ul>
                 </div>` : '';
-            // Which rung of the ladder, from the server -- re-deriving the
-            // walk here would be a second implementation of it.
-            const unit = ((phase && phase.units) || [])
-                .find(u => u.n === p.current_unit);
-            const unitRow = unit ? `
-                <div class="mt-2 rounded-lg bg-gray-950/60 border border-gray-800 px-2.5 py-1.5">
+            // Which lesson, from the server's own projection (current_lesson,
+            // GET /api/programs) -- by name under its phase, never a count:
+            // run_progress carries per-lesson session counts and none of them
+            // is drawn. A run not yet on the library keeps its old rung.
+            const cl = p.current_lesson || {};
+            const unit = cl.title ? cl : ((phase && phase.units) || []).find(u => u.n === p.current_unit);
+            const lessonName = unit ? (unit.title + (phase && phase.name && phase.name !== unit.title ? ' · ' + phase.name : '')) : '';
+            const unitRow = (unit && !p.unresolved) ? `
+                <div data-current-lesson class="mt-2 rounded-lg bg-gray-950/60 border border-gray-800 px-2.5 py-1.5">
                     <div class="flex items-start justify-between gap-2">
-                        <div class="text-xs font-bold text-gray-200 min-w-0">${mfEscape(unit.title)}</div>
+                        <div class="text-xs font-bold text-gray-200 min-w-0">${mfEscape(lessonName)}</div>
                         ${unit.url ? `<a href="${mfEscape(unit.url)}" target="_blank" rel="noopener"
                             class="text-[11px] font-bold text-blue-400 underline underline-offset-2 shrink-0">Open the lesson</a>` : ''}
                     </div>
                     ${unit.body ? `<div class="text-[11px] text-gray-400 mt-1">${mfEscape(unit.body)}</div>` : ''}
+                </div>` : '';
+            const libraryRow = (p.library_id && !p.unresolved) ? `
+                <button type="button" data-library-link data-library-id="${mfEscape(p.library_id)}"
+                    onclick="window.chfLibrary && window.chfLibrary.open('${mfEscape(p.library_id)}')"
+                    class="block text-left text-xs font-semibold text-teal-300 underline underline-offset-2 mt-1">from the library: ${mfEscape(p.title || '')}</button>` : '';
+            const judgeRow = p.ready_to_judge ? `
+                <div data-ready-to-judge class="text-xs text-blue-300 mt-1.5">ready to judge: ${mfEscape(p.ready_to_judge)}</div>` : '';
+            // A run whose library program is missing: Delete it, or pick a
+            // program for it -- the same two hand paths as the project card.
+            const unresolvedRow = p.unresolved ? `
+                <div data-run-unresolved class="mt-2 space-y-1.5">
+                    <div class="text-xs text-gray-400">Pick a program to carry on, or delete this run.</div>
+                    <div class="flex gap-2">
+                        <button type="button" data-run-rebind onclick="phoneRebindRun('${mfEscape(p.id)}')"
+                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Pick a program</button>
+                        <button type="button" data-run-delete onclick="phoneDeleteRun('${mfEscape(p.id)}')"
+                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-900 text-red-400 border border-red-900/60 active:bg-red-950">Delete</button>
+                    </div>
                 </div>` : '';
             // How this session beats the last one. "Done when" says the phase
             // is over; without this a phase is the same evening on repeat.
@@ -1558,7 +1592,7 @@
             const milestoneRow = (phase && phase.milestone) ? `
                 <div class="mt-2 flex items-center justify-between gap-2 bg-gray-950/60 border border-gray-800 rounded-lg px-2.5 py-1.5">
                     <div class="text-xs text-gray-300 min-w-0"><span class="text-gray-500">Done when:</span> ${mfEscape(phase.milestone)}</div>
-                    <button onclick="markProgramMilestone('${p.id}', '${mfEscape(phase.name || '').replace(/'/g, "\\'")}')"
+                    <button data-reached-it="${mfEscape(phase.id || phase.name || '')}" onclick="markProgramMilestone('${p.id}', '${mfEscape(phase.name || '').replace(/'/g, "\\'")}', '${mfEscape(phase.id || '')}')"
                         class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 shrink-0">Reached it</button>
                 </div>` : '';
             // Where the plan came from, wherever the plan's own words are
@@ -1583,8 +1617,11 @@
                     </div>
                     ${madeChip}
                 </div>
+                ${libraryRow}
+                ${unresolvedRow}
                 ${what ? `<div class="text-xs text-gray-400 mt-1">${what}</div>` : ''}
                 ${unitRow}
+                ${judgeRow}
                 ${stepList}
                 ${progressionRow}
                 ${aheadRows}
@@ -1710,9 +1747,30 @@
         // program's own shape (services/programs.py's log_session), because
         // this button is agreeing the SCHEDULED session happened, not typing
         // a different number.
-        async function askProgramSession(id, slotDate) {
+        // The hand paths out of an unresolved run on the phone: pick a
+        // library program for it (window.chfLibrary.rebind), or delete it
+        // through the shared two-step (components/record_delete.html).
+        async function phoneRebindRun(id) {
+            if (!window.chfLibrary) return;
+            if (await window.chfLibrary.rebind(id, selectedMemberId, {})) afterProgramWrite();
+        }
+        async function phoneDeleteRun(id) {
+            if (!window.chfDeleteRecord) return;
+            await window.chfDeleteRecord({ kind: 'program', id, title: '', apiBase, onDone: () => {
+                if (pieceSheet && pieceSheet.detail.kind === 'program' && pieceSheet.detail.id === id) pieceSheet.close();
+                afterProgramWrite();
+            } });
+        }
+
+        async function askProgramSession(id, slotDate, lesson) {
             try {
                 const payload = { member_id: selectedMemberId, source: 'asked' };
+                // Completion credits the lesson the player opened, never
+                // whatever is current when the tap lands.
+                if (lesson && lesson.lesson_id) {
+                    payload.lesson_id = lesson.lesson_id;
+                    payload.variant_label = lesson.variant_label || '';
+                }
                 // `member_id` is who is ASKING, not whose program it is --
                 // the server resolves ownership from the program row itself
                 // and falls through to the parent/adult stand-in.
@@ -1754,11 +1812,14 @@
             } catch (e) { showGlobalAlert("Couldn't log that just now."); }
         }
 
-        async function markProgramMilestone(id, phaseName) {
+        async function markProgramMilestone(id, phaseName, phaseId) {
             try {
+                // The phase by its stable id; the name only for a run not yet
+                // on the library (accepted for one release).
                 const r = await fetch(`${apiBase}api/programs/${id}/milestone`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ member_id: selectedMemberId, phase_name: phaseName })
+                    body: JSON.stringify({ member_id: selectedMemberId,
+                                           ...(phaseId ? { phase_id: phaseId } : { phase_name: phaseName }) })
                 });
                 const d = await r.json().catch(() => ({}));
                 if (!r.ok || d.status === 'error') { showGlobalAlert(d.detail || d.message || "Couldn't mark that."); return; }
@@ -1809,9 +1870,13 @@
             if (!w || !w.program_id || w._lesson !== undefined) return;
             w._lesson = null;
             try {
-                const qs = new URLSearchParams({ phase_name: w.phase_name || '',
-                                                 unit_n: w.unit_n || 0,
-                                                 session_label: w.session_label || '' });
+                // Stable lesson identity when the window carries it; the
+                // legacy slot tuple only for a run not yet on the library.
+                const qs = new URLSearchParams(w.lesson_id
+                    ? { lesson_id: w.lesson_id, variant_label: w.variant_label || '' }
+                    : { phase_name: w.phase_name || '',
+                        unit_n: w.unit_n || 0,
+                        session_label: w.session_label || '' });
                 const r = await fetch(`${apiBase}api/programs/${w.program_id}/lesson?${qs}`);
                 if (r.ok) w._lesson = (await r.json()).lesson || null;
             } catch (e) { /* the player just falls back to plain steps */ }
@@ -2168,7 +2233,7 @@
         window.addEventListener('lesson-player:done', (e) => {
             const w = (e.detail || {}).window || {};
             if (!w.program_id) return;
-            askProgramSession(w.program_id, w.date);
+            askProgramSession(w.program_id, w.date, w);
         });
 
         // The same answer the wall's dialog gives for a background trip, in

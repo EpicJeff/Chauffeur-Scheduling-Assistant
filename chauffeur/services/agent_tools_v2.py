@@ -2715,14 +2715,9 @@ def propose_program(title: str, for_member_name: str = None,
 
 
 def _program_choice_question(choice):
-    from services import storage, stages
+    from services import storage, library
     row = storage.get_library_program(choice['library_id']) or {}
-    profile = row.get('made_for') or {}
-    band = profile.get('age_band')
-    cut = stages.cutoffs()
-    ages = {'sprout': f'ages 0–{cut[0] - 1}', 'explorer': f'ages {cut[0]}–{cut[1] - 1}',
-            'navigator': f'ages {cut[1]}–{cut[2] - 1}', 'copilot': f'ages {cut[2]} and up'}
-    made_for = f"{ages.get(band, 'all ages')} with {profile.get('minutes', 20)}-minute sessions"
+    made_for = library.made_for_line(row.get('made_for'))
     member = storage.get_member(choice['member_id']) or {}
     return (f"There's a {row.get('title', choice['title'])} program in the library, made for {made_for}. "
             f"Use it for {member.get('name') or 'you'}, or make a new one?")

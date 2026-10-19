@@ -10,6 +10,9 @@ import re
 
 from harness import check
 from services import storage
+# A run reads its title and curriculum from its library row since the
+# program library split; fixtures make the pair through program_fixture.
+from program_fixture import add_run
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -48,8 +51,8 @@ def scenario_the_pwa_shows_no_streak():
 def scenario_a_members_programs_come_back_filtered():
     import main
     storage.programs_table.truncate()
-    storage.add_program({'member_id': 'kid', 'title': 'Guitar', 'state': 'active'})
-    storage.add_program({'member_id': 'mom', 'title': 'Running', 'state': 'active'})
+    add_run({'member_id': 'kid', 'title': 'Guitar', 'state': 'active'})
+    add_run({'member_id': 'mom', 'title': 'Running', 'state': 'active'})
     res = main.list_programs_api(member_id='kid')
     titles = [p['title'] for p in res['programs']]
     check(titles == ['Guitar'], f"only their own, got {titles}")
@@ -91,7 +94,7 @@ def scenario_the_pwa_reads_the_real_commitment_not_shape():
             'id': 'commit1', 'member_id': 'kid', 'title': 'Guitar practice',
             'days_of_week': [0, 1, 2, 3, 4, 5, 6],
             'time_start': '23:00', 'time_end': '23:59', 'active': True})
-        storage.add_program({
+        add_run({
             'id': 'prog1', 'member_id': 'kid', 'title': 'Guitar',
             'state': 'active', 'phases': [],
             'shape': {'sessions_per_week': 3, 'minutes': 25,
@@ -200,7 +203,7 @@ def scenario_the_wall_reads_a_celebration_only_projection():
     storage.programs_table.truncate()
     storage.members_table.truncate()
     storage.add_member({'id': 'kid', 'name': 'Lily', 'role': 'child'})
-    pid = storage.add_program({
+    pid = add_run({
         'member_id': 'kid', 'title': 'Guitar', 'state': 'active',
         'baseline': {'start_date': '2026-08-01', 'target_date': '2026-06-14',
                      'target_event_id': None, 'rebaselined_at': None,

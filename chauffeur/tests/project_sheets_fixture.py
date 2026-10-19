@@ -55,7 +55,9 @@ def seed():
                                             'result_json': {'question': 'Which day suits the tiler?'}})
     projects.adopt('mission', IDS['mission'], None, project_id='prj-bath')
     for pid, title, state in (('pr-prop', 'Tiling basics', 'proposed'), ('pr-live', 'Strength basics', 'active')):
-        storage.add_program({'id': pid, 'member_id': 'mom', 'title': title, 'state': state, **_PROGRAM})
+        # A run reads its curriculum from the library since the program library split.
+        from library_run_fixture import add_run
+        add_run({'id': pid, 'member_id': 'mom', 'title': title, 'state': state, **_PROGRAM})
         projects.adopt('program', pid, None, project_id='prj-bath')
     storage.add_project({'id': 'prj-gift', 'title': 'Surprise party', 'goal': 'x', 'done_when': 'x', 'owner_member_id': 'mom',
                          'created_by': 'mom', 'audience': 'private', 'pieces': [], 'steps': []})

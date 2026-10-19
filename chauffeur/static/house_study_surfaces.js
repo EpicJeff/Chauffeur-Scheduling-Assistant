@@ -95,7 +95,7 @@
       var note=field('Session note','',a,'textarea'),controls=el('div',null,a,'study-actions'),path='programs/'+encodeURIComponent(p.id)+'/';
       button('Log practice',controls,()=>{var n=Number(mins.value);if(!Number.isInteger(n)||n<1||n>600){message.textContent='Enter 1–600 minutes.';return;}act(path+'session',{minutes:n,note:note.value});});
       action(p.state==='paused'?'Resume program':'Pause program',path+(p.state==='paused'?'resume':'pause'),{},controls);
-      if(phase.name&&phase.milestone)action('Milestone reached',path+'milestone',{phase_name:phase.name},controls);
+      if(phase.name&&phase.milestone)action('Milestone reached',path+'milestone',phase.id?{phase_id:phase.id}:{phase_name:phase.name},controls);
     }else if(key==='contracts'){
       var deal=paged(d.items||[],'agreements');if(!deal)return true;
       var spread=el('div',null,body,'study-book-spread'),left=el('div',null,spread,'study-agreement-page'),right=el('div',null,spread,'study-agreement-page');

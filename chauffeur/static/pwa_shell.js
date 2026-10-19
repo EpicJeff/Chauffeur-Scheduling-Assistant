@@ -74,7 +74,7 @@ function pwaSyncShell() {
     document.getElementById('pwa-more-container').hidden = !adult || currentView !== 'more';
     document.querySelectorAll('#pwa-tab-bar > button').forEach(button => {
         const name = button.id.slice(4);
-        const active = name === currentView || (adult && name === 'more' && ['map', 'music'].includes(currentView));
+        const active = name === currentView || (adult && name === 'more' && ['map', 'music', 'library'].includes(currentView));
         if (active) button.setAttribute('aria-current', 'page');
         else button.removeAttribute('aria-current');
     });
@@ -104,6 +104,9 @@ function pwaFeatures() {
     // Explorer reaches the same view from More, with no extra tab.
     if (pwaChildStage() === 'explorer' || (pwaChildStage() !== 'sprout' && pwaAllowed('projects')))
         items.push({id: 'projects', title: 'Projects', description: 'Your goals, steps and linked records', run: () => setView('projects')});
+    // The program library: the household's programs, each run in a project.
+    if (pwaChildStage() !== 'sprout' && (pwaChildStage() === 'explorer' || pwaAllowed('projects')))
+        items.push({id: 'library', title: 'Library', description: 'The household’s programs and who is running them', run: () => setView('library')});
     route('map', 'Family map', 'Find shared locations and driving progress', 'map');
     route('music', 'Music', 'Favorites and household listening', 'music');
     const rewards = chfFeatureOn('rewards');
@@ -288,6 +291,7 @@ function pwaIcon(name) {
         critter: '<path d="M5 10V5l5 3h4l5-3v5c4 11-18 11-14 0Z"/><path d="M9 12h.01M15 12h.01M10 16h4"/>',
         projects: '<path d="M4 5h16v14H4zM8 9h8M8 13h5"/>',
         programs: '<path d="M12 5v16M3 3c4 0 6 0 9 2 3-2 5-2 9-2v16c-4 0-6 0-9 2-3-2-5-2-9-2V3Z"/>',
+        library: '<path d="M4 4h4v16H4zM10 4h4v16h-4zM16 5l3.5-1 3 15.5-3.5 1z"/>',
         profile: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',
         theme: '<path d="M20.5 13a8.5 8.5 0 0 1-9.5-9.5A8.5 8.5 0 1 0 20.5 13Z"/>',
         refresh: '<path d="M20 4v6h-6M4 20v-6h6M20 10a8 8 0 0 0-14-5M4 14a8 8 0 0 0 14 5"/>',

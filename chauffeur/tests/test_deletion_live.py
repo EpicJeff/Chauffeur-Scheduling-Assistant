@@ -124,7 +124,8 @@ def _mission(goal, pid, thread=None, by='mom', status='done'):
 def _program(title, pid, member='mom'):
     from services import projects
     gid = _id('pr')
-    storage.add_program({'id': gid, 'member_id': member, 'title': title, 'state': 'active', **_PROGRAM})
+    from library_run_fixture import add_run   # a run reads its curriculum from the library
+    add_run({'id': gid, 'member_id': member, 'title': title, 'state': 'active', **_PROGRAM})
     projects.adopt('program', gid, None, project_id=pid)
     return gid
 

@@ -1995,6 +1995,11 @@ def programs_page(request: Request):
 def projects_page(request: Request):
     return templates.TemplateResponse(request=request, name="projects.html")
 
+@app.get("/library")
+def library_page(request: Request):
+    """The household's program library (Work group): one card per program."""
+    return templates.TemplateResponse(request=request, name="library.html")
+
 @app.get("/chores")
 def chores_page(request: Request):
     return _page_or_board(request, "chores", "chores.html")
@@ -7749,6 +7754,7 @@ def list_programs_api(member_id: str = None, include_finished: bool = False,
                                            'phase_name': phase.get('name') or ''},
                         'current_phase': phase.get('name') or '',
                         'current_unit': unit.get('n') or 0,
+                        'ready_to_judge': _prog.ready_to_judge(r),
                         'member_name': owner.get('name') or '',
                         'owner_practices_alone': bool(
                             caps.get('practices_alone', True))})
@@ -7770,8 +7776,14 @@ def _library_result(result):
 
 @app.get('/api/library')
 def list_library_api(request: Request, include_archived: bool = True):
+    """The library, plus what a create form needs: the age bands worded once
+    (library.age_bands) and each active member's default band, from a
+    birthdate on file, else any -- so no page ever has to know a birthday."""
     from services import library
-    return {'programs': library.list_programs(_library_actor(request), include_archived)}
+    members = [m for m in storage.get_all_members() if m.get('status', 'active') == 'active']
+    return {'programs': library.list_programs(_library_actor(request), include_archived),
+            'age_bands': library.age_bands(),
+            'member_bands': {m['id']: library.band_for(m) for m in members if m.get('id')}}
 
 
 @app.post('/api/library')

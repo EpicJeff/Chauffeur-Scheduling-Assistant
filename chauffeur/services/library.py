@@ -5,6 +5,33 @@ import uuid
 from services import access, storage
 
 EDIT_REFUSAL = 'Only the person who made this program, or a parent, can change it.'
+LIVE_RUN_STATES = ('proposed', 'active', 'paused')
+
+
+def age_bands():
+    """The bands a public profile names, worded once for every surface."""
+    from services import stages
+    cut = stages.cutoffs()
+    return [{'key': 'any', 'label': 'all ages'},
+            {'key': 'sprout', 'label': f'ages 0–{cut[0] - 1}'},
+            {'key': 'explorer', 'label': f'ages {cut[0]}–{cut[1] - 1}'},
+            {'key': 'navigator', 'label': f'ages {cut[1]}–{cut[2] - 1}'},
+            {'key': 'copilot', 'label': f'ages {cut[2]} and up'}]
+
+
+def made_for_line(profile):
+    """"ages 7–10 with 20-minute sessions": Argyle's choice card and the library cards."""
+    profile = profile or {}
+    labels = {b['key']: b['label'] for b in age_bands()}
+    return f"{labels.get(profile.get('age_band'), 'all ages')} with {profile.get('minutes', 20)}-minute sessions"
+
+
+def band_for(member):
+    """The age band a new profile starts on: the birthdate's stage, else any.
+    Never a pinned UI stage (spec §1)."""
+    from services import stages
+    age = stages.age_of(member or {})
+    return stages.stage_for_age(age) if age is not None else 'any'
 
 
 def can_edit(row, viewer):
@@ -113,7 +140,7 @@ def create(fields, actor):
 
 def runners(library_id, viewer):
     """Project visibility and record visibility both apply to a named runner."""
-    named, hidden = [], 0
+    named, hidden, hidden_on = [], 0, {}
     with access.batch():
         for run in storage.get_programs(include_finished=True):
             if run.get('library_id') != library_id or access.gone('program', run):
@@ -122,22 +149,43 @@ def runners(library_id, viewer):
             # A household runner's public identity is visible on this shared
             # surface even to a helper or sibling who cannot open the run.
             projection = access.record_view('program', run, viewer) or access.record_view('program', run, access.HOUSE)
+            # Which lesson a live run sits on: what Remove has to warn about.
+            current = ((run.get('progress') or {}).get('current')
+                       if run.get('state') in LIVE_RUN_STATES else None)
             if project and access.project_visible(project, viewer) and projection:
                 member = storage.get_member(run.get('member_id')) or {}
                 named.append({'name': member.get('name') or '', 'project_id': project['id'],
-                              'project_title': project.get('title') or ''})
+                              'project_title': project.get('title') or '', 'current': current})
             else:
                 hidden += 1
-    return {'named': named, 'hidden': hidden}
+                if current:
+                    hidden_on[current] = hidden_on.get(current, 0) + 1
+    return {'named': named, 'hidden': hidden, 'hidden_on': hidden_on}
+
+
+def in_use_message(library_id, viewer):
+    """Delete's refusal while any run references the program, else ''."""
+    if not any(r.get('library_id') == library_id for r in storage.get_programs(include_finished=True)):
+        return ''
+    visible = runners(library_id, viewer)['named']
+    names = ', '.join(dict.fromkeys(n['name'] for n in visible))
+    return f"In use by {names}'s project" if names else 'In use by another project'
+
+
+def _view(row, viewer):
+    """A library row as one viewer reads it: runners filtered, and what they may do."""
+    return {**row, 'runners': runners(row['id'], viewer), 'can_edit': can_edit(row, viewer),
+            'made_for_line': made_for_line(row.get('made_for')),
+            'in_use': in_use_message(row['id'], viewer)}
 
 
 def get(library_id, viewer):
     row = storage.get_library_program(library_id)
-    return {**row, 'runners': runners(library_id, viewer)} if row else None
+    return _view(row, viewer) if row else None
 
 
 def list_programs(viewer, include_archived=True):
-    return [{**r, 'runners': runners(r['id'], viewer)} for r in storage.get_library_programs()
+    return [_view(r, viewer) for r in storage.get_library_programs()
             if include_archived or not r.get('archived')]
 
 
@@ -235,10 +283,9 @@ def delete(library_id, actor):
             return {'status': 'error', 'code': 404, 'message': 'No such library program.'}
         if not can_edit(row, actor):
             return {'status': 'error', 'code': 403, 'message': EDIT_REFUSAL}
-        if any(r.get('library_id') == library_id for r in storage.get_programs(include_finished=True)):
-            visible = runners(library_id, actor)['named']
-            names = ', '.join(dict.fromkeys(n['name'] for n in visible))
-            return {'status': 'error', 'message': f"In use by {names}'s project" if names else 'In use by another project'}
+        refusal = in_use_message(library_id, actor)
+        if refusal:
+            return {'status': 'error', 'message': refusal}
         storage.delete_library_program(library_id)
     _invalidate()
     return {'status': 'success'}

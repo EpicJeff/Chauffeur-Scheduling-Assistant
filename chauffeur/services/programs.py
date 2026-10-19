@@ -180,6 +180,28 @@ def next_in_phase(run):
                  and not counts.get(l['id'], {}).get('completed_at')), None)
 
 
+def ready_to_judge(run):
+    """The current phase's milestone once every lesson in it is completed, else ''.
+
+    The bookmark stays on the phase's last lesson and never crosses into the
+    next phase by itself: the person judges the milestone ("Reached it").
+    """
+    row = load(run) if run and 'lessons' not in run else run
+    if not row or row.get('unresolved') or not row.get('library_id'):
+        return ''
+    progress_ = row.get('progress') or {}
+    judged = progress_.get('phases') or {}
+    phase = next((p for p in row.get('phases') or []
+                  if not (judged.get(p['id']) or {}).get('milestone_hit_at')), None)
+    if not phase:
+        return ''
+    counts = progress_.get('lessons') or {}
+    lessons = [l for l in row.get('lessons') or [] if l['phase_id'] == phase['id']]
+    if lessons and all((counts.get(l['id']) or {}).get('completed_at') for l in lessons):
+        return phase.get('milestone') or phase.get('name') or ''
+    return ''
+
+
 def step_bookmark(program_id, direction):
     if direction not in ('next', 'back', 'stay'):
         return {'status': 'error', 'message': 'Which way — next, or back?'}

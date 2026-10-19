@@ -1044,9 +1044,15 @@ def piece_cards(project, viewer, project_view=None):
         elif kind == 'program':
             row = programs.load(storage.get_program(sid)) or {}
             phase = (programs.progress(row) or {}).get('phase') or {}
+            # The run's card: the current lesson by name under its phase,
+            # never a count; the library program it reads; and whether the
+            # phase is waiting on the person's own judgement.
             card['program'] = {'state': row.get('state'), 'member_id': row.get('member_id'), 'unresolved': row.get('unresolved', False),
                                'current_lesson': programs.lesson_for(row, datetime.date.today()),
-                               'phase': phase.get('name') or ''}
+                               'phase': phase.get('name') or '',
+                               'library_id': row.get('library_id') if not row.get('unresolved') else None,
+                               'library_title': row.get('title') if row.get('library_id') and not row.get('unresolved') else '',
+                               'ready_to_judge': programs.ready_to_judge(row)}
         out.append(card)
     return out
 

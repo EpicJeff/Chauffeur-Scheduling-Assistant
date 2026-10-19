@@ -29,7 +29,7 @@
 [data-child-stage] #pwa-page-heading h2 { font-size:1.9375rem; }
 [data-child-stage] #myday-content > * { margin-top:0; margin-bottom:20px; }
 .child-greeting { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 0; }
-.child-greeting h1,.child-page-heading h1,[data-child-stage] #projects-container .panel-page-title { font-size:1.9375rem; line-height:1.15; letter-spacing:-1px; font-weight:650; }
+.child-greeting h1,.child-page-heading h1,[data-child-stage] #projects-container .panel-page-title,[data-child-stage] #library-container .panel-page-title { font-size:1.9375rem; line-height:1.15; letter-spacing:-1px; font-weight:650; }
 .child-greeting p,.child-page-heading p { margin-top:9px; font-size:0.8125rem; color:rgb(var(--c-gray-400)); }
 .child-companion { width:76px; height:80px; flex-shrink:0; border:0; background:transparent; }
 .child-companion img { height:100%; width:100%; object-fit:contain; }

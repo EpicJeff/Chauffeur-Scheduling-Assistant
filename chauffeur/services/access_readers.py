@@ -17,6 +17,8 @@ READERS = [
           ('PATCH', '/api/library/{id}/lessons/{lesson_id}'), ('DELETE', '/api/library/{id}/lessons/{lesson_id}'),
           ('POST', '/api/library/{id}/lessons/order')]],
     ((F, 'services.library.runners'), '4.1-signed-in', ('program',), 'project_visible and record_view'),
+    ((F, 'services.library.in_use_message'), '4.1-signed-in', ('program',), "names only library.runners' visible runners"),
+    ((F, 'services.migrations.migrate_program_library_v2499'), 'INTERNAL', ('program',), 'startup migration; no viewer, ids and curricula only'),
     *[((F, name), 'INTERNAL', ('program',), 'curriculum resolution or authorized mutation; callers own access') for name in [
         'services.library.get', 'services.library.list_programs', 'services.library.create', 'services.library._write',
         'services.library.delete', 'services.programs.load', 'services.programs.create_row',

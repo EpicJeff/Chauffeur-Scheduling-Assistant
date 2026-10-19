@@ -169,7 +169,7 @@
 .pwa-feature-icon { color: var(--pwa-accent); }
 .pwa-page-heading { padding: 12px 20px 20px; align-items: start; justify-content: space-between; gap: 8px; flex-shrink: 0; }
 .pwa-page-heading[hidden] { display: none !important; }
-.pwa-page-heading h2, .pwa-directory h2, [data-audience="adult"] #projects-container .panel-page-title { font-size: 31px; line-height: 1.15; letter-spacing: -.9px; font-weight: 600; margin: 0 0 7px; }
+.pwa-page-heading h2, .pwa-directory h2, [data-audience="adult"] #projects-container .panel-page-title, [data-audience="adult"] #library-container .panel-page-title { font-size: 31px; line-height: 1.15; letter-spacing: -.9px; font-weight: 600; margin: 0 0 7px; }
 .pwa-page-heading p { font-size: 13px; color: rgb(var(--c-gray-400)); }
 .pwa-date-toggle { min-width: 44px; height: 44px; display: grid; place-items: center; color: rgb(var(--c-gray-400)); }
 [data-audience="adult"] #days-container > div { padding: 0 20px 28px; }

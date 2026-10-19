@@ -2011,8 +2011,12 @@ function lessonPlayer() {
                     fetch((window.chfBase || '') + 'api/lessons/wait', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
+                        // The lesson this wait belongs to, by its stable
+                        // identity when the window carries one.
                         body: JSON.stringify({room: this.room, minutes: mins,
-                                              text: s.announce, program_id: this.w.program_id}),
+                                              text: s.announce, program_id: this.w.program_id,
+                                              ...(this.w.lesson_id ? {lesson_id: this.w.lesson_id,
+                                                                      variant_label: this.w.variant_label || ''} : {})}),
                     }).catch(() => {});
                 } catch (e) { /* the on-screen countdown still runs */ }
             }
@@ -2156,9 +2160,12 @@ function lessonPlayer() {
                     + encodeURIComponent(w.program_id) + '/lesson-help',
                     {method: 'POST', headers,
                      body: JSON.stringify({
-                         phase_name: w.phase_name || '',
-                         unit_n: w.unit_n || 0,
-                         session_label: w.session_label || '',
+                         // Stable lesson identity when the window carries
+                         // it; the legacy slot tuple for one release.
+                         ...(w.lesson_id ? {lesson_id: w.lesson_id, variant_label: w.variant_label || ''}
+                                         : {phase_name: w.phase_name || '',
+                                            unit_n: w.unit_n || 0,
+                                            session_label: w.session_label || ''}),
                          scene_idx: this.idx,
                      })});
                 const data = res.ok ? await res.json() : {};

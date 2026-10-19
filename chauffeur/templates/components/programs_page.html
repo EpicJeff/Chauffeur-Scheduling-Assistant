@@ -36,6 +36,11 @@
                     <span class="text-gray-500 text-xs" x-text="creating ? 'Hide' : 'Show'"></span>
                 </button>
                 <div class="mt-3 space-y-2.5" x-show="creating" x-cloak>
+                    <!-- The aim becomes a library program the whole household
+                         can see (spec 2026-10-19-program-library §2); the
+                         starting point stays on this one run. -->
+                    <p data-visibility-line class="text-xs font-semibold text-blue-300"
+                       x-text="'Everyone in the household will see this program as: ' + ((draft.title || '').trim() || '…')"></p>
                     <input type="text" x-model="draft.title" placeholder="The aim (e.g. Learn guitar, Train for a 5K)"
                         @keydown.enter="proposeProgram()"
                         class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
@@ -53,6 +58,8 @@
                     <input type="text" x-model="draft.starting_point"
                         placeholder="Where they're starting from (optional — e.g. already plays open chords)"
                         class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
+                    <p data-private-label class="text-[11px] text-gray-500 -mt-1.5"
+                       x-text="'stays private to ' + (draft.for_member_id ? memberName(draft.for_member_id) : 'their') + &quot;'s run&quot;"></p>
                     <div class="grid grid-cols-2 gap-2.5">
                         <label class="text-xs text-gray-400 flex items-center gap-2">
                             Sessions / week
@@ -124,6 +131,34 @@
                                         x-text="p.state"></span>
                                 </div>
                                 <div class="text-[11px] text-gray-500 mt-1" x-text="memberName(p.member_id)"></div>
+                                <!-- The run reads its library program (spec 2026-10-19-program-
+                                     library §3 "A run's card"): a button to it, then the
+                                     current lesson by name under its phase. Never a count:
+                                     run_progress carries per-lesson session counts, and none
+                                     of them is ever drawn. -->
+                                <template x-if="!p.unresolved && p.library_id">
+                                    <button type="button" data-library-link :data-library-id="p.library_id" @click="openLibrary(p.library_id)"
+                                        class="block text-left text-xs font-semibold text-teal-300 underline underline-offset-2 mt-1"
+                                        x-text="'from the library: ' + p.title"></button>
+                                </template>
+                                <div data-current-lesson class="text-xs text-gray-300 mt-1" x-show="!sec.archived && lessonLine(p)" x-text="lessonLine(p)"></div>
+                                <div data-ready-to-judge class="text-xs text-blue-300 mt-1" x-show="!sec.archived && p.ready_to_judge"
+                                    x-text="'ready to judge: ' + (p.ready_to_judge || '')"></div>
+                                <template x-if="p.unresolved">
+                                    <div data-run-unresolved class="mt-1.5 space-y-1.5">
+                                        <p class="text-xs text-gray-400">Pick a program to carry on, or delete this run.</p>
+                                        <div class="flex flex-wrap gap-2">
+                                            <template x-if="canAct(p)">
+                                                <button type="button" data-run-rebind @click="rebindRun(p)" :disabled="!!(proposing)"
+                                                    class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 disabled:opacity-50">Pick a program</button>
+                                            </template>
+                                            <template x-if="canAct(p) && window.chfDeleteRecord">
+                                                <button type="button" data-run-delete @click="deleteRun(p)"
+                                                    class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-900 text-red-400 border border-red-900/60 active:bg-red-950">Delete</button>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
 
                                 <div class="text-xs text-gray-400 mt-1" x-init="window.chfPartOf('program', p.id, $el, false)"></div>
                                 <!-- Where the plan came from. Three tiers, each said plainly:
@@ -224,7 +259,7 @@
                                      beside it, there is no way to tell which of the two you are
                                      looking at or what the button claims. -->
                                 <div class="mt-2 space-y-1" x-show="(p.phases || []).length && !sec.archived">
-                                    <template x-for="ph in (p.phases || [])" :key="ph.name">
+                                    <template x-for="ph in (p.phases || [])" :key="ph.id || ph.name">
                                         <div class="flex items-start justify-between gap-2 text-xs bg-gray-950/60 border border-gray-800 rounded-lg px-2.5 py-1.5">
                                             <div class="min-w-0">
                                                 <div class="font-semibold" :class="ph.milestone_hit_at ? 'text-teal-300' : 'text-gray-300'"
@@ -417,7 +452,7 @@
                                                      percentage with the division left undone, and
                                                      that is one of the six. -->
                                                 <div class="mt-1.5 space-y-1" x-show="(ph.units || []).length">
-                                                    <template x-for="u in (ph.units || [])" :key="u.n">
+                                                    <template x-for="u in (ph.units || [])" :key="u.lesson_id || u.n">
                                                         <div class="flex items-start gap-1.5 text-[11px]">
                                                             <span class="shrink-0"
                                                                 :class="onThisRung(p, ph, u) ? 'text-teal-400' : 'text-gray-600'"
@@ -431,12 +466,15 @@
                                                             </div>
                                                         </div>
                                                     </template>
+                                                    <!-- Back ("Another session on this") and Next move the
+                                                         bookmark one lesson inside this phase; neither
+                                                         completes anything, and every count is kept. -->
                                                     <div class="flex gap-2 pt-0.5" x-show="onThisPhase(p, ph) && p.state === 'active' && canAct(p)">
-                                                        <button @click="moveUnit(p, 'stay')"
+                                                        <button type="button" data-unit-move="back" @click="moveUnit(p, 'back')"
                                                             class="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">
                                                             Another session on this
                                                         </button>
-                                                        <button @click="moveUnit(p, 'next')"
+                                                        <button type="button" data-unit-move="next" @click="moveUnit(p, 'next')"
                                                             class="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">
                                                             Move on
                                                         </button>
@@ -456,7 +494,7 @@
                                                 </div>
                                             </div>
                                             <span class="text-[10px] font-bold text-teal-400 shrink-0" x-show="ph.milestone_hit_at">🎉 done</span>
-                                            <button x-show="!ph.milestone_hit_at && (p.state === 'active' || p.state === 'paused') && canAct(p)"
+                                            <button type="button" :data-reached-it="ph.id || ph.name" x-show="!ph.milestone_hit_at && (p.state === 'active' || p.state === 'paused') && canAct(p)"
                                                 @click="markMilestone(p, ph)"
                                                 class="text-[10px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 shrink-0">
                                                 Reached it
@@ -574,8 +612,9 @@
                                      Re-shape the week, which frees the time first. -->
                                 <template x-if="p.state === 'proposed' && editOpen[p.id] && edits[p.id]">
                                     <div class="mt-2.5 bg-gray-950/60 border border-gray-800 rounded-xl p-2.5 space-y-2.5">
-                                        <input type="text" x-model="edits[p.id].title" placeholder="The aim"
-                                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
+                                        <!-- The retitle control is gone (spec 2026-10-19-program-library
+                                             §2): the name is the library program's. -->
+                                        <p data-retitle-ruling class="text-[11px] text-gray-500 italic">The name belongs to the library program; rename the project instead.</p>
                                         <input type="text" x-model="edits[p.id].starting_point"
                                             placeholder="Where they're starting from (optional)"
                                             class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
@@ -610,7 +649,6 @@
                                                 class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm">
                                         </label>
                                         <p class="text-[11px] text-gray-500 italic">
-                                            Changing the aim looks for a new plan and spends a research run.
                                             Changing the week re-paces the phases already found and reads nothing.
                                             Changing the starting point is saved and used the next time you look again — on its own it reads nothing.
                                         </p>
@@ -867,9 +905,7 @@
                 // window in hand; both name the same rung by construction.
                 async loadWindowLesson(w) {
                     try {
-                        const qs = new URLSearchParams({ phase_name: w.phase_name || '',
-                                                         unit_n: w.unit_n || 0,
-                                                         session_label: w.session_label || '' });
+                        const qs = new URLSearchParams(this.slotParams(w));
                         const r = await fetch(this.apiBase + `api/programs/${w.program_id}/lesson?${qs}`,
                                               { headers: this.authHeaders() });
                         if (r.ok) w._lesson = (await r.json()).lesson || null;
@@ -900,7 +936,8 @@
                 onLessonDone(detail) {
                     const w = (detail || {}).window || {};
                     const p = this.programs.find(x => x.id === w.program_id);
-                    if (p) this.logSession(p, { source: 'asked', slot_date: w.date });
+                    if (p) this.logSession(p, { source: 'asked', slot_date: w.date,
+                                                ...(w.lesson_id ? { lesson_id: w.lesson_id, variant_label: w.variant_label || '' } : {}) });
                 },
 
                 async saveProgramSettings() {
@@ -970,9 +1007,7 @@
                 // and this tap), never the expected path.
                 async playSweepSlot(slot) {
                     try {
-                        const qs = new URLSearchParams({ phase_name: slot.phase || '',
-                                                         unit_n: slot.unit_n || 0,
-                                                         session_label: slot.session_label || '' });
+                        const qs = new URLSearchParams(this.slotParams(slot));
                         const r = await fetch(this.apiBase + `api/programs/${slot.program_id}/lesson?${qs}`,
                                               { headers: this.authHeaders() });
                         const body = r.ok ? await r.json() : {};
@@ -1151,7 +1186,6 @@
                     if (this.editOpen[p.id]) { this.editOpen[p.id] = false; return; }
                     const shape = p.shape || {};
                     this.edits[p.id] = {
-                        title: p.title || '',
                         sessions_per_week: shape.sessions_per_week || 3,
                         minutes: shape.minutes || 25,
                         preferred_days: [...(shape.preferred_days || [])],
@@ -1166,11 +1200,68 @@
                 // on when the phase began and on every session logged since,
                 // and two implementations of that drift.
                 onThisPhase(p, ph) {
+                    const cur = (p.progress || {}).phase || {};
+                    if (ph.id && cur.id) return ph.id === cur.id;
                     return !!ph.name && ph.name === p.current_phase;
                 },
 
                 onThisRung(p, ph, u) {
+                    if (u.lesson_id) return this.onThisPhase(p, ph) && u.lesson_id === this.currentLessonId(p);
                     return this.onThisPhase(p, ph) && u.n === p.current_unit;
+                },
+
+                // The bookmark: a lesson id on a library run (run_progress.current).
+                currentLessonId(p) {
+                    return (p.current_lesson || {}).lesson_id || (p.run_progress || {}).current || '';
+                },
+
+                // "Scales · Foundations": the current lesson by name under its
+                // phase, read from the server's own projection. Never a count.
+                lessonLine(p) {
+                    const l = p.current_lesson || {};
+                    if (p.unresolved || !l.title) return '';
+                    return l.phase_name && l.phase_name !== l.title ? l.title + ' · ' + l.phase_name : l.title;
+                },
+
+                openLibrary(id) {
+                    if (window.chfLibrary) return window.chfLibrary.open(id);
+                    window.location.href = this.apiBase + 'library?id=' + encodeURIComponent(id);
+                },
+
+                async rebindRun(p) {
+                    if (!window.chfLibrary) return;
+                    if (await window.chfLibrary.rebind(p.id, this.myId, this.myToken ? { 'X-Member-Token': this.myToken } : {}))
+                        await this.load();
+                },
+
+                deleteRun(p) {
+                    return window.chfDeleteRecord({ kind: 'program', id: p.id, title: p.title, apiBase: this.apiBase,
+                                                    onDone: async () => {
+                                                        await this.load();
+                                                        window.dispatchEvent(new CustomEvent('chf-record-sheet-close'));
+                                                    } });
+                },
+
+                // The lesson a request names: stable ids when the source has
+                // them, else the one-release legacy tuple.
+                slotParams(src) {
+                    src = src || {};
+                    if (src.lesson_id) return { lesson_id: src.lesson_id, variant_label: src.variant_label || '' };
+                    return { phase_name: src.phase_name || src.phase || '', unit_n: src.unit_n || 0,
+                             session_label: src.session_label || '' };
+                },
+
+                // The editor's slot for a phase and rotation label: the
+                // bookmarked lesson and that variant on a library run.
+                editorSlot(p, ph, label) {
+                    const id = p.library_id ? this.currentLessonId(p) : '';
+                    return id ? { lesson_id: id, variant_label: label || '' }
+                              : { phase_name: ph.name || '', unit_n: p.current_unit || 0, session_label: label || '' };
+                },
+
+                currentUnit(p, ph) {
+                    const id = this.currentLessonId(p);
+                    return (ph.units || []).find(u => id ? u.lesson_id === id : u.n === p.current_unit) || {};
                 },
 
                 // The hand on the ladder: a lesson that needs another evening,
@@ -1192,20 +1283,9 @@
                 async saveEdit(p) {
                     const e = this.edits[p.id];
                     if (!e) return;
-                    const title = (e.title || '').trim();
-                    if (!title) { showGlobalAlert('What is the aim?'); return; }
-                    // The aim changing means the plan that was found was found
-                    // for a different question, so it is re-run -- and that
-                    // spends a real research call, which the family is told
-                    // before it happens rather than after.
-                    if (title !== (p.title || '')) {
-                        const ok = await promptConfirm('Change the aim?',
-                            'The plan is looked up again for the new aim, which spends one research run. The old plan is replaced.',
-                            'Look again', 'Cancel');
-                        if (!ok) return;
-                    }
+                    // No title: the name belongs to the library program, and
+                    // the server refuses a retitle with that ruling.
                     await this.patchProgram(p, {
-                        title,
                         sessions_per_week: e.sessions_per_week,
                         minutes: e.minutes,
                         preferred_days: e.preferred_days,
@@ -1220,7 +1300,7 @@
                 // else on the card could ever try again.
                 async lookAgain(p) {
                     const ok = await promptConfirm('Look for a plan again?',
-                        'This spends one research run. Anything found replaces the plan on this proposal; if nothing new turns up, the plan you have stays. The practice time is untouched.',
+                        'This spends one research run and makes a new library program from the same profile. Progress on this run starts over and its lesson scripts are regenerated. If nothing new turns up, the plan you have stays. The practice time is untouched.',
                         'Look again', 'Cancel');
                     if (!ok) return;
                     await this.patchProgram(p, { recurate: true },
@@ -1235,7 +1315,7 @@
                 // honestly rather than pretending the books were never there.
                 async replanWithoutBooks(p) {
                     const ok = await promptConfirm('Plan without the book?',
-                        'This spends one research run looking for a plan whose lessons are on free pages. If nothing bookless turns up, the app writes a plan and says so.',
+                        'This spends one research run looking for a plan whose lessons are on free pages, made as a new library program. Progress on this run starts over and its lesson scripts are regenerated. If nothing bookless turns up, the app writes a plan and says so.',
                         'Look again', 'Cancel');
                     if (!ok) return;
                     await this.patchProgram(p, { recurate: true, exclude_books: true },
@@ -1341,6 +1421,9 @@
                                           minutes: minutes || null,
                                           source: o.source || 'added' };
                         if (o.slot_date) payload.slot_date = o.slot_date;
+                        // Completion credits the lesson the player opened,
+                        // never whatever is current when the tap lands.
+                        if (o.lesson_id) { payload.lesson_id = o.lesson_id; payload.variant_label = o.variant_label || ''; }
                         const r = await fetch(this.apiBase + `api/programs/${p.id}/session`, {
                             method: 'POST', headers: this.authHeaders(),
                             body: JSON.stringify(payload)
@@ -1368,7 +1451,7 @@
                         const r = await fetch(this.apiBase + `api/programs/${p.id}/milestone`, {
                             method: 'POST', headers: this.authHeaders(),
                             body: JSON.stringify({ member_id: this.myId || null,
-                                                   phase_name: ph.name })
+                                                   ...(ph.id ? { phase_id: ph.id } : { phase_name: ph.name }) })
                         });
                         const d = await r.json().catch(() => ({}));
                         if (!r.ok || d.status === 'error') {
@@ -1477,7 +1560,9 @@
                 // disclosure per label.
 
                 lessonKey(p, ph, label) {
-                    return `${p.id}|${ph.name || ''}|${p.current_unit || 0}|${label || ''}`;
+                    const slot = this.editorSlot(p, ph, label);
+                    return slot.lesson_id ? `${p.id}|${slot.lesson_id}|${label || ''}`
+                                          : `${p.id}|${ph.name || ''}|${p.current_unit || 0}|${label || ''}`;
                 },
 
                 // The distinct lessons THIS phase can hold right now: one
@@ -1485,6 +1570,10 @@
                 // phase is not rotated -- the same two shapes the read-only
                 // steps/rotation blocks above already branch on.
                 lessonSlotsFor(p, ph) {
+                    if (p.library_id) {
+                        const variants = (this.currentUnit(p, ph).variants || []).filter(v => (v.steps || []).length);
+                        return variants.length ? variants.map(v => v.label || '') : [''];
+                    }
                     const rotation = ph.rotation || [];
                     return rotation.length ? rotation.map(s => s.label || '') : [''];
                 },
@@ -1499,9 +1588,7 @@
                 async loadLesson(p, ph, label) {
                     const key = this.lessonKey(p, ph, label);
                     try {
-                        const qs = new URLSearchParams({ phase_name: ph.name || '',
-                                                         unit_n: p.current_unit || 0,
-                                                         session_label: label || '' });
+                        const qs = new URLSearchParams(this.editorSlot(p, ph, label));
                         const r = await fetch(this.apiBase + `api/programs/${p.id}/lesson?${qs}`,
                                               { headers: this.authHeaders() });
                         const body = r.ok ? await r.json() : {};
@@ -1547,6 +1634,15 @@
                 // these into `do` beats, exactly what tonight's Start tap
                 // would show for the identical slot today.
                 slotSteps(ph, label) {
+                    // On a library run the bookmarked lesson's own steps
+                    // (or its variant's), found through the run that holds
+                    // this phase.
+                    const p = this.programs.find(x => (x.phases || []).includes(ph));
+                    if (p && p.library_id) {
+                        const unit = this.currentUnit(p, ph);
+                        const v = label ? (unit.variants || []).find(x => (x.label || '') === label) : null;
+                        return (v && v.steps) || unit.steps || [];
+                    }
                     if (label) {
                         const sess = (ph.rotation || []).find(s => (s.label || '') === label);
                         return (sess && sess.steps) || [];
@@ -1576,17 +1672,16 @@
                 // plan's own steps rather than a bare, contentless check.
                 async playLesson(p, ph, label) {
                     try {
-                        const qs = new URLSearchParams({ phase_name: ph.name || '',
-                                                         unit_n: p.current_unit || 0,
-                                                         session_label: label || '' });
+                        const qs = new URLSearchParams(this.editorSlot(p, ph, label));
                         const r = await fetch(this.apiBase + `api/programs/${p.id}/lesson?${qs}`,
                                               { headers: this.authHeaders() });
                         const body = r.ok ? await r.json() : {};
-                        const unit = (ph.units || []).find(u => u.n === p.current_unit) || {};
+                        const unit = this.currentUnit(p, ph);
                         window.dispatchEvent(new CustomEvent('lesson-player:open', {
                             detail: {
                                 preview: true,
                                 window: { title: p.title || '', session_label: label || '',
+                                         ...this.editorSlot(p, ph, label), program_id: p.id,
                                          phase_name: ph.name || '', steps: this.slotSteps(ph, label),
                                          unit_title: unit.title || '', milestone: ph.milestone || '' },
                                 lesson: body.lesson || null,
@@ -1626,10 +1721,11 @@
                 // session would open, so a save or a clear shows up there
                 // without a full page reload.
                 _syncTonight(p, ph, label) {
+                    const slot = this.editorSlot(p, ph, label);
                     this.practiceToday
                         .filter(w => w.program_id === p.id
-                            && (w.phase_name || '') === (ph.name || '')
-                            && (w.session_label || '') === (label || ''))
+                            && (slot.lesson_id ? (w.lesson_id === slot.lesson_id && (w.variant_label || '') === (label || ''))
+                                : ((w.phase_name || '') === (ph.name || '') && (w.session_label || '') === (label || ''))))
                         .forEach(w => this.loadWindowLesson(w));
                 },
 
@@ -1641,9 +1737,7 @@
                         const r = await fetch(this.apiBase + `api/programs/${p.id}/lesson`, {
                             method: 'PUT', headers: this.authHeaders(),
                             body: JSON.stringify({ member_id: this.myId || null,
-                                                   phase_name: ph.name || '',
-                                                   unit_n: p.current_unit || 0,
-                                                   session_label: label || '', scenes })
+                                                   ...this.editorSlot(p, ph, label), scenes })
                         });
                         const d = await r.json().catch(() => ({}));
                         if (!r.ok || d.status === 'error') {
@@ -1667,9 +1761,7 @@
                     if (!ok) return;
                     const key = this.lessonKey(p, ph, label);
                     try {
-                        const qs = new URLSearchParams({ phase_name: ph.name || '',
-                                                         unit_n: p.current_unit || 0,
-                                                         session_label: label || '' });
+                        const qs = new URLSearchParams(this.editorSlot(p, ph, label));
                         const r = await fetch(this.apiBase + `api/programs/${p.id}/lesson?${qs}`,
                                               { method: 'DELETE', headers: this.authHeaders() });
                         const d = await r.json().catch(() => ({}));

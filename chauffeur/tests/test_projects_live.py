@@ -59,7 +59,8 @@ def _seed():
         storage.add_member(m)
     for who in ('mom', 'dad', 'kid', 'tot', 'exp'):
         TOKENS[who] = storage.create_member_token(who)
-    storage.add_program({'id': 'pr1', 'member_id': 'mom', 'title': 'Strength basics', 'state': 'active'})
+    from library_run_fixture import add_run   # a run reads its curriculum from the library
+    add_run({'id': 'pr1', 'member_id': 'mom', 'title': 'Strength basics', 'state': 'active'})
     bath = storage.add_project({'id': 'prj-bath', 'title': 'Bathroom', 'goal': 'a new bathroom', 'done_when': 'we use it every day',
                                 'owner_member_id': 'mom', 'created_by': 'mom', 'audience': 'household',
                                 'pieces': [{'kind': 'program', 'id': 'pr1', 'added_by': 'mom', 'added_at': 0}],
