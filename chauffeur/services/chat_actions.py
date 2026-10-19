@@ -443,8 +443,15 @@ def run_row(proposal_id, approver, idem):
     finally:
         agent_tools_v2._mission_context.reset(token)
     with storage.db_lock, storage.db.transaction():
+        status = ('waiting_choice' if result['status'] == 'waiting_choice'
+                  else 'approved' if result['status'] == 'success' else 'failed')
+        if status == 'failed' and prop['action_type'] == 'propose_program' \
+                and not prop.get('stage_id') and prop.get('origin_kind') == 'mission':
+            # Only the call that claimed and executed this proposal may make
+            # its failure retryable. A losing tap returns before this write.
+            status = 'proposed'
         storage.update_action_proposal(proposal_id, {
-            'status': 'waiting_choice' if result['status'] == 'waiting_choice' else 'approved' if result['status'] == 'success' else 'failed',
+            'status': status,
             'result': result, 'approved_by_member_id': (approver or {}).get('id')})
         if result['status'] == 'waiting_choice' and not prop.get('stage_id') and prop.get('origin_kind') == 'mission':
             planned.record_program_choice(prop, result)
@@ -517,10 +524,9 @@ def act_on_proposal(proposal_id: str, act: str, approver_member: Optional[dict])
     if res.get('status') == 'waiting_choice':
         return {**res, 'card': build_card(proposal_id, a_type, summary, 'waiting_choice')}
     if res.get("status") == "error":
-        if a_type == 'propose_program':
-            storage.update_action_proposal(proposal_id, {'status': 'proposed'})
+        current_status = (storage.get_action_proposal(proposal_id) or {}).get('status', 'dismissed')
         return {"status": "error", "message": res.get("message") or "That action failed.",
-                "card": build_card(proposal_id, a_type, summary, "proposed")}
+                "card": build_card(proposal_id, a_type, summary, current_status)}
     result = {"status": "success", "message": res.get("message") or f"Done: {summary}",
               "created": res.get("created") or []}
     storage.update_action_proposal(proposal_id, {

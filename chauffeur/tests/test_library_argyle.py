@@ -1,6 +1,7 @@
 """Task 4: child choices, library audience, and the removed creation door."""
 import traceback
 import copy
+import threading
 from unittest.mock import patch
 
 from harness import check
@@ -326,6 +327,130 @@ def scenario_run_row_persists_only_the_choice_contract():
     expected = {k: v for k, v in result.items() if k != 'debug'}
     check(out == expected and storage.get_action_proposal(made['proposal_id'])['result'] == expected,
           'only status/message/created and the five choice fields are persisted')
+
+
+def scenario_standalone_approval_racing_taps_do_not_reopen_the_claim():
+    _fresh()
+    project = _project('mom', audience='private')
+    mid = _mission(project_id=project['id'])
+    made = chat_actions.create_action_proposal('propose_program', 'Piano for Kate', ROWS[0]['args'],
+        created_by_member_id='mom', extra_allowed=missions.proposable_tools(),
+        extra={'origin_kind': 'mission', 'origin_id': mid})
+    pid = made['proposal_id']
+    stale_ready, executing, release = threading.Event(), threading.Event(), threading.Event()
+    results, errors, calls = {}, [], []
+    real_run_row, real_execute = chat_actions.run_row, chat_actions._execute
+
+    def delayed_claim(*args, **kwargs):
+        if threading.current_thread().name == 'approval-b':
+            # B has already read `proposed` in act_on_proposal. Let A claim it.
+            stale_ready.set()
+            check(executing.wait(10), 'A reached the real executor')
+        return real_run_row(*args, **kwargs)
+
+    def held_executor(*args, **kwargs):
+        calls.append(threading.current_thread().name)
+        if threading.current_thread().name == 'approval-a':
+            executing.set()
+            check(release.wait(15), 'A is released after B and C')
+        return real_execute(*args, **kwargs)
+
+    def tap(label):
+        try:
+            results[label] = chat_actions.act_on_proposal(pid, 'approve', storage.get_member('mom'))
+        except BaseException as exc:
+            errors.append(exc)
+
+    a = threading.Thread(target=tap, args=('a',), name='approval-a', daemon=True)
+    b = threading.Thread(target=tap, args=('b',), name='approval-b', daemon=True)
+    with patch.object(chat_actions, 'run_row', side_effect=delayed_claim), \
+            patch.object(chat_actions, '_execute', side_effect=held_executor):
+        try:
+            b.start()
+            check(stale_ready.wait(10), 'B holds a stale proposed read')
+            a.start()
+            b.join(10)
+            check(not b.is_alive(), 'B returns while A remains in the executor')
+            after_b = storage.get_action_proposal(pid)['status']
+            tap('c')
+            after_c = storage.get_action_proposal(pid)['status']
+        finally:
+            release.set()
+            if a.ident is not None:
+                a.join(15)
+            b.join(15)
+    check(not errors and not a.is_alive() and not b.is_alive(), f'all approvals finished: {errors}')
+    check(results['b']['status'] == 'error' and results['c']['status'] == 'error'
+          and after_b == after_c == 'executing', f'B/C cannot reopen A: {after_b}, {after_c}, {results}')
+    check(results['a']['status'] == 'success' and calls == ['approval-a'], 'only A executes the tool')
+    check(len(_library_rows()) == len(_runs()) == 1, 'one library program and one run')
+    check(storage.get_action_proposal(pid)['status'] == 'approved'
+          and not [r for r in storage.get_mission(mid).get('program_choices') or [] if r['state'] == 'waiting_choice']
+          and not missions.ask_card(storage.get_mission(mid)), 'no open choice beside the existing run')
+
+
+def scenario_an_executed_standalone_failure_can_still_retry():
+    _fresh()
+    mid = _mission(project_id=_project('mom', audience='private')['id'])
+    made = chat_actions.create_action_proposal('propose_program', 'Piano for Kate', ROWS[0]['args'],
+        created_by_member_id='mom', extra_allowed=missions.proposable_tools(),
+        extra={'origin_kind': 'mission', 'origin_id': mid})
+    with patch.object(chat_actions, '_execute', return_value={'status': 'error', 'message': 'Research unavailable'}):
+        failed = chat_actions.act_on_proposal(made['proposal_id'], 'approve', storage.get_member('mom'))
+    check(failed['status'] == 'error' and storage.get_action_proposal(made['proposal_id'])['status'] == 'proposed',
+          'a call that actually executed and failed remains retryable')
+    retried = chat_actions.act_on_proposal(made['proposal_id'], 'approve', storage.get_member('mom'))
+    check(retried['status'] == 'success' and len(_library_rows()) == len(_runs()) == 1, 'one successful retry')
+
+
+def scenario_cancellation_preserves_an_earlier_use_outcome():
+    import test_library_flows as flows
+    from test_library_flows import REAL_POST
+    from services import deletion
+    for action in ('stop', 'delete'):
+        _fresh()
+        _library()
+        rows = [copy.deepcopy(ROWS[0]), {**copy.deepcopy(ROWS[0]), 'id': 'r2'}]
+        with patch.object(flows, 'ROWS', rows), patch.object(missions, '_post', REAL_POST):
+            mid, _ = _staged()
+            check(answer_as(mid, 'mom', _choice(mid)['use']).status_code == 200, 'first choice answered Use')
+        check(_row(mid, 'r2')['state'] == 'waiting_choice', 'second choice is still open')
+        before = {m['id']: copy.deepcopy(m['card']) for m in storage.chat_messages_table.all()
+                  if (m.get('card') or {}).get('mission_id') == mid
+                  and (m.get('card') or {}).get('ask') == 'program_choice'}
+        used = {key: card for key, card in before.items() if card.get('outcome') == 'Use'}
+        pending = [key for key, card in before.items() if card.get('state') == 'open']
+        check(used and pending, 'stored answered and open copies coexist')
+        if action == 'stop':
+            check(planned.stop_plan(mid, dict(MOM))['status'] == 'success', 'stopped')
+        else:
+            preview = deletion.preview('mission', mid, dict(MOM))
+            check(deletion.start('mission', mid, dict(MOM), preview['token'])['status'] == 'ok', 'deletion admitted')
+        check(all(storage.get_chat_message(key)['card'] == card for key, card in used.items()),
+              f'{action} preserves the previous Use card exactly')
+        check(all(storage.get_chat_message(key)['card'].get('outcome') == 'Stopped' for key in pending),
+              f'{action} settles the choice that was still waiting')
+
+
+def scenario_reconcile_does_not_interrupt_a_live_choice_continuation():
+    from test_library_flows import POSTS
+    _fresh()
+    _library()
+    mid, _ = _staged()
+    continue_real = planned._continue_program_choice
+    observed = []
+
+    def reconcile_in_the_gap(mission_id, stage_id):
+        check(_row(mid, 'r1')['state'] == 'done' and _stage(mid).get('continue_after_choice'), 'answer has committed')
+        before = len(POSTS)
+        planned.reconcile()
+        observed.extend(p for p in POSTS[before:] if (p.get('card') or {}).get('ask') == 'stage')
+        return continue_real(mission_id, stage_id)
+
+    with patch.object(planned, '_continue_program_choice', side_effect=reconcile_in_the_gap):
+        check(answer_as(mid, 'mom', _choice(mid)['use']).status_code == 200, 'choice and continuation succeed')
+    check(not observed and _row(mid, 'r2')['state'] == 'done', 'no stray stage DM during a live continuation')
+    check((mid, 's1') not in planned._active_stages, 'live continuation releases its claim')
 
 
 if __name__ == '__main__':
