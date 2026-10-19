@@ -23,6 +23,8 @@ READERS = [
         'services.agent_tools_v2._program_choice_question', 'services.agent_tools_v2._start_program_choice',
         'services.planned.answer_program_choice',
         'services.planned._offer_program_choice',
+        'services.planned.record_program_choice', 'services.planned._continue_program_choice',
+        'services.planned._cancel_program_choices',
         'services.agent_tools_v2.propose_program', 'services.chat_actions.run_row',
         'main._program_lesson_call',
         'services.programs.step_bookmark', 'services.programs.rebind', 'services.programs.lesson_for',

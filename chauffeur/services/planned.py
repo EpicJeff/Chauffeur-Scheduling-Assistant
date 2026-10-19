@@ -432,14 +432,17 @@ def cancel_for_delete(mission_id):
     with storage.db_lock:
         mission = storage.get_mission(mission_id) or {}
         plan = mission.get('plan')
+        _cancel_program_choices(mission)
         if not plan:
+            if mission:
+                storage.update_mission(mission_id, {'program_choices': mission.get('program_choices', [])})
             return
         plan['state'] = 'stopped'
         for stage in plan.get('stages', []):
             _dismiss_rows(stage)
             if stage.get('state') == 'running':
                 stage.update(state='skipped', outcome='stop')
-        storage.update_mission(mission_id, {'plan': plan})
+        storage.update_mission(mission_id, {'plan': plan, 'program_choices': mission.get('program_choices', [])})
         storage.set_app_state(f'mission_steer:{mission_id}', {'text': 'Stopped', 'ts': time.time()})
         for name in ('plan', 'stage', 'stage_check'):
             _settle(mission_id, name, 'Stopped')
@@ -457,9 +460,12 @@ def stop_plan(mission_id, actor):
         # current row, but must see stopped before claiming the next one.
         plan = storage.get_mission(mission_id)['plan']
         plan['state'] = 'stopped'
+        current = storage.get_mission(mission_id)
+        current['plan'] = plan
+        _cancel_program_choices(current)
         for stage in plan['stages']:
             _dismiss_rows(stage)
-        storage.update_mission(mission_id, {'plan': plan})
+        storage.update_mission(mission_id, {'plan': plan, 'program_choices': current.get('program_choices', [])})
         _settle(mission_id, 'plan', 'Stopped')
         _settle(mission_id, 'stage', 'Stopped')
         _settle(mission_id, 'stage_check', 'Stopped')
@@ -512,8 +518,24 @@ def _dismiss_rows(stage, status='dismissed'):
             continue  # A stopped build finishes the row it already claimed.
         pid = row.get('proposal_id')
         prop = storage.get_action_proposal(pid) if pid else None
-        if prop and prop.get('status') == 'proposed':
+        if prop and prop.get('status') in ('proposed', 'waiting_choice'):
             storage.update_action_proposal(pid, {'status': status})
+        if row.get('state') == 'waiting_choice':
+            row['state'] = 'excluded'
+
+
+def _cancel_program_choices(mission):
+    if not mission:
+        return
+    for stage in (mission.get('plan') or {}).get('stages', []):
+        continuation = stage.pop('continue_after_choice', False)
+        if stage.get('state') == 'waiting_choice' or continuation:
+            stage.update(state='skipped', outcome='stop')
+        _dismiss_rows(stage)
+    _dismiss_rows({'rows': mission.get('program_choices') or []})
+    for ask in storage.get_mission_steps(mission['id']):
+        if ask.get('kind') == 'ask' and ask.get('name') == 'program_choice':
+            missions.settle_ask_cards(mission['id'], ask['id'], 'Stopped')
 
 
 def _dismiss_followups(plan, stage_id):
@@ -861,6 +883,11 @@ def prepare_next(mid):
     with storage.db_lock:
         mission = storage.get_mission(mid)
         plan = mission.get('plan') or {}
+        continuation = next((s for s in plan.get('stages', []) if s.get('continue_after_choice')
+                             and (mid, s['id']) not in _active_stages), None)
+        if continuation:
+            _recover_choice_continuation(mission, continuation)
+            return True
         if mission['status'] not in missions.RUNNABLE or plan.get('state') != 'approved':
             return False
         if mission.get('interaction') == 'voice':
@@ -1088,7 +1115,23 @@ def _offer_program_choice(mid, stage):
             missions._close(mid, 'waiting_user')
         return
     _ask(mid, 'program_choice', result['message'], choice_id=result['choice_id'],
-         stage_id=stage['id'], row_id=row['id'])
+         stage_id=stage.get('id'), row_id=row['id'])
+
+
+def record_program_choice(proposal, result):
+    """A standalone proposal uses the same mission ask and answer transaction."""
+    mid = proposal['origin_id']
+    mission = storage.get_mission(mid)
+    rows = mission.setdefault('program_choices', [])
+    if not any(r['state'] == 'waiting_choice' for r in rows):
+        previous = next((s for s in reversed(storage.get_mission_steps(mid)) if s.get('kind') == 'ask'), None)
+        mission['program_choice_resume'] = {'status': mission['status'],
+            'ask': {k: previous[k] for k in ('name', 'result_json')} if previous else None}
+    if not any(r['proposal_id'] == proposal['id'] for r in rows):
+        rows.append({'id': proposal['id'], 'proposal_id': proposal['id'],
+                     'state': 'waiting_choice', 'result': result})
+    storage.update_mission(mid, {'program_choices': rows, 'program_choice_resume': mission.get('program_choice_resume')})
+    _offer_program_choice(mid, {'rows': rows})
 
 
 def program_choice_for(mission, choice_id):
@@ -1096,7 +1139,54 @@ def program_choice_for(mission, choice_id):
         for row in stage.get('rows', []):
             if (row.get('result') or {}).get('choice_id') == choice_id:
                 return stage, row
+    for row in mission.get('program_choices') or []:
+        if (row.get('result') or {}).get('choice_id') == choice_id:
+            return None, row
     return None, None
+
+
+def _recover_choice_continuation(mission, stage):
+    """Restore an actionable ask after an answered choice, without repeating a write."""
+    if mission.get('paused_by_project') or (mission.get('plan') or {}).get('state') != 'approved':
+        return
+    with storage.db_lock, storage.db.transaction():
+        mid = mission['id']
+        stage.pop('continue_after_choice', None)
+        if any(r['state'] == 'waiting_choice' for r in stage['rows']):
+            stage['state'] = 'waiting_choice'
+            storage.update_mission(mid, {'plan': mission['plan']})
+            _offer_program_choice(mid, stage)
+            return
+        uncertain = [{'stage_id': stage['id'], 'row_id': r['id'], 'summary': r.get('summary')}
+                     for r in stage['rows'] if r['state'] == 'uncertain']
+        if uncertain:
+            stage['state'] = 'uncertain'
+            storage.update_mission(mid, {'plan': mission['plan']})
+            _ask(mid, 'stage_check', 'Please check what happened before carrying on.', rows=uncertain)
+        else:
+            stage.update(state='proposed', subject=list(missions.subject_of(mission)))
+            stage['snapshot'] = snapshot(stage, stage['subject'], mission['plan']['rev'])
+            storage.update_mission(mid, {'plan': mission['plan']})
+            _ask(mid, 'stage', stage['title'], stage_id=stage['id'])
+
+
+def _continue_program_choice(mid, stage_id):
+    with storage.db_lock:
+        mission = storage.get_mission(mid)
+        stage = next(s for s in mission['plan']['stages'] if s['id'] == stage_id)
+        if any(r['state'] == 'uncertain' for r in stage['rows']):
+            _recover_choice_continuation(mission, stage)
+            return {'status': 'success', 'message': 'Please check what happened before carrying on.'}
+        approver = storage.get_member(mission['plan'].get('approved_by'))
+        snap = stage['snapshot']
+    continued = run_stage(mid, stage_id, snap, approver)
+    if continued.get('status') != 'success' or continued.get('moved'):
+        with storage.db_lock:
+            mission = storage.get_mission(mid)
+            stage = next(s for s in mission['plan']['stages'] if s['id'] == stage_id)
+            if stage.get('continue_after_choice'):
+                _recover_choice_continuation(mission, stage)
+    return continued
 
 
 def may_answer_program_choice(mission, choice_id, actor):
@@ -1132,11 +1222,22 @@ def answer_program_choice(mid, choice_id, option, actor):
         if (row.get('result') or {}).get('run_id') or row['state'] == 'failed':
             return {'status': 'success', 'already': True, 'run_id': row['result'].get('run_id')}
         choice = row['result']['choice']
-        if mission.get('paused_by_project') or mission['plan'].get('state') != 'approved':
+        stage, _ = program_choice_for(mission, choice_id)
+        if (mission.get('paused_by_project') or
+                stage is not None and (mission.get('plan') or {}).get('state') != 'approved'):
             return _refused('That choice is no longer open.')
-    if option == 'make_new' and actor.get('role') in ('adult', 'parent'):
-        with budget_guard.guard():
-            prepared = library.prepare(choice['profile'], actor)
+    if option == 'make_new':
+        if actor.get('role') not in ('adult', 'parent'):
+            return _refused(library.EDIT_REFUSAL)
+        try:
+            with budget_guard.guard():
+                prepared = library.prepare(choice['profile'], actor)
+        except deletion.Cancelled:
+            raise
+        except Exception as exc:
+            return {'status': 'error', 'message': str(exc)}
+        if prepared.get('status') != 'success':
+            return prepared
     with storage.db_lock, storage.db.transaction():
         mission = storage.get_mission(mid)
         if not may_answer_program_choice(mission, choice_id, actor):
@@ -1145,20 +1246,30 @@ def answer_program_choice(mid, choice_id, option, actor):
         result = row['result']
         if result.get('run_id') or row['state'] == 'failed':
             return {'status': 'success', 'already': True, 'run_id': result.get('run_id')}
-        if (mission.get('paused_by_project') or mission.get('status') in missions.TERMINAL
-                or mission['plan'].get('state') != 'approved' or row['state'] != 'waiting_choice'):
+        if (mission.get('paused_by_project') or row['state'] != 'waiting_choice'
+                or stage is not None and (mission.get('status') in missions.TERMINAL
+                    or (mission.get('plan') or {}).get('state') != 'approved')
+                or stage is None and mission.get('status') in ('blocked', 'dropped')):
             return _refused('Resume the project first.' if mission.get('paused_by_project') else 'That choice is no longer open.')
         if option == 'not_now':
             outcome = {'status': 'error', 'message': 'No program for now', 'created': []}
         else:
             outcome = agent_tools_v2._start_program_choice(result['choice'], actor,
                          make_new=option == 'make_new', prepared=prepared)
+            if outcome.get('status') != 'success':
+                if option == 'use' and 'no longer available' in outcome.get('message', ''):
+                    outcome = {**outcome, 'message': outcome['message'] + ' You can still Make new or Not now.'}
+                return outcome
         result = {**result, **outcome}
         if outcome.get('run_id'):
             result['choice']['run_id'] = outcome['run_id']
         row.update(state='done' if outcome['status'] == 'success' else 'failed', result=result)
-        stage['state'] = 'proposed'  # Continue only untouched rows under the original stage approval.
-        storage.update_mission(mid, {'plan': mission['plan']})
+        if stage is not None:
+            # The marker survives a crash before continuation claims the stage.
+            stage.update(state='proposed', continue_after_choice=True)
+            storage.update_mission(mid, {'plan': mission['plan']})
+        else:
+            storage.update_mission(mid, {'program_choices': mission['program_choices']})
         storage.update_action_proposal(row['proposal_id'], {
             'status': 'approved' if row['state'] == 'done' else 'failed', 'result': result})
         if row['state'] == 'done':
@@ -1166,9 +1277,18 @@ def answer_program_choice(mid, choice_id, option, actor):
             if bound:
                 project_audience.narrow_on_bind(bound[0], situations.load(*bound))
         _settle(mid, 'program_choice', {'use': 'Use', 'make_new': 'Make new', 'not_now': 'Not now'}[option])
-        # The plan approval remains the authority for the other stage tools.
-        approver = storage.get_member(mission['plan'].get('approved_by')) or actor
-    continued = run_stage(mid, stage['id'], stage['snapshot'], approver)
+        if stage is None:
+            if any(r['state'] == 'waiting_choice' for r in mission['program_choices']):
+                _offer_program_choice(mid, {'rows': mission['program_choices']})
+            else:
+                resume = mission.get('program_choice_resume') or {}
+                missions._close(mid, resume.get('status') or 'running', program_choice_resume=None)
+                previous = resume.get('ask')
+                if resume.get('status') == 'waiting_user' and previous:
+                    details = previous.get('result_json') or {}
+                    _ask(mid, previous['name'], details.get('question') or '',
+                         **{k: v for k, v in details.items() if k != 'question'})
+    continued = _continue_program_choice(mid, stage['id']) if stage is not None else {'status': 'success'}
     return {'status': 'success', 'run_id': result.get('run_id'), 'message': outcome['message'],
             'continued': continued.get('status')}
 
@@ -1190,6 +1310,7 @@ def run_stage(mission_id, stage_id, snap, actor):
         if snapshot(stage, stage['subject'], plan['rev']) != snap:
             return _refused('The plan moved; look again.')
         stage['state'] = 'running'
+        stage.pop('continue_after_choice', None)
         storage.update_mission(mission_id, {'plan': plan})
         projects.on_stage_started(mission_id, stage_id)
         if stage['kind'] == 'work':
@@ -1336,12 +1457,18 @@ def reconcile():
                 continue
             with deletion.acting_for('mission', mission['id']):
                 plan = mission.get('plan') or {}
+                standalone = [r for r in mission.get('program_choices') or [] if r['state'] == 'waiting_choice']
+                if standalone and not mission.get('paused_by_project') and mission.get('status') not in ('blocked', 'dropped'):
+                    _offer_program_choice(mission['id'], {'rows': standalone})
                 if plan.get('state') in ('stopped', 'done'):
                     continue
                 changed, uncertain = False, []
                 for stage in plan.get('stages', []):
                     if stage['kind'] == 'work':
                         continue  # The normal persisted planner loop resumes work after restart.
+                    if stage.get('continue_after_choice') and (mission['id'], stage['id']) not in _active_stages:
+                        _recover_choice_continuation(mission, stage)
+                        continue
                     if stage['state'] == 'waiting_choice':
                         if not mission.get('paused_by_project'):
                             _offer_program_choice(mission['id'], stage)

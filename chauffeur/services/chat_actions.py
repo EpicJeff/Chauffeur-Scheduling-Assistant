@@ -420,13 +420,16 @@ def run_row(proposal_id, approver, idem):
         payload['idem'] = idem
     token = agent_tools_v2._mission_context.set(
         storage.get_mission(prop.get('origin_id')) if prop.get('origin_kind') == 'mission' else None)
+    if prop['action_type'] == 'propose_program' and agent_tools_v2._mission_context.get():
+        payload.setdefault('project_id', agent_tools_v2._mission_context.get().get('project_id'))
     try:
         requester = storage.get_member((agent_tools_v2._mission_context.get() or {}).get('created_by'))
         principal = requester if prop['action_type'] == 'propose_program' and (requester or {}).get('role') == 'child' else approver
         result = _execute(prop['action_type'], payload, approver=principal)
         budget = result.get('budget') is True
         ok = result.get('status') == 'success'
-        result = {**result, 'status': 'waiting_choice' if result.get('status') == 'waiting_choice' else 'success' if ok else 'error',
+        result = {**{k: result[k] for k in ('choice_id', 'options', 'choice', 'run_id', 'notice') if k in result},
+                  'status': 'waiting_choice' if result.get('status') == 'waiting_choice' else 'success' if ok else 'error',
                   'message': result.get('message') or ('Done.' if ok else 'That action failed.'),
                   'created': result.get('created') or []}
         if budget:
@@ -439,9 +442,12 @@ def run_row(proposal_id, approver, idem):
         result = {'status': 'error', 'message': str(exc), 'created': []}
     finally:
         agent_tools_v2._mission_context.reset(token)
-    storage.update_action_proposal(proposal_id, {
-        'status': 'waiting_choice' if result['status'] == 'waiting_choice' else 'approved' if result['status'] == 'success' else 'failed',
-        'result': result, 'approved_by_member_id': (approver or {}).get('id')})
+    with storage.db_lock, storage.db.transaction():
+        storage.update_action_proposal(proposal_id, {
+            'status': 'waiting_choice' if result['status'] == 'waiting_choice' else 'approved' if result['status'] == 'success' else 'failed',
+            'result': result, 'approved_by_member_id': (approver or {}).get('id')})
+        if result['status'] == 'waiting_choice' and not prop.get('stage_id') and prop.get('origin_kind') == 'mission':
+            planned.record_program_choice(prop, result)
     return result
 
 
@@ -475,6 +481,10 @@ def act_on_proposal(proposal_id: str, act: str, approver_member: Optional[dict])
     if prop.get('stage_id'):
         return {'status': 'error', 'message': 'Handle this row through its stage.'}
     a_type, summary = prop.get("action_type"), prop.get("summary")
+    if prop.get('status') == 'waiting_choice' and a_type == 'propose_program':
+        if prop.get('requires_admin') and not _is_admin(approver_member):
+            return {'status': 'error', 'message': 'Only a parent can approve this.'}
+        return {**prop['result'], 'card': build_card(proposal_id, a_type, summary, 'waiting_choice')}
     if prop.get("status") != "proposed":
         return {"status": "error",
                 "message": f"That action was already {prop.get('status')}.",
@@ -501,8 +511,14 @@ def act_on_proposal(proposal_id: str, act: str, approver_member: Optional[dict])
     approver_id = (approver_member or {}).get("id")
     if approver_id and not payload.get("member_id"):
         payload["member_id"] = approver_id
-    res = _execute(a_type, payload, approver=approver_member)
+    res = (run_row(proposal_id, approver_member, None)
+           if a_type == 'propose_program' and prop.get('origin_kind') == 'mission'
+           else _execute(a_type, payload, approver=approver_member))
+    if res.get('status') == 'waiting_choice':
+        return {**res, 'card': build_card(proposal_id, a_type, summary, 'waiting_choice')}
     if res.get("status") == "error":
+        if a_type == 'propose_program':
+            storage.update_action_proposal(proposal_id, {'status': 'proposed'})
         return {"status": "error", "message": res.get("message") or "That action failed.",
                 "card": build_card(proposal_id, a_type, summary, "proposed")}
     result = {"status": "success", "message": res.get("message") or f"Done: {summary}",

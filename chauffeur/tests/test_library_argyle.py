@@ -7,7 +7,7 @@ from harness import check
 from test_library_flows import (_fresh, _library, _project, _http, _runs, _library_rows,
                                 _row, _stage, _choice, _interviewed, _mission, _plan, _step,
                                 _staged, _waiting_checks, STAGES, ROWS, MOM)
-from services import storage, planned, situations, missions, programs, library, agent_tools_v2 as tools
+from services import storage, planned, situations, missions, programs, library, agent_tools_v2 as tools, chat_actions
 
 
 def child_stage(match=True):
@@ -47,10 +47,12 @@ def scenario_child_can_use_but_cannot_publish():
     mid, _ = child_stage()
     with patch('services.programs_curate.curate', side_effect=AssertionError('no child research')):
         response = answer_as(mid, 'kid', _choice(mid)['make_new'])
-    check(response.status_code == 200 and _row(mid, 'r1')['state'] == 'failed'
-          and _row(mid, 'r1')['result']['message'] == library.EDIT_REFUSAL,
-          f'child Make new fails cleanly: {response.text}')
-    check(not _runs() and len(_library_rows()) == 1 and _row(mid, 'r2')['state'] == 'skipped', 'no half state')
+    check(response.status_code == 403 and response.json()['detail'] == library.EDIT_REFUSAL,
+          f'child Make new is refused without consuming the choice: {response.text}')
+    _waiting_checks(mid)
+    check(not _runs() and len(_library_rows()) == 1 and _row(mid, 'r2')['state'] == 'proposed', 'no half state')
+    check(answer_as(mid, 'mom', _choice(mid)['use']).status_code == 200 and len(_runs()) == 1,
+          'a parent can still choose after the child refusal')
     mid, _ = child_stage(match=False)
     check(_row(mid, 'r1')['state'] == 'failed' and _row(mid, 'r1')['result']['message'] == library.EDIT_REFUSAL
           and not _runs() and not _library_rows(), 'child no-match fails without publication')
@@ -144,6 +146,186 @@ def scenario_a_reference_waits_without_an_explicit_needs_list():
     check(response.status_code == 200 and _row(mid, 'r2')['state'] == 'done', 'referencing row resumes')
     thread_id = _row(mid, 'r2')['result']['created'][0]['id']
     check(storage.get_thread(thread_id)['goal'] == _runs()[0]['id'], 'reference resolves to the bound run')
+
+
+def scenario_standalone_proposal_keeps_a_durable_choice():
+    from test_library_flows import REAL_POST
+    _fresh()
+    lid = _library()
+    project = _project('mom', audience='private')
+    mid = _mission(project_id=project['id'])
+    _plan({'action': 'propose', 'tool': 'propose_program', 'summary': 'Piano for Kate', 'args': ROWS[0]['args']})
+    _step(mid)
+    prop = next(p for p in storage.agent_action_proposals_table.all() if p.get('origin_id') == mid)
+    check(not prop.get('stage_id') and prop['status'] == 'proposed', 'ordinary mission posted a standalone proposal')
+    with patch.object(missions, '_post', REAL_POST):
+        response = _http('mom', 'POST', f"/api/action-proposals/{prop['id']}/act", json={'act': 'approve', 'member_id': 'mom'})
+    check(response.status_code == 200 and not _runs(), f'approval waits: {response.text}')
+    check(storage.get_action_proposal(prop['id'])['status'] in ('proposed', 'waiting_choice'), 'proposal is still open')
+    opts = _choice(mid)
+    dm = storage.get_or_create_dm(storage.ensure_argyle_member()['id'], 'mom')
+    check(any((m.get('card') or {}).get('ask') == 'program_choice'
+              for m in storage.get_channel_messages(dm['id'])), 'the real notice path stored a choice card')
+    response = answer_as(mid, 'mom', opts['use'])
+    check(response.status_code == 200, f'Use on the standalone choice: {response.text}')
+    runs = _runs()
+    check(len(runs) == 1 and runs[0]['library_id'] == lid and runs[0]['project_id'] == project['id'], 'one run in its mission project')
+    bound = storage.get_action_proposal(prop['id'])
+    check(bound['status'] == 'approved' and bound['result']['run_id'] == runs[0]['id'], 'proposal binds the run durably')
+    answer_as(mid, 'mom', opts['use'])
+    check(len(_runs()) == 1, 'repeated standalone answer creates nothing')
+
+
+def scenario_choice_continuation_recovers_after_commit():
+    for recovery in ('reconcile', 'prepare_next'):
+        _fresh()
+        _library()
+        mid, _ = _staged()
+        opt = _choice(mid)['use']
+        with patch.object(planned, 'run_stage', side_effect=RuntimeError('power loss before continuation')):
+            response = _http('mom', 'POST', f'/api/situations/mission/{mid}/act', raise_errors=False,
+                             json={'verb': opt['verb'], 'option_id': opt['id'], 'payload': opt['payload']})
+        check(response.status_code == 500 and len(_runs()) == 1 and _row(mid, 'r1')['state'] == 'done', 'answer committed before crash')
+        getattr(planned, recovery)(*(() if recovery == 'reconcile' else (mid,)))
+        card = missions.ask_card(storage.get_mission(mid))
+        check(card and card['ask'] == 'stage' and any(o['verb'] == 'run_stage' for o in card['options']),
+              f'{recovery} restores a stage approval: {card}')
+        opt = next(o for o in card['options'] if o['payload'].get('decision') == 'approve')
+        with patch.object(tools, 'propose_program', side_effect=AssertionError('answered row must not rerun')):
+            check(answer_as(mid, 'mom', opt).status_code == 200, 'resume untouched rows')
+        check(_row(mid, 'r2')['state'] == 'done' and len(_runs()) == 1, 'continuation runs once')
+
+
+def scenario_recovery_itself_cannot_lose_the_continuation():
+    _fresh()
+    _library()
+    mid, _ = _staged()
+    opt = _choice(mid)['use']
+    with patch.object(planned, 'run_stage', side_effect=RuntimeError('power loss')):
+        _http('mom', 'POST', f'/api/situations/mission/{mid}/act', raise_errors=False,
+              json={'verb': opt['verb'], 'option_id': opt['id'], 'payload': opt['payload']})
+    with patch.object(planned, '_ask', side_effect=RuntimeError('power loss while restoring the ask')):
+        try:
+            planned.reconcile()
+        except RuntimeError:
+            pass
+    check(_stage(mid).get('continue_after_choice') and len(_runs()) == 1, 'failed recovery retains its durable marker')
+    planned.reconcile()
+    card = missions.ask_card(storage.get_mission(mid))
+    check(card and card['ask'] == 'stage', 'a later recovery still offers continuation')
+
+
+def scenario_standalone_choice_restores_an_existing_question():
+    _fresh()
+    _library()
+    project = _project('mom', audience='private')
+    mid = _mission(project_id=project['id'])
+    question = 'Which books should I look for?'
+    _plan({'action': 'propose', 'tool': 'propose_program', 'summary': 'Piano for Kate', 'args': ROWS[0]['args']},
+          {'action': 'ask_user', 'question': question})
+    _step(mid)
+    _step(mid)
+    prop = next(p for p in storage.agent_action_proposals_table.all() if p.get('origin_id') == mid)
+    response = _http('mom', 'POST', f"/api/action-proposals/{prop['id']}/act", json={'act': 'approve', 'member_id': 'mom'})
+    check(response.status_code == 200, 'standalone approval while the mission waits')
+    check(answer_as(mid, 'mom', _choice(mid)['use']).status_code == 200, 'answered the program choice')
+    card = missions.ask_card(storage.get_mission(mid))
+    check(card and card['question'] == question, 'the earlier mission question is actionable again')
+
+
+def scenario_a_refused_continuation_offers_a_fresh_stage():
+    for refusal in ({'status': 'refused', 'message': 'Approver no longer allowed'},
+                    {'status': 'success', 'moved': True, 'message': 'The subject moved; look again.'}):
+        _fresh()
+        _library()
+        mid, _ = _staged()
+        with patch.object(planned, 'run_stage', return_value=refusal):
+            check(answer_as(mid, 'mom', _choice(mid)['use']).status_code == 200, 'run choice succeeds')
+        card = missions.ask_card(storage.get_mission(mid))
+        check(card and card['ask'] == 'stage' and len(_runs()) == 1, 'refusal/move leaves a fresh actionable stage ask')
+
+
+def scenario_uncertain_sibling_is_checked_after_the_choice():
+    import test_library_flows as flows
+    _fresh()
+    _library()
+    rows = copy.deepcopy(ROWS)
+    rows.append({'id': 'r3', 'tool': 'create_thread', 'needs': ['r2'], 'summary': 'Needs the uncertain row',
+                 'args': {'title': 'Later', 'kind': 'project'}})
+    with patch.object(flows, 'ROWS', rows):
+        mid, _ = _staged()
+    mission = storage.get_mission(mid)
+    stage = mission['plan']['stages'][0]
+    stage['state'] = 'running'
+    stage['rows'][1]['state'] = 'running'
+    storage.update_action_proposal(stage['rows'][1]['proposal_id'], {'status': 'executing'})
+    storage.update_mission(mid, {'plan': mission['plan']})
+    planned.reconcile()
+    check(_row(mid, 'r2')['state'] == 'uncertain', 'lost sibling is uncertain')
+    check(answer_as(mid, 'mom', _choice(mid)['use']).status_code == 200, 'choice succeeds')
+    card = missions.ask_card(storage.get_mission(mid))
+    check(_stage(mid)['state'] == 'uncertain' and card and card['ask'] == 'stage_check', 'person must check the lost write')
+    check(_row(mid, 'r3')['state'] == 'proposed' and _row(mid, 'r2')['state'] == 'uncertain', 'dependent stays untouched until the check')
+    check(card['question'] == 'Please check what happened before carrying on.', 'normal uncertainty warning')
+
+
+def scenario_failed_choices_stay_open():
+    _fresh()
+    lid = _library()
+    mid, _ = _staged()
+    before = copy.deepcopy(_row(mid, 'r1'))
+    storage.delete_library_program(lid)
+    response = answer_as(mid, 'mom', _choice(mid)['use'])
+    check(response.status_code == 400 and 'Make new' in response.text and 'Not now' in response.text, 'vanished match offers alternatives')
+    check(_row(mid, 'r1') == before and _row(mid, 'r2')['state'] == 'proposed', 'vanished match does not consume the choice')
+    with patch.object(library, 'prepare', return_value={'status': 'error', 'message': 'Research unavailable'}):
+        response = answer_as(mid, 'mom', _choice(mid)['make_new'])
+    check(response.status_code == 400 and 'Research unavailable' in response.text and _row(mid, 'r1') == before,
+          'curation error leaves the original choice intact')
+    with patch.object(library, 'prepare', side_effect=RuntimeError('Research disconnected')):
+        response = answer_as(mid, 'mom', _choice(mid)['make_new'])
+    check(response.status_code == 400 and 'Research disconnected' in response.text and _row(mid, 'r1') == before,
+          'curation exception is reported without consuming the choice')
+    check(answer_as(mid, 'mom', _choice(mid)['make_new']).status_code == 200 and len(_runs()) == 1, 'Make new still works after failures')
+
+
+def scenario_stop_and_delete_leave_no_waiting_choices():
+    from test_library_flows import REAL_POST
+    from services import deletion
+    for action in ('stop', 'delete'):
+        _fresh()
+        _library()
+        with patch.object(missions, '_post', REAL_POST):
+            mid, _ = _staged()
+        opt = _choice(mid)['use']
+        proposal_id = _row(mid, 'r1')['proposal_id']
+        if action == 'stop':
+            check(planned.stop_plan(mid, dict(MOM))['status'] == 'success', 'stopped')
+        else:
+            preview = deletion.preview('mission', mid, dict(MOM))
+            check(deletion.start('mission', mid, dict(MOM), preview['token'])['status'] == 'ok', 'deletion admitted')
+        check(_stage(mid)['state'] != 'waiting_choice' and _row(mid, 'r1')['state'] != 'waiting_choice', 'no waiting stage/row remains')
+        check(storage.get_action_proposal(proposal_id)['status'] == 'dismissed', 'waiting proposal dismissed')
+        copies = [m['card'] for m in storage.chat_messages_table.all() if (m.get('card') or {}).get('mission_id') == mid
+                  and (m.get('card') or {}).get('ask') == 'program_choice']
+        check(copies and all(c['state'] == 'answered' and not c['options'] for c in copies), 'every stored choice card is settled')
+        check(answer_as(mid, 'mom', opt).status_code != 200 and not _runs(), 'stale choice cannot create a run')
+        if action == 'delete':
+            for _ in range(5):
+                deletion.maintain()
+            check(storage.get_mission(mid) is None and storage.get_action_proposal(proposal_id) is None, 'cleanup removes mission and proposal')
+
+
+def scenario_run_row_persists_only_the_choice_contract():
+    _fresh()
+    result = {'status': 'success', 'message': 'Done', 'created': [], 'choice_id': 'c', 'options': ['use'],
+              'choice': {'title': 'Public'}, 'run_id': 'r', 'notice': 'A notice', 'debug': {'private': 'must not persist'}}
+    made = chat_actions.create_action_proposal('create_thread', 'Test', {}, extra_allowed=missions.proposable_tools())
+    with patch.object(chat_actions, '_execute', return_value=result):
+        out = chat_actions.run_row(made['proposal_id'], dict(MOM), None)
+    expected = {k: v for k, v in result.items() if k != 'debug'}
+    check(out == expected and storage.get_action_proposal(made['proposal_id'])['result'] == expected,
+          'only status/message/created and the five choice fields are persisted')
 
 
 if __name__ == '__main__':
