@@ -551,6 +551,38 @@ def _raw_notices():
     return [m for m in storage.chat_messages_table.all() if NOTICE in (m.get('body') or '')]
 
 
+def _held(held):
+    """Hold every queued push fan-out: _post_chat_message stores the message, then hands it to
+    main._fanout_message_notifications on a thread; here the hand-off is recorded, not run."""
+    return patch.object(main, '_fanout_message_notifications', side_effect=lambda channel, message: held.append((channel, message)))
+
+
+def _settle():
+    """Join the fan-out threads the held hand-offs ran on."""
+    import threading
+    for t in threading.enumerate():
+        if t is not threading.current_thread() and t.daemon:
+            t.join(5)
+
+
+def _held_notices(held):
+    return [(channel, message) for channel, message in held if NOTICE in (message.get('body') or '')]
+
+
+def _release(queued):
+    """Deliver the held notices through the REAL fan-out, recording every push and HA notify."""
+    from services import ha_api
+    sent = []
+    real = main._fanout_message_notifications
+    with patch.object(main, 'send_push_to_member', side_effect=lambda member_id, title, body, path, *a, **k:
+                      sent.append({'to': member_id, 'body': body})), \
+            patch.object(ha_api, 'call_service', side_effect=lambda *a, **k: sent.append({'ha': a})), \
+            patch('services.family_digest.in_member_quiet_hours', return_value=False):
+        for channel, message in queued:
+            real(channel, message)
+    return sent
+
+
 def _voice_until_the_stage_ran():
     """Kate's piano by voice, driven to the moment the program stage has run (one match: used)."""
     from services import agent_tools_v2 as tools
@@ -584,14 +616,46 @@ def _voice_until_the_stage_ran():
 
 
 def scenario_voice_uses_a_single_match_and_says_so_later():
-    mid, run_id = _voice_until_the_stage_ran()
-    _step(mid)
+    held = []
+    with _held(held):
+        mid, run_id = _voice_until_the_stage_ran()
+        _step(mid)
+        _settle()
     notices = _notices()
     check(len(notices) == 1, f"the mission's notice arrives once, after the stage ran: {[m.get('body') for m in _dm()]}")
     check({'kind': 'program', 'id': run_id} in [{k: r.get(k) for k in ('kind', 'id')} for r in notices[0].get('refs') or []],
           f'the notice refers to the run: {notices[0]}')
     check(storage.message_visible(notices[0]), 'and passes the delivery re-check')
     check(len(_raw_notices()) == 1, 'stored once')
+    queued = _held_notices(held)
+    check(len(queued) == 1, f'and queued once for delivery: {len(queued)}')
+    sent = _release(queued)
+    check(len(sent) == 1 and sent[0].get('to') == 'mom' and NOTICE in sent[0].get('body', ''),
+          f'released while the run exists, it is delivered (the control for the suppression below): {sent}')
+
+
+def scenario_a_queued_voice_notice_is_not_delivered_once_its_run_is_gone():
+    """The notice is stored and queued while its run exists; the run is deleted; delivery is released.
+    Only the delivery path's own re-check can stop it now."""
+    from services import deletion
+    held = []
+    with _held(held):
+        mid, run_id = _voice_until_the_stage_ran()
+        _step(mid)
+        _settle()
+    queued = _held_notices(held)
+    check(len(queued) == 1 and len(_raw_notices()) == 1 and storage.get_program(run_id),
+          f'the notice was stored and queued while its run existed: {len(queued)} {_raw_notices()}')
+    preview = deletion.preview('program', run_id, dict(MOM))
+    check(preview['status'] == 'ok', f'preview: {preview}')
+    check(deletion.start('program', run_id, dict(MOM), preview['token'])['status'] == 'ok', 'the run is deleted')
+    for _ in range(5):
+        deletion.maintain()
+    check(storage.get_program(run_id) is None, 'gone before delivery is released')
+    sent = _release(queued)
+    check(not sent, f'no push and no HA notify about a run that is gone: {sent}')
+    check(not _notices() and all(not storage.message_visible(m) for m in _raw_notices()),
+          f'and the stored notice is not visible: {_raw_notices()}')
 
 
 def scenario_a_voice_notice_is_suppressed_once_its_run_is_gone():
