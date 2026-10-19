@@ -5,12 +5,14 @@ approvals is the named killer of assistants. And it applies the way negotiation
 proved: pre-flight everything, local writes before the one external write, stamp
 each emission as it lands.
 """
+from program_fixture import add_run, loaded, phase_id
 from harness import check
 from services import programs, storage
 
 
 def _reset():
     storage.programs_table.truncate()
+    storage.library_programs_table.truncate()
     storage.protected_commitments_table.truncate()
     storage.threads_table.truncate()
     storage.members_table.truncate()
@@ -19,7 +21,7 @@ def _reset():
 
 
 def _mk(what='Three chords'):
-    return storage.add_program({
+    return add_run({
         'member_id': 'lily', 'title': 'Play campfire songs by summer',
         'shape': {'sessions_per_week': 3, 'minutes': 25,
                   'preferred_days': [1, 3, 5]},
@@ -52,7 +54,7 @@ def scenario_approval_claims_the_time():
     pid = _mk()
     res = programs.approve(pid, 'mom')
     check(res['status'] == 'success', f"got {res}")
-    row = storage.get_program(pid)
+    row = loaded(pid)
     check(row['state'] == 'active', f"the program is live, got {row['state']}")
     check(row['approved_by'] == 'mom', "and records who approved it")
     ids = row['emissions']['commitment_ids']
@@ -79,7 +81,7 @@ def scenario_a_target_date_never_calls_a_failing_calendar():
     from unittest.mock import patch
     with patch('services.calendar.create_event', side_effect=RuntimeError('calendar offline')) as create:
         res = programs.approve(pid, 'mom')
-    row = storage.get_program(pid)
+    row = loaded(pid)
     check(res['status'] == 'success' and row['state'] == 'active', str(res))
     check(not create.called, 'spec 10.3: approval never attempts a target event')
     check(len(row['emissions']['commitment_ids']) == 3, 'practice still claims its time')
@@ -95,7 +97,7 @@ def scenario_a_target_date_never_calls_a_rejecting_calendar():
     from unittest.mock import patch
     with patch('services.calendar.create_event', return_value=None) as create:
         res = programs.approve(pid, 'mom')
-    row = storage.get_program(pid)
+    row = loaded(pid)
     check(res['status'] == 'success' and row['state'] == 'active', str(res))
     check(not create.called and row['emissions']['event_ids'] == [], 'no external calendar write')
     check(len(storage.get_protected_commitments(member_id='lily')) == 3, 'reservations still created')
@@ -129,7 +131,7 @@ def scenario_a_local_write_failure_reverts_and_cleans_up():
         storage.add_protected_commitment = real_add
     check(len(calls) == 2, f"the scenario must fail on the second write, got {len(calls)}")
     check(res['status'] == 'error', f"it reports the failure, got {res}")
-    row = storage.get_program(pid)
+    row = loaded(pid)
     check(row['state'] == 'proposed',
           f"not stranded in approving, not silently active, got {row['state']}")
     check(row['emissions'] == {'commitment_ids': [], 'thread_ids': [], 'event_ids': []},
@@ -182,7 +184,7 @@ def scenario_a_final_flip_failure_reverts_and_cleans_up():
     storage.delete_thread = tracked_delete_thread
     try:
         res = programs.approve(pid, 'mom')
-        row = storage.get_program(pid)
+        row = loaded(pid)
         check(res['status'] == 'error', f"it reports the failure, got {res}")
         check(row['state'] == 'proposed',
               f"not stranded in approving, not silently active, got {row['state']}")
@@ -251,7 +253,7 @@ def scenario_a_revert_survives_the_settings_read_failing():
     storage.get_settings = dead_settings
     try:
         res = programs.approve(pid, 'mom')
-        row = storage.get_program(pid)
+        row = loaded(pid)
         check(res['status'] == 'error',
               f"approve() returns an error rather than letting the revert's "
               f"own failure escape, got {res}")
@@ -316,7 +318,7 @@ def scenario_a_failing_cleanup_delete_does_not_take_the_revert_down():
     check(len(calls) == 3, f"the scenario must fail on the third write, got {len(calls)}")
     check(refused, "and the revert's first delete must really have refused")
     check(res['status'] == 'error', f"it reports the failure, got {res}")
-    row = storage.get_program(pid)
+    row = loaded(pid)
     check(row['state'] == 'proposed',
           f"a failed cleanup step is not allowed to strand the program, "
           f"got {row['state']}")
@@ -368,7 +370,7 @@ def scenario_a_revert_survives_the_handback_itself_failing():
     check(res['status'] == 'error',
           f"approve() still returns rather than raising out of its own "
           f"recovery, got {res}")
-    row = storage.get_program(pid)
+    row = loaded(pid)
     check(row['state'] == 'proposed',
           f"the fallback write got it back to retryable anyway, got {row['state']}")
     check(not storage.get_protected_commitments(member_id='lily'),
@@ -415,7 +417,7 @@ def scenario_two_taps_claim_the_week_once():
     finally:
         storage.claim_program = real_claim
     check(reentered, "the scenario must actually have re-entered, or it proves nothing")
-    row = storage.get_program(pid)
+    row = loaded(pid)
     check(row['state'] == 'active', f"one of them won, got {row['state']}")
     check(row['approved_by'] == 'dad',
           f"the one that actually claimed it first, got {row['approved_by']}")
@@ -521,7 +523,7 @@ def scenario_a_reshaped_program_can_be_approved_again_without_a_duplicate_thread
           "and it stops holding time it is no longer sure about")
 
     check(programs.approve(pid, 'mom')['status'] == 'success', 're-approved')
-    row = storage.get_program(pid)
+    row = loaded(pid)
     check(row['emissions']['thread_ids'] == threads,
           f"the same kit thread, never a second one, got {row['emissions']}")
     check(len(row['emissions']['commitment_ids']) == 3,
@@ -553,7 +555,7 @@ def scenario_pausing_an_unapproved_program_cannot_claim_the_week():
           f"nor resumed into being active, got {res}")
     check(storage.get_protected_commitments(member_id='lily') == [],
           "so no evening was ever claimed without an approval")
-    row = storage.get_program(pid)
+    row = loaded(pid)
     check(not row.get('approved_by') and row['state'] == 'proposed',
           f"the program is exactly where it started, got {row['state']}")
 
@@ -624,7 +626,7 @@ def scenario_a_failed_resume_keeps_nothing_and_can_be_retried():
     check('still paused' in res['message'],
           f"and says what state that leaves, got {res['message']}")
 
-    row = storage.get_program(pid)
+    row = loaded(pid)
     check(row['state'] == 'paused', f"the row is still paused, got {row['state']}")
     check(row['emissions']['commitment_ids'] == [],
           f"believing in no windows, got {row['emissions']}")

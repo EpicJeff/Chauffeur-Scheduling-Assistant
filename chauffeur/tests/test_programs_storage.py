@@ -3,12 +3,14 @@
 The six progress rules from the design are enforced by what this object
 CANNOT express. These scenarios are the enforcement.
 """
+from program_fixture import add_run, loaded, phase_id
 from harness import check
 from services import programs, storage
 
 
 def _reset():
     storage.programs_table.truncate()
+    storage.library_programs_table.truncate()
 
 
 def _mk(**kw):
@@ -16,7 +18,7 @@ def _mk(**kw):
             'shape': {'sessions_per_week': 3, 'minutes': 25,
                       'preferred_days': [1, 3, 5]}}
     data.update(kw)
-    return storage.add_program(data)
+    return add_run(data)
 
 
 def scenario_roundtrip_and_defaults():
@@ -28,7 +30,7 @@ def scenario_roundtrip_and_defaults():
     check(row['emissions'] == {'commitment_ids': [], 'thread_ids': [],
                                'event_ids': []},
           f"and claims nothing yet, got {row['emissions']}")
-    check(row['source']['hand_written'] is False,
+    check(loaded(pid)['source']['hand_written'] is False,
           "hand_written defaults false — it becomes true only when curation finds nothing")
 
 
@@ -66,8 +68,8 @@ def scenario_no_streak_can_be_derived():
               'days_since', 'missed', 'missed_count', 'target_weight',
               'calories', 'rank', 'vs_member')
     flat = (set(row) | set(row.get('shape') or {}) | set(row.get('baseline') or {})
-            | set(row.get('source') or {}) | set(row.get('emissions') or {}))
-    for phase in row.get('phases') or []:
+            | set(loaded(pid).get('source') or {}) | set(row.get('emissions') or {}))
+    for phase in loaded(pid).get('phases') or []:
         flat |= set(phase)
     for session in row.get('sessions') or []:
         flat |= set(session)
@@ -108,8 +110,10 @@ def scenario_a_milestone_can_only_be_hit():
     pid = _mk(phases=[{'name': 'Phase 1', 'weeks': 4, 'what': 'Three chords',
                        'milestone': 'switch G to C without looking',
                        'milestone_hit_at': None}])
-    phase = storage.get_program(pid)['phases'][0]
-    check(set(phase) == {'name', 'weeks', 'what', 'milestone', 'milestone_hit_at'},
+    phase = loaded(pid)['phases'][0]
+    check(set(storage.get_program(pid)['progress']['phases'][phase['id']]) == {'weeks', 'milestone_hit_at'},
+          'run pacing and judgement have no way to record a miss')
+    check(set(phase) == {'id', 'name', 'weeks', 'what', 'milestone', 'milestone_hit_at', 'units'},
           f"a phase carries no way to record a miss, got {sorted(phase)}")
 
 

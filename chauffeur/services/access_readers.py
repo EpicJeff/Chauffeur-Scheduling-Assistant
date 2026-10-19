@@ -9,6 +9,18 @@ CLASSES = ('4.1-signed-in', '4.2-conversation', '4.3-channel', '4.4-engine', '4.
 R, P, T, F = 'route', 'route-prefix', 'tool', 'reader'
 
 READERS = [
+    *[((R, method, path), '4.1-signed-in', ('program',), 'public curriculum; library.runners applies project_visible and record_view')
+      for method, path in [
+          ('GET', '/api/library'), ('POST', '/api/library'),
+          ('GET', '/api/library/{id}'), ('PATCH', '/api/library/{id}'), ('DELETE', '/api/library/{id}'),
+          ('POST', '/api/library/{id}/archive'), ('POST', '/api/library/{id}/lessons'),
+          ('PATCH', '/api/library/{id}/lessons/{lesson_id}'), ('DELETE', '/api/library/{id}/lessons/{lesson_id}'),
+          ('POST', '/api/library/{id}/lessons/order')]],
+    ((F, 'services.library.runners'), '4.1-signed-in', ('program',), 'project_visible and record_view'),
+    *[((F, name), 'INTERNAL', ('program',), 'curriculum resolution or authorized mutation; callers own access') for name in [
+        'services.library.get', 'services.library.list_programs', 'services.library.create', 'services.library._write',
+        'services.library.delete', 'services.programs.load', 'services.programs.create_row',
+        'services.programs.step_bookmark', 'services.programs.rebind']],
     # §4.1 threads
     ((R, 'GET', '/api/threads'), '4.1-signed-in', ('thread',), 'record_view'),
     ((R, 'POST', '/api/threads'), '4.1-signed-in', ('thread',), 'record_actable'),

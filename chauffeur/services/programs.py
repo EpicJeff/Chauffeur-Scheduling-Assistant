@@ -17,6 +17,7 @@ import math
 import re
 import time
 import uuid
+import copy
 from functools import wraps
 
 from services import stages, storage, access, deletion
@@ -33,16 +34,161 @@ def _program_work(fn):
 
 def create_row(data: dict, project_id: str = None) -> str:
     """The one door for a new program row: stored, then adopted into its project."""
-    data = dict(data)
-    if project_id is not None:
-        data['project_id'] = project_id
-    pid = storage.add_program(data)
-    if not pid:
+    with storage.db_lock, storage.db.transaction():
+        data = dict(data)
+        # Compatibility for callers handing over an already curated proposal.
+        # Curation callers move to the public profile in their own task.
+        if not data.get('library_id') and data.get('title'):
+            from services import library
+            profile = library.public_profile(data.get('shape') or {})
+            curriculum = library.from_curated(data['title'], profile, data, data.get('created_by'))
+            data['library_id'] = storage.add_library_program(curriculum)
+        if data.get('library_id') and not storage.get_library_program(data['library_id']):
+            return None
+        if data.get('library_id') and 'progress' not in data:
+            curriculum = storage.get_library_program(data['library_id'])
+            data['progress'] = reconcile_progress(data, curriculum) if curriculum else {
+                'lessons': {}, 'current': None, 'phases': {}}
+        if project_id is not None:
+            data['project_id'] = project_id
+        pid = storage.add_program(data)
+        if not pid:
+            return None
+        from services import projects
+        projects.adopt('program', pid, storage.get_member(data.get('created_by')) if data.get('created_by') else None,
+                       project_id=project_id)
+        return pid
+
+
+def reconcile_progress(run, curriculum, previous=None):
+    """Keep the bookmark inside the first unjudged phase, without moving counts."""
+    out = copy.deepcopy(run.get('progress') or {})
+    counts = out.setdefault('lessons', {})
+    judgements = out.setdefault('phases', {})
+    lessons = curriculum.get('lessons') or []
+    phases = curriculum.get('phases') or []
+    for lesson in lessons:
+        stamp = judgements.get(lesson['phase_id'], {}).get('milestone_hit_at')
+        if stamp and not counts.get(lesson['id'], {}).get('completed_at'):
+            counts[lesson['id']] = {**counts.get(lesson['id'], {}),
+                                    'done_sessions': max(int(lesson.get('sessions') or 1),
+                                                         counts.get(lesson['id'], {}).get('done_sessions') or 0),
+                                    'completed_at': stamp}
+    phase = next((p for p in phases if not judgements.get(p['id'], {}).get('milestone_hit_at')), None)
+    candidates = [l for l in lessons if phase and l['phase_id'] == phase['id']]
+    current = out.get('current')
+    if current not in {l['id'] for l in candidates}:
+        chosen = None
+        if previous:
+            old = previous.get('lessons') or []
+            index = next((i for i, l in enumerate(old) if l['id'] == current), None)
+            if index is not None and phase and old[index]['phase_id'] == phase['id']:
+                remaining = {l['id'] for l in candidates}
+                chosen = next((l['id'] for l in old[index + 1:] if l['id'] in remaining), None)
+                if not chosen:
+                    chosen = next((l['id'] for l in reversed(old[:index]) if l['id'] in remaining), None)
+        out['current'] = chosen or next((l['id'] for l in candidates if not counts.get(l['id'], {}).get('completed_at')),
+                                        candidates[-1]['id'] if candidates else None)
+    return out
+
+
+def load(run):
+    """Resolve fresh library content. Storage remains the raw run boundary."""
+    if run is None:
         return None
-    from services import projects
-    projects.adopt('program', pid, storage.get_member(data.get('created_by')) if data.get('created_by') else None,
-                   project_id=project_id)
-    return pid
+    out = copy.deepcopy(run)
+    # Unconverted rows remain readable until the explicit migration task.
+    if not run.get('library_id') and 'phases' in run:
+        return {**out, 'unresolved': False}
+    from services import library
+    curriculum = storage.get_library_program(run.get('library_id'))
+    if not library.valid_curriculum(curriculum):
+        out.update(title='Its library program is missing', source={}, phases=[], lessons=[], unresolved=True)
+        return out
+    out.update(title=curriculum['title'], source=copy.deepcopy(curriculum.get('source') or {}),
+               lessons=copy.deepcopy(curriculum['lessons']), unresolved=False)
+    out['progress'] = reconcile_progress(run, curriculum)
+    phases = []
+    for raw in curriculum['phases']:
+        ph = copy.deepcopy(raw)
+        ph.update(out['progress']['phases'].get(ph['id'], {}))
+        ph.setdefault('milestone_hit_at', None)
+        ph['units'] = [{**copy.deepcopy(l), 'lesson_id': l['id'], 'n': i + 1}
+                       for i, l in enumerate(l for l in curriculum['lessons'] if l['phase_id'] == ph['id'])]
+        phases.append(ph)
+    out['phases'] = phases
+    return out
+
+
+def next_in_phase(run):
+    row = load(run)
+    current = (row.get('progress') or {}).get('current')
+    lessons = row.get('lessons') or []
+    lesson = next((l for l in lessons if l['id'] == current), None)
+    if not lesson:
+        return None
+    after = lessons[lessons.index(lesson) + 1:]
+    counts = row['progress']['lessons']
+    return next((l for l in after if l['phase_id'] == lesson['phase_id']
+                 and not counts.get(l['id'], {}).get('completed_at')), None)
+
+
+def step_bookmark(program_id, direction):
+    if direction not in ('next', 'back', 'stay'):
+        return {'status': 'error', 'message': 'Which way — next, or back?'}
+    with storage.db_lock, storage.db.transaction():
+        row = load(storage.get_program(program_id))
+        if not row or row.get('unresolved'):
+            return {'status': 'error', 'message': 'Its library program is missing'}
+        progress_ = row['progress']
+        lesson = next((l for l in row['lessons'] if l['id'] == progress_.get('current')), None)
+        if not lesson:
+            return {'status': 'error', 'message': 'Nothing left to move through.'}
+        lessons = [l for l in row['lessons'] if l['phase_id'] == lesson['phase_id']]
+        index = max(0, min(len(lessons) - 1, lessons.index(lesson) + (1 if direction == 'next' else -1)))
+        progress_['current'] = lessons[index]['id']
+        storage.update_program(program_id, {'progress': progress_})
+    return {'status': 'success', 'message': f"On {lessons[index]['title']} now.",
+            'program': load(storage.get_program(program_id))}
+
+
+def lesson_for(run, date):
+    row = load(run)
+    if not row or row.get('unresolved'):
+        return {}
+    lesson = next((l for l in row.get('lessons') or []
+                   if l['id'] == (row.get('progress') or {}).get('current')), None)
+    if lesson is None:
+        return {}
+    variants = lesson.get('variants') or []
+    variant = {}
+    if variants:
+        slots = emitted_slots(row) or (row.get('shape') or {}).get('slots') or propose_slots(row.get('member_id'), row.get('shape'))
+        count = sum(_occurrences_before({s['day']}, phase_started_on(row), date) for s in slots)
+        variant = variants[count % len(variants)]
+    content = {**lesson, **variant}
+    material = variant if variant.get('body') or variant.get('url') else lesson
+    return {'lesson_id': lesson['id'], 'phase_id': lesson['phase_id'],
+            'variant_label': variant.get('label') or '', 'title': lesson.get('title') or '',
+            'steps': list(content.get('steps') or []),
+            **{k: material[k] for k in ('body', 'url') if material.get(k)}}
+
+
+def rebind(program_id, library_id, actor):
+    from services import library
+    with storage.db_lock, storage.db.transaction():
+        row = storage.get_program(program_id)
+        if not row or not access.record_view('program', row, actor):
+            return {'status': 'error', 'message': 'No such program.'}
+        if not access.record_actable('program', row, actor, 'edit'):
+            return {'status': 'error', 'message': 'You cannot change this program.'}
+        curriculum = storage.get_library_program(library_id)
+        if not library.valid_curriculum(curriculum):
+            return {'status': 'error', 'message': 'Its library program is missing'}
+        storage.update_program(program_id, {'library_id': library_id,
+            'progress': reconcile_progress({}, curriculum)})
+        storage.delete_program_lessons(program_id)
+    return {'status': 'success', 'program': load(storage.get_program(program_id))}
 
 
 # The states a program can be in. `paused` is a peer of `active`, not a flavour
@@ -160,6 +306,7 @@ def progress(program: dict) -> dict:
     this dict even though `len(phases)` is trivial to compute, and `phase`
     (the milestone ahead) is what a caller actually needs to show.
     """
+    program = load(program)
     sessions = program.get('sessions') or []
     phases = program.get('phases') or []
     hit = [p for p in phases if p.get('milestone_hit_at')]
@@ -209,61 +356,67 @@ def _slot_ts(slot_date) -> float:
 
 
 def log_session(program_id: str, minutes: int = None, source: str = 'added',
-                note: str = '', slot_date: str = None) -> dict:
-    """Record that it happened. `asked` came from the question after a slot;
-    `added` is a person saying so themselves — practising on the bus is still
-    practising."""
-    row = storage.get_program(program_id)
-    if not row:
-        return {'status': 'error', 'message': 'That program is no longer here.'}
-    if row.get('state') not in ('active', 'paused'):
-        return {'status': 'error',
-                'message': f"That program is {row.get('state')}."}
-    mins = int(minutes if minutes is not None
-               else (row.get('shape') or {}).get('minutes') or 0)
-    entry = {'minutes': mins, 'source': source, 'note': (note or '').strip()}
-    ts = _slot_ts(slot_date)
-    if ts:
-        entry['ts'] = ts
-    storage.append_program_session(program_id, entry)
-    p = progress(storage.get_program(program_id))
-    return {'status': 'success', 'sessions': p['sessions'],
-            'message': f"{p['sessions']} sessions so far."}
+                note: str = '', slot_date: str = None, lesson_id: str = None) -> dict:
+    """Credit the lesson the person opened, even if the bookmark has moved."""
+    with storage.db_lock, storage.db.transaction():
+        row = load(storage.get_program(program_id))
+        if not row:
+            return {'status': 'error', 'message': 'That program is no longer here.'}
+        if row.get('state') not in ('active', 'paused'):
+            return {'status': 'error', 'message': f"That program is {row.get('state')}."}
+        selected = lesson_id or (row.get('progress') or {}).get('current')
+        lesson = next((l for l in row.get('lessons') or [] if l['id'] == selected), None)
+        if lesson_id and lesson is None:
+            return {'status': 'error', 'code': 409, 'message': 'That lesson moved; open it again.'}
+        entry = {'minutes': int(minutes if minutes is not None else (row.get('shape') or {}).get('minutes') or 0),
+                 'source': source, 'note': (note or '').strip()}
+        if lesson:
+            entry['lesson_id'] = selected
+        ts = _slot_ts(slot_date)
+        if ts:
+            entry['ts'] = ts
+        storage.append_program_session(program_id, entry)
+        if lesson:
+            progress_ = row['progress']
+            count = progress_['lessons'].setdefault(selected, {'done_sessions': 0, 'completed_at': None})
+            count['done_sessions'] = int(count.get('done_sessions') or 0) + 1
+            if count['done_sessions'] >= int(lesson.get('sessions') or 1):
+                count['completed_at'] = count.get('completed_at') or time.time()
+                if selected == progress_['current']:
+                    nxt = next_in_phase(row)
+                    candidates = [l for l in row['lessons'] if l['phase_id'] == lesson['phase_id']]
+                    if nxt is None:
+                        nxt = next((l for l in candidates if not progress_['lessons'].get(l['id'], {}).get('completed_at')), None)
+                    progress_['current'] = nxt['id'] if nxt else candidates[-1]['id']
+            storage.update_program(program_id, {'progress': progress_})
+        p = progress(load(storage.get_program(program_id)))
+    return {'status': 'success', 'sessions': p['sessions'], 'message': f"{p['sessions']} sessions so far."}
 
 
-def mark_milestone(program_id: str, phase_name: str) -> dict:
-    """A person marks it, because 'switch G to C without looking' is a
-    judgement no app can make. Only ever sets a date — there is no counterpart
-    that marks one missed."""
-    row = storage.get_program(program_id)
-    if not row:
-        return {'status': 'error', 'message': 'That program is no longer here.'}
-    phases, found = [], False
-    for ph in row.get('phases') or []:
-        if not found and ph.get('name') == phase_name and not ph.get('milestone_hit_at'):
-            ph = {**ph, 'milestone_hit_at': time.time()}
-            found = True
-        phases.append(ph)
-    if not found:
-        return {'status': 'error', 'message': "I can't find that milestone."}
-    # The last milestone IS done -- that is the design's own definition, and
-    # without this the only exit from a finished plan was a button reading
-    # "Dropped. The time is back." Reaching the end of a plan must not be
-    # indistinguishable from abandoning it, and a program nobody can finish
-    # keeps its practice windows and keeps asking "did it happen?" forever.
-    if not any(not ph.get('milestone_hit_at') for ph in phases):
-        try:
-            released = release_commitments(program_id)
-        except RuntimeError:
-            return {'status': 'error', 'message': RELEASE_ERROR}
-        storage.update_program(program_id, {'phases': phases, 'state': 'done',
-                                            'finished_at': time.time()})
+def mark_milestone(program_id: str, phase_id: str) -> dict:
+    """A person's judgement and the final release commit together or not at all."""
+    try:
+        with storage.db_lock, storage.db.transaction():
+            row = load(storage.get_program(program_id))
+            if not row:
+                return {'status': 'error', 'message': 'That program is no longer here.'}
+            phase = next((p for p in row['phases'] if p.get('id') == phase_id), None)
+            if not phase or phase.get('milestone_hit_at'):
+                return {'status': 'error', 'message': "I can't find that milestone."}
+            progress_ = row['progress']
+            progress_['phases'].setdefault(phase_id, {})['milestone_hit_at'] = time.time()
+            progress_ = reconcile_progress({**row, 'progress': progress_}, row)
+            updates = {'progress': progress_}
+            done = all(progress_['phases'].get(p['id'], {}).get('milestone_hit_at') for p in row['phases'])
+            released = 0
+            if done:
+                released = release_commitments(program_id)
+                updates.update(state='done', finished_at=time.time())
+            storage.update_program(program_id, updates)
         return {'status': 'success', 'schedule_dirty': bool(released),
-                'message': f"🎉 {row.get('title')}: {phase_name} done — "
-                           f"that's the last one. The whole program is done."}
-    storage.update_program(program_id, {'phases': phases})
-    return {'status': 'success',
-            'message': f"🎉 {row.get('title')}: {phase_name} done."}
+                'message': f"{row.get('title')}: {phase['name']} done." + (' The whole program is done.' if done else '')}
+    except RuntimeError:
+        return {'status': 'error', 'message': RELEASE_ERROR}
 
 
 def finish(program_id: str) -> dict:
@@ -619,6 +772,7 @@ def phase_started_on(program: dict) -> datetime.date:
     what keeps it from becoming the last-session-gap the six progress rules
     refuse to let this object hold.
     """
+    program = load(program)
     stamps = [p.get('milestone_hit_at') for p in (program.get('phases') or [])
               if p.get('milestone_hit_at')]
     if stamps:
@@ -680,7 +834,11 @@ def unit_for(program: dict, phase: dict) -> dict:
     session on this lesson, or who did two in one evening, says so and the
     pointer moves. It is a bookmark, not a record of anything.
     """
+    program = load(program)
     units = [u for u in (phase.get('units') or []) if isinstance(u, dict)]
+    if program.get('library_id'):
+        current = program['progress'].get('current')
+        return next(({**u, 'index': i} for i, u in enumerate(units) if u.get('lesson_id') == current), None)
     if not units:
         return None
     done = sessions_since(program, phase_started_on(program))
@@ -744,6 +902,7 @@ def _practice_windows(start: datetime.date, end: datetime.date,
             # Paused and proposed programs hold no time: pause releases the
             # commitments outright, and a proposal has never claimed any.
             continue
+        row = load(row)
         phase = progress(row).get('phase') or {}
         unit = unit_for(row, phase) or {}
         rotation = [s for s in (phase.get('rotation') or [])
@@ -777,7 +936,10 @@ def _practice_windows(start: datetime.date, end: datetime.date,
                 n = rank.get(day, 0)
                 rank[day] = n + 1
                 session = rotation[(before[day] + n) % len(rotation)]
+            projection = lesson_for(row, day) if row.get('library_id') else {}
             out.append({
+                **({'lesson_id': projection.get('lesson_id'), 'variant_label': projection.get('variant_label') or ''}
+                   if projection else {}),
                 'program_id': row['id'],
                 'commitment_id': cid,
                 'member_id': row.get('member_id'),
@@ -806,9 +968,9 @@ def _practice_windows(start: datetime.date, end: datetime.date,
                 # Which lesson this evening is, and where to actually read it
                 # -- a link for a cited plan, the app's own words for one it
                 # wrote. Never both, and never a link it does not have.
-                'unit_title': unit.get('title') or '',
-                'unit_url': unit.get('url') or '',
-                'unit_body': unit.get('body') or '',
+                'unit_title': projection.get('title', unit.get('title') or ''),
+                'unit_url': projection.get('url', '') if projection else unit.get('url') or '',
+                'unit_body': projection.get('body', '') if projection else unit.get('body') or '',
                 # WHICH rung, as a number -- the other half of a lesson's
                 # slot key (program_lessons.slot_of is phase_name + unit_n +
                 # session_label). Without it a surface holding a window
@@ -818,8 +980,8 @@ def _practice_windows(start: datetime.date, end: datetime.date,
                 # from the same `unit_for` walk the unit title beside it
                 # came from, so one window can never name two rungs.
                 'unit_n': int(unit.get('n') or 0),
-                'session_label': (session or {}).get('label') or '',
-                'steps': list((session or phase).get('steps') or []),
+                'session_label': projection.get('variant_label', (session or {}).get('label') or ''),
+                'steps': projection.get('steps', list((session or phase).get('steps') or [])),
                 'progression': phase.get('progression') or '',
                 'milestone': phase.get('milestone') or '',
                 'logged': _already_logged(row, day),
@@ -838,11 +1000,17 @@ def practice_windows(start: datetime.date, end: datetime.date,
         visible = {}
         for window in _practice_windows(start, end, member_id):
             pid = window['program_id']
+            row = storage.get_program(pid)
             if pid not in visible:
-                row = storage.get_program(pid)
                 visible[pid] = access.GONE if access.gone('program', row, rid=pid) else not access.practice_hidden(row, viewer)
             if visible[pid] is access.GONE:
                 continue
+            if load(row).get('unresolved'):
+                # The keeper can still identify and resolve this reservation.
+                # The window was already built with an empty curriculum.
+                if access.record_view('program', row, viewer):
+                    out.append(window)
+                    continue
             if visible[pid]:
                 out.append(window)
             else:
@@ -927,6 +1095,7 @@ def mark_practice_pushed(keys) -> None:
 
 def footprint(program: dict) -> dict:
     """Everything approval would create, for the screen that asks."""
+    program = load(program)
     shape = program.get('shape') or {}
     kit = _kit_line(program)
     return {
@@ -939,6 +1108,7 @@ def footprint(program: dict) -> dict:
 def _kit_line(program: dict) -> str:
     """What the plan says to get, if it says anything. Never invented -- an
     empty kit is better than a shopping list nobody's plan asked for."""
+    program = load(program)
     for ph in program.get('phases') or []:
         what = (ph.get('what') or '').lower()
         for word in ('buy', 'you will need', 'equipment', 'gear'):
@@ -1101,7 +1271,7 @@ def approve(program_id: str, approver_id: str = None, slots: list = None) -> dic
     Pre-flight everything first, then stamp each local emission as it lands
     so a failure can say how far it got instead of implying nothing happened.
     """
-    row = storage.get_program(program_id)
+    row = load(storage.get_program(program_id))
     if not row:
         return {'status': 'error', 'message': 'That program is no longer here.'}
     if row.get('state') != 'proposed':
@@ -1181,7 +1351,8 @@ def approve(program_id: str, approver_id: str = None, slots: list = None) -> dic
             datetime.date.today().isoformat()
         storage.update_program(program_id, {
             'state': 'active', 'approved_by': approver_id,
-            'emissions': emissions, 'baseline': baseline})
+            'emissions': emissions, 'baseline': baseline,
+            'shape': clamp_shape({**shape, 'slots': use})})
     except deletion.Cancelled:
         raise
     except Exception as e:
@@ -1346,6 +1517,7 @@ def maybe_rebaseline(program: dict, now=None) -> dict:
     can say the plan is tight rather than pretend room was made where none
     was.
     """
+    program = load(program)
     now = now or datetime.datetime.now()
     if program.get('state') != 'active':
         return None
@@ -1373,6 +1545,11 @@ def maybe_rebaseline(program: dict, now=None) -> dict:
     else:
         phases = _stretch_phases(original_phases, _stretch_factor(short))
         update['phases'] = phases
+    if program.get('library_id'):
+        progress_ = copy.deepcopy(program['progress'])
+        for phase in update.pop('phases', []):
+            progress_['phases'].setdefault(phase['id'], {})['weeks'] = phase['weeks']
+        update['progress'] = progress_
     storage.update_program(program['id'], update)
     # Slack before a fixed date is not a squeeze; malformed dates cannot
     # justify claiming room either. Keep those distinctions in the finding.
@@ -1426,6 +1603,7 @@ def due_asks_for(program: dict, now=None, viewer=None) -> list:
     nobody watched is the one place in this arc where the app could claim more
     than happened, and the design's promise is that it never does.
     """
+    program = load(program)
     from services import family_digest, access
     if viewer is not None and not access.record_visible('program', program, viewer):
         return []

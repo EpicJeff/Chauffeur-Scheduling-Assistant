@@ -1,4 +1,5 @@
 """The hand path. Every capability the agent has, a person has by tap."""
+from program_fixture import add_run, loaded, phase_id
 from harness import check  # noqa: F401  (isolates CHAUFFEUR_DATA_DIR)
 
 from fastapi import HTTPException
@@ -28,6 +29,7 @@ def _denied(fn, *a, **kw):
 
 def _reset():
     storage.programs_table.truncate()
+    storage.library_programs_table.truncate()
     storage.members_table.truncate()
     storage.protected_commitments_table.truncate()
     storage.add_member({'id': 'mom', 'name': 'Mom', 'role': 'parent'})
@@ -62,7 +64,7 @@ def scenario_a_child_cannot_approve():
     import main
     # Access rule section 4 hides missing ids before the role gate. Exercise
     # the role gate with the child's own visible program instead.
-    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed'})
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed'})
     check(_denied(main.approve_program, pid,
                   body={'member_id': 'kid'}, request=Req(storage.create_member_token('kid'))) == 403,
           "approving claims the family's week — that is grown-up work")
@@ -73,7 +75,7 @@ def scenario_logging_a_session_is_reachable():
     is what should let this through."""
     _reset()
     import main
-    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar',
                                'state': 'active'})
     res = main.log_program_session(pid, body={'minutes': 25,
                                               'member_id': 'kid'}, request=None)
@@ -91,7 +93,7 @@ def scenario_logging_a_session_is_reachable():
 def scenario_a_child_cannot_drop_a_parents_program():
     _reset()
     import main
-    pid = storage.add_program({'member_id': 'mom', 'title': "Learn Spanish",
+    pid = add_run({'member_id': 'mom', 'title': "Learn Spanish",
                                'state': 'active'})
     cid = storage.add_protected_commitment({
         'id': 'commit_mom_1', 'member_id': 'mom', 'title': 'Learn Spanish',
@@ -111,22 +113,22 @@ def scenario_a_child_cannot_mark_a_siblings_milestone():
     _reset()
     import main
     storage.add_member({'id': 'sib', 'name': 'Sam', 'role': 'child'})
-    pid = storage.add_program({'member_id': 'sib', 'title': 'Reading ladder',
+    pid = add_run({'member_id': 'sib', 'title': 'Reading ladder',
                                'state': 'active',
                                'phases': [{'name': 'Level 1', 'weeks': 2, 'what': '',
                                           'milestone': 'Finish 5 books',
                                           'milestone_hit_at': None}]})
     check(_denied(main.hit_program_milestone, pid,
-                  body={'member_id': 'kid', 'phase_name': 'Level 1'}, request=None) == 403,
+                  body={'member_id': 'kid', 'phase_id': phase_id(pid)}, request=None) == 403,
           "a child marking a SIBLING's milestone must be refused")
-    check(storage.get_program(pid)['phases'][0]['milestone_hit_at'] is None,
+    check(loaded(pid)['phases'][0]['milestone_hit_at'] is None,
           "the sibling's milestone is untouched")
 
 
 def scenario_a_parent_acts_on_a_childs_program():
     _reset()
     import main
-    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar',
                                'state': 'active'})
     res = main.pause_program(pid, body={'member_id': 'mom'}, request=None)
     check(res.get('status') == 'success', f"a parent pausing a child's program: got {res}")
@@ -139,7 +141,7 @@ def scenario_the_control_center_surface_acts_via_parent_of_record():
     household's parent of record, exactly as `approve` already relies on."""
     _reset()
     import main
-    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar',
                                'state': 'active'})
     res = main.pause_program(pid, body={}, request=None)
     check(res.get('status') == 'success',
@@ -156,9 +158,11 @@ def scenario_a_child_proposes_for_themselves():
     _cur.curate = lambda *a, **kw: {
         'phases': [], 'source': {'plan_name': '', 'url': '', 'why_this_one': '',
                                  'facts': [], 'runners_up': [], 'hand_written': True}}
+    example = add_run({'member_id': 'mom', 'title': 'Learn guitar'})
+    lid = storage.get_program(example)['library_id']
     try:
         res = main.create_program(body={'member_id': 'kid', 'for_member_id': 'kid',
-                                        'title': 'Learn guitar'}, request=None)
+                                        'library_id': lid}, request=None)
     finally:
         _cur.curate = real_curate
     check(res.get('status') == 'success', f"got {res}")
@@ -189,7 +193,7 @@ def scenario_a_child_cannot_list_a_siblings_programs():
     _reset()
     import main
     storage.add_member({'id': 'sib', 'name': 'Sam', 'role': 'child'})
-    storage.add_program({'member_id': 'sib', 'title': 'Reading ladder',
+    add_run({'member_id': 'sib', 'title': 'Reading ladder',
                          'state': 'active'})
     kid_token = storage.create_member_token('kid')
     check(_denied(main.list_programs_api, member_id='sib',
@@ -200,7 +204,7 @@ def scenario_a_child_cannot_list_a_siblings_programs():
 def scenario_a_child_can_list_their_own_programs_by_token():
     _reset()
     import main
-    storage.add_program({'member_id': 'kid', 'title': 'Guitar', 'state': 'active'})
+    add_run({'member_id': 'kid', 'title': 'Guitar', 'state': 'active'})
     kid_token = storage.create_member_token('kid')
     res = main.list_programs_api(member_id='kid', request=Req(kid_token))
     check([p['title'] for p in res['programs']] == ['Guitar'],
@@ -210,7 +214,7 @@ def scenario_a_child_can_list_their_own_programs_by_token():
 def scenario_a_parent_can_list_a_childs_programs():
     _reset()
     import main
-    storage.add_program({'member_id': 'kid', 'title': 'Guitar', 'state': 'active'})
+    add_run({'member_id': 'kid', 'title': 'Guitar', 'state': 'active'})
     mom_token = storage.create_member_token('mom')
     res = main.list_programs_api(member_id='kid', request=Req(mom_token))
     check([p['title'] for p in res['programs']] == ['Guitar'],
@@ -225,8 +229,8 @@ def scenario_a_child_with_no_filter_gets_only_their_own():
     _reset()
     import main
     storage.add_member({'id': 'sib', 'name': 'Sam', 'role': 'child'})
-    storage.add_program({'member_id': 'kid', 'title': 'Guitar', 'state': 'active'})
-    storage.add_program({'member_id': 'sib', 'title': 'Reading ladder',
+    add_run({'member_id': 'kid', 'title': 'Guitar', 'state': 'active'})
+    add_run({'member_id': 'sib', 'title': 'Reading ladder',
                          'state': 'active'})
     kid_token = storage.create_member_token('kid')
     res = main.list_programs_api(request=Req(kid_token))
@@ -240,8 +244,8 @@ def scenario_a_parent_with_no_filter_still_gets_the_household():
     _reset()
     import main
     storage.add_member({'id': 'sib', 'name': 'Sam', 'role': 'child'})
-    storage.add_program({'member_id': 'kid', 'title': 'Guitar', 'state': 'active'})
-    storage.add_program({'member_id': 'sib', 'title': 'Reading ladder',
+    add_run({'member_id': 'kid', 'title': 'Guitar', 'state': 'active'})
+    add_run({'member_id': 'sib', 'title': 'Reading ladder',
                          'state': 'active'})
     mom_token = storage.create_member_token('mom')
     res = main.list_programs_api(request=Req(mom_token))
@@ -258,8 +262,8 @@ def scenario_the_control_center_still_gets_the_household():
     _reset()
     import main
     storage.add_member({'id': 'sib', 'name': 'Sam', 'role': 'child'})
-    storage.add_program({'member_id': 'kid', 'title': 'Guitar', 'state': 'active'})
-    storage.add_program({'member_id': 'sib', 'title': 'Reading ladder',
+    add_run({'member_id': 'kid', 'title': 'Guitar', 'state': 'active'})
+    add_run({'member_id': 'sib', 'title': 'Reading ladder',
                          'state': 'active'})
     res = main.list_programs_api(request=Req())
     titles = sorted(p['title'] for p in res['programs'])
@@ -303,7 +307,7 @@ def scenario_a_proposal_can_be_re_shaped_without_spending_research():
     _reset()
     import main
     from services import programs_curate as _cur
-    pid = storage.add_program({
+    pid = add_run({
         'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
         'shape': {'sessions_per_week': 3, 'minutes': 25, 'preferred_days': []},
         'phases': [{'name': 'Grade 1', 'weeks': 4, 'what': 'Open chords',
@@ -320,7 +324,7 @@ def scenario_a_proposal_can_be_re_shaped_without_spending_research():
         _cur.curate = real_curate
     check(res.get('status') == 'success', f"got {res}")
     check(called == [], "a shape edit must not spend a research run")
-    row = storage.get_program(pid)
+    row = loaded(pid)
     check(row['shape']['sessions_per_week'] == 2, f"the shape moved: {row['shape']}")
     check(row['phases'][0]['weeks'] == _cur.phase_weeks(2),
           f"and the phases were re-paced by the same arithmetic, got "
@@ -333,7 +337,7 @@ def scenario_changing_the_aim_looks_for_a_new_plan():
     _reset()
     import main
     from services import programs_curate as _cur
-    pid = storage.add_program({
+    pid = add_run({
         'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
         'shape': {'sessions_per_week': 3, 'minutes': 25, 'preferred_days': []},
         'phases': [{'name': 'Old', 'weeks': 4, 'what': 'old material',
@@ -345,11 +349,15 @@ def scenario_changing_the_aim_looks_for_a_new_plan():
         res = main.edit_program(pid, body={'member_id': 'mom',
                                             'title': 'Learn the ukulele'},
                                  request=None)
+        check(res.get('status') == 'error' and res.get('message') ==
+              'The name belongs to the library program; rename the project instead.',
+              f'the library owns the name: {res}')
+        res = main.edit_program(pid, body={'member_id': 'mom', 'recurate': True}, request=None)
     finally:
         _cur.curate = real_curate
     check(res.get('status') == 'success', f"got {res}")
-    row = storage.get_program(pid)
-    check(row['title'] == 'Learn the ukulele', f"the aim moved: {row['title']}")
+    row = loaded(pid)
+    check(row['title'] == 'Guitar', f"the library keeps its name: {row['title']}")
     check(row['phases'][0]['name'] == 'New',
           f"a plan found for the OLD aim must not survive it, got {row['phases']}")
 
@@ -360,7 +368,7 @@ def scenario_looking_again_re_runs_research_on_the_same_aim():
     _reset()
     import main
     from services import programs_curate as _cur
-    pid = storage.add_program({
+    pid = add_run({
         'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
         'shape': {'sessions_per_week': 3, 'minutes': 25, 'preferred_days': []},
         'phases': [], 'source': {'origin': 'none', 'reason': 'capped',
@@ -374,7 +382,7 @@ def scenario_looking_again_re_runs_research_on_the_same_aim():
     finally:
         _cur.curate = real_curate
     check(res.get('status') == 'success', f"got {res}")
-    row = storage.get_program(pid)
+    row = loaded(pid)
     check(row['phases'], f"the second look replaced the empty plan, got {row}")
     check(row['source']['origin'] == 'cited', f"and its tier moved, got {row['source']}")
 
@@ -391,7 +399,7 @@ def scenario_a_replan_drops_the_old_plans_lessons():
     _reset()
     import main
     from services import programs_curate as _cur
-    pid = storage.add_program({
+    pid = add_run({
         'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
         'phases': [{'name': 'Grade 1', 'weeks': 4, 'what': 'Open chords',
                     'milestone': 'G-C-D', 'milestone_hit_at': None}],
@@ -412,7 +420,7 @@ def scenario_a_replan_drops_the_old_plans_lessons():
     check(res.get('status') == 'success', f"got {res}")
     check(storage.get_program_lesson(pid, slot) is None,
           "the old plan's script goes with the old plan")
-    check(storage.get_program(pid)['phases'][0]['what'] == 'App-made plan',
+    check(loaded(pid)['phases'][0]['what'] == 'App-made plan',
           "and the new plan is the one that stands")
 
 
@@ -426,7 +434,7 @@ def scenario_a_kept_plan_keeps_its_lessons():
     from services import programs_curate as _cur
     had = [{'name': 'Grade 1', 'weeks': 4, 'what': 'Open chords',
             'milestone': 'G-C-D', 'milestone_hit_at': None}]
-    pid = storage.add_program({
+    pid = add_run({
         'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
         'phases': list(had),
         'source': {'plan_name': 'Justin Guitar', 'url': 'https://jg.example/',
@@ -457,11 +465,12 @@ def scenario_looking_again_never_costs_the_plan_already_found():
     from services import programs_curate as _cur
     had = [{'name': 'Grade 1', 'weeks': 4, 'what': 'Open chords',
             'milestone': 'G-C-D', 'milestone_hit_at': None}]
-    pid = storage.add_program({
+    pid = add_run({
         'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
         'phases': list(had),
         'source': {'plan_name': 'Justin Guitar', 'url': 'https://jg.example/',
                    'origin': 'cited', 'reason': '', 'hand_written': False}})
+    had = loaded(pid)['phases']
     real_curate = _cur.curate
     _cur.curate = lambda *a, **kw: {
         'phases': [], 'source': {'origin': 'none', 'reason': 'capped',
@@ -472,7 +481,7 @@ def scenario_looking_again_never_costs_the_plan_already_found():
     finally:
         _cur.curate = real_curate
     check(res.get('status') == 'success', f"got {res}")
-    row = storage.get_program(pid)
+    row = loaded(pid)
     check(row['phases'] == had, f"the plan they had must stand, got {row['phases']}")
     check(row['source']['plan_name'] == 'Justin Guitar',
           f"and so must where it came from, got {row['source']}")
@@ -488,7 +497,7 @@ def scenario_a_family_can_choose_their_own_practice_windows():
     _reset()
     import main
     from services import programs as _prog
-    pid = storage.add_program({
+    pid = add_run({
         'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
         'shape': {'sessions_per_week': 3, 'minutes': 30, 'preferred_days': []}})
     res = main.edit_program(pid, body={
@@ -496,7 +505,7 @@ def scenario_a_family_can_choose_their_own_practice_windows():
         'slots': [{'day': 2, 'time_start': '07:15'},
                   {'day': 5, 'time_start': '16:00'}]}, request=None)
     check(res.get('status') == 'success', f"got {res}")
-    row = storage.get_program(pid)
+    row = loaded(pid)
     check([s['time_start'] for s in row['shape']['slots']] == ['07:15', '16:00'],
           f"the chosen times are what is stored, got {row['shape']['slots']}")
     check(row['shape']['slots'][0]['time_end'] == '07:45',
@@ -518,7 +527,7 @@ def scenario_handing_the_choice_back_resumes_proposing():
     _reset()
     import main
     from services import programs as _prog
-    pid = storage.add_program({
+    pid = add_run({
         'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
         'shape': {'sessions_per_week': 2, 'minutes': 25, 'preferred_days': [1],
                   'slots': [{'day': 6, 'time_start': '08:00',
@@ -526,7 +535,7 @@ def scenario_handing_the_choice_back_resumes_proposing():
     res = main.edit_program(pid, body={'member_id': 'mom', 'slots': []},
                             request=None)
     check(res.get('status') == 'success', f"got {res}")
-    row = storage.get_program(pid)
+    row = loaded(pid)
     check(row['shape']['slots'] == [],
           f"an explicit empty list is an instruction, not a no-op, got {row['shape']}")
     check([s['day'] for s in _prog.propose_slots('kid', row['shape'])],
@@ -539,14 +548,14 @@ def scenario_an_edit_of_the_minutes_keeps_the_chosen_windows():
     picked by hand."""
     _reset()
     import main
-    pid = storage.add_program({
+    pid = add_run({
         'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
         'shape': {'sessions_per_week': 1, 'minutes': 25, 'preferred_days': [],
                   'slots': [{'day': 3, 'time_start': '17:30',
                              'time_end': '17:55'}]}})
     main.edit_program(pid, body={'member_id': 'mom', 'minutes': 60},
                       request=None)
-    row = storage.get_program(pid)
+    row = loaded(pid)
     check(len(row['shape']['slots']) == 1,
           f"the chosen window survives an unrelated edit, got {row['shape']}")
     check(row['shape']['slots'][0]['time_end'] == '18:30',
@@ -563,7 +572,7 @@ def scenario_a_slot_list_from_a_request_cannot_reach_the_solver_unchecked():
     _reset()
     import main
     from services import programs as _prog
-    pid = storage.add_program({
+    pid = add_run({
         'member_id': 'mom', 'title': 'Guitar', 'state': 'proposed',
         'shape': {'sessions_per_week': 1, 'minutes': 25, 'preferred_days': []}})
     res = _prog.approve(pid, approver_id='mom', slots=[
@@ -585,14 +594,14 @@ def scenario_a_body_aim_is_refused_on_an_edit_too():
     an aim that could not be proposed must not be reachable by renaming."""
     _reset()
     import main
-    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar',
                                'state': 'proposed'})
     res = main.edit_program(pid, body={'member_id': 'mom',
                                         'title': 'lose 15 pounds'},
                              request=None)
     check(res.get('status') == 'error', f"got {res}")
     check(res.get('alternatives'), "and the behaviour version is offered")
-    check(storage.get_program(pid)['title'] == 'Guitar', "and nothing moved")
+    check(loaded(pid)['title'] == 'Guitar', "and nothing moved")
 
 
 def scenario_only_a_proposal_is_editable():
@@ -600,7 +609,7 @@ def scenario_only_a_proposal_is_editable():
     nobody re-approved. `reshape` is the way back, and it frees the time."""
     _reset()
     import main
-    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar',
                                'state': 'active'})
     res = main.edit_program(pid, body={'member_id': 'mom', 'minutes': 45},
                              request=None)
@@ -613,7 +622,7 @@ def scenario_a_child_cannot_edit_a_siblings_proposal():
     _reset()
     import main
     storage.add_member({'id': 'sib', 'name': 'Sam', 'role': 'child'})
-    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar',
                                'state': 'proposed'})
     token = storage.create_member_token('sib')
     check(_denied(main.edit_program, pid, body={}, request=Req(token)) == 404,
@@ -627,7 +636,7 @@ def scenario_dismissing_a_proposal_is_reachable_and_honest():
     page is careful about."""
     _reset()
     import main
-    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar',
                                'state': 'proposed'})
     res = main.drop_program(pid, background_tasks=None,
                             body={'member_id': 'mom'}, request=None)
@@ -645,7 +654,7 @@ def scenario_a_child_cannot_read_a_siblings_footprint():
     _reset()
     import main
     storage.add_member({'id': 'sib', 'name': 'Sam', 'role': 'child'})
-    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar',
                                'state': 'proposed',
                                'shape': {'sessions_per_week': 2, 'minutes': 25,
                                          'preferred_days': [1, 3]}})
@@ -666,7 +675,7 @@ def scenario_claiming_and_releasing_time_reaches_the_solver():
     not protecting it."""
     _reset()
     import main
-    pid = storage.add_program({
+    pid = add_run({
         'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
         'shape': {'sessions_per_week': 2, 'minutes': 25,
                   'preferred_days': [1, 3]}})
@@ -690,7 +699,8 @@ def scenario_claiming_and_releasing_time_reaches_the_solver():
 def scenario_a_starting_point_is_taken_by_hand_and_used():
     """The hand path for the field that stops a plan being written for a
     generic beginner. Typed on the Programs page, stored on the program, and
-    handed to curation with the member themselves rather than a first name."""
+    carried by the loaded run with its person for per-run lesson generation.
+    Library curation receives only the explicit public assumptions."""
     _reset()
     import main
     from services import programs_curate as _cur
@@ -698,20 +708,26 @@ def scenario_a_starting_point_is_taken_by_hand_and_used():
     real_curate = _cur.curate
     def fake(title, shape, member_name='', member=None, starting_point=''):
         seen['member'] = member
-        seen['starting_point'] = starting_point
+        seen['starting_point'] = shape.get('assumes')
+        seen['private'] = starting_point
         return {'phases': [], 'source': {}}
     _cur.curate = fake
     try:
         res = main.create_program(body={
-            'member_id': 'kid', 'title': 'learn guitar',
+            'member_id': 'mom', 'for_member_id': 'kid', 'title': 'learn guitar',
+            'assumes': 'already plays open chords',
             'starting_point': 'already plays open chords'}, request=None)
     finally:
         _cur.curate = real_curate
     check(res.get('status') == 'success', f"got {res}")
-    check(seen.get('starting_point') == 'already plays open chords',
-          f"it has to reach curation, got {seen}")
-    check((seen.get('member') or {}).get('id') == 'kid',
-          f"and so does the person, not only their name, got {seen}")
+    run = loaded(res['id'])
+    check(run['starting_point'] == 'already plays open chords',
+          f"it reaches the per-run lesson input, got {run}")
+    check((storage.get_member(run['member_id']) or {}).get('id') == 'kid',
+          f"and so does the person, not only their name, got {run}")
+    check(seen.get('starting_point') == 'already plays open chords'
+          and seen.get('member') is None and not seen.get('private'),
+          f"library curation receives only the explicit public profile: {seen}")
     row = storage.get_program(res['id'])
     check(row.get('starting_point') == 'already plays open chords',
           f"and it is kept, so looking again can use it, got {row}")
@@ -749,7 +765,7 @@ def scenario_editing_the_starting_point_spends_no_research():
     _reset()
     import main
     from services import programs_curate as _cur
-    pid = storage.add_program({
+    pid = add_run({
         'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
         'shape': {'sessions_per_week': 3, 'minutes': 25, 'preferred_days': []},
         'phases': [{'name': 'Grade 1', 'weeks': 4, 'what': 'Open chords',
@@ -792,9 +808,9 @@ def scenario_a_program_says_whether_its_owner_can_run_it_alone():
     tot = datetime.date.today()
     storage.update_member('kid', {'birthdate':
                                   tot.replace(year=tot.year - 7).isoformat()})
-    storage.add_program({'member_id': 'kid', 'title': 'Learn guitar',
+    add_run({'member_id': 'kid', 'title': 'Learn guitar',
                          'state': 'active'})
-    storage.add_program({'member_id': 'mom', 'title': 'Guitar',
+    add_run({'member_id': 'mom', 'title': 'Guitar',
                          'state': 'active'})
     rows = main.list_programs_api(request=None)['programs']
     by_title = {r['title']: r for r in rows}
@@ -825,7 +841,7 @@ def scenario_a_parent_can_log_a_small_childs_session():
     the only way a session ever gets logged for somebody who cannot tap."""
     _reset()
     import main
-    pid = storage.add_program({'member_id': 'kid', 'title': 'Learn to swim',
+    pid = add_run({'member_id': 'kid', 'title': 'Learn to swim',
                                'state': 'active'})
     res = main.log_program_session(pid, body={'member_id': 'mom',
                                               'source': 'asked'}, request=None)

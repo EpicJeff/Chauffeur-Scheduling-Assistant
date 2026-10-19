@@ -566,6 +566,7 @@ with db_lock:
     music_favorites_table = db.table('music_favorites')
     music_recent_table = db.table('music_recent')
     programs_table = db.table('programs')
+    library_programs_table = db.table('library_programs')
     # A practice window's lesson — scenes the player renders. Its own table
     # rather than a field on the program row on purpose: the program
     # document is the one place in this app that must not accumulate bulk
@@ -3759,6 +3760,44 @@ def _check_program_keys(value, path: str = ''):
     elif isinstance(value, list):
         for i, item in enumerate(value):
             _check_program_keys(item, f"{path}[{i}]")
+
+def add_library_program(data: dict) -> str:
+    from models.schemas import LibraryProgram
+    _check_program_keys(data)
+    row = LibraryProgram(**data).model_dump()
+    with db_lock:
+        deletion.check()
+        library_programs_table.insert(row)
+    return row['id']
+
+
+def get_library_program(library_id: str) -> Optional[dict]:
+    with db_lock:
+        rows = library_programs_table.search(Query().id == library_id)
+        return dict(rows[0]) if rows else None
+
+
+def get_library_programs() -> List[dict]:
+    with db_lock:
+        return [dict(row) for row in library_programs_table.all()]
+
+
+def update_library_program(library_id: str, data: dict) -> bool:
+    _check_program_keys(data)
+    # A curriculum update cannot smuggle personal run fields into a public row.
+    allowed = {'title', 'made_for', 'source', 'phases', 'lessons', 'archived'}
+    fields = {k: v for k, v in data.items() if k in allowed}
+    fields['updated_at'] = time.time()
+    with db_lock:
+        deletion.check()
+        return bool(library_programs_table.update(fields, Query().id == library_id))
+
+
+def delete_library_program(library_id: str):
+    with db_lock:
+        deletion.check()
+        library_programs_table.remove(Query().id == library_id)
+
 
 def add_program(data: dict) -> str:
     from models.schemas import Program

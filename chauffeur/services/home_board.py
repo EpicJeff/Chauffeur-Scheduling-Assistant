@@ -5336,6 +5336,7 @@ def _access_input_digest():
         return memo['digest']
     policy = []
     for records, fields in (
+            (storage.get_library_programs(), ('id', 'updated_at')),
             (storage.get_projects(), ('id', 'deleting', 'audience', 'shared_with', 'audience_rev', 'wrapped_from', 'owner_member_id')),
             (storage.get_all_members(), ('id', 'role', 'status', 'is_child', 'system')),
             (storage.get_programs(include_finished=True),

@@ -685,8 +685,24 @@ def curate(title: str, shape: dict, member_name: str = '',
     """
     per_week = int((shape or {}).get('sessions_per_week') or 3)
     minutes = int((shape or {}).get('minutes') or 25)
-    context = _context_block(member, member_name, per_week, minutes,
-                             starting_point)
+    if 'age_band' in (shape or {}):
+        # Library curation has public assumptions, never a named person's input.
+        band = shape.get('age_band') or 'any'
+        if band in stages.STAGE_KEYS:
+            index = stages.STAGE_KEYS.index(band)
+            cuts = stages.cutoffs()
+            lower = 0 if index == 0 else cuts[index - 1]
+            upper = f"{cuts[index] - 1}" if index < len(cuts) else 'and up'
+            audience = f"ages {lower}–{upper}" if index < len(cuts) else f"ages {lower} and up"
+        else:
+            audience = 'any age'
+        context = (f"Public profile: {audience}.\n"
+                   f"Their week: {per_week} sessions, {minutes} minutes each. "
+                   f"What a session contains has to FIT {minutes} minutes.\n"
+                   f"Assumes: {str(shape.get('assumes') or '')[:STARTING_POINT_CHARS]}")
+    else:
+        context = _context_block(member, member_name, per_week, minutes,
+                                 starting_point)
     question = (f"What is the best established, existing, step-by-step program "
                 f"a beginner should follow to {title}? Name the real program "
                 f"and its phases. Prefer pages that actually teach the "

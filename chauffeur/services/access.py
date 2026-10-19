@@ -381,6 +381,10 @@ def practice_hidden(program, viewer, *, shared=False):
         return True
     if not program:
         return False
+    if program.get('library_id'):
+        from services import programs
+        if programs.load(program).get('unresolved'):
+            return True
     if _gone_subject('program', program):
         return not _is_keeper('program', program, viewer)
     visible = shared_screen_visible if shared else record_visible
@@ -481,7 +485,8 @@ def commitment_view(row, viewer=HOUSE, *, programs=None):
         program = _commitment_emitter(row)
     if program and gone('program', program):
         return GONE
-    if program and not record_visible('program', program, viewer):
+    from services import programs as program_service
+    if program and (program_service.load(program).get('unresolved') or not record_visible('program', program, viewer)):
         return {k: v for k, v in dict(row, title='Busy').items() if k != 'source'}
     return row
 

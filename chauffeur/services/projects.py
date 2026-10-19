@@ -1040,9 +1040,9 @@ def piece_cards(project, viewer, project_view=None):
                         and viewer is not None and access.record_view('thread', origin, viewer) is not None):
                     card['origin_thread'] = origin['id']
         elif kind == 'program':
-            row = storage.get_program(sid) or {}
+            row = programs.load(storage.get_program(sid)) or {}
             phase = (programs.progress(row) or {}).get('phase') or {}
-            card['program'] = {'state': row.get('state'), 'member_id': row.get('member_id'),
+            card['program'] = {'state': row.get('state'), 'member_id': row.get('member_id'), 'unresolved': row.get('unresolved', False),
                                'phase': phase.get('name') or ''}
         out.append(card)
     return out
@@ -1158,9 +1158,13 @@ def view(project, viewer):
                                          'link': f'projects?piece=mission:{sid}'})
             continue
         row = subjects.load(kind, sid)
+        if kind == 'program' and row is not None:
+            from services import programs
+            row = programs.load(row)
         if row is not None and subjects.visible(kind, row, viewer):
             result['pieces'].append({'kind': kind, 'id': sid,
                                      'title': subjects.title_of(kind, row),
+                                     **({'unresolved': row.get('unresolved', False)} if kind == 'program' else {}),
                                      'link': subjects.link(kind, sid)})
     result.update(next_step=next((step for step in sorted(result['steps'], key=lambda item: item['order'])
                                   if step.get('state') == 'todo'

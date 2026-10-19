@@ -7,12 +7,14 @@ import datetime
 import time
 import uuid
 
+from program_fixture import add_run, loaded, phase_id
 from harness import check
 from services import chat_actions, programs, storage, watchers
 
 
 def _reset():
     storage.programs_table.truncate()
+    storage.library_programs_table.truncate()
     storage.protected_commitments_table.truncate()
     storage.members_table.truncate()
     storage.add_member({'id': 'lily', 'name': 'Lily', 'role': 'child'})
@@ -23,7 +25,7 @@ def _mk(start_days_ago=21, member_id='lily', target_date='2026-06-14',
        phases=None):
     start = (datetime.date.today()
              - datetime.timedelta(days=start_days_ago)).isoformat()
-    return storage.add_program({
+    return add_run({
         'member_id': member_id, 'title': 'Guitar', 'state': 'active',
         'shape': {'sessions_per_week': 3, 'minutes': 25,
                   'preferred_days': [1, 3, 5]},
@@ -57,7 +59,7 @@ def scenario_the_shortfall_is_derived_and_never_stored():
     _log_on(pid, 1)      # Tuesdays happen
     _log_on(pid, 5)      # Saturdays happen
     # Thursdays (weekday 3) never do.
-    row = storage.get_program(pid)
+    row = loaded(pid)
 
     real_update = storage.update_program
     real_append = storage.append_program_session
@@ -85,7 +87,7 @@ def scenario_rebaseline_never_moves_a_date_the_world_fixed():
     _reset()
     pid = _mk()
     _log_on(pid, 1)      # one session a week against a shape of three
-    row = storage.get_program(pid)
+    row = loaded(pid)
     before = dict(row['baseline'])
     out = programs.maybe_rebaseline(row)
     after = storage.get_program(pid)['baseline']
@@ -109,7 +111,7 @@ def scenario_rebaseline_compresses_phases_to_still_fit():
                      {'name': 'Phase 2', 'weeks': 5, 'what': 'Barre chords',
                       'milestone': 'F major', 'milestone_hit_at': None}])
     _log_on(pid, 1)      # one session a week against a shape of three
-    row = storage.get_program(pid)
+    row = loaded(pid)
     out = programs.maybe_rebaseline(row)
     check(out is not None and out['fits'] is True,
           f"two weeks of runway is tight but real -- it must fit, got {out}")
@@ -120,7 +122,7 @@ def scenario_rebaseline_compresses_phases_to_still_fit():
     check(all(w < 5 for w in weeks),
           f"and they were actually shrunk, not left alone, got {weeks}")
     check(all(w >= 1 for w in weeks), f"never compressed below one week, got {weeks}")
-    stored = [p['weeks'] for p in storage.get_program(pid)['phases']]
+    stored = [p['weeks'] for p in loaded(pid)['phases']]
     check(stored == weeks, "the compression is really persisted, not just returned")
 
 
@@ -134,7 +136,7 @@ def scenario_rebaseline_does_not_claim_a_squeeze_that_never_happened():
              phases=[{'name': 'Phase 1', 'weeks': 2, 'what': 'Chords',
                       'milestone': 'G to C', 'milestone_hit_at': None}])
     _log_on(pid, 1)      # pace shortfall, but plenty of calendar slack
-    row = storage.get_program(pid)
+    row = loaded(pid)
     out = programs.maybe_rebaseline(row)
     check(out is not None and out['fits'] is True,
           f"eight weeks of runway against a two-week phase already fits, got {out}")
@@ -163,14 +165,15 @@ def scenario_rebaseline_admits_when_phases_cannot_fit():
                 'milestone': 'G to C', 'milestone_hit_at': None}]
     pid = _mk(target_date=target,
              phases=[dict(p) for p in original])
+    original = loaded(pid)['phases']
     _log_on(pid, 1)
-    row = storage.get_program(pid)
+    row = loaded(pid)
     out = programs.maybe_rebaseline(row)
     check(out is not None and out['fits'] is False,
           f"three days cannot hold even one more week, got {out}")
     check(out['phases'] == original,
           f"and it must not pretend to make room it doesn't have, got {out['phases']}")
-    check(storage.get_program(pid)['phases'] == original,
+    check(loaded(pid)['phases'] == original,
           "the untouched phases are what actually got saved")
     day = watchers._eaten_days(out)
     line = watchers._rebaseline_line(row.get('title'), day, out).lower()
@@ -185,12 +188,12 @@ def scenario_rebaseline_stretches_when_nothing_pins_the_date():
     _reset()
     pid = _mk(target_date=None)
     _log_on(pid, 1)
-    row = storage.get_program(pid)
+    row = loaded(pid)
     out = programs.maybe_rebaseline(row)
     check(out is not None and out['fits'] is None and not out['date_moved'], str(out))
     check(out['stretched'] and out['phases'][0]['weeks'] > row['phases'][0]['weeks'],
           'an undated plan stretches its phases')
-    after = storage.get_program(pid)
+    after = loaded(pid)
     check(after['baseline']['target_date'] is None and after['phases'] == out['phases'],
           'stretch persisted without inventing a target date')
 
@@ -200,7 +203,7 @@ def scenario_malformed_target_date_claims_no_room_was_made():
     _reset()
     pid = _mk(target_date='invalid-date')
     _log_on(pid, 1)
-    row = storage.get_program(pid)
+    row = loaded(pid)
     out = programs.maybe_rebaseline(row)
     check(out is not None and not out['date_moved'] and not out['phases_changed'], str(out))
     line = watchers._rebaseline_line(row.get('title'), watchers._eaten_days(out), out).lower()
@@ -390,7 +393,7 @@ def scenario_a_deactivated_window_is_not_a_deleted_one():
     pid = _mk()
     cid, _ = _elapsed_slot(pid)
     storage.update_protected_commitment(cid, {'active': False})
-    row = storage.get_program(pid)
+    row = loaded(pid)
     check(programs.orphaned_emissions(row) == [],
           "deactivating is not deleting")
     storage.delete_protected_commitment(cid)
@@ -439,13 +442,13 @@ def scenario_the_last_milestone_finishes_the_program():
                       {'name': 'Phase 2', 'weeks': 4, 'what': 'Songs',
                        'milestone': 'A whole song', 'milestone_hit_at': None}])
     _elapsed_slot(pid)
-    programs.mark_milestone(pid, 'Phase 1')
+    programs.mark_milestone(pid, phase_id(pid, 0))
     check(storage.get_program(pid)['state'] == 'active',
           "one of two is not the end")
-    res = programs.mark_milestone(pid, 'Phase 2')
+    res = programs.mark_milestone(pid, phase_id(pid, 1))
     check(res['status'] == 'success' and res.get('schedule_dirty'),
           f"the last one finishes it, got {res}")
-    row = storage.get_program(pid)
+    row = loaded(pid)
     check(row['state'] == 'done' and row.get('finished_at'),
           f"reaching the end is not the same as abandoning it, got {row['state']}")
     check(storage.get_protected_commitments(member_id='lily') == [],
@@ -462,7 +465,7 @@ def scenario_a_person_can_say_it_is_finished():
     _elapsed_slot(pid)
     res = programs.finish(pid)
     check(res['status'] == 'success', f"got {res}")
-    row = storage.get_program(pid)
+    row = loaded(pid)
     check(row['state'] == 'done' and row.get('finished_at'), f"got {row['state']}")
     check(storage.get_protected_commitments(member_id='lily') == [],
           "the evenings go back, same as dropping -- what differs is the record")
@@ -476,11 +479,11 @@ def scenario_an_undated_program_really_stretches():
     _reset()
     pid = _mk(target_date=None)
     _log_on(pid, 1)
-    row = storage.get_program(pid)
+    row = loaded(pid)
     before = [p['weeks'] for p in row['phases']]
     out = programs.maybe_rebaseline(row)
     check(out is not None, f"it still fires, got {out}")
-    after = [p['weeks'] for p in storage.get_program(pid)['phases']]
+    after = [p['weeks'] for p in loaded(pid)['phases']]
     check(all(a > b for a, b in zip(after, before)),
           f"and the timeline actually stretches, {before} -> {after}")
     check(out.get('stretched') is True, f"and says so honestly, got {out}")
@@ -494,7 +497,7 @@ def scenario_a_tied_shortfall_names_no_single_day():
     empty log said "Mondays keep getting eaten" about three identical days.
     The whole value of that sentence is naming the right one."""
     _reset()
-    pid = storage.add_program({
+    pid = add_run({
         'member_id': 'lily', 'title': 'Guitar', 'state': 'active',
         'shape': {'sessions_per_week': 3, 'minutes': 25,
                   'preferred_days': [0, 2, 4]},

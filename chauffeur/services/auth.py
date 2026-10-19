@@ -90,6 +90,8 @@ RULES = [
     # which is the only place the faces picker exists any more. Off trusted
     # ground the front door is the login page, which needs no list. The tier
     # table cannot express "trusted ground", so the handler owns the rest.
+    (ANY, '/api/library', SIGNED_IN, None),
+    (ANY, '/api/library/*', SIGNED_IN, None),
     ('GET', '/api/members', ANYONE, None),
     ('GET', '/api/drivers', ANYONE, None),
     # "Where am I standing?" — one boolean about the caller's own ground,

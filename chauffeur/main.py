@@ -1,3 +1,4 @@
+import copy
 import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -7705,6 +7706,7 @@ def list_programs_api(member_id: str = None, include_finished: bool = False,
         members = {x['id']: x for x in storage.get_all_members(include_archived=True)}
         out = []
         for r in rows:
+            r = _prog.load(r)
             # The "did it happen?" question rides the OWNER's own surface rather
             # than a DM to their parents (see `watchers._program_findings`), so
             # the pending ask has to come back with the program the PWA already
@@ -7749,269 +7751,209 @@ def list_programs_api(member_id: str = None, include_finished: bool = False,
         return {"programs": out}
 
 
+def _library_actor(request):
+    actor = _piece_viewer(request)
+    if not actor.get('id'):
+        raise HTTPException(status_code=401, detail='Sign in first.')
+    return actor
+
+
+def _library_result(result):
+    if result.get('code'):
+        raise HTTPException(status_code=result['code'], detail=result['message'])
+    return result
+
+
+@app.get('/api/library')
+def list_library_api(request: Request, include_archived: bool = True):
+    from services import library
+    return {'programs': library.list_programs(_library_actor(request), include_archived)}
+
+
+@app.post('/api/library')
+def create_library_api(request: Request, body: dict = Body(default={})):
+    from services import library
+    return _library_result(library.create(body, _library_actor(request)))
+
+
+@app.get('/api/library/{id}')
+def get_library_api(id: str, request: Request):
+    from services import library
+    row = library.get(id, _library_actor(request))
+    if row is None:
+        raise HTTPException(status_code=404, detail='No such library program.')
+    return row
+
+
+@app.patch('/api/library/{id}')
+def update_library_api(id: str, request: Request, body: dict = Body(default={})):
+    from services import library
+    return _library_result(library.update(id, body, _library_actor(request)))
+
+
+@app.delete('/api/library/{id}')
+def delete_library_api(id: str, request: Request):
+    from services import library
+    return _library_result(library.delete(id, _library_actor(request)))
+
+
+@app.post('/api/library/{id}/archive')
+def archive_library_api(id: str, request: Request):
+    from services import library
+    return _library_result(library.archive(id, _library_actor(request)))
+
+
+@app.post('/api/library/{id}/lessons')
+def add_library_lesson_api(id: str, request: Request, body: dict = Body(default={})):
+    from services import library
+    return _library_result(library.add_lesson(id, body, _library_actor(request)))
+
+
+@app.patch('/api/library/{id}/lessons/{lesson_id}')
+def update_library_lesson_api(id: str, lesson_id: str, request: Request, body: dict = Body(default={})):
+    from services import library
+    return _library_result(library.update_lesson(id, lesson_id, body, _library_actor(request)))
+
+
+@app.delete('/api/library/{id}/lessons/{lesson_id}')
+def remove_library_lesson_api(id: str, lesson_id: str, request: Request):
+    from services import library
+    return _library_result(library.remove_lesson(id, lesson_id, _library_actor(request)))
+
+
+@app.post('/api/library/{id}/lessons/order')
+def order_library_lessons_api(id: str, request: Request, body: dict = Body(default={})):
+    from services import library
+    return _library_result(library.order_lessons(id, body.get('ids') or [], _library_actor(request)))
+
+
 @app.post("/api/programs")
 def create_program(body: dict = Body(default={}), request: Request = None):
-    """Propose a program: screen the aim, then curate a real plan for it.
-
-    The screen runs before anything else — a body-composition aim never
-    reaches research and never becomes an object somebody could approve
-    later, no matter who is asking. Proposing for YOURSELF is open to any
-    signed-in member, the child whose program this is included; proposing
-    in somebody ELSE's name is the same parent/adult act every other write
-    below requires once ownership doesn't hold — a program is still a
-    capability nobody granted, even sitting `proposed` until approved.
-    """
-    from services import programs as _prog, programs_curate as _cur
-    # `programs_enabled` used to gate only the watcher sweep, so a household
-    # that had turned programs off could still propose one -- spending a real
-    # research run and claiming a week the settings said it did not want. A
-    # setting named for a feature governs the feature.
+    from services import programs as _prog, programs_curate as _cur, library, stages
     if not storage.get_settings().get('programs_enabled', True):
-        return {"status": "error",
-                "message": "Programs are switched off for this household."}
-    title = (body.get('title') or '').strip()
-    screen = _cur.screen_aim(title)
-    if not screen.get('ok'):
-        return {"status": "error", "message": screen.get('message'),
-                "alternatives": screen.get('alternatives') or []}
-    # The starting point is the second free-text field a family types, and a
-    # screen that guards only the first is a screen with a door beside it.
-    starting_point = (body.get('starting_point') or '').strip()
-    screen = _cur.screen_starting_point(starting_point)
-    if not screen.get('ok'):
-        return {"status": "error", "message": screen.get('message'),
-                "alternatives": screen.get('alternatives') or []}
-    claimed = body.get('member_id')
-    actor_id = _acting_id(request, claimed)
-    # Clamped HERE, not only by `max="7"` on the number input: a shape nobody
-    # bounded hung `propose_slots` forever and wrote a '29:00' window that
-    # silently disabled protected time household-wide.
-    shape = _prog.clamp_shape({
-        'sessions_per_week': body.get('sessions_per_week'),
-        'minutes': body.get('minutes'),
-        'preferred_days': list(body.get('preferred_days') or [])})
-    for_member_id = body.get('for_member_id')
-    member_id = for_member_id or actor_id
+        return {'status': 'error', 'message': 'Programs are switched off for this household.'}
+    starting_point = str(body.get('starting_point') or '').strip()
+    title = str(body.get('title') or '').strip()
+    # Screen before any publication, project writes or research.
+    screens = [_cur.screen_starting_point(starting_point)]
+    if not body.get('library_id'):
+        screens.insert(0, _cur.screen_aim(title))
+    for screen in screens:
+        if not screen.get('ok'):
+            return {'status': 'error', 'message': screen.get('message'), 'alternatives': screen.get('alternatives') or []}
+    actor_id = _acting_id(request, body.get('member_id'))
+    actor = storage.get_member(actor_id) if actor_id else _approver_of_record(_mind_actor(request, None))
+    member_id = body.get('for_member_id') or actor_id
     if not member_id:
-        return {"status": "error", "message": "Whose program is this?"}
-    if for_member_id and for_member_id != actor_id:
-        _approver_of_record(_mind_actor(request, claimed))
-    pid = _project_to_join(body, storage.get_member(actor_id) if actor_id else None)
-    member = storage.get_member(member_id) or {}
-    curated = _cur.curate(title, shape, member_name=member.get('name') or '',
-                          member=member, starting_point=starting_point)
-    pid = _prog.create_row({
-        'member_id': member_id, 'title': title, 'shape': shape,
-        'starting_point': starting_point,
-        'phases': curated['phases'], 'source': curated['source'],
-        'baseline': {'start_date': None,
-                     'target_date': body.get('target_date'),
-                     'target_event_id': None, 'rebaselined_at': None,
-                     'rebaselines': 0},
-        'created_by': actor_id}, project_id=pid)
-    return {"status": "success", "id": pid, "program": storage.get_program(pid)}
+        return {'status': 'error', 'message': 'Whose program is this?'}
+    if member_id != actor_id:
+        _approver_of_record(_mind_actor(request, body.get('member_id')))
+    project_id = _project_to_join(body, actor)
+    made = None
+    if body.get('library_id'):
+        curriculum = storage.get_library_program(body['library_id'])
+        if not library.valid_curriculum(curriculum) or curriculum.get('archived'):
+            return {'status': 'error', 'message': 'Choose a library program.'}
+    else:
+        member = storage.get_member(member_id) or {}
+        age = stages.age_of(member)
+        band = body.get('age_band') or (stages.stage_for_age(age) if age is not None else 'any')
+        made = library.create({**body, 'age_band': band}, actor)
+        if made.get('status') != 'success':
+            return _library_result(made)
+        curriculum = made['program']
+    shape = _prog.clamp_shape({**{k: curriculum['made_for'][k] for k in ('minutes', 'sessions_per_week')},
+                               **{k: body[k] for k in ('minutes', 'sessions_per_week', 'preferred_days', 'slots') if k in body}})
+    pid = _prog.create_row({'member_id': member_id, 'library_id': curriculum['id'], 'shape': shape,
+        'starting_point': starting_point, 'created_by': actor.get('id'),
+        'baseline': {'start_date': None, 'target_date': body.get('target_date'), 'target_event_id': None,
+                     'rebaselined_at': None, 'rebaselines': 0}}, project_id=project_id)
+    if not pid:
+        return {'status': 'error', 'message': 'That project or library program is no longer here.'}
+    return {'status': 'success', 'id': pid, 'program': _prog.load(storage.get_program(pid)),
+            **({'message': made['message']} if made else {})}
 
 
 @app.post("/api/programs/{program_id}/edit")
-def edit_program(program_id: str, body: dict = Body(default={}),
-                 request: Request = None):
-    """Change a proposal before it claims anything.
-
-    A POST verb on the program rather than a PATCH on the collection item,
-    because every other thing a program can be told to do is one
-    (`approve`, `pause`, `resume`, `reshape`, `finish`, `drop`) and the odd
-    one out is a variable the day something between a phone and the add-on
-    declines it.
-
-    A proposal used to be frozen the moment it was made: no title fix, no
-    change of shape, no second look. The only exits were approving it or
-    leaving it on the page forever, which meant a typo, a bad guess at how
-    many evenings a week were realistic, or a research outage all cost a
-    fresh proposal — and a fresh proposal spends another research run.
-
-    Only a PROPOSAL is editable, and that is the point rather than a
-    limitation: once time is claimed, changing the plan under it would move
-    windows nobody re-approved. An active program's route back here is
-    `reshape`, which frees the time first.
-
-    A research run is spent only when the aim itself changed, or when the
-    caller explicitly asks to look again — editing "three evenings" to "two"
-    re-paces the phases already found with the same arithmetic that produced
-    them, and reads nothing.
-    """
+def edit_program(program_id: str, body: dict = Body(default={}), request: Request = None):
     _piece_or_404('program', program_id, request, 'edit')
-    from services import programs as _prog, programs_curate as _cur
-    row = storage.get_program(program_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="No such program")
+    from services import programs as _prog, programs_curate as _cur, library
+    row = _prog.load(storage.get_program(program_id))
     _program_permission_or_refuse(request, body, row)
+    if body.get('library_id'):
+        actor = _piece_viewer(request)
+        if not actor.get('id'):
+            actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
+        return _prog.rebind(program_id, body['library_id'], actor)
     if row.get('state') != 'proposed':
-        return {"status": "error",
-                "message": ("Only a proposal can be edited. Re-shape the week "
-                            "to bring this one back to a proposal first.")}
-
-    updates = {}
-    title = (body.get('title') or '').strip()
-    retitled = bool(title) and title != (row.get('title') or '')
-    if retitled:
+        return {'status': 'error', 'message': 'Only a proposal can be edited. Re-shape the week to bring this one back to a proposal first.'}
+    title = str(body.get('title') or '').strip()
+    if title and title != row.get('title'):
         screen = _cur.screen_aim(title)
-        if not screen.get('ok'):
-            return {"status": "error", "message": screen.get('message'),
-                    "alternatives": screen.get('alternatives') or []}
-        updates['title'] = title
-
-    # Changing where somebody is starting from does NOT spend a research run
-    # by itself. The material on the page did not change; how it should be
-    # organised did, and re-reading the web to learn that would charge the
-    # family for an edit. It lands in the row and is used the next time
-    # somebody asks to look again -- which the page says out loud rather than
-    # leaving them to wonder why the plan looks the same.
-    starting_point = row.get('starting_point') or ''
-    restarted = False
+        return {'status': 'error', 'message': 'The name belongs to the library program; rename the project instead.',
+                **({'alternatives': screen.get('alternatives') or []} if not screen.get('ok') else {})}
+    updates = {}
+    started = False
     if 'starting_point' in body:
-        starting_point = (body.get('starting_point') or '').strip()
-        screen = _cur.screen_starting_point(starting_point)
+        start = str(body['starting_point'] or '').strip()
+        screen = _cur.screen_starting_point(start)
         if not screen.get('ok'):
-            return {"status": "error", "message": screen.get('message'),
-                    "alternatives": screen.get('alternatives') or []}
-        restarted = starting_point != (row.get('starting_point') or '')
-        if restarted:
-            updates['starting_point'] = starting_point
-
+            return {'status': 'error', 'message': screen.get('message'), 'alternatives': screen.get('alternatives') or []}
+        updates['starting_point'] = start
+        started = start != row.get('starting_point')
     old_shape = row.get('shape') or {}
-    # Every field carries forward unless this call names it — an edit of the
-    # minutes must not silently discard the windows somebody chose by hand,
-    # which is what building the shape from three fields did.
-    shape = _prog.clamp_shape({
-        'sessions_per_week': body.get('sessions_per_week',
-                                      old_shape.get('sessions_per_week')),
-        'minutes': body.get('minutes', old_shape.get('minutes')),
-        'preferred_days': list(body.get('preferred_days')
-                               if body.get('preferred_days') is not None
-                               else (old_shape.get('preferred_days') or [])),
-        # An explicit empty list is a real instruction — "stop using my times,
-        # propose them again" — so it is distinguished from not saying.
-        'slots': (body.get('slots') if body.get('slots') is not None
-                  else (old_shape.get('slots') or []))})
+    shape = _prog.clamp_shape({**old_shape, **{k: body[k] for k in
+        ('minutes', 'sessions_per_week', 'preferred_days', 'slots') if body.get(k) is not None}})
     if shape != old_shape:
         updates['shape'] = shape
-
+        progress_ = copy.deepcopy(row['progress'])
+        for ph in row.get('phases') or []:
+            # A phase flattened from a phase-only plan retains its original pacing formula.
+            units = ph.get('units') or []
+            material_units = units if any(u.get('body') or u.get('url') or u.get('title') != ph.get('name') for u in units) else None
+            progress_['phases'].setdefault(ph['id'], {})['weeks'] = _cur.phase_weeks(shape['sessions_per_week'], material_units)
+        updates['progress'] = progress_
     if 'target_date' in body:
-        baseline = dict(row.get('baseline') or {})
-        baseline['target_date'] = body.get('target_date') or None
-        updates['baseline'] = baseline
-
+        updates['baseline'] = {**row['baseline'], 'target_date': body['target_date'] or None}
     kept = False
-    if retitled or body.get('recurate'):
+    if body.get('recurate'):
         if not storage.get_settings().get('programs_enabled', True):
-            return {"status": "error",
-                    "message": "Programs are switched off for this household."}
-        member = storage.get_member(row.get('member_id')) or {}
-        # `curate()` handles its own expected failures and hands back a tier;
-        # anything it does NOT expect would otherwise leave FastAPI to answer
-        # with a plain-text 500, which the page cannot parse into words --
-        # every such failure reached the family as "Couldn't look again just
-        # now", the least useful sentence in the app.
+            return {'status': 'error', 'message': 'Programs are switched off for this household.'}
+        previous = storage.get_library_program(row['library_id'])
+        profile = previous['made_for']
         try:
-            curated = _cur.curate(updates.get('title') or row.get('title'),
-                                  shape, member_name=member.get('name') or '',
-                                  member=member, starting_point=starting_point,
-                                  exclude_books=bool(body.get('exclude_books')))
-        except Exception as e:
-            print(f"[programs] curate failed for {program_id}: {e!r}")
-            return {"status": "error",
-                    "message": f"Looking for a plan failed: {e}"}
-        # A second look that finds nothing must not COST the family the plan
-        # they already had — research can be down, capped or simply unlucky,
-        # and overwriting a cited plan with an empty one would make "Look
-        # again" a button that can only lose. A retitle is the exception:
-        # that plan was found for a question nobody is asking any more.
-        if retitled or curated['phases'] or not (row.get('phases') or []):
-            updates['phases'] = curated['phases']
-            updates['source'] = curated['source']
-            # The old plan's lessons go with the old plan. A lesson is keyed
-            # to (phase_name, unit_n, session_label), `_clean_units`
-            # renumbers `n` from 1 every time, and phase names and rotation
-            # labels recur across a re-curate -- so a colliding slot would
-            # otherwise hand the NEW plan a script written for the OLD one,
-            # and `generate_for`'s already-has-a-lesson skip means the sweep
-            # would never replace it. The book-spine "plan without the book"
-            # fork lands exactly here, which is the case where the two plans
-            # are most likely to share a phase name and least likely to mean
-            # the same thing by it.
-            storage.delete_program_lessons(program_id)
+            curated = _cur.curate(row['title'], profile, **({'exclude_books': True} if body.get('exclude_books') else {}))
+        except Exception as exc:
+            return {'status': 'error', 'message': f'Looking for a plan failed: {exc}'}
+        if curated.get('phases') or not row.get('phases'):
+            actor = _piece_viewer(request)
+            if not actor.get('id'):
+                actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
+            with storage.db_lock, storage.db.transaction():
+                lid = storage.add_library_program(library.from_curated(row['title'], profile, curated, actor['id']))
+                # Permission was checked above, including trusted control-center calls.
+                updates.update(library_id=lid, progress=_prog.reconcile_progress({}, storage.get_library_program(lid)))
+                storage.delete_program_lessons(program_id)
+                storage.update_program(program_id, updates)
+            library._invalidate()
+            updates = {}
         else:
             kept = True
-    elif 'shape' in updates and row.get('phases'):
-        # Pacing is arithmetic over the shape, so a shape edit re-paces what
-        # was already found. Nothing is re-read and no model is asked: the
-        # material did not change, only how much of it fits in a week.
-        per_week = shape.get('sessions_per_week') or 3
-        updates['phases'] = [
-            {**ph, 'weeks': _cur.phase_weeks(per_week, ph.get('units'))}
-            for ph in row['phases']]
-
-    if kept:
-        message = "Looked again and found nothing new — the plan you had stands."
-    elif retitled or body.get('recurate'):
-        message = "Looked again."
-    elif restarted:
-        message = ("Saved where they're starting from — tap Look again to "
-                   "re-plan around it.")
-    else:
-        message = "Updated."
-    if not updates:
-        return {"status": "success", "program": row, "message": message}
-    storage.update_program(program_id, updates)
-    return {"status": "success", "program": storage.get_program(program_id),
-            "message": message}
+    if updates:
+        storage.update_program(program_id, updates)
+    message = ('Looked again and found nothing new. The plan you had stands.' if kept else
+               'Looked again.' if body.get('recurate') else
+               "Saved where they're starting from. Tap Look again to re-plan around it." if started else 'Updated.')
+    return {'status': 'success', 'program': _prog.load(storage.get_program(program_id)), 'message': message}
 
 
 @app.post("/api/programs/{program_id}/unit")
-def move_program_unit(program_id: str, body: dict = Body(default={}),
-                      request: Request = None):
-    """Stay on this lesson, or move on to the next one.
-
-    Which rung a session lands on is derived from the sessions logged since
-    the phase began, which is right often enough to be the default and wrong
-    often enough to need a hand on it: a lesson that needs another evening,
-    or two lessons done in one sitting, are both ordinary and neither is
-    visible to this app.
-
-    `unit_shift` is a bookmark and nothing else. It does not count anything,
-    it is not a record of what happened, and it moves in both directions --
-    which is exactly why it is not any of the six things a program may not
-    hold. Nothing here can mark a lesson missed, because there is nowhere to
-    write that down.
-    """
+def move_program_unit(program_id: str, body: dict = Body(default={}), request: Request = None):
     _piece_or_404('program', program_id, request, 'unit')
     from services import programs as _prog
     row = storage.get_program(program_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="No such program")
     _program_permission_or_refuse(request, body, row)
-    direction = (body.get('direction') or '').strip()
-    if direction not in ('next', 'stay'):
-        return {"status": "error", "message": "Which way — next, or stay?"}
-    phases, moved = [], None
-    for ph in (row.get('phases') or []):
-        if moved is None and not ph.get('milestone_hit_at'):
-            units = [u for u in (ph.get('units') or []) if isinstance(u, dict)]
-            if not units:
-                return {"status": "error",
-                        "message": "This plan has no lessons to move between."}
-            ph = {**ph, 'unit_shift': int(ph.get('unit_shift') or 0)
-                  + (1 if direction == 'next' else -1)}
-            moved = ph
-        phases.append(ph)
-    if moved is None:
-        return {"status": "error", "message": "Nothing left to move through."}
-    storage.update_program(program_id, {'phases': phases})
-    fresh = storage.get_program(program_id)
-    unit = _prog.unit_for(fresh, _prog.progress(fresh).get('phase') or {}) or {}
-    return {"status": "success", "program": fresh,
-            "message": (f"On {unit.get('title')} now."
-                        if unit.get('title') else "Moved.")}
+    return _prog.step_bookmark(program_id, body.get('direction'))
 
 
 @app.get("/api/practice-windows")
@@ -8649,10 +8591,11 @@ def log_program_session(program_id: str, body: dict = Body(default={}),
     # slot asks in the morning, so stamping "yes, it happened" with `now`
     # would file Thursday's practice under Friday — and the prompt for
     # Thursday would never clear.
-    return _prog.log_session(program_id, minutes=body.get('minutes'),
+    result = _prog.log_session(program_id, minutes=body.get('minutes'),
                              source=body.get('source') or 'added',
                              note=body.get('note') or '',
-                             slot_date=body.get('slot_date'))
+                             slot_date=body.get('slot_date'), lesson_id=body.get('lesson_id'))
+    return _library_result(result)
 
 
 @app.post("/api/programs/{program_id}/milestone")
@@ -8668,7 +8611,7 @@ def hit_program_milestone(program_id: str, background_tasks: BackgroundTasks = N
     # Marking the LAST milestone finishes the program, which hands its
     # evenings back — so this one can move protected time too.
     return _program_refresh(
-        _prog.mark_milestone(program_id, body.get('phase_name') or ''),
+        _prog.mark_milestone(program_id, body.get('phase_id') or ''),
         background_tasks)
 
 

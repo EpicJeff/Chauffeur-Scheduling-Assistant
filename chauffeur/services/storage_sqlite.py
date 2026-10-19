@@ -97,6 +97,7 @@ INDEX_SPEC = {
     "protected_exceptions": [["commitment_id"], ["date"]],
     # Programs: read by whose they are and by state on every sweep.
     "programs": [["id"], ["member_id"], ["state"]],
+    "library_programs": [["id"], ["created_by"], ["archived"]],
 }
 
 # '!=' is deliberately absent: TinyDB matches a stored null against `!= x`,

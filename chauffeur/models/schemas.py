@@ -762,69 +762,42 @@ class ProtectedCommitment(BaseModel):
     active: bool = True
     created_at: float = Field(default_factory=time.time)
 
+class LibraryProgram(BaseModel):
+    """Public household curriculum. Personal inputs belong only to a run."""
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    title: str
+    created_by: Optional[str] = None
+    created_at: float = Field(default_factory=time.time)
+    updated_at: float = Field(default_factory=time.time)
+    archived: bool = False
+    made_for: Dict[str, Any] = Field(default_factory=lambda: {
+        'age_band': 'any', 'minutes': 25, 'sessions_per_week': 3, 'assumes': ''})
+    source: Dict[str, Any] = Field(default_factory=lambda: {
+        'plan_name': '', 'url': '', 'facts': [], 'origin': 'none',
+        'reason': '', 'hand_written': False})
+    phases: List[Dict[str, Any]] = Field(default_factory=list)
+    lessons: List[Dict[str, Any]] = Field(default_factory=list)
+
+
 class Program(BaseModel):
-    """An ambition made concrete: an aim, a cited path, and the week it needs.
+    """One person's run: agreement, reservations, sessions and milestone judgements.
 
-    A goal is not a block on a calendar. Nobody reserves forty minutes for
-    guitar and then sits there wondering what to do with it — they never
-    reserve it, because they have no idea what would go in it. So a program
-    carries the plan as well as the time, and it GENERATES the rest: practice
-    slots the solver defends, a thread for the kit, a real date to aim at.
-
-    The six progress rules from the design live in this shape rather than in
-    the code that renders it. There is no streak field, so no streak can be
-    drawn. A milestone has only a hit date, so nothing can mark one missed.
-    There is nowhere to put an outcome measure, which is also what keeps
-    body-composition targets structurally out of the app. A schema that cannot
-    express shame is worth more than a rule asking people not to render it.
+    Public curriculum is stored in LibraryProgram and resolved by programs.load.
+    The bookmark and session counts name stable lesson ids; milestone timestamps
+    remain a person's judgement, never an inferred completion percentage.
     """
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     member_id: str
-    title: str                                   # the aim, in their words
+    library_id: Optional[str] = None
+    progress: Dict[str, Any] = Field(default_factory=lambda: {
+        'lessons': {}, 'current': None, 'phases': {}})
     state: str = 'proposed'                      # proposed|active|paused|done|dropped
     created_by: Optional[str] = None
     project_id: Optional[str] = None          # every record belongs to one project (front door §1)
     approved_by: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
-    # Phases come from pages the app actually read (or, in the generated tier,
-    # are labelled as the app's own); pacing is computed. A phase that cited
-    # nothing was dropped before it got here. `steps` is the phase's actual
-    # content -- the named exercises, drills or material, in order -- which
-    # `what` (a paragraph about the phase) and `milestone` (how you know it
-    # ended) between them never were.
-    #
-    # `progression` is how one session beats the last one INSIDE a phase, in
-    # the activity's own terms, and `rotation` is 2-4 labelled sessions for a
-    # phase whose sessions differ from each other (empty where they do not).
-    # Both are content, not record: nothing here counts what happened, which
-    # is what keeps the rotation from becoming a streak by another name.
-    #
-    # `units` is the ladder a real curriculum is actually made of -- the
-    # lessons, modules or chapters in order, each with a title, how many
-    # sessions it takes, and somewhere to read it: a `url` for a cited plan
-    # (only ever a page the app really read) or a `body` for one the app
-    # wrote. Never both. `unit_shift` is the hand on that ladder, a bookmark
-    # a person moves either way; it counts nothing and records nothing, which
-    # is what keeps it out of the six.
-    phases: List[Dict[str, Any]] = Field(default_factory=list)
-    # What this person can already do, in their own words, and it is an INPUT
-    # to curation rather than a measurement of them. A plan written for a
-    # generic beginner is the single most common way a real plan is useless,
-    # and until this existed the app had no way to say "already plays open
-    # chords" or "has a keyboard but no pedal". Screened for body-composition
-    # terms at every door, exactly like the aim.
+    # Private input for per-run lesson generation, never library curation.
     starting_point: str = ''
-    # `origin` is the tier: 'cited' (a real published plan, with its pages),
-    # 'generated' (none was found, so the app wrote one and says so) or 'none'
-    # (research could not run — time only). `reason` names WHY it is not
-    # cited, which used to exist only inside the curator and never reach a
-    # screen. `hand_written` is kept as origin != 'cited' so rows and readers
-    # written before the tiers existed still mean what they meant.
-    source: Dict[str, Any] = Field(
-        default_factory=lambda: {'plan_name': '', 'url': '', 'why_this_one': '',
-                                 'facts': [], 'runners_up': [], 'answer': '',
-                                 'origin': 'none', 'reason': '',
-                                 'hand_written': False})
     # `slots` is the week said exactly -- [{day, time_start, time_end}] --
     # when a person picked their own windows instead of taking the proposal.
     # Empty means "you choose", which is where every program starts.
