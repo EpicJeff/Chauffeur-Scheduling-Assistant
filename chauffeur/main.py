@@ -7885,6 +7885,15 @@ def edit_program(program_id: str, body: dict = Body(default={}), request: Reques
         if not actor.get('id'):
             actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
         return _prog.rebind(program_id, body['library_id'], actor)
+    if body.get('recurate'):
+        actor_id = _acting_id(request, body.get('member_id'))
+        actor = (storage.get_member(actor_id) if actor_id else
+                 _approver_of_record(_mind_actor(request, body.get('member_id'))))
+        if not actor or actor.get('role') not in ('parent', 'adult') or actor.get('status', 'active') != 'active':
+            return {'status': 'error', 'message': library.EDIT_REFUSAL}
+        previous = storage.get_library_program(row.get('library_id'))
+        if row.get('unresolved') or not row.get('library_id') or not library.valid_curriculum(previous):
+            return {'status': 'error', 'message': 'Its library program is missing'}
     if row.get('state') != 'proposed':
         return {'status': 'error', 'message': 'Only a proposal can be edited. Re-shape the week to bring this one back to a proposal first.'}
     title = str(body.get('title') or '').strip()
@@ -7906,29 +7915,26 @@ def edit_program(program_id: str, body: dict = Body(default={}), request: Reques
         ('minutes', 'sessions_per_week', 'preferred_days', 'slots') if body.get(k) is not None}})
     if shape != old_shape:
         updates['shape'] = shape
-        progress_ = copy.deepcopy(row['progress'])
-        for ph in row.get('phases') or []:
-            # A phase flattened from a phase-only plan retains its original pacing formula.
-            units = ph.get('units') or []
-            material_units = units if any(u.get('body') or u.get('url') or u.get('title') != ph.get('name') for u in units) else None
-            progress_['phases'].setdefault(ph['id'], {})['weeks'] = _cur.phase_weeks(shape['sessions_per_week'], material_units)
-        updates['progress'] = progress_
+        if row.get('library_id') and not row.get('unresolved'):
+            progress_ = copy.deepcopy(row['progress'])
+            for ph in row.get('phases') or []:
+                # A phase flattened from a phase-only plan retains its original pacing formula.
+                units = ph.get('units') or []
+                material_units = units if any(u.get('body') or u.get('url') or u.get('title') != ph.get('name') for u in units) else None
+                progress_['phases'].setdefault(ph['id'], {})['weeks'] = _cur.phase_weeks(shape['sessions_per_week'], material_units)
+            updates['progress'] = progress_
     if 'target_date' in body:
         updates['baseline'] = {**row['baseline'], 'target_date': body['target_date'] or None}
     kept = False
     if body.get('recurate'):
         if not storage.get_settings().get('programs_enabled', True):
             return {'status': 'error', 'message': 'Programs are switched off for this household.'}
-        previous = storage.get_library_program(row['library_id'])
         profile = previous['made_for']
         try:
             curated = _cur.curate(row['title'], profile, **({'exclude_books': True} if body.get('exclude_books') else {}))
         except Exception as exc:
             return {'status': 'error', 'message': f'Looking for a plan failed: {exc}'}
         if curated.get('phases') or not row.get('phases'):
-            actor = _piece_viewer(request)
-            if not actor.get('id'):
-                actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
             with storage.db_lock, storage.db.transaction():
                 lid = storage.add_library_program(library.from_curated(row['title'], profile, curated, actor['id']))
                 # Permission was checked above, including trusted control-center calls.
@@ -8611,7 +8617,7 @@ def hit_program_milestone(program_id: str, background_tasks: BackgroundTasks = N
     # Marking the LAST milestone finishes the program, which hands its
     # evenings back — so this one can move protected time too.
     return _program_refresh(
-        _prog.mark_milestone(program_id, body.get('phase_id') or ''),
+        _prog.mark_milestone(program_id, body.get('phase_id'), phase_name=body.get('phase_name')),
         background_tasks)
 
 

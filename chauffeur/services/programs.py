@@ -393,21 +393,33 @@ def log_session(program_id: str, minutes: int = None, source: str = 'added',
     return {'status': 'success', 'sessions': p['sessions'], 'message': f"{p['sessions']} sessions so far."}
 
 
-def mark_milestone(program_id: str, phase_id: str) -> dict:
+def mark_milestone(program_id: str, phase_id: str = None, *, phase_name: str = None) -> dict:
     """A person's judgement and the final release commit together or not at all."""
     try:
         with storage.db_lock, storage.db.transaction():
             row = load(storage.get_program(program_id))
             if not row:
                 return {'status': 'error', 'message': 'That program is no longer here.'}
-            phase = next((p for p in row['phases'] if p.get('id') == phase_id), None)
+            # One-release compatibility for Reached it buttons still posting names.
+            # Resolve under the same transaction as the judgement so namesakes
+            # advance only to the first phase that has not already been judged.
+            phase = (next((p for p in row['phases'] if p.get('id') == phase_id), None) if phase_id else
+                     next((p for p in row['phases'] if phase_name and p.get('name') == phase_name
+                           and not p.get('milestone_hit_at')), None))
             if not phase or phase.get('milestone_hit_at'):
                 return {'status': 'error', 'message': "I can't find that milestone."}
-            progress_ = row['progress']
-            progress_['phases'].setdefault(phase_id, {})['milestone_hit_at'] = time.time()
-            progress_ = reconcile_progress({**row, 'progress': progress_}, row)
-            updates = {'progress': progress_}
-            done = all(progress_['phases'].get(p['id'], {}).get('milestone_hit_at') for p in row['phases'])
+            if row.get('library_id'):
+                phase_id = phase['id']
+                progress_ = row['progress']
+                progress_['phases'].setdefault(phase_id, {})['milestone_hit_at'] = time.time()
+                progress_ = reconcile_progress({**row, 'progress': progress_}, row)
+                updates = {'progress': progress_}
+                done = all(progress_['phases'].get(p['id'], {}).get('milestone_hit_at') for p in row['phases'])
+            else:
+                # Persisted pre-library rows keep their old shape until Task 5.
+                phase['milestone_hit_at'] = time.time()
+                updates = {'phases': row['phases']}
+                done = all(p.get('milestone_hit_at') for p in row['phases'])
             released = 0
             if done:
                 released = release_commitments(program_id)

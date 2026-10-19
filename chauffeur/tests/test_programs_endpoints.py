@@ -3,6 +3,8 @@ from program_fixture import add_run, loaded, phase_id
 from harness import check  # noqa: F401  (isolates CHAUFFEUR_DATA_DIR)
 
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
+from unittest.mock import patch
 
 from services import storage
 
@@ -850,6 +852,126 @@ def scenario_a_parent_can_log_a_small_childs_session():
           "and it counted once")
 
 
+def _post_program_as(member_id, program_id, action, body):
+    import main
+    headers = {'X-Member-Token': storage.create_member_token(member_id)}
+    with patch.object(storage, 'get_settings', return_value={**storage.get_settings(), 'auth_enforce': True}):
+        return TestClient(main.app, raise_server_exceptions=False).post(
+            f'/api/programs/{program_id}/{action}', headers=headers, json=body)
+
+
+def scenario_legacy_phase_names_mark_the_first_unjudged_match():
+    _reset()
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar', 'state': 'active',
+                   'phases': [{'name': 'Practice', 'weeks': 2, 'milestone': 'Play it',
+                               'milestone_hit_at': stamp} for stamp in (123, None, None)]})
+    ids = [p['id'] for p in loaded(pid)['phases']]
+    response = _post_program_as('kid', pid, 'milestone', {'phase_name': 'Practice'})
+    check(response.status_code == 200 and response.json()['status'] == 'success',
+          f'the existing Reached it button works: {response.status_code} {response.text}')
+    judged = storage.get_program(pid)['progress']['phases']
+    check(judged[ids[0]]['milestone_hit_at'] == 123 and judged[ids[1]]['milestone_hit_at']
+          and not judged[ids[2]].get('milestone_hit_at'), 'the first unjudged match, never an already judged namesake')
+    before = storage.get_program(pid)
+    response = _post_program_as('kid', pid, 'milestone', {'phase_id': 'missing', 'phase_name': 'Practice'})
+    check(response.status_code == 200 and response.json()['status'] == 'error'
+          and storage.get_program(pid) == before, 'an explicit id never falls back to a different phase')
+    response = _post_program_as('kid', pid, 'milestone', {'phase_name': 'Practice'})
+    check(response.status_code == 200 and response.json()['status'] == 'success'
+          and storage.get_program(pid)['state'] == 'done', 'the next legacy tap judges the remaining phase')
+
+
+def _check_recurate_refused_without_writes(pid):
+    from services import programs_curate
+    before = storage.get_program(pid)
+    library_before = storage.get_library_programs()
+    with patch.object(programs_curate, 'curate', side_effect=AssertionError('a refused re-curate spends no research')) as curate:
+        response = _post_program_as('mom', pid, 'edit', {'recurate': True, 'minutes': 10})
+    check(response.status_code == 200 and response.json() == {
+        'status': 'error', 'message': 'Its library program is missing'},
+        f'refused with the exact message, never a 500: {response.status_code} {response.text}')
+    check(not curate.called, 'missing, malformed and unconverted curricula are never researched')
+    check(storage.get_program(pid) == before and storage.get_library_programs() == library_before,
+          'a refused re-curate creates nothing and changes neither the run nor its shape')
+
+
+def scenario_look_again_refuses_a_missing_library():
+    _reset()
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar'})
+    storage.delete_library_program(storage.get_program(pid)['library_id'])
+    _check_recurate_refused_without_writes(pid)
+
+
+def scenario_look_again_refuses_a_malformed_library():
+    _reset()
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar'})
+    storage.library_programs_table.update({'lessons': 'damaged'},
+        storage.Query().id == storage.get_program(pid)['library_id'])
+    _check_recurate_refused_without_writes(pid)
+
+
+def scenario_a_legacy_runs_shape_still_edits_but_look_again_waits_for_migration():
+    _reset()
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar'})
+    raw = storage.get_program(pid)
+    storage.delete_library_program(raw.pop('library_id'))
+    raw.pop('progress')
+    raw.update(title='Guitar', source={}, phases=[{'name': 'Chords', 'weeks': 4, 'milestone_hit_at': None}])
+    storage.programs_table.remove(storage.Query().id == pid)
+    storage.programs_table.insert(raw)
+    response = _post_program_as('kid', pid, 'edit', {'minutes': 15, 'sessions_per_week': 2})
+    check(response.status_code == 200 and response.json()['status'] == 'success',
+          f'a legacy shape edit still works: {response.status_code} {response.text}')
+    after = storage.get_program(pid)
+    check(after['shape']['minutes'] == 15 and after['shape']['sessions_per_week'] == 2,
+          'the legacy run owns its effective shape too')
+    check(after['phases'] == raw['phases'] and 'progress' not in after and 'library_id' not in after,
+          'a shape edit does not invent a partial migration')
+    _check_recurate_refused_without_writes(pid)
+    storage.update_program(pid, {'state': 'active'})
+    response = _post_program_as('kid', pid, 'milestone', {'phase_name': 'Chords'})
+    check(response.status_code == 200 and response.json()['status'] == 'success',
+          f'the legacy Reached it button works before migration too: {response.status_code} {response.text}')
+    judged = storage.get_program(pid)
+    check(judged['phases'][0]['milestone_hit_at'] and judged['state'] == 'done' and 'progress' not in judged,
+          'legacy judgement and finish stay atomic without inventing a partial migration')
+
+
+def scenario_a_child_keeper_can_edit_shape_but_cannot_recurate():
+    from services import library, programs_curate
+    _reset()
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar',
+                   'phases': [{'name': 'Chords', 'weeks': 4}]})
+    library_before = storage.get_library_programs()
+    response = _post_program_as('kid', pid, 'edit', {'minutes': 15})
+    check(response.status_code == 200 and response.json()['status'] == 'success'
+          and storage.get_program(pid)['shape']['minutes'] == 15, 'the child keeper can still change shape')
+    before = storage.get_program(pid)
+    with patch.object(programs_curate, 'curate', side_effect=AssertionError('children never publish a library row')) as curate:
+        response = _post_program_as('kid', pid, 'edit', {'recurate': True, 'minutes': 30})
+    check(response.status_code == 200 and response.json() == {'status': 'error', 'message': library.EDIT_REFUSAL},
+          f'the child keeper receives the exact edit refusal: {response.status_code} {response.text}')
+    check(not curate.called and storage.get_program(pid) == before
+          and storage.get_library_programs() == library_before, 'refusal spends nothing and changes nothing')
+
+
+def scenario_a_parent_recurates_without_removing_the_previous_library_program():
+    from services import programs_curate
+    _reset()
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar', 'created_by': 'mom',
+                   'phases': [{'name': 'Old', 'weeks': 4}]})
+    old = storage.get_library_program(storage.get_program(pid)['library_id'])
+    count = len(storage.get_library_programs())
+    with patch.object(programs_curate, 'curate', return_value={
+            'phases': [{'name': 'New', 'weeks': 2, 'steps': ['Strum']}], 'source': {'origin': 'generated'}}):
+        response = _post_program_as('mom', pid, 'edit', {'recurate': True})
+    check(response.status_code == 200 and response.json()['status'] == 'success',
+          f'a parent may re-curate: {response.status_code} {response.text}')
+    check(storage.get_program(pid)['library_id'] != old['id'] and len(storage.get_library_programs()) == count + 1,
+          're-curate creates a new library program')
+    check(storage.get_library_program(old['id']) == old, 'the old library program stands unchanged')
+
+
 if __name__ == '__main__':
     scenario_the_endpoints_exist()
     scenario_a_body_aim_is_refused_at_the_door()
@@ -889,4 +1011,10 @@ if __name__ == '__main__':
     scenario_editing_the_starting_point_spends_no_research()
     scenario_a_program_says_whether_its_owner_can_run_it_alone()
     scenario_a_parent_can_log_a_small_childs_session()
+    scenario_legacy_phase_names_mark_the_first_unjudged_match()
+    scenario_look_again_refuses_a_missing_library()
+    scenario_look_again_refuses_a_malformed_library()
+    scenario_a_legacy_runs_shape_still_edits_but_look_again_waits_for_migration()
+    scenario_a_child_keeper_can_edit_shape_but_cannot_recurate()
+    scenario_a_parent_recurates_without_removing_the_previous_library_program()
     print("test_programs_endpoints OK")

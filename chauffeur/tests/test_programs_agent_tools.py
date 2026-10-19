@@ -1,5 +1,9 @@
 """Argyle can find a plan and count a session. It cannot claim the week."""
 from harness import check
+from program_fixture import add_run
+import datetime
+import json
+from unittest.mock import patch
 from services import agent_tools_v2, storage
 
 
@@ -35,11 +39,14 @@ def scenario_a_body_aim_is_refused_in_chat_too():
 
 def _reset_programs():
     storage.programs_table.truncate()
+    storage.library_programs_table.truncate()
     # Access spec §2: a keeper must name an active stored member. These
     # fixtures used to contain program member ids without any member rows.
     for mid in ('kid-a', 'kid-b'):
         if not storage.get_member(mid):
             storage.add_member({'id': mid, 'name': mid, 'role': 'child'})
+    if not storage.get_member('mom'):
+        storage.add_member({'id': 'mom', 'name': 'Mom', 'role': 'parent'})
 
 
 def scenario_a_childs_not_found_hint_never_names_a_sibling():
@@ -50,8 +57,8 @@ def scenario_a_childs_not_found_hint_never_names_a_sibling():
     uses, so the not-found hint can carry only what this caller could see
     on a successful lookup too."""
     _reset_programs()
-    storage.add_program({'member_id': 'kid-a', 'title': 'Guitar practice'})
-    storage.add_program({'member_id': 'kid-b', 'title': 'Soccer skills'})
+    add_run({'member_id': 'kid-a', 'title': 'Guitar practice'})
+    add_run({'member_id': 'kid-b', 'title': 'Soccer skills'})
     res = agent_tools_v2.program_progress(
         'Xylophone', acting_member={'id': 'kid-a', 'role': 'child'})
     check(res.get('status') == 'error', f"got {res}")
@@ -66,8 +73,8 @@ def scenario_a_parents_not_found_hint_still_sees_the_household():
     """A parent/adult keeps the household hint through the conversation gate,
     just as in `list_programs`."""
     _reset_programs()
-    storage.add_program({'member_id': 'kid-a', 'title': 'Guitar practice'})
-    storage.add_program({'member_id': 'kid-b', 'title': 'Soccer skills'})
+    add_run({'member_id': 'kid-a', 'title': 'Guitar practice'})
+    add_run({'member_id': 'kid-b', 'title': 'Soccer skills'})
     res = agent_tools_v2.program_progress(
         'Xylophone', acting_member={'id': 'mom', 'role': 'parent'})
     check(res.get('status') == 'error', f"got {res}")
@@ -106,6 +113,50 @@ def scenario_a_body_target_in_the_starting_point_is_refused_in_chat_too():
           "and nothing was created to approve later")
 
 
+def scenario_a_proposal_curates_only_a_public_profile_and_keeps_its_private_start():
+    from services import programs_curate
+    _reset_programs()
+    actor = storage.get_member('mom')
+    secret = 'PRIVATE-START: already plays open chords but is shy about singing'
+    calls = []
+
+    def echo_input(title, shape, **kwargs):
+        calls.append((title, shape, kwargs))
+        return {'phases': [{'name': 'Start', 'weeks': 2, 'steps': [repr((shape, kwargs))]}],
+                'source': {'origin': 'generated', 'reason': repr((shape, kwargs))}}
+
+    for birthdate, expected_band in ((f'{datetime.date.today().year - 9}-03-01', 'explorer'), (None, 'any')):
+        storage.update_member('kid-a', {'birthdate': birthdate, 'stage_override': 'copilot'})
+        with patch.object(programs_curate, 'curate', side_effect=echo_input):
+            result = agent_tools_v2.propose_program('Learn guitar', for_member_name='kid-a', minutes=20,
+                sessions_per_week=2, starting_point=secret, acting_member=actor)
+        check(result.get('status') == 'success', f'the parent can propose for a child: {result}')
+        run = storage.get_program(result['id'])
+        curriculum = storage.get_library_program(run['library_id'])
+        expected = {'age_band': expected_band, 'minutes': 20, 'sessions_per_week': 2, 'assumes': ''}
+        check(curriculum['made_for'] == expected, f'public profile from birthdate, not pinned stage: {curriculum}')
+        check(calls[-1][1] == expected and not calls[-1][2], f'no member or private starting point reaches curation: {calls[-1]}')
+        check(secret not in json.dumps(curriculum) and secret not in json.dumps(storage.get_library_programs()),
+              'no private starting point can be echoed into public curriculum or source')
+        check(run['starting_point'] == secret and run['member_id'] == 'kid-a' and curriculum['created_by'] == 'mom',
+              'the private starting point stays on the correct run; its adult made the library row')
+
+
+def scenario_a_childs_argyle_proposal_is_refused_before_publication():
+    from services import programs_curate
+    _reset_programs()
+    before = storage.get_library_programs()
+    runs_before = storage.get_programs(include_finished=True)
+    with patch.object(programs_curate, 'curate', side_effect=AssertionError('a child cannot publish curriculum')) as curate:
+        result = agent_tools_v2.propose_program('Learn guitar', starting_point='already plays open chords',
+                                               acting_member=storage.get_member('kid-a'))
+    check(result == {'status': 'error', 'message': 'Only a signed-in parent or adult can start a program.'},
+          f'the existing child refusal is returned cleanly: {result}')
+    check(not curate.called and storage.get_library_programs() == before
+          and storage.get_programs(include_finished=True) == runs_before,
+          'the refused proposal spends no research and creates no half state')
+
+
 if __name__ == '__main__':
     scenario_reads_are_in_both_stacks()
     scenario_approving_is_never_a_chat_tool()
@@ -115,4 +166,6 @@ if __name__ == '__main__':
     scenario_a_parents_not_found_hint_still_sees_the_household()
     scenario_the_chat_tool_can_be_told_where_somebody_is_starting()
     scenario_a_body_target_in_the_starting_point_is_refused_in_chat_too()
+    scenario_a_proposal_curates_only_a_public_profile_and_keeps_its_private_start()
+    scenario_a_childs_argyle_proposal_is_refused_before_publication()
     print("test_programs_agent_tools OK")

@@ -2566,9 +2566,9 @@ def _resolve_named_member_or_refuse(acting_member: dict, name: str, verb_phrase:
 
 def _match_program(title: str, acting_member: dict, focus_key=None):
     """Match only this conversation's programs; the hint uses that same set."""
-    from services import storage as _storage
+    from services import storage as _storage, programs as _prog
     q = (title or '').strip().lower()
-    rows = [r for r in _storage.get_programs(include_finished=False)
+    rows = [_prog.load(r) for r in _storage.get_programs(include_finished=False)
             if _conversation_view('program', r, acting_member or access.HOUSE, focus_key) is not None]
     if not q:
         return None, rows
@@ -2644,13 +2644,12 @@ def propose_program(title: str, for_member_name: str = None,
     a body-composition aim never reaches research and never becomes an
     object somebody could approve later, no matter who is asking — its
     refusal is returned verbatim, so the sentence is the same wherever the
-    aim is typed. Proposing for YOURSELF is open to any resolved member (a
-    kid proposing their own guitar program is the point); proposing in
-    somebody ELSE's name needs a parent/adult, same rule as every other
-    program write. Nothing is claimed here — approving is deliberately not a
+    aim is typed. Publishing a new library curriculum requires a parent/adult;
+    the private starting point belongs only to the person's run.
+    Nothing is claimed here — approving is deliberately not a
     chat tool at all; the program sits `proposed` until a person taps
     approve on the Programs page after seeing the footprint."""
-    refusal = _program_writer(acting_member, 'start a program')
+    refusal = _thread_writer(acting_member, 'start a program')
     if refusal:
         return refusal
     from services import storage as _st, programs_curate as _cur
@@ -2678,33 +2677,38 @@ def propose_program(title: str, for_member_name: str = None,
                 "alternatives": screen.get('alternatives') or []}
     from services import storage as _storage
     member_id = acting_member.get('id')
-    member_name = acting_member.get('name') or ''
     member = acting_member
     if for_member_name:
         m, refusal = _resolve_named_member_or_refuse(
             acting_member, for_member_name, 'start a program for someone else')
         if refusal:
             return refusal
-        member_id, member_name, member = m['id'], m.get('name') or '', m
+        member_id, member = m['id'], m
     # Clamped, because this schema's bounds are a hint to a model and nothing
     # more: asked for "twice a day" a model says 14, and an unbounded shape
     # hung `propose_slots` forever and wrote a '29:00' window that silently
     # disabled protected time for the whole household.
-    from services import programs as _prog
+    from services import programs as _prog, library, stages
     shape = _prog.clamp_shape({'sessions_per_week': sessions_per_week,
                                'minutes': minutes, 'preferred_days': []})
-    curated = _cur.curate(title, shape, member_name=member_name,
-                          member=member, starting_point=starting_point)
+    age = stages.age_of(member)
+    made = library.create({'title': title, 'minutes': shape['minutes'],
+                           'sessions_per_week': shape['sessions_per_week'], 'assumes': '',
+                           'age_band': stages.stage_for_age(age) if age is not None else 'any'}, acting_member)
+    if made.get('status') != 'success':
+        return made
+    curriculum = made['program']
     pid = _prog.create_row({
-        'member_id': member_id, 'title': title, 'shape': shape,
+        'member_id': member_id, 'library_id': curriculum['id'], 'shape': shape,
         'starting_point': starting_point,
-        'phases': curated['phases'], 'source': curated['source'],
         'baseline': {'start_date': None, 'target_date': None,
                      'target_event_id': None, 'rebaselined_at': None,
                      'rebaselines': 0},
         'created_by': acting_member.get('id')}, project_id=project_id)
-    source = curated.get('source') or {}
-    n = len(curated.get('phases') or [])
+    if not pid:
+        return {'status': 'error', 'message': 'That project is no longer here.'}
+    source = curriculum.get('source') or {}
+    n = len(curriculum.get('phases') or [])
     tail = ("Nothing's claimed yet: see the footprint and approve it on the "
             "Programs page.")
     # The three tiers, said out loud. Saying "hand-written" for all of them
