@@ -108,7 +108,11 @@ def _rows(kind):
 def load(kind, sid):
     """Load a raw record; trips use the calendar event id as their subject id."""
     if kind in ('thread', 'mission', 'program', 'project'):
-        return access._memo(('subject', kind, sid), lambda: getattr(storage, 'get_' + kind)(sid))
+        row = access._memo(('subject', kind, sid), lambda: getattr(storage, 'get_' + kind)(sid))
+        if kind == 'program':
+            from services import programs
+            return programs.load(row)
+        return row
     return next((row for row in _rows(kind) if str(row.get('id')) == str(sid)), None)
 
 
@@ -117,6 +121,9 @@ def _title(row):
 
 
 def title_of(kind, row):
+    if kind == 'program':
+        from services import programs
+        row = programs.load(row)
     adapter = ADAPTERS.get(kind)
     return adapter.title(row) if adapter else _title(row)
 
@@ -124,6 +131,11 @@ def title_of(kind, row):
 def _program_visible(row, viewer):
     from services import access
     return access.record_visible('program', row, viewer)
+
+
+def _program_rows():
+    from services import programs
+    return [programs.load(r) for r in storage.get_programs(include_finished=True)]
 
 
 def _thread_visible(row, viewer):
@@ -605,6 +617,9 @@ def _thread_context(row, viewer, spoken, facet):
 def _program_context(row, viewer, spoken, facet):
     from services import programs
 
+    row = programs.load(row)
+    if row.get('unresolved'):
+        return 'PROGRAM: Its library program is missing; it needs attention.'
     member = storage.get_member(row.get('member_id')) or {}
     today = datetime.date.today()
     monday = today - datetime.timedelta(days=today.weekday())
@@ -699,7 +714,7 @@ ADAPTERS.update({
         spoken_safe=_thread_spoken_safe,
     ),
     'program': Adapter(
-        rows=lambda: storage.get_programs(include_finished=True),
+        rows=lambda: _program_rows(),
         title=_title,
         visible=_program_visible,
         closed=lambda row: row.get('state') in ('done', 'dropped'),

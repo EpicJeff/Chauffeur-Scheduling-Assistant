@@ -4,6 +4,7 @@ import json
 import traceback
 from unittest.mock import patch
 
+from program_fixture import add_run
 from harness import check
 import access_fixture
 from services import access, storage, programs, migrations, family_digest
@@ -22,9 +23,12 @@ def seed(fx, key='R3'):
         'id': cid, 'member_id': member, 'title': fx.title(key),
         'days_of_week': [DAY.weekday()], 'time_start': '17:00', 'time_end': '17:30',
         'active': True, 'source': {'kind': 'program', 'id': pid}})
+    curriculum = storage.get_library_program(fx.library[key])
+    storage.update_library_program(fx.library[key], {
+        'phases': [{**p, 'name': fx.secret(key), 'weeks': 2, 'steps': [fx.secret(key)],
+                    'milestone': fx.secret(key)} for p in curriculum['phases']],
+        'lessons': [{**l, 'title': fx.secret(key), 'steps': [fx.secret(key)]} for l in curriculum['lessons']]})
     storage.update_program(pid, {
-        'phases': [{'name': fx.secret(key), 'weeks': 2, 'steps': [fx.secret(key)],
-                    'milestone': fx.secret(key), 'units': [{'n': 1, 'title': fx.secret(key)}]}],
         'baseline': {'start_date': DAY.isoformat()},
         'emissions': {'commitment_ids': [cid], 'event_ids': []}})
     event = {
@@ -61,7 +65,7 @@ def scenario_cache_narrowing_takes_effect_at_read():
 def scenario_no_target_event_is_written():
     access_fixture.build()
     with patch('services.calendar.create_event', return_value='ev-new') as create:
-        pid = storage.add_program({'title': 'T', 'member_id': 'mom', 'state': 'proposed',
+        pid = add_run({'title': 'T', 'member_id': 'mom', 'state': 'proposed',
                                    'shape': {'minutes': 25},
                                    'baseline': {'target_date': '2027-01-01'}})
         result = programs.approve(pid, 'mom', slots=[{'day': 4, 'time_start': '17:00'}])
@@ -76,7 +80,7 @@ def scenario_no_target_event_is_written():
 
 def scenario_migration_deletes_old_target_events():
     access_fixture.build()
-    pid = storage.add_program({'title': 'T', 'member_id': 'mom', 'state': 'active',
+    pid = add_run({'title': 'T', 'member_id': 'mom', 'state': 'active',
                                'baseline': {'target_date': '2027-01-01', 'target_event_id': 'ev-old'},
                                'emissions': {'event_ids': ['ev-old', 'other'], 'commitment_ids': []}})
     with patch('services.calendar.delete_event', return_value=True) as delete:
@@ -90,7 +94,7 @@ def scenario_migration_deletes_old_target_events():
 
 def scenario_failed_target_deletion_is_retryable():
     access_fixture.build()
-    pid = storage.add_program({'member_id': 'mom', 'title': 'T',
+    pid = add_run({'member_id': 'mom', 'title': 'T',
                                'baseline': {'target_date': '2027-01-01', 'target_event_id': 'retry-me'},
                                'emissions': {'event_ids': ['retry-me']}})
     with patch('services.calendar.delete_event', return_value=False):
@@ -222,7 +226,7 @@ def scenario_deleted_target_404_and_410_clear_ids():
     from services import calendar
     for status in (404, 410):
         access_fixture.build()
-        pid = storage.add_program({'member_id': 'mom', 'title': 'T',
+        pid = add_run({'member_id': 'mom', 'title': 'T',
             'baseline': {'target_date': '2027-01-01', 'target_event_id': 'gone'},
             'emissions': {'event_ids': ['gone', 'unproven']}})
         exc = RuntimeError('already gone')

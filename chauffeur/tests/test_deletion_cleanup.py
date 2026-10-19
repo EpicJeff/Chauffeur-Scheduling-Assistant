@@ -170,8 +170,10 @@ def rich():
                              'line': fx.secret('GP1'), 'state': 'open', 'identity': f'commitment:{cid}:ev1'})
     storage.update_program(ids['GP1'], {'state': 'active', 'emissions': {'commitment_ids': list(fx.commitments),
                                                                         'thread_ids': [ids['GK1']], 'event_ids': []}})
-    storage.upsert_program_lesson(ids['GP1'], {'phase_name': 'Grade 1', 'unit_n': 0, 'session_label': ''},
+    slot = {'lesson_id': storage.get_program(ids['GP1'])['progress']['current'], 'variant_label': ''}
+    storage.upsert_program_lesson(ids['GP1'], slot,
                                   {'scenes': [{'type': 'say', 'text': fx.secret('GP1')}]})
+    check(storage.get_program_lesson(ids['GP1'], slot), 'the cleanup fixture has a real named lesson script')
     # Files: two browse folders, a new thread photo, a legacy thread photo in the shared archive.
     for key in ('GM1', 'GM2'):
         with open(os.path.join(missions.browse_dir(ids[key]), 'turn_01.png'), 'wb') as f:
@@ -209,6 +211,7 @@ def rich():
                     'prop_keep': keep_prop['proposal_id'], 'r5p_key': r5p_key, 'gp1_key': gp1_key}
     fx.ledger = {'asks': [ask_t, ask_m, ask_f], 'findings': [f_thread, f_mission, f_program], 'prop': prop['proposal_id']}
     check(r5p is not None, "the fixture")
+    fx.library_before = storage.get_library_programs()
     return fx
 
 
@@ -294,7 +297,8 @@ def assert_clean(fx, how):
         check(LOAD[kind](rid) is not None, f"{how}: {key} survives")
     # Nothing of the mark: no stamp, no deletion row, and no word of the closure in any table.
     words = [fx.secret(k) for k in fx.closure] + [fx.title(k) for k in fx.closure]
-    dump = json.dumps(_all_rows(), default=str, ensure_ascii=False)
+    check(storage.get_library_programs() == fx.library_before, f"{how}: public curricula survive run deletion unchanged")
+    dump = json.dumps({k: v for k, v in _all_rows().items() if k != 'library_programs'}, default=str, ensure_ascii=False)
     found = [w for w in words if re.search(re.escape(w) + r'(?!\w)', dump)]
     check(not found, f"{how}: no word of the closure survives anywhere: {found}")
     stamps = [(name, r.get('id')) for name, rows in _all_rows().items() for r in rows if r.get('deleting')]

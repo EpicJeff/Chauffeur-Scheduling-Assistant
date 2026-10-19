@@ -5340,7 +5340,7 @@ def _access_input_digest():
             (storage.get_projects(), ('id', 'deleting', 'audience', 'shared_with', 'audience_rev', 'wrapped_from', 'owner_member_id')),
             (storage.get_all_members(), ('id', 'role', 'status', 'is_child', 'system')),
             (storage.get_programs(include_finished=True),
-             ('id', 'deleting', 'project_id', 'member_id', 'subject_kind', 'subject_id', 'subject_history')),
+             ('id', 'library_id', 'deleting', 'project_id', 'member_id', 'subject_kind', 'subject_id', 'subject_history')),
             (storage.get_threads(include_closed=True),
              ('id', 'deleting', 'project_id', 'owner_member_id', 'subject_kind', 'subject_id', 'subject_history')),
             (storage.get_missions(),

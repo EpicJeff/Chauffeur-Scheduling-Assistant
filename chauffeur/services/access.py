@@ -486,8 +486,11 @@ def commitment_view(row, viewer=HOUSE, *, programs=None):
     if program and gone('program', program):
         return GONE
     from services import programs as program_service
-    if program and (program_service.load(program).get('unresolved') or not record_visible('program', program, viewer)):
-        return {k: v for k, v in dict(row, title='Busy').items() if k != 'source'}
+    if program:
+        program = program_service.load(program)
+        if program.get('unresolved') or not record_visible('program', program, viewer):
+            return {k: v for k, v in dict(row, title='Busy').items() if k != 'source'}
+        return dict(row, title=program.get('title') or 'Practice')
     return row
 
 

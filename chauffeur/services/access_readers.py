@@ -20,7 +20,8 @@ READERS = [
     *[((F, name), 'INTERNAL', ('program',), 'curriculum resolution or authorized mutation; callers own access') for name in [
         'services.library.get', 'services.library.list_programs', 'services.library.create', 'services.library._write',
         'services.library.delete', 'services.programs.load', 'services.programs.create_row',
-        'services.programs.step_bookmark', 'services.programs.rebind']],
+        'services.programs.step_bookmark', 'services.programs.rebind', 'services.programs.lesson_for',
+        'services.subjects._program_rows', 'services.program_lessons.arm_wait_announce']],
     # §4.1 threads
     ((R, 'GET', '/api/threads'), '4.1-signed-in', ('thread',), 'record_view'),
     ((R, 'POST', '/api/threads'), '4.1-signed-in', ('thread',), 'record_actable'),

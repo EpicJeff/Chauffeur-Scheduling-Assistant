@@ -36,7 +36,9 @@ def register(probe):
                 conv = conversation(c, h, surface)
                 if rid[-1] == '/api/chat':
                     if KIND[rkey] == 'program':
-                        storage.update_program(fx.ids[rkey], {'phases': [{'name': fx.secret(rkey), 'units': []}]})
+                        curriculum = storage.get_library_program(fx.library[rkey])
+                        storage.update_library_program(fx.library[rkey], {
+                            'phases': [{**p, 'name': fx.secret(rkey)} for p in curriculum['phases']]})
                     def fake(message, **kw):
                         if KIND[rkey] == 'program':
                             return tools.list_programs(acting_member=kw['acting_member'], focus_key=kw['focus_key'])

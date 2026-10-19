@@ -1571,7 +1571,8 @@ def _render_at(kind, row, view, viewer, focus_key=None):
     if view is None or not row:
         return None
     if kind == 'program':
-        return dict(row)  # A program's keeper projection is the whole program (§3).
+        from services import programs
+        return programs.load(row)  # A keeper reads their whole run (§3).
     # The engine has already passed mission_view, including its own project
     # and origin exceptions. The internal renderer must not reapply HOUSE's
     # narrower project gate to that authorized row.
@@ -2600,6 +2601,9 @@ def list_programs(member_name: str = None, acting_member: dict = None, focus_key
     lines = []
     for p in rows[:15]:
         p = _render_at('program', p, _conversation_view('program', p, acting_member or access.HOUSE, focus_key), acting_member)
+        if p.get('unresolved'):
+            lines.append('Its library program is missing; it needs attention.')
+            continue
         prog = _prog.progress(p)
         bits = [p.get('title') or 'Program']
         holder = names.get(p.get('member_id') or '')
@@ -2622,6 +2626,8 @@ def program_progress(program_title: str, acting_member: dict = None, focus_key: 
         return {"status": "error",
                 "message": f"I couldn't find a matching program. Programs: {titles}."}
     row = _render_at('program', row, _conversation_view('program', row, acting_member or access.HOUSE, focus_key), acting_member)
+    if row.get('unresolved'):
+        return {'status': 'success', 'message': 'Its library program is missing; it needs attention.'}
     p = _prog.progress(row)
     bits = [f"{row.get('title')}: {p['sessions']} session(s)",
             f"{p['minutes']} minutes"]

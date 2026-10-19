@@ -53,9 +53,12 @@ def seed(fx):
     events = []
     for key in ('R3', 'R5p', 'R15', 'R17'):
         storage.update_program(fx.ids[key], {
-            'shape': {'phases': [{'name': fx.secret(key), 'weeks': 1,
-                                  'milestone': fx.secret(key), 'steps': [fx.secret(key)]}]},
             'sessions': [{'ts': NOW.timestamp()}]})
+        curriculum = storage.get_library_program(fx.library[key])
+        storage.update_library_program(fx.library[key], {
+            'phases': [{**p, 'name': fx.secret(key), 'weeks': 1,
+                        'milestone': fx.secret(key), 'steps': [fx.secret(key)]} for p in curriculum['phases']],
+            'lessons': [{**l, 'steps': [fx.secret(key)]} for l in curriculum['lessons']]})
         events.append({'id': 'practice-' + fx.ids[key], 'title': fx.title(key),
                        'description': fx.secret(key), 'start': '2026-10-16T17:00:00',
                        'end': '2026-10-16T18:00:00', 'event_type': 'practice',

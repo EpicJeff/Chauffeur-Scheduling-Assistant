@@ -53,7 +53,8 @@ def load(kind: str, sid: str) -> Optional[dict]:
     if kind == 'thread':
         return storage.get_thread(sid)
     if kind == 'program':
-        return storage.get_program(sid)
+        from services import programs
+        return programs.load(storage.get_program(sid))
     if kind == 'mission':
         row = storage.get_mission(sid)
         if row:

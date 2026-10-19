@@ -3,13 +3,15 @@ getting what it wanted rather than surviving what it was handed."""
 import datetime
 import time
 
+from program_fixture import add_run
 from harness import check
 from services import storage, vitals
 
 
 def scenario_a_day_measures_sessions_per_member():
     storage.programs_table.truncate()
-    pid = storage.add_program({'member_id': 'lily', 'title': 'Guitar',
+    storage.library_programs_table.truncate()
+    pid = add_run({'member_id': 'lily', 'title': 'Guitar',
                                'state': 'active'})
     storage.append_program_session(pid, {'ts': time.time(), 'minutes': 25,
                                          'source': 'asked'})
@@ -62,6 +64,7 @@ def scenario_the_two_person_signs_do_not_read_the_same():
     snapshot got two indistinguishable bullets: one meaning Lily's load fell
     (good) and one meaning her practice did (not)."""
     storage.programs_table.truncate()
+    storage.library_programs_table.truncate()
     storage.members_table.truncate()
     storage.add_member({'id': 'lily', 'name': 'Lily', 'role': 'child'})
     rows = _rows([3.0] * 21 + [1.0] * 7)

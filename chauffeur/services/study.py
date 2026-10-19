@@ -396,6 +396,9 @@ def _binders(now, viewer=access.HOUSE):
     for p in storage.get_programs() or []:
         if not access.shared_screen_visible('program', p, viewer):
             continue
+        p = programs.load(p)
+        if p.get('unresolved'):
+            continue
         if p.get('state') not in ('active', 'paused'):
             continue
         pulled = False

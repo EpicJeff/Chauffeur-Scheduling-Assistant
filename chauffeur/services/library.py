@@ -64,7 +64,8 @@ def from_curated(title, profile, curated, created_by):
                 'sessions': max(1, int(unit.get('sessions') or 1)),
                 'steps': copy.deepcopy(unit.get('steps', raw.get('steps') or [])),
                 **{k: unit[k] for k in ('body', 'url') if unit.get(k)},
-                'variants': copy.deepcopy(raw.get('rotation') or [])})
+                'variants': copy.deepcopy([v for v in raw.get('rotation') or []
+                                           if isinstance(v, dict) and v.get('steps')])})
     return {'title': title, 'made_for': profile, 'created_by': created_by,
             'phases': phases, 'lessons': lessons, 'source': curated.get('source') or {}}
 

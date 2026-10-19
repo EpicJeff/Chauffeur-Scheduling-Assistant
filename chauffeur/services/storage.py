@@ -3888,13 +3888,18 @@ def _lesson_query(program_id: str, slot: dict):
     # delete_program_lesson both route every query through.
     slot = slot or {}
     q = Query()
+    if slot.get('lesson_id'):
+        return ((q.program_id == program_id)
+                & (q.lesson_id == slot['lesson_id'])
+                & (q.variant_label == str(slot.get('variant_label') or '')))
     return ((q.program_id == program_id)
+            & ~(q.lesson_id.exists())
             & (q.phase_name == str(slot.get('phase_name') or ''))
             & (q.unit_n == int(slot.get('unit_n') or 0))
             & (q.session_label == str(slot.get('session_label') or '')))
 
 def upsert_program_lesson(program_id: str, slot: dict, data: dict) -> str:
-    """One lesson per slot -- (program_id, phase_name, unit_n, session_label),
+    """One script per (run id, lesson id, variant label).
     the distinct lesson in the plan's own terms, never a date, so a rotation
     session repeating inside one unit's week reuses this same row and a new
     unit gets its own. Refuses to overwrite a row whose `edited` is true
@@ -3911,15 +3916,20 @@ def upsert_program_lesson(program_id: str, slot: dict, data: dict) -> str:
     with db_lock:
         if not _admit_child('program', program_id):
             return None
+        from services.program_lessons import resolve_slot
+        program = get_program(program_id)
+        slot = resolve_slot(program, slot)
+        if program.get('library_id') and not slot.get('lesson_id'):
+            return ''
         cond = _lesson_query(program_id, slot)
         existing = program_lessons_table.search(cond)
         if existing and existing[0].get('edited') and not data.get('edited'):
             return ''
         row = {'id': existing[0]['id'] if existing else str(uuid.uuid4()),
                'program_id': program_id,
-               'phase_name': str(slot.get('phase_name') or ''),
-               'unit_n': int(slot.get('unit_n') or 0),
-               'session_label': str(slot.get('session_label') or ''),
+               **({k: slot[k] for k in ('lesson_id', 'variant_label')} if slot.get('lesson_id') else {}),
+               **({k: slot[k] for k in ('phase_name', 'unit_n', 'session_label')}
+                  if not slot.get('lesson_id') else {}),
                'origin': data.get('origin') or 'generated',
                'source_url': data.get('source_url') or '',
                'edited': bool(data.get('edited')),
@@ -3946,6 +3956,8 @@ def get_program_lesson(program_id: str, slot: dict) -> Optional[dict]:
     generated yet for this slot' and fall back to the plain steps, never as
     an error."""
     with db_lock:
+        from services.program_lessons import resolve_slot
+        slot = resolve_slot(get_program(program_id), slot)
         res = program_lessons_table.search(_lesson_query(program_id, slot))
         return dict(res[0]) if res else None
 
@@ -3957,6 +3969,8 @@ def delete_program_lesson(program_id: str, slot: dict) -> bool:
     'there was nothing there'; delete_program_lessons() below answers the
     different question of how many a whole program held."""
     with db_lock:
+        from services.program_lessons import resolve_slot
+        slot = resolve_slot(get_program(program_id), slot)
         deletion.check()
         gone = program_lessons_table.remove(_lesson_query(program_id, slot))
         return bool(gone)

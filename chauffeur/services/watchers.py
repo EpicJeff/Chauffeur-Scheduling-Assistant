@@ -614,6 +614,9 @@ def _program_findings(now: datetime.datetime):
 
     for row in storage.get_programs(state='active'):
         try:
+            row = _prog.load(row)
+            if row.get('unresolved'):
+                continue
             with deletion.acting_for('program', row['id']):
                 gone = _prog.orphaned_emissions(row)
                 if gone:

@@ -215,6 +215,8 @@ def runner_visible(rkey, col):
 
 def library_expected(rid, fx, rkey, col, value):
     """The matrix's expectation for a library route cell; any other reader keeps `value`."""
+    if rid == ('reader', 'services.library.runners'):
+        return ('curriculum+runner' if runner_visible(rkey, col) else 'curriculum') if col != 'pat' else 'skip'
     what = LIBRARY_ROUTES.get(rid)
     if what is None:
         return value
@@ -384,3 +386,21 @@ def register_library(probe):
         def run(fx, rkey, col, rid=rid, fn=fn):
             return fn(rid, fx if fn is library_write_probe else build(), rkey, col)
         probe(rid)(run)
+    @probe(('reader', 'services.library.runners'))
+    def runners_probe(fx, rkey, col):
+        import json
+        from services import library
+        if col == 'pat':
+            return 'skip'  # an internal reader receives active viewers at its route boundary
+        fx = build()
+        result = library.runners(fx.library[rkey], fx.viewers[col])
+        project = storage.get_project(storage.get_program(fx.ids[rkey])['project_id'])
+        named = [{k: n.get(k) for k in ('name', 'project_id', 'project_title')} for n in result['named']]
+        if runner_visible(rkey, col):
+            want = [{'name': RUNNER_NAME[rkey], 'project_id': project['id'], 'project_title': project['title']}]
+            assert named == want and result['hidden'] == 0, result
+            return 'curriculum+runner'
+        assert not named and result['hidden'] == 1, result
+        words = json.dumps(result)
+        assert project['id'] not in words and project['title'] not in words and RUNNER_NAME[rkey] not in words, result
+        return 'curriculum'

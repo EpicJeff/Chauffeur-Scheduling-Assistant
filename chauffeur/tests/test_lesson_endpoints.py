@@ -5,7 +5,12 @@ sanitizer or storage.py's lesson CRUD has onto HTTP. Every rule tested here
 is a rule those two modules already enforce (sanitize_script's caps and
 screens, upsert_program_lesson's edited:true refusal); this file is only
 proving the endpoint asks them correctly and gates who is asking.
+
+The tuple-based calls below pin the one-release legacy translation on real
+library/run pairs, including malformed legacy numerals and keeper gates.
+Named-id route behavior is covered by test_library_model and test_library_cutover.
 """
+from program_fixture import add_run
 from harness import check  # noqa: F401  (isolates CHAUFFEUR_DATA_DIR)
 
 from fastapi import HTTPException
@@ -32,11 +37,12 @@ def _denied(fn, *a, **kw):
 
 def _reset():
     storage.programs_table.truncate()
+    storage.library_programs_table.truncate()
     storage.program_lessons_table.truncate()
     storage.members_table.truncate()
     storage.add_member({'id': 'mom', 'name': 'Mom', 'role': 'parent'})
     storage.add_member({'id': 'kid', 'name': 'Lily', 'role': 'child'})
-    pid = storage.add_program({'member_id': 'kid', 'title': 'Play guitar',
+    pid = add_run({'member_id': 'kid', 'title': 'Play guitar', 'phases': [{'name': 'F', 'units': [{'title': 'One'}, {'title': 'Two'}]}],
                                'shape': {'sessions_per_week': 2, 'minutes': 20}})
     storage.upsert_program_lesson(pid, {'phase_name': 'F', 'unit_n': 1,
                                         'session_label': ''},
@@ -216,7 +222,7 @@ def scenario_a_none_unit_n_is_treated_as_zero_on_get():
     that it stopped crashing."""
     _reset()
     import main
-    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar', 'phases': [{'name': 'F', 'steps': []}],
                                'shape': {'sessions_per_week': 2, 'minutes': 20}})
     storage.upsert_program_lesson(pid, {'phase_name': 'F', 'unit_n': 0,
                                         'session_label': ''},
@@ -258,7 +264,7 @@ def scenario_editing_a_cited_lesson_keeps_cited_screening():
     would otherwise silently drop that scene)."""
     _reset()
     import main
-    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar', 'phases': [{'name': 'F', 'steps': []}],
                                'shape': {'sessions_per_week': 2, 'minutes': 20}})
     storage.upsert_program_lesson(pid, {'phase_name': 'F', 'unit_n': 1,
                                         'session_label': ''},
@@ -350,7 +356,7 @@ def scenario_a_none_unit_n_is_treated_as_zero_on_put():
     lock the shared behaviour in across all three verbs together."""
     _reset()
     import main
-    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar', 'phases': [{'name': 'F', 'steps': []}],
                                'shape': {'sessions_per_week': 2, 'minutes': 20}})
     res = main.put_program_lesson_api(pid, body={
         'phase_name': 'F', 'unit_n': None, 'session_label': '',
@@ -420,7 +426,7 @@ def scenario_a_none_unit_n_is_treated_as_zero_on_delete():
     unrelated real slot at unit_n=1."""
     _reset()
     import main
-    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar',
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar', 'phases': [{'name': 'F', 'steps': []}],
                                'shape': {'sessions_per_week': 2, 'minutes': 20}})
     storage.upsert_program_lesson(pid, {'phase_name': 'F', 'unit_n': 0,
                                         'session_label': ''},
@@ -452,7 +458,7 @@ def scenario_a_non_numeric_unit_n_is_a_400_on_delete():
 def scenario_a_child_cannot_edit_a_siblings_lesson():
     _reset()
     import main
-    mom_pid = storage.add_program({'member_id': 'mom', 'title': 'Spanish',
+    mom_pid = add_run({'member_id': 'mom', 'title': 'Spanish', 'phases': [{'name': 'F', 'units': [{'title': 'One'}, {'title': 'Two'}]}],
                                    'shape': {'sessions_per_week': 1, 'minutes': 20}})
     kid_token = storage.create_member_token('kid')
     code = _denied(main.put_program_lesson_api, mom_pid, body={
@@ -469,7 +475,7 @@ def scenario_a_child_cannot_edit_a_siblings_lesson():
 def scenario_a_child_cannot_delete_a_siblings_lesson():
     _reset()
     import main
-    mom_pid = storage.add_program({'member_id': 'mom', 'title': 'Spanish',
+    mom_pid = add_run({'member_id': 'mom', 'title': 'Spanish', 'phases': [{'name': 'F', 'units': [{'title': 'One'}, {'title': 'Two'}]}],
                                    'shape': {'sessions_per_week': 1, 'minutes': 20}})
     storage.upsert_program_lesson(mom_pid, {'phase_name': 'F', 'unit_n': 1,
                                             'session_label': ''},

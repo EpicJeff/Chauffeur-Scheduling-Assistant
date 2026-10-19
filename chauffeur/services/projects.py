@@ -851,6 +851,8 @@ def _wrapper_fields(kind, row, actor):
     if kind == 'thread':
         title, goal, owner = row.get('title') or '', row.get('goal') or row.get('title') or '', row.get('owner_member_id')
     elif kind == 'program':
+        from services import programs
+        row = programs.load(row)
         title, goal, owner = row.get('title') or '', row.get('title') or '', row.get('member_id')
     else:
         title, goal, owner = (row.get('goal') or '')[:80], row.get('goal') or '', row.get('created_by')
@@ -1043,6 +1045,7 @@ def piece_cards(project, viewer, project_view=None):
             row = programs.load(storage.get_program(sid)) or {}
             phase = (programs.progress(row) or {}).get('phase') or {}
             card['program'] = {'state': row.get('state'), 'member_id': row.get('member_id'), 'unresolved': row.get('unresolved', False),
+                               'current_lesson': programs.lesson_for(row, datetime.date.today()),
                                'phase': phase.get('name') or ''}
         out.append(card)
     return out

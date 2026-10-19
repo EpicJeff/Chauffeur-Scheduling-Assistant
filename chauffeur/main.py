@@ -7743,6 +7743,9 @@ def list_programs_api(member_id: str = None, include_finished: bool = False,
             owner = members.get(r.get('member_id')) or {}
             caps = _stages.capabilities(owner)
             out.append({**r, 'progress': prog, 'due_ask': ask,
+                        'run_progress': r.get('progress') or {},
+                        'current_lesson': {**_prog.lesson_for(r, datetime.now().date()),
+                                           'phase_name': phase.get('name') or ''},
                         'current_phase': phase.get('name') or '',
                         'current_unit': unit.get('n') or 0,
                         'member_name': owner.get('name') or '',
@@ -8008,10 +8011,30 @@ def practice_windows_api(start_date: str = None, end_date: str = None,
 _LESSON_UNIT_N_MAX = 2**31 - 1
 
 
+def _program_lesson_call(fn, *args, **kwargs):
+    """A library edit between admission and storage still has the moved response."""
+    try:
+        return fn(*args, **kwargs)
+    except ValueError as exc:
+        from services.programs import MOVED_LESSON
+        if str(exc) == MOVED_LESSON:
+            raise HTTPException(status_code=409, detail=MOVED_LESSON)
+        raise
+
+
+def _program_lesson_slot(row, slot, *, required=False):
+    from services.program_lessons import resolve_slot
+    resolved = _program_lesson_call(resolve_slot, row, slot)
+    if required and (row or {}).get('library_id') and not resolved.get('lesson_id'):
+        from services.programs import MOVED_LESSON
+        raise HTTPException(status_code=409, detail=MOVED_LESSON)
+    return resolved
+
+
 @app.get("/api/programs/{program_id}/lesson")
 def get_program_lesson_api(program_id: str, phase_name: str = '',
                            unit_n: int = 0, session_label: str = '',
-                           request: Request = None):
+                           request: Request = None, lesson_id: str = '', variant_label: str = ''):
     """Read a lesson only when its program is visible (access rule section 4).
     Hidden and missing programs both return 404. An unknown lesson slot or an
     unusable unit number still returns null, preserving the player fallback.
@@ -8029,9 +8052,10 @@ def get_program_lesson_api(program_id: str, phase_name: str = '',
     scope = _program_list_scope(request, None)
     if scope is _NOBODY or (scope is not None and scope != row.get('member_id')):
         return {"lesson": None}
-    lesson = storage.get_program_lesson(program_id, {
+    slot = _program_lesson_slot(row, {
         'phase_name': phase_name, 'unit_n': unit_n,
-        'session_label': session_label})
+        'session_label': session_label, 'lesson_id': lesson_id, 'variant_label': variant_label})
+    lesson = _program_lesson_call(storage.get_program_lesson, program_id, slot)
     return {"lesson": lesson}
 
 
@@ -8075,26 +8099,30 @@ def put_program_lesson_api(program_id: str, body: dict = Body(default={}),
     # than a 400 for one bad shape and a 500 for another.
     if not (0 <= unit_n <= _LESSON_UNIT_N_MAX):
         raise HTTPException(status_code=400, detail="unit_n is out of range")
-    slot = {'phase_name': str(body.get('phase_name') or ''),
+    slot = _program_lesson_slot(row, {'phase_name': str(body.get('phase_name') or ''),
             'unit_n': unit_n,
-            'session_label': str(body.get('session_label') or '')}
-    existing = storage.get_program_lesson(program_id, slot) or {}
+            'session_label': str(body.get('session_label') or ''),
+            'lesson_id': body.get('lesson_id'), 'variant_label': body.get('variant_label')}, required=True)
+    existing = _program_lesson_call(storage.get_program_lesson, program_id, slot) or {}
     origin = existing.get('origin') or 'generated'
     scenes = _pl.sanitize_script(body.get('scenes') or [], origin)
     if not scenes:
         return {"status": "error",
                 "message": "Nothing survivable in that script."}
-    storage.upsert_program_lesson(program_id, slot, {
+    saved = _program_lesson_call(storage.upsert_program_lesson, program_id, slot, {
         'origin': origin, 'source_url': existing.get('source_url') or '',
         'scenes': scenes, 'edited': True,
         'model': existing.get('model') or ''})
+    if not saved:
+        from services.programs import MOVED_LESSON
+        raise HTTPException(status_code=409, detail=MOVED_LESSON)
     return {"status": "ok"}
 
 
 @app.delete("/api/programs/{program_id}/lesson")
 def delete_program_lesson_api(program_id: str, phase_name: str = '',
                               unit_n: int = 0, session_label: str = '',
-                              request: Request = None):
+                              request: Request = None, lesson_id: str = '', variant_label: str = ''):
     """Clear one slot by hand -- a force-regenerate, or a reset -- without
     touching the rest of the program's plan. The sweep writes a fresh lesson
     next tick; tonight is never blocked on that, because the player's own
@@ -8122,15 +8150,17 @@ def delete_program_lesson_api(program_id: str, phase_name: str = '',
                             detail="unit_n must be a whole number")
     if not (0 <= unit_n <= _LESSON_UNIT_N_MAX):
         raise HTTPException(status_code=400, detail="unit_n is out of range")
-    storage.delete_program_lesson(program_id, {
+    slot = _program_lesson_slot(row, {
         'phase_name': phase_name, 'unit_n': unit_n,
-        'session_label': session_label})
+        'session_label': session_label, 'lesson_id': lesson_id, 'variant_label': variant_label})
+    _program_lesson_call(storage.delete_program_lesson, program_id, slot)
     return {"status": "ok"}
 
 
 @app.get("/api/programs/{program_id}/lesson-scenes")
 def program_lesson_scenes(program_id: str, phase_name: str = '',
-                          unit_n: int = 0, session_label: str = '', request: Request = None):
+                          unit_n: int = 0, session_label: str = '', request: Request = None,
+                          lesson_id: str = '', variant_label: str = ''):
     """The lesson a wall board may play — the scenes, and nothing else.
 
     A deliberately narrow projection, the same shape and the same reasoning
@@ -8175,9 +8205,10 @@ def program_lesson_scenes(program_id: str, phase_name: str = '',
         return {"lesson": None}
     if not (0 <= unit_n <= _LESSON_UNIT_N_MAX):
         return {"lesson": None}
-    lesson = storage.get_program_lesson(program_id, {
+    slot = _program_lesson_slot(row, {
         'phase_name': phase_name, 'unit_n': unit_n,
-        'session_label': session_label}) or {}
+        'session_label': session_label, 'lesson_id': lesson_id, 'variant_label': variant_label})
+    lesson = _program_lesson_call(storage.get_program_lesson, program_id, slot) or {}
     if not lesson.get('scenes'):
         return {"lesson": None}
     return {"lesson": {'scenes': lesson.get('scenes') or [],
@@ -8323,7 +8354,10 @@ def lesson_wait_api(body: dict = Body(default={})):
     program_id = str((body or {}).get('program_id') or '')
     if _program_delivery_gone(program_id):
         raise HTTPException(status_code=404, detail='Not found')
-    entry = _pl.arm_wait_announce(room, text, minutes, program_id=program_id)
+    slot = _program_lesson_slot(storage.get_program(program_id), body,
+                                required=bool(body.get('phase_name'))) if program_id else {}
+    entry = _pl.arm_wait_announce(room, text, minutes, program_id=program_id,
+                                 lesson_id=slot.get('lesson_id'), variant_label=slot.get('variant_label') or '')
     return {'status': 'armed', 'fire_ts': entry['fire_ts']}
 
 
@@ -8394,6 +8428,10 @@ def lesson_help_api(program_id: str, body: dict = Body(default={}), request: Req
         raise HTTPException(status_code=400, detail="A unit is a number.")
     if not (0 <= unit_n <= _LESSON_UNIT_N_MAX):
         raise HTTPException(status_code=400, detail="A unit is a number.")
+    slot = _program_lesson_slot(row, {**body, 'unit_n': unit_n})
+    from services import programs as _prog
+    if _prog.load(row).get('unresolved'):
+        return {'answer': ''}
     settings = storage.get_settings() or {}
     cap = settings.get('lesson_help_daily_cap')
     cap = _LESSON_HELP_DEFAULT_CAP if cap is None else cap
@@ -8418,19 +8456,20 @@ def lesson_help_api(program_id: str, body: dict = Body(default={}), request: Req
     if now - float(_lesson_help_at.get(program_id) or 0) < _LESSON_HELP_GAP_S:
         raise HTTPException(status_code=429, detail="One at a time.")
 
-    lesson = storage.get_program_lesson(program_id, {
-        'phase_name': str((body or {}).get('phase_name') or ''),
-        'unit_n': unit_n,
-        'session_label': str((body or {}).get('session_label') or '')}) or {}
+    lesson = _program_lesson_call(storage.get_program_lesson, program_id, slot) or {}
     scenes = lesson.get('scenes') or []
     try:
         idx = int((body or {}).get('scene_idx') or 0)
     except (TypeError, ValueError, OverflowError):
         idx = 0
     scene = scenes[idx] if 0 <= idx < len(scenes) else {}
-    row = storage.get_program(program_id) or {}
+    row = _prog.load(storage.get_program(program_id)) or {}
     beat = ' '.join(str(scene.get(k) or '')
                     for k in ('text', 'ask', 'caption', 'speak')).strip()
+    if not beat and slot.get('lesson_id'):
+        projection = _program_lesson_call(_prog.lesson_for, row, datetime.now().date(), lesson_id=slot['lesson_id'],
+                                     variant_label=slot.get('variant_label') or '')
+        beat = ' | '.join(projection.get('steps') or [])
     prompt = (f"Program: {row.get('title') or 'practice'}\n"
               f"The beat they are on: {beat or 'the current step'}\n"
               f"They tapped 'Explain this'.")
@@ -8597,10 +8636,12 @@ def log_program_session(program_id: str, body: dict = Body(default={}),
     # slot asks in the morning, so stamping "yes, it happened" with `now`
     # would file Thursday's practice under Friday — and the prompt for
     # Thursday would never clear.
+    slot = _program_lesson_slot(row, body, required=True) if body.get('lesson_id') or body.get('phase_name') else {}
     result = _prog.log_session(program_id, minutes=body.get('minutes'),
                              source=body.get('source') or 'added',
                              note=body.get('note') or '',
-                             slot_date=body.get('slot_date'), lesson_id=body.get('lesson_id'))
+                             slot_date=body.get('slot_date'), lesson_id=slot.get('lesson_id'),
+                             variant_label=slot.get('variant_label') or '')
     return _library_result(result)
 
 

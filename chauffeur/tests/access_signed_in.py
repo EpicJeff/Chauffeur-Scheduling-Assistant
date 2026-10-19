@@ -313,8 +313,10 @@ def read_probe(rid, fx, rkey, col):
                                'asked_by': 'mom', 'what': fx.secret(rkey), 'channel': 'text'})
         path = f'/api/asks/{aid}/channels'
     elif path == '/api/programs/{program_id}/lesson':
-        storage.upsert_program_lesson(sid, {'phase_name': '', 'unit_n': 0, 'session_label': ''},
+        lesson_id = row['progress']['current']
+        storage.upsert_program_lesson(sid, {'lesson_id': lesson_id, 'variant_label': ''},
                                       {'scenes': [{'say': fx.secret(rkey)}]})
+        path += '?lesson_id=' + lesson_id
     elif path == '/api/action-proposals':
         storage.add_action_proposal({'action_type': 'skip_occurrence', 'summary': fx.secret(rkey),
                                      'status': 'proposed', 'origin_kind': 'mission', 'origin_id': sid})
@@ -392,6 +394,8 @@ def write_probe(rid, fx, rkey, col, forced_verb=None):
             'phase_name': 'phase', 'unit_n': 1, 'scenes': [{'type': 'say', 'text': 'Hello'}]}
     if path in ('/api/threads', '/api/programs'):
         body.update(title='Learn piano', project_id=row['project_id'], owner_member_id=col)
+        if path == '/api/programs':
+            body['library_id'] = fx.library[rkey]
     if path == '/api/missions/launch':
         body.update(origin_kind='thread', origin_ref=sid, goal='Help with this')
         verb = 'mission'
@@ -438,7 +442,6 @@ def write_probe(rid, fx, rkey, col, forced_verb=None):
         if kind == 'program' and verb == 'edit':
             storage.update_program(sid, {'state': 'proposed'})
         if kind == 'program' and verb == 'unit':
-            storage.update_program(sid, {'phases': [{'name': 'phase', 'units': [{'n': 1, 'title': 'One'}, {'n': 2, 'title': 'Two'}]}]})
             body['direction'] = 'next'
         if path.endswith('/photo'):
             r = request(fx, col, method, path, files={'file': ('test.png', b'png', 'image/png')})

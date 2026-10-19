@@ -152,23 +152,45 @@ def step_bookmark(program_id, direction):
             'program': load(storage.get_program(program_id))}
 
 
-def lesson_for(run, date):
+MOVED_LESSON = 'That lesson moved; open it again.'
+
+
+def lesson_for(run, date, *, slot_rank=0, lesson_id=None, variant_label=None):
+    """Resolve one lesson; dates deal variants, same-day windows take chronological turns.
+
+    A date alone describes the first window that day. Callers with a particular
+    window pass its zero-based same-day rank. Named open lessons keep their id
+    and variant even after the bookmark changes.
+    """
     row = load(run)
     if not row or row.get('unresolved'):
         return {}
-    lesson = next((l for l in row.get('lessons') or []
-                   if l['id'] == (row.get('progress') or {}).get('current')), None)
+    if not row.get('library_id'):
+        phase = progress(row).get('phase') or {}
+        unit = unit_for(row, phase) or {}
+        lesson = {**unit, 'steps': phase.get('steps') or [],
+                  'variants': phase.get('rotation') or []}
+    else:
+        lesson = next((l for l in row.get('lessons') or []
+                       if l['id'] == (lesson_id or (row.get('progress') or {}).get('current'))), None)
+    if lesson_id and lesson is None:
+        raise ValueError(MOVED_LESSON)
     if lesson is None:
         return {}
-    variants = lesson.get('variants') or []
+    variants = [v for v in lesson.get('variants') or [] if isinstance(v, dict) and v.get('steps')]
     variant = {}
     if variants:
-        slots = emitted_slots(row) or (row.get('shape') or {}).get('slots') or propose_slots(row.get('member_id'), row.get('shape'))
+        ids = set((row.get('emissions') or {}).get('commitment_ids') or [])
+        slots = [{'day': d} for pc in storage.get_protected_commitments(member_id=row.get('member_id'))
+                 if pc['id'] in ids and pc.get('active') for d in pc.get('days_of_week') or []]
+        if not ids:
+            slots = (row.get('shape') or {}).get('slots') or propose_slots(row.get('member_id'), row.get('shape'))
         count = sum(_occurrences_before({s['day']}, phase_started_on(row), date) for s in slots)
-        variant = variants[count % len(variants)]
+        variant = (next((v for v in variants if v.get('label') == variant_label), {})
+                   if variant_label is not None else variants[(count + slot_rank) % len(variants)])
     content = {**lesson, **variant}
     material = variant if variant.get('body') or variant.get('url') else lesson
-    return {'lesson_id': lesson['id'], 'phase_id': lesson['phase_id'],
+    return {**({'lesson_id': lesson['id'], 'phase_id': lesson['phase_id']} if row.get('library_id') else {}),
             'variant_label': variant.get('label') or '', 'title': lesson.get('title') or '',
             'steps': list(content.get('steps') or []),
             **{k: material[k] for k in ('body', 'url') if material.get(k)}}
@@ -188,6 +210,7 @@ def rebind(program_id, library_id, actor):
         storage.update_program(program_id, {'library_id': library_id,
             'progress': reconcile_progress({}, curriculum)})
         storage.delete_program_lessons(program_id)
+    library._invalidate()
     return {'status': 'success', 'program': load(storage.get_program(program_id))}
 
 
@@ -356,7 +379,8 @@ def _slot_ts(slot_date) -> float:
 
 
 def log_session(program_id: str, minutes: int = None, source: str = 'added',
-                note: str = '', slot_date: str = None, lesson_id: str = None) -> dict:
+                note: str = '', slot_date: str = None, lesson_id: str = None,
+                variant_label: str = '') -> dict:
     """Credit the lesson the person opened, even if the bookmark has moved."""
     with storage.db_lock, storage.db.transaction():
         row = load(storage.get_program(program_id))
@@ -372,6 +396,7 @@ def log_session(program_id: str, minutes: int = None, source: str = 'added',
                  'source': source, 'note': (note or '').strip()}
         if lesson:
             entry['lesson_id'] = selected
+            entry['variant_label'] = variant_label
         ts = _slot_ts(slot_date)
         if ts:
             entry['ts'] = ts
@@ -440,7 +465,7 @@ def finish(program_id: str) -> dict:
     the time really is free either way — what differs is the record, and the
     record is the whole point of having two words for it.
     """
-    row = storage.get_program(program_id)
+    row = load(storage.get_program(program_id))
     if not row:
         return {'status': 'error', 'message': 'That program is no longer here.'}
     if row.get('state') in ('done', 'dropped'):
@@ -597,7 +622,7 @@ def resume(program_id: str) -> dict:
     pair moves a program a parent already approved, and can never be a way of
     claiming time nobody approved at all.
     """
-    row = storage.get_program(program_id)
+    row = load(storage.get_program(program_id))
     if not row:
         return {'status': 'error', 'message': 'That program is no longer here.'}
     if row.get('state') != 'paused':
@@ -624,7 +649,7 @@ def resume(program_id: str) -> dict:
         release_commitments(program_id)
     except RuntimeError:
         return {'status': 'error', 'message': RELEASE_ERROR}
-    row = storage.get_program(program_id) or row
+    row = load(storage.get_program(program_id)) or row
     emissions = dict(row.get('emissions') or {})
     emissions['commitment_ids'] = []
     keep = dict(emissions)
@@ -662,7 +687,7 @@ def reshape(program_id: str) -> dict:
     back in front of a person with the whole footprint on one screen, which
     is the same gate the time went through the first time.
     """
-    row = storage.get_program(program_id)
+    row = load(storage.get_program(program_id))
     if not row:
         return {'status': 'error', 'message': 'That program is no longer here.'}
     if row.get('state') not in ('active', 'paused'):
@@ -847,6 +872,10 @@ def unit_for(program: dict, phase: dict) -> dict:
     pointer moves. It is a bookmark, not a record of anything.
     """
     program = load(program)
+    if program.get('unresolved'):
+        return None
+    if program.get('library_id'):
+        phase = next((p for p in program['phases'] if p['id'] == phase.get('id')), {})
     units = [u for u in (phase.get('units') or []) if isinstance(u, dict)]
     if program.get('library_id'):
         current = program['progress'].get('current')
@@ -917,8 +946,6 @@ def _practice_windows(start: datetime.date, end: datetime.date,
         row = load(row)
         phase = progress(row).get('phase') or {}
         unit = unit_for(row, phase) or {}
-        rotation = [s for s in (phase.get('rotation') or [])
-                    if isinstance(s, dict) and s.get('steps')]
         member = members.get(row.get('member_id')) or {}
         pairs = [(cid, live[cid])
                  for cid in ((row.get('emissions') or {}).get('commitment_ids') or [])
@@ -935,27 +962,18 @@ def _practice_windows(start: datetime.date, end: datetime.date,
         # the rotation deals onto the WEEK rather than onto one reservation:
         # two windows on the same evening are two different sessions.
         raw.sort(key=lambda r: (r[0], r[1]))
-        anchor = phase_started_on(row) if rotation else None
-        before, rank = {}, {}
+        rank = {}
         for day, ts, cid, pc in raw:
-            session = None
-            if rotation:
-                if day not in before:
-                    before[day] = sum(
-                        _occurrences_before(set(p.get('days_of_week') or []),
-                                            anchor, day)
-                        for _, p in pairs)
-                n = rank.get(day, 0)
-                rank[day] = n + 1
-                session = rotation[(before[day] + n) % len(rotation)]
-            projection = lesson_for(row, day) if row.get('library_id') else {}
+            same_day_rank = rank.get(day, 0)
+            rank[day] = same_day_rank + 1
+            projection = lesson_for(row, day, slot_rank=same_day_rank)
             out.append({
-                **({'lesson_id': projection.get('lesson_id'), 'variant_label': projection.get('variant_label') or ''}
-                   if projection else {}),
+                **({'lesson_id': projection['lesson_id'], 'variant_label': projection.get('variant_label') or ''}
+                   if projection.get('lesson_id') else {}),
                 'program_id': row['id'],
                 'commitment_id': cid,
                 'member_id': row.get('member_id'),
-                'member_name': member.get('name') or '',
+                'member_name': '' if row.get('unresolved') else member.get('name') or '',
                 'color': member.get('color_code') or '#14b8a6',
                 # Whether the person this window belongs to can be sent
                 # off to do it alone. Carried HERE rather than looked up
@@ -972,7 +990,7 @@ def _practice_windows(start: datetime.date, end: datetime.date,
                 # capability list, and an adult practises alone.
                 'owner_practices_alone': bool(
                     stages.capabilities(member).get('practices_alone', True)),
-                'title': row.get('title') or 'Practice',
+                'title': 'Busy' if row.get('unresolved') else row.get('title') or 'Practice',
                 'date': day.isoformat(),
                 'time_start': pc.get('time_start'),
                 'time_end': pc.get('time_end'),
@@ -992,8 +1010,8 @@ def _practice_windows(start: datetime.date, end: datetime.date,
                 # from the same `unit_for` walk the unit title beside it
                 # came from, so one window can never name two rungs.
                 'unit_n': int(unit.get('n') or 0),
-                'session_label': projection.get('variant_label', (session or {}).get('label') or ''),
-                'steps': projection.get('steps', list((session or phase).get('steps') or [])),
+                'session_label': projection.get('variant_label') or '',
+                'steps': projection.get('steps', []),
                 'progression': phase.get('progression') or '',
                 'milestone': phase.get('milestone') or '',
                 'logged': _already_logged(row, day),
@@ -1009,15 +1027,17 @@ def practice_windows(start: datetime.date, end: datetime.date,
     viewer = access.HOUSE if viewer is None else viewer
     out = []
     with access.batch():
-        visible = {}
+        visible, rows = {}, {}
         for window in _practice_windows(start, end, member_id):
             pid = window['program_id']
-            row = storage.get_program(pid)
+            if pid not in rows:
+                rows[pid] = load(storage.get_program(pid))
+            row = rows[pid]
             if pid not in visible:
                 visible[pid] = access.GONE if access.gone('program', row, rid=pid) else not access.practice_hidden(row, viewer)
             if visible[pid] is access.GONE:
                 continue
-            if load(row).get('unresolved'):
+            if row.get('unresolved'):
                 # The keeper can still identify and resolve this reservation.
                 # The window was already built with an empty curriculum.
                 if access.record_view('program', row, viewer):
@@ -1620,7 +1640,7 @@ def due_asks_for(program: dict, now=None, viewer=None) -> list:
     if viewer is not None and not access.record_visible('program', program, viewer):
         return []
     now = now or datetime.datetime.now()
-    if program.get('state') != 'active':
+    if program.get('state') != 'active' or program.get('unresolved'):
         return []
     if not storage.get_settings().get('programs_enabled', True):
         return []
@@ -1722,6 +1742,9 @@ def celebrations(now=None, *, viewer=access.HOUSE) -> dict:
              for m in storage.get_all_members(include_archived=True)}
     up_next, practiced, celebrated = None, [], []
     for row in storage.get_programs():
+        row = load(row)
+        if row.get('unresolved'):
+            continue
         if not access.shared_screen_visible('program', row, viewer):
             continue
         # Paused is a peer of active, not a flavour of stopped: the wall still

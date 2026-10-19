@@ -2,13 +2,15 @@
 import datetime
 from unittest.mock import patch
 from harness import check
+from program_fixture import add_run, loaded
 from services import storage, house_programs
 
 
 def scenario_objects_and_sessions():
-    row = {'id':'guitar', 'member_id':'kid', 'state':'active', 'title':'Learn electric guitar',
+    add_run({'id':'guitar', 'member_id':'kid', 'state':'active', 'title':'Learn electric guitar',
            'starting_point':'private note', 'sessions':[],
-           'phases':[{'name':'First chords', 'steps':['Tune the guitar', 'Play E minor']} ]}
+           'phases':[{'name':'First chords', 'steps':['Tune the guitar', 'Play E minor']} ]})
+    row = storage.get_program('guitar')
     member = {'id':'kid','role':'child','name':'Maya','color_code':'#448899'}
     with patch.object(storage,'get_programs',return_value=[row]), \
          patch.object(storage,'get_all_members',return_value=[member]), \
@@ -19,7 +21,7 @@ def scenario_objects_and_sessions():
         check(objects[0]['kind']=='guitar' and objects[0]['variant']=='electric','named aim selects its instrument')
         check('starting_point' not in objects[0] and 'sessions' not in objects[0], 'object feed contains no private record')
         session=house_programs.session('guitar',datetime.datetime(2026,9,14,10))
-        check(session['program_id']=='guitar' and session['steps']==row['phases'][0]['steps'], 'unscheduled tap opens current program material')
+        check(session['program_id']=='guitar' and session['steps']==loaded('guitar')['phases'][0]['steps'], 'unscheduled tap opens current program material')
         check(not row['sessions'] and 'starting_point' not in session, 'opening neither logs nor leaks notes')
         row['state']='paused'
         check(house_programs.session('guitar') is None,'paused program cannot start')

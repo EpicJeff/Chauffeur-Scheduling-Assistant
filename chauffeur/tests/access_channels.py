@@ -227,10 +227,14 @@ def run_one(name, fx, rkey, col, context):
     elif name == 'list_threads': out = tools.list_threads(**kwargs)
     elif name == 'list_programs':
         # Existing list/progress reports phase words, not starting_point.
-        storage.update_program(sid, {'phases': [{'name': fx.secret(rkey), 'units': []}]})
+        curriculum = storage.get_library_program(fx.library[rkey])
+        storage.update_library_program(fx.library[rkey], {
+            'phases': [{**p, 'name': fx.secret(rkey)} for p in curriculum['phases']]})
         out = tools.list_programs(**kwargs)
     elif name == 'program_progress':
-        storage.update_program(sid, {'phases': [{'name': fx.secret(rkey), 'units': []}]})
+        curriculum = storage.get_library_program(fx.library[rkey])
+        storage.update_library_program(fx.library[rkey], {
+            'phases': [{**p, 'name': fx.secret(rkey)} for p in curriculum['phases']]})
         out = tools.program_progress(title, **kwargs)
     elif name == 'list_situations': out = tools.list_situations(kinds=kind, limit=30, **kwargs)
     elif name == '_conversation_situations':

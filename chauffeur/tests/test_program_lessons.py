@@ -4,6 +4,7 @@ Same philosophy as programs.sanitize_slots: bounds live in the shape,
 every door goes through them, and the model is never trusted to stay
 inside a limit it was merely asked to respect.
 """
+from program_fixture import add_run, loaded
 from harness import check
 from services import program_lessons as pl
 
@@ -359,11 +360,14 @@ def scenario_infinite_numerics_never_raise():
 
 
 def scenario_slot_of():
-    w = {'program_id': 'p1', 'phase_name': 'Foundations', 'session_label': 'Technique',
+    w = {'program_id': 'p1', 'lesson_id': 'stable-rung', 'variant_label': 'Technique',
+         'phase_name': 'Foundations', 'session_label': 'Technique',
          'date': '2026-09-01', 'unit_title': '', 'steps': []}
     s = pl.slot_of(w, unit_n=3)
-    check(s == {'phase_name': 'Foundations', 'unit_n': 3,
-                'session_label': 'Technique'}, f"got {s}")
+    check(s == {'lesson_id': 'stable-rung', 'variant_label': 'Technique'}, f"got {s}")
+    legacy = {k: v for k, v in w.items() if k not in ('lesson_id', 'variant_label')}
+    check(pl.slot_of(legacy, unit_n=3) == {'phase_name': 'Foundations', 'unit_n': 3,
+                                        'session_label': 'Technique'}, 'one-release legacy window identity')
 
 
 # --- storage: a lesson lives beside the program, keyed on its slot ---
@@ -372,28 +376,34 @@ def _lreset(program_ids=('p1', 'p2')):
     from services import storage
     storage.program_lessons_table.truncate()
     for pid in program_ids:
+        if storage.get_program(pid):
+            storage.delete_program(pid)
         if not storage.get_program(pid):
-            storage.add_program({'id': pid, 'member_id': 'kid',
-                                 'title': 'Play guitar'})
+            add_run({'id': pid, 'member_id': 'kid',
+                                 'title': 'Play guitar', 'phases': [
+                                     {'name': 'F', 'units': [{'title': 'One'}, {'title': 'Two'}]},
+                                     {'name': 'Foundations', 'steps': ['One-minute changes G-C'],
+                                      'units': [{'title': 'One', 'body': 'Chords first.'}, {'title': 'Two'}, {'title': 'Three'}]},
+                                     {'name': '', 'steps': []}]})
 
 
 def scenario_lesson_roundtrip_by_slot():
     from services import storage
     _lreset()
-    slot = {'phase_name': 'Foundations', 'unit_n': 1, 'session_label': 'Technique'}
+    slot = {'lesson_id': loaded('p1')['phases'][1]['units'][0]['lesson_id'], 'variant_label': 'Technique'}
     storage.upsert_program_lesson('p1', slot, {
         'origin': 'generated', 'scenes': [_say()], 'model': 'gemma-4-31b-it'})
     row = storage.get_program_lesson('p1', slot)
     check(row and row['origin'] == 'generated' and row['edited'] is False,
           f"got {row}")
-    check(storage.get_program_lesson('p1', {**slot, 'unit_n': 2}) is None,
+    check(storage.get_program_lesson('p1', {**slot, 'lesson_id': loaded('p1')['phases'][1]['units'][1]['lesson_id']}) is None,
           "a different unit is a different lesson")
 
 
 def scenario_upsert_replaces_same_slot():
     from services import storage
     _lreset()
-    slot = {'phase_name': 'F', 'unit_n': 1, 'session_label': ''}
+    slot = {'lesson_id': loaded('p1')['phases'][0]['units'][0]['lesson_id'], 'variant_label': ''}
     storage.upsert_program_lesson('p1', slot, {'origin': 'generated',
                                                'scenes': [_say('v1')]})
     storage.upsert_program_lesson('p1', slot, {'origin': 'generated',
@@ -405,7 +415,7 @@ def scenario_upsert_replaces_same_slot():
 def scenario_edited_is_never_regenerated_over():
     from services import storage
     _lreset()
-    slot = {'phase_name': 'F', 'unit_n': 1, 'session_label': ''}
+    slot = {'lesson_id': loaded('p1')['phases'][0]['units'][0]['lesson_id'], 'variant_label': ''}
     storage.upsert_program_lesson('p1', slot, {
         'origin': 'generated', 'scenes': [_say('mine')], 'edited': True})
     wrote = storage.upsert_program_lesson('p1', slot, {
@@ -421,8 +431,8 @@ def scenario_edited_is_never_regenerated_over():
 def scenario_delete_one_lesson():
     from services import storage
     _lreset()
-    slot = {'phase_name': 'F', 'unit_n': 1, 'session_label': ''}
-    other = {'phase_name': 'F', 'unit_n': 2, 'session_label': ''}
+    slot = {'lesson_id': loaded('p1')['phases'][0]['units'][0]['lesson_id'], 'variant_label': ''}
+    other = {'lesson_id': loaded('p1')['phases'][0]['units'][1]['lesson_id'], 'variant_label': ''}
     storage.upsert_program_lesson('p1', slot, {'scenes': []})
     storage.upsert_program_lesson('p1', other, {'scenes': []})
     gone = storage.delete_program_lesson('p1', slot)
@@ -438,14 +448,11 @@ def scenario_delete_one_lesson():
 def scenario_delete_clears_a_program():
     from services import storage
     _lreset()
-    storage.upsert_program_lesson('p1', {'phase_name': 'F', 'unit_n': 1,
-                                         'session_label': ''}, {'scenes': []})
-    storage.upsert_program_lesson('p2', {'phase_name': 'F', 'unit_n': 1,
-                                         'session_label': ''}, {'scenes': []})
+    storage.upsert_program_lesson('p1', {'lesson_id': loaded('p1')['phases'][0]['units'][0]['lesson_id'], 'variant_label': ''}, {'scenes': []})
+    storage.upsert_program_lesson('p2', {'lesson_id': loaded('p2')['phases'][0]['units'][0]['lesson_id'], 'variant_label': ''}, {'scenes': []})
     n = storage.delete_program_lessons('p1')
     check(n == 1, f"one program's lessons gone, got {n}")
-    check(storage.get_program_lesson('p2', {'phase_name': 'F', 'unit_n': 1,
-                                            'session_label': ''}) is not None,
+    check(storage.get_program_lesson('p2', {'lesson_id': loaded('p2')['phases'][0]['units'][0]['lesson_id'], 'variant_label': ''}) is not None,
           "the other program keeps its lesson")
 
 
@@ -472,15 +479,18 @@ def scenario_none_slot_and_data_never_raise():
 # --- generation: one slot's script, from the right source, or nothing ---
 
 def _program_row(origin='generated', unit_url=''):
-    return {'id': 'p9', 'member_id': 'kid', 'title': 'Play guitar',
-            'source': {'origin': origin},
-            'shape': {'minutes': 20}}
+    from services import storage
+    row = loaded('p9')
+    storage.update_library_program(row['library_id'], {'source': {'origin': origin}})
+    return loaded('p9')
 
 
 def _window():
-    return {'program_id': 'p9', 'phase_name': 'Foundations',
-            'session_label': 'Technique', 'steps': ['One-minute changes G-C'],
-            'unit_title': 'Stage 1', 'unit_url': '', 'unit_body': 'Chords first.',
+    row = loaded('p9')
+    lesson = next(p for p in row['phases'] if p['name'] == 'Foundations')['units'][0]
+    return {'program_id': 'p9', 'lesson_id': lesson['lesson_id'], 'variant_label': 'Technique',
+            'phase_name': 'Foundations', 'session_label': 'Technique', 'steps': ['One-minute changes G-C'],
+            'unit_title': lesson['title'], 'unit_url': lesson.get('url') or '', 'unit_body': lesson.get('body') or '',
             'milestone': 'Play a song', 'progression': 'Add D when G-C is clean'}
 
 
@@ -503,9 +513,7 @@ def scenario_generated_origin_uses_pool_and_stores():
         mp.call_pool_json = orig
     check(lid, "stored a lesson")
     check(calls['tier'] == 'background', "nobody is waiting — background tier")
-    row = storage.get_program_lesson('p9', {'phase_name': 'Foundations',
-                                            'unit_n': 1,
-                                            'session_label': 'Technique'})
+    row = storage.get_program_lesson('p9', {'lesson_id': _window()['lesson_id'], 'variant_label': 'Technique'})
     check(row['origin'] == 'generated' and row['model'] == 'gemma-4-31b-it',
           f"got {row}")
 
@@ -515,7 +523,12 @@ def scenario_cited_needs_its_page_or_stays_silent():
     never papered over -- no script, ever, not even a generated one."""
     from services import storage, program_lessons as pl, web
     _lreset(('p9',))
-    w = {**_window(), 'unit_url': 'https://jg.example/s1'}
+    row = loaded('p9')
+    curriculum = storage.get_library_program(row['library_id'])
+    target = _window()['lesson_id']
+    storage.update_library_program(row['library_id'], {'lessons': [
+        {**l, 'url': 'https://jg.example/s1'} if l['id'] == target else l for l in curriculum['lessons']]})
+    w = _window()
     orig = web.read_page
     web.read_page = lambda url: None
     try:
@@ -524,9 +537,7 @@ def scenario_cited_needs_its_page_or_stays_silent():
     finally:
         web.read_page = orig
     check(lid is None, "no page, no script")
-    check(storage.get_program_lesson('p9', {'phase_name': 'Foundations',
-                                            'unit_n': 1,
-                                            'session_label': 'Technique'}) is None,
+    check(storage.get_program_lesson('p9', {'lesson_id': _window()['lesson_id'], 'variant_label': 'Technique'}) is None,
           "and nothing stored")
 
 
@@ -560,9 +571,7 @@ def scenario_cited_with_no_url_falls_through_to_generated():
     check(lid, "a lesson was still stored -- structure, not silence")
     check(calls['read_page'] == 0,
           "no url means read_page is never called")
-    row = storage.get_program_lesson('p9', {'phase_name': 'Foundations',
-                                            'unit_n': 1,
-                                            'session_label': 'Technique'})
+    row = storage.get_program_lesson('p9', {'lesson_id': _window()['lesson_id'], 'variant_label': 'Technique'})
     check(row['origin'] == 'generated' and row['source_url'] == '',
           f"honestly labelled generated, no source claimed, got {row}")
 
@@ -571,7 +580,12 @@ def scenario_cited_carries_its_source():
     from services import storage, program_lessons as pl, web
     import services.model_pools as mp
     _lreset(('p9',))
-    w = {**_window(), 'unit_url': 'https://jg.example/s1'}
+    row = loaded('p9')
+    curriculum = storage.get_library_program(row['library_id'])
+    target = _window()['lesson_id']
+    storage.update_library_program(row['library_id'], {'lessons': [
+        {**l, 'url': 'https://jg.example/s1'} if l['id'] == target else l for l in curriculum['lessons']]})
+    w = _window()
     orig_read, orig_pool = web.read_page, mp.call_pool_json
     web.read_page = lambda url: 'Stage 1: learn G and C. Practice changes.'
     mp.call_pool_json = lambda *a, **k: {
@@ -582,9 +596,7 @@ def scenario_cited_carries_its_source():
                               {'llm_gemini_api_key': 'k'})
     finally:
         web.read_page, mp.call_pool_json = orig_read, orig_pool
-    row = storage.get_program_lesson('p9', {'phase_name': 'Foundations',
-                                            'unit_n': 1,
-                                            'session_label': 'Technique'})
+    row = storage.get_program_lesson('p9', {'lesson_id': _window()['lesson_id'], 'variant_label': 'Technique'})
     check(lid and row['origin'] == 'cited'
           and row['source_url'] == 'https://jg.example/s1', f"got {row}")
 
@@ -771,10 +783,11 @@ def _due_fixture(cid='pl-c1', day_offset=1):
     import datetime
     from services import storage
     storage.programs_table.truncate()
+    storage.library_programs_table.truncate()
     storage.program_lessons_table.truncate()
     storage.protected_commitments_table.truncate()
     target = datetime.date.today() + datetime.timedelta(days=day_offset)
-    pid = storage.add_program({'member_id': 'kid', 'title': 'Play guitar',
+    pid = add_run({'member_id': 'kid', 'title': 'Play guitar',
                                'shape': {'sessions_per_week': 1, 'minutes': 20},
                                'phases': [{'name': 'Foundations',
                                            'steps': ['One-minute changes G-C'],
@@ -798,11 +811,12 @@ def _due_fixture_many(n=3, day_offset=1):
     import datetime
     from services import storage
     storage.programs_table.truncate()
+    storage.library_programs_table.truncate()
     storage.program_lessons_table.truncate()
     storage.protected_commitments_table.truncate()
     target = datetime.date.today() + datetime.timedelta(days=day_offset)
     for i in range(n):
-        pid = storage.add_program({
+        pid = add_run({
             'member_id': 'kid', 'title': f'Program {i}',
             'shape': {'sessions_per_week': 1, 'minutes': 20},
             'phases': [{'name': 'Foundations',
@@ -1035,7 +1049,7 @@ def scenario_sweep_report_start_offset_zero_reaches_today():
     slot = out['slots'][0]
     check(slot['program'] == 'Play guitar', f"names the program, got {slot}")
     check(slot['phase'] == 'Foundations', f"names the phase, got {slot}")
-    check(slot['unit_n'] == 0, f"names the unit, got {slot}")
+    check(slot['lesson_id'] == loaded(slot['program_id'])['progress']['current'], f"names the unit, got {slot}")
     check(slot['date'] == today, f"names today, not tomorrow, got {slot}")
     check(slot['origin'] == 'generated' and slot['scenes'] == 1,
           f"names what generate_for actually stored, got {slot}")
@@ -1930,9 +1944,7 @@ def scenario_a_model_echoing_the_voice_fields_stores_them_clean():
                         {'llm_gemini_api_key': 'k'})
     finally:
         mp.call_pool_json = orig
-    row = storage.get_program_lesson('p9', {'phase_name': 'Foundations',
-                                            'unit_n': 1,
-                                            'session_label': 'Technique'})
+    row = storage.get_program_lesson('p9', {'lesson_id': _window()['lesson_id'], 'variant_label': 'Technique'})
     scenes = (row or {}).get('scenes') or []
     check(len(scenes) == 2, f"both beats stored, got {scenes}")
     check(scenes[0].get('speak') == 'Sit tall.'

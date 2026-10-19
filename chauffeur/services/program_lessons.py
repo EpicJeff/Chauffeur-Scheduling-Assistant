@@ -344,9 +344,41 @@ def slot_of(window: dict, unit_n: int = 0) -> dict:
     plan's own terms, never the date. A label repeating inside one unit's
     week is one lesson; a new unit is a new lesson, which is the
     escalation the plan already prescribes."""
+    if window.get('lesson_id'):
+        return {'lesson_id': window['lesson_id'],
+                'variant_label': str(window.get('variant_label') or '')}
     return {'phase_name': str(window.get('phase_name') or ''),
             'unit_n': int(unit_n or 0),
             'session_label': str(window.get('session_label') or '')}
+
+
+def resolve_slot(program: dict, slot: dict) -> dict:
+    """Translate the old tuple for one release; named lessons never follow the bookmark.
+
+    Unconverted runs retain their old keys until Task 5 migrates their scripts.
+    An unknown legacy tuple stays a missing slot, rather than opening today's lesson.
+    """
+    from services import programs
+    row = programs.load(program) or {}
+    slot = slot or {}
+    if slot.get('lesson_id'):
+        if not any(l['id'] == slot['lesson_id'] for l in row.get('lessons') or []):
+            raise ValueError(programs.MOVED_LESSON)
+        return {'lesson_id': str(slot['lesson_id']),
+                'variant_label': str(slot.get('variant_label') or '')}
+    legacy = {'phase_name': str(slot.get('phase_name') or ''),
+              'unit_n': int(slot.get('unit_n') or 0),
+              'session_label': str(slot.get('session_label') or '')}
+    if not row.get('library_id'):
+        return legacy
+    phase = next((p for p in row.get('phases') or [] if p.get('name') == legacy['phase_name']), {})
+    units = phase.get('units') or []
+    unit = next((u for u in units if u.get('n') == legacy['unit_n']), None)
+    if not unit and legacy['unit_n'] == 0 and len(units) == 1:
+        unit = units[0]  # the old phase-only slot had no unit number
+    if not unit:
+        return legacy
+    return {'lesson_id': unit['lesson_id'], 'variant_label': legacy['session_label']}
 
 
 def _clean_text(raw, cap: int = MAX_TEXT) -> str:
@@ -750,7 +782,8 @@ WAIT_STATE_KEY = 'lesson_wait_announces'
 
 
 def arm_wait_announce(room: str, text: str, minutes: int, now_ts=None,
-                      program_id: str = None) -> dict:
+                      program_id: str = None, lesson_id: str = None,
+                      variant_label: str = '') -> dict:
     """Queue one call into a room, `minutes` from now.
 
     Pruned on every write rather than on a schedule of its own: the queue
@@ -761,13 +794,18 @@ def arm_wait_announce(room: str, text: str, minutes: int, now_ts=None,
     """
     with (deletion.acting_for('program', program_id) if program_id else nullcontext()):
         import time
-        from services import storage
+        from services import storage, programs
+        if program_id and not lesson_id:
+            import datetime
+            projection = programs.lesson_for(storage.get_program(program_id), datetime.date.today())
+            lesson_id, variant_label = projection.get('lesson_id'), projection.get('variant_label') or ''
         now_ts = float(now_ts if now_ts is not None else time.time())
         mins = max(1, min(MAX_WAIT_MINUTES, _to_int(minutes) or 0))
         entry = {'fire_ts': now_ts + mins * 60,
                  'room': str(room or '')[:60],
                  'text': _clean_text(text, MAX_WAIT_ANNOUNCE),
-                 'program_id': program_id}
+                 'program_id': program_id, 'lesson_id': lesson_id,
+                 'variant_label': variant_label}
         queue = storage.get_app_state(WAIT_STATE_KEY) or []
         if not isinstance(queue, list):
             queue = []
@@ -796,7 +834,7 @@ def due_wait_announces(now_ts=None) -> list:
     behind it.
     """
     import time
-    from services import storage, access
+    from services import storage, access, programs
     now_ts = float(now_ts if now_ts is not None else time.time())
     try:
         queue = storage.get_app_state(WAIT_STATE_KEY) or []
@@ -808,6 +846,11 @@ def due_wait_announces(now_ts=None) -> list:
                 continue
             if e.get('program_id') and access.gone('program', storage.get_program(e['program_id']), rid=e['program_id']):
                 continue
+            if e.get('program_id'):
+                row = programs.load(storage.get_program(e['program_id']))
+                if row and (row.get('unresolved') or (e.get('lesson_id') and not any(
+                        l['id'] == e['lesson_id'] for l in row.get('lessons') or []))):
+                    continue
             ts = float(e.get('fire_ts') or 0)
             if ts > now_ts:
                 keep.append(e)
@@ -981,6 +1024,8 @@ def _context_block(program: dict, now=None) -> str:
     alone = caps.get('practices_alone', True)
     who = programs_curate._who_line(member, '')
     lines = [f"Who this is for: {who}."]
+    if program.get('starting_point'):
+        lines.append(f"Their starting point: {program['starting_point']}")
     lines.append("They can run this session on their own." if alone else
                  "They need a grown-up beside them for this session — write "
                  "the script so an adult can follow along too.")
@@ -1129,8 +1174,18 @@ def generate_for(program: dict, window: dict, unit: dict, settings: dict):
     and a None, so a sweep calling this in a loop never needs a
     try/except of its own.
     """
-    from services import model_pools, storage, web
+    from services import model_pools, storage, web, programs
     try:
+        program = programs.load(program)
+        if program.get('unresolved'):
+            return None
+        if window.get('lesson_id'):
+            import datetime
+            projection = programs.lesson_for(program, datetime.date.fromisoformat(
+                window.get('date') or datetime.date.today().isoformat()),
+                lesson_id=window['lesson_id'], variant_label=window.get('variant_label') or '')
+            window = {**window, 'steps': projection['steps'], 'unit_title': projection['title'],
+                      'unit_body': projection.get('body') or '', 'unit_url': projection.get('url') or ''}
         origin = ((program.get('source') or {}).get('origin')
                   or 'generated')
         slot = slot_of(window, unit_n=int((unit or {}).get('n') or 0))
@@ -1217,11 +1272,11 @@ def _windows_to_scan(now, start_offset: int, days: int):
     import datetime
     from services import storage, programs
     start = now.date() + datetime.timedelta(days=start_offset)
-    rows = {r['id']: r for r in storage.get_programs(state='active')}
+    rows = {r['id']: programs.load(r) for r in storage.get_programs(state='active')}
     for w in programs._practice_windows(
             start, start + datetime.timedelta(days=days)):
         row = rows.get(w.get('program_id'))
-        if not row:
+        if not row or row.get('unresolved'):
             continue
         phase = programs.progress(row).get('phase') or {}
         unit = programs.unit_for(row, phase) or {}
@@ -1402,7 +1457,8 @@ def sweep_report(now=None, start_offset: int = 0, days: int = 3,
                      'program_id': row.get('id') or '',
                      'phase': w.get('phase_name') or '',
                      'session_label': w.get('session_label') or '',
-                     'unit_n': slot['unit_n'],
+                     'unit_n': int(w.get('unit_n') or 0),
+                     **{k: slot[k] for k in ('lesson_id', 'variant_label') if k in slot},
                      'date': w.get('date') or ''}
             if not needs_lesson(row['id'], slot):
                 entry['skipped'] = _lesson_skip_reason(row['id'], slot)

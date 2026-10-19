@@ -64,8 +64,12 @@ def world():
     reset_ledgers()
     missions._post = REAL_POST
     for key in ('R3', 'R5p'):
-        storage.update_program(fx.ids[key], {'state': 'active', 'phases': [
-            {'name': fx.secret(key), 'weeks': 2, 'what': 'x', 'steps': [fx.secret(key)], 'milestone': 'm'}]})
+        storage.update_program(fx.ids[key], {'state': 'active'})
+        curriculum = storage.get_library_program(fx.library[key])
+        storage.update_library_program(fx.library[key], {
+            'phases': [{**p, 'name': fx.secret(key), 'weeks': 2, 'what': 'x',
+                        'steps': [fx.secret(key)], 'milestone': 'm'} for p in curriculum['phases']],
+            'lessons': [{**l, 'steps': [fx.secret(key)]} for l in curriculum['lessons']]})
     fx.commitments = {}
     for key in ('R3', 'R5p'):
         fx.commitments[key] = storage.add_protected_commitment({

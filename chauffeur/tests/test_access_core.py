@@ -4,6 +4,7 @@ Run from chauffeur/: python tests/test_access_core.py
 """
 import traceback
 
+from program_fixture import add_run
 from harness import check
 import access_fixture
 from services import access, storage, threads
@@ -211,7 +212,7 @@ def scenario_program_subject_keeper_reads_it():
     """Codex T1 review #1: Aunt's program in Mom's private project; Aunt's own household
     thread about it stays visible to Aunt (a program keeper reads the whole program)."""
     fx = access_fixture.build()
-    pid = storage.add_program({'title': 'Aunt piano', 'member_id': 'aunt', 'state': 'active'})
+    pid = add_run({'title': 'Aunt piano', 'member_id': 'aunt', 'state': 'active'})
     from services import projects
     projects.adopt('program', pid, None, project_id=fx.projects['mom_private']['id'])
     tid = threads.create(title='About piano', owner_member_id='aunt', created_by='aunt',
