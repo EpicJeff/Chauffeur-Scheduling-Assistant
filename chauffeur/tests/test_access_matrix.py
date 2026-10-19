@@ -79,6 +79,7 @@ def scenario_every_probe_matches_the_table():
                 continue
             for col in COLS:
                 want = signed_in.expected(rid, fx, rkey, col, expect(cls, rkey, col))
+                want = access_fixture.library_expected(rid, fx, rkey, col, want)
                 try:
                     got = PROBES[rid](fx, rkey, col)
                 except Exception as exc:
@@ -111,6 +112,9 @@ shared_signals.register(probe, expect, observed)
 
 import access_calendar as calendar
 calendar.register(probe)
+
+# Program library routes (spec 2026-10-19 §4): inert until their READERS rows exist.
+access_fixture.register_library(probe)
 
 
 def scenario_shared_contracts():

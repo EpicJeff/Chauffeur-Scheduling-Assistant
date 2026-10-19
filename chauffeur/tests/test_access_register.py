@@ -15,12 +15,13 @@ import main
 ROOT = Path(__file__).resolve().parents[1]
 KEYWORDS = re.compile(r'thread|mission|program|situation|asks?\b|action-proposal|project|practice|lesson|'
                       r'study|house|schedule|calendar|subjects|chat|commitments|findings|overview|'
-                      r'summary|history|converse|packing')
+                      r'summary|history|converse|packing|library')
 TOOL_KEYWORDS = re.compile(r'thread|mission|program|project|situation|_ask|ask_|lesson|practice|finding|'
                            r'summar|overview|history')
 GETTERS = re.compile(r'\b(get_thread|get_threads|get_mission|get_missions|get_mission_steps|get_program|'
                      r'get_programs|get_protected_commitments|get_findings|get_open_findings|'
-                     r'get_cached_schedule|get_conversation|get_all_conversations)\(')
+                     r'get_cached_schedule|get_conversation|get_all_conversations|'
+                     r'get_library_program|get_library_programs)\(')
 
 
 def scenario_every_keyword_route_is_classified():
