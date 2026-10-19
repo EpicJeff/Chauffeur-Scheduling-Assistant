@@ -1,5 +1,6 @@
 """Executable cutover edges beyond the immutable library model contract."""
 import datetime as dt
+import json
 import traceback
 from unittest.mock import patch
 
@@ -29,8 +30,40 @@ def fresh():
 
 def http(method, path, **kwargs):
     with patch.object(storage, 'get_settings', return_value={'auth_enforce': True}):
+        headers = {'X-Member-Token': storage.create_member_token('mom'), **kwargs.pop('headers', {})}
         return TestClient(main.app).request(method, path,
-            headers={'X-Member-Token': storage.create_member_token('mom')}, **kwargs)
+            headers=headers, **kwargs)
+
+
+def scenario_malformed_legacy_numbers_never_crash_completion_or_wait():
+    rid = fresh()
+    for value in ('abc', ['abc'], float('inf')):
+        body = {'phase_name': 'Basics', 'unit_n': value, 'program_id': rid,
+                'room': 'Kitchen', 'text': 'Come back to the keys.', 'minutes': 5}
+        # Raw JSON also exercises Infinity, which httpx's json= encoder rejects.
+        for path in (f'/api/programs/{rid}/session', '/api/lessons/wait'):
+            response = http('POST', path, content=json.dumps(body), headers={'Content-Type': 'application/json'})
+            check(response.status_code == 409 and response.json() == {'detail': programs.MOVED_LESSON},
+                  f'{path}: malformed legacy number is an unknown required slot: {value!r}')
+        optional = program_lessons.resolve_slot(storage.get_program(rid), {'unit_n': value})
+        check(not optional.get('lesson_id'), 'a malformed optional slot never resolves to a lesson')
+    check(not storage.get_program(rid).get('sessions'), 'refused slots do not credit a session')
+    check(not storage.get_app_state(program_lessons.WAIT_STATE_KEY), 'refused slots do not arm a wait')
+    response = http('POST', '/api/lessons/wait', json={'program_id': rid, 'unit_n': 'abc',
+                    'room': 'Kitchen', 'text': 'Come back to the keys.', 'minutes': 5})
+    check(response.status_code == 200, 'an optional unknown legacy slot is ignored')
+
+
+def scenario_unresolved_run_keeps_a_neutral_house_object():
+    rid = fresh()
+    check(len(house_programs.objects(viewer=access.HOUSE)) == 1, 'resolved run has a house object')
+    storage.delete_library_program(loaded(rid)['library_id'])
+    objects = house_programs.objects(viewer=access.HOUSE)
+    check(len(objects) == 1 and objects[0]['id'] == rid, 'unresolved run keeps its tappable house object')
+    check(all(not objects[0].get(key) for key in
+              ('title', 'phase_name', 'phase', 'steps', 'milestone', 'member_name')),
+          'unresolved house object has no curriculum words or member name')
+    check(objects[0]['kind'] == 'book', 'unresolved house object uses neutral geometry')
 
 
 def scenario_date_rotation_includes_same_day_rank_and_filters_empty_variants():
@@ -133,7 +166,9 @@ if __name__ == '__main__':
     failures = 0
     for fn in (scenario_date_rotation_includes_same_day_rank_and_filters_empty_variants,
                scenario_named_routes_generation_wait_and_unresolved_reads,
-               scenario_a_removal_between_route_admission_and_storage_is_still_409):
+               scenario_a_removal_between_route_admission_and_storage_is_still_409,
+               scenario_malformed_legacy_numbers_never_crash_completion_or_wait,
+               scenario_unresolved_run_keeps_a_neutral_house_object):
         try:
             fn()
             print('PASS', fn.__name__)

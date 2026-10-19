@@ -27,14 +27,13 @@ def objects(*, viewer=access.HOUSE):
         if not access.shared_screen_visible('program', row, viewer):
             continue
         row = programs.load(row)
-        if row.get('unresolved'):
-            continue
+        unresolved = row.get('unresolved')
         member = members.get(row.get('member_id'))
         if not member:
             continue
-        kind = appearance(row)
-        out.append({'id': row['id'], 'kind': kind, 'title': row.get('title') or 'Practice',
-                    'member_name': member.get('name') or '',
+        kind = 'book' if unresolved else appearance(row)
+        out.append({'id': row['id'], 'kind': kind, 'title': '' if unresolved else row.get('title') or 'Practice',
+                    'member_name': '' if unresolved else member.get('name') or '',
                     'color': member.get('color_code') or '#58978b',
                     'variant': 'electric' if kind == 'guitar' and 'electric' in row.get('title', '').lower() else 'acoustic'})
     return out

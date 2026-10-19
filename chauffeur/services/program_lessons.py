@@ -366,8 +366,12 @@ def resolve_slot(program: dict, slot: dict) -> dict:
             raise ValueError(programs.MOVED_LESSON)
         return {'lesson_id': str(slot['lesson_id']),
                 'variant_label': str(slot.get('variant_label') or '')}
+    try:
+        unit_n = int(slot.get('unit_n') or 0)
+    except (ValueError, TypeError, OverflowError):
+        unit_n = -1  # Unknown slot; never the phase-only zero alias.
     legacy = {'phase_name': str(slot.get('phase_name') or ''),
-              'unit_n': int(slot.get('unit_n') or 0),
+              'unit_n': unit_n,
               'session_label': str(slot.get('session_label') or '')}
     if not row.get('library_id'):
         return legacy
