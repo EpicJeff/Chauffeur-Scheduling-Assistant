@@ -401,7 +401,7 @@ def _binders(now, viewer=access.HOUSE):
             continue
         if p.get('unresolved'):
             out.append({'id': p.get('id'), 'title': '', 'state': p.get('state'),
-                        'why': '', 'shape': {}, 'progress': {}, 'current_unit': {},
+                        'why': '', 'shape': {}, 'progress': None, 'current_unit': {},
                         'pulled': False, 'detail': ''})
             continue
         pulled = False
