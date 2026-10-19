@@ -197,9 +197,16 @@ def scenario_runners_hide_projects_the_viewer_cannot_see():
         for k in ('R3', 'R5p', 'R15', 'R17'):
             if k not in keys:
                 check(p[k]['id'] not in words and p[k]['title'] not in words, f'{col} never learns of {k}: {out}')
-    r = request(fx, 'dad', 'GET', f'/api/library/{lid}')
-    check(r.status_code == 200 and 'Kate no Dad' not in r.text and 'Mom no Dad' not in r.text
-          and 'Mom private' not in r.text, f"Dad's library page names only what he sees: {r.text[:300]}")
+    for path in (f'/api/library/{lid}', '/api/library'):
+        r = request(fx, 'dad', 'GET', path)
+        hidden = [p[k] for k in ('R3', 'R15', 'R17')]
+        check(r.status_code == 200 and not any(h['title'] in r.text or h['id'] in r.text for h in hidden),
+              f"Dad's {path} names only what he sees: {r.text[:300]}")
+        runners = access_fixture._runners_in(access_fixture._library_entry(r.json(), lid)
+                                             if path == '/api/library' else r.json())
+        check(runners and runners['hidden'] == 3
+              and [n.get('project_id') for n in runners['named']] == [p['R5p']['id']],
+              f'{path}: the runner projection Dad gets: {runners}')
 
 
 def scenario_run_cells_and_keeper_gates_are_unchanged():

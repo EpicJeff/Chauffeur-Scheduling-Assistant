@@ -73,7 +73,7 @@ def _fresh():
     home_board.invalidate_cache()
 
 
-def _curriculum():
+def _curriculum(b_sessions=1):
     """Two phases; the first holds a two-session lesson, a lesson with a rotation, and a third."""
     ids = {k: uuid.uuid4().hex for k in ('P1', 'P2', 'A', 'B', 'D', 'C', 'E')}
     phases = [
@@ -85,7 +85,7 @@ def _curriculum():
     lessons = [
         {'id': ids['A'], 'phase_id': ids['P1'], 'title': 'Posture and middle C', 'sessions': 2,
          'steps': ['Sit tall', 'Find middle C'], 'body': 'Middle C sits under the brand name.', 'variants': []},
-        {'id': ids['B'], 'phase_id': ids['P1'], 'title': 'Five-finger scale', 'sessions': 1, 'steps': ['Scale'],
+        {'id': ids['B'], 'phase_id': ids['P1'], 'title': 'Five-finger scale', 'sessions': b_sessions, 'steps': ['Scale'],
          'variants': [{'label': 'Session A', 'steps': ['Scale up slowly']},
                       {'label': 'Session B', 'steps': ['Scale down slowly']}]},
         {'id': ids['D'], 'phase_id': ids['P1'], 'title': 'Hands together', 'sessions': 1,
@@ -97,8 +97,8 @@ def _curriculum():
     return ids, phases, lessons
 
 
-def _library(title='Learn piano', created_by='aunt', minutes=30, sessions_per_week=2):
-    ids, phases, lessons = _curriculum()
+def _library(title='Learn piano', created_by='aunt', minutes=30, sessions_per_week=2, b_sessions=1):
+    ids, phases, lessons = _curriculum(b_sessions)
     ids['L'] = storage.add_library_program({
         'title': title, 'created_by': created_by, 'archived': False,
         'made_for': {'age_band': 'explorer', 'minutes': minutes, 'sessions_per_week': sessions_per_week,
@@ -257,6 +257,25 @@ def scenario_lesson_for_resolves_the_bookmark_and_the_date():
     programs.log_session(rid, lesson_id=ids['A'])
     check(programs.lesson_for(storage.get_program(rid), WED)['variant_label'] == before,
           'logging never changes which variant a date gets')
+    # The bookmarked lesson itself practised, short of completion: still date arithmetic only.
+    multi = _library(b_sessions=3)
+    busy = _run(multi, current='B')
+    _approve(busy)
+    days = (MON, WED, FRI, MON2)
+    seen = {d: programs.lesson_for(storage.get_program(busy), d) for d in days}
+    check(len({seen[d]['variant_label'] for d in days}) == 2, f'both variants are dealt: {seen}')
+    windows_before = {w['date']: (w['variant_label'], w['steps']) for w in _windows(busy, MON, MON2)}
+    programs.log_session(busy, lesson_id=multi['B'])
+    programs.log_session(busy)
+    check(_count(busy, multi['B']) == 2 and not _completed(busy, multi['B']) and _current(busy) == multi['B'],
+          f'two of three sessions on the bookmarked lesson: {_progress(busy)}')
+    for d in days:
+        now = programs.lesson_for(storage.get_program(busy), d)
+        check((now['lesson_id'], now['variant_label'], now['steps'])
+              == (seen[d]['lesson_id'], seen[d]['variant_label'], seen[d]['steps']),
+              f'practising the lesson never moves a date to another variant: {d} {seen[d]} -> {now}')
+    check({w['date']: (w['variant_label'], w['steps']) for w in _windows(busy, MON, MON2)} == windows_before,
+          'and every window keeps its variant and steps')
     windows = _windows(rid, MON, FRI)
     check(len(windows) == 3, f'three windows this week: {windows}')
     from services import program_lessons as pl
@@ -359,6 +378,19 @@ def scenario_partial_sessions_then_completion_then_the_next_in_phase():
           'the next phase waits for the person to judge the milestone')
 
 
+def scenario_completion_moves_past_a_lesson_already_completed():
+    _fresh()
+    ids = _library()
+    done = {ids['A']: {'done_sessions': 1, 'completed_at': None}, **_done(ids, 'B')}
+    rid = _run(ids, current='A', state='active', done=done)
+    stamp = done[ids['B']]['completed_at']
+    programs.log_session(rid)
+    check(_completed(rid, ids['A']) and _current(rid) == ids['D'],
+          f'the next UNCOMPLETED lesson, skipping one already done: {_progress(rid)}')
+    b = (_progress(rid).get('lessons') or {}).get(ids['B']) or {}
+    check(b.get('done_sessions') == 1 and b.get('completed_at') == stamp, f'the completed lesson keeps its counts: {b}')
+
+
 def scenario_next_and_back_keep_every_count():
     _fresh()
     ids = _library()
@@ -440,6 +472,29 @@ def scenario_reached_it_finishes_only_when_every_phase_is_judged():
     check(res['status'] == 'error' and res['message'] == programs.RELEASE_ERROR, f'a release failure surfaces: {res}')
     check(row['state'] == 'active' and not (row['progress']['phases'].get(ids3['P2']) or {}).get('milestone_hit_at')
           and len(_live_commitments(rid3)) == 3, f'and nothing of the finish landed (one transaction): {row}')
+    # A release that fails part-way: the first window is deleted, the second refuses.
+    ids4 = _library()
+    rid4 = _run(ids4)
+    _approve(rid4)
+    programs.mark_milestone(rid4, ids4['P1'])
+    before = json.loads(json.dumps(storage.get_program(rid4)))
+    real_delete = storage.delete_protected_commitment
+    deletes = []
+
+    def second_fails(cid):
+        deletes.append(cid)
+        if len(deletes) == 2:
+            raise RuntimeError('the second window would not go')
+        return real_delete(cid)
+    with patch.object(storage, 'delete_protected_commitment', side_effect=second_fails):
+        res = programs.mark_milestone(rid4, ids4['P2'])
+    row = storage.get_program(rid4)
+    check(len(deletes) >= 2, f'the failure was injected after one window was released: {deletes}')
+    check(res['status'] == 'error' and res['message'] == programs.RELEASE_ERROR, f'it surfaces: {res}')
+    check(len(_live_commitments(rid4)) == 3, f'all three windows are back (rolled back): {_live_commitments(rid4)}')
+    check(row['emissions'] == before['emissions'] and row['progress'] == before['progress']
+          and row['state'] == 'active' and not row.get('finished_at'),
+          f'emissions, progress, state and finish time exactly as before: {row}')
 
 
 def scenario_completion_credits_the_named_lesson_and_a_moved_lesson_is_409():
@@ -486,6 +541,82 @@ def scenario_scripts_are_keyed_by_run_lesson_and_variant():
     check(r.status_code == 200 and storage.get_program_lesson(kate, {'lesson_id': ids['A'], 'variant_label': ''}) is None,
           f'cleared by lesson id: {r.text[:200]}')
     check(storage.get_program_lesson(kate, b_a) and storage.get_program_lesson(kate, b_b), 'the other scripts stay')
+
+
+def scenario_generation_help_and_legacy_slots_keep_lesson_identity():
+    """Generation, the player's help, the wall's scenes and the legacy slot tuple, by lesson id."""
+    _fresh()
+    from services import model_pools, program_lessons as pl
+    ids = _library()
+    rid = _run(ids, current='B')
+    _approve(rid, [{'day': 0, 'time_start': '17:00'}, {'day': 2, 'time_start': '17:00'}])
+    other = _run(ids, member='sib', current='B', project=_project('sib'))
+    _approve(other, [{'day': 0, 'time_start': '18:00'}, {'day': 2, 'time_start': '18:00'}])
+    labels = {d: programs.lesson_for(storage.get_program(rid), d)['variant_label'] for d in (MON, WED)}
+    check(labels[MON] != labels[WED], f'two evenings, two variants: {labels}')
+    prompts = []
+
+    def fake_pool(pool, key, system, prompt, **kw):
+        prompts.append(prompt)
+        return {'scenes': [{'type': 'say', 'text': f'Generated script {len(prompts)}.'}], '_model': 'stub'}
+    eve = datetime.datetime.combine(MON - datetime.timedelta(days=1), datetime.time(21, 0))
+    with patch.object(model_pools, 'call_pool_json', side_effect=fake_pool):
+        wrote = pl.generate_due(now=eve)
+    check(wrote == 4 and len(prompts) == 4, f'one script per run, lesson and variant: {wrote} {len(prompts)}')
+    for run in (rid, other):
+        for day in (MON, WED):
+            slot = {'lesson_id': ids['B'], 'variant_label': labels[day]}
+            check((storage.get_program_lesson(run, slot) or {}).get('scenes'), f'stored under (run, lesson, variant): {run} {slot}')
+    check(sum('SECRET-START-kid' in p for p in prompts) == 2 and sum('SECRET-START-sib' in p for p in prompts) == 2,
+          "each run's private starting point reaches its own generation, and only its own")
+    check(any('Scale up slowly' in p for p in prompts) and any('Scale down slowly' in p for p in prompts),
+          "the projection's steps reach the generation input")
+    hand, regen = labels[MON], labels[WED]
+    storage.upsert_program_lesson(rid, {'lesson_id': ids['B'], 'variant_label': hand},
+                                  {'scenes': _say('Thumb on C, then climb.'), 'origin': 'generated', 'edited': True})
+    # Legacy (phase_name, unit_n, session_label), translated for one release: unit 2 of Foundations is B.
+    r = _http('mom', 'GET', f'/api/programs/{rid}/lesson',
+              params={'phase_name': 'Foundations', 'unit_n': 2, 'session_label': hand})
+    check(r.status_code == 200 and 'Thumb on C, then climb.' in r.text, f'the legacy tuple finds the lesson: {r.text[:200]}')
+    r = _http('mom', 'GET', f'/api/programs/{rid}/lesson-scenes', params={'lesson_id': ids['B'], 'variant_label': hand})
+    check(r.status_code == 200 and 'Thumb on C, then climb.' in r.text, f"the wall's scenes by lesson id: {r.text[:200]}")
+    import main as _main
+    helped = []
+
+    def fake_help(pool, key, system, prompt, **kw):
+        helped.append(prompt)
+        return {'answer': 'Try it slowly, one finger at a time.'}
+    with patch.object(model_pools, 'call_pool_json', side_effect=fake_help), \
+            patch.object(model_pools, 'credentials', return_value=('interactive', 'k')):
+        _main._lesson_help_at.clear()
+        r = _http('kid', 'POST', f'/api/programs/{rid}/lesson-help',
+                  json={'lesson_id': ids['B'], 'variant_label': hand, 'scene_idx': 0})
+        check(r.status_code == 200 and r.json().get('answer'), f'help answers: {r.status_code} {r.text[:200]}')
+        check(helped and 'Thumb on C, then climb.' in helped[0] and 'Learn piano' in helped[0],
+              f"help reads the beat of the named lesson and the library title: {helped}")
+        _main._lesson_help_at.clear()
+        r = _http('kid', 'POST', f'/api/programs/{rid}/lesson-help', json={'lesson_id': 'f' * 32, 'variant_label': ''})
+        check(r.status_code == 409 and MOVED in r.text, f'help for a moved lesson: {r.status_code} {r.text[:200]}')
+    r = _http('kid', 'POST', '/api/lessons/wait',
+              json={'room': 'living room', 'text': 'Time to switch hands.', 'minutes': 5, 'program_id': rid})
+    queue = storage.get_app_state(pl.WAIT_STATE_KEY) or []
+    check(r.status_code == 200 and any(e.get('program_id') == rid for e in queue), f'the wait queue carries the run id: {queue}')
+    # A content edit keeps every script until Regenerate.
+    _svc().update_lesson(ids['L'], ids['B'], {'variants': [{'label': 'Session A', 'steps': ['Up, both hands']},
+                                                           {'label': 'Session B', 'steps': ['Down, both hands']}]}, dict(AUNT))
+    for label, words in ((hand, 'Thumb on C, then climb.'), (regen, 'Generated script')):
+        kept = storage.get_program_lesson(rid, {'lesson_id': ids['B'], 'variant_label': label})
+        check(words in json.dumps(kept), f'{label}: kept through the library edit: {kept}')
+    r = _http('mom', 'DELETE', f'/api/programs/{rid}/lesson', params={'lesson_id': ids['B'], 'variant_label': regen})
+    check(r.status_code == 200, f'Regenerate clears one slot: {r.text[:200]}')
+    prompts.clear()
+    storage.set_app_state('program_lessons_swept', '')
+    with patch.object(model_pools, 'call_pool_json', side_effect=fake_pool):
+        pl.generate_due(now=eve)
+    want = {'Session A': 'Up, both hands', 'Session B': 'Down, both hands'}[regen]
+    check(len(prompts) == 1 and want in prompts[0], f'only the cleared slot is written again, from the edited steps: {prompts}')
+    check('Thumb on C, then climb.' in json.dumps(storage.get_program_lesson(rid, {'lesson_id': ids['B'], 'variant_label': hand})),
+          'the hand edit is still there')
 
 
 def scenario_the_effective_shape_lives_on_the_run():
@@ -584,21 +715,65 @@ def scenario_unresolved_run():
     check(len(_live_commitments(rid2)) == 3, 'and its time was never released')
 
 
+def _corrupt_raw(lid, fields):
+    """Write a malformed value past the storage door's own checks, as a damaged file would."""
+    table = getattr(storage, 'library_programs_table', None)
+    if table is not None:
+        table.update(fields, storage.Query().id == lid)
+    else:
+        storage.update_library_program(lid, fields)
+
+
+def scenario_a_corrupted_library_row_reads_unresolved():
+    """Review Focus 3, the corrupted half: the row is there but its curriculum cannot be read."""
+    _fresh()
+    project = _project('kid')
+
+    def orphan_lesson(ids):
+        lessons = [dict(l, phase_id='no-such-phase') if l['id'] == ids['A'] else l
+                   for l in storage.get_library_program(ids['L'])['lessons']]
+        _corrupt_raw(ids['L'], {'lessons': lessons})
+    for what, corrupt in (('a lesson in no phase', orphan_lesson),
+                          ('lessons that are not a list', lambda ids: _corrupt_raw(ids['L'], {'lessons': 'not a list'}))):
+        ids = _library()
+        rid = _run(ids, project=project)
+        _approve(rid)
+        corrupt(ids)
+        loaded = programs.load(storage.get_program(rid))
+        check(loaded['unresolved'] is True and loaded['phases'] == [], f'{what}: unresolved, never half a curriculum: {loaded}')
+        windows = _windows(rid, MON)
+        check(len(windows) == 1 and not windows[0].get('steps') and not windows[0].get('lesson_id'),
+              f'{what}: a neutral window that still holds the time: {windows}')
+        for path in ('/api/programs', f"/api/projects/{project['id']}", '/api/practice-windows',
+                     f'/api/programs/{rid}/footprint', '/api/commitments'):
+            r = _http('mom', 'GET', path)
+            check(r.status_code == 200, f'{what}: {path} answers, never a 500: {r.status_code} {r.text[:200]}')
+        check(len(_live_commitments(rid)) == 3, f'{what}: its time stays reserved')
+
+
 def scenario_a_library_change_invalidates_warm_boards():
     _fresh()
     ids = _library()
     _run(ids)
+    spare = _library(title='Learn the recorder')      # no run: the service may delete it
 
     def digest():
         home_board._ACCESS_DIGEST.clear()
         return home_board._access_input_digest()
     before = digest()
     check(digest() == before, 'the digest is stable while nothing changes')
+    # A WARM digest: memoised a moment ago, then the library changes under it.
+    warm = home_board._access_input_digest()
+    check(warm == before and home_board._ACCESS_DIGEST.get('digest') == warm, 'the digest is memoised')
     _svc().update(ids['L'], {'title': 'Learn the piano'}, dict(AUNT))
-    edited = digest()
-    check(edited != before, 'an edited library row changes the digest')
+    edited = home_board._access_input_digest()
+    check(edited != warm, 'an edit through the library service reaches a warm digest at once')
+    res = _svc().delete(spare['L'], dict(AUNT))
+    check(res.get('status') in ('success', 'ok'), f'the unused row is deleted: {res}')
+    removed = home_board._access_input_digest()
+    check(removed != edited, 'a removal through the library service reaches a warm digest at once')
     storage.delete_library_program(ids['L'])
-    check(digest() != edited, 'a vanished library row changes it too')
+    check(digest() != removed, 'a vanished library row changes it too')
 
 
 # --- Review Focus 1 and 2 -------------------------------------------------------------------

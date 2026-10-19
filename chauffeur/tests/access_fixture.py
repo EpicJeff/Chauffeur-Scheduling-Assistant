@@ -245,7 +245,23 @@ def _library_entry(data, lid):
     return None
 
 
+def _runners_in(data):
+    """The {'named': [...], 'hidden': n} runner projection inside a response, wherever it is nested."""
+    if isinstance(data, dict):
+        if isinstance(data.get('named'), list) and 'hidden' in data:
+            return data
+        data = list(data.values())
+    if isinstance(data, list):
+        for item in data:
+            found = _runners_in(item)
+            if found is not None:
+                return found
+    return None
+
+
 def library_read_probe(rid, fx, rkey, col):
+    """Public curriculum, and the runner projection exactly: named when the viewer sees the run's
+    project, otherwise counted, with no runner field and no project word anywhere in the response."""
     import json
     from access_signed_in import request
     if col == 'house':
@@ -263,10 +279,50 @@ def library_read_probe(rid, fx, rkey, col):
     entry = _library_entry(r.json(), lid)
     if entry is None or entry.get('title') != fx.title(rkey):
         return 'NO-CURRICULUM'
-    project_id = storage.get_program(fx.ids[rkey])['project_id']
     # One program's page may carry its runners beside the row; the list must carry them in it.
     scope = r.json() if rid[-1] == '/api/library/{id}' else entry
-    return 'curriculum+runner' if project_id in json.dumps(scope) else 'curriculum'
+    runners = _runners_in(scope)
+    if runners is None:
+        return 'NO-RUNNER-PROJECTION'
+    project = storage.get_project(storage.get_program(fx.ids[rkey])['project_id'])
+    named = [{k: n.get(k) for k in ('name', 'project_id', 'project_title')} for n in runners['named']]
+    if runner_visible(rkey, col):
+        want = [{'name': RUNNER_NAME[rkey], 'project_id': project['id'], 'project_title': project['title']}]
+        return 'curriculum+runner' if named == want and runners['hidden'] == 0 else f'RUNNERS-WRONG: {runners}'
+    if named or runners['hidden'] != 1:
+        return f'RUNNERS-WRONG: {runners}'
+    words = json.dumps(scope)
+    if project['id'] in r.text or project['title'] in r.text or RUNNER_NAME[rkey] in words:
+        return 'LEAK: a hidden runner or its project reached the library payload'
+    return 'curriculum'
+
+
+def _library_effect(rid, col, row, after, before_count, lid):
+    """What an accepted write must have changed, read back from storage; None when it did."""
+    method, path = rid[1], rid[-1]
+    if path == '/api/library':
+        made = [r for r in storage.get_library_programs() if r.get('title') == 'Learn the recorder']
+        ok = (len(storage.get_library_programs()) == before_count + 1 and len(made) == 1
+              and made[0].get('created_by') == col
+              and made[0].get('made_for') == {'age_band': 'any', 'minutes': 15, 'sessions_per_week': 2,
+                                              'assumes': 'complete beginner'})
+        return None if ok else 'ACCEPTED-BUT-NOT-CREATED'
+    lessons = [l['id'] for l in (after or {}).get('lessons') or []]
+    first = row['lessons'][0]['id']
+    if path == '/api/library/{id}':
+        ok = (after or {}).get('title') == f'Edited by {col}'
+    elif path.endswith('/archive'):
+        ok = (after or {}).get('archived') is True
+    elif path.endswith('/order'):
+        ok = lessons == [l['id'] for l in reversed(row['lessons'])]
+    elif path.endswith('/lessons'):
+        new = [l for l in (after or {}).get('lessons') or [] if l['id'] not in {x['id'] for x in row['lessons']}]
+        ok = (len(new) == 1 and new[0].get('title') == 'Three' and new[0].get('phase_id') == row['phases'][0]['id'])
+    elif method == 'PATCH':
+        ok = next((l for l in after['lessons'] if l['id'] == first), {}).get('title') == f'Lesson edited by {col}'
+    else:
+        ok = first not in lessons and len(lessons) == len(row['lessons']) - 1
+    return None if ok else 'ACCEPTED-BUT-NOT-STORED'
 
 
 def library_write_probe(rid, fx, rkey, col):
@@ -277,6 +333,7 @@ def library_write_probe(rid, fx, rkey, col):
     fx = build()                          # every write starts with a fresh household
     lid = fx.library[rkey]
     row = storage.get_library_program(lid)
+    before_count = len(storage.get_library_programs())
     method, path = rid[1], rid[-1].replace('{id}', lid)
     path = path.replace('{lesson_id}', row['lessons'][0]['id'])
     body = {}
@@ -296,9 +353,12 @@ def library_write_probe(rid, fx, rkey, col):
     if r is None or r.status_code in (401, 404):
         return None
     after = storage.get_library_program(lid)
+    unchanged = after == row and len(storage.get_library_programs()) == before_count
     if 'In use by' in r.text:
         if after is None:
             return 'REFUSED-BUT-DELETED'
+        if not unchanged:
+            return 'REFUSED-BUT-CHANGED'
         if IN_USE_ANOTHER in r.text:
             return 'IN-USE-ANOTHER'
         named = "In use by " + RUNNER_NAME[rkey] + "'s project"
@@ -306,16 +366,14 @@ def library_write_probe(rid, fx, rkey, col):
     if r.status_code == 403:
         if rid[-1] != '/api/library' and EDIT_REFUSAL not in r.text:
             return f'FORBIDDEN-WRONG-WORDS: {r.text[:140]}'
-        if rid[-1] != '/api/library' and after != row:
+        if not unchanged:
             return 'REFUSED-BUT-CHANGED'
         return 'FORBIDDEN-NOT-404'
     if not 200 <= r.status_code < 300:
         return f'HTTP {r.status_code}: {r.text[:140]}'
     if r.json().get('status') in ('error', 'refused', 'not_found'):
         return f'ACTION-NOT-ACCEPTED: {r.text[:160]}'
-    if method == 'PATCH' and path.endswith(lid) and (after or {}).get('title') != f'Edited by {col}':
-        return 'ACCEPTED-BUT-NOT-STORED'
-    return 'full'
+    return _library_effect(rid, col, row, after, before_count, lid) or 'full'
 
 
 def register_library(probe):

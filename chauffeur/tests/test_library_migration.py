@@ -262,18 +262,22 @@ def scenario_progress_comes_from_todays_position():
           f'one more session lands where it would have before: want {want}, got {_current_title(rid)}')
 
 
-def scenario_migration_residual_position():
-    """Review Focus 4: mid-ladder with unit_shift and a rotation."""
+def _parity(shift, logged, here_want, next_want):
+    """Behavioural parity (controller ruling on spec §4 vs shipped unit_for): after conversion the
+    bookmark is where the ladder was, every date keeps its variant, and the next logged session
+    lands on the rung today's code reaches on an unconverted twin. How progress encodes that is
+    the implementation's choice."""
     _fresh()
-    rid = _legacy('kid', shift=1, logged=1)        # the walk says rung 2; the hand moved it on to rung 3
-    before = storage.get_program(rid)
-    here = _legacy_rung(before)
-    next_one = _legacy_rung(_with_one_more(before))
+    rid = _legacy('kid', shift=shift, logged=logged)
+    twin = json.loads(json.dumps(storage.get_program(rid)))      # the unconverted twin, held aside
+    here = _legacy_rung(twin)
+    next_one = _legacy_rung(_with_one_more(twin))
     today = datetime.date.today()
     dates = [today + datetime.timedelta(days=n) for n in range(1, 15)
              if (today + datetime.timedelta(days=n)).weekday() in (0, 3)][:4]
-    labels = [_legacy_label(before, d) for d in dates]
-    check(here == 'F and G' and len(set(labels)) == 2, f'the oracle: {here} {labels}')
+    labels = [_legacy_label(twin, d) for d in dates]
+    check((here, next_one) == (here_want, next_want) and len(set(labels)) == 2,
+          f'the oracle (shift {shift}, logged {logged}): {here} -> {next_one} {labels}')
     _migrate()
     check(_current_title(rid) == here, f'the bookmark is where the ladder was: want {here}, got {_current_title(rid)}')
     run = storage.get_program(rid)
@@ -285,7 +289,13 @@ def scenario_migration_residual_position():
           'with the variant\'s steps')
     programs.log_session(rid)
     check(_current_title(rid) == next_one,
-          f'the next session after conversion lands exactly where it would have: want {next_one}, got {_current_title(rid)}')
+          f'shift {shift}, logged {logged}: the next session lands where it would have: want {next_one}, got {_current_title(rid)}')
+
+
+def scenario_migration_residual_position():
+    """Review Focus 4: mid-ladder with unit_shift and a rotation, including the shifted boundary."""
+    _parity(shift=1, logged=1, here_want='F and G', next_want='F and G')       # the hand moved it on; the next log stays
+    _parity(shift=1, logged=2, here_want='F and G', next_want='Hands together')  # the boundary: the next log moves on
 
 
 def scenario_scripts_are_rekeyed_per_variant():
@@ -308,27 +318,67 @@ def scenario_scripts_are_rekeyed_per_variant():
           'three scripts before, three after')
 
 
+def _raw_run(rid):
+    return json.loads(json.dumps(storage.get_program(rid)))
+
+
+def _raw_scripts(rid):
+    return sorted(json.dumps(r, sort_keys=True) for r in storage.program_lessons_table.all() if r.get('program_id') == rid)
+
+
+class _WritesFail:
+    """The scripts table, with every write refused: a crash while the scripts are being re-keyed."""
+    WRITES = ('insert', 'insert_multiple', 'update', 'update_multiple', 'upsert', 'remove', 'truncate')
+
+    def __init__(self, table):
+        self._table, self.hits = table, 0
+
+    def __getattr__(self, name):
+        if name in self.WRITES:
+            def fail(*a, **k):
+                self.hits += 1
+                raise RuntimeError('the disk filled while the scripts were moving')
+            return fail
+        return getattr(self._table, name)
+
+    def __len__(self):
+        return len(self._table)
+
+
+def _crash(during):
+    """Run the migration through one injected crash; the process 'dies' there (the error is eaten)."""
+    try:
+        with during:
+            _migrate()
+    except RuntimeError:
+        pass
+
+
 def scenario_a_crash_before_the_mark_converts_again_from_scratch():
     _fresh()
     rid = _legacy('kid')
     _legacy_script(rid, 'Foundations', 3, 'Session A', 'Rung three, session A')
     want = _legacy_rung(storage.get_program(rid))
+    run_before, scripts_before = _raw_run(rid), _raw_scripts(rid)
     real = storage.add_library_program
     calls = []
 
     def crash_after_insert(row):
         calls.append(real(row))
         raise RuntimeError('the power went out before the mark')
-    with patch.object(storage, 'add_library_program', side_effect=crash_after_insert):
-        try:
-            _migrate()
-        except RuntimeError:
-            pass
-    check(calls, 'the crash was injected inside the conversion')
-    check(not storage.get_program(rid).get('library_id'), 'unmarked: the row was not converted')
+    _crash(patch.object(storage, 'add_library_program', side_effect=crash_after_insert))
+    check(calls, 'the crash was injected inside the conversion, after the library row was written')
+    check(storage.get_library_programs() == [], f'rolled back: no library row survives: {storage.get_library_programs()}')
+    check(_raw_run(rid) == run_before and _raw_scripts(rid) == scripts_before,
+          'the run and its scripts are exactly as they were: unmarked, unconverted')
+    proxy = _WritesFail(storage.program_lessons_table)
+    _crash(patch.object(storage, 'program_lessons_table', proxy))
+    check(proxy.hits, 'the crash was injected while the scripts were being re-keyed')
+    check(storage.get_library_programs() == [] and _raw_run(rid) == run_before and _raw_scripts(rid) == scripts_before,
+          'rolled back again: no library row, the run unmarked, the scripts untouched')
     _migrate()
     rows = storage.get_library_programs()
-    check(len(rows) == 1, f'converted again from scratch, still one library row: {[r["id"] for r in rows]}')
+    check(len(rows) == 1, f'converted from scratch, one library row: {[r["id"] for r in rows]}')
     check(storage.get_program(rid)['library_id'] == rows[0]['id'], 'bound to it')
     check(len([r for r in storage.program_lessons_table.all() if r.get('program_id') == rid]) == 1, 'its script, once')
     check(_current_title(rid) == want, f'and the position the ladder had: want {want}, got {_current_title(rid)}')
@@ -336,27 +386,46 @@ def scenario_a_crash_before_the_mark_converts_again_from_scratch():
 
 def scenario_a_crash_after_the_mark_never_reconverts():
     _fresh()
-    rid = _legacy('kid')
-    _migrate()
-    lid = storage.get_program(rid)['library_id']
-    programs.log_session(rid)                     # life goes on after the mark
-    progressed = json.loads(json.dumps(storage.get_program(rid)['progress']))
-    library = json.loads(json.dumps(storage.get_library_program(lid)))
+    first, second = _legacy('kid'), _legacy('mom')
+    for rid in (first, second):
+        _legacy_script(rid, 'Foundations', 3, 'Session A', 'Rung three, session A')
+    before = {rid: (_raw_run(rid), _raw_scripts(rid)) for rid in (first, second)}
+    real = storage.add_library_program
     calls = []
 
-    def must_not(row):
+    def second_row_crashes(row):
         calls.append(row)
-        raise AssertionError('a marked row must never convert again')
-    with patch.object(storage, 'add_library_program', side_effect=must_not):
-        try:
-            _migrate()
-        except AssertionError:
-            pass
-    check(not calls, f'the marked row is never converted again: {len(calls)} attempts')
-    check(storage.get_program(rid)['library_id'] == lid and storage.get_program(rid)['progress'] == progressed,
-          'its binding and progress are left alone')
-    _migrate()
-    check(storage.get_library_program(lid) == library and len(storage.get_library_programs()) == 1, 'idempotent')
+        if len(calls) == 2:
+            raise RuntimeError('the power went out on the next program')
+        return real(row)
+    _crash(patch.object(storage, 'add_library_program', side_effect=second_row_crashes))
+    check(len(calls) == 2, f'one row converted, the crash on the next: {len(calls)}')
+    marked = [rid for rid in (first, second) if storage.get_program(rid).get('library_id')]
+    check(len(marked) == 1 and len(storage.get_library_programs()) == 1, f'exactly one row marked: {marked}')
+    done, other = marked[0], next(r for r in (first, second) if r != marked[0])
+    lesson = _lesson(done, 'F and G')['id']
+    check(storage.get_program_lesson(done, {'lesson_id': lesson, 'variant_label': 'Session A'})
+          and (storage.get_program(done).get('progress') or {}).get('current'),
+          'the marked row is completely converted: progress and re-keyed script')
+    check((_raw_run(other), _raw_scripts(other)) == before[other], 'the crashed row is exactly as it was')
+    progressed = json.loads(json.dumps(storage.get_program(done)['progress']))
+    lid = storage.get_program(done)['library_id']
+    calls.clear()
+    with patch.object(storage, 'add_library_program', side_effect=lambda row: calls.append(row) or real(row)):
+        _migrate()
+    check(len(calls) == 1, f'the retry converts only the unmarked row: {len(calls)} conversions')
+    check(storage.get_program(done)['library_id'] == lid and storage.get_program(done)['progress'] == progressed,
+          'the marked row is never converted again')
+    check(storage.get_program(other).get('library_id') and len(storage.get_library_programs()) == 2, 'and the other is now done')
+    programs.log_session(done)                    # life goes on after the mark
+    progressed = json.loads(json.dumps(storage.get_program(done)['progress']))
+    library = json.loads(json.dumps(storage.get_library_program(lid)))
+    calls.clear()
+    with patch.object(storage, 'add_library_program', side_effect=lambda row: calls.append(row) or real(row)):
+        _migrate()
+    check(not calls and storage.get_program(done)['progress'] == progressed
+          and storage.get_library_program(lid) == library and len(storage.get_library_programs()) == 2,
+          'idempotent: nothing converts again and nothing is recomputed')
 
 
 def scenario_emissions_kit_thread_and_ids_are_untouched():

@@ -49,6 +49,8 @@ VISIBLE = "Everyone in the household will see this program as: Learn piano"
 RETITLE = "The name belongs to the library program; rename the project instead."
 MATCH_HEAD = "There's a Learn piano program in the library, made for "
 MATCH_TAIL = ". Use it for Kate, or make a new one?"
+NOTICE = "I started Kate on Learn piano from the library"
+SPOKEN = "I'm setting that up"
 NOT_NOW = "No program for now"
 SECRET = 'SECRET-START: shy about playing for anyone'
 CURATED = {'phases': [{'name': 'Foundations', 'weeks': 4, 'what': 'The keys', 'milestone': 'Play a C major scale',
@@ -64,6 +66,7 @@ ROWS = [{'id': 'r1', 'tool': 'propose_program', 'summary': "Propose Kate's piano
         {'id': 'r2', 'tool': 'create_thread', 'needs': ['r1'], 'summary': 'A thread for the books',
          'args': {'title': 'Piano books for Kate', 'kind': 'project'}}]
 POSTS = []
+REAL_POST = missions._post        # kept before any scenario stubs it: the voice notice path is real
 
 
 def _svc():
@@ -106,10 +109,10 @@ def _project(owner='kid', audience='parents', title=None):
     return res['project']
 
 
-def _http(member_id, method, path, **kwargs):
+def _http(member_id, method, path, raise_errors=True, **kwargs):
     headers = {'X-Member-Token': storage.create_member_token(member_id)} if member_id else {}
     with patch.object(storage, 'get_settings', return_value={**storage.get_settings(), 'auth_enforce': True}):
-        return TestClient(main.app).request(method, path, headers=headers, **kwargs)
+        return TestClient(main.app, raise_server_exceptions=raise_errors).request(method, path, headers=headers, **kwargs)
 
 
 def _library_rows():
@@ -282,27 +285,76 @@ def _staged(interaction=None):
     return mid, project
 
 
+def _made_for_phrase(minutes=20):
+    """The fixture profile (explorer, 20 minutes) said as the card says it: the explorer stage's
+    ages from the household's cutoffs, then the session length."""
+    from services import stages
+    cut = stages.cutoffs()
+    return f"ages {cut[0]}–{cut[1] - 1} with {minutes}-minute sessions"
+
+
+def _match_card():
+    return (f"There's a Learn piano program in the library, made for {_made_for_phrase()}. "
+            f"Use it for Kate, or make a new one?")
+
+
 def _choice(mid):
     card = missions.ask_card(storage.get_mission(mid))
-    check(card and (card.get('question') or '').startswith(MATCH_HEAD) and card['question'].endswith(MATCH_TAIL),
-          f'the choice is a mission ask card in its own words: {card}')
+    check(card and card.get('question') == _match_card(), f'the choice card, word for word: {card}')
     labels = [o.get('label') for o in card['options']]
     check(all(label in labels for label in ('Use', 'Make new', 'Not now')), f'three buttons: {labels}')
     return {o['payload']['option']: o for o in card['options'] if (o.get('payload') or {}).get('option')}
 
 
+def _act(mid, opt, raise_errors=True):
+    """A card button, through the HTTP route the phone and the admin page post to."""
+    body = {'verb': opt['verb'], 'option_id': opt['id'], 'payload': opt['payload']}
+    return _http('mom', 'POST', f'/api/situations/mission/{mid}/act', json=body, raise_errors=raise_errors)
+
+
 def _answer(mid, option, opts=None):
-    opt = (opts or _choice(mid))[option]
-    return situations.act('mission', mid, opt['verb'], option_id=opt['id'], payload=opt['payload'], actor=dict(MOM))
+    return _act(mid, (opts or _choice(mid))[option])
 
 
-def _waiting_checks(mid):
+def _choice_id(mid):
+    return (_row(mid, 'r1').get('result') or {}).get('choice_id')
+
+
+def _bound(mid, choice_id, run_id):
+    """Whether the persisted mission (row or steps) binds this choice to this run."""
+    def walk(value):
+        if isinstance(value, dict):
+            if value.get('run_id') == run_id and choice_id in json.dumps(value):
+                return True
+            return any(walk(v) for v in value.values())
+        if isinstance(value, list):
+            return any(walk(v) for v in value)
+        return False
+    return walk(storage.get_mission(mid)) or walk(storage.get_mission_steps(mid))
+
+
+def _waiting_checks(mid, choice_id=None):
     row = _row(mid, 'r1')
     check(row['state'] == 'waiting_choice' and (row.get('result') or {}).get('status') == 'waiting_choice'
           and (row.get('result') or {}).get('choice_id'), f'the row waits on a durable choice: {row}')
+    if choice_id is not None:
+        check(row['result']['choice_id'] == choice_id, f'the same choice, never a new one: {row}')
     check(_row(mid, 'r2')['state'] not in ('skipped', 'done', 'failed', 'running'), f"its dependent waits: {_row(mid, 'r2')}")
     check(_stage(mid)['state'] not in ('done', 'skipped', 'uncertain', 'partial'), f"the stage stays open: {_stage(mid)['state']}")
     check(not _runs(), 'no run until the person chooses')
+
+
+def scenario_the_tool_returns_a_waiting_choice_on_a_match():
+    _fresh()
+    from services import agent_tools_v2 as tools
+    _library()
+    project = _project('mom', audience='private', title='Music at home')
+    res = tools.propose_program(title='Learn piano', for_member_name='Kate', sessions_per_week=3, minutes=20,
+                                starting_point=SECRET, acting_member=dict(MOM), project_id=project['id'])
+    options = [o if isinstance(o, str) else (o.get('option') or o.get('id')) for o in res.get('options') or []]
+    check(res.get('status') == 'waiting_choice' and res.get('choice_id') and options == ['use', 'make_new'],
+          f"a match returns the choice, its id and its options: {res}")
+    check(not _runs() and len(_library_rows()) == 1, 'and creates nothing yet')
 
 
 def scenario_a_library_match_waits_for_a_choice():
@@ -310,39 +362,72 @@ def scenario_a_library_match_waits_for_a_choice():
     lid = _library()
     mid, _ = _staged()
     _waiting_checks(mid)
+    choice = _choice_id(mid)
     opts = _choice(mid)
     check(set(opts) == {'use', 'make_new', 'not_now'}, f'the options name their choice: {opts}')
-    res = _answer(mid, 'use', opts)
-    check(_ok(res), f'Use: {res}')
+    r = _answer(mid, 'use', opts)
+    check(r.status_code == 200, f'Use, through the route: {r.status_code} {r.text[:200]}')
     runs = _runs()
     check(len(runs) == 1 and runs[0]['library_id'] == lid and runs[0]['member_id'] == 'kid'
           and runs[0]['starting_point'] == SECRET, f'one run of the library program for Kate: {runs}')
     row = _row(mid, 'r1')
     check(row['state'] == 'done' and (row.get('result') or {}).get('created') == [{'kind': 'program', 'id': runs[0]['id']}],
           f'the row is done and names the run: {row}')
+    check(_bound(mid, choice, runs[0]['id']), 'the choice is durably bound to the run it made')
     check(_row(mid, 'r2')['state'] == 'done', f"and the stage carried on: {_row(mid, 'r2')}")
     _answer(mid, 'use', opts)
-    check(len(_runs()) == 1, 'a repeated answer creates nothing')
+    check(len(_runs()) == 1 and _row(mid, 'r1') == row, 'a repeated answer creates nothing and changes nothing')
 
 
 def scenario_make_new_curates_and_not_now_fails_the_row():
     _fresh()
     lid = _library()
     mid, _ = _staged()
+    choice = _choice_id(mid)
+    opts = _choice(mid)
     before = len(_library_rows())
-    check(_ok(_answer(mid, 'make_new')), 'Make new')
+    r = _answer(mid, 'make_new', opts)
+    check(r.status_code == 200, f'Make new: {r.status_code} {r.text[:200]}')
     runs = _runs()
     check(len(_library_rows()) == before + 1 and len(runs) == 1 and runs[0]['library_id'] != lid,
           f'a new library program, and a run of it: {runs}')
+    check(_bound(mid, choice, runs[0]['id']), 'the choice is bound to the run')
     check(_row(mid, 'r1')['state'] == 'done' and _row(mid, 'r2')['state'] == 'done', 'the stage carried on')
+    _answer(mid, 'make_new', opts)
+    check(len(_library_rows()) == before + 1 and len(_runs()) == 1, 'a repeated Make new makes nothing more')
     _fresh()
     _library()
     mid, _ = _staged()
-    _answer(mid, 'not_now')
+    r = _answer(mid, 'not_now')
+    check(r.status_code == 200, f'Not now: {r.status_code} {r.text[:200]}')
     row = _row(mid, 'r1')
     check(row['state'] == 'failed' and (row.get('result') or {}).get('message') == NOT_NOW, f'Not now fails the row: {row}')
     check(not _runs() and _row(mid, 'r2')['state'] == 'skipped', f"no run, and the dependent is skipped: {_row(mid, 'r2')}")
     check(_stage(mid)['state'] not in ('running', 'proposed'), f"the stage goes on without it: {_stage(mid)['state']}")
+
+
+def scenario_a_failed_answer_leaves_no_half_state():
+    _fresh()
+    from services import programs
+    lid = _library()
+    mid, _ = _staged()
+    choice = _choice_id(mid)
+    opts = _choice(mid)
+    real = programs.create_row
+    made = []
+
+    def crash(*a, **k):
+        made.append(real(*a, **k))
+        raise RuntimeError('the power went out after the run was written')
+    with patch.object(programs, 'create_row', side_effect=crash):
+        r = _act(mid, opts['use'], raise_errors=False)
+    check(made, 'the failure was injected after the run was created')
+    check(r.status_code != 200 or not _ok(r.json()), f'the answer did not succeed: {r.status_code} {r.text[:200]}')
+    check(all(storage.get_program(m) is None for m in made if m), f'the half-made run was rolled back: {made}')
+    _waiting_checks(mid, choice)
+    r = _answer(mid, 'use')
+    runs = _runs()
+    check(r.status_code == 200 and len(runs) == 1 and runs[0]['library_id'] == lid, f'answered again, one run: {runs}')
 
 
 def scenario_no_match_curates_at_once():
@@ -357,40 +442,102 @@ def scenario_no_match_curates_at_once():
     check(len(runs) == 1 and len(_library_rows()) == 1 and runs[0]['library_id'] != archived, 'one new row, one run of it')
 
 
+def _answer_in_a_fresh_process(mid, option):
+    """Answer the card from a NEW interpreter over the same data directory: nothing in memory
+    survives, only what was persisted."""
+    import os
+    import subprocess
+    import sys
+    here = os.path.dirname(os.path.abspath(__file__))
+    code = f"""
+import sys
+sys.path.insert(0, {here!r})
+import harness
+from unittest.mock import patch
+from fastapi.testclient import TestClient
+from services import storage, missions
+import main
+card = missions.ask_card(storage.get_mission({mid!r}))
+opt = next(o for o in card['options'] if (o.get('payload') or {{}}).get('option') == {option!r})
+token = storage.create_member_token('mom')
+with patch.object(storage, 'get_settings', return_value={{**storage.get_settings(), 'auth_enforce': True}}):
+    r = TestClient(main.app).post('/api/situations/mission/{mid}/act', headers={{'X-Member-Token': token}},
+                                  json={{'verb': opt['verb'], 'option_id': opt['id'], 'payload': opt['payload']}})
+print('STATUS', r.status_code, r.text[:300])
+"""
+    env = {k: v for k, v in os.environ.items() if k != 'HA_BASE_URL'}
+    out = subprocess.run([sys.executable, '-c', code], cwd=os.path.dirname(here), env=env,
+                         capture_output=True, text=True, timeout=600)
+    return out.stdout + out.stderr
+
+
 def scenario_waiting_choice_survives_restart():
     """Review Focus 5: a restart while the choice is open, then a pause and resume."""
     _fresh()
+    from services import agent_tools_v2 as tools
     lid = _library()
     mid, project = _staged()
     _waiting_checks(mid)
-    planned._active_stages.clear()                # the process died; nothing is in flight
-    planned.reconcile()
-    _waiting_checks(mid)
-    check(not [s for s in storage.get_mission_steps(mid) if s.get('name') == 'stage_check'],
-          'a waiting choice is never mistaken for an uncertain write')
-    check(_ok(projects.set_state(project['id'], 'paused', dict(MOM))), 'paused')
-    check(_ok(projects.set_state(project['id'], 'active', dict(MOM))), 'resumed')
-    _waiting_checks(mid)
-    stage = _stage(mid)
-    try:
-        planned.resume_stage(mid, 's1', stage.get('snapshot'), dict(MOM))
-    except Exception as exc:                      # a refusal is fine; a re-run is not
-        print('resume_stage raised', type(exc).__name__, exc)
-    _waiting_checks(mid)
-    opts = _choice(mid)
-    check(_ok(_answer(mid, 'use', opts)), 'Use after the restart')
-    _answer(mid, 'use', opts)
+    choice = _choice_id(mid)
+    reran = []
+
+    def trap(*a, **k):
+        reran.append((a, k))
+        raise AssertionError('the waiting row was executed again')
+    with patch.object(tools, 'propose_program', side_effect=trap), \
+            patch.dict(tools.TOOL_HANDLERS, {'propose_program': trap}), \
+            patch.object(programs_curate, 'curate', side_effect=trap):
+        planned._active_stages.clear()            # the process died; nothing is in flight
+        planned.reconcile()
+        _waiting_checks(mid, choice)
+        check(not [s for s in storage.get_mission_steps(mid) if s.get('name') == 'stage_check'],
+              'a waiting choice is never mistaken for an uncertain write')
+        check(_ok(projects.set_state(project['id'], 'paused', dict(MOM))), 'paused')
+        check(_ok(projects.set_state(project['id'], 'active', dict(MOM))), 'resumed')
+        _waiting_checks(mid, choice)
+        res = planned.resume_stage(mid, 's1', _stage(mid).get('snapshot'), dict(MOM))
+        check(isinstance(res, dict), f'resume answers (a refusal is fine): {res}')
+        _waiting_checks(mid, choice)
+    check(not reran, f'reconcile, pause/resume and resume never re-ran the row: {reran}')
+    stale = _choice(mid)
+    out = _answer_in_a_fresh_process(mid, 'use')
+    check('STATUS 200' in out, f'a fresh process answers from what was persisted: {out[-600:]}')
     runs = _runs()
-    check(len(runs) == 1 and runs[0]['library_id'] == lid, f'exactly one run: {runs}')
+    check(len(runs) == 1 and runs[0]['library_id'] == lid and _bound(mid, choice, runs[0]['id']),
+          f'exactly one run, bound to the choice: {runs}')
+    _act(mid, stale['use'])
+    check(len(_runs()) == 1, 'a repeated tap after the restart creates nothing')
 
 
 # --- voice ----------------------------------------------------------------------------------
 
-def scenario_voice_persists_its_policy():
+def _voice_fresh():
     from test_front_door_chat import _fresh as _fresh_front_door
-    from services import agent_tools_v2 as tools
     storage.add_library_program               # the library's storage door: red here until Task 2
     _fresh_front_door()
+    table = getattr(storage, 'library_programs_table', None)
+    if table is not None:
+        table.truncate()
+    for name in ('program_lessons_table', 'deletions_table', 'protected_commitments_table', 'agent_action_proposals_table'):
+        getattr(storage, name).truncate()
+    missions._post = REAL_POST                # the real notice path: stored DMs with their refs
+    web.research = lambda question, read_pages=None, api_key=None: {'status': 'success', 'answer': 'x', 'facts': [], 'sources': []}
+    threads.draft_message = lambda thread_id, intent=None, **k: {'status': 'ok', 'subject': 's', 'body': 'b'}
+    programs_curate.curate = lambda *a, **k: json.loads(json.dumps(CURATED))
+
+
+def _dm(member_id='mom'):
+    argyle = storage.ensure_argyle_member()
+    return storage.get_channel_messages(storage.get_or_create_dm(argyle['id'], member_id)['id'])
+
+
+def _notices():
+    return [m for m in _dm() if NOTICE in (m.get('body') or '')]
+
+
+def scenario_voice_persists_its_policy():
+    from services import agent_tools_v2 as tools
+    _voice_fresh()
     out = tools.start_project('I want Kate to learn piano', acting_member=dict(MOM), spoken=True)
     check(out['status'] == 'success' and out.get('mission_id'), f'started by voice: {out}')
     check(storage.get_mission(out['mission_id']).get('interaction') == 'voice',
@@ -400,23 +547,50 @@ def scenario_voice_persists_its_policy():
 
 
 def scenario_voice_uses_a_single_match_and_says_so_later():
-    _fresh()
+    from services import agent_tools_v2 as tools
+    _voice_fresh()
     lid = _library()
-    mid, _ = _staged(interaction='voice')
+    out = tools.start_project('I want Kate to learn piano', acting_member=dict(MOM), spoken=True)
+    check(out['status'] == 'success' and SPOKEN in (out.get('message') or ''), f'the spoken reply: {out}')
+    check(not _notices(), 'nothing is announced at the time of the spoken reply')
+    mid = out['mission_id']
+    _plan({'action': 'interview', 'questions': [{'key': 'budget', 'ask': 'What is the budget?', 'kind': 'number'}]})
+    _step(mid)
+    planned.answer_plan(mid, {'budget': 40}, dict(MOM))
+    _plan({'action': 'plan', 'stages': STAGES})
+    _step(mid)
+    rev = _plan_of(mid)['rev']
+    res = situations.act('mission', mid, 'approve_plan', option_id=f'approve_plan:{rev}:approve', payload={}, actor=dict(MOM))
+    check(res['status'] == 'success', f'plan approved: {res}')
+    _plan({'action': 'stage', 'stage_id': 's1', 'rows': ROWS})
+    _step(mid)
+    check(not _notices(), 'still nothing before the program stage runs')
+    st = _stage(mid)
+    res = situations.act('mission', mid, 'run_stage', option_id=f"run_stage:s1:{st['snapshot']}:approve", payload={},
+                         actor=dict(MOM))
+    check(res['status'] == 'success', f'stage approved: {res}')
     runs = _runs()
     check(len(runs) == 1 and runs[0]['library_id'] == lid and _row(mid, 'r1')['state'] == 'done',
           f'one match: used at once, no spoken dialog: {_row(mid, "r1")}')
-    check(not any(MATCH_HEAD in (p['body'] or '') + json.dumps(p['card'] or {}) for p in POSTS),
+    check(not any(MATCH_HEAD in json.dumps(m.get('card') or {}) + (m.get('body') or '') for m in _dm()),
           'no Use / Make new card under voice')
     _step(mid)
-    check(any('from the library' in (p['body'] or '') and 'Kate' in (p['body'] or '') for p in POSTS),
-          f"the mission's notice says so: {[p['body'] for p in POSTS]}")
+    notices = _notices()
+    check(len(notices) == 1, f"the mission's notice arrives once, after the stage ran: {[m.get('body') for m in _dm()]}")
+    check({'kind': 'program', 'id': runs[0]['id']} in [{k: r.get(k) for k in ('kind', 'id')} for r in notices[0].get('refs') or []],
+          f'the notice refers to the run: {notices[0]}')
+    check(storage.message_visible(notices[0]), 'and passes the delivery re-check')
+
+
+def scenario_voice_curates_when_the_match_is_not_single():
     _fresh()
     first, second = _library(), _library()
     mid, _ = _staged(interaction='voice')
     runs = _runs()
     check(len(runs) == 1 and runs[0]['library_id'] not in (first, second) and len(_library_rows()) == 3,
           f'several matches: a new one is curated: {runs}')
+    check(not any(MATCH_HEAD in (p['body'] or '') + json.dumps(p['card'] or {}) for p in POSTS),
+          'no Use / Make new card under voice')
     _fresh()
     mid, _ = _staged(interaction='voice')
     check(len(_runs()) == 1 and len(_library_rows()) == 1, 'no match: curated')
