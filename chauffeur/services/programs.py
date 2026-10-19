@@ -87,6 +87,54 @@ def reconcile_progress(run, curriculum, previous=None):
     return out
 
 
+def legacy_library_progress(run, curriculum):
+    """Carry the old ladder's bookmark and remaining session into stable ids.
+
+    A shift moves the selected rung, not the underlying session clock. Use
+    the unshifted rung's next boundary to preserve that clock on conversion.
+    """
+    out = {'lessons': {}, 'current': None, 'phases': {}}
+    current_phase = next((p for p in run.get('phases') or []
+                          if not p.get('milestone_hit_at')), None)
+    done = sessions_since(run, phase_started_on(run))
+    stamp = time.time()
+    for raw, phase in zip(run.get('phases') or [], curriculum['phases']):
+        out['phases'][phase['id']] = {
+            'weeks': raw.get('weeks') or 1,
+            'milestone_hit_at': raw.get('milestone_hit_at')}
+        lessons = [l for l in curriculum['lessons'] if l['phase_id'] == phase['id']]
+        if raw.get('milestone_hit_at'):
+            for lesson in lessons:
+                out['lessons'][lesson['id']] = {
+                    'done_sessions': lesson['sessions'], 'completed_at': raw['milestone_hit_at']}
+        elif raw is current_phase:
+            selected = unit_for(run, raw)
+            index = selected['index'] if selected else 0  # phase-only/time-only lesson
+            for lesson in lessons[:index]:
+                out['lessons'][lesson['id']] = {
+                    'done_sessions': lesson['sessions'], 'completed_at': stamp}
+            lesson = lessons[index]
+            before = sum(l['sessions'] for l in lessons[:index])
+            residual = max(0, min(lesson['sessions'] - 1, done - before))
+            if selected:
+                natural = unit_for(run, {**raw, 'unit_shift': 0})
+                boundary = sum(l['sessions'] for l in lessons[:natural['index'] + 1])
+                remaining = max(1, boundary - done)
+                residual = max(0, min(lesson['sessions'] - 1, lesson['sessions'] - remaining))
+                following = unit_for({**run, 'sessions': (run.get('sessions') or []) + [{'ts': stamp}]}, raw)
+                if following['index'] > index:
+                    residual = lesson['sessions'] - 1
+                elif residual == lesson['sessions'] - 1 and index < len(lessons) - 1:
+                    # A shifted one-session rung cannot encode "stay on the next
+                    # log" with a nonnegative count. A -1 offset buys that log;
+                    # counts then only increase through the ordinary log path.
+                    # Also covers a backward shift on an exhausted old ladder.
+                    residual -= 1
+            out['current'] = lesson['id']
+            out['lessons'][lesson['id']] = {'done_sessions': residual, 'completed_at': None}
+    return out
+
+
 def load(run):
     """Resolve fresh library content. Storage remains the raw run boundary."""
     if run is None:
