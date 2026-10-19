@@ -265,8 +265,20 @@ def scenario_lesson_for_resolves_the_bookmark_and_the_date():
     seen = {d: programs.lesson_for(storage.get_program(busy), d) for d in days}
     check(len({seen[d]['variant_label'] for d in days}) == 2, f'both variants are dealt: {seen}')
     windows_before = {w['date']: (w['variant_label'], w['steps']) for w in _windows(busy, MON, MON2)}
-    programs.log_session(busy, lesson_id=multi['B'])
-    programs.log_session(busy)
+    for logged in (1, 2):
+        if logged == 1:
+            programs.log_session(busy, lesson_id=multi['B'])
+        else:
+            programs.log_session(busy)
+        check(_count(busy, multi['B']) == logged and not _completed(busy, multi['B']) and _current(busy) == multi['B'],
+              f'{logged} of three sessions on the bookmarked lesson: {_progress(busy)}')
+        for d in days:
+            now = programs.lesson_for(storage.get_program(busy), d)
+            check((now['lesson_id'], now['variant_label'], now['steps'])
+                  == (seen[d]['lesson_id'], seen[d]['variant_label'], seen[d]['steps']),
+                  f'after log {logged}, the date keeps its variant: {d} {seen[d]} -> {now}')
+        check({w['date']: (w['variant_label'], w['steps']) for w in _windows(busy, MON, MON2)} == windows_before,
+              f'after log {logged}, every window keeps its variant and steps')
     check(_count(busy, multi['B']) == 2 and not _completed(busy, multi['B']) and _current(busy) == multi['B'],
           f'two of three sessions on the bookmarked lesson: {_progress(busy)}')
     for d in days:
@@ -556,9 +568,15 @@ def scenario_generation_help_and_legacy_slots_keep_lesson_identity():
     check(labels[MON] != labels[WED], f'two evenings, two variants: {labels}')
     prompts = []
 
+    marks = ('Scale up slowly', 'Scale down slowly', 'Up, both hands', 'Down, both hands')
+
     def fake_pool(pool, key, system, prompt, **kw):
+        # The script says which private inputs and which steps its own prompt carried, so each
+        # stored row can be traced back to the prompt that wrote it.
         prompts.append(prompt)
-        return {'scenes': [{'type': 'say', 'text': f'Generated script {len(prompts)}.'}], '_model': 'stub'}
+        who = '+'.join(sp for sp in ('SECRET-START-kid', 'SECRET-START-sib') if sp in prompt) or 'nobody'
+        steps = '+'.join(m for m in marks if m in prompt) or 'no steps'
+        return {'scenes': [{'type': 'say', 'text': f'Generated script for {who} with {steps}.'}], '_model': 'stub'}
     eve = datetime.datetime.combine(MON - datetime.timedelta(days=1), datetime.time(21, 0))
     with patch.object(model_pools, 'call_pool_json', side_effect=fake_pool):
         wrote = pl.generate_due(now=eve)
@@ -571,6 +589,14 @@ def scenario_generation_help_and_legacy_slots_keep_lesson_identity():
           "each run's private starting point reaches its own generation, and only its own")
     check(any('Scale up slowly' in p for p in prompts) and any('Scale down slowly' in p for p in prompts),
           "the projection's steps reach the generation input")
+    variant_steps = {'Session A': 'Scale up slowly', 'Session B': 'Scale down slowly'}
+    for run, member in ((rid, 'kid'), (other, 'sib')):
+        for day in (MON, WED):
+            stored = storage.get_program_lesson(run, {'lesson_id': ids['B'], 'variant_label': labels[day]}) or {}
+            want = f'Generated script for SECRET-START-{member} with {variant_steps[labels[day]]}.'
+            check(json.dumps(stored.get('scenes')).count(want) == 1,
+                  f"the script under ({member}'s run, B, {labels[day]}) came from a prompt carrying that run's "
+                  f"starting point and that variant's steps, and nothing of the other's: {stored.get('scenes')}")
     hand, regen = labels[MON], labels[WED]
     storage.upsert_program_lesson(rid, {'lesson_id': ids['B'], 'variant_label': hand},
                                   {'scenes': _say('Thumb on C, then climb.'), 'origin': 'generated', 'edited': True})

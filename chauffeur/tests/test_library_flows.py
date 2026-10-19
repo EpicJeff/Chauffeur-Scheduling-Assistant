@@ -546,13 +546,19 @@ def scenario_voice_persists_its_policy():
     check(storage.get_mission(out['mission_id']).get('interaction') != 'voice', 'a typed one does not')
 
 
-def scenario_voice_uses_a_single_match_and_says_so_later():
+def _raw_notices():
+    """Every stored notice, before any read filter: what delivery would have to re-check."""
+    return [m for m in storage.chat_messages_table.all() if NOTICE in (m.get('body') or '')]
+
+
+def _voice_until_the_stage_ran():
+    """Kate's piano by voice, driven to the moment the program stage has run (one match: used)."""
     from services import agent_tools_v2 as tools
     _voice_fresh()
     lid = _library()
     out = tools.start_project('I want Kate to learn piano', acting_member=dict(MOM), spoken=True)
     check(out['status'] == 'success' and SPOKEN in (out.get('message') or ''), f'the spoken reply: {out}')
-    check(not _notices(), 'nothing is announced at the time of the spoken reply')
+    check(not _notices() and not _raw_notices(), 'nothing is announced at the time of the spoken reply')
     mid = out['mission_id']
     _plan({'action': 'interview', 'questions': [{'key': 'budget', 'ask': 'What is the budget?', 'kind': 'number'}]})
     _step(mid)
@@ -574,12 +580,34 @@ def scenario_voice_uses_a_single_match_and_says_so_later():
           f'one match: used at once, no spoken dialog: {_row(mid, "r1")}')
     check(not any(MATCH_HEAD in json.dumps(m.get('card') or {}) + (m.get('body') or '') for m in _dm()),
           'no Use / Make new card under voice')
+    return mid, runs[0]['id']
+
+
+def scenario_voice_uses_a_single_match_and_says_so_later():
+    mid, run_id = _voice_until_the_stage_ran()
     _step(mid)
     notices = _notices()
     check(len(notices) == 1, f"the mission's notice arrives once, after the stage ran: {[m.get('body') for m in _dm()]}")
-    check({'kind': 'program', 'id': runs[0]['id']} in [{k: r.get(k) for k in ('kind', 'id')} for r in notices[0].get('refs') or []],
+    check({'kind': 'program', 'id': run_id} in [{k: r.get(k) for k in ('kind', 'id')} for r in notices[0].get('refs') or []],
           f'the notice refers to the run: {notices[0]}')
     check(storage.message_visible(notices[0]), 'and passes the delivery re-check')
+    check(len(_raw_notices()) == 1, 'stored once')
+
+
+def scenario_a_voice_notice_is_suppressed_once_its_run_is_gone():
+    """The notice is delivered later; by then the run it names may be gone, and then it says nothing."""
+    from services import deletion
+    mid, run_id = _voice_until_the_stage_ran()
+    preview = deletion.preview('program', run_id, dict(MOM))
+    check(preview['status'] == 'ok', f'preview: {preview}')
+    check(deletion.start('program', run_id, dict(MOM), preview['token'])['status'] == 'ok', 'the run is deleted')
+    for _ in range(5):
+        deletion.maintain()
+    check(storage.get_program(run_id) is None, 'gone before the notice is delivered')
+    _step(mid)
+    check(not _notices(), f"no notice reaches Mom's DM about a run that is gone: {[m.get('body') for m in _dm()]}")
+    check(all(not storage.message_visible(m) for m in _raw_notices()),
+          f'and any stored copy fails the delivery re-check: {_raw_notices()}')
 
 
 def scenario_voice_curates_when_the_match_is_not_single():

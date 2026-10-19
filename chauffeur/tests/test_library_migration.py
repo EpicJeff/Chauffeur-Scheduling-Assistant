@@ -345,6 +345,37 @@ class _WritesFail:
         return len(self._table)
 
 
+class _MarkFails:
+    """The programs table, with the write that sets `library_id` (the mark) failing: before it is
+    applied (`after=False`) or just after it was applied, before anything could commit (`after=True`).
+    Every other read and write passes through."""
+    WRITES = ('insert', 'insert_multiple', 'update', 'update_multiple', 'upsert')
+
+    def __init__(self, table, after=False):
+        self._table, self._after, self.hits = table, after, 0
+
+    def __getattr__(self, name):
+        attr = getattr(self._table, name)
+        if name not in self.WRITES:
+            return attr
+
+        def write(*a, **k):
+            fields = a[0] if a else k.get('fields') or k.get('document') or {}
+            marks = isinstance(fields, dict) and fields.get('library_id')
+            if marks and not self._after:
+                self.hits += 1
+                raise RuntimeError('the power went out writing the mark')
+            out = attr(*a, **k)
+            if marks:
+                self.hits += 1
+                raise RuntimeError('the power went out just after the mark')
+            return out
+        return write
+
+    def __len__(self):
+        return len(self._table)
+
+
 def _crash(during):
     """Run the migration through one injected crash; the process 'dies' there (the error is eaten)."""
     try:
@@ -376,6 +407,14 @@ def scenario_a_crash_before_the_mark_converts_again_from_scratch():
     check(proxy.hits, 'the crash was injected while the scripts were being re-keyed')
     check(storage.get_library_programs() == [] and _raw_run(rid) == run_before and _raw_scripts(rid) == scripts_before,
           'rolled back again: no library row, the run unmarked, the scripts untouched')
+    mark = _MarkFails(storage.programs_table)
+    _crash(patch.object(storage, 'programs_table', mark))
+    check(mark.hits, 'the crash was injected on the final write, the library_id mark itself')
+    check(storage.get_library_programs() == [], f'a failed mark leaves no library row: {storage.get_library_programs()}')
+    run_now = _raw_run(rid)
+    check(not run_now.get('library_id') and not run_now.get('progress') and run_now == run_before,
+          f'nor any progress or other change on the run: {run_now}')
+    check(_raw_scripts(rid) == scripts_before, 'and the scripts are still on the legacy key')
     _migrate()
     rows = storage.get_library_programs()
     check(len(rows) == 1, f'converted from scratch, one library row: {[r["id"] for r in rows]}')
@@ -426,6 +465,28 @@ def scenario_a_crash_after_the_mark_never_reconverts():
     check(not calls and storage.get_program(done)['progress'] == progressed
           and storage.get_library_program(lid) == library and len(storage.get_library_programs()) == 2,
           'idempotent: nothing converts again and nothing is recomputed')
+    # A crash right after a mark was written: that row is converted entirely or not at all.
+    third = _legacy('kid', title='Learn the cello')
+    _legacy_script(third, 'Foundations', 3, 'Session A', 'Rung three, session A')
+    third_before = (_raw_run(third), _raw_scripts(third))
+    mark = _MarkFails(storage.programs_table, after=True)
+    _crash(patch.object(storage, 'programs_table', mark))
+    check(mark.hits, 'the crash was injected just after a mark was written')
+    cellos = [r for r in storage.get_library_programs() if r.get('title') == 'Learn the cello']
+    if storage.get_program(third).get('library_id'):
+        three = _lesson(third, 'F and G')['id']
+        check(len(cellos) == 1 and _library_of(third)['id'] == cellos[0]['id']
+              and (storage.get_program(third).get('progress') or {}).get('current')
+              and storage.get_program_lesson(third, {'lesson_id': three, 'variant_label': 'Session A'}),
+              'marked, so the conversion is complete: library row, progress, re-keyed script')
+    else:
+        check(not cellos and (_raw_run(third), _raw_scripts(third)) == third_before,
+              'not marked, so nothing of the conversion remains')
+    _migrate()
+    cellos = [r for r in storage.get_library_programs() if r.get('title') == 'Learn the cello']
+    check(storage.get_program(third).get('library_id') and len(cellos) == 1
+          and storage.get_program(third)['library_id'] == cellos[0]['id'],
+          'either way the retry leaves exactly one converted row')
 
 
 def scenario_emissions_kit_thread_and_ids_are_untouched():
