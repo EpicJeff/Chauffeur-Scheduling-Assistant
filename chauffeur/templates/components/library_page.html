@@ -263,13 +263,13 @@ function libraryPage(host = 'admin') {
                 this.profile = null;
         },
         async archiveProgram(lp) {
-            if (!await promptConfirm('Archive ' + chfLibrary.esc(lp.title) + '?',
+            if (!await promptConfirm('Archive ' + lp.title + '?',
                 'It leaves the picker for new runs. It stays in the library, and anyone running it carries on.', 'Archive', 'Keep it')) return;
             await this.mutate(this.lib(lp, '/archive'), {});
         },
         async deleteProgram(lp) {
             if (lp.in_use) { showGlobalAlert(lp.in_use); return; }
-            if (!await promptConfirm('Delete ' + chfLibrary.esc(lp.title) + '?',
+            if (!await promptConfirm('Delete ' + lp.title + '?',
                 'Nobody is running it. It leaves the library for good.', 'Delete', 'Keep it')) return;
             if (await this.mutate(this.lib(lp), undefined, 'DELETE')) this.back();
         },
@@ -298,7 +298,7 @@ function libraryPage(host = 'admin') {
         async removeLesson(lp, l) {
             const lines = chfLibrary.removeLines(lp, l);
             const say = lines.length ? lines.join('\n') : 'It leaves this program for everyone running it.';
-            if (!await promptConfirm('Remove ' + chfLibrary.esc(l.title) + '?', chfLibrary.esc(say), 'Remove', 'Keep it')) return;
+            if (!await promptConfirm('Remove ' + l.title + '?', chfLibrary.asText(say), 'Remove', 'Keep it')) return;
             await this.mutate(this.lib(lp, '/lessons/' + encodeURIComponent(l.id)), undefined, 'DELETE');
         },
         // Reordering moves a lesson within its own phase; the server takes

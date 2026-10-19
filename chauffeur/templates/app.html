@@ -1502,8 +1502,16 @@
             // reference view -- which is what the Programs page is for.
             const nextUp = upcomingWindows(p.id)[0];
             const rotation = ((phase && phase.rotation) || []).filter(sess => (sess.steps || []).length);
+            // With no window ahead (unscheduled, paused), a library run reads
+            // its bookmarked lesson through the server's projection
+            // (current_lesson = programs.lesson_for: that lesson's steps, or
+            // its variant's for today), so a library edit shows at once. Only
+            // a run not yet on the library falls back to its phase.
+            const projected = p.current_lesson || {};
             const shown = (nextUp && (nextUp.steps || []).length)
                 ? { label: nextUp.session_label || '', steps: nextUp.steps }
+                : projected.lesson_id
+                ? { label: projected.variant_label || '', steps: projected.steps || [] }
                 : (rotation.length ? { label: rotation[0].label || '', steps: rotation[0].steps }
                                    : { label: '', steps: (phase && phase.steps) || [] });
             const stepList = (shown.steps || []).length ? `
@@ -1522,8 +1530,8 @@
                 <div data-current-lesson class="mt-2 rounded-lg bg-gray-950/60 border border-gray-800 px-2.5 py-1.5">
                     <div class="flex items-start justify-between gap-2">
                         <div class="text-xs font-bold text-gray-200 min-w-0">${mfEscape(lessonName)}</div>
-                        ${unit.url ? `<a href="${mfEscape(unit.url)}" target="_blank" rel="noopener"
-                            class="text-[11px] font-bold text-blue-400 underline underline-offset-2 shrink-0">Open the lesson</a>` : ''}
+                        ${unit.url ? `<button type="button" data-lesson-url="${mfEscape(unit.url)}" onclick="phoneOpenLesson(this.dataset.lessonUrl)"
+                            class="text-[11px] font-bold text-blue-400 underline underline-offset-2 shrink-0">Open the lesson</button>` : ''}
                     </div>
                     ${unit.body ? `<div class="text-[11px] text-gray-400 mt-1">${mfEscape(unit.body)}</div>` : ''}
                 </div>` : '';
@@ -1747,6 +1755,21 @@
         // program's own shape (services/programs.py's log_session), because
         // this button is agreeing the SCHEDULED session happened, not typing
         // a different number.
+        // Buttons, not anchors, on the phone: a lesson's own page opens in a
+        // new tab from a button, and only an http(s) address ever does.
+        function phoneOpenLesson(url) {
+            if (!/^https?:\/\//i.test(url || '')) return;
+            window.open(url, '_blank', 'noopener');
+        }
+
+        // Leaving a piece sheet for another view (the run card's "from the
+        // library" button) closes the sheet first: it lives in a body-level
+        // overlay that setView() never touches, so the view would otherwise
+        // open underneath it.
+        window.chfPhoneCloseSheets = function () {
+            if (pieceSheet) pieceSheet.close();
+        };
+
         // The hand paths out of an unresolved run on the phone: pick a
         // library program for it (window.chfLibrary.rebind), or delete it
         // through the shared two-step (components/record_delete.html).

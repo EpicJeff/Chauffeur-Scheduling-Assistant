@@ -31,6 +31,10 @@ promptConfirm, promptInput); buttons, not anchors, on the phone.
      itself.
  14. (Task 1 review) Look again (re-curate) asks first, saying progress starts over and scripts
      are regenerated.
+ 15. (Task 6 review) "from the library" on the phone's run sheet closes the sheet: the library's
+     own controls take the tap. The phone's run card has no anchor, a lesson link is a button.
+ 16. (Task 6 review) A library lesson edit reaches a paused run's phone card (the resolved
+     lesson's steps, never the phase's), and confirm titles show people's words unescaped.
 
 Run from chauffeur/:  python tests/test_library_live.py   (LIBRARY_SHOTS=<dir> for screenshots)
 """
@@ -74,7 +78,7 @@ def _library_row(lid, title, phases, lessons, origin='generated'):
 
 
 PIANO_ROW = _library_row(PIANO, 'Learn piano', [
-    {'id': FOUND, 'name': 'Foundations', 'weeks': 2, 'what': 'Hands and keys', 'steps': [],
+    {'id': FOUND, 'name': 'Foundations', 'weeks': 2, 'what': 'Hands and keys', 'steps': ['Old phase warm-up'],
      'milestone': 'Plays a C scale hands together'},
     {'id': SONGS, 'name': 'Songs', 'weeks': 3, 'what': 'Whole tunes', 'steps': [],
      'milestone': 'Plays Twinkle for the family'}], [
@@ -257,7 +261,7 @@ def scenario_a_new_program_says_what_the_household_will_see():
         page.locator('[data-library-new]').click()
         form = page.locator('[data-library-create-form]')
         form.wait_for(state='visible')
-        line, title = form.locator('[data-visibility-line]'), form.locator('input[name="library_title"]')
+        line, title = form.locator('[data-visibility-line]'), form.locator('input[name="title"]')
         check(line.evaluate('(el, t) => !!(el.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING)', title.element_handle()),
               "the publication line sits above the title")
         check(form.locator('select[name="age_band"]').input_value() == 'any', "a library program with nobody yet starts at any age")
@@ -286,7 +290,7 @@ def scenario_a_new_program_says_what_the_household_will_see():
         fresh.wait_for(state='visible')
         check(fresh.locator('select[name="age_band"]').input_value() == 'explorer', "Kate's band comes from her birthdate")
         check(fresh.locator('[data-private-label]').inner_text() == "stays private to Kate's run", "the starting point is Kate's alone")
-        line, title = fresh.locator('[data-visibility-line]'), fresh.locator('input[name="library_title"]')
+        line, title = fresh.locator('[data-visibility-line]'), fresh.locator('input[name="title"]')
         check(line.evaluate('(el, t) => !!(el.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING)', title.element_handle()),
               "the publication line sits above the title here too")
         form.locator('select[name="for_member_id"]').select_option('sam')
@@ -524,11 +528,91 @@ def scenario_the_run_card_names_the_lesson():
               and sheet.locator('[data-library-link]').inner_text().strip() == 'from the library: Learn piano',
               f"the phone's own program card: {sheet.inner_text()[:300]}")
         check(not COUNT.search(sheet.inner_text()), "no count on the phone")
+        check(sheet.locator('a[href]').count() == 0, "buttons only on the phone's run card")
         shot(page, 'run-sheet-phone-dark')
         sheet.locator('[data-library-link]').click()
         page.wait_for_selector('#library-container [data-library-detail]', timeout=10000)
         check(page.locator('#library-container').is_visible(), "the phone opens its library home on the program")
+        page.wait_for_function("() => !document.querySelector('[data-piece-sheet]') && !document.querySelector('.pwa-prompt-overlay')", timeout=5000)
+        # The library's own controls take the tap: nothing covers them.
+        edit = page.locator(f'#library-container [data-lesson-id="{SCALES}"] [data-lesson-edit]')
+        edit.click(timeout=5000)
+        page.locator(f'#library-container [data-lesson-id="{SCALES}"] [data-lesson-form]').wait_for(state='visible', timeout=5000)
+        shot(page, 'run-sheet-phone-to-library-dark')
         check(served.errors() == [], f"no page errors: {served.errors()}")
+
+
+# 16 ------------------------------------------------------------------------
+def scenario_a_library_edit_reaches_a_paused_runs_phone_card():
+    served = serve()
+    if served is None:
+        return
+    from services import library
+    _reset_kate(_progress(CHORDS))
+    storage.update_program('run-kate', {'state': 'paused'})
+    library._invalidate()
+    library.update_lesson(PIANO, CHORDS, {'url': 'https://example.com/chords', 'body': ''}, storage.get_member('mom'))
+    duet = library.add_lesson(PIANO, {'phase_id': SONGS, 'title': "Mom & Kate's duet", 'sessions': 1, 'steps': ['Together']},
+                              storage.get_member('mom'))
+    duet_id = next(l['id'] for l in duet['program']['lessons'] if l['title'] == "Mom & Kate's duet")
+    try:
+        with served.browser() as page:
+            page.set_viewport_size({'width': 390, 'height': 844})
+            pwa(page, served, 'mom')
+            page.goto(served.url('app'), wait_until='load')
+            page.wait_for_selector('#tab-more', timeout=20000)
+            page.locator('#tab-more').click()
+            page.locator('[data-feature="library"]').click()
+            home = page.locator('#library-container')
+            home.locator(f'[data-library-card][data-library-id="{PIANO}"] [data-library-view]').click()
+            lesson = home.locator(f'[data-lesson-id="{CHORDS}"]')
+            lesson.locator('[data-lesson-edit]').click()
+            lesson.locator('textarea[name="lesson_steps"]').fill('Strum C, then F\nHold each for four')
+            lesson.locator('[data-lesson-save]').click()
+            _wait(lambda: next(l for l in storage.get_library_program(PIANO)['lessons'] if l['id'] == CHORDS)['steps']
+                  == ['Strum C, then F', 'Hold each for four'], "the edit saved from the phone")
+            # Confirm titles carry people's words as they are, escaped once.
+            home.locator(f'[data-lesson-id="{duet_id}"] [data-lesson-remove]').click()
+            overlay = page.locator('.pwa-prompt-overlay:has([data-yes]):has([data-no])').last
+            overlay.wait_for(state='visible', timeout=10000)
+            text = overlay.inner_text()
+            check("Remove Mom & Kate's duet?" in text and '&amp;' not in text and '&#39;' not in text,
+                  f"the phone's confirm shows the title unescaped: {text}")
+            overlay.locator('[data-no]').click()
+
+            page.reload(wait_until='load')
+            page.wait_for_function("() => typeof setView === 'function'", timeout=20000)
+            page.evaluate("() => setView('projects')")
+            page.wait_for_selector('[data-project-id="prj-piano"]', timeout=15000)
+            page.locator('[data-project-id="prj-piano"]').first.click()
+            page.locator('[data-piece-open="program:run-kate"]').click()
+            page.wait_for_selector('[data-piece-sheet] [data-current-lesson]', timeout=10000)
+            sheet = page.locator('[data-piece-sheet]')
+            body = sheet.inner_text()
+            check('Strum C, then F' in body and 'Hold each for four' in body,
+                  f"the paused run's card reads the edited lesson: {body[:500]}")
+            check('Old phase warm-up' not in body, f"never the phase's own steps: {body[:500]}")
+            check(sheet.locator('a[href]').count() == 0, "no anchor on the phone's run card")
+            link = sheet.locator('button[data-lesson-url]')
+            check(link.count() == 1 and link.inner_text().strip() == 'Open the lesson', "the lesson's page is a button")
+            page.evaluate("() => { window.__opened = []; window.open = (u) => { window.__opened.push(u); return null; }; }")
+            link.click()
+            check(page.evaluate('() => window.__opened') == ['https://example.com/chords'], "and it opens that page")
+            shot(page, 'run-paused-phone-edited-lesson-dark')
+            check(served.errors() == [], f"no page errors: {served.errors()}")
+        with served.browser() as page:
+            _library(page, served, 'mom', '?id=' + PIANO)
+            page.wait_for_selector('[data-library-detail]', timeout=10000)
+            page.locator(f'[data-lesson-id="{duet_id}"] [data-lesson-remove]').click()
+            _confirm_text(page)
+            title = page.locator('#cc-confirm-title').inner_text()
+            check(title == "Remove Mom & Kate's duet?", f"the admin confirm's title is the words as typed: {title}")
+            page.locator('#cc-confirm-cancel-btn').click()
+            check(served.errors() == [], f"no page errors: {served.errors()}")
+    finally:
+        library.remove_lesson(PIANO, duet_id, storage.get_member('mom'))
+        storage.update_program('run-kate', {'state': 'active'})
+        _reset_kate()
 
 
 # 13 ------------------------------------------------------------------------
@@ -730,6 +814,7 @@ SCENARIOS = [scenario_the_library_page_lists_each_program, scenario_a_new_progra
              scenario_delete_waits_until_nobody_runs_it, scenario_the_picker_starts_a_proposed_run,
              scenario_the_run_card_names_the_lesson, scenario_an_exhausted_phase_waits_for_judgement,
              scenario_next_back_and_reached_it, scenario_look_again_says_progress_starts_over,
+             scenario_a_library_edit_reaches_a_paused_runs_phone_card,
              scenario_removing_the_current_lesson_says_who_is_on_it, scenario_an_unresolved_run_can_be_deleted_or_rebound,
              scenario_the_phone_library_home_light_and_dark]
 

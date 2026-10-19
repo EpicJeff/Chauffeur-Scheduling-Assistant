@@ -58,6 +58,8 @@ T = 'templates/components/'
 TP, MP, PP, MT = T + 'threads_page.html', T + 'missions_page.html', T + 'programs_page.html', T + 'mission_transcript.html'
 PJ, PF, APP = T + 'projects_page.html', T + 'project_piece_forms.html', 'templates/app.html'
 SJ, MTJ = 'static/situations.js', 'static/mission_transcript.js'
+LC = T + 'library_card.html'
+PROFILE_FIELDS = ('title', 'sessions_per_week', 'minutes')
 
 # (inventory line, file, marker)
 PARITY = [
@@ -146,8 +148,16 @@ for kind, fields in (
                  'minutes', 'target_date')),
 ):
     for field in fields:
-        PARITY.append((f'{kind.title()}: create field {field}', PF,
-                       form(kind, re.compile(r'<(?:input|select|textarea)\b[^>]*\bname="' + field + '"'))))
+        named = re.compile(r'<(?:input|select|textarea)\b[^>]*\bname="' + field + '"')
+        if kind == 'program' and field in PROFILE_FIELDS:
+            # Since the program library, Make a new one draws the public
+            # profile through the shared builder (library_card.html): the
+            # form calls it, and the builder holds the field.
+            PARITY.append((f'{kind.title()}: create field {field}', PF, form(kind, "library_profile_fields('pieceDraft'")))
+            PARITY.append((f'{kind.title()}: create field {field} (profile builder)', LC,
+                           within('{% macro library_profile_fields', '{% endmacro %}', named)))
+            continue
+        PARITY.append((f'{kind.title()}: create field {field}', PF, form(kind, named)))
     PARITY.append((f'{kind.title()}: submit the piece form', PF, form(kind, bound('createPiece'))))
 
 PARITY += [
@@ -233,12 +243,13 @@ PARITY += [
     ('Programs: kit thread', PP, 'x-text="\'Kit thread: \' + footprints[p.id].thread"'),
     ('Programs: calendar target', PP, 'x-text="footprints[p.id].event ? (\'Calendar target: \''),
     ('Programs: finishing a lesson logs the session', PP,
-     (bound('onLessonDone'), "this.logSession(p, { source: 'asked', slot_date: w.date })")),
+     (bound('onLessonDone'), "this.logSession(p, { source: 'asked', slot_date: w.date,")),
     ('Programs: open proposal editor', PP, bound('startEdit')),
     ('Programs: edit preferred days', PP, bound('toggleEditDay')),
     ('Programs: add a practice window', PP, bound('addSlot')),
     ('Programs: remove a practice window', PP, '@click="slotDraft[p.id].splice(i, 1)"'),
-    ('Programs: another session', PP, bound('moveUnit', "p, 'stay'")),
+    # Back ("Another session on this") moves the bookmark back (program library §1).
+    ('Programs: another session', PP, bound('moveUnit', "p, 'back'")),
     ('Programs: move on', PP, bound('moveUnit', "p, 'next'")),
     ('Programs: lesson editor move up', PP, bound('moveLessonRow', 'p, ph, label, i, -1')),
     ('Programs: lesson editor move down', PP, bound('moveLessonRow', 'p, ph, label, i, 1')),
@@ -247,7 +258,8 @@ PARITY += [
     ('Programs: lesson editor show caption', PP, 'x-model="row.caption"'),
     ('Programs: lesson editor beat type', PP, 'x-model="lessonAddType[lessonKey(p, ph, label)]"'),
     ('Phone: program Coming up sessions', APP, within('function renderProgramCard(', 'function renderProgramsSection(', bound('openSessionSheet'))),
-    ('Phone: program Open the lesson', APP, within('function renderProgramCard(', 'function renderProgramsSection(', '>Open the lesson</a>')),
+    # A button since the program library UI: buttons, not anchors, on the phone.
+    ('Phone: program Open the lesson', APP, within('function renderProgramCard(', 'function renderProgramsSection(', '>Open the lesson</button>')),
     ('Phone: program Yes it happened / Did it happen', APP, bound('askProgramSession')),
     ('Phone: program Add a session', APP, bound('addProgramSession')),
     ('Phone: program Reached it', APP, bound('markProgramMilestone')),
