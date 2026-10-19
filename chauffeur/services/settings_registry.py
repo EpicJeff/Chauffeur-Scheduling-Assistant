@@ -664,7 +664,7 @@ ENTRIES: List[dict] = [
        'traffic stays on the free key.', page='work?tab=projects', anchor='missions-settings'),
     _e('model_pool_pro', 'missions', 'Pro model pool',
        'Comma-separated pro models missions may use '
-       '(default gemini-3.1-pro-preview).', page='work?tab=projects', anchor='missions-settings'),
+       '(default gemini-4-argon, gemini-3.1-pro-preview).', page='work?tab=projects', anchor='missions-settings'),
     _e('mission_cap_launch', 'missions', 'Daily launch cap',
        'Missions that may be started per day (default 3).', page='work?tab=projects', anchor='missions-settings'),
     _e('mission_step_cap', 'missions', 'Steps per mission',

@@ -59,7 +59,7 @@ def scenario_credentials_and_has_credentials():
     mp.reset_cooldowns()
     check(mp.credentials('interactive', CLAUDE) == ('anthropic:claude-haiku-5-5', 'A'), 'credentials = first model + its key')
     check(mp.credentials('interactive', {'llm_provider': 'anthropic'}) == ('', ''), 'no key -> empty pair')
-    check(mp.credentials('mission', GEMINI) == ('gemini-3.1-pro-preview', 'PAID'), 'gemini mission credentials = pro + paid')
+    check(mp.credentials('mission', GEMINI) == ('gemini-4-argon', 'PAID'), 'gemini mission credentials = first pro model (Argon) + paid')
     check(mp.has_credentials(CLAUDE) and mp.has_credentials(OPENAI) and mp.has_credentials({'llm_gemini_api_key': 'k'}), 'each provider with its key')
     check(not mp.has_credentials({'llm_provider': 'anthropic', 'llm_gemini_api_key': 'k'}), 'a gemini key does not satisfy a claude selection')
     check(not mp.has_credentials({'llm_provider': 'gemini', 'llm_anthropic_api_key': 'A'}), 'switching back to gemini with no gemini key is honest')
