@@ -541,66 +541,79 @@ def migrate_commitment_sources_v2499():
 
 def migrate_program_library_v2499():
     """Split each legacy curriculum/run atomically; the binding is the last write."""
-    from services import library, programs, stages
+    from services import access, library, programs, stages
 
     converted = 0
+    failed = []
     for snapshot in storage.get_programs(include_finished=True):
-        with storage.db_lock, storage.db.transaction():
-            # Re-read after acquiring the lock: another invocation may have converted it.
-            run = storage.get_program(snapshot['id'])
-            if not run or run.get('library_id'):
-                continue
-            shape = dict(run.get('shape') or {})
-            defaults = programs.clamp_shape(shape)
-            for key in ('minutes', 'sessions_per_week'):
-                shape.setdefault(key, defaults[key])
-            age = stages.age_of(storage.get_member(run.get('member_id')))
-            profile = {'age_band': stages.stage_for_age(age) if age is not None else 'any',
-                       'minutes': shape['minutes'], 'sessions_per_week': shape['sessions_per_week'],
-                       'assumes': ''}
-            curriculum = library.from_curated(run['title'], profile, run,
-                                              run.get('created_by') or run.get('member_id'))
-            progress = programs.legacy_library_progress(run, curriculum)
-            library_id = storage.add_library_program(curriculum)
-
-            # Map the actual old ordinal (not today's bookmark) to its minted lesson.
-            slots = {}
-            for raw, phase in zip(run.get('phases') or [], curriculum['phases']):
-                lessons = [l for l in curriculum['lessons'] if l['phase_id'] == phase['id']]
-                for i, lesson in enumerate(lessons):
-                    units = raw.get('units') or []
-                    number = int(units[i].get('n') or i + 1) if units else 0
-                    slots.setdefault((raw.get('name') or '', number), lesson)
-            for script in storage.program_lessons_table.search(storage.Query().program_id == run['id']):
-                if script.get('lesson_id'):
+        try:
+            with storage.db_lock, storage.db.transaction():
+                # Re-read after acquiring the lock: another invocation may have converted it.
+                run = storage.get_program(snapshot['id'])
+                if not run or run.get('library_id') or 'phases' not in run or access.gone('program', run):
                     continue
-                lesson = slots.get((script.get('phase_name') or '', int(script.get('unit_n') or 0)))
-                if lesson is None:
-                    raise ValueError(f"Cannot map legacy script {script['id']} on program {run['id']}")
-                label = str(script.get('session_label') or '')
-                if label and label not in {v.get('label') for v in lesson['variants']}:
-                    raise ValueError(f"Cannot map legacy variant {label!r} on program {run['id']}")
+                shape = dict(run.get('shape') or {})
+                defaults = programs.clamp_shape(shape)
+                for key in ('minutes', 'sessions_per_week'):
+                    shape.setdefault(key, defaults[key])
+                age = stages.age_of(storage.get_member(run.get('member_id')))
+                profile = {'age_band': stages.stage_for_age(age) if age is not None else 'any',
+                           'minutes': shape['minutes'], 'sessions_per_week': shape['sessions_per_week'],
+                           'assumes': ''}
+                curriculum = library.from_curated(run['title'], profile, run,
+                                                  run.get('created_by') or run.get('member_id'))
+                progress = programs.legacy_library_progress(run, curriculum)
+                library_id = storage.add_library_program(curriculum)
 
-                def rekey(row, lesson_id=lesson['id'], variant_label=label):
-                    for key in ('phase_name', 'unit_n', 'session_label'):
+                # Map the actual old ordinal (not today's bookmark) to its minted lesson.
+                slots = {}
+                for raw, phase in zip(run.get('phases') or [], curriculum['phases']):
+                    lessons = [l for l in curriculum['lessons'] if l['phase_id'] == phase['id']]
+                    for i, lesson in enumerate(lessons):
+                        units = raw.get('units') or []
+                        number = int(units[i].get('n') or 0) if units else 0
+                        slots.setdefault((raw.get('name') or '', number), lesson)
+                    # Actual legacy numbers take priority; fill ordinal aliases only
+                    # after all real keys, including the missing-n zero key, exist.
+                    for i, lesson in enumerate(lessons):
+                        slots.setdefault((raw.get('name') or '', i + 1), lesson)
+                for script in storage.program_lessons_table.search(storage.Query().program_id == run['id']):
+                    if script.get('lesson_id'):
+                        continue
+                    lesson = slots.get((script.get('phase_name') or '', int(script.get('unit_n') or 0)))
+                    if lesson is None:
+                        raise ValueError(f"Cannot map legacy script {script['id']} on program {run['id']}")
+                    label = str(script.get('session_label') or '')
+                    if label and label not in {v.get('label') for v in lesson['variants']}:
+                        raise ValueError(f"Cannot map legacy variant {label!r} on program {run['id']}")
+
+                    def rekey(row, lesson_id=lesson['id'], variant_label=label):
+                        for key in ('phase_name', 'unit_n', 'session_label'):
+                            row.pop(key, None)
+                        row.update(lesson_id=lesson_id, variant_label=variant_label)
+
+                    storage.program_lessons_table.update(rekey, doc_ids=[script.doc_id])
+
+                def strip_curriculum(row):
+                    for key in ('title', 'source', 'phases'):
                         row.pop(key, None)
-                    row.update(lesson_id=lesson_id, variant_label=variant_label)
 
-                storage.program_lessons_table.update(rekey, doc_ids=[script.doc_id])
-
-            def strip_curriculum(row):
-                for key in ('title', 'source', 'phases'):
-                    row.pop(key, None)
-
-            storage.programs_table.update(strip_curriculum, storage.Query().id == run['id'])
-            storage.update_program(run['id'], {'shape': shape, 'progress': progress})
-            # Keep this a separate dict write: a failed mark rolls everything back.
-            storage.programs_table.update({'library_id': library_id}, storage.Query().id == run['id'])
+                storage.programs_table.update(strip_curriculum, storage.Query().id == run['id'])
+                storage.update_program(run['id'], {'shape': shape, 'progress': progress})
+                # Keep this a separate dict write: a failed mark rolls everything back.
+                storage.programs_table.update({'library_id': library_id}, storage.Query().id == run['id'])
+        except Exception:
+            # The transaction has rolled back before logging or continuing.
+            failed.append(snapshot['id'])
+            logger.exception(f"[migrations] program {snapshot['id']} not converted")
+            continue
         converted += 1
         # A later row may fail; already committed rows must still refresh readers.
         library._invalidate()
     if converted:
         logger.info(f"[migrations] program library converted: {converted}")
+    if failed:
+        logger.error(f"[migrations] program library failed ids: {failed}")
     return converted
 
 

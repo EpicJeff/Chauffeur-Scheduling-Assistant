@@ -56,7 +56,10 @@ def create_row(data: dict, project_id: str = None) -> str:
 
 
 def reconcile_progress(run, curriculum, previous=None):
-    """Keep the bookmark inside the first unjudged phase, without moving counts."""
+    """Keep the bookmark inside the first unjudged phase, without moving counts.
+
+    A migrated count may be -1 until its next log; readers never display or normalise it.
+    """
     out = copy.deepcopy(run.get('progress') or {})
     counts = out.setdefault('lessons', {})
     judgements = out.setdefault('phases', {})
@@ -92,6 +95,7 @@ def legacy_library_progress(run, curriculum):
 
     A shift moves the selected rung, not the underlying session clock. Use
     the unshifted rung's next boundary to preserve that clock on conversion.
+    A migrated count may be -1 until its next log; readers never display or normalise it.
     """
     out = {'lessons': {}, 'current': None, 'phases': {}}
     current_phase = next((p for p in run.get('phases') or []
