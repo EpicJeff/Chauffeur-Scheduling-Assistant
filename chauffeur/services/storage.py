@@ -3957,7 +3957,15 @@ def get_program_lesson(program_id: str, slot: dict) -> Optional[dict]:
     an error."""
     with db_lock:
         from services.program_lessons import resolve_slot
-        slot = resolve_slot(get_program(program_id), slot)
+        try:
+            slot = resolve_slot(get_program(program_id), slot)
+        except ValueError as exc:
+            from services.programs import MOVED_LESSON
+            if str(exc) != MOVED_LESSON:
+                raise
+            # A removed/rebound lesson has no script. HTTP readers validate
+            # the named lesson at admission and still return the moved 409.
+            return None
         res = program_lessons_table.search(_lesson_query(program_id, slot))
         return dict(res[0]) if res else None
 

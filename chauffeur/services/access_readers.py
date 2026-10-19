@@ -20,6 +20,11 @@ READERS = [
     *[((F, name), 'INTERNAL', ('program',), 'curriculum resolution or authorized mutation; callers own access') for name in [
         'services.library.get', 'services.library.list_programs', 'services.library.create', 'services.library._write',
         'services.library.delete', 'services.programs.load', 'services.programs.create_row',
+        'services.agent_tools_v2._program_choice_question', 'services.agent_tools_v2._start_program_choice',
+        'services.planned.answer_program_choice',
+        'services.planned._offer_program_choice',
+        'services.agent_tools_v2.propose_program', 'services.chat_actions.run_row',
+        'main._program_lesson_call',
         'services.programs.step_bookmark', 'services.programs.rebind', 'services.programs.lesson_for',
         'services.subjects._program_rows', 'services.program_lessons.arm_wait_announce']],
     # §4.1 threads

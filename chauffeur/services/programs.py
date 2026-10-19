@@ -36,13 +36,8 @@ def create_row(data: dict, project_id: str = None) -> str:
     """The one door for a new program row: stored, then adopted into its project."""
     with storage.db_lock, storage.db.transaction():
         data = dict(data)
-        # Compatibility for callers handing over an already curated proposal.
-        # Curation callers move to the public profile in their own task.
         if not data.get('library_id') and data.get('title'):
-            from services import library
-            profile = library.public_profile(data.get('shape') or {})
-            curriculum = library.from_curated(data['title'], profile, data, data.get('created_by'))
-            data['library_id'] = storage.add_library_program(curriculum)
+            raise ValueError('Choose a library program before starting a run.')
         if data.get('library_id') and not storage.get_library_program(data['library_id']):
             return None
         if data.get('library_id') and 'progress' not in data:
@@ -400,7 +395,8 @@ def log_session(program_id: str, minutes: int = None, source: str = 'added',
         ts = _slot_ts(slot_date)
         if ts:
             entry['ts'] = ts
-        storage.append_program_session(program_id, entry)
+        if not storage.append_program_session(program_id, entry):
+            return {'status': 'error', 'message': 'That program is no longer here.'}
         if lesson:
             progress_ = row['progress']
             count = progress_['lessons'].setdefault(selected, {'done_sessions': 0, 'completed_at': None})

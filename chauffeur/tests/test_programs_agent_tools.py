@@ -126,6 +126,7 @@ def scenario_a_proposal_curates_only_a_public_profile_and_keeps_its_private_star
                 'source': {'origin': 'generated', 'reason': repr((shape, kwargs))}}
 
     for birthdate, expected_band in ((f'{datetime.date.today().year - 9}-03-01', 'explorer'), (None, 'any')):
+        _reset_programs()  # Each case tests no-match curation; a live match now waits.
         storage.update_member('kid-a', {'birthdate': birthdate, 'stage_override': 'copilot'})
         with patch.object(programs_curate, 'curate', side_effect=echo_input):
             result = agent_tools_v2.propose_program('Learn guitar', for_member_name='kid-a', minutes=20,
@@ -150,8 +151,8 @@ def scenario_a_childs_argyle_proposal_is_refused_before_publication():
     with patch.object(programs_curate, 'curate', side_effect=AssertionError('a child cannot publish curriculum')) as curate:
         result = agent_tools_v2.propose_program('Learn guitar', starting_point='already plays open chords',
                                                acting_member=storage.get_member('kid-a'))
-    check(result == {'status': 'error', 'message': 'Only a signed-in parent or adult can start a program.'},
-          f'the existing child refusal is returned cleanly: {result}')
+    check(result == {'status': 'error', 'message': 'Only the person who made this program, or a parent, can change it.', 'created': []},
+          f'the no-match child publication refusal is returned cleanly: {result}')
     check(not curate.called and storage.get_library_programs() == before
           and storage.get_programs(include_finished=True) == runs_before,
           'the refused proposal spends no research and creates no half state')

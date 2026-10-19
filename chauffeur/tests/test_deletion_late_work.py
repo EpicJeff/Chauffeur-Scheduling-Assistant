@@ -1070,8 +1070,12 @@ def scenario_a_reconcile_replay_that_the_deletion_overtakes_writes_nothing():
     from services import planned
     from test_planned_missions import _planned_mission, _plan_of
     fx = late_world()
+    before = set(threading.enumerate())
     mid = _planned_mission()
     projects.adopt('mission', mid, None, project_id=garage(fx))
+    # Fixture approval-card notifications must finish before measuring the
+    # replay's late writes; an already in-flight push cannot be recalled.
+    settle(before)
     rev = _plan_of(mid)['rev']
 
     def lost(*a, **k):
@@ -1349,10 +1353,12 @@ def scenario_a_lesson_voice_timer_re_checks_after_it_is_dequeued():
 # --- creation bound at insert, children refused, no replacement wrapper ---------------------------
 
 def scenario_nothing_new_is_created_inside_or_on_behalf_of_a_gone_record():
-    from services import programs
+    from services import programs, library
     fx = late_world()
     survivor = fx.projects['survivor']['id']
     live, gone = {}, {}
+    lid = storage.add_library_program(library.from_curated('Live program', library.public_profile({}),
+                                      {'phases': [], 'source': {'origin': 'none'}}, 'mom'))
     pairs = [
         ('threads.create',
          lambda: threads.create(title='Live thread', owner_member_id='mom', created_by='mom', project_id=survivor),
@@ -1363,11 +1369,11 @@ def scenario_nothing_new_is_created_inside_or_on_behalf_of_a_gone_record():
          lambda: missions.launch('late goal', origin_kind='thread', origin_ref=fx.ids['GT1'], created_by='mom'),
          lambda: [m for m in storage.get_missions() if m.get('goal') == 'live goal']),
         ('programs.create_row',
-         lambda: programs.create_row({'title': 'Live program', 'member_id': 'kid', 'state': 'proposed',
+         lambda: programs.create_row({'library_id': lid, 'member_id': 'kid', 'state': 'proposed',
                                       'created_by': 'mom'}, project_id=survivor),
-         lambda: programs.create_row({'title': 'Late program', 'member_id': 'kid', 'state': 'proposed',
+         lambda: programs.create_row({'library_id': lid, 'member_id': 'kid', 'state': 'proposed',
                                       'created_by': 'mom'}, project_id=garage(fx)),
-         lambda: [p for p in storage.get_programs(include_finished=True) if p.get('title') == 'Live program']),
+         lambda: [p for p in storage.get_programs(include_finished=True) if p.get('library_id') == lid]),
         ('add_mission_step',
          lambda: storage.add_mission_step(fx.ids['R9b'], {'kind': 'note', 'name': 'live'}),
          lambda: storage.add_mission_step(fx.ids['GM2'], {'kind': 'note', 'name': 'late'}),
@@ -1381,9 +1387,10 @@ def scenario_nothing_new_is_created_inside_or_on_behalf_of_a_gone_record():
          lambda: storage.add_finding({'subject_type': 'thread', 'subject_id': fx.ids['GT1'], 'line': 'late'}),
          lambda: [f for f in storage.findings_table.all() if f.get('line') == 'live']),
         ('upsert_program_lesson',
-         lambda: storage.upsert_program_lesson(fx.ids['R5p'], {'phase_name': 'live'}, {'scenes': [{'type': 'say', 'text': 'live'}]}),
-         lambda: storage.upsert_program_lesson(fx.ids['GP1'], {'phase_name': 'late'}, {'scenes': [{'type': 'say', 'text': 'late'}]}),
-         lambda: storage.program_lessons_table.search(storage.Query().phase_name == 'live')),
+         lambda: storage.upsert_program_lesson(fx.ids['R5p'], {'lesson_id': programs.load(storage.get_program(fx.ids['R5p']))['lessons'][0]['id'], 'variant_label': ''}, {'scenes': [{'type': 'say', 'text': 'live'}]}),
+         lambda: storage.upsert_program_lesson(fx.ids['GP1'], {'lesson_id': programs.load(storage.get_program(fx.ids['GP1']))['lessons'][0]['id'], 'variant_label': ''}, {'scenes': [{'type': 'say', 'text': 'late'}]}),
+         lambda: [l for l in storage.program_lessons_table.all() if l.get('program_id') == fx.ids['R5p']
+                  and l.get('scenes') == [{'type': 'say', 'text': 'live'}]]),
         ('add_protected_commitment',
          lambda: storage.add_protected_commitment({'id': 'live-c', 'member_id': 'kid', 'title': 'live', 'days_of_week': [1],
                                                    'time_start': '17:00', 'time_end': '17:30', 'active': True,

@@ -170,6 +170,12 @@ def _prepare(kind, rid, actor):
     items = [{'kind': k, 'id': record_id,
               'title': ((programs.load(row) if k == 'program' else row).get('goal' if k == 'mission' else 'title')) or k}
              for k, record_id, row in records if k != 'project']
+    for item in items:
+        if item['kind'] == 'program':
+            run = storage.get_program(item['id']) or {}
+            member = storage.get_member(run.get('member_id')) or {}
+            if member.get('name'):
+                item['title'] += ' — ' + member['name']
     triples = sorted((i['kind'], i['id'], i['title']) for i in items)
     token = hashlib.sha256(json.dumps(triples, ensure_ascii=False, separators=(',', ':')).encode('utf-8')).hexdigest()
     links = sum(1 for p in root.get('pieces', []) if p.get('kind') not in ('thread', 'mission', 'program')) if kind == 'project' else 0

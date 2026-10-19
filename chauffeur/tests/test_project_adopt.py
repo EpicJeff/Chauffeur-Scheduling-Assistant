@@ -46,9 +46,11 @@ def scenario_a_thread_created_by_hand_gets_a_project():
 
 def scenario_a_childs_record_gets_a_parents_project():
     _fresh()
-    from services import programs
-    pid_prog = programs.create_row({'member_id': 'kid', 'title': 'Learn guitar', 'shape': {'sessions_per_week': 3, 'minutes': 20, 'preferred_days': []},
-                                    'phases': [], 'source': {'origin': 'none'}, 'created_by': 'mom'})
+    from services import programs, library
+    lid = storage.add_library_program(library.from_curated('Learn guitar', library.public_profile({}),
+                                      {'phases': [], 'source': {'origin': 'none'}}, 'mom'))
+    pid_prog = programs.create_row({'member_id': 'kid', 'library_id': lid, 'shape': {'sessions_per_week': 3, 'minutes': 20, 'preferred_days': []},
+                                    'created_by': 'mom'})
     p = storage.get_project(storage.get_program(pid_prog)['project_id'])
     check(p['owner_member_id'] == 'kid' and p['audience'] == 'household' and p['title'] == 'Learn guitar', f"a kid's program: {p}")
 

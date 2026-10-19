@@ -523,6 +523,10 @@ def _dm_person(mission: dict, text: str) -> None:
             for created in (row.get('result') or {}).get('created') or []:
                 if created.get('kind') in deletion.KINDS and created.get('id'):
                     ref = {'kind': created['kind'], 'id': created['id']}
+                    from services import access
+                    target = deletion._load(ref['kind'], ref['id'])
+                    if not target or access.gone(ref['kind'], target):
+                        return  # A later notice may not describe deleted stage work.
                     if ref not in refs:
                         refs.append(ref)
     token = _notice_refs.set(tuple(refs))
@@ -549,17 +553,26 @@ def _dm_person(mission: dict, text: str) -> None:
                 people = [m for m in storage.get_all_members() if m.get('role') == 'parent' and not m.get('system')]
         else:
             people = [who] if who else [m for m in storage.get_all_members() if m.get('role') == 'parent' and not m.get('system')]
-        people = [m for m in people if m and access._active(m) and access.record_visible('mission', mission, m)]
+        def owns_choice(member):
+            return bool(card and card.get('ask') == 'program_choice' and any(
+                planned.may_answer_program_choice(mission, (o.get('payload') or {}).get('choice_id'), member)
+                for o in card.get('options') or []))
+        from services import planned
+        if who and owns_choice(who) and not any(m and m['id'] == who['id'] for m in people):
+            people.append(who)
+        people = [m for m in people if m and access._active(m)
+                  and (access.record_visible('mission', mission, m) or owns_choice(m))]
         for m in people:
             from services import planned
             keeper = planned.is_keeper(mission, m)
-            recipient_card = None if keeper else card
+            choice_card = owns_choice(m)
+            recipient_card = None if keeper and not choice_card else card
             if recipient_card and recipient_card.get('project'):
                 project = recipient_card['project']
                 project = storage.get_project(project.get('id')) or project
                 if not access.project_visible(project, m):
                     recipient_card = None
-            body = 'Argyle needs a parent to look at your mission.' if keeper else text
+            body = 'Argyle needs a parent to look at your mission.' if keeper and not choice_card else text
             message = _post(storage.get_or_create_dm(argyle['id'], m['id']), argyle, body, card=recipient_card)
             if recipient_card and card.get('ask_id') and message and message.get('id'):
                 with storage.db_lock:
@@ -785,7 +798,7 @@ def _pending_ask(mission_id: str, name: str):
 
 
 TERMINAL = ('done', 'blocked', 'dropped')
-TAP_ONLY_ASKS = ('release', 'submit', 'verify', 'plan', 'stage', 'stage_check')
+TAP_ONLY_ASKS = ('release', 'submit', 'verify', 'plan', 'stage', 'stage_check', 'program_choice')
 
 
 def _unverified(mission_id: str) -> list:
@@ -1808,7 +1821,7 @@ def _seed_thread_context(mission_id: str, thread: dict) -> None:
 
 def launch(goal: str, origin_kind: str = 'manual', origin_ref=None,
            created_by=None, tier: str = 'mission', project_id: str = None,
-           subject: tuple = None) -> dict:
+           subject: tuple = None, interaction: str = None) -> dict:
     settings = storage.get_settings() or {}
     if not settings.get('missions_enabled', False):
         return {'status': 'disabled',
@@ -1838,6 +1851,8 @@ def launch(goal: str, origin_kind: str = 'manual', origin_ref=None,
         fields = {'goal': goal, 'origin_kind': origin_kind,
                   'origin_ref': origin_ref, 'created_by': created_by,
                   'tier': tier, 'project_id': project_id}
+        if interaction == 'voice':
+            fields['interaction'] = interaction
         if subject and subject[0] and subject[1]:
             from services import subjects
             fields.update(subject_kind=subject[0], subject_id=subject[1], subject_rev=1,

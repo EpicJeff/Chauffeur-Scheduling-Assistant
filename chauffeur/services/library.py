@@ -81,7 +81,8 @@ def public_profile(fields):
             'assumes': str(fields.get('assumes') or '').strip()}
 
 
-def create(fields, actor):
+def prepare(fields, actor):
+    """Curate public content without a write lock; callers publish atomically."""
     from services import programs_curate
     if not actor or actor.get('role') not in ('adult', 'parent') or actor.get('status', 'active') != 'active':
         return {'status': 'error', 'code': 403, 'message': 'An adult or a parent can make a library program.'}
@@ -96,10 +97,18 @@ def create(fields, actor):
         return {'status': 'error', 'message': str(exc)}
     curated = programs_curate.curate(title, profile, **({'exclude_books': True} if fields.get('exclude_books') else {}))
     row = from_curated(title, profile, curated, actor['id'])
-    lid = storage.add_library_program(row)
+    return {'status': 'success', 'program': row,
+            'message': f'Everyone in the household will see this program as: {title}'}
+
+
+def create(fields, actor):
+    prepared = prepare(fields, actor)
+    if prepared.get('status') != 'success':
+        return prepared
+    lid = storage.add_library_program(prepared['program'])
     _invalidate()
     return {'status': 'success', 'program': storage.get_library_program(lid),
-            'message': f'Everyone in the household will see this program as: {title}'}
+            'message': prepared['message']}
 
 
 def runners(library_id, viewer):

@@ -407,7 +407,7 @@ def create_action_proposal(action_type: str, summary: str, payload: dict,
 
 def run_row(proposal_id, approver, idem):
     """The stage runner's atomic, durable proposal execution door."""
-    from services import storage, planned, budget_guard
+    from services import storage, planned, budget_guard, agent_tools_v2
     with storage.db_lock:
         prop = storage.get_action_proposal(proposal_id)
         if not prop or prop.get('status') != 'proposed':
@@ -418,11 +418,15 @@ def run_row(proposal_id, approver, idem):
     payload = dict(prop.get('payload') or {})
     if planned.CONTRACT.get(prop['action_type'], {}).get('idem'):
         payload['idem'] = idem
+    token = agent_tools_v2._mission_context.set(
+        storage.get_mission(prop.get('origin_id')) if prop.get('origin_kind') == 'mission' else None)
     try:
-        result = _execute(prop['action_type'], payload, approver=approver)
+        requester = storage.get_member((agent_tools_v2._mission_context.get() or {}).get('created_by'))
+        principal = requester if prop['action_type'] == 'propose_program' and (requester or {}).get('role') == 'child' else approver
+        result = _execute(prop['action_type'], payload, approver=principal)
         budget = result.get('budget') is True
         ok = result.get('status') == 'success'
-        result = {'status': 'success' if ok else 'error',
+        result = {**result, 'status': 'waiting_choice' if result.get('status') == 'waiting_choice' else 'success' if ok else 'error',
                   'message': result.get('message') or ('Done.' if ok else 'That action failed.'),
                   'created': result.get('created') or []}
         if budget:
@@ -433,8 +437,10 @@ def run_row(proposal_id, approver, idem):
         raise
     except Exception as exc:
         result = {'status': 'error', 'message': str(exc), 'created': []}
+    finally:
+        agent_tools_v2._mission_context.reset(token)
     storage.update_action_proposal(proposal_id, {
-        'status': 'approved' if result['status'] == 'success' else 'failed',
+        'status': 'waiting_choice' if result['status'] == 'waiting_choice' else 'approved' if result['status'] == 'success' else 'failed',
         'result': result, 'approved_by_member_id': (approver or {}).get('id')})
     return result
 

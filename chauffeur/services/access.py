@@ -284,6 +284,11 @@ def conversation_view(kind, row, viewer, focus_key):
 
 
 def record_actable(kind, row, viewer, verb):
+    if kind == 'mission' and verb == 'program_choice':
+        from services import planned
+        return any(planned.may_answer_program_choice(row, (r.get('result') or {}).get('choice_id'), viewer)
+                   for s in ((row or {}).get('plan') or {}).get('stages', []) for r in s.get('rows', [])
+                   if (r.get('result') or {}).get('choice_id'))
     view = record_view(kind, row, viewer)
     if view is None:
         return False

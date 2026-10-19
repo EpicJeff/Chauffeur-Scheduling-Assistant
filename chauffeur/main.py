@@ -6100,7 +6100,8 @@ def situations_act(kind: str, sid: str, body: dict = Body(default={}),
         if kind == 'thread' and len(bits) >= 3 and bits[1] == 'mission':
             action = _sit.option_action('mission', storage.get_mission(bits[2]), verb, option_id)
             _piece_or_404('mission', bits[2], request, action)
-    actor = _approver_of_record(_mind_actor(request, body.get('member_id')))
+    choice_answer = kind == 'mission' and (body.get('option_id') or '').startswith('answer:program_choice:')
+    actor = _piece_viewer(request) if choice_answer else _approver_of_record(_mind_actor(request, body.get('member_id')))
     res = _sit.act(kind, sid, body.get('verb') or '', option_id=body.get('option_id'),
                    payload=body.get('payload') or {}, actor=actor)
     if res.get('status') == 'refused':
@@ -8014,6 +8015,13 @@ _LESSON_UNIT_N_MAX = 2**31 - 1
 def _program_lesson_call(fn, *args, **kwargs):
     """A library edit between admission and storage still has the moved response."""
     try:
+        if fn is storage.get_program_lesson:
+            from services.program_lessons import resolve_slot
+            with storage.db_lock:
+                # The low-level getter returns None for a removed script;
+                # HTTP keeps its stronger current-lesson contract.
+                resolve_slot(storage.get_program(args[0]), args[1])
+                return fn(*args, **kwargs)
         return fn(*args, **kwargs)
     except ValueError as exc:
         from services.programs import MOVED_LESSON

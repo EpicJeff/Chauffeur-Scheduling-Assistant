@@ -292,7 +292,14 @@ def _options_mission(row: dict) -> list:
         name = (asked or {}).get('name')
         aid = (asked or {}).get('id') or ''
         plan = row.get('plan') or {}
-        if name == 'plan' and plan.get('state') == 'proposed':
+        if name == 'program_choice':
+            choice_id = rj.get('choice_id')
+            _, choice_row = planned.program_choice_for(row, choice_id)
+            if choice_row and choice_row.get('state') == 'waiting_choice':
+                for option, label in [('use', 'Use'), ('make_new', 'Make new'), ('not_now', 'Not now')]:
+                    out.append(_opt('answer', label, {'ask': 'program_choice', 'choice_id': choice_id,
+                                                    'option': option}, f'program_choice:{choice_id}:{option}'))
+        elif name == 'plan' and plan.get('state') == 'proposed':
             rev = plan['rev']
             out.append(_opt('approve_plan', 'Looks good', {'rev': rev, 'decision': 'approve'}, f'{rev}:approve'))
             out.append(_opt('approve_plan', 'Stop', {'rev': rev, 'decision': 'stop'}, f'{rev}:stop'))
@@ -587,6 +594,8 @@ def thread_keeper_view(row):
 def option_action(kind, row, verb, option_id):
     """Translate a card option into the verb checked by piece routes."""
     if kind == 'mission':
+        if verb == 'answer' and (option_id or '').startswith('answer:program_choice:'):
+            return 'program_choice'
         if verb == 'answer' and (option_id or '').endswith(':steer'):
             from services import missions
             return missions.answer_verb(row) if row else 'answer'
@@ -851,6 +860,16 @@ def act(kind: str, sid: str, verb: str, option_id: str = None, payload: dict = N
     earlier view that no longer exists is refused, nothing runs."""
     if kind not in KINDS or verb not in VERBS:
         return _refused("That is not something I can do here.")
+    if kind == 'mission' and verb == 'answer' and (option_id or '').startswith('answer:program_choice:'):
+        from services import planned
+        bits = option_id.split(':')
+        if len(bits) != 4 or (payload or {}).get('option') != bits[3]:
+            return _refused('That option moved; look again.')
+        res = planned.answer_program_choice(sid, bits[2], bits[3], actor)
+        if res.get('status') == 'success' and not res.get('already'):
+            bump_rev(kind, sid)
+            request_refresh(kind, sid)
+        return res
     if not _can_write(actor):
         return _refused("Only a parent or adult can do that.")
     row = load(kind, sid)

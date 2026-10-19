@@ -2219,10 +2219,11 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
     if focused:
         if focused.get('state') == 'active' and projects.can_act(focused, actor) \
                 and not any(m.get('status') in _missions.LIVE for m in projects._work_missions(focused)):
-            res = _missions.launch(goal, created_by=actor['id'], project_id=focused['id'], subject=('project', focused['id']))
+            res = _missions.launch(goal, created_by=actor['id'], project_id=focused['id'], subject=('project', focused['id']),
+                                   **({'interaction': 'voice'} if spoken else {}))
             if res.get('status') == 'launched':
                 return {"status": "success", "project_id": focused['id'], "mission_id": res['mission_id'],
-                        "message": f"On it, inside \"{focused['title']}\"."}
+                        "message": ("I'm setting that up" if spoken else f"On it, inside \"{focused['title']}\".")}
     # Dedupe: same owner, same subject (when one was named), same intent, visible
     # to the caller (and spoken-safe, household, for voice).
     matches = []
@@ -2269,7 +2270,8 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
     else:
         res = _missions.launch('Help me plan the next part of this project: ' + project['title'], created_by=actor['id'],
                                project_id=project['id'], subject=(subject_kind, subject_id)
-                               if subject_kind in projects.PIECE_HOME_KINDS else ('project', project['id']))
+                               if subject_kind in projects.PIECE_HOME_KINDS else ('project', project['id']),
+                               **({'interaction': 'voice'} if spoken else {}))
         if res.get('status') == 'launched':
             mission_id = res['mission_id']
             if ctx:
@@ -2301,7 +2303,7 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
             'needs_parent': 'A parent can plan it with Argyle from the Projects page.',
             'off': reason}[planning]
     return {"status": "success", "project_id": project['id'], "mission_id": mission_id,
-            "message": f"Started a project: \"{project['title']}\". {tail}"}
+            "message": ("I'm setting that up" if spoken and mission_id else f"Started a project: \"{project['title']}\". {tail}")}
 
 
 def list_threads(state: str = None, owner_name: str = None,
@@ -2583,38 +2585,31 @@ def _match_program(title: str, acting_member: dict, focus_key=None):
 
 
 def list_programs(member_name: str = None, acting_member: dict = None, focus_key: str = None) -> Dict[str, Any]:
-    """Programs this conversation can receive. A keeper gets their whole program."""
-    acting_member = acting_member or access.HOUSE
-    from services import storage as _storage, programs as _prog
-    scope_id = None
-    if member_name:
-        m, refusal = _resolve_named_member_or_refuse(
-            acting_member, member_name, "see someone else's programs")
-        if refusal:
-            return refusal
-        scope_id = m['id']
-    rows = [r for r in _storage.get_programs(member_id=scope_id, include_finished=False)
-            if _conversation_view('program', r, acting_member or access.HOUSE, focus_key) is not None]
-    if not rows:
-        return {"status": "success", "message": "No programs going right now."}
-    names = {m['id']: m.get('name') for m in _storage.get_all_members(include_archived=True)}
+    """Public library programs, with runners named only within this audience."""
+    from services import library, subjects
+    viewer = acting_member or access.HOUSE
+    rows = library.list_programs(viewer, include_archived=False)
+    humans = subjects.channel_humans(focus_key) if focus_key else None
     lines = []
-    for p in rows[:15]:
-        p = _render_at('program', p, _conversation_view('program', p, acting_member or access.HOUSE, focus_key), acting_member)
-        if p.get('unresolved'):
-            lines.append('Its library program is missing; it needs attention.')
-            continue
-        prog = _prog.progress(p)
-        bits = [p.get('title') or 'Program']
-        holder = names.get(p.get('member_id') or '')
-        if holder:
-            bits.append(holder)
-        bits.append(p.get('state') or '?')
-        if prog.get('phase'):
-            bits.append(f"working on {prog['phase'].get('name')}")
-        bits.append(f"{prog['sessions']} session(s) logged")
-        lines.append(" — ".join(bits))
-    return {"status": "success", "message": "Programs:\n" + "\n".join(lines)}
+    for row in rows:
+        runners = row['runners']
+        if humans:
+            # Public titles travel through a channel; each runner must be visible
+            # to every human who receives that channel's reply.
+            views = [library.runners(row['id'], h)['named'] for h in humans]
+            named = [r for r in runners['named'] if all(r in v for v in views)]
+            runners = {'named': named, 'hidden': runners['hidden'] + len(runners['named']) - len(named)}
+        names = [r['name'] for r in runners['named'] if not member_name or
+                 member_name.casefold() in r['name'].casefold()]
+        line = row['title']
+        if names:
+            line += ' — ' + ', '.join(names)
+        if runners['hidden']:
+            line += f"; and {runners['hidden']} more"
+        lines.append(line)
+    return {'status': 'success', 'message': 'Library programs:\n' + '\n'.join(lines)
+            if lines else 'No programs in the library yet.'}
+
 
 
 def program_progress(program_title: str, acting_member: dict = None, focus_key: str = None) -> Dict[str, Any]:
@@ -2655,7 +2650,7 @@ def propose_program(title: str, for_member_name: str = None,
     Nothing is claimed here — approving is deliberately not a
     chat tool at all; the program sits `proposed` until a person taps
     approve on the Programs page after seeing the footprint."""
-    refusal = _thread_writer(acting_member, 'start a program')
+    refusal = _program_writer(acting_member, 'start a program')
     if refusal:
         return refusal
     from services import storage as _st, programs_curate as _cur
@@ -2698,43 +2693,75 @@ def propose_program(title: str, for_member_name: str = None,
     shape = _prog.clamp_shape({'sessions_per_week': sessions_per_week,
                                'minutes': minutes, 'preferred_days': []})
     age = stages.age_of(member)
-    made = library.create({'title': title, 'minutes': shape['minutes'],
-                           'sessions_per_week': shape['sessions_per_week'], 'assumes': '',
-                           'age_band': stages.stage_for_age(age) if age is not None else 'any'}, acting_member)
-    if made.get('status') != 'success':
-        return made
-    curriculum = made['program']
-    pid = _prog.create_row({
-        'member_id': member_id, 'library_id': curriculum['id'], 'shape': shape,
-        'starting_point': starting_point,
-        'baseline': {'start_date': None, 'target_date': None,
-                     'target_event_id': None, 'rebaselined_at': None,
-                     'rebaselines': 0},
-        'created_by': acting_member.get('id')}, project_id=project_id)
-    if not pid:
-        return {'status': 'error', 'message': 'That project is no longer here.'}
-    source = curriculum.get('source') or {}
-    n = len(curriculum.get('phases') or [])
-    tail = ("Nothing's claimed yet: see the footprint and approve it on the "
-            "Programs page.")
-    # The three tiers, said out loud. Saying "hand-written" for all of them
-    # was wrong twice over: nothing had been written, and a research outage
-    # read exactly like the web having nothing on the aim.
-    origin = source.get('origin') or (
-        'none' if source.get('hand_written') else 'cited')
-    if origin == 'cited':
-        plan = source.get('plan_name') or 'what was found'
-        msg = f"Proposed \"{title}\" with a {n}-phase plan from {plan}. {tail}"
-    elif origin == 'generated':
-        msg = (f"Proposed \"{title}\". No published program fit it, so I "
-               f"made a {n}-phase plan and it's labelled as mine rather than "
-               f"anyone's real curriculum. {tail}")
-    else:
-        why = source.get('why_this_one') or 'no plan could be found'
-        msg = (f"Proposed \"{title}\" with practice time but no plan — "
-               f"{why}. {tail}")
-    return {"status": "success", "id": pid, "message": msg,
-            "created": [{'kind': 'program', 'id': pid}]}
+    choice = {'title': title, 'member_id': member_id, 'shape': shape,
+              'starting_point': starting_point, 'project_id': project_id,
+              'created_by': acting_member.get('id'),
+              'profile': {'title': title, 'minutes': shape['minutes'],
+                          'sessions_per_week': shape['sessions_per_week'], 'assumes': '',
+                          'age_band': stages.stage_for_age(age) if age is not None else 'any'}}
+    matches = [r for r in _storage.get_library_programs() if not r.get('archived')
+               and library.valid_curriculum(r) and _same_goal(title, r)]
+    voice = (_mission_context.get() or {}).get('interaction') == 'voice'
+    if matches and not voice:
+        import uuid
+        choice.update(library_id=matches[0]['id'], choice_id=uuid.uuid4().hex)
+        return {'status': 'waiting_choice', 'choice_id': choice['choice_id'],
+                'options': ['use', 'make_new'], 'choice': choice,
+                'message': _program_choice_question(choice)}
+    if voice and len(matches) == 1:
+        choice['library_id'] = matches[0]['id']
+        return _start_program_choice(choice, acting_member)
+    return _start_program_choice(choice, acting_member, make_new=True)
+
+
+def _program_choice_question(choice):
+    from services import storage, stages
+    row = storage.get_library_program(choice['library_id']) or {}
+    profile = row.get('made_for') or {}
+    band = profile.get('age_band')
+    cut = stages.cutoffs()
+    ages = {'sprout': f'ages 0–{cut[0] - 1}', 'explorer': f'ages {cut[0]}–{cut[1] - 1}',
+            'navigator': f'ages {cut[1]}–{cut[2] - 1}', 'copilot': f'ages {cut[2]} and up'}
+    made_for = f"{ages.get(band, 'all ages')} with {profile.get('minutes', 20)}-minute sessions"
+    member = storage.get_member(choice['member_id']) or {}
+    return (f"There's a {row.get('title', choice['title'])} program in the library, made for {made_for}. "
+            f"Use it for {member.get('name') or 'you'}, or make a new one?")
+
+
+def _start_program_choice(choice, actor, make_new=False, prepared=None):
+    """The caller's transaction also owns binding a waiting row to this run."""
+    from services import storage, programs, library
+    if make_new and actor.get('role') not in ('adult', 'parent'):
+        return {'status': 'error', 'message': library.EDIT_REFUSAL, 'created': []}
+    if make_new and prepared is None:
+        prepared = library.prepare(choice['profile'], actor)
+    if make_new and prepared.get('status') != 'success':
+        return prepared
+    with storage.db_lock, storage.db.transaction():
+        if make_new:
+            lid = storage.add_library_program(prepared['program'])
+            curriculum = storage.get_library_program(lid)
+            library._invalidate()
+        else:
+            curriculum = storage.get_library_program(choice.get('library_id'))
+            if not library.valid_curriculum(curriculum) or curriculum.get('archived'):
+                return {'status': 'error', 'message': 'That library program is no longer available.', 'created': []}
+        pid = programs.create_row({
+            'member_id': choice['member_id'], 'library_id': curriculum['id'], 'shape': choice['shape'],
+            'starting_point': choice['starting_point'],
+            'baseline': {'start_date': None, 'target_date': None, 'target_event_id': None,
+                         'rebaselined_at': None, 'rebaselines': 0},
+            'created_by': actor.get('id')}, project_id=choice.get('project_id'))
+        if not pid:
+            # Roll back a freshly curated library row as well as adoption.
+            raise ValueError('That project is no longer here.')
+    member = storage.get_member(choice['member_id']) or {}
+    notice = f"I started {member.get('name') or 'you'} on {curriculum['title']} from the library"
+    message = (f"I made a new library program: {curriculum['title']}. " if make_new else notice + '. ')
+    return {'status': 'success', 'id': pid, 'run_id': pid,
+            'message': message + "Nothing's claimed yet: see the footprint and approve it on the Programs page.",
+            'notice': notice, 'created': [{'kind': 'program', 'id': pid}]}
+
 
 
 def log_program_session(program_title: str, minutes: int = None,
@@ -6893,7 +6920,7 @@ class StartProjectTool(BaseModel):
     subject_id: Optional[str] = Field(None, description="The subject id from find_in_chauffeur.")
 
 class ProposeProgramTool(BaseModel):
-    """Proposes a new program: screens the aim, then finds a real cited plan for it ('learn guitar', 'start Ben on a couch to 5k'). Refuses body-composition aims outright (weight, calories, BMI) for anyone, no exceptions. This ONLY proposes: nothing is claimed in the week; a person approves the footprint on the program. Inside a plan the row carries the plan's project. Proposing for yourself is open to anyone; naming someone else is parent/adult only."""
+    """Find or make a library program and start a proposed run in this project. A library match waits for Use / Make new / Not now; no match curates from a public profile. A child can use an existing program but cannot publish a new one. Body-composition aims are refused. Nothing is claimed in the week until the person approves the footprint. Naming someone else is parent/adult only."""
     title: str = Field(..., description="The aim, e.g. 'learn guitar' or 'couch to 5k'.")
     for_member_name: Optional[str] = Field(None, description="Whose program this is, if not the caller's own.")
     sessions_per_week: Optional[int] = Field(None, ge=1, le=7, description="How many times a week to practise, 1-7. Defaults to 3.")
@@ -6902,9 +6929,9 @@ class ProposeProgramTool(BaseModel):
 
 class ListProgramsTool(BaseModel):
     """
-    Lists ambitions with a real plan attached — a curated curriculum, reserved practice time, a session log. Each shows who it's for, its state, the phase ahead, and sessions logged.
+    Lists the public program library with visible runners; private runners are counted without names. Read each person's runs through list_projects/get_project.
     """
-    member_name: Optional[str] = Field(default=None, description="See one family member's programs by name, if said.")
+    member_name: Optional[str] = Field(default=None, description="Filter the visible runner names, if said; library titles stay public.")
 
 class ClaimChoreTool(BaseModel):
     """
