@@ -972,7 +972,61 @@ def scenario_a_parent_recurates_without_removing_the_previous_library_program():
     check(storage.get_library_program(old['id']) == old, 'the old library program stands unchanged')
 
 
+def scenario_a_failed_migration_run_refuses_bookmark_moves_cleanly():
+    _reset()
+    pid = storage.add_program({'member_id': 'kid', 'title': 'Guitar', 'state': 'active',
+                               'phases': [{'name': 'Basics', 'weeks': 2}]})
+    before = storage.get_program(pid)
+    for direction in ('next', 'back', 'stay'):
+        response = _post_program_as('mom', pid, 'unit', {'direction': direction})
+        check(response.status_code == 200 and response.json() == {
+            'status': 'error', 'message': 'Its library program is missing'},
+            f'failed migration is a clean refusal: {response.status_code} {response.text}')
+        check(storage.get_program(pid) == before, 'refused move leaves legacy progress untouched')
+
+
+def scenario_an_unresolved_proposal_cannot_claim_the_week():
+    from services import programs
+    _reset()
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
+                   'phases': [{'name': 'Basics', 'weeks': 2}]})
+    storage.delete_library_program(storage.get_program(pid)['library_id'])
+    before = storage.get_program(pid)
+    with patch.object(storage, 'claim_program', wraps=storage.claim_program) as claim, \
+            patch.object(programs, '_emit_commitments', wraps=programs._emit_commitments) as emit:
+        response = _post_program_as('mom', pid, 'approve', {'slots': [{'day': 0, 'time_start': '17:00'}]})
+    check(response.status_code == 200 and response.json() == {
+        'status': 'error', 'message': 'Its library program is missing'}, f'unresolved approval refuses: {response.text}')
+    check(not claim.called and not emit.called, 'unresolved approval never claims or emits')
+    check(storage.get_program(pid) == before and not storage.get_protected_commitments(),
+          'proposal and reserved time remain untouched')
+
+
+def scenario_a_refused_hand_create_rolls_back_its_new_library_program():
+    import main
+    from services import programs_curate, projects
+    _reset()
+    mom = storage.get_member('mom')
+    project = projects.create({'title': 'Guitar project', 'owner_member_id': 'mom', 'audience': 'household'}, mom)['project']
+    before = storage.get_library_programs()
+    def curate(*args, **kwargs):
+        # The project disappears after route admission but before child admission.
+        storage.update_project(project['id'], {'deleting': 'deletion-in-flight'})
+        return {'phases': [{'name': 'Basics', 'weeks': 2, 'steps': ['Strum']}], 'source': {'origin': 'generated'}}
+    with patch.object(programs_curate, 'curate', side_effect=curate), \
+            patch.object(storage, 'get_settings', return_value={**storage.get_settings(), 'auth_enforce': True}):
+        response = TestClient(main.app).post('/api/programs',
+            headers={'X-Member-Token': storage.create_member_token('mom')},
+            json={'title': 'Guitar', 'project_id': project['id']})
+    check(response.status_code == 200 and response.json()['status'] == 'error', f'create refused: {response.text}')
+    check(storage.get_library_programs() == before, 'a refused run leaves no new library program')
+    check(not storage.get_programs(include_finished=True), 'no run survives refused child admission')
+
+
 if __name__ == '__main__':
+    scenario_a_failed_migration_run_refuses_bookmark_moves_cleanly()
+    scenario_an_unresolved_proposal_cannot_claim_the_week()
+    scenario_a_refused_hand_create_rolls_back_its_new_library_program()
     scenario_the_endpoints_exist()
     scenario_a_body_aim_is_refused_at_the_door()
     scenario_a_child_cannot_approve()

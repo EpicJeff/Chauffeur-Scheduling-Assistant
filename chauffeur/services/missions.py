@@ -526,7 +526,7 @@ def _dm_person(mission: dict, text: str) -> None:
                     from services import access
                     target = deletion._load(ref['kind'], ref['id'])
                     if not target or access.gone(ref['kind'], target):
-                        return  # A later notice may not describe deleted stage work.
+                        continue  # Deleted stage work must not mute later mission asks.
                     if ref not in refs:
                         refs.append(ref)
     token = _notice_refs.set(tuple(refs))

@@ -210,13 +210,18 @@ RUNNER_NAME = {'R3': 'Kate', 'R5p': 'Kate', 'R5s': 'Sam', 'R15': 'Kate', 'R17': 
 def runner_visible(rkey, col):
     """A runner is named to a viewer who sees that run's PROJECT (spec §2); fixture knowledge only."""
     from access_signed_in import project_visible
+    if rkey == 'R5s' and col == 'house':
+        return True                     # Sam's run is in the household project too.
     return project_visible(None, rkey, col)
 
 
 def library_expected(rid, fx, rkey, col, value):
     """The matrix's expectation for a library route cell; any other reader keeps `value`."""
-    if rid == ('reader', 'services.library.runners'):
+    if rid in (('reader', 'services.library.runners'), ('tool', 'list_programs'),
+               ('reader', 'services.agent_tools_v2.list_programs')):
         return ('curriculum+runner' if runner_visible(rkey, col) else 'curriculum') if col != 'pat' else 'skip'
+    if rid == ('reader', 'services.library.in_use_message'):
+        return ('IN-USE-NAMED' if runner_visible(rkey, col) else 'IN-USE-ANOTHER') if col != 'pat' else 'skip'
     what = LIBRARY_ROUTES.get(rid)
     if what is None:
         return value
@@ -386,6 +391,18 @@ def register_library(probe):
         def run(fx, rkey, col, rid=rid, fn=fn):
             return fn(rid, fx if fn is library_write_probe else build(), rkey, col)
         probe(rid)(run)
+    @probe(('reader', 'services.library.in_use_message'))
+    def in_use_probe(fx, rkey, col):
+        from services import library
+        if col == 'pat':
+            return 'skip'
+        fx = build()
+        message = library.in_use_message(fx.library[rkey], fx.viewers[col])
+        expected = ("In use by " + RUNNER_NAME[rkey] + "'s project"
+                    if runner_visible(rkey, col) else IN_USE_ANOTHER)
+        assert message == expected, message
+        assert fx.secret(rkey) not in message, message
+        return 'IN-USE-NAMED' if runner_visible(rkey, col) else 'IN-USE-ANOTHER'
     @probe(('reader', 'services.library.runners'))
     def runners_probe(fx, rkey, col):
         import json

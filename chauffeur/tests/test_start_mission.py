@@ -102,7 +102,9 @@ def scenario_declared_dispatched_terminal():
                                                  voice_context=ctx, focus_key='voice:9')
     finally:
         agent_router.call_gemma_with_fallback = orig
-    check(res['message'] == "I'm setting that up", f"verified voice opens a project: {res}")
+    check(res['message'] == 'Started a project: "get the dishwasher fixed". '
+          "I'll ask a couple of questions, then show you a plan. I'm setting that up",
+          f"verified voice names the project and next step: {res}")
     project = storage.get_project(triage.get_focus('voice:9')['id'])
     check(project['owner_member_id'] == 'alex' and project['audience'] == 'household',
           f"the project belongs to the verified speaker: {project}")
@@ -119,7 +121,9 @@ def scenario_identity_free_non_voice_starts_household_project():
     reply = {'tool_calls': [{'name': 'start_project', 'arguments': {'goal': 'repair the garage'}}], 'message': ''}
     with patch.object(agent_router, 'call_gemma_with_fallback', return_value=reply):
         res = agent_router.process_agent_request('repair the garage', focus_key='voice:legacy')
-    check(res['message'] == "I'm setting that up", f"identity-free start remains available: {res}")
+    check(res['message'] == 'Started a project: "repair the garage". '
+          "I'll ask a couple of questions, then show you a plan. I'm setting that up",
+          f"identity-free start names the project and next step: {res}")
     project = storage.get_project(triage.get_focus('voice:legacy')['id'])
     check(project['owner_member_id'] == situations.parent_of_record()['id']
           and project['audience'] == 'household', 'Follow-up B: parent owns the household project')

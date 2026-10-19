@@ -310,8 +310,13 @@ the code it names.
 
 - Teaching the solver to defend a non-driver's time.
 - Body-composition goals, for anybody.
-- Programs shared across members. One program, one person; a family program is
-  a different object and the design does not ask for one.
+- ~~Programs shared across members. One program, one person; a family program is
+  a different object and the design does not ask for one.~~ **Amended 2026-10-19
+  (program library, `2026-10-19-program-library-design.md`):** the curriculum now
+  lives once in a household library (`library_programs`, ordered lessons with
+  stable ids, a public profile) and the program row is one person's RUN of it;
+  two children may run the same library program at once. Milestones stay the
+  person's call and no completion fraction is ever shown.
 - Any streak, leaderboard or cross-member comparison — there is nowhere in the
   schema to put one.
 - Automatic re-curation, or any background research spend.

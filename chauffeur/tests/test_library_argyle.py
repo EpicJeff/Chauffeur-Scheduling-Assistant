@@ -317,6 +317,35 @@ def scenario_stop_and_delete_leave_no_waiting_choices():
             check(storage.get_mission(mid) is None and storage.get_action_proposal(proposal_id) is None, 'cleanup removes mission and proposal')
 
 
+def scenario_deleting_a_stage_run_does_not_mute_the_next_ask():
+    from test_library_flows import REAL_POST
+    from services import access, deletion
+    _fresh()
+    mid, _ = _staged()
+    run = _runs()[0]
+    check(_stage(mid)['state'] == 'done' and any(
+        ref.get('kind') == 'program' and ref.get('id') == run['id']
+        for ref in (_row(mid, 'r1').get('result') or {}).get('created') or []),
+        'the completed stage records its created run')
+    preview = deletion.preview('program', run['id'], dict(MOM))
+    check(deletion.start('program', run['id'], dict(MOM), preview['token'])['status'] == 'ok', 'run deletion admitted')
+    check(access.gone('program', storage.get_program(run['id']))
+          and not access.gone('mission', storage.get_mission(mid)), 'the run is gone but its mission survives')
+    question = 'Which music book should we look at next?'
+    _plan({'action': 'ask_user', 'question': question})
+    with patch.object(missions, '_post', REAL_POST):
+        _step(mid)
+    check(storage.get_mission(mid)['status'] == 'waiting_user', 'the mission waits for its next answer')
+    argyle = storage.ensure_argyle_member()
+    dm = storage.get_or_create_dm(argyle['id'], 'mom')
+    delivered = [m for m in storage.chat_messages_table.all()
+                 if m.get('channel_id') == dm['id'] and question in (m.get('body') or '')]
+    check(len(delivered) == 1 and storage.message_visible(delivered[0]), 'the next ask reaches Mom in her Argyle DM')
+    check(delivered[0]['card']['question'] == question
+          and {'kind': 'program', 'id': run['id']} not in delivered[0].get('refs', []),
+          'the actionable ask carries no ref to the deleted work')
+
+
 def scenario_run_row_persists_only_the_choice_contract():
     _fresh()
     result = {'status': 'success', 'message': 'Done', 'created': [], 'choice_id': 'c', 'options': ['use'],

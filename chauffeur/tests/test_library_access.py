@@ -209,6 +209,25 @@ def scenario_runners_hide_projects_the_viewer_cannot_see():
               f'{path}: the runner projection Dad gets: {runners}')
 
 
+def scenario_a_deleting_run_does_not_keep_the_library_in_use():
+    fx = _build()
+    lib = _svc()
+    lid = _shared(fx, keys=('R15',))
+    storage.update_program(fx.ids['R15'], {'deleting': 'pending-cleanup'})
+    check(access.gone('program', storage.get_program(fx.ids['R15'])), 'the run is gone before cleanup')
+    for viewer in (MOM, DAD, AUNT):
+        check(lib.in_use_message(lid, dict(viewer)) == '', 'a gone run never blocks library deletion')
+    check(_ok(lib.delete(lid, dict(AUNT))) and storage.get_library_program(lid) is None,
+          'the creator can delete the library row while its gone run awaits cleanup')
+
+
+def scenario_made_for_uses_the_schema_minutes_default():
+    lib = _svc()
+    check(lib.made_for_line({}) == 'all ages with 25-minute sessions', 'an omitted duration defaults to 25')
+    check(lib.made_for_line({'minutes': 15}) == 'all ages with 15-minute sessions',
+          'an explicit duration is kept')
+
+
 def scenario_run_cells_and_keeper_gates_are_unchanged():
     fx = _build()
     _shared(fx)

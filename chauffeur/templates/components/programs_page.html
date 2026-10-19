@@ -900,9 +900,9 @@
                 // the program row this page happens to hold, so this page,
                 // the PWA and the wall board -- only one of which can read
                 // a program row at all -- resolve one evening to one lesson
-                // by one route. The EDITOR below still keys off
-                // `p.current_unit`, because it edits a phase's slot with no
-                // window in hand; both name the same rung by construction.
+                // by one route. The editorSlot below uses the bookmarked
+                // lesson id for library runs, or p.current_unit for legacy
+                // rows, when no practice window is in hand.
                 async loadWindowLesson(w) {
                     try {
                         const qs = new URLSearchParams(this.slotParams(w));

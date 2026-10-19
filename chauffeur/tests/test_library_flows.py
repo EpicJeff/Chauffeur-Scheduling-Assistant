@@ -236,7 +236,7 @@ def scenario_deleting_a_project_or_a_run_leaves_the_library_row():
     preview = deletion.preview('project', project['id'], dict(MOM))
     check(preview['status'] == 'ok', f'preview: {preview}')
     item = next((i for i in preview['items'] if i['kind'] == 'program'), None)
-    check(item and 'Learn piano' in item['title'] and 'Kate' in item['title'],
+    check(item and item['title'] == "Learn piano (Kate's run)",
           f"the confirm names the run by its program and person: {preview['items']}")
     check(deletion.start('project', project['id'], dict(MOM), preview['token'])['status'] == 'ok', 'started')
     for _ in range(5):

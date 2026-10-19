@@ -35,20 +35,20 @@ def register(probe):
                     return None
                 conv = conversation(c, h, surface)
                 if rid[-1] == '/api/chat':
-                    if KIND[rkey] == 'program':
-                        curriculum = storage.get_library_program(fx.library[rkey])
-                        storage.update_library_program(fx.library[rkey], {
-                            'phases': [{**p, 'name': fx.secret(rkey)} for p in curriculum['phases']]})
                     def fake(message, **kw):
                         if KIND[rkey] == 'program':
-                            return tools.list_programs(acting_member=kw['acting_member'], focus_key=kw['focus_key'])
+                            return tools.program_progress(fx.title(rkey), acting_member=kw['acting_member'],
+                                                          focus_key=kw['focus_key'])
                         return tools.explain_situation(fx.ids[rkey], kind=KIND[rkey],
                             acting_member=kw['acting_member'], focus_key=kw['focus_key'])
                     with patch.object(agent_router, 'process_agent_request', side_effect=fake):
                         r = c.post('/api/chat?surface=' + surface, headers=h,
                                    json={'message': 'Explain', 'conversation_id': conv['id']})
                     check(r.status_code == 200 and 'error' not in r.json(), f'chat dispatch: {r.text}')
-                    return observed(r.text, fx, rkey)
+                    got = observed(r.text, fx, rkey)
+                    # A successful progress reply is the run projection; its public
+                    # title is enough to identify it without putting secrets in curriculum.
+                    return 'full' if KIND[rkey] == 'program' and got == 'keeper' else got
                 if rid[-1] == '/api/v2/chat/stream':
                     # History already said stays readable regardless of later narrowing (4.2:165).
                     chunk = stream_chunk(h, conv['id'])

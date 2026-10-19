@@ -324,7 +324,12 @@ def scenario_the_preview_names_every_piece_and_counts_the_links():
     check(set(items) == {fx.ids[k] for k in GARAGE_KEYS}, f"every thread, mission and program by title: {res['items']}")
     for key in GARAGE_KEYS:
         it = items[fx.ids[key]]
-        check(it['kind'] == kind_of(key) and it['title'] == fx.title(key), f"{key} named by its title: {it}")
+        title = fx.title(key)
+        if kind_of(key) == 'program':
+            member = storage.get_member(storage.get_program(fx.ids[key])['member_id']) or {}
+            if member.get('name'):
+                title += f" ({member['name']}'s run)"
+        check(it['kind'] == kind_of(key) and it['title'] == title, f"{key} named by its title: {it}")
     check(res['links'] == 1, f"one linked record (the trip) is counted, never deleted: {res}")
     check(not leaked(res, [fx.title('SA1'), fx.title('SA2'), 'Disney World']),
           f"records about it and linked records are not named: {res}")
@@ -540,7 +545,11 @@ def scenario_renaming_a_mission_or_a_program_moves_the_token():
                               ('program', 'GP1', {'title': 'Renamed program'})):
         fx = build()
         token = preview_ok('project', garage(fx), dict(MOM))['token']
-        getattr(storage, f'update_{kind}')(fx.ids[key], fields)
+        if kind == 'program':
+            # The confirmation resolves the library title, not a legacy run title.
+            storage.update_library_program(storage.get_program(fx.ids[key])['library_id'], fields)
+        else:
+            storage.update_mission(fx.ids[key], fields)
         before = snapshot()
         res = _d().start('project', garage(fx), dict(MOM), token)
         check(res.get('status') == 'changed' and res.get('message') == CHANGED, f"a renamed {kind}: {res}")

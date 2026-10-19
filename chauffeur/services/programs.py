@@ -144,7 +144,8 @@ def load(run):
     if run is None:
         return None
     out = copy.deepcopy(run)
-    # Unconverted rows remain readable until the explicit migration task.
+    # Only failed-migration rows use this fallback. Remove it in the first
+    # release after the program-library cutover (one-release compatibility).
     if not run.get('library_id') and 'phases' in run:
         return {**out, 'unresolved': False}
     from services import library
@@ -207,7 +208,7 @@ def step_bookmark(program_id, direction):
         return {'status': 'error', 'message': 'Which way — next, or back?'}
     with storage.db_lock, storage.db.transaction():
         row = load(storage.get_program(program_id))
-        if not row or row.get('unresolved'):
+        if not row or not row.get('library_id') or row.get('unresolved'):
             return {'status': 'error', 'message': 'Its library program is missing'}
         progress_ = row['progress']
         lesson = next((l for l in row['lessons'] if l['id'] == progress_.get('current')), None)
@@ -937,9 +938,9 @@ def unit_for(program: dict, phase: dict) -> dict:
     become is "3 of 10", which is a completion percentage with the division
     left undone -- so this returns the rung, and no total.
 
-    `unit_shift` is the hand on the ladder: a person who needs another
-    session on this lesson, or who did two in one evening, says so and the
-    pointer moves. It is a bookmark, not a record of anything.
+    Legacy rows alone use `unit_shift` to move the pointer without recording
+    progress. Library runs use the stable lesson id in `progress.current`;
+    their bookmark ignores `unit_shift`.
     """
     program = load(program)
     if program.get('unresolved'):
@@ -1376,6 +1377,8 @@ def approve(program_id: str, approver_id: str = None, slots: list = None) -> dic
     row = load(storage.get_program(program_id))
     if not row:
         return {'status': 'error', 'message': 'That program is no longer here.'}
+    if row.get('unresolved'):
+        return {'status': 'error', 'message': 'Its library program is missing'}
     if row.get('state') != 'proposed':
         return {'status': 'error',
                 'message': f"That program is already {row.get('state')}."}

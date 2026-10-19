@@ -7866,25 +7866,35 @@ def create_program(body: dict = Body(default={}), request: Request = None):
         _approver_of_record(_mind_actor(request, body.get('member_id')))
     project_id = _project_to_join(body, actor)
     made = None
-    if body.get('library_id'):
-        curriculum = storage.get_library_program(body['library_id'])
-        if not library.valid_curriculum(curriculum) or curriculum.get('archived'):
-            return {'status': 'error', 'message': 'Choose a library program.'}
-    else:
+    if not body.get('library_id'):
         member = storage.get_member(member_id) or {}
         age = stages.age_of(member)
         band = body.get('age_band') or (stages.stage_for_age(age) if age is not None else 'any')
-        made = library.create({**body, 'age_band': band}, actor)
-        if made.get('status') != 'success':
-            return _library_result(made)
-        curriculum = made['program']
-    shape = _prog.clamp_shape({**{k: curriculum['made_for'][k] for k in ('minutes', 'sessions_per_week')},
-                               **{k: body[k] for k in ('minutes', 'sessions_per_week', 'preferred_days', 'slots') if k in body}})
-    pid = _prog.create_row({'member_id': member_id, 'library_id': curriculum['id'], 'shape': shape,
-        'starting_point': starting_point, 'created_by': actor.get('id'),
-        'baseline': {'start_date': None, 'target_date': body.get('target_date'), 'target_event_id': None,
-                     'rebaselined_at': None, 'rebaselines': 0}}, project_id=project_id)
-    if not pid:
+        prepared = library.prepare({**body, 'age_band': band}, actor)
+        if prepared.get('status') != 'success':
+            return _library_result(prepared)
+    class RunRefused(Exception):
+        pass
+    try:
+        with storage.db_lock, storage.db.transaction():
+            if body.get('library_id'):
+                curriculum = storage.get_library_program(body['library_id'])
+                if not library.valid_curriculum(curriculum) or curriculum.get('archived'):
+                    return {'status': 'error', 'message': 'Choose a library program.'}
+            else:
+                lid = storage.add_library_program(prepared['program'])
+                curriculum = storage.get_library_program(lid)
+                library._invalidate()
+                made = {'message': prepared['message']}
+            shape = _prog.clamp_shape({**{k: curriculum['made_for'][k] for k in ('minutes', 'sessions_per_week')},
+                                       **{k: body[k] for k in ('minutes', 'sessions_per_week', 'preferred_days', 'slots') if k in body}})
+            pid = _prog.create_row({'member_id': member_id, 'library_id': curriculum['id'], 'shape': shape,
+                'starting_point': starting_point, 'created_by': actor.get('id'),
+                'baseline': {'start_date': None, 'target_date': body.get('target_date'), 'target_event_id': None,
+                             'rebaselined_at': None, 'rebaselines': 0}}, project_id=project_id)
+            if not pid:
+                raise RunRefused()
+    except RunRefused:
         return {'status': 'error', 'message': 'That project or library program is no longer here.'}
     return {'status': 'success', 'id': pid, 'program': _prog.load(storage.get_program(pid)),
             **({'message': made['message']} if made else {})}

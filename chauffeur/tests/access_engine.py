@@ -44,11 +44,20 @@ def run(name, fx, rkey):
             out = storage.get_mission_steps(m['id'])
         else:
             action = {'action': 'tool', 'tool': {'mission': 'list_situations',
-                      'thread': 'list_threads', 'program': 'list_programs'}[kind], 'args': {}}
+                      'thread': 'list_threads', 'program': 'program_progress'}[kind],
+                      'args': {'program_title': fx.title(rkey)} if kind == 'program' else {}}
             storage.mission_steps_table.truncate()
             out = act(fx, action, engine, entry=name)
             if name == '_user_prompt':
                 out = missions._user_prompt(storage.get_mission(m['id']))
+                if kind == 'program':
+                    # The probe supplies the public title as its query. Judge
+                    # what the tool disclosed, not that echoed input.
+                    query = 'args=' + missions._compact(action['args'], 200)
+                    check(query in out, 'the planner transcript contains the actual progress query')
+                    out = out.replace(query, 'args={}')
+            elif kind == 'program':
+                out = [{**s, 'args_json': {}} for s in out]
         text = words(out)
         seen = fx.title(rkey) in text or fx.secret(rkey) in text
         check(seen == allowed, f'{name} {engine} {rkey}: allowed={allowed}, output={text[:1800]}')

@@ -23,7 +23,7 @@ def made_for_line(profile):
     """"ages 7–10 with 20-minute sessions": Argyle's choice card and the library cards."""
     profile = profile or {}
     labels = {b['key']: b['label'] for b in age_bands()}
-    return f"{labels.get(profile.get('age_band'), 'all ages')} with {profile.get('minutes', 20)}-minute sessions"
+    return f"{labels.get(profile.get('age_band'), 'all ages')} with {profile.get('minutes', 25)}-minute sessions"
 
 
 def band_for(member):
@@ -164,8 +164,9 @@ def runners(library_id, viewer):
 
 
 def in_use_message(library_id, viewer):
-    """Delete's refusal while any run references the program, else ''."""
-    if not any(r.get('library_id') == library_id for r in storage.get_programs(include_finished=True)):
+    """Delete's refusal while any non-gone run references the program, else ''."""
+    if not any(r.get('library_id') == library_id and not access.gone('program', r)
+               for r in storage.get_programs(include_finished=True)):
         return ''
     visible = runners(library_id, viewer)['named']
     names = ', '.join(dict.fromkeys(n['name'] for n in visible))

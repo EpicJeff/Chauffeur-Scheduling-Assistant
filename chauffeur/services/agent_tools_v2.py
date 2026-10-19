@@ -2223,7 +2223,8 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
                                    **({'interaction': 'voice'} if spoken else {}))
             if res.get('status') == 'launched':
                 return {"status": "success", "project_id": focused['id'], "mission_id": res['mission_id'],
-                        "message": ("I'm setting that up" if spoken else f"On it, inside \"{focused['title']}\".")}
+                        "message": (f"On it, inside \"{focused['title']}\"."
+                                    + (" I'm setting that up" if spoken else ""))}
     # Dedupe: same owner, same subject (when one was named), same intent, visible
     # to the caller (and spoken-safe, household, for voice).
     matches = []
@@ -2303,7 +2304,8 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
             'needs_parent': 'A parent can plan it with Argyle from the Projects page.',
             'off': reason}[planning]
     return {"status": "success", "project_id": project['id'], "mission_id": mission_id,
-            "message": ("I'm setting that up" if spoken and mission_id else f"Started a project: \"{project['title']}\". {tail}")}
+            "message": (f"Started a project: \"{project['title']}\". {tail}"
+                        + (" I'm setting that up" if spoken and mission_id else ""))}
 
 
 def list_threads(state: str = None, owner_name: str = None,

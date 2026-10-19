@@ -3900,9 +3900,10 @@ def _lesson_query(program_id: str, slot: dict):
 
 def upsert_program_lesson(program_id: str, slot: dict, data: dict) -> str:
     """One script per (run id, lesson id, variant label).
-    the distinct lesson in the plan's own terms, never a date, so a rotation
-    session repeating inside one unit's week reuses this same row and a new
-    unit gets its own. Refuses to overwrite a row whose `edited` is true
+
+    Stable lesson identity keeps each run's script attached to its library
+    lesson through reordering. Dates choose rotation variants; repeating the
+    same variant reuses its script. Refuses to overwrite a row whose `edited` is true
     unless this write is itself a hand edit (`data['edited']` true): a hand
     edit may replace a hand edit, generation may not. Returns the row id, or
     '' when the write was refused."""

@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from harness import check
 from program_fixture import add_run, loaded
-from services import access, home_board, house_programs, library, model_pools, program_lessons, programs, storage
+from services import access, home_board, house_programs, library, model_pools, program_lessons, programs, storage, study
 from fastapi.testclient import TestClient
 import main
 
@@ -64,6 +64,11 @@ def scenario_unresolved_run_keeps_a_neutral_house_object():
               ('title', 'phase_name', 'phase', 'steps', 'milestone', 'member_name')),
           'unresolved house object has no curriculum words or member name')
     check(objects[0]['kind'] == 'book', 'unresolved house object uses neutral geometry')
+    binders = study._binders(dt.datetime.combine(MON, dt.time(17)), viewer=access.HOUSE)
+    check(len(binders) == 1 and binders[0]['id'] == rid, 'unresolved run keeps its neutral Study binder')
+    check(all(not binders[0].get(key) for key in
+              ('title', 'why', 'shape', 'progress', 'current_unit', 'pulled', 'detail')),
+          'unresolved Study binder carries no words or attention signal')
 
 
 def scenario_date_rotation_includes_same_day_rank_and_filters_empty_variants():

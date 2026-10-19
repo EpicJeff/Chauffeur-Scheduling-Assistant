@@ -226,11 +226,18 @@ def run_one(name, fx, rkey, col, context):
         want = F if want else None
     elif name == 'list_threads': out = tools.list_threads(**kwargs)
     elif name == 'list_programs':
-        # Existing list/progress reports phase words, not starting_point.
-        curriculum = storage.get_library_program(fx.library[rkey])
-        storage.update_library_program(fx.library[rkey], {
-            'phases': [{**p, 'name': fx.secret(rkey)} for p in curriculum['phases']]})
+        if col == 'pat':
+            return  # a disabled member cannot start a conversation
         out = tools.list_programs(**kwargs)
+        expected = access_fixture.library_expected(('tool', name), fx, rkey, col, want)
+        humans = subjects.channel_humans(key) if context != 'dm' else None
+        if humans and not all(access_fixture.runner_visible(rkey, h['id']) for h in humans):
+            expected = 'curriculum'
+        runner = access_fixture.RUNNER_NAME[rkey]
+        line = title + (' — ' + runner if expected == 'curriculum+runner' else '; and 1 more')
+        check(line in out.get('message', '').splitlines(), f'{label}: want {line}: {out}')
+        check(fx.secret(rkey) not in json.dumps(out), f'{label}: private starting point leaked')
+        return
     elif name == 'program_progress':
         curriculum = storage.get_library_program(fx.library[rkey])
         storage.update_library_program(fx.library[rkey], {
@@ -355,6 +362,12 @@ def router_dispatch_context():
         visible_key = 'R5p' if name == 'list_programs' else 'R5t'
         check(observe([prompt, out], fx, visible_key) is not None,
               f'{name}: the actual tool result must include the household piece')
+        if name == 'list_programs':
+            for rkey in ('R3', 'R15', 'R17'):
+                check(fx.title(rkey) + '; and 1 more' in prompt,
+                      f'{name}: panel gets public curriculum and a hidden-runner count for {rkey}')
+                check(fx.secret(rkey) not in prompt + json.dumps(out),
+                      f'{name}: panel must not receive the private starting point for {rkey}')
 
 
 def panel_write_dispatch():
@@ -566,6 +579,13 @@ def registry_and_ask_payloads():
         out = tools.execute_tool(name, {})
         check(out.get('status') == 'success', f'registry {name}: {out}')
         for rkey in ('R1', 'R2', 'R3', 'R4', 'R7', 'R11', 'R14', 'R15', 'R16', 'R17'):
+            if name == 'list_programs' and KIND[rkey] == 'program':
+                check(fx.title(rkey) + '; and 1 more' in out.get('message', '').splitlines(),
+                      f'registry {name}: public title and hidden-runner count for {rkey}: {out}')
+                check(fx.secret(rkey) not in json.dumps(out), f'registry {name}: private starting point for {rkey}')
+                progress = tools.execute_tool('program_progress', {'program_title': fx.title(rkey)})
+                check(observe(progress, fx, rkey) is None, f'registry program_progress: leaked {rkey}')
+                continue
             check(observe(out, fx, rkey) is None, f'registry {name}: leaked {rkey}')
     for out in (tools.list_projects(), tools.get_project(fx.projects['household']['id'])):
         check(out['status'] == 'success' and 'Household' in json.dumps(out), 'id-less project reads use HOUSE')
