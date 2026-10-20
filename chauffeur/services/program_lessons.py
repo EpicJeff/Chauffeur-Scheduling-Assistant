@@ -22,6 +22,14 @@ from contextlib import nullcontext
 from services import deletion
 
 MAX_SCENES = 12
+MAX_TEACH_TITLE = 80
+MAX_TEACH_TEXT = 700
+MAX_TEACH_SPEAK = 500
+MAX_TEACH_EXAMPLES = 5
+MAX_TEACH_EXAMPLE = 160
+VARIABLES = ('name', 'project')
+VARIABLE_RE = re.compile(r'\{[A-Za-z_]+\}')
+BUDGET_LOW, BUDGET_HIGH, SHORTFALL = 0.8, 1.2, 0.5
 MAX_TEXT = 280
 MAX_SHORT_TEXT = 120               # a check's ask, a show's caption, a card face
 # One BEAT, not one session -- the longest a single countdown may run.
@@ -152,6 +160,12 @@ def _to_int(value):
         return int(value)
     except (TypeError, ValueError, OverflowError):
         return None
+
+
+def scene_cap(minutes) -> int:
+    """How many scenes a session this long may hold: one a minute between 12 and 40."""
+    m = _to_int(minutes)
+    return 12 if m is None else max(12, min(40, m))
 
 
 def _valid_keyboard(p):
@@ -386,7 +400,8 @@ def resolve_slot(program: dict, slot: dict) -> dict:
 
 
 def _clean_text(raw, cap: int = MAX_TEXT) -> str:
-    return re.sub(r'\s+', ' ', str(raw or '')).strip()[:cap]
+    text = VARIABLE_RE.sub(lambda m: m.group(0) if m.group(0)[1:-1] in VARIABLES else '', str(raw or ''))
+    return re.sub(r'\s+', ' ', text).strip()[:cap]
 
 
 def _build_primitive(prim):
@@ -657,7 +672,7 @@ def _clean_offer(raw, origin: str):
     return {'label': label, 'scenes': inner[:MAX_OFFER_SCENES]}
 
 
-def sanitize_script(scenes: list, origin: str, _depth: int = 0) -> list:
+def sanitize_script(scenes: list, origin: str, minutes=None, _depth: int = 0) -> list:
     """Every script through one door. Clamps, whitelists, screens; returns
     what survives, which may be nothing — and nothing is a fine answer,
     because the player's fallback ladder plays the plain steps.
@@ -668,6 +683,7 @@ def sanitize_script(scenes: list, origin: str, _depth: int = 0) -> list:
     makes "an offer may not contain an offer" a property of the shape
     rather than a rule anybody has to enforce twice.
     """
+    cap = scene_cap(minutes)
     out = []
     # `scenes or []` only coalesces FALSY junk (None, 0, ''); a truthy
     # scalar -- an int, a float, a bare True -- is not a list and would
@@ -675,7 +691,7 @@ def sanitize_script(scenes: list, origin: str, _depth: int = 0) -> list:
     # list of scenes becomes no scenes, the same way a malformed scene
     # inside the list becomes no scene below.
     for raw in (scenes if isinstance(scenes, list) else []):
-        if len(out) >= MAX_SCENES:
+        if len(out) >= cap:
             break
         if not isinstance(raw, dict):
             continue
@@ -700,6 +716,39 @@ def sanitize_script(scenes: list, origin: str, _depth: int = 0) -> list:
                                       min(MAX_FADE_PASSES,
                                           _to_int(raw.get('passes'))
                                           or MIN_FADE_PASSES))
+            scene.update(voice)
+            out.append(scene)
+        elif kind == 'teach':
+            text = _clean_text(raw.get('text'), MAX_TEACH_TEXT)
+            title = _clean_text(raw.get('title'), MAX_TEACH_TITLE)
+            if not text or _screened(text, origin) or (title and _screened(title, origin)):
+                continue
+            scene = {'type': 'teach', 'text': text}
+            if title:
+                scene['title'] = title
+            examples = []
+            for ex in (raw.get('examples') if isinstance(raw.get('examples'), list) else []):
+                if isinstance(ex, str):
+                    ex = {'text': ex}
+                if not isinstance(ex, dict):
+                    continue
+                etext = _clean_text(ex.get('text'), MAX_TEACH_EXAMPLE)
+                if not etext or _screened(etext, origin):
+                    continue
+                entry = {'text': etext}
+                lang = ex.get('speak_lang')
+                if isinstance(lang, str) and _LANG_RE.match(lang):
+                    entry['speak_lang'] = lang
+                examples.append(entry)
+                if len(examples) >= MAX_TEACH_EXAMPLES:
+                    break
+            if examples:
+                scene['examples'] = examples
+            voice = dict(voice)
+            speak = _clean_text(raw.get('speak'), MAX_TEACH_SPEAK)
+            voice.pop('speak', None)
+            if speak and not _screened(speak, origin):
+                voice['speak'] = speak
             scene.update(voice)
             out.append(scene)
         elif kind == 'do':
@@ -771,6 +820,75 @@ def sanitize_script(scenes: list, origin: str, _depth: int = 0) -> list:
             # An unknown kind is dropped whole: the model demanded a
             # visual this player has never heard of.
     return out
+
+
+def _words(text) -> float:
+    return len(str(text or '').split())
+
+
+def estimate_seconds(scenes) -> int:
+    total = 0.0
+    for s in (scenes if isinstance(scenes, list) else []):
+        if not isinstance(s, dict):
+            continue
+        kind = s.get('type')
+        if kind == 'say':
+            if s.get('fade'):
+                total += (_to_int(s.get('passes')) or MIN_FADE_PASSES) * _words(s.get('text')) / 2.5
+            else:
+                total += 4 + _words(s.get('text')) / 2.5
+            total += _words(s.get('speak')) / 2.5
+        elif kind == 'teach':
+            total += 6 + _words(s.get('text')) / 2.5 + _words(s.get('speak')) / 2.5 + 6 * len(s.get('examples') or [])
+        elif kind == 'do':
+            total += _to_int(s.get('seconds')) or 60
+        elif kind == 'check':
+            total += 8
+        elif kind == 'wait':
+            total += (_to_int(s.get('minutes')) or 0) * 60
+        elif kind == 'show':
+            p = s.get('primitive') or {}
+            k = p.get('kind')
+            if k in ('timer', 'listen'):
+                total += _to_int(p.get('seconds')) or 0
+            elif k == 'metronome':
+                total += 45
+            elif k in ('keyboard', 'fretboard', 'tuner'):
+                total += 20
+            elif k == 'cards':
+                total += 8 * len(p.get('pairs') or [])
+            elif k == 'lines':
+                total += 12 * len(p.get('pairs') or [])
+            elif k == 'counter':
+                total += (_to_int(p.get('target')) or 0) * (_to_int(p.get('seconds_per_rep')) or COUNTER_DEFAULT_SPR)
+            elif k == 'hints':
+                total += 30
+    return int(round(total))
+
+
+def fill(scenes, vars: dict) -> list:
+    """Substitute the closed variable set in every free-text field. Pure."""
+    import copy
+    values = {'name': str((vars or {}).get('name') or '').strip() or 'you',
+              'project': str((vars or {}).get('project') or '').strip()}
+
+    def sub(text):
+        if not isinstance(text, str):
+            return text
+        for k, v in values.items():
+            text = text.replace('{' + k + '}', v)
+        return text
+
+    def walk(node):
+        if isinstance(node, dict):
+            return {k: (walk(v) if k in ('examples', 'cues', 'pairs', 'steps', 'scenes', 'primitive', 'not_yet_offer')
+                        else sub(v) if k in ('text', 'speak', 'ask', 'caption', 'announce', 'title', 'say', 'front', 'back',
+                                              'cue', 'line', 'answer', 'label') else v)
+                    for k, v in node.items()}
+        if isinstance(node, list):
+            return [walk(x) if isinstance(x, (dict, list)) else sub(x) for x in node]
+        return node
+    return walk(copy.deepcopy(scenes if isinstance(scenes, list) else []))
 
 
 # --- the wait's one-shot call --------------------------------------------
@@ -893,6 +1011,9 @@ _SYSTEM = (
     '{"type":"say","text":"","fade":true,"passes":3} a short '
     "teaching beat (\"fade\" repeats the same words with more of "
     "them blanked each pass, 2-4, for anything learned by heart); "
+    '{"type":"teach","title":"","text":"","examples":[{"text":"","speak_lang":"pt-BR"}],"speak":""} '
+    "a teaching beat: what is new, why it matters, what good looks like, in up to 700 characters, with up to 5 short "
+    "examples (each may carry speak_lang when it is in another language; a tap says it) and up to 500 spoken characters; "
     '{"type":"do","text":"","seconds":60,"metronome_bpm":80,'
     '"cues":[{"at":30,"say":"Switch sides","speak_lang":"pt-BR"}]} a '
     "practice interlude (seconds and metronome_bpm optional; \"cues\" are "
@@ -938,8 +1059,12 @@ _SYSTEM = (
     '{"kind":"counter","target":10,"seconds_per_rep":3} '
     "(seconds_per_rep is optional, 1-10, how long one rep takes so the "
     "count can pace itself hands-free -- default 3). "
-    "At most 10 scenes. Structure: a short why, then the drill as do-beats, "
-    "one check near the end. Every do-beat must be startable alone from its "
+    "STRUCTURE, four parts: OPEN connects to the previous lesson only when this one builds on it (cards or lines from its "
+    "material, never more than two scenes; cooking and lawn mostly skip it). TEACH: at least one teach scene per new idea. "
+    "WORK: the drill as do-beats and primitives, most of the time. WRAP: one check or one fade. "
+    "VARIABLES: write {name} wherever a teacher would say the learner's name, and {project} for what they are working "
+    "towards. Nothing else goes in braces. "
+    "Every do-beat must be startable alone from its "
     "text. No praise-fluff, no streaks, no scores. Never write about "
     "weight, calories, body composition, or dieting -- anywhere, card "
     "fronts and backs included; any scene that does is dropped before it "
@@ -947,7 +1072,7 @@ _SYSTEM = (
     # The voice. Every scene may carry these; the assistant reads `speak`
     # aloud while the scene is on screen, so it is what a person HEARS
     # rather than a second copy of what they read.
-    'Any scene may also carry: "speak" (up to 200 characters said out '
+    'Any scene may also carry: "speak" (up to 200 characters (500 on a teach scene) said out '
     "loud while that scene is showing -- write what a teacher would SAY, "
     "not a repeat of the text on screen), "
     '"speak_lang" (a language tag like "es" or "pt-BR", only when the '
@@ -958,17 +1083,17 @@ _SYSTEM = (
     # PATTERNS: enforcement in this module is entirely subtractive -- the
     # screens drop, they never require -- so the ceiling on how much a
     # lesson teaches is whatever this paragraph asks for.
-    "PATTERNS, by what the session is: for anything MOVED or held, speak "
-    "the count and the switch-over out loud. For anything read or spoken, "
-    "say the word and let them answer before the next scene. For anything "
-    "problem-shaped, give the smallest nudge first and the answer last. "
-    "For lines to be learned by heart, say the other person's part and "
-    "let them reply. For cooking and anything with a wait in it, say what "
-    "happens while you wait. Put \"grownup\": true on knives, heat, power "
+    "Put \"grownup\": true on knives, heat, power "
     "tools and anything sharp or hot, so the scene asks for a grown-up. "
-    "For anything chemical -- fertiliser, "
-    "cleaner, weedkiller -- say follow the label and never a rate or an "
-    "amount of your own."
+    "PATTERNS, by what the session is: music - teach names the notes or chords and is followed by a keyboard or fretboard "
+    "show before metronome do-beats; strings tune up first. movement (anything moved or held) - teach says what the exercise "
+    "is for and its pacing, never how to hold or move a joint; work is counters with spoken counts and switch-overs. cooking "
+    "and crafts - teach the technique before the step it applies to; waits carry announce; grownup true on heat, blades, power "
+    "tools. reading and phonics - teach the sound or rule with cards; work is cards and lines. problem-shaped (maths, puzzles) "
+    "- teach the rule with one worked example; work is hint ladders, smallest nudge first. language - teach the rule with "
+    "examples in both languages (speak_lang on the target-language ones); controlled practice through lines (lang set) and "
+    "cards (speak + speak_lang); free production through a presence listen; at most one greeting beat in a session; OPEN "
+    "reviews last lesson's words as cards. chemical (fertiliser, cleaner, weedkiller) - follow the label, never a rate or an amount."
 )
 
 # How many chargeable failures a single slot is allowed before generation
@@ -1011,6 +1136,57 @@ _GENERATED_PROMPT = (
     "Structure the practice (warmup, the work, brief review). Do NOT "
     "prescribe how to hold or move any part of the body."
 )
+
+
+def profile_context(row: dict) -> str:
+    from services import library
+    made = row.get('made_for') or {}
+    return (f"Who this is for: {library.made_for_line(made)}"
+            + f", {made.get('sessions_per_week', 3)} sessions a week"
+            + (f"; assumes {made['assumes']}." if made.get('assumes') else '.')
+            + " Write it so they can run the session on their own; put grownup true on any scene that needs an adult.")
+
+
+def _budget_lines(minutes: int) -> str:
+    return (f"This session is {minutes} minutes. Write a script that runs between {int(minutes * BUDGET_LOW)} and "
+            f"{int(minutes * BUDGET_HIGH)} minutes by this reckoning: a say or teach beat takes about a second per two and a "
+            f"half words read plus the same for its spoken line, a teach adds six seconds per example, a do-beat takes its "
+            f"seconds (60 when it has none), a check 8 seconds, a wait its minutes, cards 8 seconds a pair, lines 12 seconds a "
+            f"pair, a counter its target times its pace, a metronome 45 seconds, a keyboard, fretboard or tuner 20, a hint ladder "
+            f"30, a timer or listen its seconds. Up to {scene_cap(minutes)} scenes.")
+
+
+def lesson_prompt(row: dict, lesson: dict, variant_label: str) -> str:
+    phases = {p['id']: p for p in row.get('phases') or []}
+    phase = phases.get(lesson.get('phase_id')) or {}
+    ladder = row.get('lessons') or []
+    idx = next((i for i, l in enumerate(ladder) if l['id'] == lesson['id']), 0)
+    prev = ladder[idx - 1] if idx > 0 else None
+    nxt = ladder[idx + 1] if idx + 1 < len(ladder) else None
+    variant = next((v for v in lesson.get('variants') or [] if (v.get('label') or '') == (variant_label or '')), {}) if variant_label else {}
+    steps = variant.get('steps') or lesson.get('steps') or []
+    body = variant.get('body') or lesson.get('body') or ''
+    minutes = int((row.get('made_for') or {}).get('minutes') or 25)
+    lines = [f'Write the session script for "{row.get("title") or ""}", phase {phase.get("name") or ""}'
+             + (f' ({phase.get("what")})' if phase.get('what') else '') + f', lesson "{lesson.get("title") or ""}"'
+             + (f', session {variant_label}' if variant_label else '') + '.',
+             profile_context(row), _budget_lines(minutes),
+             'Steps the lesson names: ' + ' | '.join(steps), 'Lesson material: ' + body,
+             'Progression rule: ' + (phase.get('progression') or '')]
+    if prev:
+        lines.append(f'Previous lesson: "{prev.get("title") or ""}" - {str(prev.get("body") or "")[:300]}')
+    if nxt:
+        lines.append(f'Next lesson: "{nxt.get("title") or ""}"')
+    lines.append('Build the session around the steps and the material; teach before you drill. Do NOT prescribe how to hold '
+                 'or move any part of the body.'
+                 " Write {name} wherever a teacher would say the learner's name, and {project} for what they are working "
+                 "towards. Nothing else goes in braces.")
+    return '\n'.join(lines)
+
+
+def shortfall_prompt(n_minutes: int, minutes: int) -> str:
+    return (f"Your last script runs about {n_minutes} minutes of the {minutes} asked. Keep what works and add teaching, "
+            f"practice and review until it fills the session.")
 
 
 def _context_block(program: dict, now=None) -> str:

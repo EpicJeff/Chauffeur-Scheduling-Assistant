@@ -758,6 +758,10 @@ ENTRIES: List[dict] = [
        'keeps failing before it stops and leaves the plain steps (default 3, '
        '1-20). Outages, quota and paused models never count. Regenerate on '
        'the lesson starts the count over.', page='work?tab=projects', anchor='lessons'),
+    _e('lesson_pool', 'programs', 'Lesson writing model',
+       'Which model pool writes lesson scripts: best available (Flash first, then Lite, then Gemma; default) or '
+       'low cost (Gemma first). Used when a program is created, by Write lessons and Regenerate, and by the nightly retry.',
+       page='work?tab=projects', anchor='lessons'),
     _e('lesson_help_daily_cap', 'programs', 'Questions a day during a session',
        'How many times anybody in the house may tap Explain this inside a '
        'lesson before the app stops answering for the day (default 20). '

@@ -170,7 +170,7 @@ ANSWER_CHARS = 4000
 MIN_UNITS = 2
 MAX_UNITS = 12
 UNIT_TITLE_CHARS = 80
-UNIT_BODY_CHARS = 600
+UNIT_BODY_CHARS = 1500
 # How many sessions one rung may claim. Bounded because this number decides
 # pacing, and pacing is the one thing a model has never been allowed to set
 # outright -- four is a fortnight of evenings on a single lesson, which is
@@ -496,11 +496,11 @@ GENERATE_SYSTEM = (
     "this family's practice days. Where a session is genuinely the same thing "
     "each time, leave `rotation` out. Do not manufacture variety.\n\n"
     "`units` is the LADDER: the lessons this phase works through IN ORDER, "
-    "each with a title and a `body` of a few sentences saying what to "
-    "actually do in that session -- enough that somebody could sit down and "
-    "follow it without looking anything up. `sessions` is how many sessions "
-    "that unit takes, 1-4. NEVER give a unit a `url`: you have no source and "
-    "a link you invented is worse than no link.\n\n"
+    "each with a title and a `body` carrying the material itself in the activity's own terms, enough to run the session "
+    "without looking anything up: the words, the rule and example sentences for a language; the notes, chords or the "
+    "section of the piece for music; the exercises with sets and reps for movement; the recipe steps for cooking; the "
+    "sound and the words for phonics. `sessions` is how many sessions that unit takes, 1-4. NEVER give a unit a `url`: "
+    "you have no source and a link you invented is worse than no link.\n\n"
     "You MAY say how much to repeat something: sets, reps, rounds, minutes, "
     "times per session. You may NOT put a number on external load or intake "
     "-- no pounds or kilos on a bar, no percentages of a one-rep max, no "
