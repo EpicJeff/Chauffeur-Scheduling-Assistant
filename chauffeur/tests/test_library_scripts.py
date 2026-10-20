@@ -653,6 +653,28 @@ def scenario_write_refuses_switches_and_children():
     check(library_scripts.write(lid, storage.get_member('aunt'))['code'] == 403, 'a non-creator adult may not')
 
 
+def scenario_write_refuses_an_archived_library():
+    """An archived program writes nothing: Regenerate must not delete a ready script first, and
+    Write lessons must not start a job (spec section 6, commit-time admission refuses archived)."""
+    from services import library_scripts, model_pools
+    rid, lid, lesson = _reset()
+    mom = storage.get_member('mom')
+    t = storage.claim_library_script(lid, _slot(lesson))
+    storage.commit_library_script(lid, _slot(lesson), t, _data())
+    storage.update_library_program(lid, {'archived': True})
+    call, calls = _fake_pool([_long()] * 4)
+    with patch.object(model_pools, 'call_pool_json', call):
+        one = library_scripts.write(lid, mom, lesson_id=lesson['id'], variant_label='Session A')
+        every = library_scripts.write(lid, mom)
+    want = {'status': 'error', 'message': 'This program is archived.'}
+    check(one == want, f'Regenerate on an archived program is refused in words, with no code, got {one}')
+    check(every == want, f'and so is Write lessons, got {every}')
+    row = storage.get_library_script(lid, _slot(lesson))
+    check(row and row['scenes'] == SAY, f'the ready script was not deleted, got {row}')
+    check(library_scripts.job_state(lid) is None and lid not in _raw_jobs(), 'no job was started')
+    check(not calls, f'and nothing was spent, got {len(calls)} calls')
+
+
 def scenario_startup_clears_the_job_map():
     from services import library_scripts
     rid, lid, lesson = _reset()
@@ -983,6 +1005,7 @@ if __name__ == '__main__':
     scenario_two_libraries_both_start()
     scenario_a_new_library_row_schedules_one_write_and_lesson_edits_schedule_none()
     scenario_write_refuses_switches_and_children()
+    scenario_write_refuses_an_archived_library()
     scenario_startup_clears_the_job_map()
     scenario_a_restart_keeps_written_scripts()
     scenario_retry_due_claims_writes_and_skips_a_live_job()
