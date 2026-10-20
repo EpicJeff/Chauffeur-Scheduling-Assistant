@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.597 (2026-10-19).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.598 (2026-10-19).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 **FIXED (device-found 2026-10-19, third round): a phone or a computer speaks through the browser until it opts into its own player.** Even with the device rung gated on a live socket, a desktop on the admin Projects page connected its screen player (so the rung opened and Home Assistant accepted every line) and played nothing, because the player's audio was never unlocked by a user gesture on that page - the sendspin unlock runs after the library import and the socket handshake, long after the tap. Rule now: a panel is the house voice by design; any other surface uses the browser voice until somebody taps the header chip to "this device" (per device, remembered in localStorage as chf-lesson-voice), and that tap - and every later Start tap - calls the player's unlock synchronously inside the gesture before anything is awaited, then starts the player. lesson_player.voiceChoice is pure and Node-executed; the gesture ordering in open() and toggleVoice() is pinned from the source.
 

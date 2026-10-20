@@ -2630,8 +2630,7 @@ def scenario_a_phone_or_computer_speaks_through_the_browser_until_it_opts_in():
     ob = o.group(1) if o else ''
     check('voiceChoice(' in ob and ob.index('unlockDevice()') < ob.index('ensureDevicePlayer()'),
           "open() reads the choice and unlocks the player inside the Start tap, before the player is (re)started")
-    code_before = '
-'.join(l for l in ob[:ob.index('unlockDevice()')].splitlines() if not l.strip().startswith('//'))
+    code_before = '\n'.join(l for l in ob[:ob.index('unlockDevice()')].splitlines() if not l.strip().startswith('//'))
     check('await ' not in code_before, "nothing is awaited before the unlock spends the gesture")
     t = re.search(r'\n        toggleVoice\(\) \{(.*?)\n        \},', src, re.S)
     tb = t.group(1) if t else ''
