@@ -968,7 +968,21 @@ _SYSTEM = (
 # stops spending calls on it, and how many slots one nightly pass may spend
 # a call on at all. Both exist for the same reason: a sweep nobody is
 # watching must have a ceiling on what it can quietly burn.
-MAX_ATTEMPTS = 3
+MAX_ATTEMPTS = 3   # the default; `lesson_max_attempts` in settings overrides it
+
+
+def max_attempts(settings: dict = None) -> int:
+    """How many chargeable failures a slot may burn before the sweep stops
+    spending on it: the `lesson_max_attempts` setting (Config > Work >
+    Lessons), 1..20, default MAX_ATTEMPTS. Transient failures and workflow
+    pauses never count, so this only bounds real, repeatable failures."""
+    from services import storage
+    raw = (settings if settings is not None else (storage.get_settings() or {})).get('lesson_max_attempts')
+    try:
+        n = int(raw)
+    except (TypeError, ValueError, OverflowError):
+        return MAX_ATTEMPTS
+    return max(1, min(20, n))
 MAX_SLOTS_PER_PASS = 6
 
 _CITED_PROMPT = (
@@ -1091,7 +1105,7 @@ def needs_lesson(program_id: str, slot: dict) -> bool:
     existing = storage.get_program_lesson(program_id, slot) or {}
     if existing.get('edited') or existing.get('scenes'):
         return False
-    return int(existing.get('attempts') or 0) < MAX_ATTEMPTS
+    return int(existing.get('attempts') or 0) < max_attempts()
 
 
 def _record_attempt(program_id: str, slot: dict, origin: str, source_url: str,
@@ -1232,7 +1246,8 @@ def generate_for(program: dict, window: dict, unit: dict, settings: dict):
                 program['id'], slot, origin, source_url,
                 str((res or {}).get('error') if isinstance(res, dict)
                     else 'the model pool answered with nothing usable'),
-                counts=not (isinstance(res, dict) and res.get('transient')))
+                counts=not (isinstance(res, dict)
+                            and (res.get('transient') or res.get('deferred'))))
             return None
         scenes = sanitize_script(res.get('scenes') or [], origin)
         if not scenes:

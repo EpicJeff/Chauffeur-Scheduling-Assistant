@@ -753,6 +753,11 @@ ENTRIES: List[dict] = [
        'Write a short scripted lesson for each practice session the night '
        'before — the session still shows its plain steps with this off '
        '(default on).', page='work?tab=projects', anchor='lessons'),
+    _e('lesson_max_attempts', 'programs', 'Tries per lesson',
+       'How many times the sweep may spend a model call on one lesson that '
+       'keeps failing before it stops and leaves the plain steps (default 3, '
+       '1-20). Outages, quota and paused models never count. Regenerate on '
+       'the lesson starts the count over.', page='work?tab=projects', anchor='lessons'),
     _e('lesson_help_daily_cap', 'programs', 'Questions a day during a session',
        'How many times anybody in the house may tap Explain this inside a '
        'lesson before the app stops answering for the day (default 20). '

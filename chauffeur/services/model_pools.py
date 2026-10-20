@@ -550,7 +550,10 @@ def _call_candidates(tier, api_key, system_prompt, user_prompt, temperature, tim
             # penalised or used-up MODEL is a reason to try the next one,
             # not to stall the whole workflow until that model recovers.
             if background and getattr(e, 'scope', 'workflow') == 'workflow':
-                return {'error': str(e), 'deferred': True, 'retry_at': e.retry_at}
+                # A paused workflow is a wait, never a verdict on the work:
+                # callers that count chargeable failures must not count it.
+                return {'error': str(e), 'deferred': True, 'retry_at': e.retry_at,
+                        'transient': True}
             last_err = str(e)
             deferred_until = min(deferred_until or e.retry_at, e.retry_at)
             transient = True

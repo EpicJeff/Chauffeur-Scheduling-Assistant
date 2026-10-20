@@ -710,6 +710,117 @@ def scenario_a_transient_failure_is_recorded_but_never_counted():
           f"recorded, never counted, got {row}")
 
 
+def scenario_a_paused_workflow_never_spends_an_attempt():
+    """Device-found 2026-10-19: after Google's Gemma endpoint answered 503s,
+    llm_budget paused the background workflow and the pool came back
+    `deferred` with no `transient` flag -- so every tap of "Write lessons
+    now" during the outage spent one of the slot's three attempts, and a
+    lesson that never ran once read "attempts exhausted". A pause is a
+    wait, never a verdict on the slot."""
+    from services import storage, program_lessons as pl
+    import services.model_pools as mp
+    _lreset(('p9',))
+    calls = {'n': 0}
+
+    def fake_pool(*a, **k):
+        calls['n'] += 1
+        return {'error': 'AI requests paused after provider failure',
+                'deferred': True, 'retry_at': 1.0}
+
+    orig = mp.call_pool_json
+    mp.call_pool_json = fake_pool
+    try:
+        for _ in range(5):
+            pl.generate_for(_program_row(), _window(), {'n': 1},
+                            {'llm_gemini_api_key': 'k'})
+    finally:
+        mp.call_pool_json = orig
+    check(calls['n'] == 5, f"a paused workflow keeps the slot eligible, got {calls['n']}")
+    row = storage.get_program_lesson('p9', pl.slot_of(_window(), unit_n=1))
+    check(row and row.get('attempts') == 0 and 'paused' in (row.get('note') or ''),
+          f"recorded, never counted, got {row}")
+
+
+def scenario_the_pool_marks_a_workflow_pause_transient():
+    """The pool's own deferred answer carries the transient flag, so every
+    counter built on that flag (not only lessons) treats a pause as a wait."""
+    import contextlib
+    import services.model_pools as mp
+    from services import llm_budget
+
+    @contextlib.contextmanager
+    def paused(workflow, background=False):
+        raise llm_budget.Deferred('AI requests paused after provider failure', 5.0)
+        yield  # noqa: unreachable, keeps the generator shape
+
+    orig_scope, orig_models = llm_budget.request_scope, mp.models_for
+    llm_budget.request_scope = paused
+    mp.models_for = lambda *a, **k: ['gemma-4-31b-it']
+    try:
+        res = mp._call_candidates('background', 'k', 's', 'u', 0.1, 60, 180, 1, {}, None,
+                                  True, 'lessons', False, None, 1, None, None, None, False)
+    finally:
+        llm_budget.request_scope, mp.models_for = orig_scope, orig_models
+    check(res.get('deferred') and res.get('transient') is True,
+          f"a deferred pool answer is transient, got {res}")
+
+
+def scenario_attempts_spent_on_a_pause_are_given_back():
+    """The repair for rows the bug already touched: a slot whose only
+    failures were pauses or deferrals gets its attempts back; a slot that
+    really failed keeps them."""
+    from services import storage, program_lessons as pl, migrations
+    _lreset(('p9',))
+    slot = pl.slot_of(_window(), unit_n=1)
+    storage.upsert_program_lesson('p9', slot, {'origin': 'generated', 'source_url': '', 'scenes': [],
+                                               'attempts': 3, 'note': 'AI requests paused after provider failure', 'model': ''})
+    # A sibling slot that really failed, seeded raw the way the sweep stored it.
+    with storage.db_lock:
+        storage.program_lessons_table.insert({'program_id': 'p9', 'lesson_id': 'other-lesson', 'variant_label': '',
+                                              'origin': 'generated', 'source_url': '', 'scenes': [],
+                                              'attempts': 3, 'note': 'API key not valid', 'model': ''})
+    fixed = migrations.migrate_lesson_attempts_paused_v2499()
+    check(fixed == 1, f'exactly the paused slot is repaired, got {fixed}')
+    check(storage.get_program_lesson('p9', slot).get('attempts') == 0, 'the paused slot is eligible again')
+    q = storage.Query()
+    with storage.db_lock:
+        other = [dict(r) for r in storage.program_lessons_table.search((q.program_id == 'p9') & (q.lesson_id == 'other-lesson'))]
+    check(other and other[0].get('attempts') == 3, 'a real failure keeps its count')
+    check(pl.needs_lesson('p9', slot), 'needs_lesson follows')
+    check(migrations.migrate_lesson_attempts_paused_v2499() == 0, 'idempotent')
+
+
+def scenario_the_attempt_cap_is_a_setting():
+    """`lesson_max_attempts` (Config > Work > Lessons) bounds the spending;
+    out-of-range or junk values fall back to the default, and the sweep's
+    own predicate reads it."""
+    from services import storage, program_lessons as pl
+    import services.model_pools as mp
+    _lreset(('p9',))
+    calls = {'n': 0}
+
+    def fake_pool(*a, **k):
+        calls['n'] += 1
+        return {'error': 'API key not valid', 'transient': False}
+
+    orig = mp.call_pool_json
+    mp.call_pool_json = fake_pool
+    orig_settings = storage.get_settings
+    try:
+        storage.get_settings = lambda: {'lesson_max_attempts': 1}
+        for _ in range(4):
+            pl.generate_for(_program_row(), _window(), {'n': 1}, {'llm_gemini_api_key': ''})
+        check(calls['n'] == 1, f"a cap of 1 stops after one real failure, got {calls['n']}")
+        storage.get_settings = lambda: {'lesson_max_attempts': 5}
+        check(pl.needs_lesson('p9', pl.slot_of(_window(), unit_n=1)), 'raising the cap re-opens the slot')
+        check(pl.max_attempts({'lesson_max_attempts': 'junk'}) == pl.MAX_ATTEMPTS, 'junk falls back')
+        check(pl.max_attempts({'lesson_max_attempts': 99}) == 20 and pl.max_attempts({'lesson_max_attempts': 0}) == 1,
+              'clamped to 1..20')
+    finally:
+        mp.call_pool_json = orig
+        storage.get_settings = orig_settings
+
+
 def scenario_a_hard_pool_error_does_spend_an_attempt():
     """The empty-api-key case: not transient, fails identically forever.
     That one has to stop, and has to leave the reason where a person
@@ -2071,6 +2182,10 @@ if __name__ == '__main__':
     scenario_existing_lesson_skips_before_spending_a_call()
     scenario_a_slot_that_always_fails_stops_costing_a_call()
     scenario_a_transient_failure_is_recorded_but_never_counted()
+    scenario_a_paused_workflow_never_spends_an_attempt()
+    scenario_the_pool_marks_a_workflow_pause_transient()
+    scenario_attempts_spent_on_a_pause_are_given_back()
+    scenario_the_attempt_cap_is_a_setting()
     scenario_a_hard_pool_error_does_spend_an_attempt()
     scenario_a_recorded_failure_never_becomes_a_lesson()
     scenario_a_hand_edit_is_never_bounced_by_a_recorded_failure()

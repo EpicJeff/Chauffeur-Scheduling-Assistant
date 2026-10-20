@@ -539,6 +539,34 @@ def migrate_commitment_sources_v2499():
                 storage.update_protected_commitment(cid, {'source': {'kind': 'program', 'id': row['id']}})
 
 
+def migrate_lesson_attempts_paused_v2499():
+    """Give back lesson attempts a workflow pause spent (device-found 2026-10-19).
+
+    Until v2.499.593 a background pool answer of `deferred` (llm_budget paused
+    the workflow after Gemma 5xx bursts) carried no `transient` flag, so each
+    forced sweep during an outage counted one of a slot's attempts and a
+    lesson that never ran read "attempts exhausted". A slot whose recorded
+    reason is a pause or a deferral, and that holds no script, gets its
+    attempts back; real failures keep theirs. Idempotent: a zeroed row is
+    left alone.
+    """
+    from services import storage
+    words = ('paused', 'deferred', 'time budget exhausted')
+    fixed = 0
+    with storage.db_lock:
+        for doc in storage.program_lessons_table.all():
+            row = dict(doc)
+            note = (row.get('note') or '').lower()
+            if row.get('scenes') or not int(row.get('attempts') or 0) \
+                    or not any(w in note for w in words):
+                continue
+            storage.program_lessons_table.update({'attempts': 0}, doc_ids=[doc.doc_id])
+            fixed += 1
+    if fixed:
+        logger.info(f"[migrations] gave back attempts on {fixed} paused lesson slot(s)")
+    return fixed
+
+
 def migrate_program_library_v2499():
     """Split each legacy curriculum/run atomically; the binding is the last write."""
     from services import access, library, programs, stages
@@ -682,6 +710,10 @@ async def run_all_migrations():
             migrate()
         except Exception as e:
             logger.error(f"Error in {migrate.__name__}: {e}")
+    try:
+        migrate_lesson_attempts_paused_v2499()
+    except Exception as e:
+        logger.error(f"Error giving back paused lesson attempts: {e}")
     try:
         migrate_program_library_v2499()
     except Exception as e:
