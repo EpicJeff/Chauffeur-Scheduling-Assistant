@@ -2775,6 +2775,9 @@ def scenario_the_device_lookup_is_bounded_and_has_a_second_rung():
     check("(local && local.active) ? 'not listed' : 'did not connect'" in lb, "connected-but-unlisted is told apart from never-connected")
     check('await this.memberPlayer()' in lb and lb.index('findLocalEntity') < lb.index('memberPlayer'),
           "the person's configured player is tried after the Sendspin rung")
+    check('for (let attempt = 0; attempt < 5; attempt++)' in lb and 'setTimeout(resolve, 1500)' in lb
+          and lb.index('for (let attempt') < lb.index('findLocalEntity'),
+          "the Sendspin lookup is asked a few times over ~8 s (the state list is cached and the player turns available a beat after connect)")
     mp = re.search(r'\n        async memberPlayer\(\) \{(.*?)\n        \},', src, re.S)
     mb = mp.group(1) if mp else ''
     check("api/members" in mb and 'media_player_entity' in mb and "startsWith('media_player.')" in mb,

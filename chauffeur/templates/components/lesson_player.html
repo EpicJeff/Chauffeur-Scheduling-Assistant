@@ -1525,8 +1525,20 @@ function lessonPlayer() {
                 }
                 local.wanted = true;
                 await local.start();
-                const found = await MusicLogic.findLocalEntity(
-                    local, {apiBase: window.chfBase || ''});
+                // Home Assistant's state list is served from a short cache
+                // and Music Assistant marks a freshly connected player
+                // available a beat later, so the first look right after
+                // connect() often misses a player that the Music tab finds
+                // a moment on (the phone of 2026-10-19). Ask a few times
+                // over ~8 s before calling it missing; startDeviceVoice's
+                // deadline still bounds the whole thing.
+                let found = null;
+                for (let attempt = 0; attempt < 5; attempt++) {
+                    found = await MusicLogic.findLocalEntity(
+                        local, {apiBase: window.chfBase || ''});
+                    if (found && found.entity) break;
+                    await new Promise(resolve => setTimeout(resolve, 1500));
+                }
                 // Null until Music Assistant has been told to expose this
                 // player, and null again whenever two players answer to
                 // one name (`entityIn` refuses to guess). Both mean the
