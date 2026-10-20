@@ -2690,6 +2690,63 @@ def scenario_the_browser_voice_is_woken_by_the_first_tap():
           "the old unconditional cancel-then-speak pair is gone")
 
 
+def scenario_a_player_home_assistant_does_not_know_is_said_so_and_the_browser_speaks():
+    """Device-found 2026-10-19 (both surfaces): the chip read "starting…"
+    forever. The handset or screen had a Sendspin registration but Home
+    Assistant listed no media player for it (the Music Assistant exposure
+    step was never done), so the entity lookup finished with nothing and
+    nothing said so. voiceChip is pure and Node-executed; the settle rule
+    (say it once, name the player and the step, speak through the browser
+    for this session without forgetting the remembered choice) is read
+    from the source."""
+    import json
+    import os
+    import re
+    import shutil
+    import subprocess
+    import tempfile
+    src = _read('components/lesson_player.html')
+    m = re.search(r'\n        voiceChip\(voiceLocal, lookup\) \{(.*?)\n        \},', src, re.S)
+    check(m, "voiceChip(voiceLocal, lookup) is findable")
+    body = m.group(1)
+    check('this.' not in body, f"and pure, got {body!r}")
+    e = re.search(r'\n        async ensureDevicePlayer\(\) \{(.*?)\n        \},', src, re.S)
+    eb = e.group(1) if e else ''
+    check("this.deviceLookup = this.deviceEntity ? 'ready' : 'missing'" in eb and 'settleDeviceVoice()' in eb,
+          "the lookup ends ready or missing and is settled")
+    s2 = re.search(r'\n        settleDeviceVoice\(\) \{(.*?)\n        \},', src, re.S)
+    sb = s2.group(1) if s2 else ''
+    check("this.deviceLookup !== 'missing'" in sb and 'this.voiceLocal = true' in sb
+          and 'showGlobalAlert' in sb and 'Music Assistant' in sb and "localStorage" not in sb,
+          f"a missing player falls back to the browser for the session, says the step once, keeps the remembered choice, got {sb!r}")
+    for banned in ('alert(', 'confirm(', 'prompt('):
+        check(banned not in sb.replace('showGlobalAlert(', ''), f"never a browser {banned}")
+    node = shutil.which('node')
+    if not node:
+        print('  skip  node is not installed')
+        return
+    harness = r'''
+const out = {};
+out.local = voiceChip(true, 'ready');
+out.ready = voiceChip(false, 'ready');
+out.missing = voiceChip(false, 'missing');
+out.starting = voiceChip(false, 'starting');
+out.blank = voiceChip(false, '');
+console.log(JSON.stringify(out));
+'''
+    scratch = tempfile.mkdtemp(prefix='chauffeur_chip_')
+    path = os.path.join(scratch, 'run.mjs')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write('function voiceChip(voiceLocal, lookup) {' + body + '\n}\n' + harness)
+    proc = subprocess.run([node, path], capture_output=True, text=True,
+                          encoding='utf-8', errors='replace', timeout=60)
+    check(proc.returncode == 0, f"voiceChip threw:\n{proc.stderr[-1500:]}")
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    check(out['local'].endswith('browser') and out['ready'].endswith('this device')
+          and out['missing'].endswith('not set up') and out['starting'].endswith('starting…') and out['blank'].endswith('starting…'),
+          f"four honest readings, got {out}")
+
+
 def scenario_no_music_logic_is_not_an_error():
     """A host that loads no music logic (the house exterior quick lesson,
     any future include) still plays the lesson, in the browser's own
@@ -2903,6 +2960,7 @@ if __name__ == '__main__':
     scenario_the_device_rung_needs_a_live_player_and_a_failed_line_is_read_locally()
     scenario_a_phone_or_computer_speaks_through_the_browser_until_it_opts_in()
     scenario_the_browser_voice_is_woken_by_the_first_tap()
+    scenario_a_player_home_assistant_does_not_know_is_said_so_and_the_browser_speaks()
     scenario_only_session_level_lines_reach_the_room()
     scenario_the_room_voice_is_a_panel_only_fork()
     scenario_the_room_is_asked_once_and_remembered_on_the_device()

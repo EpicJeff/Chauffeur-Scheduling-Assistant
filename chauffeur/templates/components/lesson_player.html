@@ -115,7 +115,7 @@
                 class="shrink-0 rounded-full border font-bold px-4 h-14 text-base"
                 :class="!voiceLocal ? 'bg-teal-500/20 border-teal-500/40 text-teal-300'
                                     : 'bg-gray-800 border-gray-700 text-gray-400'"
-                x-text="voiceLocal ? '🔈 browser' : (deviceEntity ? '🔈 this device' : '🔈 starting…')"></button>
+                x-text="voiceChip(voiceLocal, deviceLookup)"></button>
         <!-- Argyle's voice, off for this session. Always visible, never a
              setting: a lesson in a quiet house is the same lesson, and a
              person who wants the voice back gets it by tapping again or
@@ -733,6 +733,8 @@ function lessonPlayer() {
         deviceEntity: '',
         voiceLocal: true,    // browser voice unless this device opted into its own player (see voiceChoice)
         canDeviceVoice: false,
+        deviceLookup: '',    // '' | 'starting' | 'ready' | 'missing' -- what ensureDevicePlayer found
+        deviceName: '',      // the player's Music Assistant name, for the not-set-up notice
         // A wait beat's on-screen countdown. Cosmetic only -- the call
         // into the room is armed on the server and outlives this.
         waitLeft: 0, waitTimer: null,
@@ -789,6 +791,7 @@ function lessonPlayer() {
             this.idx = 0; this.openFlag = true;
             this.room = this.loadRoom();
             this.deviceEntity = '';
+            this.deviceLookup = '';
             // Which voice this surface uses. A panel is the house voice by
             // design (room, else its own screen). A phone or a computer on
             // an admin page defaults to the BROWSER until somebody taps the
@@ -1388,6 +1391,7 @@ function lessonPlayer() {
             this.voiceLocal = !this.voiceLocal;
             try { localStorage.setItem('chf-lesson-voice', this.voiceLocal ? 'browser' : 'device'); } catch (e) {}
             if (!this.voiceLocal) {
+                this.deviceLookup = this.deviceEntity ? 'ready' : 'starting';
                 this.unlockDevice();
                 this.ensureDevicePlayer();
             }
@@ -1486,6 +1490,7 @@ function lessonPlayer() {
                     try { stored = localStorage; } catch (e) { stored = null; }
                     const {key, name} = this.deviceIdentity(
                         this.panel, stored, MusicLogic.deviceId(), MusicLogic.deviceTag());
+                    this.deviceName = name;
                     local = MusicLogic.localPlayer({name, key}, {
                         get apiBase() { return window.chfBase || ''; },
                         onNotice: (msg) => {
@@ -1505,7 +1510,35 @@ function lessonPlayer() {
                 // ladder below it is already the answer.
                 const ent = (found || {}).entity;
                 this.deviceEntity = (ent && ent.entity_id) || '';
-            } catch (e) { this.deviceEntity = ''; }
+                this.deviceLookup = this.deviceEntity ? 'ready' : 'missing';
+            } catch (e) { this.deviceEntity = ''; this.deviceLookup = 'missing'; }
+            this.settleDeviceVoice();
+        },
+
+        // What the chip says, from two facts and nothing else. Pure so Node
+        // can execute it: "starting…" forever was the symptom of 2026-10-19
+        // when a registered player had never been exposed in Music
+        // Assistant -- the lookup finished with nothing and the chip never
+        // said so.
+        voiceChip(voiceLocal, lookup) {
+            if (voiceLocal) return '🔈 browser';
+            if (lookup === 'ready') return '🔈 this device';
+            if (lookup === 'missing') return '🔈 not set up';
+            return '🔈 starting…';
+        },
+        // The device was chosen but Home Assistant knows no player for it:
+        // say so ONCE, name the player and the step, and speak through the
+        // browser for this session (the remembered choice stays, so the
+        // chip keeps offering the device until it is really set up).
+        settleDeviceVoice() {
+            if (this.voiceLocal || this.deviceLookup !== 'missing') return;
+            this.voiceLocal = true;
+            const who = this.deviceName || 'This device';
+            if (typeof showGlobalAlert === 'function') {
+                showGlobalAlert(`${who} is not a Music Assistant player yet. In Home Assistant open `
+                                + `Music Assistant → Players, enable "${who}", then tap the voice chip again. `
+                                + `Until then the lesson speaks through the browser.`);
+            }
         },
 
         // The room channel. Fire-and-forget on purpose: a session must
