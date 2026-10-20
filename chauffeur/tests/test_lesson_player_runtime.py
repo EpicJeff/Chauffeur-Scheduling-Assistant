@@ -2576,7 +2576,7 @@ def scenario_the_device_rung_needs_a_live_player_and_a_failed_line_is_read_local
     r = re.search(r'\n        roomSay\(text, lang, tone\) \{(.*?)\n        \},', src, re.S)
     check(d and 'deviceRung(' in d.group(1) and 'handOff(' in d.group(1), "deviceSay asks the rung and hands off through the net")
     check(r and 'voiceLocal' in r.group(1) and 'handOff(' in r.group(1), "roomSay honours the override and uses the same net")
-    check('x-show="!panel && canDeviceVoice"' in src and '@click="toggleVoice()"' in src,
+    check('x-show="!panel && canDeviceVoice && !preview"' in src and '@click="toggleVoice()"' in src,
           "a non-panel surface that could have a device player shows the voice chip, and a tap swaps")
     node = shutil.which('node')
     if not node:
@@ -2821,6 +2821,74 @@ console.log(JSON.stringify(out));
     check('Players' in out['blank'], "an unknown reason reads as unlisted (the enable step), never as a crash")
 
 
+def scenario_off_a_panel_the_browser_plays_the_house_voice_itself():
+    """Device-found 2026-10-20: the phone reported its player connected and
+    working and played nothing; the desktop had no local player at all.
+    Off a panel the browser IS the device now: deviceSay goes to clipSay,
+    which fetches /api/lessons/voice and plays the clip in one <audio>
+    element the arming tap unlocked with a silent play; 409/503/no answer
+    or a refused play() read the line in the browser's own voice. The
+    starter short-circuits to ready off-panel (no Music Assistant lookup),
+    and a preview shows no chip. clipRung is pure and Node-executed."""
+    import json
+    import os
+    import re
+    import shutil
+    import subprocess
+    import tempfile
+    src = _read('components/lesson_player.html')
+    d = re.search(r'\n        deviceSay\(text, lang, tone\) \{(.*?)\n        \},', src, re.S)
+    db = d.group(1) if d else ''
+    check('if (!this.panel) return this.clipSay(text, lang, tone);' in db, "off a panel deviceSay is clipSay")
+    c = re.search(r'\n        clipSay\(text, lang, tone\) \{(.*?)\n        \},', src, re.S)
+    cb = c.group(1) if c else ''
+    check("api/lessons/voice" in cb and 'this.playClip(blob, tone, () => this.sayLocal(text, lang, tone))' in cb
+          and cb.count('this.sayLocal(text, lang, tone)') >= 3,
+          f"the clip is fetched and every failure reads the line locally, got {cb!r}")
+    pc = re.search(r'\n        playClip\(blob, tone, fallback\) \{(.*?)\n        \},', src, re.S)
+    pb = pc.group(1) if pc else ''
+    check('URL.createObjectURL(blob)' in pb and "tone === 'calm' ? 0.9 : 1.0" in pb and 'if (fallback) fallback()' in pb,
+          "the clip plays through one element with the calm pace and a refused play falls back")
+    u = re.search(r'\n        unlockDevice\(\) \{(.*?)\n        \},', src, re.S)
+    ub = u.group(1) if u else ''
+    check('a.muted = true' in ub and "data:audio/wav;base64," in ub and 'a.play()' in ub,
+          "the arming tap unlocks the element with a silent play")
+    s2 = re.search(r'\n        async startDeviceVoice\(\) \{(.*?)\n        \},', src, re.S)
+    sb = s2.group(1) if s2 else ''
+    check("if (!this.panel) {" in sb and "this.deviceLookup = 'ready'" in sb
+          and sb.index("if (!this.panel) {") < sb.index('Promise.race'),
+          "off a panel the device is ready at once, before any Music Assistant lookup")
+    check('x-show="!panel && canDeviceVoice && !preview"' in src, "a preview shows no device chip")
+    check('this.canDeviceVoice = !this.panel || (typeof MusicLogic !== \'undefined\')' in src,
+          "the chip needs no player library off a panel")
+    m = re.search(r'\n        clipRung\(voiceLocal, preview, armed\) \{(.*?)\n        \},', src, re.S)
+    check(m, "clipRung(voiceLocal, preview, armed) is findable")
+    body = m.group(1)
+    check('this.' not in body, f"and pure, got {body!r}")
+    node = shutil.which('node')
+    if not node:
+        print('  skip  node is not installed')
+        return
+    harness = r'''
+const out = {};
+out.armed = clipRung(false, false, true);
+out.unarmed = clipRung(false, false, false);
+out.local = clipRung(true, false, true);
+out.preview = clipRung(false, true, true);
+console.log(JSON.stringify(out));
+'''
+    scratch = tempfile.mkdtemp(prefix='chauffeur_clip_')
+    path = os.path.join(scratch, 'run.mjs')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write('function clipRung(voiceLocal, preview, armed) {' + body + '\n}\n' + harness)
+    proc = subprocess.run([node, path], capture_output=True, text=True,
+                          encoding='utf-8', errors='replace', timeout=60)
+    check(proc.returncode == 0, f"clipRung threw:\n{proc.stderr[-1500:]}")
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    check(out['armed'] is True and out['unarmed'] is False and out['local'] is False and out['preview'] is False,
+          f"only an armed, non-preview, non-override session plays clips, got {out}")
+
+
 def scenario_no_music_logic_is_not_an_error():
     """A host that loads no music logic (the house exterior quick lesson,
     any future include) still plays the lesson, in the browser's own
@@ -3036,6 +3104,7 @@ if __name__ == '__main__':
     scenario_the_browser_voice_is_woken_by_the_first_tap()
     scenario_a_player_home_assistant_does_not_know_is_said_so_and_the_browser_speaks()
     scenario_the_device_lookup_is_bounded_and_has_a_second_rung()
+    scenario_off_a_panel_the_browser_plays_the_house_voice_itself()
     scenario_only_session_level_lines_reach_the_room()
     scenario_the_room_voice_is_a_panel_only_fork()
     scenario_the_room_is_asked_once_and_remembered_on_the_device()

@@ -497,6 +497,9 @@ RULES = [
     # disclosure here at all -- the exposure is a speaker, and that is
     # what those three guards are for.
     ('POST', '/api/lessons/speak', WALL, None),
+    # The same line as a clip for a browser that is its own speaker; the
+    # same screens, the same cap, nothing stored.
+    ('POST', '/api/lessons/voice', WALL, None),
     # The same speaker, later. A wait beat arms one call into a room for
     # when the dough is up; identical screens and caps to the route above,
     # queued in app_state rather than said now. WALL for the same reason:

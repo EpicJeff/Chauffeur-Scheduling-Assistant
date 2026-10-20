@@ -188,6 +188,56 @@ def _tts_config():
     return (ents[0]['entity_id'] if ents else None), None, None
 
 
+def voice_clip(message: str, lang: str = '') -> dict:
+    """The house voice as a FILE, for a browser that is itself the speaker.
+
+    A phone or a desktop running a lesson is a device Home Assistant can
+    only reach as a Music Assistant player, and that path proved to be
+    silence with a registration twice over (2026-10-19/20). The browser can
+    play audio itself, so render the line through the SAME engine, language
+    and voice `speak_on` would use (`_tts_config`) and hand the bytes back:
+    `POST /api/tts_get_url` renders without playing, `fetch_binary` reads
+    the clip from HA's own tts cache with the token attached.
+
+    `lang` is the line's own language tag when the script marked one. A
+    line in another language than the pipeline voice speaks answers
+    `other_language` rather than an English voice reading Portuguese; the
+    caller's browser picks a native voice for it instead. No HA, no engine,
+    no clip: `unavailable`, and the caller falls back the same way.
+    """
+    message = (message or '').strip()
+    if not message:
+        return {'status': 'error', 'code': 'empty', 'message': "There's nothing to say."}
+    tts, language, voice = _tts_config()
+    if not tts:
+        return {'status': 'error', 'code': 'unavailable',
+                'message': "No text-to-speech engine is set up in Home Assistant."}
+    want = (lang or '').strip().lower()[:2]
+    have = (language or '').strip().lower()[:2]
+    if want and have and want != have:
+        return {'status': 'error', 'code': 'other_language',
+                'message': f"The house voice speaks {language}, not {lang}."}
+    body = {'engine_id': tts, 'message': message}
+    if language:
+        body['language'] = language
+    if voice:
+        body['options'] = {'voice': voice}
+    res = ha_api._request('POST', '/tts_get_url', json_body=body)
+    path = (res or {}).get('path') or (res or {}).get('url') or ''
+    if not path:
+        return {'status': 'error', 'code': 'unavailable',
+                'message': "Home Assistant did not render that line."}
+    got = ha_api.fetch_binary(path)
+    if not got or not got[0]:
+        return {'status': 'error', 'code': 'unavailable',
+                'message': "The rendered line would not load."}
+    audio, content_type = got
+    if not (content_type or '').startswith('audio/'):
+        ext = path.split('?')[0].rsplit('.', 1)[-1].lower() if '.' in path.split('?')[0] else ''
+        content_type = {'wav': 'audio/wav', 'mp3': 'audio/mpeg', 'ogg': 'audio/ogg'}.get(ext, 'audio/mpeg')
+    return {'status': 'success', 'audio': audio, 'content_type': content_type}
+
+
 def speak_on(entity_id: str, message: str) -> dict:
     """Say something on ONE named media player, skipping area matching.
 

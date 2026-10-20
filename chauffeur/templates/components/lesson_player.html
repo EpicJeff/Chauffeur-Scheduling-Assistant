@@ -111,12 +111,12 @@
              session only -- a handset whose player is registered but not
              actually sounding tonight needs a way to be heard that does not
              go through Music Assistant settings. -->
-        <button type="button" x-show="!panel && canDeviceVoice" @click="toggleVoice()"
+        <button type="button" x-show="!panel && canDeviceVoice && !preview" @click="toggleVoice()"
                 class="shrink-0 rounded-full border font-bold px-4 h-14 text-base"
                 :class="!voiceLocal ? 'bg-teal-500/20 border-teal-500/40 text-teal-300'
                                     : 'bg-gray-800 border-gray-700 text-gray-400'"
                 x-text="voiceChip(voiceLocal, deviceLookup, deviceArmed)"></button>
-        <div x-show="!panel && canDeviceVoice && !voiceLocal" x-cloak
+        <div x-show="!panel && canDeviceVoice && !voiceLocal && !preview" x-cloak
              class="basis-full text-[11px] text-gray-400 truncate" x-text="voiceDetail()"></div>
         <!-- Argyle's voice, off for this session. Always visible, never a
              setting: a lesson in a quiet house is the same lesson, and a
@@ -806,7 +806,9 @@ function lessonPlayer() {
             // chip and hears the device play -- a handset or desktop player
             // that Home Assistant accepts lines for but that never unlocked
             // its audio is silence with a registration (2026-10-19, twice).
-            this.canDeviceVoice = (typeof MusicLogic !== 'undefined');
+            // Off a panel the browser itself plays the house voice (a clip
+            // from /api/lessons/voice), so the chip needs no player library.
+            this.canDeviceVoice = !this.panel || (typeof MusicLogic !== 'undefined');
             let stored = null;
             try { stored = localStorage; } catch (e) { stored = null; }
             this.voiceLocal = this.voiceChoice(this.panel, stored).local;
@@ -1418,6 +1420,15 @@ function lessonPlayer() {
         // Harmless when there is no player yet (start() will unlock on
         // connect if the gesture still counts) and when it is already open.
         unlockDevice() {
+            // The clip element: a silent play inside this gesture is what
+            // lets the real clips play later without one.
+            try {
+                const a = this.voiceAudio();
+                a.muted = true;
+                a.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=';
+                const p = a.play();
+                if (p && typeof p.catch === 'function') p.catch(() => {});
+            } catch (e) { /* no audio element on this page */ }
             try {
                 const lp = window.chfLocalPlayer;
                 const player = lp && lp.player;
@@ -1433,10 +1444,65 @@ function lessonPlayer() {
             return !!(localPlayer && localPlayer.active);
         },
         deviceSay(text, lang, tone) {
+            if (!this.panel) return this.clipSay(text, lang, tone);
             if (!this.deviceRung(this.deviceEntity, window.chfLocalPlayer, this.voiceLocal, this.preview,
-                                 this.panel ? true : this.deviceArmed)) return false;
+                                 true)) return false;
             this.handOff({entity_id: this.deviceEntity, text: String(text)}, text, lang, tone);
             return true;
+        },
+        // The house voice played by THIS browser: the device rung for a
+        // phone or a desktop. Open only once a tap has armed it (audio
+        // may not play otherwise) and never in a preview or under the
+        // browser override. A line the house voice cannot speak (another
+        // language, 409), no engine (503), or no answer at all is read by
+        // the browser's own voice instead -- the same net handOff keeps.
+        clipRung(voiceLocal, preview, armed) {
+            return !voiceLocal && !preview && !!armed;
+        },
+        clipSay(text, lang, tone) {
+            if (!this.clipRung(this.voiceLocal, this.preview, this.deviceArmed)) return false;
+            try {
+                fetch((window.chfBase || '') + 'api/lessons/voice', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({text: String(text), lang: lang || ''}),
+                }).then(async (r) => {
+                    if (!r.ok) {
+                        let d = {};
+                        try { d = await r.json(); } catch (e) { d = {}; }
+                        this.lastSpeak = r.status + (d.detail ? ' - ' + d.detail : '');
+                        this.sayLocal(text, lang, tone);
+                        return;
+                    }
+                    const blob = await r.blob();
+                    this.lastSpeak = r.status + ' ' + (blob.type || 'audio') + ' ' + blob.size + 'B';
+                    this.playClip(blob, tone, () => this.sayLocal(text, lang, tone));
+                }).catch(() => { this.lastSpeak = 'no answer'; this.sayLocal(text, lang, tone); });
+            } catch (e) { this.sayLocal(text, lang, tone); }
+            return true;
+        },
+        // One <audio> element for the session, created once so the unlock
+        // a tap performed still covers it. Plays the clip; a refused play()
+        // (audio never unlocked, a codec the browser lacks) runs `fallback`.
+        voiceAudio() {
+            if (!this._voiceAudio) {
+                this._voiceAudio = new Audio();
+                this._voiceAudio.preload = 'auto';
+            }
+            return this._voiceAudio;
+        },
+        playClip(blob, tone, fallback) {
+            try {
+                const a = this.voiceAudio();
+                if (this._voiceUrl) { try { URL.revokeObjectURL(this._voiceUrl); } catch (e) {} }
+                this._voiceUrl = URL.createObjectURL(blob);
+                a.pause();
+                a.src = this._voiceUrl;
+                a.muted = false;
+                a.playbackRate = tone === 'calm' ? 0.9 : 1.0;
+                const p = a.play();
+                if (p && typeof p.catch === 'function') p.catch(() => { this.lastSpeak += ' (play refused)'; if (fallback) fallback(); });
+            } catch (e) { if (fallback) fallback(); }
         },
         // One line through Home Assistant, with the browser as the net:
         // "One line at a time" (429), a rejected player, a dead network --
@@ -1503,6 +1569,14 @@ function lessonPlayer() {
 
         async startDeviceVoice() {
             if (this.preview) return;
+            if (!this.panel) {
+                // This browser IS the device: no Music Assistant player to
+                // find. Ready as soon as a tap has unlocked its audio.
+                this.deviceEntity = '';
+                this.deviceLookup = 'ready';
+                this.deviceWhy = '';
+                return;
+            }
             if (typeof MusicLogic === 'undefined') return;
             // Bounded: a Sendspin handshake that never completes (one player
             // id already open in another tab, a proxy that swallows the
@@ -1528,6 +1602,12 @@ function lessonPlayer() {
             try {
                 const lp = window.chfLocalPlayer;
                 const bits = [];
+                if (!this.panel) {
+                    bits.push('house voice in this browser');
+                    if (!this.deviceArmed) bits.push('tap the chip once more to unlock audio');
+                    if (this.lastSpeak) bits.push('last line: ' + this.lastSpeak);
+                    return bits.join(' · ');
+                }
                 if (!lp) bits.push('no local player');
                 else {
                     bits.push(lp.connecting ? 'connecting' : (lp.active ? 'socket live' : 'socket not live'));

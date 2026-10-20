@@ -732,6 +732,52 @@ def _speak(**kw):
     return main.lesson_speak_api(body=kw)
 
 
+def scenario_the_voice_route_renders_the_house_voice_as_audio():
+    """Device-found 2026-10-19/20: a phone or desktop reached by Home
+    Assistant only as a Music Assistant player was silence with a
+    registration. The browser is its own speaker, so this route renders
+    one screened line through the SAME engine, language and voice the
+    announce path uses and hands the bytes back; another language answers
+    409 (the browser reads it natively), no engine or no clip answers 503,
+    and the usual screens and cap apply. Runs the real route through
+    TestClient with HA stubbed at ha_api."""
+    import main
+    from fastapi.testclient import TestClient
+    from services import announce, ha_api, auth
+    c = TestClient(main.app)
+    check(auth.resolve('POST', '/api/lessons/voice') == auth.WALL, "a panel or a phone may ask for a clip")
+    calls = []
+    orig = (announce._tts_config, ha_api._request, ha_api.fetch_binary)
+    announce._tts_config = lambda: ('tts.edge', 'en-US', 'en-US-AndrewNeural')
+    ha_api._request = lambda m, p, json_body=None, **k: (calls.append((m, p, json_body)) or {'path': '/api/tts_proxy/abc.mp3'})
+    ha_api.fetch_binary = lambda path: (b'ID3clip', 'audio/mpeg')
+    try:
+        r = c.post('/api/lessons/voice', json={'text': 'Switch sides.'})
+        check(r.status_code == 200 and r.content == b'ID3clip' and r.headers['content-type'].startswith('audio/mpeg'),
+              f"the clip comes back as audio, got {r.status_code} {r.headers.get('content-type')} {r.content[:12]!r}")
+        check(calls and calls[0][1] == '/tts_get_url' and calls[0][2]['engine_id'] == 'tts.edge'
+              and calls[0][2]['language'] == 'en-US' and calls[0][2]['options'] == {'voice': 'en-US-AndrewNeural'},
+              f"rendered through the announce path's own engine, language and voice, got {calls}")
+        r = c.post('/api/lessons/voice', json={'text': 'Bom dia.', 'lang': 'pt-BR'})
+        check(r.status_code == 409, f"another language is 409 so the browser reads it natively, got {r.status_code}")
+        r = c.post('/api/lessons/voice', json={'text': 'Hello there.', 'lang': 'en-GB'})
+        check(r.status_code == 200, f"a same-language tag is fine, got {r.status_code}")
+        r = c.post('/api/lessons/voice', json={'text': ''})
+        check(r.status_code == 400, "nothing to say is 400")
+        r = c.post('/api/lessons/voice', json={'text': 'x' * 300})
+        check(r.status_code == 400, "a line longer than a scene is 400")
+        r = c.post('/api/lessons/voice', json={'text': 'Lose weight fast.'})
+        check(r.status_code == 400, "the same screen as the speak route")
+        ha_api._request = lambda *a, **k: None
+        r = c.post('/api/lessons/voice', json={'text': 'Switch sides.'})
+        check(r.status_code == 503, f"no clip from HA is 503, got {r.status_code}")
+        announce._tts_config = lambda: (None, None, None)
+        r = c.post('/api/lessons/voice', json={'text': 'Switch sides.'})
+        check(r.status_code == 503, f"no engine is 503, got {r.status_code}")
+    finally:
+        announce._tts_config, ha_api._request, ha_api.fetch_binary = orig
+
+
 def scenario_the_speak_route_exists_and_is_wall_tier():
     """The wall is the whole point: a session running on a board in the
     room where the practising happens should come out of that room's own
@@ -1204,6 +1250,7 @@ if __name__ == '__main__':
     scenario_forced_sweep_an_infinite_limit_is_a_400()
     scenario_forced_sweep_a_huge_finite_days_is_a_400()
     scenario_forced_sweep_a_negative_days_is_a_400()
+    scenario_the_voice_route_renders_the_house_voice_as_audio()
     scenario_the_speak_route_exists_and_is_wall_tier()
     scenario_the_speak_route_routes_through_announce()
     scenario_the_speak_route_refuses_a_speech_longer_than_a_scene()
