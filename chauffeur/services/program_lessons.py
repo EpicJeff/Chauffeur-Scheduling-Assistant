@@ -1163,7 +1163,7 @@ def lesson_prompt(row: dict, lesson: dict, variant_label: str) -> str:
     idx = next((i for i, l in enumerate(ladder) if l['id'] == lesson['id']), 0)
     prev = ladder[idx - 1] if idx > 0 else None
     nxt = ladder[idx + 1] if idx + 1 < len(ladder) else None
-    variant = next((v for v in lesson.get('variants') or [] if (v.get('label') or '') == (variant_label or '')), {}) if variant_label else {}
+    variant = next((v for v in lesson.get('variants') or [] if isinstance(v, dict) and (v.get('label') or '') == (variant_label or '')), {}) if variant_label else {}
     steps = variant.get('steps') or lesson.get('steps') or []
     body = variant.get('body') or lesson.get('body') or ''
     minutes = int((row.get('made_for') or {}).get('minutes') or 25)
@@ -1449,27 +1449,19 @@ def generate_for(program: dict, window: dict, unit: dict, settings: dict):
         return None
 
 
-# --- the nightly sweep, and the forced one --------------------------------
+# --- the nightly retry ---------------------------------------------------
 # generate_for is a single slot; generate_due is what actually runs, once a
 # day, with nobody watching -- "a lesson generates itself" (Task 9) is only
 # half a feature until something calls it, exactly once, not once per
-# 30-second tick forever. sweep_report runs the identical scan on demand
-# and NAMES what it did: a person who just changed generation code cannot
-# wait for tonight to see what it does now.
+# 300-second tick forever. Library scripts are shared; unconverted runs
+# keep their legacy generation path for this release.
 
 def _windows_to_scan(now, start_offset: int, days: int):
     """(program row, window, unit) for every practice window the scan
     reaches -- `start_offset` days from `now` through `days` more.
 
-    The walk generate_due and sweep_report both need: which programs are
-    active, which windows practice_windows hands back for the date range,
-    and which unit each window's program currently sits on. Factored into
-    one place so a change to how any of that resolves can never drift
-    between the nightly sweep and the forced one. What is deliberately NOT
-    shared here is the day-marker/settings gate around this walk -- that
-    stays in each caller, because sweep_report's whole reason to exist is
-    that `force` may skip the marker where generate_due never does; see
-    `_lessons_switched_on` for the half of the gate that IS shared.
+    Resolves active programs and their current units for the nightly
+    legacy branch. The caller owns the day marker, switches, and budget.
     """
     import datetime
     from services import storage, programs
@@ -1486,10 +1478,7 @@ def _windows_to_scan(now, start_offset: int, days: int):
 
 
 def _lessons_switched_on(settings: dict) -> bool:
-    """Both switches a real pass must clear, asked in one place --
-    generate_due's own two `if not settings.get(...): return` reads, so a
-    forced call from sweep_report can never silently outrun a switch
-    generate_due still honors."""
+    """Both household switches must be on before the nightly pass runs."""
     return bool(settings.get('programs_enabled', True)
                and settings.get('program_lessons_enabled', True))
 
@@ -1506,9 +1495,9 @@ def generate_due(now=None, limit: int = MAX_SLOTS_PER_PASS,
     an unbounded stall -- and the realistic bad case is not midnight but a
     morning: the marker is date-based, so an app that was down overnight
     and comes up at 07:00 runs the WHOLE sweep in the school-run window.
-    `limit` counts slots that would actually spend a call (`needs_lesson`),
-    never slots that were only ever going to be skipped, so the cap is a
-    cap on cost. The remainder is absorbed by the two-day lookahead below:
+    `limit` counts model calls, including shortfall retries, across library
+    scripts and legacy runs; each attempted slot costs at least one unit.
+    Ready or exhausted slots cost nothing. The remainder is absorbed by the two-day lookahead below:
     a slot passed over tonight is seen again tomorrow, before the evening
     it is needed.
 
@@ -1531,12 +1520,9 @@ def generate_due(now=None, limit: int = MAX_SLOTS_PER_PASS,
     slot re-seen on its second night costs one storage read and nothing
     else.
 
-    `start_offset` exists for `sweep_report` below and nothing else: it
-    moves where "tomorrow" starts without touching what the scan means.
-    The default (1) reproduces the paragraph above exactly -- tomorrow
-    through tomorrow+2d -- so every existing caller, and every scenario
-    already pinned to that scan, is untouched. The 300s loop never passes
-    it.
+    `start_offset` moves the start of both the library and legacy scans.
+    Its default (1) scans tomorrow through tomorrow+2d; zero starts today.
+    The 300s loop uses the default.
 
     Apart from deletion.Cancelled, never raises -- as with every
     function in this module follows. `generate_for` already promises that
@@ -1562,7 +1548,8 @@ def generate_due(now=None, limit: int = MAX_SLOTS_PER_PASS,
         storage.set_app_state('program_lessons_swept', marker)
         from services import library_scripts
         library_scripts._PASS_SPENT = 0
-        wrote = library_scripts.retry_due(now, limit)
+        wrote = (library_scripts.retry_due(now, limit) if start_offset == 1 else
+                 library_scripts.retry_due(now, limit, start_offset=start_offset))
         # unconverted runs keep the legacy branch
         spent = library_scripts._PASS_SPENT
         for row, w, unit in _windows_to_scan(now, start_offset, 2):

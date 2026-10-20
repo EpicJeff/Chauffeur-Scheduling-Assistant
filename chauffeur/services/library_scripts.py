@@ -4,11 +4,14 @@ The shape (sanitizer, estimate, fill, prompts) lives in program_lessons.py; this
 claim-token flow around a model call, the per-program background job and its ownership, the
 nightly retry, and the one resolver every run route reads through.
 """
+import logging
 import threading
 import time
 import uuid
 
-from services import storage, program_lessons as pl
+from services import deletion, storage, program_lessons as pl
+
+logger = logging.getLogger(__name__)
 
 JOBS_KEY = 'library_script_jobs'
 DEAD_AFTER_S = 30 * 60
@@ -52,7 +55,7 @@ def generate_script(row: dict, lesson: dict, variant_label: str, settings: dict,
     slot = {'lesson_id': lesson['id'], 'variant_label': variant_label or ''}
     minutes = int((row.get('made_for') or {}).get('minutes') or 25)
     origin = (row.get('source') or {}).get('origin') or 'generated'
-    variant = next((v for v in lesson.get('variants') or [] if (v.get('label') or '') == (variant_label or '')), {}) if variant_label else {}
+    variant = next((v for v in lesson.get('variants') or [] if isinstance(v, dict) and (v.get('label') or '') == (variant_label or '')), {}) if variant_label else {}
     url = (variant.get('url') or lesson.get('url') or '') if origin == 'cited' else ''
     source_url = ''
     if origin == 'cited' and url:
@@ -161,6 +164,8 @@ def write(library_id: str, actor: dict, lesson_id: str = None, variant_label: st
     row = storage.get_library_program(library_id)
     if not row:
         return {'status': 'error', 'code': 404, 'message': 'No such library program.'}
+    if row.get('archived'):
+        return {'status': 'error', 'message': 'This program is archived.'}
     if not library.can_edit(row, actor):
         return {'status': 'error', 'code': 403, 'message': library.EDIT_REFUSAL}
     if lesson_id:
@@ -196,7 +201,7 @@ def _run(library_id, job_id, pairs, settings):
             try:
                 written = generate_script(row, lesson, label, settings)
             except Exception as e:                 # never let one lesson kill the job
-                print(f"[library_scripts] {library_id} {lesson.get('id')} failed: {e}")
+                logger.exception("Library %s lesson %s failed: %s", library_id, lesson.get('id'), e)
                 written = None
             done += 1
             if not (written and written.get('scenes')):
@@ -217,7 +222,7 @@ def script_for_run(run: dict, lesson_id: str, variant_label: str):
     return None   # legacy runs are read by the caller through storage.get_program_lesson with the tuple slot
 
 
-def retry_due(now, limit: int) -> int:
+def retry_due(now, limit: int, *, start_offset: int = 1) -> int:
     """Tonight's pass: every active run's windows in the next two days whose library lesson still
     needs a script. Skips a library with a live job. Counts calls, a shortfall retry included."""
     global _PASS_SPENT
@@ -226,7 +231,7 @@ def retry_due(now, limit: int) -> int:
         import datetime
         from services import programs
         settings = storage.get_settings() or {}
-        start = now.date() + datetime.timedelta(days=1)
+        start = now.date() + datetime.timedelta(days=start_offset)
         runs = {r['id']: r for r in storage.get_programs(state='active')}
         wrote = 0
         seen = set()
@@ -253,6 +258,11 @@ def retry_due(now, limit: int) -> int:
             spend = []
             try:
                 out = generate_script(row, lesson, slot['variant_label'], settings, allowance=allowance, spend=spend)
+            except deletion.Cancelled:
+                raise
+            except Exception as e:
+                logger.exception("Library %s lesson %s retry failed: %s", row['id'], lesson['id'], e)
+                continue
             finally:
                 spent += max(1, len(spend))
             if out and out.get('scenes'):

@@ -7844,6 +7844,75 @@ def order_library_lessons_api(id: str, request: Request, body: dict = Body(defau
     return _library_result(library.order_lessons(id, body.get('ids') or [], _library_actor(request)))
 
 
+def _library_script_slot(lesson_id, variant_label):
+    return {'lesson_id': str(lesson_id or ''), 'variant_label': str(variant_label or '')}
+
+
+@app.get('/api/library/{id}/lessons/{lesson_id}/script')
+def get_library_script_api(id: str, lesson_id: str, request: Request, variant_label: str = '', fill: int = 0):
+    from services import library, program_lessons as _pl
+    actor = _library_actor(request)
+    row = library.get(id, actor)
+    if row is None:
+        raise HTTPException(status_code=404, detail='No such library program.')
+    script = storage.get_library_script(id, _library_script_slot(lesson_id, variant_label))
+    if not script:
+        return {'script': None}
+    scenes = script.get('scenes') or []
+    if fill:
+        names = str(actor.get('name') or '').split()
+        scenes = _pl.fill(scenes, {'name': names[0] if names else '', 'project': row.get('title') or ''})
+    return {'script': {'scenes': scenes, 'origin': script.get('origin') or '', 'source_url': script.get('source_url') or '',
+                       'edited': bool(script.get('edited')), 'minutes': int(script.get('minutes') or 0), 'note': script.get('note') or ''}}
+
+
+@app.put('/api/library/{id}/lessons/{lesson_id}/script')
+def put_library_script_api(id: str, lesson_id: str, request: Request, body: dict = Body(default={}), variant_label: str = ''):
+    from services import library, program_lessons as _pl
+    actor = _library_actor(request)
+    row = storage.get_library_program(id)
+    if not row:
+        raise HTTPException(status_code=404, detail='No such library program.')
+    if not library.can_edit(row, actor):
+        raise HTTPException(status_code=403, detail=library.EDIT_REFUSAL)
+    slot = _library_script_slot(lesson_id, body.get('variant_label', variant_label))
+    existing = storage.get_library_script(id, slot) or {}
+    origin = existing.get('origin') or ((row.get('source') or {}).get('origin') if (row.get('source') or {}).get('origin') == 'cited' else 'generated')
+    scenes = _pl.sanitize_script(body.get('scenes') or [], origin, minutes=(row.get('made_for') or {}).get('minutes'))
+    if not scenes:
+        return {'status': 'error', 'message': 'Nothing survivable in that script.'}
+    saved = storage.edit_library_script(id, slot, {'origin': origin, 'source_url': existing.get('source_url') or '', 'scenes': scenes,
+                                                   'model': existing.get('model') or '', 'minutes': int(round(_pl.estimate_seconds(scenes) / 60))})
+    if not saved:
+        raise HTTPException(status_code=409, detail='That lesson moved; open it again.')
+    return {'status': 'ok'}
+
+
+@app.delete('/api/library/{id}/lessons/{lesson_id}/script')
+def delete_library_script_api(id: str, lesson_id: str, request: Request, variant_label: str = ''):
+    from services import library
+    actor = _library_actor(request)
+    row = storage.get_library_program(id)
+    if not row:
+        raise HTTPException(status_code=404, detail='No such library program.')
+    if not library.can_edit(row, actor):
+        raise HTTPException(status_code=403, detail=library.EDIT_REFUSAL)
+    storage.delete_library_script(id, _library_script_slot(lesson_id, variant_label))
+    return {'status': 'ok'}
+
+
+@app.post('/api/library/{id}/scripts/write', status_code=202)
+def write_library_scripts_api(id: str, request: Request, body: dict = Body(default={})):
+    from services import library_scripts
+    res = library_scripts.write(id, _library_actor(request), lesson_id=body.get('lesson_id') or None,
+                                variant_label=body.get('variant_label') or '')
+    if res.get('code'):
+        raise HTTPException(status_code=res['code'], detail=res['message'])
+    if res.get('status') == 'error':
+        return JSONResponse(status_code=200, content=res)
+    return res
+
+
 @app.post("/api/programs")
 def create_program(body: dict = Body(default={}), request: Request = None):
     from services import programs as _prog, programs_curate as _cur, library, stages
@@ -7897,6 +7966,9 @@ def create_program(body: dict = Body(default={}), request: Request = None):
                 raise RunRefused()
     except RunRefused:
         return {'status': 'error', 'message': 'That project or library program is no longer here.'}
+    if made:
+        from services import library_scripts
+        library_scripts.write(lid, actor)
     return {'status': 'success', 'id': pid, 'program': _prog.load(storage.get_program(pid)),
             **({'message': made['message']} if made else {})}
 
@@ -7969,6 +8041,8 @@ def edit_program(program_id: str, body: dict = Body(default={}), request: Reques
                 storage.delete_program_lessons(program_id)
                 storage.update_program(program_id, updates)
             library._invalidate()
+            from services import library_scripts
+            library_scripts.write(lid, actor)
             updates = {}
         else:
             kept = True
@@ -8062,6 +8136,25 @@ def _program_lesson_slot(row, slot, *, required=False):
     return resolved
 
 
+def _script_vars(run: dict) -> dict:
+    member = storage.get_member(run.get('member_id') or '') or {}
+    project = storage.get_project(run.get('project_id') or '') if run.get('project_id') else None
+    names = str(member.get('name') or '').split()
+    return {'name': names[0] if names else '', 'project': (project or {}).get('title') or ''}
+
+
+def _run_script(row, slot):
+    """The filled script for a run, or None. Legacy runs keep their tuple lookup."""
+    from services import library_scripts, program_lessons as _pl
+    if row.get('library_id'):
+        script = library_scripts.script_for_run(row, slot.get('lesson_id'), slot.get('variant_label') or '')
+    else:
+        script = _program_lesson_call(storage.get_program_lesson, row['id'], slot)
+    if not script:
+        return None
+    return {**script, 'scenes': _pl.fill(script.get('scenes') or [], _script_vars(row))}
+
+
 @app.get("/api/programs/{program_id}/lesson")
 def get_program_lesson_api(program_id: str, phase_name: str = '',
                            unit_n: int = 0, session_label: str = '',
@@ -8086,8 +8179,10 @@ def get_program_lesson_api(program_id: str, phase_name: str = '',
     slot = _program_lesson_slot(row, {
         'phase_name': phase_name, 'unit_n': unit_n,
         'session_label': session_label, 'lesson_id': lesson_id, 'variant_label': variant_label})
-    lesson = _program_lesson_call(storage.get_program_lesson, program_id, slot)
-    return {"lesson": lesson}
+    lesson = _run_script(row, slot)
+    return {"lesson": {k: lesson[k] for k in
+                       ('scenes', 'origin', 'source_url', 'edited', 'minutes', 'note', 'attempts')
+                       if k in lesson} if lesson else None}
 
 
 @app.put("/api/programs/{program_id}/lesson")
@@ -8106,6 +8201,8 @@ def put_program_lesson_api(program_id: str, body: dict = Body(default={}),
     row = storage.get_program(program_id)
     if not row:
         raise HTTPException(status_code=404, detail="No such program")
+    if row.get('library_id'):
+        raise HTTPException(status_code=409, detail='Scripts live in the library.')
     _program_permission_or_refuse(request, body, row)
     # Same shape as every other numeral this app takes off a raw JSON body
     # (`packing_claim`'s `delta`, two screens over): a bad TYPE -- a string
@@ -8164,6 +8261,8 @@ def delete_program_lesson_api(program_id: str, phase_name: str = '',
     row = storage.get_program(program_id)
     if not row:
         raise HTTPException(status_code=404, detail="No such program")
+    if row.get('library_id'):
+        raise HTTPException(status_code=409, detail='Scripts live in the library.')
     _program_permission_or_refuse(request, {}, row)
     # Same normalise-then-range-check as PUT, mirrored here for the same
     # reason GET now carries it (fix round 2): FastAPI's own `int` query
@@ -8239,7 +8338,7 @@ def program_lesson_scenes(program_id: str, phase_name: str = '',
     slot = _program_lesson_slot(row, {
         'phase_name': phase_name, 'unit_n': unit_n,
         'session_label': session_label, 'lesson_id': lesson_id, 'variant_label': variant_label})
-    lesson = _program_lesson_call(storage.get_program_lesson, program_id, slot) or {}
+    lesson = _run_script(row, slot) or {}
     if not lesson.get('scenes'):
         return {"lesson": None}
     return {"lesson": {'scenes': lesson.get('scenes') or [],
@@ -8301,7 +8400,7 @@ def lesson_speak_api(body: dict = Body(default={})):
     from services import announce as _announce, program_lessons as _pl
     room = str((body or {}).get('room') or '').strip()
     entity_id = str((body or {}).get('entity_id') or '').strip()
-    text = _pl._clean_text((body or {}).get('text'), _pl.MAX_SPEAK + 1)
+    text = _pl._clean_text((body or {}).get('text'), _pl.MAX_TEACH_SPEAK + 1)
     if entity_id and not entity_id.startswith('media_player.'):
         # The room half of this route already reaches whatever the
         # household named a room; an entity is the same exposure with a
@@ -8312,9 +8411,9 @@ def lesson_speak_api(body: dict = Body(default={})):
     if not (room or entity_id) or not text:
         raise HTTPException(status_code=400,
                             detail="Somewhere to say it, and something to say.")
-    if len(text) > _pl.MAX_SPEAK:
+    if len(text) > _pl.MAX_TEACH_SPEAK:
         raise HTTPException(status_code=400,
-                            detail=f"A spoken line is at most {_pl.MAX_SPEAK} "
+                            detail=f"A spoken line is at most {_pl.MAX_TEACH_SPEAK} "
                                    f"characters.")
     if _pl._screened(text, 'generated'):
         raise HTTPException(status_code=400,
@@ -8362,13 +8461,13 @@ def lesson_voice_api(body: dict = Body(default={})):
     """
     from fastapi.responses import Response as _Response
     from services import announce as _announce, program_lessons as _pl
-    text = _pl._clean_text((body or {}).get('text'), _pl.MAX_SPEAK + 1)
+    text = _pl._clean_text((body or {}).get('text'), _pl.MAX_TEACH_SPEAK + 1)
     lang = str((body or {}).get('lang') or '').strip()[:12]
     if not text:
         raise HTTPException(status_code=400, detail="Something to say.")
-    if len(text) > _pl.MAX_SPEAK:
+    if len(text) > _pl.MAX_TEACH_SPEAK:
         raise HTTPException(status_code=400,
-                            detail=f"A spoken line is at most {_pl.MAX_SPEAK} characters.")
+                            detail=f"A spoken line is at most {_pl.MAX_TEACH_SPEAK} characters.")
     if _pl._screened(text, 'generated'):
         raise HTTPException(status_code=400,
                             detail="That is not something this app says out loud.")
@@ -8518,7 +8617,7 @@ def lesson_help_api(program_id: str, body: dict = Body(default={}), request: Req
     if now - float(_lesson_help_at.get(program_id) or 0) < _LESSON_HELP_GAP_S:
         raise HTTPException(status_code=429, detail="One at a time.")
 
-    lesson = _program_lesson_call(storage.get_program_lesson, program_id, slot) or {}
+    lesson = _run_script(row, slot) or {}
     scenes = lesson.get('scenes') or []
     try:
         idx = int((body or {}).get('scene_idx') or 0)
@@ -8526,8 +8625,12 @@ def lesson_help_api(program_id: str, body: dict = Body(default={}), request: Req
         idx = 0
     scene = scenes[idx] if 0 <= idx < len(scenes) else {}
     row = _prog.load(storage.get_program(program_id)) or {}
-    beat = ' '.join(str(scene.get(k) or '')
-                    for k in ('text', 'ask', 'caption', 'speak')).strip()
+    if scene.get('type') == 'teach':
+        beat = ' '.join([scene.get('title') or '', scene.get('text') or '',
+                         ' '.join(e['text'] for e in scene.get('examples') or [])]).strip()
+    else:
+        beat = ' '.join(str(scene.get(k) or '')
+                        for k in ('text', 'ask', 'caption', 'speak')).strip()
     if not beat and slot.get('lesson_id'):
         projection = _program_lesson_call(_prog.lesson_for, row, datetime.now().date(), lesson_id=slot['lesson_id'],
                                      variant_label=slot.get('variant_label') or '')
@@ -8547,81 +8650,6 @@ def lesson_help_api(program_id: str, body: dict = Body(default={}), request: Req
     if not answer or _pl._screened(answer, 'generated'):
         return {'answer': ''}
     return {'answer': answer}
-
-
-# The magnitude bound `days` and `limit` share below, mirroring
-# _LESSON_UNIT_N_MAX's own role for unit_n a few endpoints up: generous
-# enough that no real value is ever clipped (the scan below defaults to
-# three days deep and MAX_SLOTS_PER_PASS is 6), narrow enough that an
-# absurd one can never reach `datetime.timedelta` downstream and raise an
-# OverflowError instead of the clean 400 every other bad number on this
-# page already answers with.
-_LESSON_SWEEP_PARAM_MAX = 365
-
-
-@app.post("/api/programs/lessons/sweep")
-def sweep_program_lessons_now(body: dict = Body(default={}),
-                              request: Request = None):
-    """Force the nightly lesson sweep to run right now, and report what it
-    produced — the hand path beside `generate_due`'s own blind call off the
-    300s loop, for a household that just changed a prompt or a screen and
-    cannot wait for tonight to see what it does now (`program_lessons.
-    sweep_report`, which this only gates and calls).
-
-    Runs SYNCHRONOUSLY and can take minutes: every slot it reaches is up to
-    four model-pool candidates at a 180-second gemma timeout, exactly the
-    cost `generate_due`'s own docstring warns about. That is fine here and
-    nowhere else on this app's request path, because this is the one
-    caller who explicitly asked for this pass right now and is sitting
-    there waiting on the answer — the opposite of the 300s loop's "nobody
-    waiting on the other end", which is why that call stays backgrounded
-    on a thread (`asyncio.to_thread`) and this one does not need to be.
-
-    Parent/adult work, the same `_mind_actor` + `_approver_of_record`
-    pairing every other household-wide programs write already uses — this
-    is not scoped to one program a caller might own, so there is no
-    ownership half to check first, only the household-wide gate.
-
-    Bypasses the day marker — that is the entire point of a button someone
-    taps after the automatic pass already ran today — but never the two
-    switches: `programs_enabled` or `program_lessons_enabled` off means
-    this refuses outright, in words, exactly like every other programs
-    write already gated on them, rather than quietly running a pass the
-    household's own settings say it does not want.
-
-    Body takes two optional numbers — `days` (default 3, how far past
-    today the scan reaches) and `limit` (default `MAX_SLOTS_PER_PASS`, the
-    cap on slots this pass may spend a model call on) — always scanning
-    from TODAY (`start_offset=0`), never generate_due's own tomorrow, so
-    the report shows the very next lesson for every active program.
-    """
-    from services import access
-    with access.batch():
-        from services import program_lessons as _pl
-        _approver_of_record(_mind_actor(request, body.get('member_id')))
-        settings = storage.get_settings() or {}
-        if not settings.get('programs_enabled', True):
-            return {"status": "error",
-                    "message": "Programs are switched off for this household."}
-        if not settings.get('program_lessons_enabled', True):
-            return {"status": "error",
-                    "message": "Lesson scripts are switched off for this household."}
-        # Same shape as every other numeral this app takes off a raw JSON body
-        # (PUT .../lesson's own unit_n, just above): a bad TYPE has to land as
-        # a 400, never fall through to a raw traceback, and a huge-but-finite
-        # value (a plain `1e300`) sails through int() without complaint, so
-        # the magnitude is checked separately, after the coercion succeeds.
-        try:
-            days = int(body.get('days', 3))
-            limit = int(body.get('limit', _pl.MAX_SLOTS_PER_PASS))
-        except (TypeError, ValueError, OverflowError):
-            raise HTTPException(status_code=400,
-                                detail="days and limit must be whole numbers")
-        if not (0 <= days <= _LESSON_SWEEP_PARAM_MAX
-               and 0 <= limit <= _LESSON_SWEEP_PARAM_MAX):
-            raise HTTPException(status_code=400,
-                                detail="days and limit are out of range")
-        return _pl.sweep_report(start_offset=0, days=days, limit=limit, force=True, viewer=_piece_viewer(request))
 
 
 @app.get("/api/programs/celebrations")

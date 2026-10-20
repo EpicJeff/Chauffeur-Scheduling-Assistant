@@ -2752,6 +2752,9 @@ def _start_program_choice(choice, actor, make_new=False, prepared=None):
         if not pid:
             # Roll back a freshly curated library row as well as adoption.
             raise ValueError('That project is no longer here.')
+    if make_new:
+        from services import library_scripts
+        library_scripts.write(lid, actor)
     member = storage.get_member(choice['member_id']) or {}
     notice = f"I started {member.get('name') or 'you'} on {curriculum['title']} from the library"
     message = (f"I made a new library program: {curriculum['title']}. " if make_new else notice + '. ')

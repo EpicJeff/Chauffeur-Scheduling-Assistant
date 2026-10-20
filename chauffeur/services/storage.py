@@ -3798,7 +3798,7 @@ def delete_library_program(library_id: str):
     with db_lock, db.transaction():
         deletion.check()
         library_programs_table.remove(Query().id == library_id)
-        library_scripts_table.remove(Query().library_id == library_id)
+        delete_library_scripts(library_id)
         jobs = get_app_state('library_script_jobs') or {}
         if isinstance(jobs, dict) and library_id in jobs:
             del jobs[library_id]
@@ -4020,14 +4020,15 @@ def _library_slot_alive(library_id: str, slot: dict) -> bool:
                 and any(l.get('id') == (slot or {}).get('lesson_id') for l in row.get('lessons') or []))
 
 
-def _script_row(library_id, slot, data, claim, edited, row_id=None):
+def _script_row(library_id, slot, data, claim, edited, row_id=None, created_at=None):
     import uuid
     return {'id': row_id or uuid.uuid4().hex, 'library_id': library_id,
             'lesson_id': str(slot.get('lesson_id') or ''), 'variant_label': str(slot.get('variant_label') or ''),
             'origin': data.get('origin') or 'generated', 'source_url': data.get('source_url') or '',
             'scenes': list(data.get('scenes') or []), 'edited': edited, 'model': data.get('model') or '',
             'attempts': int(data.get('attempts') or 0), 'note': str(data.get('note') or ''),
-            'minutes': int(data.get('minutes') or 0), 'claim': claim, 'created_at': time.time()}
+            'minutes': int(data.get('minutes') or 0), 'claim': claim,
+            'created_at': created_at if created_at is not None else time.time()}
 
 
 def claim_library_script(library_id: str, slot: dict):
@@ -4047,7 +4048,7 @@ def claim_library_script(library_id: str, slot: dict):
         return token
 
 
-def _guarded_replace(library_id, slot, token, data, *, allow_edited):
+def _guarded_replace(library_id, slot, token, data):
     import uuid
     with db_lock, db.transaction():
         if not _library_slot_alive(library_id, slot):
@@ -4056,10 +4057,12 @@ def _guarded_replace(library_id, slot, token, data, *, allow_edited):
         existing = library_scripts_table.search(cond)
         if not existing or existing[0].get('claim') != token:
             return ''
-        if existing[0].get('edited') and not allow_edited:
+        if existing[0].get('edited'):
             return ''
         new = uuid.uuid4().hex
-        library_scripts_table.update(_script_row(library_id, slot, data, new, False, row_id=existing[0]['id']), cond)
+        library_scripts_table.update(_script_row(
+            library_id, slot, data, new, False, row_id=existing[0]['id'],
+            created_at=existing[0].get('created_at')), cond)
         return new
 
 
@@ -4070,11 +4073,11 @@ def commit_library_script(library_id: str, slot: dict, token: str, data: dict) -
         existing = library_scripts_table.search(_library_script_query(library_id, slot))
         if existing and existing[0].get('scenes') and not (data or {}).get('scenes'):
             return ''
-        return _guarded_replace(library_id, slot, token, data or {}, allow_edited=False)
+        return _guarded_replace(library_id, slot, token, data or {})
 
 
 def replace_library_script(library_id: str, slot: dict, token: str, data: dict) -> str:
-    return _guarded_replace(library_id, slot, token, data or {}, allow_edited=False)
+    return _guarded_replace(library_id, slot, token, data or {})
 
 
 def edit_library_script(library_id: str, slot: dict, data: dict) -> str:
@@ -4085,7 +4088,9 @@ def edit_library_script(library_id: str, slot: dict, data: dict) -> str:
         cond = _library_script_query(library_id, slot)
         existing = library_scripts_table.search(cond)
         new = uuid.uuid4().hex
-        row = _script_row(library_id, slot, data or {}, new, True, row_id=existing[0]['id'] if existing else None)
+        row = _script_row(library_id, slot, data or {}, new, True,
+                          row_id=existing[0]['id'] if existing else None,
+                          created_at=existing[0].get('created_at') if existing else None)
         if existing:
             library_scripts_table.update(row, cond)
         else:

@@ -15,7 +15,11 @@ READERS = [
           ('GET', '/api/library/{id}'), ('PATCH', '/api/library/{id}'), ('DELETE', '/api/library/{id}'),
           ('POST', '/api/library/{id}/archive'), ('POST', '/api/library/{id}/lessons'),
           ('PATCH', '/api/library/{id}/lessons/{lesson_id}'), ('DELETE', '/api/library/{id}/lessons/{lesson_id}'),
-          ('POST', '/api/library/{id}/lessons/order')]],
+          ('POST', '/api/library/{id}/lessons/order'),
+          ('GET', '/api/library/{id}/lessons/{lesson_id}/script'),
+          ('PUT', '/api/library/{id}/lessons/{lesson_id}/script'),
+          ('DELETE', '/api/library/{id}/lessons/{lesson_id}/script'),
+          ('POST', '/api/library/{id}/scripts/write')]],
     *[((F, name), 'INTERNAL', ('program',), 'public library script generation or resolution; callers own access') for name in [
         'services.library_scripts.needs_script', 'services.library_scripts.slots_of',
         'services.library_scripts.generate_script', 'services.library_scripts.write',
@@ -35,7 +39,7 @@ READERS = [
         'services.planned.record_program_choice', 'services.planned._continue_program_choice',
         'services.planned._cancel_program_choices',
         'services.agent_tools_v2.propose_program', 'services.chat_actions.run_row',
-        'main._program_lesson_call',
+        'main._program_lesson_call', 'main._run_script', 'main._script_vars',
         'services.programs.step_bookmark', 'services.programs.rebind', 'services.programs.lesson_for',
         'services.subjects._program_rows', 'services.program_lessons.arm_wait_announce']],
     # §4.1 threads
@@ -72,7 +76,6 @@ READERS = [
     ((R, 'GET', '/api/programs/{program_id}/lesson'), '4.1-signed-in', ('program',), 'record_view'),
     ((R, 'PUT', '/api/programs/{program_id}/lesson'), '4.1-signed-in', ('program',), 'record_actable'),
     ((R, 'DELETE', '/api/programs/{program_id}/lesson'), '4.1-signed-in', ('program',), 'record_actable'),
-    ((R, 'POST', '/api/programs/lessons/sweep'), '4.1-signed-in', ('program',), 'record_view'),
     ((R, 'GET', '/api/programs/{program_id}/footprint'), '4.1-signed-in', ('program',), 'record_view'),
     # Projects delete (spec 2026-10-18 §6): the preview names closure titles to whoever may delete;
     # a program is deleted by its project's owner or a parent who reads it.
