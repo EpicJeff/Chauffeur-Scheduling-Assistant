@@ -2198,7 +2198,11 @@
             // teal, so it reads as its own action next to Done rather than a
             // restyle of it -- and it is the exact color the player's own
             // "Continue / Log it?" button uses, so the thread carries through.
-            const startBtn = canLog && w.date === todayStr() ? `
+            // Start is not gated on the day: free time today is a fine
+            // time to do tomorrow's session, and the finish files it under
+            // the window it was for (`slot_date`). Done stays today-or-
+            // earlier, since Done claims it already happened.
+            const startBtn = (mine || grown) && !w.logged && w.date >= todayStr() ? `
                 <button data-start class="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-bold">Start</button>` : '';
             _pwaModal(`
                 <div class="text-[11px] font-bold uppercase tracking-widest text-teal-400">${mfEscape(sessionDateLabel(w))}</div>

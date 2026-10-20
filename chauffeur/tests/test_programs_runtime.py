@@ -232,6 +232,42 @@ def scenario_the_wall_card_fetches_only_that_projection():
           "and never the full list it could not read anyway")
 
 
+def scenario_a_session_done_ahead_of_its_window_files_under_that_window():
+    """A person with free time runs tomorrow's session today. It HAPPENED
+    today (sessions_between counts it today, so pacing and vitals see the
+    practice), but it was tomorrow's slot: tomorrow's window reads logged
+    so nothing asks "did it happen?" tomorrow, and today's own window stays
+    open. A past slot answered late keeps today's rule: filed under the day
+    it was about."""
+    import datetime
+    from services import programs
+    storage.programs_table.truncate(); storage.library_programs_table.truncate()
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar', 'state': 'active',
+                   'phases': [{'name': 'F', 'units': [{'title': 'One', 'sessions': 3}]}],
+                   'shape': {'sessions_per_week': 7, 'minutes': 20}})
+    today = datetime.date.today()
+    tomorrow, yesterday = today + datetime.timedelta(days=1), today - datetime.timedelta(days=1)
+    res = programs.log_session(pid, source='asked', slot_date=tomorrow.isoformat())
+    check(res.get('status') == 'success', "tomorrow's session logs now, got %r" % (res,))
+    row = storage.get_program(pid)
+    entry = row['sessions'][-1]
+    check(entry.get('slot_date') == tomorrow.isoformat(), 'the slot it was for is kept, got %r' % (entry,))
+    check(datetime.datetime.fromtimestamp(entry['ts']).date() == today, 'it happened today')
+    check(programs._already_logged(row, tomorrow), "tomorrow's window reads logged")
+    check(not programs._already_logged(row, today), "today's own window is still open")
+    check(len(programs.sessions_between(row, today, today)) == 1, 'and it counts as practice done today')
+    programs.log_session(pid, source='asked', slot_date=yesterday.isoformat())
+    row = storage.get_program(pid)
+    check(programs._already_logged(row, yesterday) and not programs._already_logged(row, today),
+          'a late answer for yesterday still files under yesterday')
+    programs.log_session(pid, source='added', minutes=10)
+    row = storage.get_program(pid)
+    check(programs._already_logged(row, today), 'an undated session counts for the day it happened')
+    check(programs._already_logged(row, tomorrow) and not any(
+        x.get('slot_date') == tomorrow.isoformat() for x in row['sessions'][1:]),
+        'the earlier future-filed entry is the only thing that counts for tomorrow')
+
+
 if __name__ == '__main__':
     scenario_the_pwa_reaches_a_members_own_programs()
     scenario_the_pwa_shows_no_streak()
@@ -241,4 +277,5 @@ if __name__ == '__main__':
     scenario_the_wall_card_celebrates_and_does_not_measure()
     scenario_the_wall_reads_a_celebration_only_projection()
     scenario_the_wall_card_fetches_only_that_projection()
+    scenario_a_session_done_ahead_of_its_window_files_under_that_window()
     print("test_programs_runtime OK")

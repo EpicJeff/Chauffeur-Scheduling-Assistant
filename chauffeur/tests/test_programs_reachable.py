@@ -305,6 +305,21 @@ def scenario_a_child_who_cannot_tap_still_has_a_surface():
           "a card that can be somebody else's has to say whose")
 
 
+def scenario_a_session_can_be_started_ahead_of_its_window():
+    """Free time today should let a person do tomorrow's session now. The
+    sheet's Start used to be gated on the window being dated today; Done
+    (saying it happened, without doing it here) stays today-or-earlier."""
+    src = _app()
+    sheet = _body(src, 'openSessionSheet')
+    check("w.date === todayStr()" not in sheet, 'Start is no longer today-only')
+    check(re.search(r"const startBtn = [^\n]*w\.date >= todayStr\(\)", sheet),
+          'Start is offered for today and every window ahead')
+    check(re.search(r"const canLog = [^\n]*w\.date <= todayStr\(\)", sheet),
+          'Done still never claims a session that has not happened')
+    check(re.search(r"const startBtn = [^\n]*!w\.logged", sheet),
+          'a logged window offers no Start')
+
+
 if __name__ == '__main__':
     os.environ.setdefault('CHAUFFEUR_DATA_DIR', tempfile.mkdtemp())
     scenario_the_program_surfaces_have_a_driver_side_mount()
@@ -319,4 +334,5 @@ if __name__ == '__main__':
     scenario_last_nights_session_is_not_the_next_one()
     scenario_a_child_who_cannot_tap_still_has_a_surface()
     scenario_every_inline_script_still_parses()
+    scenario_a_session_can_be_started_ahead_of_its_window()
     print("test_programs_reachable OK")

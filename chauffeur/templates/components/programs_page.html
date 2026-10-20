@@ -229,19 +229,20 @@
                                     </template>
                                 </div>
 
-                                <!-- Tonight: the practice-windows read this page never made until
-                                     now -- one compact row per today's window on THIS program,
-                                     carrying the tap that opens the lesson player. `w._lesson` is
-                                     always empty until a later task starts storing scripts, so
-                                     this always opens on the player's own fallback ladder for now
-                                     -- exactly the P1 shape, no LLM change. Gated like every other
-                                     action on this card: informational content shows to the room,
-                                     but a tap that ends in a session log is canAct(p) only. -->
-                                <div class="mt-2 space-y-1" x-show="!sec.archived && canAct(p) && todayWindowsFor(p).length">
-                                    <template x-for="w in todayWindowsFor(p)" :key="w.commitment_id + w.date + w.time_start">
+                                <!-- The sessions ahead: one compact row per practice window on
+                                     THIS program over the coming week, each carrying the tap that
+                                     opens the lesson player. Not only tonight's: free time today
+                                     is a fine time to do tomorrow's session, and a run with
+                                     nothing scheduled today still needs a way in (the finish
+                                     files the session under the window it was for). Gated like
+                                     every other action on this card: informational content shows
+                                     to the room, but a tap that ends in a session log is
+                                     canAct(p) only. -->
+                                <div class="mt-2 space-y-1" x-show="!sec.archived && canAct(p) && upcomingWindowsFor(p).length">
+                                    <template x-for="w in upcomingWindowsFor(p)" :key="w.commitment_id + w.date + w.time_start">
                                         <div class="flex items-center gap-2 text-xs bg-gray-950/60 border border-gray-800 rounded-lg px-2.5 py-1.5">
-                                            <span class="text-[11px] font-semibold text-gray-400 shrink-0" x-text="(w.time_start || '').slice(0, 5)"></span>
-                                            <span class="text-[11px] text-gray-300 truncate flex-1" x-text="w.session_label || 'Tonight'"></span>
+                                            <span class="text-[11px] font-semibold text-gray-400 shrink-0" x-text="windowDayLabel(w) + ' ' + (w.time_start || '').slice(0, 5)"></span>
+                                            <span class="text-[11px] text-gray-300 truncate flex-1" x-text="w.session_label || 'Practice'"></span>
                                             <button @click="window.dispatchEvent(new CustomEvent('lesson-player:open',
                                                     {detail: {window: w, lesson: w._lesson || null}}))"
                                                 class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-teal-600 text-white active:bg-teal-700 shrink-0">
@@ -758,7 +759,7 @@
                 // (components/programs_card.html) and the PWA
                 // (app.html's `fetchPracticeWindows`, which takes a whole
                 // week rather than a day); both drop a window once it is
-                // logged -- todayWindowsFor() below does the same, for the
+                // logged -- upcomingWindowsFor() below does the same, for the
                 // same reason: a session that already happened offers
                 // nothing left to start.
                 practiceToday: [],
@@ -880,7 +881,11 @@
                         const d = new Date();
                         const pad = n => String(n).padStart(2, '0');
                         const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-                        const r = await fetch(this.apiBase + `api/practice-windows?start_date=${day}&end_date=${day}`,
+                        // A week ahead, not only today: every window is a
+                        // session a person may start now.
+                        const e = new Date(d); e.setDate(e.getDate() + 7);
+                        const week = `${e.getFullYear()}-${pad(e.getMonth() + 1)}-${pad(e.getDate())}`;
+                        const r = await fetch(this.apiBase + `api/practice-windows?start_date=${day}&end_date=${week}`,
                                               { headers: this.authHeaders() });
                         if (r.ok) {
                             const body = await r.json();
@@ -920,8 +925,21 @@
                     } catch (e) { /* the player just falls back to plain steps */ }
                 },
 
-                todayWindowsFor(p) {
-                    return this.practiceToday.filter(w => w.program_id === p.id);
+                upcomingWindowsFor(p) {
+                    return this.practiceToday.filter(w => w.program_id === p.id)
+                        .sort((a, b) => (a.date + (a.time_start || '')).localeCompare(b.date + (b.time_start || '')));
+                },
+                // "Today", "Tomorrow", else the weekday: the row has to say
+                // which session it is before anyone taps Start on it.
+                windowDayLabel(w) {
+                    const d = new Date(); const pad = n => String(n).padStart(2, '0');
+                    const today = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+                    d.setDate(d.getDate() + 1);
+                    const tomorrow = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+                    if (w.date === today) return 'Today';
+                    if (w.date === tomorrow) return 'Tomorrow';
+                    try { return new Date(w.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }); }
+                    catch (e) { return w.date || ''; }
                 },
 
                 // The player never posts. Finishing a lesson dispatches

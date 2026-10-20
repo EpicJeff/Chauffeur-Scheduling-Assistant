@@ -3298,6 +3298,25 @@ def scenario_the_player_uses_no_lookbehind():
     check([s.strip() for s in got] == ['Play it.', 'Count 2.5 beats!', 'Again?'], f'three sentences, 2.5 whole, got {got}')
 
 
+def scenario_the_record_sheet_offers_the_weeks_sessions_not_only_tonights():
+    """Viewing a program in its project used to show Start session only for
+    a window dated today, so a run with nothing scheduled today had no way
+    to start a session at all. The sheet now reads a week of windows and
+    offers each one, dated."""
+    import re
+    src = _read('components/programs_page.html')
+    m = re.search(r'async loadPracticeToday\(\)\s*{(.*?)\n\s{16}},', src, re.S)
+    check(m, 'the practice-window fetch is findable')
+    body = m.group(1)
+    check('end_date=${day}' not in body, 'the fetch is no longer today only')
+    check(re.search(r'\+\s*7\b', body), 'it reaches a week ahead')
+    check('upcomingWindowsFor(' in src and 'x-for="w in upcomingWindowsFor(p)"' in src,
+          'the rows are every upcoming window of the program')
+    rows = re.search(r'x-for="w in upcomingWindowsFor\(p\)".*?Start session', src, re.S)
+    check(rows and 'windowDayLabel(w)' in rows.group(0),
+          'each row says which day it is for')
+
+
 if __name__ == '__main__':
     scenario_component_exists_and_renders_the_four_beats()
     scenario_checks_are_never_stored()
@@ -3439,4 +3458,5 @@ if __name__ == '__main__':
     scenario_a_tapped_example_plays_next_not_after_the_explanation()
     scenario_a_mounted_teach_scene_shows_its_words_and_speaks_an_example()
     scenario_the_player_uses_no_lookbehind()
+    scenario_the_record_sheet_offers_the_weeks_sessions_not_only_tonights()
     print("test_lesson_player_runtime OK")

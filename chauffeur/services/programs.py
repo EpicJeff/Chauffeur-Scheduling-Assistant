@@ -470,6 +470,12 @@ def log_session(program_id: str, minutes: int = None, source: str = 'added',
         ts = _slot_ts(slot_date)
         if ts:
             entry['ts'] = ts
+            # The slot this session was FOR, kept beside when it happened.
+            # A session run ahead of its window (free time today, tomorrow's
+            # lesson) happens today -- pacing and vitals count it today --
+            # but it answers tomorrow's slot, so tomorrow's window reads
+            # logged and nothing asks "did it happen?" the next morning.
+            entry['slot_date'] = str(slot_date)
         if not storage.append_program_session(program_id, entry):
             return {'status': 'error', 'message': 'That program is no longer here.'}
         if lesson:
@@ -1784,7 +1790,23 @@ def _slot_end(day, hhmm: str):
 
 
 def _already_logged(program: dict, day) -> bool:
-    return bool(sessions_between(program, day, day))
+    """Whether a day's slot has its session. An entry that names the slot
+    it was for (`slot_date`) counts for that day and no other -- a session
+    done today for tomorrow's window closes tomorrow's, not today's -- and
+    an entry without one counts for the day it happened."""
+    key = day.isoformat() if hasattr(day, 'isoformat') else str(day)
+    for s in program.get('sessions') or []:
+        if s.get('slot_date'):
+            if s['slot_date'] == key:
+                return True
+            continue
+        try:
+            d = datetime.datetime.fromtimestamp(float(s['ts'])).date().isoformat()
+        except (KeyError, TypeError, ValueError):
+            continue
+        if d == key:
+            return True
+    return False
 
 
 # --- What a hallway is allowed to know --------------------------------------

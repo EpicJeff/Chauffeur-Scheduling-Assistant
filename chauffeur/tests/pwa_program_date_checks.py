@@ -10,7 +10,12 @@ def check_program_dates(page, member, driver, output=None):
     pid, cid = 'dated-'+member, 'dated-slot-'+member
     storage.add_protected_commitment(dict(id=cid, member_id=member, title='Dated guitar',
         days_of_week=list(range(7)), time_start='11:00', time_end='13:00', active=True))
-    storage.add_program(dict(id=pid, member_id=member, title='Dated guitar', state='active',
+    # A library-backed run (the only shape a run has had since the program
+    # library split): storage.add_program drops `title` and `phases`, so a
+    # row written the old way loads unresolved and its windows carry no
+    # steps. library_run_fixture mints the library row and the bookmark.
+    from library_run_fixture import add_run
+    add_run(dict(id=pid, member_id=member, title='Dated guitar', state='active',
         phases=[dict(name='Chords', steps=['Tune up', 'Practice chord changes'])],
         shape=dict(sessions_per_week=7, minutes=30),
         baseline=dict(start_date=(today-datetime.timedelta(days=14)).isoformat()),
@@ -53,7 +58,8 @@ def check_program_dates(page, member, driver, output=None):
     sheet = page.locator('.pwa-prompt-overlay')
     assert sheet.get_by_text('Tomorrow, 11:00 AM', exact=True).is_visible()
     assert sheet.get_by_text('Practice chord changes', exact=True).is_visible()
-    assert sheet.locator('[data-done], [data-start]').count() == 0
+    assert sheet.locator('[data-done]').count() == 0, 'a session that has not happened cannot be marked done'
+    assert sheet.locator('[data-start]').count() == 1, 'but it can be started now, ahead of its window'
     sheet.locator('[data-close]').click()
     past = select(-1)
     row = past.locator('[data-myday-program="'+pid+'"]')
