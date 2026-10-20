@@ -192,6 +192,31 @@ def scenario_delete_invalidates_every_token():
     check(storage.commit_library_script(lid, _slot(lesson), t3, _data()), 'a fresh claim commits')
 
 
+def scenario_the_doors_refuse_a_write_for_a_source_deleted_under_them():
+    """The nightly retry acts for the run it serves. A deletion that lands
+    after the service's own check but before the door takes the lock must
+    still be refused: the check lives INSIDE claim, commit and replace, under
+    db_lock, so there is no window between the check and the write."""
+    from services import deletion
+    rid, lid, lesson = _reset()
+    with deletion.acting_for('program', rid):
+        token = storage.claim_library_script(lid, _slot(lesson))
+        check(token, 'a live source claims')
+        storage.programs_table.update({'deleting': True}, storage.Query().id == rid)
+        for door, args in (('commit_library_script', (lid, _slot(lesson), token, _data())),
+                           ('replace_library_script', (lid, _slot(lesson), token, _data())),
+                           ('claim_library_script', (lid, _slot(lesson)))):
+            try:
+                getattr(storage, door)(*args)
+                check(False, door + ' must raise Cancelled for a deleted source')
+            except deletion.Cancelled:
+                pass
+    check(not (storage.get_library_script(lid, _slot(lesson)) or {}).get('scenes'), 'nothing landed')
+    # without a carried source the same doors are untouched by the flag
+    token = storage.claim_library_script(lid, _slot(lesson))
+    check(token and storage.commit_library_script(lid, _slot(lesson), token, _data()), 'a source-free writer (the job) is unaffected')
+
+
 # --- generation ----------------------------------------------------------------
 
 def _fake_pool(answers):
@@ -1080,6 +1105,7 @@ if __name__ == '__main__':
     scenario_replace_is_in_place_and_conditional()
     scenario_an_edit_during_a_job_wins()
     scenario_delete_invalidates_every_token()
+    scenario_the_doors_refuse_a_write_for_a_source_deleted_under_them()
     scenario_a_short_script_is_stored_then_retried_once_and_replaced()
     scenario_retry_needs_allowance_and_a_worse_second_changes_nothing()
     scenario_a_full_length_script_costs_one_call_and_resets_attempts()

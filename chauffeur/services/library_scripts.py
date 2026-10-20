@@ -47,16 +47,6 @@ def _call(tier, settings, system, prompt):
                                       timeout_s=60, gemma_timeout_s=180, settings=settings, paid_ok=False)
 
 
-def _late_check():
-    """A late result never lands for a source that was deleted while the
-    model call ran: the nightly pass acts for the run it serves (see
-    retry_due), and deletion.check raises once that run is gone. The
-    per-program job carries no source and this is a no-op there -- a
-    library in use cannot be deleted, and an idle one being deleted is
-    caught by the storage doors' own liveness check."""
-    deletion.check()
-
-
 def generate_script(row: dict, lesson: dict, variant_label: str, settings: dict, *, allowance=None, spend=None):
     """One lesson's script, claimed, written and committed against its token. Returns the stored
     row or None. `allowance` is how many calls the caller still has; None means unbounded.
@@ -80,7 +70,6 @@ def generate_script(row: dict, lesson: dict, variant_label: str, settings: dict,
     else:
         origin = 'generated'
         prompt = pl.lesson_prompt(row, lesson, variant_label or '')
-    _late_check()
     token = storage.claim_library_script(row['id'], slot)
     if not token:
         return None
@@ -91,7 +80,6 @@ def generate_script(row: dict, lesson: dict, variant_label: str, settings: dict,
     if not isinstance(res, dict) or res.get('error'):
         counts = not (isinstance(res, dict) and (res.get('transient') or res.get('deferred')))
         existing = storage.get_library_script(row['id'], slot) or {}
-        _late_check()
         storage.commit_library_script(row['id'], slot, token, {
             'origin': origin, 'source_url': source_url, 'scenes': [],
             'attempts': int(existing.get('attempts') or 0) + (1 if counts else 0),
@@ -100,7 +88,6 @@ def generate_script(row: dict, lesson: dict, variant_label: str, settings: dict,
     scenes = pl.sanitize_script(res.get('scenes') or [], origin, minutes=minutes)
     if not scenes:
         existing = storage.get_library_script(row['id'], slot) or {}
-        _late_check()
         storage.commit_library_script(row['id'], slot, token, {'origin': origin, 'source_url': source_url, 'scenes': [],
                                                                'attempts': int(existing.get('attempts') or 0) + 1,
                                                                'note': 'Nothing in the script the model wrote survived the screens.'})
@@ -111,7 +98,6 @@ def generate_script(row: dict, lesson: dict, variant_label: str, settings: dict,
             'attempts': 0, 'note': '', 'minutes': int(round(est / 60))}
     if est < target * pl.SHORTFALL:
         data['note'] = f"runs about {int(round(est / 60))} minutes of {minutes}"
-    _late_check()
     token = storage.commit_library_script(row['id'], slot, token, data)
     if not token:
         return None
@@ -123,7 +109,6 @@ def generate_script(row: dict, lesson: dict, variant_label: str, settings: dict,
             more = pl.sanitize_script(again.get('scenes') or [], origin, minutes=minutes)
             est2 = pl.estimate_seconds(more)
             if more and est2 > est:
-                _late_check()
                 storage.replace_library_script(row['id'], slot, token, {
                     **data, 'scenes': more, 'model': again.get('_model') or data['model'], 'minutes': int(round(est2 / 60)),
                     'note': f"runs about {int(round(est2 / 60))} minutes of {minutes}" if est2 < target * pl.SHORTFALL else ''})
@@ -279,7 +264,7 @@ def retry_due(now, limit: int, *, start_offset: int = 1) -> int:
             try:
                 # Acting for the RUN this window serves: cleanup waits while
                 # the call runs, and a result arriving after the run's
-                # deletion is refused at the write (_late_check).
+                # deletion is refused at the write (the doors check the carried source under the lock).
                 with deletion.acting_for('program', run['id']):
                     out = generate_script(row, lesson, slot['variant_label'], settings, allowance=allowance, spend=spend)
             except deletion.Cancelled:

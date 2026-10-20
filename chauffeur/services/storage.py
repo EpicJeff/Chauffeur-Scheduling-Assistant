@@ -4041,6 +4041,7 @@ def _script_row(library_id, slot, data, claim, edited, row_id=None, created_at=N
 def claim_library_script(library_id: str, slot: dict):
     import uuid
     with db_lock, db.transaction():
+        deletion.check()   # a carried source deleted under us: refuse inside the lock
         if not _library_slot_alive(library_id, slot):
             return None
         cond = _library_script_query(library_id, slot)
@@ -4058,6 +4059,7 @@ def claim_library_script(library_id: str, slot: dict):
 def _guarded_replace(library_id, slot, token, data):
     import uuid
     with db_lock, db.transaction():
+        deletion.check()
         if not _library_slot_alive(library_id, slot):
             return ''
         cond = _library_script_query(library_id, slot)
