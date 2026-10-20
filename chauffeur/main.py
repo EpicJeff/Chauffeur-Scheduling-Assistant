@@ -7875,6 +7875,8 @@ def put_library_script_api(id: str, lesson_id: str, request: Request, body: dict
         raise HTTPException(status_code=404, detail='No such library program.')
     if not library.can_edit(row, actor):
         raise HTTPException(status_code=403, detail=library.EDIT_REFUSAL)
+    if row.get('archived'):
+        raise HTTPException(status_code=409, detail='This program is archived.')
     slot = _library_script_slot(lesson_id, body.get('variant_label', variant_label))
     existing = storage.get_library_script(id, slot) or {}
     origin = existing.get('origin') or ((row.get('source') or {}).get('origin') if (row.get('source') or {}).get('origin') == 'cited' else 'generated')
@@ -8139,8 +8141,12 @@ def _program_lesson_slot(row, slot, *, required=False):
 def _script_vars(run: dict) -> dict:
     member = storage.get_member(run.get('member_id') or '') or {}
     project = storage.get_project(run.get('project_id') or '') if run.get('project_id') else None
+    project_title = (project or {}).get('title') or ''
+    if not project_title and run.get('library_id'):
+        library_program = storage.get_library_program(run['library_id']) or {}
+        project_title = library_program.get('title') or ''
     names = str(member.get('name') or '').split()
-    return {'name': names[0] if names else '', 'project': (project or {}).get('title') or ''}
+    return {'name': names[0] if names else '', 'project': project_title}
 
 
 def _run_script(row, slot):
@@ -8158,7 +8164,7 @@ def _run_script(row, slot):
 @app.get("/api/programs/{program_id}/lesson")
 def get_program_lesson_api(program_id: str, phase_name: str = '',
                            unit_n: int = 0, session_label: str = '',
-                           request: Request = None, lesson_id: str = '', variant_label: str = ''):
+                           request: Request = None, lesson_id: str = '', variant_label: str = '', raw: int = 0):
     """Read a lesson only when its program is visible (access rule section 4).
     Hidden and missing programs both return 404. An unknown lesson slot or an
     unusable unit number still returns null, preserving the player fallback.
@@ -8179,7 +8185,10 @@ def get_program_lesson_api(program_id: str, phase_name: str = '',
     slot = _program_lesson_slot(row, {
         'phase_name': phase_name, 'unit_n': unit_n,
         'session_label': session_label, 'lesson_id': lesson_id, 'variant_label': variant_label})
-    lesson = _run_script(row, slot)
+    if raw == 1 and not row.get('library_id'):
+        lesson = _program_lesson_call(storage.get_program_lesson, row['id'], slot)
+    else:
+        lesson = _run_script(row, slot)
     return {"lesson": {k: lesson[k] for k in
                        ('scenes', 'origin', 'source_url', 'edited', 'minutes', 'note', 'attempts')
                        if k in lesson} if lesson else None}

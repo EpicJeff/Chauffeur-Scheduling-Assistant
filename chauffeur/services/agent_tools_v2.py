@@ -2713,7 +2713,11 @@ def propose_program(title: str, for_member_name: str = None,
     if voice and len(matches) == 1:
         choice['library_id'] = matches[0]['id']
         return _start_program_choice(choice, acting_member)
-    return _start_program_choice(choice, acting_member, make_new=True)
+    result = _start_program_choice(choice, acting_member, make_new=True)
+    if result.get('status') == 'success' and result.get('library_id'):
+        from services import library_scripts
+        library_scripts.write(result['library_id'], acting_member)
+    return result
 
 
 def _program_choice_question(choice):
@@ -2726,7 +2730,7 @@ def _program_choice_question(choice):
 
 
 def _start_program_choice(choice, actor, make_new=False, prepared=None):
-    """The caller's transaction also owns binding a waiting row to this run."""
+    """The caller owns choice binding and schedules scripts after its commit."""
     from services import storage, programs, library
     if make_new and actor.get('role') not in ('adult', 'parent'):
         return {'status': 'error', 'message': library.EDIT_REFUSAL, 'created': []}
@@ -2752,13 +2756,11 @@ def _start_program_choice(choice, actor, make_new=False, prepared=None):
         if not pid:
             # Roll back a freshly curated library row as well as adoption.
             raise ValueError('That project is no longer here.')
-    if make_new:
-        from services import library_scripts
-        library_scripts.write(lid, actor)
     member = storage.get_member(choice['member_id']) or {}
     notice = f"I started {member.get('name') or 'you'} on {curriculum['title']} from the library"
     message = (f"I made a new library program: {curriculum['title']}. " if make_new else notice + '. ')
     return {'status': 'success', 'id': pid, 'run_id': pid,
+            **({'library_id': lid} if make_new else {}),
             'message': message + "Nothing's claimed yet: see the footprint and approve it on the Programs page.",
             'notice': notice, 'created': [{'kind': 'program', 'id': pid}]}
 

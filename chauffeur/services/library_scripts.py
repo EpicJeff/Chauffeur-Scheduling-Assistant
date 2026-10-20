@@ -200,8 +200,8 @@ def _run(library_id, job_id, pairs, settings):
                 return
             try:
                 written = generate_script(row, lesson, label, settings)
-            except Exception as e:                 # never let one lesson kill the job
-                logger.exception("Library %s lesson %s failed: %s", library_id, lesson.get('id'), e)
+            except Exception:                     # never let one lesson kill the job
+                logger.exception("Library %s lesson %s failed", library_id, lesson.get('id'))
                 written = None
             done += 1
             if not (written and written.get('scenes')):

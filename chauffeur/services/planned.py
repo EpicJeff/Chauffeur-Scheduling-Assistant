@@ -1294,6 +1294,9 @@ def answer_program_choice(mid, choice_id, option, actor):
                         details = previous.get('result_json') or {}
                         _ask(mid, previous['name'], details.get('question') or '',
                              **{k: v for k, v in details.items() if k != 'question'})
+        if outcome.get('status') == 'success' and outcome.get('library_id'):
+            from services import library_scripts
+            library_scripts.write(outcome['library_id'], actor)
         continued = _continue_program_choice(mid, stage['id']) if stage is not None else {'status': 'success'}
         return {'status': 'success', 'run_id': result.get('run_id'), 'message': outcome['message'],
                 'continued': continued.get('status')}
