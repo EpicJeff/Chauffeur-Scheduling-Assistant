@@ -1628,11 +1628,11 @@ def scenario_a_preview_is_never_greeted():
     enough."""
     src = _read('components/lesson_player.html')
     import re
-    m = re.search(r'\n        open\(w, lesson, preview\) \{(.*?)\n        \},', src, re.S)
-    check(m, "open() body is findable")
+    m = re.search(r'\n        start\(\) \{(.*?)\n        \},', src, re.S)
+    check(m, "start() body is findable")
     body = m.group(1) if m else ''
     check('this.preview' in body and 'greetingLine' in body,
-          "the greeting is spoken from open()")
+          "the greeting is spoken from start()")
     check(re.search(r'if \(!this\.preview\)[^\n]*greetingLine', body),
           f"and only when this is a real session, got {body!r}")
 
@@ -2439,6 +2439,7 @@ def scenario_the_lesson_starts_the_players_own_player():
           "then asks which Home Assistant entity that turned into")
     m2 = re.search(r'\n        open\(w, lesson, preview\) \{(.*?)\n        \},',
                    src, re.S)
+    m2 = re.search(r'\n        start\(\) \{(.*?)\n        \},', src, re.S)
     check('startDeviceVoice' in (m2.group(1) if m2 else ''),
           "opened from a session, not from a tap somebody has to find")
 
@@ -2632,17 +2633,26 @@ def scenario_a_phone_or_computer_speaks_through_the_browser_until_it_opts_in():
     check('this.' not in body, f"and pure, got {body!r}")
     o = re.search(r'\n        open\(w, lesson, preview\) \{(.*?)\n        \},', src, re.S)
     ob = o.group(1) if o else ''
-    check('voiceChoice(' in ob and ob.index('unlockDevice()') < ob.index('startDeviceVoice()'),
-          "open() reads the choice and unlocks the player inside the Start tap, before the player is (re)started")
-    code_before = '\n'.join(l for l in ob[:ob.index('unlockDevice()')].splitlines() if not l.strip().startswith('//'))
+    check('voiceChoice(' in ob and 'this.started = false' in ob and 'greetingLine()' not in ob and 'enterScene()' not in ob,
+          "open() reads the choice and then WAITS: no greeting, no scene, until Start")
+    check('if (this.preview) this.start();' in ob, "a preview starts itself")
+    st = re.search(r'\n        start\(\) \{(.*?)\n        \},', src, re.S)
+    sb = st.group(1) if st else ''
+    check('chfPrimeVoice' in sb and 'this.unlockDevice()' in sb and 'this.deviceArmed = true' in sb
+          and sb.index('this.unlockDevice()') < sb.index('startDeviceVoice()') < sb.index('greetingLine()') < sb.index('enterScene()'),
+          "Start primes the browser voice, unlocks audio, arms, starts the device voice, greets, then enters the first scene")
+    code_before = '\n'.join(l for l in sb[:sb.index('this.unlockDevice()')].splitlines() if not l.strip().startswith('//'))
     check('await ' not in code_before, "nothing is awaited before the unlock spends the gesture")
+    check('data-lesson-start' in src and '@click="start()"' in src and 'x-show="openFlag && !started"' in src and 'x-show="started"' in src,
+          "the Start button is the first thing the session shows and the scene area waits for it")
+    adv = re.search(r'\n        advance\(\) \{(.*?)\n        \},', src, re.S)
+    check(adv and 'if (!this.started) return;' in adv.group(1), "nothing advances before Start")
     t = re.search(r'\n        toggleVoice\(\) \{(.*?)\n        \},', src, re.S)
     tb = t.group(1) if t else ''
     check("localStorage.setItem('chf-lesson-voice'" in tb and 'unlockDevice()' in tb and 'startDeviceVoice()' in tb,
           "the chip remembers the choice per device and unlocks + starts the player in the same tap")
-    check("this.deviceLookup === 'ready' && !this.deviceArmed" in tb and 'this.deviceArmed = true' in tb
-          and tb.index('this.deviceArmed = true') < tb.index('this.unlockDevice()') and "deviceSay('Argyle here.'" in tb,
-          "a ready-but-unarmed device is armed by its own tap: unlock inside the gesture, then one spoken line to prove it")
+    check('this.deviceArmed = true' in tb and 'tap to hear' not in src,
+          "the chip tap arms audio too; no second tap is ever asked for")
     check('x-text="voiceDetail()"' in src and 'this.lastSpeak = r.status' in src,
           "a detail line under the chip shows the local player's state and the speak route's last answer")
     node = shutil.which('node')
@@ -2669,9 +2679,9 @@ console.log(JSON.stringify(out));
     check(proc.returncode == 0, f"voiceChoice threw:\n{proc.stderr[-1500:]}")
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     check(out['panel'] is False, f"a panel is the house voice whatever is stored, got {out}")
-    check(out['fresh'] is True and out['optedOut'] is True and out['noStorage'] is True and out['throwing'] is True,
-          f"a fresh, opted-out, storage-less or private device speaks through the browser, got {out}")
-    check(out['optedIn'] is False, f"a device that chose itself speaks through its player, got {out}")
+    check(out['fresh'] is False and out['optedIn'] is False and out['noStorage'] is False and out['throwing'] is False,
+          f"a fresh, opted-in, storage-less or private device speaks in the house voice, got {out}")
+    check(out['optedOut'] is True, f"only a device that chose the browser speaks through it, got {out}")
 
 
 def scenario_the_browser_voice_is_woken_by_the_first_tap():
@@ -2756,8 +2766,8 @@ console.log(JSON.stringify(out));
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     check(out['local'].endswith('browser') and out['ready'].endswith('this device')
           and out['missing'].endswith('not set up') and out['starting'].endswith('starting…') and out['blank'].endswith('starting…')
-          and out['unarmed'].endswith('tap to hear'),
-          f"five honest readings, got {out}")
+          and out['unarmed'].endswith('this device'),
+          f"four honest readings and no second tap, got {out}")
 
 
 def scenario_the_device_lookup_is_bounded_and_has_a_second_rung():
@@ -2859,6 +2869,9 @@ def scenario_off_a_panel_the_browser_plays_the_house_voice_itself():
           and sb.index("if (!this.panel) {") < sb.index('Promise.race'),
           "off a panel the device is ready at once, before any Music Assistant lookup")
     check('x-show="!panel && canDeviceVoice && !preview"' in src, "a preview shows no device chip")
+    check('window.speechSynthesis.cancel()' in pb, "a clip silences the browser voice")
+    sl = re.search(r'\n        sayLocal\(text, lang, tone\) \{(.*?)\n        \},', src, re.S)
+    check(sl and '!this._voiceAudio.paused) this._voiceAudio.pause()' in sl.group(1), "and a browser line pauses a clip: one voice at a time")
     check('this.canDeviceVoice = !this.panel || (typeof MusicLogic !== \'undefined\')' in src,
           "the chip needs no player library off a panel")
     m = re.search(r'\n        clipRung\(voiceLocal, preview, armed\) \{(.*?)\n        \},', src, re.S)

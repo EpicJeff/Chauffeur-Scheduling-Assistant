@@ -8355,9 +8355,9 @@ def lesson_voice_api(body: dict = Body(default={})):
     desktop: the page plays the clip itself, so no Music Assistant player,
     no socket and no exposure step stand between the person and Argyle's
     voice (`announce.voice_clip`). Same screens and the same length cap as
-    `/api/lessons/speak`; a line in another language than the house voice
-    answers 409 so the browser can read it in a native voice; no engine or
-    no clip answers 503 and the browser reads it itself. Records nothing.
+    `/api/lessons/speak`; a line in another language is rendered by the
+    same engine in that language; no engine, no voice for it or no clip
+    answers 503 and the browser reads the line itself. Records nothing.
     """
     from fastapi.responses import Response as _Response
     from services import announce as _announce, program_lessons as _pl
@@ -8373,8 +8373,7 @@ def lesson_voice_api(body: dict = Body(default={})):
                             detail="That is not something this app says out loud.")
     res = _announce.voice_clip(text, lang)
     if res.get('status') != 'success':
-        code = res.get('code')
-        raise HTTPException(status_code=409 if code == 'other_language' else 503,
+        raise HTTPException(status_code=503,
                             detail=res.get('message') or "No house voice right now.")
     return _Response(content=res['audio'], media_type=res['content_type'],
                      headers={'Cache-Control': 'no-store'})

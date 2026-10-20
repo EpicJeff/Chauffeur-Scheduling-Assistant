@@ -148,7 +148,19 @@
          `check`, whose own three buttons carry .stop, but _SYSTEM asks the
          model for a check "near the end" and a generated script routinely
          ends on say/do/show. -->
-    <div class="flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-center gap-5 p-6 text-center lp-beat-in"
+    <!-- Start: the first thing a session shows. One tap, and only then
+         does anything speak or advance -- that tap is the user gesture a
+         browser demands before it will play audio, and a session that
+         opens on a Start button is the ordinary flow. -->
+    <div x-show="openFlag && !started" x-cloak
+         class="flex-1 min-h-0 flex flex-col items-center justify-center gap-4 p-6 text-center">
+        <div class="text-gray-300 text-base" x-text="(w && (w.unit_title || w.phase_name || w.title)) || 'Practice'"></div>
+        <button type="button" data-lesson-start @click="start()"
+                class="rounded-full bg-teal-600 text-white font-bold shadow-lg active:bg-teal-700"
+                :class="panel ? 'px-14 h-20 text-2xl' : 'px-10 h-14 text-lg'">Start</button>
+    </div>
+    <div x-show="started"
+         class="flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-center gap-5 p-6 text-center lp-beat-in"
          x-effect="idx, $nextTick(() => replayBeat($el))"
          @click="scene().type !== 'check' && !isLast() && advance()">
 
@@ -738,7 +750,8 @@ function lessonPlayer() {
         deviceLookup: '',    // '' | 'starting' | 'ready' | 'missing' -- what ensureDevicePlayer found
         deviceName: '',      // the player's Music Assistant name, for the not-set-up notice
         deviceWhy: '',       // 'not listed' | 'did not connect' -- which fact the notice states
-        deviceArmed: false,  // a non-panel device player has been unlocked by a tap AFTER it was built
+        deviceArmed: false,  // audio unlocked by the Start tap (and by the chip tap)
+        started: false,      // the Start tap has happened; nothing speaks or advances before it
         lastSpeak: '',       // what the speak route last answered, for the voice detail line
         // A wait beat's on-screen countdown. Cosmetic only -- the call
         // into the room is armed on the server and outlives this.
@@ -812,21 +825,33 @@ function lessonPlayer() {
             let stored = null;
             try { stored = localStorage; } catch (e) { stored = null; }
             this.voiceLocal = this.voiceChoice(this.panel, stored).local;
-            // The Start tap IS the gesture browsers demand before audio
-            // may play. Unlock an already-built device player here,
-            // synchronously, before any await spends that gesture.
-            if (!this.voiceLocal) this.unlockDevice();
-            // Not awaited: the session starts on time and the first
-            // lines come out of the browser, which is what would have
-            // happened anyway. Once the entity resolves, everything from
-            // that beat on is the house voice.
+            // Nothing speaks or advances until Start is tapped: that tap is
+            // the one gesture browsers demand before audio may play, and
+            // a session that begins with a Start button is the ordinary
+            // flow rather than a chip somebody has to discover. A preview
+            // (a look at a lesson nobody is having) starts itself.
+            this.started = false;
+            if (this.preview) this.start();
+        },
+
+        // The Start tap. Synchronous up to the first spoken line: the
+        // browser voice is primed, the clip element and any device player
+        // are unlocked, and only then is anything awaited.
+        start() {
+            if (this.started) return;
+            this.started = true;
+            if (!this.preview) {
+                if (typeof window.chfPrimeVoice === 'function') window.chfPrimeVoice();
+                this.unlockDevice();
+                this.deviceArmed = true;
+            }
+            // Not awaited: the session starts on time and the first lines
+            // come out of the browser if the house voice is not ready yet.
             if (!this.voiceLocal || this.panel) this.startDeviceVoice();
             // Asked ONCE per device, and never again whatever the answer
             // was -- a household that wants the panel to stay quiet says
             // so by cancelling, and the header chip is how they change
-            // their mind later. Not awaited: the session starts on time
-            // and this first one's session-level lines come out of the
-            // panel itself, which is what would have happened anyway.
+            // their mind later.
             if (this.panel && !this.preview && !this.room) this.maybeAskRoom();
             // A preview is never greeted. Everything else about it plays
             // identically -- same scenes, same voice on each of them --
@@ -1385,34 +1410,25 @@ function lessonPlayer() {
         // accepts the line and the phone plays it to nobody, which is the
         // "no voice at all" a phone gave on 2026-10-19. A session-level
         // browser override wins outright.
-        // Pure (no `this`): a panel speaks through the house; any other
-        // surface speaks through the browser unless THIS device said
-        // "this device" once (kept in localStorage, per device, because a
-        // phone that plays is a phone that plays tomorrow too).
+        // Pure (no `this`): the house voice everywhere, unless THIS device
+        // chose the browser's voice (kept in localStorage, per device).
+        // The Start tap is what unlocks audio, so no surface has to earn
+        // the house voice with a second tap any more.
         voiceChoice(panel, storage) {
             if (panel) return {local: false, stored: ''};
             let v = '';
             try { v = (storage && storage.getItem('chf-lesson-voice')) || ''; } catch (e) { v = ''; }
-            return {local: v !== 'device', stored: v};
+            return {local: v === 'browser', stored: v};
         },
         // A tap on the chip: swap, remember, and -- when swapping TO the
         // device -- unlock and start its player inside this very gesture.
         toggleVoice() {
-            // Ready but never unlocked by a tap taken AFTER the player was
-            // built: this tap is that gesture. Arm it, unlock inside the
-            // gesture, and say one line through it so the person hears at
-            // once whether this device really plays.
-            if (!this.voiceLocal && this.deviceLookup === 'ready' && !this.deviceArmed) {
-                this.deviceArmed = true;
-                this.unlockDevice();
-                this.deviceSay('Argyle here.', '', this.scene().tone);
-                return;
-            }
             this.voiceLocal = !this.voiceLocal;
             try { localStorage.setItem('chf-lesson-voice', this.voiceLocal ? 'browser' : 'device'); } catch (e) {}
             if (!this.voiceLocal) {
                 this.deviceLookup = this.deviceEntity ? 'ready' : 'starting';
                 this.unlockDevice();
+                this.deviceArmed = true;
                 this.startDeviceVoice();
             }
         },
@@ -1497,6 +1513,7 @@ function lessonPlayer() {
                 if (this._voiceUrl) { try { URL.revokeObjectURL(this._voiceUrl); } catch (e) {} }
                 this._voiceUrl = URL.createObjectURL(blob);
                 a.pause();
+                try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) {}
                 a.src = this._voiceUrl;
                 a.muted = false;
                 a.playbackRate = tone === 'calm' ? 0.9 : 1.0;
@@ -1604,7 +1621,6 @@ function lessonPlayer() {
                 const bits = [];
                 if (!this.panel) {
                     bits.push('house voice in this browser');
-                    if (!this.deviceArmed) bits.push('tap the chip once more to unlock audio');
                     if (this.lastSpeak) bits.push('last line: ' + this.lastSpeak);
                     return bits.join(' · ');
                 }
@@ -1616,7 +1632,7 @@ function lessonPlayer() {
                     if (lp.playerId) bits.push('id ' + String(lp.playerId).slice(-6));
                 }
                 bits.push(this.deviceEntity ? ('entity ' + this.deviceEntity.replace('media_player.', '')) : 'no entity');
-                if (!this.deviceArmed && this.deviceLookup === 'ready' && !this.panel) bits.push('tap the chip once more to unlock audio');
+
                 if (this.lastSpeak) bits.push('last line: ' + this.lastSpeak);
                 return bits.join(' · ');
             } catch (e) { return ''; }
@@ -1705,7 +1721,7 @@ function lessonPlayer() {
         // said so.
         voiceChip(voiceLocal, lookup, armed) {
             if (voiceLocal) return '🔈 browser';
-            if (lookup === 'ready') return armed ? '🔈 this device' : '🔈 tap to hear';
+            if (lookup === 'ready') return '🔈 this device';
             if (lookup === 'missing') return '🔈 not set up';
             return '🔈 starting…';
         },
@@ -1810,6 +1826,9 @@ function lessonPlayer() {
                 // at all" on a phone (2026-10-19).
                 const busy = !!(synth.speaking || synth.pending);
                 if (busy) synth.cancel();
+                // One voice at a time: a clip still playing yields to the
+                // browser line (the card word said over Argyle, 2026-10-20).
+                try { if (this._voiceAudio && !this._voiceAudio.paused) this._voiceAudio.pause(); } catch (e) {}
                 const u = new SpeechSynthesisUtterance(String(text));
                 if (lang) {
                     const v = (synth.getVoices() || []).find(
@@ -1919,6 +1938,7 @@ function lessonPlayer() {
         },
 
         advance() {
+            if (!this.started) return;
             this.stopSound();
             if (this.idx < this.scenes.length - 1) { this.idx++; this.enterScene(); }
             else this.finish();

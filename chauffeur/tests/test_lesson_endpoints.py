@@ -737,8 +737,8 @@ def scenario_the_voice_route_renders_the_house_voice_as_audio():
     Assistant only as a Music Assistant player was silence with a
     registration. The browser is its own speaker, so this route renders
     one screened line through the SAME engine, language and voice the
-    announce path uses and hands the bytes back; another language answers
-    409 (the browser reads it natively), no engine or no clip answers 503,
+    announce path uses and hands the bytes back; another language is
+    rendered by the same engine in that language, no engine or no clip answers 503,
     and the usual screens and cap apply. Runs the real route through
     TestClient with HA stubbed at ha_api."""
     import main
@@ -758,10 +758,14 @@ def scenario_the_voice_route_renders_the_house_voice_as_audio():
         check(calls and calls[0][1] == '/tts_get_url' and calls[0][2]['engine_id'] == 'tts.edge'
               and calls[0][2]['language'] == 'en-US' and calls[0][2]['options'] == {'voice': 'en-US-AndrewNeural'},
               f"rendered through the announce path's own engine, language and voice, got {calls}")
+        calls.clear()
         r = c.post('/api/lessons/voice', json={'text': 'Bom dia.', 'lang': 'pt-BR'})
-        check(r.status_code == 409, f"another language is 409 so the browser reads it natively, got {r.status_code}")
+        check(r.status_code == 200 and calls[0][2]['language'] == 'pt-BR' and 'options' not in calls[0][2],
+              f"another language is rendered by the same engine in that language with its own voice, got {r.status_code} {calls}")
+        calls.clear()
         r = c.post('/api/lessons/voice', json={'text': 'Hello there.', 'lang': 'en-GB'})
-        check(r.status_code == 200, f"a same-language tag is fine, got {r.status_code}")
+        check(r.status_code == 200 and calls[0][2]['language'] == 'en-US' and calls[0][2]['options'] == {'voice': 'en-US-AndrewNeural'},
+              f"a same-language tag keeps the house voice, got {calls}")
         r = c.post('/api/lessons/voice', json={'text': ''})
         check(r.status_code == 400, "nothing to say is 400")
         r = c.post('/api/lessons/voice', json={'text': 'x' * 300})

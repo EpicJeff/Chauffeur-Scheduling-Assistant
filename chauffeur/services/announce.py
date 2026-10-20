@@ -200,10 +200,12 @@ def voice_clip(message: str, lang: str = '') -> dict:
     the clip from HA's own tts cache with the token attached.
 
     `lang` is the line's own language tag when the script marked one. A
-    line in another language than the pipeline voice speaks answers
-    `other_language` rather than an English voice reading Portuguese; the
-    caller's browser picks a native voice for it instead. No HA, no engine,
-    no clip: `unavailable`, and the caller falls back the same way.
+    line in another language than the pipeline voice is rendered by the
+    same engine in that language with the engine's own voice for it,
+    never the English voice reading Portuguese; an engine with no voice
+    for it fails the render and the caller's browser reads it natively.
+    No HA, no engine, no clip: `unavailable`, and the caller falls back
+    the same way.
     """
     message = (message or '').strip()
     if not message:
@@ -212,16 +214,20 @@ def voice_clip(message: str, lang: str = '') -> dict:
     if not tts:
         return {'status': 'error', 'code': 'unavailable',
                 'message': "No text-to-speech engine is set up in Home Assistant."}
-    want = (lang or '').strip().lower()[:2]
-    have = (language or '').strip().lower()[:2]
-    if want and have and want != have:
-        return {'status': 'error', 'code': 'other_language',
-                'message': f"The house voice speaks {language}, not {lang}."}
+    want = (lang or '').strip()
+    have = (language or '').strip()
     body = {'engine_id': tts, 'message': message}
-    if language:
-        body['language'] = language
-    if voice:
-        body['options'] = {'voice': voice}
+    if want and have and want.lower()[:2] != have.lower()[:2]:
+        # Another language: the SAME engine, its own voice for that
+        # language (Edge/Azure, Piper and Google all carry one), never the
+        # pipeline's English voice reading Portuguese. If the engine has
+        # none the render fails below and the browser reads it natively.
+        body['language'] = want
+    else:
+        if language:
+            body['language'] = language
+        if voice:
+            body['options'] = {'voice': voice}
     res = ha_api._request('POST', '/tts_get_url', json_body=body)
     path = (res or {}).get('path') or (res or {}).get('url') or ''
     if not path:
