@@ -1560,14 +1560,18 @@ def generate_due(now=None, limit: int = MAX_SLOTS_PER_PASS,
         if not _lessons_switched_on(settings):
             return 0
         storage.set_app_state('program_lessons_swept', marker)
-        wrote = 0
+        from services import library_scripts
+        wrote = library_scripts.retry_due(now, limit)
+        # unconverted runs keep the legacy branch
         spent = 0
         for row, w, unit in _windows_to_scan(now, start_offset, 2):
+            if row.get('library_id'):
+                continue
             slot = slot_of(w, unit_n=int((unit or {}).get('n') or 0))
             if not needs_lesson(row['id'], slot):
-                continue          # costs one storage read, never a call
+                continue
             if spent >= max(0, int(limit or 0)):
-                break             # tomorrow night sees the rest
+                break
             spent += 1
             if generate_for(row, w, unit, settings):
                 wrote += 1
@@ -1577,112 +1581,3 @@ def generate_due(now=None, limit: int = MAX_SLOTS_PER_PASS,
     except Exception as e:
         print(f"[lessons] sweep failed: {e}")
         return 0
-
-
-def _lesson_skip_reason(program_id: str, slot: dict) -> str:
-    """Why `needs_lesson` said no for this slot, in words. Called only
-    after it already has, to name which of its two conditions (see its own
-    docstring) applied -- a slot that already carries a script, edited or
-    not, versus one that has burned MAX_ATTEMPTS chargeable failures --
-    never to re-decide the boolean itself."""
-    from services import storage
-    existing = storage.get_program_lesson(program_id, slot) or {}
-    if existing.get('edited') or existing.get('scenes'):
-        return 'already has a lesson'
-    return 'attempts exhausted'
-
-
-def sweep_report(now=None, start_offset: int = 0, days: int = 3,
-                 limit: int = MAX_SLOTS_PER_PASS, force: bool = False, viewer=None) -> dict:
-    """generate_due, but SEEN. A person who just changed a prompt or a
-    screen cannot wait for tonight to find out what it does now -- this
-    runs the identical scan, through the identical two functions
-    (`needs_lesson`, `generate_for`) generate_due itself calls, and names
-    every slot it touched: the program, the phase, the session label, the
-    unit and the window's date, plus either what got written (the origin
-    and how many scenes survived `sanitize_script`) or why nothing did
-    (already has a lesson, attempts exhausted, over this pass's own limit,
-    or the model came back with nothing usable).
-
-    `force` bypasses ONLY the day marker, never the two settings switches:
-    `_lessons_switched_on` is the exact predicate generate_due itself is
-    built from, so a forced call can never run a pass generate_due would
-    have refused. Without `force` this self-throttles exactly like
-    generate_due, sharing its own marker -- a real pass, forced or
-    nightly, earns the same `program_lessons_swept` date either way, so a
-    unscoped run at 3pm and the 300s loop's own pass later that night do not
-    both spend a full pass on the same slots twice: whatever the forced
-    run's own `limit` left undone is exactly what the nightly pass, or
-    tomorrow night's, still picks up.
-
-    A viewer-scoped manual pass leaves the household day marker alone so
-    unseen programs remain eligible for the nightly pass.
-
-    `start_offset=0` is the other half of what makes this a different
-    question than generate_due's: today's own windows, not only
-    tomorrow's, so the button behind this shows the very next lesson for
-    every active program rather than nothing until this evening's windows
-    have passed. `days=3` widens the far edge to match -- one more day
-    than generate_due's own two-day lookahead, to cover the same real
-    span now that the scan starts a day earlier.
-    """
-    import datetime
-    from services import storage
-    now = now or datetime.datetime.now()
-    marker = now.date().isoformat()
-    if not force and (storage.get_app_state('program_lessons_swept')
-                      or '') == marker:
-        return {'wrote': 0, 'skipped': 0, 'slots': []}
-    try:
-        settings = storage.get_settings() or {}
-        if not _lessons_switched_on(settings):
-            return {'wrote': 0, 'skipped': 0, 'slots': []}
-        if viewer is None:
-            # A person's filtered pass cannot mark unseen programs as swept.
-            storage.set_app_state('program_lessons_swept', marker)
-        wrote = skipped = spent = 0
-        slots = []
-        for row, w, unit in _windows_to_scan(now, start_offset, days):
-            if viewer is not None:
-                from services import access
-                if not access.record_visible('program', row, viewer):
-                    continue
-            slot = slot_of(w, unit_n=int((unit or {}).get('n') or 0))
-            entry = {'program': row.get('title') or 'Practice',
-                     # The report otherwise names the program only by
-                     # TITLE, which is not an id and is not guaranteed
-                     # unique -- a client wanting to preview what a row
-                     # actually wrote needs this to call the same scoped
-                     # GET /api/programs/{id}/lesson the hand editor
-                     # already uses, rather than guessing an id from a
-                     # string a household could give two programs at once.
-                     'program_id': row.get('id') or '',
-                     'phase': w.get('phase_name') or '',
-                     'session_label': w.get('session_label') or '',
-                     'unit_n': int(w.get('unit_n') or 0),
-                     **{k: slot[k] for k in ('lesson_id', 'variant_label') if k in slot},
-                     'date': w.get('date') or ''}
-            if not needs_lesson(row['id'], slot):
-                entry['skipped'] = _lesson_skip_reason(row['id'], slot)
-                skipped += 1
-            elif spent >= max(0, int(limit or 0)):
-                entry['skipped'] = 'over the pass limit'
-                skipped += 1
-            else:
-                spent += 1
-                lid = generate_for(row, w, unit, settings)
-                if lid:
-                    wrote += 1
-                    saved = storage.get_program_lesson(row['id'], slot) or {}
-                    entry['origin'] = saved.get('origin') or ''
-                    entry['scenes'] = len(saved.get('scenes') or [])
-                else:
-                    entry['skipped'] = 'generation returned nothing'
-                    skipped += 1
-            slots.append(entry)
-        return {'wrote': wrote, 'skipped': skipped, 'slots': slots}
-    except deletion.Cancelled:
-        raise
-    except Exception as e:
-        print(f"[lessons] sweep report failed: {e}")
-        return {'wrote': 0, 'skipped': 0, 'slots': []}

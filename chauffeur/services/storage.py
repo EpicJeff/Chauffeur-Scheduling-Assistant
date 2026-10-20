@@ -573,6 +573,7 @@ with db_lock:
     # or bookkeeping (see _check_program_keys), and a phase's worth of
     # scripts is both.
     program_lessons_table = db.table('program_lessons')
+    library_scripts_table = db.table('library_scripts')
 
     if BACKEND != 'sqlite':
         fix_corrupted_db(ROUTES_DB_PATH)
@@ -3794,9 +3795,14 @@ def update_library_program(library_id: str, data: dict) -> bool:
 
 
 def delete_library_program(library_id: str):
-    with db_lock:
+    with db_lock, db.transaction():
         deletion.check()
         library_programs_table.remove(Query().id == library_id)
+        library_scripts_table.remove(Query().library_id == library_id)
+        jobs = get_app_state('library_script_jobs') or {}
+        if isinstance(jobs, dict) and library_id in jobs:
+            del jobs[library_id]
+            set_app_state('library_script_jobs', jobs)
 
 
 def add_program(data: dict) -> str:
@@ -3999,6 +4005,113 @@ def delete_program_lessons(program_id: str) -> int:
         q = Query()
         deletion.check()
         gone = program_lessons_table.remove(q.program_id == program_id)
+        return len(gone) if isinstance(gone, list) else int(gone or 0)
+
+def _library_script_query(library_id: str, slot: dict):
+    slot = slot or {}
+    q = Query()
+    return ((q.library_id == library_id) & (q.lesson_id == str(slot.get('lesson_id') or ''))
+            & (q.variant_label == str(slot.get('variant_label') or '')))
+
+
+def _library_slot_alive(library_id: str, slot: dict) -> bool:
+    row = get_library_program(library_id)
+    return bool(row and not row.get('archived')
+                and any(l.get('id') == (slot or {}).get('lesson_id') for l in row.get('lessons') or []))
+
+
+def _script_row(library_id, slot, data, claim, edited, row_id=None):
+    import uuid
+    return {'id': row_id or uuid.uuid4().hex, 'library_id': library_id,
+            'lesson_id': str(slot.get('lesson_id') or ''), 'variant_label': str(slot.get('variant_label') or ''),
+            'origin': data.get('origin') or 'generated', 'source_url': data.get('source_url') or '',
+            'scenes': list(data.get('scenes') or []), 'edited': edited, 'model': data.get('model') or '',
+            'attempts': int(data.get('attempts') or 0), 'note': str(data.get('note') or ''),
+            'minutes': int(data.get('minutes') or 0), 'claim': claim, 'created_at': time.time()}
+
+
+def claim_library_script(library_id: str, slot: dict):
+    import uuid
+    with db_lock, db.transaction():
+        if not _library_slot_alive(library_id, slot):
+            return None
+        cond = _library_script_query(library_id, slot)
+        existing = library_scripts_table.search(cond)
+        if existing and (existing[0].get('scenes') or existing[0].get('edited')):
+            return None
+        token = uuid.uuid4().hex
+        if existing:
+            library_scripts_table.update({'claim': token}, cond)
+        else:
+            library_scripts_table.insert(_script_row(library_id, slot, {}, token, False))
+        return token
+
+
+def _guarded_replace(library_id, slot, token, data, *, allow_edited):
+    import uuid
+    with db_lock, db.transaction():
+        if not _library_slot_alive(library_id, slot):
+            return ''
+        cond = _library_script_query(library_id, slot)
+        existing = library_scripts_table.search(cond)
+        if not existing or existing[0].get('claim') != token:
+            return ''
+        if existing[0].get('edited') and not allow_edited:
+            return ''
+        new = uuid.uuid4().hex
+        library_scripts_table.update(_script_row(library_id, slot, data, new, False, row_id=existing[0]['id']), cond)
+        return new
+
+
+def commit_library_script(library_id: str, slot: dict, token: str, data: dict) -> str:
+    """A generated success or a failure record, against the token the claim handed out.
+    A failure (no scenes) is refused when the row already holds scenes."""
+    with db_lock, db.transaction():
+        existing = library_scripts_table.search(_library_script_query(library_id, slot))
+        if existing and existing[0].get('scenes') and not (data or {}).get('scenes'):
+            return ''
+        return _guarded_replace(library_id, slot, token, data or {}, allow_edited=False)
+
+
+def replace_library_script(library_id: str, slot: dict, token: str, data: dict) -> str:
+    return _guarded_replace(library_id, slot, token, data or {}, allow_edited=False)
+
+
+def edit_library_script(library_id: str, slot: dict, data: dict) -> str:
+    import uuid
+    with db_lock, db.transaction():
+        if not _library_slot_alive(library_id, slot):
+            return ''
+        cond = _library_script_query(library_id, slot)
+        existing = library_scripts_table.search(cond)
+        new = uuid.uuid4().hex
+        row = _script_row(library_id, slot, data or {}, new, True, row_id=existing[0]['id'] if existing else None)
+        if existing:
+            library_scripts_table.update(row, cond)
+        else:
+            library_scripts_table.insert(row)
+        return new
+
+
+def get_library_script(library_id: str, slot: dict):
+    with db_lock:
+        res = library_scripts_table.search(_library_script_query(library_id, slot))
+        return dict(res[0]) if res else None
+
+
+def get_library_scripts(library_id: str) -> list:
+    with db_lock:
+        return [dict(r) for r in library_scripts_table.search(Query().library_id == library_id)]
+
+
+def delete_library_script(library_id: str, slot: dict) -> bool:
+    with db_lock:
+        return bool(library_scripts_table.remove(_library_script_query(library_id, slot)))
+
+
+def delete_library_scripts(library_id: str) -> int:
+    with db_lock:
+        gone = library_scripts_table.remove(Query().library_id == library_id)
         return len(gone) if isinstance(gone, list) else int(gone or 0)
 
 # --- Shopping lists (meals & provisioning arc M1) ---

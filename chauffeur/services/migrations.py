@@ -645,6 +645,26 @@ def migrate_program_library_v2499():
     return converted
 
 
+def migrate_library_scripts_v2499():
+    """Every per-run script of a library run goes; the library job rewrites them from public inputs.
+    Edited rows are logged by id, never their text. Idempotent."""
+    from services import storage
+    with storage.db_lock:
+        library_runs = {r['id'] for r in storage.programs_table.all() if r.get('library_id')}
+        gone = edited = 0
+        for doc in storage.program_lessons_table.all():
+            if doc.get('program_id') not in library_runs:
+                continue
+            if doc.get('edited'):
+                edited += 1
+                logger.info(f"[migrations] library script edit retired: run {doc.get('program_id')} lesson {doc.get('lesson_id')} "
+                            f"variant {doc.get('variant_label')!r} scenes {len(doc.get('scenes') or [])} row {doc.get('id')}")
+            storage.program_lessons_table.remove(doc_ids=[doc.doc_id])
+            gone += 1
+    if gone:
+        logger.info(f"[migrations] library scripts: {gone} per-run rows retired ({edited} hand-edited)")
+
+
 async def run_all_migrations():
     """Runs all data migrations in the background after startup"""
     await asyncio.sleep(5) # Let the app start up completely
@@ -718,3 +738,7 @@ async def run_all_migrations():
         migrate_program_library_v2499()
     except Exception as e:
         logger.error(f"Error converting program library: {e}")
+    try:
+        migrate_library_scripts_v2499()
+    except Exception as e:
+        logger.error(f"Error retiring per-run library scripts: {e}")

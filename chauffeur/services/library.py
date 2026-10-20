@@ -133,6 +133,8 @@ def create(fields, actor):
     if prepared.get('status') != 'success':
         return prepared
     lid = storage.add_library_program(prepared['program'])
+    from services import library_scripts
+    library_scripts.write(lid, actor)
     _invalidate()
     return {'status': 'success', 'program': storage.get_library_program(lid),
             'message': prepared['message']}
@@ -173,9 +175,30 @@ def in_use_message(library_id, viewer):
     return f"In use by {names}'s project" if names else 'In use by another project'
 
 
+def _script_view(row):
+    from services import library_scripts
+    scripts = {}
+    by_slot = {(s['lesson_id'], s['variant_label']): s for s in storage.get_library_scripts(row['id'])}
+    job = library_scripts.job_state(row['id'])
+    for lesson, label in library_scripts.slots_of(row):
+        s = by_slot.get((lesson['id'], label)) or {}
+        if job and job.get('lesson_id') == lesson['id'] and (job.get('variant_label') or '') == label:
+            state = 'writing'
+        elif s.get('scenes'):
+            state = 'ready'
+        elif s.get('attempts') or s.get('note'):
+            state = 'failed'
+        else:
+            state = 'none'
+        scripts.setdefault(lesson['id'], {})[label] = {'state': state, 'minutes': int(s.get('minutes') or 0), 'note': s.get('note') or '',
+                                                        'origin': s.get('origin') or '', 'edited': bool(s.get('edited'))}
+    return scripts, job
+
+
 def _view(row, viewer):
     """A library row as one viewer reads it: runners filtered, and what they may do."""
-    return {**row, 'runners': runners(row['id'], viewer), 'can_edit': can_edit(row, viewer),
+    scripts, job = _script_view(row)
+    return {**row, 'scripts': scripts, 'writing': job, 'runners': runners(row['id'], viewer), 'can_edit': can_edit(row, viewer),
             'made_for_line': made_for_line(row.get('made_for')),
             'in_use': in_use_message(row['id'], viewer)}
 

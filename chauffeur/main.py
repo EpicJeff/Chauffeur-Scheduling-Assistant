@@ -1146,6 +1146,7 @@ async def deletion_maintenance_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from services import planned
+    from services import library_scripts; library_scripts.clear_jobs()
     planned.reconcile()
     deletion_task = asyncio.create_task(deletion_maintenance_loop())
     task = asyncio.create_task(poll_schedule())

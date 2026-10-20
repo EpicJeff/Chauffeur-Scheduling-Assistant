@@ -16,6 +16,13 @@ READERS = [
           ('POST', '/api/library/{id}/archive'), ('POST', '/api/library/{id}/lessons'),
           ('PATCH', '/api/library/{id}/lessons/{lesson_id}'), ('DELETE', '/api/library/{id}/lessons/{lesson_id}'),
           ('POST', '/api/library/{id}/lessons/order')]],
+    *[((F, name), 'INTERNAL', ('program',), 'public library script generation or resolution; callers own access') for name in [
+        'services.library_scripts.needs_script', 'services.library_scripts.slots_of',
+        'services.library_scripts.generate_script', 'services.library_scripts.write',
+        'services.library_scripts._run', 'services.library_scripts.retry_due',
+        'services.library_scripts.script_for_run', 'services.library._script_view']],
+    ((F, 'services.migrations.migrate_library_scripts_v2499'), 'INTERNAL', ('program',),
+     'retires private-derived per-run scripts; logs ids and scene counts only'),
     ((F, 'services.library.runners'), '4.1-signed-in', ('program',), 'project_visible and record_view'),
     ((F, 'services.library.in_use_message'), '4.1-signed-in', ('program',), "names only library.runners' visible runners"),
     ((F, 'services.migrations.migrate_program_library_v2499'), 'INTERNAL', ('program',), 'startup migration; no viewer, ids and curricula only'),

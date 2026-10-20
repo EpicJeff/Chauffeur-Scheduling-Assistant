@@ -1098,66 +1098,6 @@ def scenario_slot_steps_matches_the_rotation_vs_flat_branch_the_readonly_view_us
     check('ph.steps || []' in body, "and falls back to the flat phase steps when there is no label")
 
 
-def scenario_sweep_report_play_tap_only_on_rows_that_wrote_something():
-    """After a forced run, each row that produced a lesson should be
-    playable; a skipped row -- including one skipped because it already
-    had a lesson, which is the editor's own Play to offer, not this
-    report's -- has nothing this tap promises to show. Scoped to the
-    sweep-report's own row template, bounded by its closing tag."""
-    import re
-    # The forced-sweep report moved into the Programs settings drawer
-    # (components/programs_settings.html) with the Projects drawer.
-    src = _read('components/programs_page.html') + _read('components/programs_settings.html')
-    m = re.search(
-        r'<template x-for="\(slot, idx\) in \(sweepReport \? sweepReport\.slots : \[\]\)"'
-        r'[\s\S]*?</template>', src)
-    check(m, "the sweep-report row template is findable")
-    block = m.group(0) if m else ''
-    check('playSweepSlot(slot)' in block, "the block offers a Play tap at all")
-    # The skipped row is a bare, childless div -- x-text sets its whole
-    # content -- verified unchanged, so nothing tappable could have been
-    # added to it; only its ORIGIN sibling could have gained the button.
-    check('<div x-show="!slot.origin" class="text-amber-400" x-text="slot.skipped"></div>' in block,
-          "the skipped row stays a bare label with nothing added to it")
-    origin_pos = block.find('x-show="slot.origin"')
-    skipped_pos = block.find('x-show="!slot.origin"')
-    play_pos = block.find('playSweepSlot(slot)')
-    check(-1 not in (origin_pos, skipped_pos, play_pos), "all three landmarks are present")
-    check(origin_pos < play_pos < skipped_pos,
-          "the Play tap sits inside the origin (wrote-something) row, before "
-          "the skipped row begins")
-
-
-def scenario_play_sweep_slot_fetches_by_program_id_and_previews():
-    """The report entry itself carries no scenes and names a program only
-    by TITLE -- not an id, and not guaranteed unique -- so playSweepSlot
-    has to fetch through the `program_id` sweep_report now names, exactly
-    the scoped GET the editor's own playLesson uses, and open in preview."""
-    import re
-    src = _read('components/programs_page.html')
-    m = re.search(r'async playSweepSlot\(slot\)\s*\{(.*?)\n                \},', src, re.S)
-    check(m, "playSweepSlot is findable")
-    body = m.group(1) if m else ''
-    check('slot.program_id' in body, "it fetches by the id sweep_report now names")
-    check('fetch(' in body, "through a real fetch")
-    check('preview: true' in body, "and opens the player in preview")
-
-
-def scenario_sweep_report_entries_carry_a_program_id_for_the_play_tap():
-    """The report otherwise names a program only by TITLE, so a client
-    wanting to preview what a row wrote could not resolve which program to
-    call GET /api/programs/{id}/lesson on. Checked by source, the same way
-    this file already checks a backend function it does not execute
-    (scenario_the_wall_reads_the_slot_key_off_the_window, above) rather
-    than re-running the whole sweep fixture machinery
-    test_program_lessons.py already owns end to end."""
-    import inspect
-    from services import program_lessons
-    src = inspect.getsource(program_lessons.sweep_report)
-    check("'program_id': row.get('id')" in src,
-          "each report entry carries the program's real id")
-
-
 # ── Family Day / calendar: the Start tap in the shared details dialog ──────
 #
 # The lesson player was reachable from Programs, the wall's programs card
@@ -3323,9 +3263,6 @@ if __name__ == '__main__':
     scenario_the_lesson_editor_offers_a_play_tap()
     scenario_play_lesson_reads_storage_fresh_never_the_unsaved_draft()
     scenario_slot_steps_matches_the_rotation_vs_flat_branch_the_readonly_view_uses()
-    scenario_sweep_report_play_tap_only_on_rows_that_wrote_something()
-    scenario_play_sweep_slot_fetches_by_program_id_and_previews()
-    scenario_sweep_report_entries_carry_a_program_id_for_the_play_tap()
     scenario_family_calendar_offers_a_start_tap_for_practice()
     scenario_start_tap_is_wired_from_the_real_practice_payload()
     scenario_start_practice_session_reuses_the_two_shapes_its_siblings_already_use()
