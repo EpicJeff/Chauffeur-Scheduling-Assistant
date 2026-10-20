@@ -105,6 +105,17 @@
                 :class="room ? 'bg-teal-500/20 border-teal-500/40 text-teal-300'
                              : 'bg-gray-800 border-gray-700 text-gray-400'"
                 x-text="room ? ('🔈 ' + room) : 'Set room'"></button>
+        <!-- Which voice this session is using when the device itself is a
+             player: this phone (Argyle through the handset's own Music
+             Assistant player) or the browser's voice. A tap swaps for this
+             session only -- a handset whose player is registered but not
+             actually sounding tonight needs a way to be heard that does not
+             go through Music Assistant settings. -->
+        <button type="button" x-show="!panel && deviceEntity" @click="voiceLocal = !voiceLocal"
+                class="shrink-0 rounded-full border font-bold px-4 h-14 text-base"
+                :class="!voiceLocal ? 'bg-teal-500/20 border-teal-500/40 text-teal-300'
+                                    : 'bg-gray-800 border-gray-700 text-gray-400'"
+                x-text="voiceLocal ? '🔈 browser' : '🔈 this device'"></button>
         <!-- Argyle's voice, off for this session. Always visible, never a
              setting: a lesson in a quiet house is the same lesson, and a
              person who wants the voice back gets it by tapping again or
@@ -693,6 +704,7 @@ function lessonPlayer() {
         // so empty is the ordinary state on day one and the voice ladder
         // simply falls through it.
         deviceEntity: '',
+        voiceLocal: false,   // this session only: speak through the browser instead of the device
         // A wait beat's on-screen countdown. Cosmetic only -- the call
         // into the room is armed on the server and outlives this.
         waitLeft: 0, waitTimer: null,
@@ -1290,8 +1302,8 @@ function lessonPlayer() {
         // the moment it was about is worse than one nobody heard.
         say(text, lang, tone) {
             if (this.muted || !text) return;
-            if (this.deviceSay(text)) return;
-            if (this.roomSay(text)) return;
+            if (this.deviceSay(text, lang, tone)) return;
+            if (this.roomSay(text, lang, tone)) return;
             this.sayLocal(text, lang, tone);
         },
 
@@ -1312,17 +1324,38 @@ function lessonPlayer() {
         // Assistant, and a player that will not take the line is a quiet
         // device, not a stalled lesson. Returns whether the line was
         // handed off, so say() knows not to also read it out locally.
-        deviceSay(text) {
-            if (!this.deviceEntity || this.preview) return false;
+        // Whether the device rung is open tonight. Pure (no `this`), so Node
+        // can execute it: a registered entity is not enough -- the handset's
+        // own Sendspin socket has to be LIVE (`active`), or Home Assistant
+        // accepts the line and the phone plays it to nobody, which is the
+        // "no voice at all" a phone gave on 2026-10-19. A session-level
+        // browser override wins outright.
+        deviceRung(entity, localPlayer, voiceLocal, preview) {
+            if (!entity || preview || voiceLocal) return false;
+            return !!(localPlayer && localPlayer.active);
+        },
+        deviceSay(text, lang, tone) {
+            if (!this.deviceRung(this.deviceEntity, window.chfLocalPlayer, this.voiceLocal, this.preview)) return false;
+            this.handOff({entity_id: this.deviceEntity, text: String(text)}, text, lang, tone);
+            return true;
+        },
+        // One line through Home Assistant, with the browser as the net:
+        // "One line at a time" (429), a rejected player, a dead network --
+        // any of them used to be a line nobody heard, because the hand-off
+        // returned true and say() stopped looking. Now the line is read
+        // locally the moment the hand-off is known to have failed.
+        handOff(body, text, lang, tone) {
             try {
                 fetch((window.chfBase || '') + 'api/lessons/speak', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({entity_id: this.deviceEntity,
-                                          text: String(text)}),
-                }).catch(() => {});
-            } catch (e) { return false; }
-            return true;
+                    body: JSON.stringify(body),
+                }).then(async (r) => {
+                    let d = {};
+                    try { d = await r.json(); } catch (e) { d = {}; }
+                    if (!r.ok || d.status === 'error') this.sayLocal(text, lang, tone);
+                }).catch(() => this.sayLocal(text, lang, tone));
+            } catch (e) { this.sayLocal(text, lang, tone); }
         },
 
         // Make sure this device HAS a player, start it, and find out
@@ -1408,15 +1441,9 @@ function lessonPlayer() {
         //
         // Never in a preview: a look at a lesson nobody is having is not
         // a reason to talk to the house.
-        roomSay(text) {
-            if (!this.panel || !this.room || this.preview) return false;
-            try {
-                fetch((window.chfBase || '') + 'api/lessons/speak', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({room: this.room, text: String(text)}),
-                }).catch(() => {});
-            } catch (e) { return false; }
+        roomSay(text, lang, tone) {
+            if (!this.panel || !this.room || this.preview || this.voiceLocal) return false;
+            this.handOff({room: this.room, text: String(text)}, text, lang, tone);
             return true;
         },
 

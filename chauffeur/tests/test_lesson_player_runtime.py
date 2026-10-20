@@ -2407,9 +2407,12 @@ def scenario_the_voice_ladder_tries_the_device_first():
 def scenario_the_device_channel_speaks_to_an_entity_not_a_room():
     src = _read('components/lesson_player.html')
     import re
-    m = re.search(r'\n        deviceSay\(text\) \{(.*?)\n        \},', src, re.S)
+    m = re.search(r'\n        deviceSay\(text, lang, tone\) \{(.*?)\n        \},', src, re.S)
     check(m, "deviceSay exists")
-    body = m.group(1) if m else ''
+    h = re.search(r'\n        handOff\(body, text, lang, tone\) \{(.*?)\n        \},', src, re.S)
+    # deviceSay names the entity; the one speak route lives in handOff, the
+    # net both rungs share (v2.499.595).
+    body = (m.group(1) if m else '') + (h.group(1) if h else '')
     check('entity_id' in body,
           f"a registered player belongs to no area, so it is addressed by "
           f"entity, got {body!r}")
@@ -2543,6 +2546,66 @@ console.log(JSON.stringify(out));
           f"a bare handset, no storage or a throwing one all stay a phone, got {out}")
 
 
+def scenario_the_device_rung_needs_a_live_player_and_a_failed_line_is_read_locally():
+    """Device-found 2026-10-19 (a phone, before v2.499.594): the PWA
+    registers the handset as a Music Assistant player, the lesson found the
+    entity, handed every line to it and stopped looking -- and the phone
+    played to nobody, so the session had no voice at all. Two rules now:
+    the device rung is open only while the handset's own socket is LIVE
+    (executed under Node), and a hand-off that fails -- 429 "one line at a
+    time", a rejected player, a dead network -- reads the line locally
+    instead of losing it (the source carries the net)."""
+    import json
+    import os
+    import re
+    import shutil
+    import subprocess
+    import tempfile
+    src = _read('components/lesson_player.html')
+    m = re.search(r'\n        deviceRung\(entity, localPlayer, voiceLocal, preview\) \{(.*?)\n        \},',
+                  src, re.S)
+    check(m, "deviceRung(entity, localPlayer, voiceLocal, preview) is findable")
+    body = m.group(1)
+    check('this.' not in body, f"and pure, got {body!r}")
+    h = re.search(r'\n        handOff\(body, text, lang, tone\) \{(.*?)\n        \},', src, re.S)
+    check(h, "handOff exists")
+    net = h.group(1)
+    check("d.status === 'error'" in net and '!r.ok' in net and net.count('sayLocal') >= 3,
+          f"a failed hand-off (not ok, status error, or a thrown fetch) is read locally, got {net!r}")
+    d = re.search(r'\n        deviceSay\(text, lang, tone\) \{(.*?)\n        \},', src, re.S)
+    r = re.search(r'\n        roomSay\(text, lang, tone\) \{(.*?)\n        \},', src, re.S)
+    check(d and 'deviceRung(' in d.group(1) and 'handOff(' in d.group(1), "deviceSay asks the rung and hands off through the net")
+    check(r and 'voiceLocal' in r.group(1) and 'handOff(' in r.group(1), "roomSay honours the override and uses the same net")
+    check('x-show="!panel && deviceEntity"' in src and 'voiceLocal = !voiceLocal' in src,
+          "a non-panel surface with a device player shows the voice chip, and a tap swaps to the browser")
+    node = shutil.which('node')
+    if not node:
+        print('  skip  node is not installed')
+        return
+    harness = r'''
+const out = {};
+out.live = deviceRung('media_player.phone', {active: true}, false, false);
+out.dead = deviceRung('media_player.phone', {active: false}, false, false);
+out.none = deviceRung('media_player.phone', null, false, false);
+out.noEntity = deviceRung('', {active: true}, false, false);
+out.override = deviceRung('media_player.phone', {active: true}, true, false);
+out.preview = deviceRung('media_player.phone', {active: true}, false, true);
+console.log(JSON.stringify(out));
+'''
+    scratch = tempfile.mkdtemp(prefix='chauffeur_rung_')
+    path = os.path.join(scratch, 'run.mjs')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write('function deviceRung(entity, localPlayer, voiceLocal, preview) {' + body + '\n}\n' + harness)
+    proc = subprocess.run([node, path], capture_output=True, text=True,
+                          encoding='utf-8', errors='replace', timeout=60)
+    check(proc.returncode == 0, f"deviceRung threw:\n{proc.stderr[-1500:]}")
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    check(out['live'] is True, f"a live handset player opens the rung, got {out}")
+    check(out['dead'] is False and out['none'] is False, f"a registered but silent player does not, got {out}")
+    check(out['noEntity'] is False and out['override'] is False and out['preview'] is False,
+          f"no entity, the browser override and a preview all stay local, got {out}")
+
+
 def scenario_no_music_logic_is_not_an_error():
     """A host that loads no music logic (the house exterior quick lesson,
     any future include) still plays the lesson, in the browser's own
@@ -2588,9 +2651,14 @@ def scenario_the_room_voice_is_a_panel_only_fork():
     worth the name and is standing in a room that does."""
     src = _read('components/lesson_player.html')
     import re
-    m = re.search(r'\n        roomSay\(text\) \{(.*?)\n        \},', src, re.S)
-    check(m, "roomSay(text) exists")
+    m = re.search(r'\n        roomSay\(text, lang, tone\) \{(.*?)\n        \},', src, re.S)
+    check(m, "roomSay(text, lang, tone) exists")
     body = m.group(1) if m else ''
+    # the one speak route lives in handOff, the net both rungs share (v2.499.595)
+    h = re.search(r'
+        handOff\(body, text, lang, tone\) \{(.*?)
+        \},', src, re.S)
+    body = body + (h.group(1) if h else '')
     check('this.panel' in body, "and it is panel-only")
     check('this.room' in body, "and needs a room to speak into")
     check('this.preview' in body,
@@ -2750,6 +2818,7 @@ if __name__ == '__main__':
     scenario_no_music_logic_is_not_an_error()
     scenario_admin_lesson_hosts_carry_the_device_voice()
     scenario_a_computer_reuses_its_screen_registration()
+    scenario_the_device_rung_needs_a_live_player_and_a_failed_line_is_read_locally()
     scenario_only_session_level_lines_reach_the_room()
     scenario_the_room_voice_is_a_panel_only_fork()
     scenario_the_room_is_asked_once_and_remembered_on_the_device()
