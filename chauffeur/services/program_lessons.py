@@ -608,6 +608,12 @@ def _clean_cues(raw, seconds, origin: str) -> list:
             if _screened(say, origin):
                 continue
             cue['say'] = say
+        # A cue's own language, the same tag a scene's `speak_lang` takes.
+        # Dropped here until 2026-10-20, so a Portuguese cue inside an
+        # English beat could only ever be read in the English voice.
+        lang = item.get('speak_lang')
+        if cue.get('say') and isinstance(lang, str) and _LANG_RE.match(lang):
+            cue['speak_lang'] = lang
         if item.get('count'):
             cue['count'] = True
         if item.get('chime'):
@@ -888,12 +894,13 @@ _SYSTEM = (
     "teaching beat (\"fade\" repeats the same words with more of "
     "them blanked each pass, 2-4, for anything learned by heart); "
     '{"type":"do","text":"","seconds":60,"metronome_bpm":80,'
-    '"cues":[{"at":30,"say":"Switch sides"}]} a '
+    '"cues":[{"at":30,"say":"Switch sides","speak_lang":"pt-BR"}]} a '
     "practice interlude (seconds and metronome_bpm optional; \"cues\" are "
     "lines said out loud DURING the beat, each at its own second into it "
     "-- up to 8, and only on a beat that has seconds. A cue carries "
-    "\"say\", or \"count\": true to say the seconds elapsed, or "
-    "\"chime\": true for a tick); "
+    "\"say\" (with \"speak_lang\" when those words are not in the session "
+    "language, so they are said in the right voice), or \"count\": true to "
+    "say the seconds elapsed, or \"chime\": true for a tick); "
     '{"type":"check","ask":"","not_yet_offer":{"label":"Try it slower",'
     '"scenes":[...]}} a self-check with fixed answers -- "not_yet_offer" '
     "is optional and is what gets OFFERED (never forced) when the answer "

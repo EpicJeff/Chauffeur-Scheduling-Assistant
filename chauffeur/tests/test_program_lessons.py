@@ -2082,6 +2082,24 @@ def scenario_cues_need_a_beat_with_a_clock_on_it():
           f"no clock, no cues -- and the beat still plays, got {out}")
 
 
+def scenario_a_cue_keeps_its_own_language():
+    """Device-found 2026-10-20: a do-beat's Portuguese cues were read in the
+    English voice because the sanitizer dropped a cue's `speak_lang` and
+    the prompt never offered one. A valid tag survives on a cue that says
+    something; junk is dropped; a cue with nothing to say carries none."""
+    from services import program_lessons as pl
+    scenes = pl.sanitize_script([{'type': 'do', 'text': 'Greet three people', 'seconds': 60,
+                                  'cues': [{'at': 10, 'say': 'Bom dia', 'speak_lang': 'pt-BR'},
+                                           {'at': 20, 'say': 'Now you', 'speak_lang': 'english!'},
+                                           {'at': 30, 'count': True, 'speak_lang': 'pt-BR'}]}], 'generated')
+    cues = scenes[0]['cues']
+    check(cues[0].get('speak_lang') == 'pt-BR', f"a valid tag survives on a spoken cue, got {cues}")
+    check('speak_lang' not in cues[1], f"junk is dropped, got {cues[1]}")
+    check('speak_lang' not in cues[2], f"a count carries no language, got {cues[2]}")
+    check('"speak_lang":"pt-BR"' in pl.system_prompt() and 'speak_lang' in pl._SYSTEM.split('"count\\": true')[0],
+          "and the model is told a cue may carry one")
+
+
 def scenario_a_cue_is_clamped_inside_its_own_beat():
     out = pl.sanitize_script([
         {'type': 'do', 'text': 'Hold the plank.', 'seconds': 60,
@@ -2216,6 +2234,7 @@ if __name__ == '__main__':
     scenario_generation_tells_the_model_what_month_it_is()
     scenario_a_model_echoing_the_voice_fields_stores_them_clean()
     scenario_cues_need_a_beat_with_a_clock_on_it()
+    scenario_a_cue_keeps_its_own_language()
     scenario_a_cue_is_clamped_inside_its_own_beat()
     scenario_cues_are_sorted_and_capped()
     scenario_a_cue_says_something_or_it_is_not_a_cue()
