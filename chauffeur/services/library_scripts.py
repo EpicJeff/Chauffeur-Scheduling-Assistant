@@ -13,7 +13,8 @@ from services import storage, program_lessons as pl
 JOBS_KEY = 'library_script_jobs'
 DEAD_AFTER_S = 30 * 60
 ALREADY = 'Already writing lessons for this program.'
-_LAST_CALLS = 0
+# Only the nightly pass publishes this; background jobs use invocation-local lists.
+_PASS_SPENT = 0
 
 
 def pool_tier(settings: dict) -> str:
@@ -43,74 +44,72 @@ def _call(tier, settings, system, prompt):
                                       timeout_s=60, gemma_timeout_s=180, settings=settings)
 
 
-def generate_script(row: dict, lesson: dict, variant_label: str, settings: dict, *, allowance=None):
+def generate_script(row: dict, lesson: dict, variant_label: str, settings: dict, *, allowance=None, spend=None):
     """One lesson's script, claimed, written and committed against its token. Returns the stored
-    row or None. `allowance` is how many calls the caller still has; None means unbounded."""
-    global _LAST_CALLS
-    calls = 0
-    try:
-        from services import web
-        slot = {'lesson_id': lesson['id'], 'variant_label': variant_label or ''}
-        minutes = int((row.get('made_for') or {}).get('minutes') or 25)
-        origin = (row.get('source') or {}).get('origin') or 'generated'
-        variant = next((v for v in lesson.get('variants') or [] if (v.get('label') or '') == (variant_label or '')), {}) if variant_label else {}
-        url = (variant.get('url') or lesson.get('url') or '') if origin == 'cited' else ''
-        source_url = ''
-        if origin == 'cited' and url:
-            page = web.read_page(url)
-            if not page:
-                return None                    # an outage is never papered over
-            source_url = url
-            prompt = pl._CITED_PROMPT.format(url=url, page=page[:8000], minutes=minutes, label=variant_label or 'practice',
-                                             phase=next((p.get('name') for p in row.get('phases') or [] if p.get('id') == lesson.get('phase_id')), ''),
-                                             title=row.get('title') or '', context=pl.profile_context(row) + '\n' + pl._budget_lines(minutes),
-                                             steps=' | '.join(variant.get('steps') or lesson.get('steps') or []))
-        else:
-            origin = 'generated'
-            prompt = pl.lesson_prompt(row, lesson, variant_label or '')
-        token = storage.claim_library_script(row['id'], slot)
-        if not token:
-            return None
-        tier = pool_tier(settings)
-        calls = 1
-        res = _call(tier, settings, pl.system_prompt(), prompt)
-        if not isinstance(res, dict) or res.get('error'):
-            counts = not (isinstance(res, dict) and (res.get('transient') or res.get('deferred')))
-            existing = storage.get_library_script(row['id'], slot) or {}
-            storage.commit_library_script(row['id'], slot, token, {
-                'origin': origin, 'source_url': source_url, 'scenes': [],
-                'attempts': int(existing.get('attempts') or 0) + (1 if counts else 0),
-                'note': pl._clean_text(str(res.get('error') if isinstance(res, dict) else 'the model pool answered with nothing usable'), pl.MAX_SHORT_TEXT)})
-            return None
-        scenes = pl.sanitize_script(res.get('scenes') or [], origin, minutes=minutes)
-        if not scenes:
-            existing = storage.get_library_script(row['id'], slot) or {}
-            storage.commit_library_script(row['id'], slot, token, {'origin': origin, 'source_url': source_url, 'scenes': [],
-                                                                   'attempts': int(existing.get('attempts') or 0) + 1,
-                                                                   'note': 'Nothing in the script the model wrote survived the screens.'})
-            return None
-        est = pl.estimate_seconds(scenes)
-        target = minutes * 60
-        data = {'origin': origin, 'source_url': source_url, 'scenes': scenes, 'model': res.get('_model') or '',
-                'attempts': 0, 'note': '', 'minutes': int(round(est / 60))}
-        if est < target * pl.SHORTFALL:
-            data['note'] = f"runs about {int(round(est / 60))} minutes of {minutes}"
-        token = storage.commit_library_script(row['id'], slot, token, data)
-        if not token:
-            return None
-        if est < target * pl.SHORTFALL and (allowance is None or allowance >= 2):
-            calls = 2
-            again = _call(tier, settings, pl.system_prompt(), prompt + '\n\n' + pl.shortfall_prompt(int(round(est / 60)), minutes))
-            if isinstance(again, dict) and not again.get('error'):
-                more = pl.sanitize_script(again.get('scenes') or [], origin, minutes=minutes)
-                est2 = pl.estimate_seconds(more)
-                if more and est2 > est:
-                    storage.replace_library_script(row['id'], slot, token, {
-                        **data, 'scenes': more, 'model': again.get('_model') or data['model'], 'minutes': int(round(est2 / 60)),
-                        'note': f"runs about {int(round(est2 / 60))} minutes of {minutes}" if est2 < target * pl.SHORTFALL else ''})
-        return storage.get_library_script(row['id'], slot)
-    finally:
-        _LAST_CALLS = calls
+    row or None. `allowance` is how many calls the caller still has; None means unbounded.
+    When supplied, `spend` receives one entry for each model call attempted."""
+    from services import web
+    slot = {'lesson_id': lesson['id'], 'variant_label': variant_label or ''}
+    minutes = int((row.get('made_for') or {}).get('minutes') or 25)
+    origin = (row.get('source') or {}).get('origin') or 'generated'
+    variant = next((v for v in lesson.get('variants') or [] if (v.get('label') or '') == (variant_label or '')), {}) if variant_label else {}
+    url = (variant.get('url') or lesson.get('url') or '') if origin == 'cited' else ''
+    source_url = ''
+    if origin == 'cited' and url:
+        page = web.read_page(url)
+        if not page:
+            return None                    # an outage is never papered over
+        source_url = url
+        prompt = pl._CITED_PROMPT.format(url=url, page=page[:8000], minutes=minutes, label=variant_label or 'practice',
+                                         phase=next((p.get('name') for p in row.get('phases') or [] if p.get('id') == lesson.get('phase_id')), ''),
+                                         title=row.get('title') or '', context=pl.profile_context(row) + '\n' + pl._budget_lines(minutes),
+                                         steps=' | '.join(variant.get('steps') or lesson.get('steps') or []))
+    else:
+        origin = 'generated'
+        prompt = pl.lesson_prompt(row, lesson, variant_label or '')
+    token = storage.claim_library_script(row['id'], slot)
+    if not token:
+        return None
+    tier = pool_tier(settings)
+    if spend is not None:
+        spend.append(1)
+    res = _call(tier, settings, pl.system_prompt(), prompt)
+    if not isinstance(res, dict) or res.get('error'):
+        counts = not (isinstance(res, dict) and (res.get('transient') or res.get('deferred')))
+        existing = storage.get_library_script(row['id'], slot) or {}
+        storage.commit_library_script(row['id'], slot, token, {
+            'origin': origin, 'source_url': source_url, 'scenes': [],
+            'attempts': int(existing.get('attempts') or 0) + (1 if counts else 0),
+            'note': pl._clean_text(str(res.get('error') if isinstance(res, dict) else 'the model pool answered with nothing usable'), pl.MAX_SHORT_TEXT)})
+        return None
+    scenes = pl.sanitize_script(res.get('scenes') or [], origin, minutes=minutes)
+    if not scenes:
+        existing = storage.get_library_script(row['id'], slot) or {}
+        storage.commit_library_script(row['id'], slot, token, {'origin': origin, 'source_url': source_url, 'scenes': [],
+                                                               'attempts': int(existing.get('attempts') or 0) + 1,
+                                                               'note': 'Nothing in the script the model wrote survived the screens.'})
+        return None
+    est = pl.estimate_seconds(scenes)
+    target = minutes * 60
+    data = {'origin': origin, 'source_url': source_url, 'scenes': scenes, 'model': res.get('_model') or '',
+            'attempts': 0, 'note': '', 'minutes': int(round(est / 60))}
+    if est < target * pl.SHORTFALL:
+        data['note'] = f"runs about {int(round(est / 60))} minutes of {minutes}"
+    token = storage.commit_library_script(row['id'], slot, token, data)
+    if not token:
+        return None
+    if est < target * pl.SHORTFALL and (allowance is None or allowance >= 2):
+        if spend is not None:
+            spend.append(1)
+        again = _call(tier, settings, pl.system_prompt(), prompt + '\n\n' + pl.shortfall_prompt(int(round(est / 60)), minutes))
+        if isinstance(again, dict) and not again.get('error'):
+            more = pl.sanitize_script(again.get('scenes') or [], origin, minutes=minutes)
+            est2 = pl.estimate_seconds(more)
+            if more and est2 > est:
+                storage.replace_library_script(row['id'], slot, token, {
+                    **data, 'scenes': more, 'model': again.get('_model') or data['model'], 'minutes': int(round(est2 / 60)),
+                    'note': f"runs about {int(round(est2 / 60))} minutes of {minutes}" if est2 < target * pl.SHORTFALL else ''})
+    return storage.get_library_script(row['id'], slot)
 
 
 def _jobs() -> dict:
@@ -221,35 +220,43 @@ def script_for_run(run: dict, lesson_id: str, variant_label: str):
 def retry_due(now, limit: int) -> int:
     """Tonight's pass: every active run's windows in the next two days whose library lesson still
     needs a script. Skips a library with a live job. Counts calls, a shortfall retry included."""
-    import datetime
-    from services import programs
-    settings = storage.get_settings() or {}
-    start = now.date() + datetime.timedelta(days=1)
-    runs = {r['id']: r for r in storage.get_programs(state='active')}
-    wrote = spent = 0
-    seen = set()
-    for w in programs._practice_windows(start, start + datetime.timedelta(days=2)):
-        run = runs.get(w.get('program_id'))
-        if not run or not run.get('library_id') or not w.get('lesson_id'):
-            continue
-        key = (run['library_id'], w['lesson_id'], w.get('variant_label') or '')
-        if key in seen:
-            continue
-        seen.add(key)
-        if job_state(run['library_id']):
-            continue
-        slot = {'lesson_id': w['lesson_id'], 'variant_label': w.get('variant_label') or ''}
-        if not needs_script(run['library_id'], slot):
-            continue
-        if spent >= max(0, int(limit or 0)):
-            break
-        row = storage.get_library_program(run['library_id'])
-        lesson = next((l for l in (row or {}).get('lessons') or [] if l['id'] == w['lesson_id']), None)
-        if not row or not lesson:
-            continue
-        allowance = max(0, int(limit) - spent)
-        out = generate_script(row, lesson, slot['variant_label'], settings, allowance=allowance)
-        spent += _LAST_CALLS
-        if out and out.get('scenes'):
-            wrote += 1
-    return wrote
+    global _PASS_SPENT
+    spent = 0
+    try:
+        import datetime
+        from services import programs
+        settings = storage.get_settings() or {}
+        start = now.date() + datetime.timedelta(days=1)
+        runs = {r['id']: r for r in storage.get_programs(state='active')}
+        wrote = 0
+        seen = set()
+        for w in programs._practice_windows(start, start + datetime.timedelta(days=2)):
+            run = runs.get(w.get('program_id'))
+            if not run or not run.get('library_id') or not w.get('lesson_id'):
+                continue
+            key = (run['library_id'], w['lesson_id'], w.get('variant_label') or '')
+            if key in seen:
+                continue
+            seen.add(key)
+            if job_state(run['library_id']):
+                continue
+            slot = {'lesson_id': w['lesson_id'], 'variant_label': w.get('variant_label') or ''}
+            if not needs_script(run['library_id'], slot):
+                continue
+            if spent >= max(0, int(limit or 0)):
+                break
+            row = storage.get_library_program(run['library_id'])
+            lesson = next((l for l in (row or {}).get('lessons') or [] if l['id'] == w['lesson_id']), None)
+            if not row or not lesson:
+                continue
+            allowance = max(0, int(limit) - spent)
+            spend = []
+            try:
+                out = generate_script(row, lesson, slot['variant_label'], settings, allowance=allowance, spend=spend)
+            finally:
+                spent += max(1, len(spend))
+            if out and out.get('scenes'):
+                wrote += 1
+        return wrote
+    finally:
+        _PASS_SPENT = spent

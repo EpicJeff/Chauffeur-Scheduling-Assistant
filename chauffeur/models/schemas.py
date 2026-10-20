@@ -1654,6 +1654,7 @@ class Settings(BaseModel):
     program_lessons_enabled: Optional[bool] = True
     lesson_help_daily_cap: Optional[int] = 20
     lesson_max_attempts: Optional[int] = 3
+    lesson_pool: Optional[str] = 'heavy'
 
 class TelemetryEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

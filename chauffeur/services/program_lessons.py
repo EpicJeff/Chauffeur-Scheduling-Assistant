@@ -1133,7 +1133,7 @@ _GENERATED_PROMPT = (
     "are the session, your script paces and explains them: {steps}\n"
     "{context}\n"
     "Unit notes: {body}\nProgression rule: {progression}\n"
-    "Structure the practice (warmup, the work, brief review). Do NOT "
+    "Up to 12 scenes; follow the OPEN, TEACH, WORK, WRAP structure. Do NOT "
     "prescribe how to hold or move any part of the body."
 )
 
@@ -1561,9 +1561,10 @@ def generate_due(now=None, limit: int = MAX_SLOTS_PER_PASS,
             return 0
         storage.set_app_state('program_lessons_swept', marker)
         from services import library_scripts
+        library_scripts._PASS_SPENT = 0
         wrote = library_scripts.retry_due(now, limit)
         # unconverted runs keep the legacy branch
-        spent = 0
+        spent = library_scripts._PASS_SPENT
         for row, w, unit in _windows_to_scan(now, start_offset, 2):
             if row.get('library_id'):
                 continue

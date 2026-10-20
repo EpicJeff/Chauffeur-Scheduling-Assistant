@@ -179,10 +179,10 @@ MAX_UNIT_SESSIONS = 4
 
 
 def _phase_text(ph: dict) -> str:
-    """Every word of a phase a family will actually read.
+    """The plan's directions, excluding lesson material in a target language.
 
-    Every field added to a phase has to arrive here too, or the language
-    check quietly stops covering the parts of the plan that are newest.
+    Unit bodies may teach another language; they are not evidence that the
+    surrounding plan has drifted away from the language of the aim.
     """
     words = [str(ph.get(k) or '')
              for k in ('name', 'what', 'milestone', 'progression')]
@@ -194,7 +194,6 @@ def _phase_text(ph: dict) -> str:
     for unit in (ph.get('units') or []):
         if isinstance(unit, dict):
             words.append(str(unit.get('title') or ''))
-            words.append(str(unit.get('body') or ''))
     return ' '.join(w for w in words if w).strip()
 
 
