@@ -52,6 +52,14 @@ def _reset():
 
 
 def scenario_endpoints_exist():
+    """GET, PUT and DELETE all stay routed (lesson depth spec section 7).
+
+    A library run's script lives in the library now, so for a library run
+    PUT and DELETE answer 409 "Scripts live in the library." (pinned in
+    test_library_scripts.py); an unconverted run -- no library_id -- keeps
+    its hand edit through these same two verbs for this release, which is
+    why neither route may disappear yet.
+    """
     import main
     lesson_routes = [r for r in main.app.routes
                      if getattr(r, 'path', None) ==
@@ -62,6 +70,47 @@ def scenario_endpoints_exist():
     check({'GET', 'PUT', 'DELETE'} <= methods,
           f"the lesson must be reachable by hand for read, edit and clear, "
           f"got {methods}")
+
+
+def _unconverted_run():
+    """A run exactly as the pre-library code stored it: no library_id, the
+    curriculum on the row. Written past every new door, the same way
+    test_library_migration.py's `_legacy` builds one, because add_program's
+    schema no longer carries `phases` at all."""
+    import uuid
+    rid = 'legacy-' + uuid.uuid4().hex[:8]
+    storage.programs_table.insert({
+        'id': rid, 'member_id': 'kid', 'title': 'Old guitar', 'state': 'active', 'created_by': 'mom',
+        'starting_point': '', 'sessions': [], 'progress': {},
+        'shape': {'sessions_per_week': 2, 'minutes': 20, 'preferred_days': [], 'slots': []},
+        'phases': [{'name': 'F', 'weeks': 2, 'what': 'Chords', 'steps': ['Strum'],
+                    'units': [{'n': 1, 'title': 'One'}, {'n': 2, 'title': 'Two'}]}]})
+    check(storage.get_program(rid).get('library_id') is None, 'the fixture really is unconverted')
+    return rid
+
+
+def scenario_an_unconverted_run_still_edits_by_hand():
+    """Codex 6 (spec section 7): PUT and DELETE keep today's behaviour for a
+    run with no library_id -- over real HTTP, as the parent."""
+    from fastapi.testclient import TestClient
+    import main
+    _reset()
+    rid = _unconverted_run()
+    c = TestClient(main.app)
+    hdr = {'x-member-token': storage.create_member_token('mom')}
+    r = c.put(f'/api/programs/{rid}/lesson', headers=hdr,
+              json={'member_id': 'mom', 'phase_name': 'F', 'unit_n': 1, 'session_label': '',
+                    'scenes': [{'type': 'say', 'text': 'By hand'}, {'type': 'shout', 'text': 'dropped'}]})
+    check(r.status_code == 200 and r.json().get('status') == 'ok', f"an unconverted run edits by hand, got {r.status_code} {r.text}")
+    q = f'/api/programs/{rid}/lesson?phase_name=F&unit_n=1&session_label='
+    got = c.get(q, headers=hdr).json()['lesson']
+    check(got and got['edited'] is True and [s['text'] for s in got['scenes']] == ['By hand'],
+          f"and reads back sanitized and marked edited, got {got}")
+    r = c.delete(q, headers=hdr)
+    check(r.status_code == 200, f"DELETE still clears an unconverted run's slot, got {r.status_code} {r.text}")
+    check(c.get(q, headers=hdr).json()['lesson'] is None, 'gone after the delete')
+    check(storage.get_program_lesson(rid, {'phase_name': 'F', 'unit_n': 1, 'session_label': ''}) is None,
+          'and gone from storage, not only from the read')
 
 
 def scenario_the_wall_route_exists_and_is_wall_tier():
@@ -1214,6 +1263,7 @@ def scenario_a_wait_is_armed_on_no_program_row():
 
 if __name__ == '__main__':
     scenario_endpoints_exist()
+    scenario_an_unconverted_run_still_edits_by_hand()
     scenario_the_wall_route_exists_and_is_wall_tier()
     scenario_the_wall_route_returns_scenes_only()
     scenario_the_wall_route_hides_missing_programs_and_reads_null_for_missing_slots()

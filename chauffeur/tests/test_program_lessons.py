@@ -2166,6 +2166,103 @@ def scenario_the_schema_names_cues():
     check('"at"' in pl._SYSTEM, "and what schedules one")
 
 
+def scenario_a_teach_scene_is_title_text_examples_and_speak():
+    out = pl.sanitize_script([{'type': 'teach', 'title': 'T' * 100, 'text': 'x ' * 500,
+                              'examples': ['plain', {'text': 'e' * 200, 'speak_lang': 'pt-BR'}, {'text': 'burns calories'},
+                                           {'text': '4'}, {'text': '5'}, {'text': '6'}],
+                              'speak': 's' * 600}], 'generated')
+    check(len(out) == 1 and out[0]['type'] == 'teach', f'teach survives, got {out}')
+    t = out[0]
+    check(len(t['title']) == 80 and len(t['text']) == pl.MAX_TEACH_TEXT == 700, f'caps, got {len(t["title"])} {len(t["text"])}')
+    check(len(t['speak']) == pl.MAX_TEACH_SPEAK == 500, 'speak cap')
+    check(t['examples'][0] == {'text': 'plain'}, 'a bare string becomes {text}')
+    check(len(t['examples'][1]['text']) == 160 and t['examples'][1]['speak_lang'] == 'pt-BR', 'example cap and lang')
+    check(all(e['text'] != 'burns calories' for e in t['examples']), 'a screened example drops itself only')
+    check(len(t['examples']) == 5, f'five examples at most, got {len(t["examples"])}')
+    check(pl.sanitize_script([{'type': 'teach', 'text': 'rotate the wrist'}], 'generated') == [], 'screened text drops the scene')
+    check(pl.sanitize_script([{'type': 'teach', 'text': 'fine', 'speak': 'rotate the wrist'}], 'generated')[0].get('speak') is None,
+          'screened speak drops the speak, keeps the scene')
+
+
+def scenario_variables_survive_and_strangers_are_stripped():
+    out = pl.sanitize_script([{'type': 'say', 'text': "Hi {name}'s friend, o{nome} {a b} {project} {age}"}], 'generated')
+    check(out[0]['text'] == "Hi {name}'s friend, o {a b} {project} ", f'got {out[0]["text"]!r}')
+    check(pl.VARIABLES == ('name', 'project'), 'closed set')
+    cards = pl.sanitize_script([{'type': 'show', 'primitive': {'kind': 'cards', 'pairs': [{'front': '{nome}', 'back': 'ok {name}'}]}, 'caption': 'c'}], 'generated')
+    import json
+    check('{nome}' not in json.dumps(cards), f'a stranger token never survives on a card face, got {cards}')
+
+
+def scenario_scene_cap_scales_with_minutes():
+    check(pl.scene_cap(30) == 30 and pl.scene_cap(5) == 12 and pl.scene_cap(90) == 40 and pl.scene_cap(None) == 12, 'cap')
+    scenes = [{'type': 'say', 'text': f'b{i}'} for i in range(45)]
+    check(len(pl.sanitize_script(scenes, 'generated')) == 12, 'default keeps 12')
+    check(len(pl.sanitize_script(scenes, 'generated', minutes=20)) == 20, 'a 20-minute profile holds 20')
+    check(len(pl.sanitize_script(scenes, 'generated', minutes=400)) == 40, 'never more than 40')
+
+
+def scenario_estimate_seconds_table():
+    w10 = ' '.join(['w'] * 10)
+    check(pl.estimate_seconds([{'type': 'say', 'text': w10}]) == 8, 'say: 4 + 10/2.5')
+    check(pl.estimate_seconds([{'type': 'say', 'text': w10, 'speak': w10}]) == 12, 'speak adds')
+    check(pl.estimate_seconds([{'type': 'say', 'text': w10, 'fade': True, 'passes': 3}]) == 12, 'fade: passes x words/2.5')
+    check(pl.estimate_seconds([{'type': 'teach', 'text': w10, 'examples': [{'text': 'a'}, {'text': 'b'}]}]) == 22, 'teach: 6 + 4 + 12')
+    check(pl.estimate_seconds([{'type': 'do', 'text': 'x'}]) == 60 and pl.estimate_seconds([{'type': 'do', 'text': 'x', 'seconds': 90}]) == 90, 'do')
+    check(pl.estimate_seconds([{'type': 'check', 'ask': 'x'}]) == 8, 'check')
+    check(pl.estimate_seconds([{'type': 'wait', 'minutes': 2, 'text': 'x'}]) == 120, 'wait')
+    for kind, params, secs in (('timer', {'seconds': 45}, 45), ('listen', {'mode': 'presence', 'seconds': 20}, 20), ('metronome', {'bpm': 80}, 45),
+                               ('keyboard', {'keys': ['C4']}, 20), ('fretboard', {'dots': []}, 20), ('tuner', {}, 20),
+                               ('cards', {'pairs': [{}, {}, {}]}, 24), ('lines', {'pairs': [{}, {}]}, 24),
+                               ('counter', {'target': 10, 'seconds_per_rep': 3}, 30), ('hints', {'steps': ['a'], 'answer': 'b'}, 30)):
+        got = pl.estimate_seconds([{'type': 'show', 'primitive': {'kind': kind, **params}}])
+        check(got == secs, f'{kind}: {secs}, got {got}')
+
+
+def scenario_fill_touches_every_field_and_never_the_stored_row():
+    scenes = [{'type': 'teach', 'title': '{name}', 'text': '{name}', 'speak': '{name}', 'examples': [{'text': '{name}'}]},
+              {'type': 'do', 'text': '{name}', 'cues': [{'at': 1, 'say': '{name}'}]},
+              {'type': 'check', 'ask': '{name}', 'not_yet_offer': {'label': '{name}', 'scenes': [{'type': 'say', 'text': '{name}'}]}},
+              {'type': 'wait', 'minutes': 1, 'text': '{name}', 'announce': '{name}'},
+              {'type': 'show', 'caption': '{project}', 'primitive': {'kind': 'cards', 'pairs': [{'front': '{name}', 'back': '{name}', 'speak': '{name}'}]}},
+              {'type': 'show', 'caption': '', 'primitive': {'kind': 'lines', 'pairs': [{'cue': '{name}', 'line': '{name}'}]}},
+              {'type': 'show', 'caption': '', 'primitive': {'kind': 'hints', 'steps': ['{name}'], 'answer': '{name}'}}]
+    import copy, json
+    before = copy.deepcopy(scenes)
+    out = pl.fill(scenes, {'name': 'Kate', 'project': 'Piano'})
+    check(scenes == before, 'the input is never mutated')
+    text = json.dumps(out)
+    wanted = json.dumps(before).count('{name}')
+    check(wanted == 18, f'the fixture carries eighteen name fields, got {wanted}')
+    check('{name}' not in text and '{project}' not in text and text.count('Kate') == wanted and 'Piano' in text, f'every field filled: {text}')
+    check(pl.fill([{'type': 'say', 'text': '{other}'}], {'name': 'K', 'project': 'P'})[0]['text'] == '{other}', 'unknown left alone by fill')
+
+
+def scenario_the_system_prompt_has_the_arc_and_the_variables():
+    s = pl.system_prompt()
+    for needle in ('Open', 'Teach', 'Work', 'Wrap', 'teach', 'examples', '{name}', '{project}', 'Nothing else goes in braces',
+                   'music', 'movement', 'cooking', 'phonics', 'problem-shaped', 'language', 'greeting'):
+        check(needle in s, f'system prompt lacks {needle!r}')
+    check('At most 10 scenes' not in s and 'a short why, then the drill' not in s, 'the drill template is gone')
+
+
+def scenario_the_lesson_prompt_states_the_budget_and_the_neighbours():
+    row = {'title': 'Learn piano', 'made_for': {'age_band': 'explorer', 'minutes': 30, 'sessions_per_week': 3, 'assumes': 'complete beginner'},
+           'source': {'origin': 'generated'},
+           'phases': [{'id': 'p', 'name': 'Foundations', 'what': 'Hands and keys', 'progression': 'faster'}],
+           'lessons': [{'id': 'a', 'phase_id': 'p', 'title': 'Middle C', 'steps': ['Find C'], 'body': 'B' * 400, 'variants': []},
+                       {'id': 'b', 'phase_id': 'p', 'title': 'Five fingers', 'steps': ['C to G'], 'body': 'go', 'variants': []},
+                       {'id': 'c', 'phase_id': 'p', 'title': 'Both hands', 'steps': [], 'variants': []}]}
+    p = pl.lesson_prompt(row, row['lessons'][1], '')
+    for needle in ('30 minutes', 'between 24 and 36', 'Up to 30 scenes', 'Hands and keys', 'Five fingers', 'C to G',
+                   'Middle C', 'B' * 300, 'Both hands', 'complete beginner', 'faster', '{name}'):
+        check(needle in p, f'lesson prompt lacks {needle!r}')
+    check('B' * 301 not in p, 'the previous body is cut at 300')
+    check('Previous lesson' not in pl.lesson_prompt(row, row['lessons'][0], ''), 'the first lesson names no previous lesson')
+    check('runs about 4 minutes of the 30 asked' in pl.shortfall_prompt(4, 30), 'shortfall wording')
+    ctx = pl.profile_context(row)
+    check('ages' in ctx and 'complete beginner' in ctx and 'birth' not in ctx.lower(), f'profile context, got {ctx}')
+
+
 if __name__ == '__main__':
     scenario_scene_cap()
     scenario_text_cap_and_type_whitelist()
@@ -2277,4 +2374,11 @@ if __name__ == '__main__':
     scenario_a_stale_wait_is_dropped_rather_than_shouted()
     scenario_the_wait_queue_never_grows_without_bound()
     scenario_the_schema_names_the_wait_beat()
+    scenario_a_teach_scene_is_title_text_examples_and_speak()
+    scenario_variables_survive_and_strangers_are_stripped()
+    scenario_scene_cap_scales_with_minutes()
+    scenario_estimate_seconds_table()
+    scenario_fill_touches_every_field_and_never_the_stored_row()
+    scenario_the_system_prompt_has_the_arc_and_the_variables()
+    scenario_the_lesson_prompt_states_the_budget_and_the_neighbours()
     print("test_program_lessons OK")

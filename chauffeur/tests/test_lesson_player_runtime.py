@@ -3067,6 +3067,147 @@ def scenario_the_room_is_asked_once_and_remembered_on_the_device():
           "learn its own room has a door to land in")
 
 
+# --- lesson depth (spec 2026-10-20-lesson-depth-design.md section 4) ------------
+
+def _player_method(name, params):
+    """One method of the player object, by the same 8-space-indent pattern every
+    extraction in this file uses. A method that does not exist yet fails loudly
+    here rather than letting a scenario pass against nothing."""
+    import re
+    src = _read('components/lesson_player.html')
+    m = re.search(r'\n        ' + re.escape(name) + r'\(' + re.escape(params) + r'\) \{(.*?)\n        \},', src, re.S)
+    check(m, f"{name}({params}) is findable in lesson_player.html")
+    return m.group(1)
+
+
+def _run_node(prefix, script):
+    """Write `script` to a scratch .mjs and run it; None when node is absent."""
+    import json
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+    node = shutil.which('node')
+    if not node:
+        print('  skip  node is not installed')
+        return None
+    scratch = tempfile.mkdtemp(prefix=prefix)
+    path = os.path.join(scratch, 'run.mjs')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(script)
+    proc = subprocess.run([node, path], capture_output=True, text=True,
+                          encoding='utf-8', errors='replace', timeout=60)
+    check(proc.returncode == 0, f"{prefix} threw:\n{proc.stderr[-1500:]}")
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+def scenario_a_teach_scene_renders_its_own_block():
+    """A teach is a heading, a paragraph at reading size and a list of examples
+    -- never drawn through the say beat's display-size branch."""
+    import re
+    src = _read('components/lesson_player.html')
+    m = re.search(r'<template x-if="scene\(\)\.type === \'teach\'">(.*?)\n        </template>', src, re.S)
+    check(m, "the player has its own x-if=\"scene().type === 'teach'\" block")
+    block = m.group(1)
+    for marker in ('data-teach-title', 'data-teach-text', 'data-teach-example'):
+        check(marker in block, f"the teach block carries {marker}")
+    check('speakExample(' in block, "an example is a tap that speaks it")
+    check('sayText()' not in block, "the teach block is not the say beat's text")
+    say = re.search(r'<template x-if="\(scene\(\)\.type === \'say\' && !scene\(\)\.fade\)(.*?)">', src, re.S)
+    check(say, "the say block's condition is findable")
+    check('teach' not in say.group(1), f"and it never takes a teach, got {say.group(1)!r}")
+
+
+def scenario_split_sentences_is_pure_and_keeps_numbers():
+    import json
+    body = _player_method('splitSentences', 'text')
+    check('this.' not in body, f"splitSentences stays pure, got {body!r}")
+    para = ' '.join(f'Sentence number {i} says one thing about the keys and stops.' for i in range(1, 9))
+    harness = r"""
+const out = {};
+out.three = splitSentences("Play it. Count 2.5 beats! Again?");
+out.empty = splitSentences("");
+out.para = splitSentences(PARA);
+console.log(JSON.stringify(out));
+""".replace('PARA', json.dumps(para))
+    got = _run_node('chauffeur_split_', 'function splitSentences(text) {' + body + '\n}\n' + harness)
+    if got is None:
+        return
+    three = [s.strip() for s in got['three']]
+    check(three == ['Play it.', 'Count 2.5 beats!', 'Again?'], f"three sentences, 2.5 whole, got {got['three']}")
+    check(got['empty'] == [], f"an empty line is no sentences, got {got['empty']}")
+    check(len(para) > 450 and len(got['para']) == 8 and all(len(s) < 80 for s in got['para']),
+          f"a teach-length paragraph splits into its sentences, got {got['para']}")
+    check(' '.join(s.strip() for s in got['para']) == para, 'and nothing is lost or reordered')
+
+
+def scenario_an_example_tap_speaks_in_its_language():
+    """A tapped example goes through the same say path as a card's speak, in
+    the example's own language, and is queued -- never a stopVoice that
+    would cut the explanation off mid-sentence."""
+    body = _player_method('speakExample', 'i')
+    harness = r"""
+const calls = [];
+const ctx = {
+  scene: () => ({type: 'teach', tone: 'calm', speak_lang: '', text: 'x',
+                 examples: [{text: 'Play C, rest, C'}, {text: 'Dó', speak_lang: 'pt-BR'}]}),
+  say(text, lang, tone) { calls.push(['say', text, lang || '', tone || '']); },
+  stopVoice() { calls.push(['stop']); },
+  sayLocal(text) { calls.push(['local', text]); },
+  panel: false, muted: false,
+};
+const speakExample = function (i) {""" + body + r"""
+};
+speakExample.call(ctx, 1);
+speakExample.call(ctx, 0);
+speakExample.call(ctx, 7);
+console.log(JSON.stringify({calls}));
+"""
+    got = _run_node('chauffeur_example_', harness)
+    if got is None:
+        return
+    calls = got['calls']
+    check(calls[:2] == [['say', 'Dó', 'pt-BR', 'calm'], ['say', 'Play C, rest, C', '', 'calm']],
+          f"each tap says its own text in its own language through say(), got {calls}")
+    check(len(calls) == 2, f"an index past the list says nothing, and nothing is stopped or bypassed, got {calls}")
+
+
+def scenario_a_scene_speak_is_queued_sentence_by_sentence():
+    """enterScene says a scene's speak one sentence per say() call, in order,
+    so the browser voice's 12-second guard bounds a sentence, not a paragraph."""
+    split = _player_method('splitSentences', 'text')
+    enter = _player_method('enterScene', '')
+    harness = r"""
+function splitSentences(text) {""" + split + r"""
+}
+const said = [];
+const SCENE = {type: 'teach', title: 'Middle C', text: 'C sits left of the two black keys.',
+               examples: [], tone: 'calm', speak_lang: 'en-GB',
+               speak: 'Find the two black keys. Step left of them! Is that C?'};
+const base = {
+  scene: () => SCENE,
+  say(text, lang, tone) { said.push([text, lang || '', tone || '']); },
+  needsGrownUp: () => false,
+  splitSentences,
+  panel: false, muted: false, preview: true,
+};
+const noop = () => undefined;
+const ctx = new Proxy(base, {get: (t, k) => (k in t ? t[k] : noop),
+                             set: (t, k, v) => { t[k] = v; return true; }});
+const enterScene = function () {""" + enter + r"""
+};
+enterScene.call(ctx);
+console.log(JSON.stringify({said}));
+"""
+    got = _run_node('chauffeur_enter_', harness)
+    if got is None:
+        return
+    said = [[s[0].strip(), s[1], s[2]] for s in got['said']]
+    check(said == [['Find the two black keys.', 'en-GB', 'calm'], ['Step left of them!', 'en-GB', 'calm'],
+                   ['Is that C?', 'en-GB', 'calm']],
+          f"one say() per sentence of speak, in order, in the scene's voice, got {got['said']}")
+
+
 if __name__ == '__main__':
     scenario_component_exists_and_renders_the_four_beats()
     scenario_checks_are_never_stored()
@@ -3204,4 +3345,8 @@ if __name__ == '__main__':
     scenario_only_session_level_lines_reach_the_room()
     scenario_the_room_voice_is_a_panel_only_fork()
     scenario_the_room_is_asked_once_and_remembered_on_the_device()
+    scenario_a_teach_scene_renders_its_own_block()
+    scenario_split_sentences_is_pure_and_keeps_numbers()
+    scenario_an_example_tap_speaks_in_its_language()
+    scenario_a_scene_speak_is_queued_sentence_by_sentence()
     print("test_lesson_player_runtime OK")

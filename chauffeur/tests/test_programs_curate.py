@@ -1362,6 +1362,27 @@ def scenario_exclude_books_routes_a_stubborn_book_plan_to_generated():
         programs_curate._pool_call = real_pool
 
 
+def scenario_generated_units_carry_the_material_itself():
+    """Lesson depth spec section 6, curation: a generated rung's body is the
+    material in the activity's own terms -- enough to run the session without
+    looking anything up -- so the script writer has something to teach from."""
+    check(programs_curate.UNIT_BODY_CHARS == 1500, f"body cap 1500, got {programs_curate.UNIT_BODY_CHARS}")
+    s = programs_curate.GENERATE_SYSTEM
+    for needle in ('the material itself', 'words, the rule and example sentences', 'notes, chords',
+                   'sets and reps', 'recipe steps', 'the sound and the words'):
+        check(needle in s, f"GENERATE_SYSTEM lacks {needle!r}")
+    body = ('Say hello in Portuguese: ola. Say goodbye: tchau. Practise both, then swap. ' * 30)[:1399] + '.'
+    check(len(body) == 1400, 'the fixture is the length it claims')
+    units = programs_curate._clean_units(
+        [{'title': 'Greetings', 'body': body}, {'title': 'Numbers', 'body': 'um, dois, tres'}],
+        'Learn Portuguese', allow_body=True)
+    check(len(units) == 2 and units[0]['body'] == body,
+          f"a 1400-character body survives intact, got {len(units[0]['body']) if units else units}")
+    cited = programs_curate._clean_units(
+        [{'title': 'Greetings', 'body': body}, {'title': 'Numbers'}], 'Learn Portuguese')
+    check(cited and cited[0]['body'] == '', 'a cited rung still never carries our prose')
+
+
 if __name__ == '__main__':
     scenario_a_body_aim_is_refused_before_any_research()
     scenario_a_behaviour_aim_passes_the_screen()
@@ -1409,4 +1430,5 @@ if __name__ == '__main__':
     scenario_pacing_finally_runs_over_something_true()
     scenario_a_cited_plan_comes_back_with_its_lessons()
     scenario_exclude_books_routes_a_stubborn_book_plan_to_generated()
+    scenario_generated_units_carry_the_material_itself()
     print("test_programs_curate OK")
