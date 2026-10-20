@@ -1028,6 +1028,51 @@ def scenario_argyle_schedules_a_new_row_after_its_transaction():
     finally:
         missions._post, web.research, threads.draft_message, programs_curate.curate, storage.get_settings = saved
 
+def scenario_the_job_never_reaches_the_paid_key():
+    """Lesson scripts are background-shaped work (spec section 6): the job and the nightly retry
+    run on the free chain only. Every free model answers a 429 (the transient throttle that
+    with_paid_fallback counts) with a pro key on file and paid fallback set to 'auto': the throttle
+    is never noted, the pro key is never looked up, and the free chain is not cut after Flash (a
+    Flash-Lite candidate follows the Flash models within the pool's max_models). Pins the
+    behaviour, not a parameter name."""
+    from services import library_scripts, model_pools, paid_fallback, llm
+    rid, lid, lesson = _reset()
+    storage.set_app_state(paid_fallback._STATE_KEY, {})
+    paid_fallback._state = None
+    settings = {'llm_gemini_api_key': 'free-key', 'llm_gemini_paid_api_key': 'pro-key',
+                'llm_paid_fallback_mode': 'auto', 'llm_paid_fallback_failures': 1}
+    tried, keys, throttles, pools = [], [], [], []
+    real_key_for_pool = model_pools.api_key_for_pool
+
+    def call_model(model, api_key, system, prompt, **kw):
+        tried.append(model)
+        keys.append(api_key)
+        return {'error': '429 RESOURCE_EXHAUSTED: quota exceeded'}
+
+    def key_for_pool(pool, s):
+        pools.append(pool)
+        return real_key_for_pool(pool, s)
+    saved_cooldowns = dict(model_pools._cooldowns)
+    try:
+        with patch.object(llm, 'call_model', call_model), \
+                patch.object(model_pools, '_maybe_discover', lambda *a, **k: None), \
+                patch.object(model_pools, 'api_key_for_pool', key_for_pool), \
+                patch.object(paid_fallback, 'note_throttle', lambda *a, **k: throttles.append(a)):
+            out = library_scripts.generate_script(storage.get_library_program(lid), lesson, 'Session A', settings)
+    finally:
+        model_pools._cooldowns.clear()
+        model_pools._cooldowns.update(saved_cooldowns)
+    check(out is None, f'nothing usable came back, so nothing is stored as a script, got {out}')
+    check(not throttles, f'the free-tier throttle is never noted for lesson work, got {len(throttles)} notes')
+    check('pro' not in pools, f'the pro key is never looked up, got {pools}')
+    check(keys and set(keys) == {'free-key'}, f'every attempt used the free key, got {set(keys)}')
+    first_lite = next((i for i, m in enumerate(tried) if 'flash-lite' in m), None)
+    check(first_lite is not None and first_lite > 0 and all('flash' in m and 'lite' not in m for m in tried[:first_lite]),
+          f'the chain was not cut after Flash: a Flash-Lite candidate was tried after the Flash models, got {tried}')
+    row = storage.get_library_script(lid, _slot(lesson)) or {}
+    check(not row.get('scenes') and row.get('attempts', 0) == 0,
+          f'a throttle is transient: no scenes and no attempt spent, got {row}')
+
 if __name__ == '__main__':
     scenario_claim_then_commit_then_nobody_else()
     scenario_failure_record_lands_only_on_an_empty_slot()
@@ -1066,4 +1111,5 @@ if __name__ == '__main__':
     scenario_library_view_carries_script_state()
     scenario_lesson_help_reads_a_teach_beat_through_the_resolver()
     scenario_argyle_schedules_a_new_row_after_its_transaction()
+    scenario_the_job_never_reaches_the_paid_key()
     print('test_library_scripts OK')

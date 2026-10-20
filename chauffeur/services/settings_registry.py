@@ -750,11 +750,11 @@ ENTRIES: List[dict] = [
        'those programs claim practice time and carry no plan at all.',
        page='work?tab=projects', anchor='programs-settings'),
     _e('program_lessons_enabled', 'programs', 'Lesson scripts',
-       'Write a short scripted lesson for each practice session the night '
-       'before — the session still shows its plain steps with this off '
+       'Write lesson scripts in a per-program job on the library page, with '
+       'a nightly retry — the session still shows its plain steps with this off '
        '(default on).', page='work?tab=projects', anchor='lessons'),
     _e('lesson_max_attempts', 'programs', 'Tries per lesson',
-       'How many times the sweep may spend a model call on one lesson that '
+       'How many times the library page job and nightly retry may spend a model call on one lesson that '
        'keeps failing before it stops and leaves the plain steps (default 3, '
        '1-20). Outages, quota and paused models never count. Regenerate on '
        'the lesson starts the count over.', page='work?tab=projects', anchor='lessons'),

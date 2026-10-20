@@ -3279,6 +3279,25 @@ def scenario_a_mounted_teach_scene_shows_its_words_and_speaks_an_example():
             browser.close()
 
 
+def scenario_the_player_uses_no_lookbehind():
+    """Safari before 16.4 throws a parse-time SyntaxError on a regex lookbehind, and a parse
+    error takes the whole player script with it, not only the one function. So no script in the
+    component may carry `(?<` (lookbehind, either polarity), and splitSentences still does its
+    job without one: three parts, 2.5 whole."""
+    import re
+    src = _read('components/lesson_player.html')
+    scripts = re.findall(r'<script[^>]*>(.*?)</script>', src, re.S)
+    check(scripts and any('function lessonPlayer()' in s for s in scripts), 'the player script is found')
+    bad = [s[max(0, i - 60):i + 40] for s in scripts for i in [m.start() for m in re.finditer(r'\(\?<', s)]]
+    check(not bad, f'no lookbehind anywhere in the player script, found: {bad}')
+    body = _player_method('splitSentences', 'text')
+    got = _run_node('chauffeur_nolookbehind_', 'function splitSentences(text) {' + body + '\n}\n'
+                    'console.log(JSON.stringify(splitSentences("Play it. Count 2.5 beats! Again?")));\n')
+    if got is None:
+        return
+    check([s.strip() for s in got] == ['Play it.', 'Count 2.5 beats!', 'Again?'], f'three sentences, 2.5 whole, got {got}')
+
+
 if __name__ == '__main__':
     scenario_component_exists_and_renders_the_four_beats()
     scenario_checks_are_never_stored()
@@ -3419,4 +3438,5 @@ if __name__ == '__main__':
     scenario_a_scene_speak_is_queued_sentence_by_sentence()
     scenario_a_tapped_example_plays_next_not_after_the_explanation()
     scenario_a_mounted_teach_scene_shows_its_words_and_speaks_an_example()
+    scenario_the_player_uses_no_lookbehind()
     print("test_lesson_player_runtime OK")

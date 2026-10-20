@@ -288,7 +288,11 @@ def remove_lesson(library_id, lesson_id, actor):
         if not any(l['id'] == lesson_id for l in row['lessons']):
             raise ValueError('No such lesson.')
         row['lessons'] = [l for l in row['lessons'] if l['id'] != lesson_id]
-    return _write(library_id, actor, change)
+    with storage.db_lock, storage.db.transaction():
+        result = _write(library_id, actor, change)
+        if result.get('status') == 'success':
+            storage.delete_library_lesson_scripts(library_id, lesson_id)
+        return result
 
 
 def order_lessons(library_id, ids, actor):

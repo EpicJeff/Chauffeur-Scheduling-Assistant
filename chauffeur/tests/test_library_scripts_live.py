@@ -146,6 +146,8 @@ def _stub_write():
             pairs = [(lid, lab) for lid, lab in slots if lid == lesson_id and lab == (variant_label or '')]
         else:
             pairs = [(lid, lab) for lid, lab in slots if library_scripts.needs_script(library_id, _slot(lid, lab))]
+            if not pairs:
+                return {'status': 'ok', 'job': None}   # the real write()'s answer when nothing needs a script
         for lid, lab in pairs:
             storage.edit_library_script(library_id, _slot(lid, lab), {'origin': 'generated', 'scenes': copy.deepcopy(STUB_SCENES), 'minutes': 3})
         WRITES.append((library_id, lesson_id, variant_label))
@@ -588,6 +590,92 @@ def scenario_the_phone_shows_chips_and_play_light_and_dark():
         _clear_jobs()
 
 
+# 9 -------------------------------------------------------------------------
+FLUTE, BREATH = 'lib-flute', 'ls-breath'
+
+
+def _poll_running(page):
+    return page.evaluate("() => !!Alpine.$data(document.querySelector('[data-library-page]'))._poll")
+
+
+def scenario_reset_clears_a_script_and_an_archived_program_keeps_its_hands_off():
+    """Reset (spec §1) asks, then clears the stored script; a write with nothing
+    to do (job null, or a job of total 0) never flashes "0 of 0" or polls; an
+    archived program shows Play but no Edit, Regenerate, Reset or Write lessons."""
+    served = serve()
+    if served is None:
+        return
+    _clear_jobs()
+    storage.edit_library_script(DRUMS, _slot(BEAT), {'origin': 'generated', 'scenes': copy.deepcopy(STUB_SCENES), 'minutes': 3})
+    if not storage.get_library_program(FLUTE):
+        row = _library_row(FLUTE, 'Learn flute', [{'id': 'ph-air', 'name': 'Air', 'weeks': 2, 'steps': [], 'milestone': 'A long note'}],
+                           [{'id': BREATH, 'phase_id': 'ph-air', 'title': 'Long notes', 'sessions': 1, 'steps': ['Breathe low'], 'variants': []}])
+        row['archived'] = True
+        storage.add_library_program(row)
+        storage.edit_library_script(FLUTE, _slot(BREATH), {'origin': 'generated', 'scenes': copy.deepcopy(STUB_SCENES), 'minutes': 3})
+    try:
+        with served.browser() as page:
+            _library(page, served, 'mom')
+            card = f'[data-library-list] [data-library-card][data-library-id="{DRUMS}"]'
+            # Nothing left to write: the answer carries job null, the card stays as it was.
+            before = len(WRITES)
+            page.locator(card + ' [data-library-write]').click()
+            page.wait_for_function("() => !Alpine.$data(document.querySelector('[data-library-page]')).busy", timeout=10000)
+            btn = page.locator(card + ' [data-library-write]')
+            check(btn.inner_text().strip() == 'Write lessons' and btn.is_enabled(), f"nothing to write leaves the card alone: {btn.inner_text()}")
+            check(len(WRITES) == before, "and the stub saw nothing to write")
+            check(not _poll_running(page), "and no poll starts")
+            # A job of total 0 in storage reads as no job at all.
+            _fake_job(DRUMS, 0, 0, '')
+            page.reload(wait_until='load')
+            page.wait_for_selector(card, timeout=20000)
+            check(page.locator(card + ' [data-library-write]').inner_text().strip() == 'Write lessons',
+                  f"a total-0 job never reads 0 of 0: {page.locator(card).inner_text()}")
+            check('0 of 0' not in page.locator('[data-library-list]').inner_text(), "nowhere on the list")
+            check(not _poll_running(page), "and starts no poll")
+            _clear_jobs()
+            # Reset: asks, Keep it keeps, Clear clears and the editor reads the empty slot again.
+            page.locator(card + ' [data-library-view]').click()
+            page.wait_for_selector('[data-library-detail] [data-lesson-script]', timeout=10000)
+            _line(page, BEAT).locator('[data-script-edit]').click()
+            ed = _editor(page, BEAT)
+            ed.locator('[data-script-row]').first.wait_for(state='visible', timeout=10000)
+            reset = ed.locator('[data-script-reset]')
+            check(reset.is_visible() and reset.is_enabled(), "Reset is offered once the stored script is read")
+            shot_el(ed, 'scripts-editor-reset-dark')
+            reset.click()
+            text = _confirm_text(page)
+            check('Clear this script?' in text and 'nightly retry' in text, f"Reset asks first: {text}")
+            page.locator('#cc-confirm-cancel-btn').click()
+            time.sleep(0.5)
+            check((storage.get_library_script(DRUMS, _slot(BEAT)) or {}).get('scenes'), "Keep it keeps the script")
+            reset.click()
+            _confirm_text(page)
+            page.locator('#cc-confirm-execute-btn').click()
+            _wait(lambda: not (storage.get_library_script(DRUMS, _slot(BEAT)) or {}).get('scenes'), "Clear removes the stored script")
+            page.wait_for_function(f"""() => {{
+                const el = document.querySelector('[data-lesson-id="{BEAT}"] [data-lesson-script] [data-script-chip]');
+                return el && el.innerText === 'no script yet';
+            }}""", timeout=10000)
+            _wait(lambda: ed.locator('[data-script-row]').count() == 0 and 'No script yet' in ed.inner_text(), "the editor reads the empty slot")
+            check(not ed.locator('[data-script-reset]').is_visible(), "and Reset goes with nothing left to clear")
+            # An archived program: Play, nothing that writes.
+            page.locator('[data-library-back]').click()
+            flute = page.locator(f'[data-library-list] [data-library-card][data-library-id="{FLUTE}"]')
+            flute.wait_for(state='visible', timeout=10000)
+            check(flute.locator('[data-library-write]').count() == 0, "no Write lessons on an archived card")
+            flute.locator('[data-library-view]').click()
+            page.wait_for_selector('[data-library-detail] [data-lesson-script]', timeout=10000)
+            arch = page.locator('[data-library-detail]')
+            check(arch.locator('[data-script-play]').count() == 1, "Play stays on an archived program")
+            check(arch.locator('[data-script-edit], [data-script-regenerate], [data-script-reset], [data-script-editor], [data-library-write]').count() == 0,
+                  "and no Edit, Regenerate, Reset or Write lessons")
+            shot_el(arch, 'scripts-archived-dark')
+            check(served.errors() == [], f"no page errors: {served.errors()}")
+    finally:
+        _clear_jobs()
+
+
 SCENARIOS = [scenario_each_lesson_row_says_where_its_script_stands,
              scenario_the_card_writes_lessons_and_says_how_far_it_has_got,
              scenario_the_editor_writes_a_teach_beat_and_honours_the_length,
@@ -595,7 +683,8 @@ SCENARIOS = [scenario_each_lesson_row_says_where_its_script_stands,
              scenario_play_previews_the_script_filled_for_the_viewer,
              scenario_a_library_run_points_at_the_library_and_a_legacy_run_keeps_its_editor,
              scenario_the_drawer_picks_the_writing_model,
-             scenario_the_phone_shows_chips_and_play_light_and_dark]
+             scenario_the_phone_shows_chips_and_play_light_and_dark,
+             scenario_reset_clears_a_script_and_an_archived_program_keeps_its_hands_off]
 
 if __name__ == '__main__':
     import traceback

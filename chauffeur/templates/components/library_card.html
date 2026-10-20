@@ -6,7 +6,7 @@
 
    library_card()            one card; the caller's scope holds `lp` (a row of
                              GET /api/library) and libraryPage()'s methods
-                             (writeLessons/writingLine and `host` included).
+                             (writeLessons/writingOf/writingLine and `host`).
    library_profile_fields(d, bands)
                              the public profile a library program is curated
                              for, with the publication line ABOVE the title:
@@ -62,9 +62,9 @@
              has got while it runs. The admin page only: the phone shows
              chips and Play. -->
         <template x-if="lp.can_edit && !lp.archived && host === 'admin'">
-            <button type="button" data-library-write @click="writeLessons(lp)" :disabled="!!(busy || lp.writing)"
+            <button type="button" data-library-write @click="writeLessons(lp)" :disabled="!!(busy || writingOf(lp))"
                     class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-teal-300 border border-teal-700/60 active:bg-gray-700 disabled:opacity-60"
-                    x-text="lp.writing ? writingLine(lp) : 'Write lessons'"></button>
+                    x-text="writingOf(lp) ? writingLine(lp) : 'Write lessons'"></button>
         </template>
         <template x-if="lp.can_edit && !lp.archived">
             <button type="button" data-library-archive @click="archiveProgram(lp)" :disabled="!!busy"
@@ -76,7 +76,7 @@
                     class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-900 text-red-400 border border-red-900/60 active:bg-red-950 disabled:opacity-50">Delete</button>
         </template>
     </div>
-    <template x-if="lp.writing && !(lp.can_edit && !lp.archived && host === 'admin')">
+    <template x-if="writingOf(lp) && !(lp.can_edit && !lp.archived && host === 'admin')">
         <p data-library-writing class="text-[11px] text-gray-500 mt-1" x-text="writingLine(lp)"></p>
     </template>
     <template x-if="lp.can_edit && lp.in_use">

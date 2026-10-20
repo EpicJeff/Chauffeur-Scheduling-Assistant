@@ -44,7 +44,7 @@ def slots_of(row: dict) -> list:
 def _call(tier, settings, system, prompt):
     from services import model_pools
     return model_pools.call_pool_json(tier, settings.get('llm_gemini_api_key', ''), system, prompt,
-                                      timeout_s=60, gemma_timeout_s=180, settings=settings)
+                                      timeout_s=60, gemma_timeout_s=180, settings=settings, paid_ok=False)
 
 
 def generate_script(row: dict, lesson: dict, variant_label: str, settings: dict, *, allowance=None, spend=None):
@@ -174,6 +174,8 @@ def write(library_id: str, actor: dict, lesson_id: str = None, variant_label: st
             return {'status': 'error', 'code': 404, 'message': 'No such lesson.'}
     else:
         pairs = [(l, lab) for l, lab in slots_of(row) if needs_script(library_id, {'lesson_id': l['id'], 'variant_label': lab})]
+        if not pairs:
+            return {'status': 'ok', 'job': None}
     with storage.db_lock:
         jobs = _jobs()
         if _alive(jobs.get(library_id)):
@@ -212,7 +214,10 @@ def _run(library_id, job_id, pairs, settings):
         _finish(library_id, job_id)
 
 def script_for_run(run: dict, lesson_id: str, variant_label: str):
-    """The one script a run may play: its library's, or a legacy row for an unconverted run."""
+    """Return the library script, or None for an unconverted run.
+
+    The legacy script read lives in main._run_script.
+    """
     if not run:
         return None
     if run.get('library_id'):

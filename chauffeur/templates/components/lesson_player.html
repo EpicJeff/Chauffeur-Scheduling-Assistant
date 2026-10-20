@@ -7,8 +7,8 @@
      that opened it calls its own existing log action.
 
      Preview mode: `lesson-player:open`'s detail may carry `preview: true`
-     (the lesson editor's own "Play this" tap, and the forced-sweep
-     report's "Play" tap -- both in programs.html -- open onto scenes
+     (the lesson editor's own "Play this" tap on Rhythms, and the library
+     page's per-lesson "Play" tap -- both open onto scenes
      nobody has actually reached tonight yet). A preview plays exactly
      like a real session -- same scenes, same primitives, same fallback
      ladder -- except that it can never end in a write: the footer's
@@ -717,7 +717,7 @@ function lessonPlayer() {
         // which is a different, equally honest thing to say.
         lesson: null, usingLesson: false,
         // True only when opened via `lesson-player:open`'s `preview: true`
-        // (the editor's "Play this", the sweep report's "Play"). Read by
+        // (the editor's "Play this", the library page's "Play"). Read by
         // the footer's label and by finish() -- see both below -- and by
         // nothing else: every other behaviour (scene rendering, primitives,
         // checks, the fallback ladder, stopSound on close) is identical in
@@ -932,7 +932,10 @@ function lessonPlayer() {
         splitSentences(text) {
             const s = String(text || '').trim();
             if (!s) return [];
-            return s.split(/(?<=[.!?])\s+(?=\S)/).map(x => x.trim()).filter(Boolean);
+            // No lookbehind: Safari before 16.4 refuses it at parse time,
+            // which would take the whole player script down with it.
+            return s.replace(/([.!?])\s+(?=\S)/g, '$1\u0001').split('\u0001')
+                .map(x => x.trim()).filter(Boolean);
         },
         // A tapped teach example: said through say() in its own language,
         // else the scene's, queued after the line in progress and ahead of

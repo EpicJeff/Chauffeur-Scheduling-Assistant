@@ -1009,7 +1009,8 @@ _SYSTEM = (
     "You write one practice-session lesson script for a family app. Reply "
     'with ONLY JSON: {"scenes": [...]}. Scene types: '
     '{"type":"say","text":"","fade":true,"passes":3} a short '
-    "teaching beat (\"fade\" repeats the same words with more of "
+    "beat of words on screen (teaching belongs in a teach scene) "
+    "(\"fade\" repeats the same words with more of "
     "them blanked each pass, 2-4, for anything learned by heart); "
     '{"type":"teach","title":"","text":"","examples":[{"text":"","speak_lang":"pt-BR"}],"speak":""} '
     "a teaching beat: what is new, why it matters, what good looks like, in up to 700 characters, with up to 5 short "
@@ -1089,7 +1090,8 @@ _SYSTEM = (
     "show before metronome do-beats; strings tune up first. movement (anything moved or held) - teach says what the exercise "
     "is for and its pacing, never how to hold or move a joint; work is counters with spoken counts and switch-overs. cooking "
     "and crafts - teach the technique before the step it applies to; waits carry announce; grownup true on heat, blades, power "
-    "tools. reading and phonics - teach the sound or rule with cards; work is cards and lines. problem-shaped (maths, puzzles) "
+    "tools. reading and phonics - teach the sound or rule with cards; work is cards and lines. "
+    "lines to be learned by heart (poetry, drama): say the other person's part and let them reply; problem-shaped (maths, puzzles) "
     "- teach the rule with one worked example; work is hint ladders, smallest nudge first. language - teach the rule with "
     "examples in both languages (speak_lang on the target-language ones); controlled practice through lines (lang set) and "
     "cards (speak + speak_lang); free production through a presence listen; at most one greeting beat in a session; OPEN "

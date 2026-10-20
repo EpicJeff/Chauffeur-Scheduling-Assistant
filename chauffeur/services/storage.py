@@ -4016,8 +4016,15 @@ def _library_script_query(library_id: str, slot: dict):
 
 def _library_slot_alive(library_id: str, slot: dict) -> bool:
     row = get_library_program(library_id)
-    return bool(row and not row.get('archived')
-                and any(l.get('id') == (slot or {}).get('lesson_id') for l in row.get('lessons') or []))
+    if not row or row.get('archived'):
+        return False
+    slot = slot or {}
+    for lesson in row.get('lessons') or []:
+        if lesson.get('id') == slot.get('lesson_id'):
+            labels = [v.get('label') or '' for v in lesson.get('variants') or []
+                      if isinstance(v, dict) and v.get('steps')]
+            return (slot.get('variant_label') or '') in (labels or [''])
+    return False
 
 
 def _script_row(library_id, slot, data, claim, edited, row_id=None, created_at=None):
@@ -4112,6 +4119,14 @@ def get_library_scripts(library_id: str) -> list:
 def delete_library_script(library_id: str, slot: dict) -> bool:
     with db_lock:
         return bool(library_scripts_table.remove(_library_script_query(library_id, slot)))
+
+
+def delete_library_lesson_scripts(library_id: str, lesson_id: str) -> int:
+    """Delete every variant's script for one removed library lesson."""
+    with db_lock:
+        q = Query()
+        gone = library_scripts_table.remove((q.library_id == library_id) & (q.lesson_id == lesson_id))
+        return len(gone) if isinstance(gone, list) else int(gone or 0)
 
 
 def delete_library_scripts(library_id: str) -> int:

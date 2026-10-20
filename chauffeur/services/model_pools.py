@@ -401,13 +401,13 @@ def models_for(tier: str, settings: dict = None, paid: bool = False) -> list:
         return sorted(chain, key=cooldown)
 
 
-def with_paid_fallback(tier, api_key, settings, background, call_chain):
+def with_paid_fallback(tier, api_key, settings, background, call_chain, *, paid_ok: bool = True):
     """Run a caller's chain, switching keys only for eligible foreground work.
 
     call_chain(key, paid) retains the caller's request and time limits and
     reserves each paid request with paid_fallback.count_call.
     """
-    if background or tier not in ('interactive', 'vision', 'heavy'):
+    if not paid_ok or background or tier not in ('interactive', 'vision', 'heavy'):
         return call_chain(api_key, False)
     if settings is None:
         from services.storage import get_settings
@@ -445,7 +445,8 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
                    settings: dict = None, images: list = None,
                    background: bool = None, workflow: str = None,
                    strict_json: bool = False, max_output_tokens: int = None,
-                   attempts: list = None, total_timeout_s: float = None, thinking_level: str = None, response_schema: dict = None) -> dict:
+                   attempts: list = None, total_timeout_s: float = None, thinking_level: str = None, response_schema: dict = None,
+                   *, paid_ok: bool = True) -> dict:
     """JSON call with one HTTP attempt per candidate and persistent admission.
 
     Background work tries one candidate, then defers; foreground work may try
@@ -454,6 +455,8 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
     Ollama callers keep their own single-model path. An optional monotonic
     time budget caps each attempt's timeout to the remaining budget and stops
     launching candidates when it expires; existing callers remain unchanged.
+    paid_ok=False keeps the free candidate chain without paid-key lookup or
+    throttle notifications, independently of the background candidate limit.
 
     `attempts`, when a list is passed, collects the id of every model this
     call actually sends a PROVIDER REQUEST to, in order — so a caller can
@@ -474,7 +477,7 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
         return _call_chain(tier, api_key, system_prompt, user_prompt, temperature, timeout_s,
                            gemma_timeout_s, max_models, settings, images, background, workflow,
                            strict_json, max_output_tokens, attempts, total_timeout_s,
-                           thinking_level, response_schema)
+                           thinking_level, response_schema, paid_ok=paid_ok)
     # Background: the workflow pause is held until the whole call has failed,
     # so a fall-through to a sibling Gemma model is not blocked by the pause
     # its own first attempt would otherwise have written.
@@ -482,7 +485,7 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
         res = _call_chain(tier, api_key, system_prompt, user_prompt, temperature, timeout_s,
                           gemma_timeout_s, max_models, settings, images, background, workflow,
                           strict_json, max_output_tokens, attempts, total_timeout_s,
-                          thinking_level, response_schema)
+                          thinking_level, response_schema, paid_ok=paid_ok)
     if isinstance(res, dict) and res.get('error'):
         llm_budget.apply_held_pauses(held)   # no-op when nothing failed on the wire
     return res
@@ -491,7 +494,7 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
 def _call_chain(tier, api_key, system_prompt, user_prompt, temperature, timeout_s,
                 gemma_timeout_s, max_models, settings, images, background, workflow,
                 strict_json, max_output_tokens, attempts, total_timeout_s,
-                thinking_level, response_schema):
+                thinking_level, response_schema, *, paid_ok: bool = True):
     if settings is None and not background and tier in ('interactive', 'vision', 'heavy'):
         from services.storage import get_settings
         settings = get_settings()
@@ -501,7 +504,7 @@ def _call_chain(tier, api_key, system_prompt, user_prompt, temperature, timeout_
             tier, key, system_prompt, user_prompt, temperature, timeout_s,
             gemma_timeout_s, max_models, settings, images, background, workflow,
             strict_json, max_output_tokens, attempts, deadline,
-            thinking_level, response_schema, paid))
+            thinking_level, response_schema, paid), paid_ok=paid_ok)
 
 
 def _call_candidates(tier, api_key, system_prompt, user_prompt, temperature, timeout_s,
