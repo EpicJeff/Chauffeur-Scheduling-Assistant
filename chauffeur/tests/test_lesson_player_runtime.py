@@ -2439,7 +2439,7 @@ def scenario_the_lesson_starts_the_players_own_player():
           "then asks which Home Assistant entity that turned into")
     m2 = re.search(r'\n        open\(w, lesson, preview\) \{(.*?)\n        \},',
                    src, re.S)
-    check('ensureDevicePlayer' in (m2.group(1) if m2 else ''),
+    check('startDeviceVoice' in (m2.group(1) if m2 else ''),
           "opened from a session, not from a tap somebody has to find")
 
 
@@ -2628,13 +2628,13 @@ def scenario_a_phone_or_computer_speaks_through_the_browser_until_it_opts_in():
     check('this.' not in body, f"and pure, got {body!r}")
     o = re.search(r'\n        open\(w, lesson, preview\) \{(.*?)\n        \},', src, re.S)
     ob = o.group(1) if o else ''
-    check('voiceChoice(' in ob and ob.index('unlockDevice()') < ob.index('ensureDevicePlayer()'),
+    check('voiceChoice(' in ob and ob.index('unlockDevice()') < ob.index('startDeviceVoice()'),
           "open() reads the choice and unlocks the player inside the Start tap, before the player is (re)started")
     code_before = '\n'.join(l for l in ob[:ob.index('unlockDevice()')].splitlines() if not l.strip().startswith('//'))
     check('await ' not in code_before, "nothing is awaited before the unlock spends the gesture")
     t = re.search(r'\n        toggleVoice\(\) \{(.*?)\n        \},', src, re.S)
     tb = t.group(1) if t else ''
-    check("localStorage.setItem('chf-lesson-voice'" in tb and 'unlockDevice()' in tb and 'ensureDevicePlayer()' in tb,
+    check("localStorage.setItem('chf-lesson-voice'" in tb and 'unlockDevice()' in tb and 'startDeviceVoice()' in tb,
           "the chip remembers the choice per device and unlocks + starts the player in the same tap")
     node = shutil.which('node')
     if not node:
@@ -2712,12 +2712,14 @@ def scenario_a_player_home_assistant_does_not_know_is_said_so_and_the_browser_sp
     check('this.' not in body, f"and pure, got {body!r}")
     e = re.search(r'\n        async ensureDevicePlayer\(\) \{(.*?)\n        \},', src, re.S)
     eb = e.group(1) if e else ''
-    check("this.deviceLookup = this.deviceEntity ? 'ready' : 'missing'" in eb and 'settleDeviceVoice()' in eb,
-          "the lookup ends ready or missing and is settled")
+    sdv = re.search(r'\n        async startDeviceVoice\(\) \{(.*?)\n        \},', src, re.S)
+    sb0 = sdv.group(1) if sdv else ''
+    check("this.deviceLookup = 'ready'" in eb and "this.deviceLookup = 'missing'" in eb and 'settleDeviceVoice()' in sb0,
+          "the lookup ends ready or missing and startDeviceVoice settles it")
     s2 = re.search(r'\n        settleDeviceVoice\(\) \{(.*?)\n        \},', src, re.S)
     sb = s2.group(1) if s2 else ''
     check("this.deviceLookup !== 'missing'" in sb and 'this.voiceLocal = true' in sb
-          and 'showGlobalAlert' in sb and 'Music Assistant' in sb and "localStorage" not in sb,
+          and 'showGlobalAlert' in sb and 'deviceNotice(' in sb and "localStorage" not in sb,
           f"a missing player falls back to the browser for the session, says the step once, keeps the remembered choice, got {sb!r}")
     for banned in ('alert(', 'confirm(', 'prompt('):
         check(banned not in sb.replace('showGlobalAlert(', ''), f"never a browser {banned}")
@@ -2745,6 +2747,64 @@ console.log(JSON.stringify(out));
     check(out['local'].endswith('browser') and out['ready'].endswith('this device')
           and out['missing'].endswith('not set up') and out['starting'].endswith('starting…') and out['blank'].endswith('starting…'),
           f"four honest readings, got {out}")
+
+
+def scenario_the_device_lookup_is_bounded_and_has_a_second_rung():
+    """Device-found 2026-10-19 (sixth round): the admin page sat on
+    "starting…" with no message (a Sendspin handshake that never finished)
+    and the phone said "not enabled" although its music plays. The lookup
+    is now bounded (12 s, Promise.race), a player that connected but is not
+    listed is told apart from one that never connected (deviceNotice, pure,
+    Node-executed), and the person's own configured media player is the
+    next rung before the browser."""
+    import json
+    import os
+    import re
+    import shutil
+    import subprocess
+    import tempfile
+    src = _read('components/lesson_player.html')
+    e = re.search(r'\n        async startDeviceVoice\(\) \{(.*?)\n        \},', src, re.S)
+    eb = e.group(1) if e else ''
+    check('Promise.race([this.ensureDevicePlayer(), deadline])' in eb and 'setTimeout(() => resolve(\'timeout\'), 12000)' in eb,
+          "the lookup is raced against a 12 s deadline")
+    check("if (outcome === 'timeout')" in eb and "this.deviceLookup = 'missing'" in eb and "'did not connect'" in eb,
+          "a timeout is a missing player that did not connect")
+    l = re.search(r'\n        async ensureDevicePlayer\(\) \{(.*?)\n        \},', src, re.S)
+    lb = l.group(1) if l else ''
+    check("(local && local.active) ? 'not listed' : 'did not connect'" in lb, "connected-but-unlisted is told apart from never-connected")
+    check('await this.memberPlayer()' in lb and lb.index('findLocalEntity') < lb.index('memberPlayer'),
+          "the person's configured player is tried after the Sendspin rung")
+    mp = re.search(r'\n        async memberPlayer\(\) \{(.*?)\n        \},', src, re.S)
+    mb = mp.group(1) if mp else ''
+    check("api/members" in mb and 'media_player_entity' in mb and "startsWith('media_player.')" in mb,
+          "memberPlayer reads the member's media_player_entity and accepts only a media player")
+    m = re.search(r'\n        deviceNotice\(who, why\) \{(.*?)\n        \},', src, re.S)
+    check(m, "deviceNotice(who, why) is findable")
+    body = m.group(1)
+    check('this.' not in body, f"and pure, got {body!r}")
+    node = shutil.which('node')
+    if not node:
+        print('  skip  node is not installed')
+        return
+    harness = r'''
+const out = {};
+out.nc = deviceNotice('Chauffeur screen 1234', 'did not connect');
+out.nl = deviceNotice("Jeff's phone", 'not listed');
+out.blank = deviceNotice('This device', '');
+console.log(JSON.stringify(out));
+'''
+    scratch = tempfile.mkdtemp(prefix='chauffeur_notice_')
+    path = os.path.join(scratch, 'run.mjs')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write('function deviceNotice(who, why) {' + body + '\n}\n' + harness)
+    proc = subprocess.run([node, path], capture_output=True, text=True,
+                          encoding='utf-8', errors='replace', timeout=60)
+    check(proc.returncode == 0, f"deviceNotice threw:\n{proc.stderr[-1500:]}")
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    check('another tab' in out['nc'] and 'Chauffeur screen 1234' in out['nc'], f"never-connected names the other-tab cause, got {out['nc']}")
+    check('Players' in out['nl'] and "Jeff's phone" in out['nl'] and 'Music' in out['nl'], f"unlisted names the enable step and the play-once hint, got {out['nl']}")
+    check('Players' in out['blank'], "an unknown reason reads as unlisted (the enable step), never as a crash")
 
 
 def scenario_no_music_logic_is_not_an_error():
@@ -2961,6 +3021,7 @@ if __name__ == '__main__':
     scenario_a_phone_or_computer_speaks_through_the_browser_until_it_opts_in()
     scenario_the_browser_voice_is_woken_by_the_first_tap()
     scenario_a_player_home_assistant_does_not_know_is_said_so_and_the_browser_speaks()
+    scenario_the_device_lookup_is_bounded_and_has_a_second_rung()
     scenario_only_session_level_lines_reach_the_room()
     scenario_the_room_voice_is_a_panel_only_fork()
     scenario_the_room_is_asked_once_and_remembered_on_the_device()

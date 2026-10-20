@@ -735,6 +735,7 @@ function lessonPlayer() {
         canDeviceVoice: false,
         deviceLookup: '',    // '' | 'starting' | 'ready' | 'missing' -- what ensureDevicePlayer found
         deviceName: '',      // the player's Music Assistant name, for the not-set-up notice
+        deviceWhy: '',       // 'not listed' | 'did not connect' -- which fact the notice states
         // A wait beat's on-screen countdown. Cosmetic only -- the call
         // into the room is armed on the server and outlives this.
         waitLeft: 0, waitTimer: null,
@@ -792,6 +793,7 @@ function lessonPlayer() {
             this.room = this.loadRoom();
             this.deviceEntity = '';
             this.deviceLookup = '';
+            this.deviceWhy = '';
             // Which voice this surface uses. A panel is the house voice by
             // design (room, else its own screen). A phone or a computer on
             // an admin page defaults to the BROWSER until somebody taps the
@@ -810,7 +812,7 @@ function lessonPlayer() {
             // lines come out of the browser, which is what would have
             // happened anyway. Once the entity resolves, everything from
             // that beat on is the house voice.
-            if (!this.voiceLocal || this.panel) this.ensureDevicePlayer();
+            if (!this.voiceLocal || this.panel) this.startDeviceVoice();
             // Asked ONCE per device, and never again whatever the answer
             // was -- a household that wants the panel to stay quiet says
             // so by cancelling, and the header chip is how they change
@@ -1393,7 +1395,7 @@ function lessonPlayer() {
             if (!this.voiceLocal) {
                 this.deviceLookup = this.deviceEntity ? 'ready' : 'starting';
                 this.unlockDevice();
-                this.ensureDevicePlayer();
+                this.startDeviceVoice();
             }
         },
         // Resume the device player's audio while a user gesture is live.
@@ -1480,6 +1482,28 @@ function lessonPlayer() {
             return {key: 'chauffeur_sendspin_id::device', name: 'Chauffeur phone ' + tag};
         },
 
+        async startDeviceVoice() {
+            if (this.preview) return;
+            if (typeof MusicLogic === 'undefined') return;
+            // Bounded: a Sendspin handshake that never completes (one player
+            // id already open in another tab, a proxy that swallows the
+            // socket) used to leave the chip on "starting…" for ever
+            // (2026-10-19). Whatever has not answered by then is missing.
+            let timer = null;
+            const deadline = new Promise(resolve => { timer = setTimeout(() => resolve('timeout'), 12000); });
+            const outcome = await Promise.race([this.ensureDevicePlayer(), deadline]);
+            clearTimeout(timer);
+            if (outcome === 'timeout') {
+                this.deviceEntity = '';
+                this.deviceLookup = 'missing';
+                this.deviceWhy = 'did not connect';
+            }
+            this.settleDeviceVoice();
+        },
+
+        // The Sendspin rung, then the person's own configured player. Resolves
+        // once deviceEntity / deviceLookup / deviceWhy are set; never throws.
+        // Started by startDeviceVoice(), which bounds it.
         async ensureDevicePlayer() {
             if (this.preview) return;
             if (typeof MusicLogic === 'undefined') return;
@@ -1510,9 +1534,35 @@ function lessonPlayer() {
                 // ladder below it is already the answer.
                 const ent = (found || {}).entity;
                 this.deviceEntity = (ent && ent.entity_id) || '';
-                this.deviceLookup = this.deviceEntity ? 'ready' : 'missing';
-            } catch (e) { this.deviceEntity = ''; this.deviceLookup = 'missing'; }
-            this.settleDeviceVoice();
+                if (this.deviceEntity) { this.deviceLookup = 'ready'; this.deviceWhy = ''; return; }
+                // Not listed by Home Assistant. Two different facts hide
+                // behind that, and the notice has to tell them apart: a
+                // player that connected but was never enabled (or has not
+                // played yet, which is when Music Assistant first lists it),
+                // and one that never connected at all.
+                this.deviceWhy = (local && local.active) ? 'not listed' : 'did not connect';
+                // The person's own configured player (the one the Music tab
+                // plays through) is the next rung: Argyle through the speaker
+                // their music already comes out of.
+                const mine = await this.memberPlayer();
+                if (mine) { this.deviceEntity = mine; this.deviceLookup = 'ready'; this.deviceWhy = ''; return; }
+                this.deviceLookup = 'missing';
+            } catch (e) { this.deviceEntity = ''; this.deviceLookup = 'missing'; this.deviceWhy = this.deviceWhy || 'did not connect'; }
+        },
+
+        // The signed-in person's `media_player_entity`, if they set one.
+        async memberPlayer() {
+            try {
+                const pid = (typeof window.chfPersonId === 'function' && window.chfPersonId())
+                    || (typeof selectedMemberId !== 'undefined' ? selectedMemberId : '');
+                if (!pid) return '';
+                const r = await fetch((window.chfBase || '') + 'api/members');
+                if (!r.ok) return '';
+                const rows = await r.json();
+                const me = (Array.isArray(rows) ? rows : []).find(m => m && m.id === pid);
+                const ent = me && me.media_player_entity;
+                return (typeof ent === 'string' && ent.startsWith('media_player.')) ? ent : '';
+            } catch (e) { return ''; }
         },
 
         // What the chip says, from two facts and nothing else. Pure so Node
@@ -1526,6 +1576,19 @@ function lessonPlayer() {
             if (lookup === 'missing') return '🔈 not set up';
             return '🔈 starting…';
         },
+        // Pure (no `this`): the one sentence for each way a device player can
+        // be unavailable, so the person is told the step that actually applies.
+        deviceNotice(who, why) {
+            if (why === 'did not connect') {
+                return `${who} did not connect to Music Assistant. If this screen's player is open in `
+                     + `another tab, close that tab and tap the voice chip again. Until then the lesson `
+                     + `speaks through the browser.`;
+            }
+            return `${who} is connected but Home Assistant does not list it yet. In Home Assistant open `
+                 + `Music Assistant → Players and enable "${who}" (playing one song on it from the Music `
+                 + `tab also lists it), then tap the voice chip again. Until then the lesson speaks `
+                 + `through the browser.`;
+        },
         // The device was chosen but Home Assistant knows no player for it:
         // say so ONCE, name the player and the step, and speak through the
         // browser for this session (the remembered choice stays, so the
@@ -1535,9 +1598,7 @@ function lessonPlayer() {
             this.voiceLocal = true;
             const who = this.deviceName || 'This device';
             if (typeof showGlobalAlert === 'function') {
-                showGlobalAlert(`${who} is not a Music Assistant player yet. In Home Assistant open `
-                                + `Music Assistant → Players, enable "${who}", then tap the voice chip again. `
-                                + `Until then the lesson speaks through the browser.`);
+                showGlobalAlert(this.deviceNotice(who, this.deviceWhy));
             }
         },
 
