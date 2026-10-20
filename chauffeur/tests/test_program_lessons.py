@@ -2186,7 +2186,7 @@ def scenario_a_teach_scene_is_title_text_examples_and_speak():
 
 def scenario_variables_survive_and_strangers_are_stripped():
     out = pl.sanitize_script([{'type': 'say', 'text': "Hi {name}'s friend, o{nome} {a b} {project} {age}"}], 'generated')
-    check(out[0]['text'] == "Hi {name}'s friend, o {a b} {project} ", f'got {out[0]["text"]!r}')
+    check(out[0]['text'] == "Hi {name}'s friend, o {a b} {project}", f'got {out[0]["text"]!r}')
     check(pl.VARIABLES == ('name', 'project'), 'closed set')
     cards = pl.sanitize_script([{'type': 'show', 'primitive': {'kind': 'cards', 'pairs': [{'front': '{nome}', 'back': 'ok {name}'}]}, 'caption': 'c'}], 'generated')
     import json
@@ -2239,7 +2239,7 @@ def scenario_fill_touches_every_field_and_never_the_stored_row():
 
 def scenario_the_system_prompt_has_the_arc_and_the_variables():
     s = pl.system_prompt()
-    for needle in ('Open', 'Teach', 'Work', 'Wrap', 'teach', 'examples', '{name}', '{project}', 'Nothing else goes in braces',
+    for needle in ('OPEN', 'TEACH', 'WORK', 'WRAP', 'teach', 'examples', '{name}', '{project}', 'Nothing else goes in braces',
                    'music', 'movement', 'cooking', 'phonics', 'problem-shaped', 'language', 'greeting'):
         check(needle in s, f'system prompt lacks {needle!r}')
     check('At most 10 scenes' not in s and 'a short why, then the drill' not in s, 'the drill template is gone')

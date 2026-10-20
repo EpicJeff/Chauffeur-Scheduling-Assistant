@@ -3208,6 +3208,66 @@ console.log(JSON.stringify({said}));
           f"one say() per sentence of speak, in order, in the scene's voice, got {got['said']}")
 
 
+def scenario_a_mounted_teach_scene_shows_its_words_and_speaks_an_example():
+    """The teach block, mounted rather than read: the real component (rendered through the app's
+    Jinja environment) and the app's own vendored Alpine in Chromium. The file had no jsdom or
+    Node mounting harness, so this follows the repo's Playwright set_content harnesses
+    (test_packing_card.py). `say` is wrapped on the live component so the tap's text and language
+    are seen exactly as the speech path receives them; the fetch stub keeps any voice call local."""
+    import json
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print('  skip  playwright not installed -- the teach scene was not mounted')
+        return
+    import main
+    alpine = io.open(os.path.join(HERE, 'static', 'vendor', 'alpine.min.js'), encoding='utf-8').read()
+    player = main.templates.env.from_string("{% include 'components/lesson_player.html' %}").render()
+    html = ('<!doctype html><html><head></head><body>'
+            '<script>window.__said = []; window.fetch = () => Promise.resolve({ok: false, status: 503,'
+            ' json: () => Promise.resolve({}), blob: () => Promise.resolve(new Blob())});</script>'
+            + player + '<script>' + alpine + '</script></body></html>')
+    teach = {'type': 'teach', 'title': 'Middle C', 'tone': 'calm',
+             'text': 'C sits just left of the two black keys. Find the pair, step left, and that white key is C.',
+             'examples': [{'text': 'Play C, rest, C'}, {'text': 'Dó', 'speak_lang': 'pt-BR'}]}
+    after = {'type': 'say', 'text': 'Now the next beat.'}
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        try:
+            page = browser.new_page()
+            errors = []
+            page.on('pageerror', lambda e: errors.append(str(e)))
+            page.set_content(html)
+            page.wait_for_function('window.Alpine !== undefined')
+            page.evaluate("""(scenes) => {
+                const root = document.querySelector('[x-data="lessonPlayer()"]');
+                const d = Alpine.$data(root);
+                d.say = function (text, lang, tone) { window.__said.push([String(text), lang || '', tone || '']); };
+                window.dispatchEvent(new CustomEvent('lesson-player:open', {detail: {
+                    window: {program_title: 'Learn piano'}, lesson: {scenes: scenes}, preview: true}}));
+            }""", [teach, after])
+            try:
+                page.wait_for_selector('[data-teach-title]', state='visible', timeout=5000)
+            except Exception as exc:  # noqa: BLE001  (a Playwright timeout: say so in this file's words)
+                check(False, f'a mounted teach scene draws its [data-teach-title] heading, got {type(exc).__name__}')
+            title = page.locator('[data-teach-title]').inner_text().strip()
+            text = page.locator('[data-teach-text]').inner_text().strip()
+            examples = [s.strip() for s in page.locator('[data-teach-example]').all_inner_texts()]
+            check(title == 'Middle C', f"the heading is the scene's title, got {title!r}")
+            check(text == teach['text'], f"the paragraph is the scene's text, got {text!r}")
+            check(examples == ['Play C, rest, C', 'Dó'], f'the examples render as a list, got {examples}')
+            check(page.locator('[data-teach-text]').count() == 1, 'the teach text is drawn once, not also as a say beat')
+            page.evaluate('window.__said = []')
+            page.locator('[data-teach-example]').nth(1).click()
+            page.wait_for_timeout(100)
+            said = page.evaluate('window.__said')
+            check(said == [['Dó', 'pt-BR', 'calm']], f"the tap says the example in its own language, got {said}")
+            check(page.locator('[data-teach-title]').count() == 1, 'and the tap never advances past the teach scene')
+            check(not errors, f'no page errors, got {errors}')
+        finally:
+            browser.close()
+
+
 if __name__ == '__main__':
     scenario_component_exists_and_renders_the_four_beats()
     scenario_checks_are_never_stored()
@@ -3349,4 +3409,5 @@ if __name__ == '__main__':
     scenario_split_sentences_is_pure_and_keeps_numbers()
     scenario_an_example_tap_speaks_in_its_language()
     scenario_a_scene_speak_is_queued_sentence_by_sentence()
+    scenario_a_mounted_teach_scene_shows_its_words_and_speaks_an_example()
     print("test_lesson_player_runtime OK")
