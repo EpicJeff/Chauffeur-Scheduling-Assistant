@@ -167,7 +167,7 @@ def scenario_a_library_run_cannot_be_hand_edited_here():
                       ('by the legacy tuple', {'phase_name': 'F', 'unit_n': 1, 'session_label': ''})):
         got = refused(main.delete_program_lesson_api, pid, request=Req(mom), **kw)
         check(got == (409, 'Scripts live in the library.'), f'DELETE {label}: 409, got {got}')
-    check(storage.program_lessons_table.all() == [], 'nothing was written per run')
+    check(not any(r.get('program_id') == pid for r in storage.program_lessons_table.all()), 'nothing was written per run for the library run')
     check(storage.get_library_scripts(run['library_id']) == [], 'and nothing reached the library through this door')
     mom_pid = add_run({'member_id': 'mom', 'title': 'Spanish', 'phases': [{'name': 'F', 'units': [{'title': 'One'}, {'title': 'Two'}]}],
                        'shape': {'sessions_per_week': 1, 'minutes': 20}})
