@@ -590,7 +590,8 @@ def _write_spy():
 
 
 def scenario_a_new_library_row_schedules_one_write_and_lesson_edits_schedule_none():
-    """Spec section 6, Triggers: library.create (hand), the run edit's Look again (recurate) and
+    """Spec section 6, Triggers: library.create (hand), the run picker's make-new branch of
+    POST /api/programs (hand; controller ruling 2026-10-20), the run edit's Look again (recurate) and
     Argyle's propose_program each start the job for the row they minted, once; add_lesson and
     update_lesson start nothing. propose_program does not go through library.create (it mints in
     agent_tools_v2._start_program_choice with storage.add_library_program), so its call site is
@@ -606,9 +607,17 @@ def scenario_a_new_library_row_schedules_one_write_and_lesson_edits_schedule_non
         check(made['status'] == 'success', f'created, got {made}')
         check(calls == [made['program']['id']], f'library.create schedules its new row once, got {calls}')
         del calls[:]
+        c, main = _client()
+        r = c.post('/api/programs', headers=_hdr('mom'),
+                   json={'project_id': 'prj', 'for_member_id': 'kate', 'title': 'Learn flute', 'minutes': 30,
+                         'sessions_per_week': 3, 'assumes': '', 'starting_point': ''})
+        check(r.status_code == 200 and r.json().get('status') == 'success', f'make a new one: {r.status_code} {r.text[:300]}')
+        flute_lid = storage.get_program(r.json()['id'])['library_id']
+        check(flute_lid not in (lid, made['program']['id']), 'the run picker minted its own new library row')
+        check(calls == [flute_lid], f"POST /api/programs' make-new branch schedules its new row once, got {calls}")
+        del calls[:]
         pid = add_run({'member_id': 'kate', 'created_by': 'mom', 'project_id': 'prj', 'state': 'proposed', **PIANO})
         old_lid = storage.get_program(pid)['library_id']
-        c, main = _client()
         r = c.post(f'/api/programs/{pid}/edit', json={'member_id': 'mom', 'recurate': True}, headers=_hdr('mom'))
         new_lid = storage.get_program(pid)['library_id']
         check(r.status_code == 200 and r.json().get('status') == 'success' and new_lid != old_lid,
