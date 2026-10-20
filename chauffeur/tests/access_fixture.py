@@ -202,6 +202,12 @@ LIBRARY_ROUTES = {
     ('route', 'PATCH', '/api/library/{id}/lessons/{lesson_id}'): 'edit',
     ('route', 'DELETE', '/api/library/{id}/lessons/{lesson_id}'): 'edit',
     ('route', 'POST', '/api/library/{id}/lessons/order'): 'edit',
+    # Lesson depth spec section 7: the library's own script routes. Any active member reads the
+    # template; the creating adult or a parent edits, clears and writes.
+    ('route', 'GET', '/api/library/{id}/lessons/{lesson_id}/script'): 'script-read',
+    ('route', 'PUT', '/api/library/{id}/lessons/{lesson_id}/script'): 'script-edit',
+    ('route', 'DELETE', '/api/library/{id}/lessons/{lesson_id}/script'): 'script-edit',
+    ('route', 'POST', '/api/library/{id}/scripts/write'): 'script-edit',
 }
 # Whose run each fixture library row carries (the in-use refusal names the runner).
 RUNNER_NAME = {'R3': 'Kate', 'R5p': 'Kate', 'R5s': 'Sam', 'R15': 'Kate', 'R17': 'Kate'}
@@ -231,8 +237,12 @@ def library_expected(rid, fx, rkey, col, value):
         return None                       # a disabled member reaches nothing
     if what == 'read':
         return 'curriculum+runner' if runner_visible(rkey, col) else 'curriculum'
+    if what == 'script-read':
+        return 'script'                   # public curriculum: every active member reads the template
     if col in ('kid', 'hal'):
         return 'FORBIDDEN-NOT-404'        # a child never creates or edits; a helper is not an adult
+    if what == 'script-edit':
+        return 'full'                     # Aunt made the row; Mom and Dad are parents
     if what == 'delete':                  # every fixture row has a run: refused, never deleted
         return 'IN-USE-NAMED' if runner_visible(rkey, col) else 'IN-USE-ANOTHER'
     return 'full'                         # Aunt made the row; Mom and Dad are parents
@@ -383,13 +393,94 @@ def library_write_probe(rid, fx, rkey, col):
     return _library_effect(rid, col, row, after, before_count, lid) or 'full'
 
 
+SCRIPT_WORDS = 'Script words for {name}.'
+
+
+def _seed_script(lid, lesson_id):
+    storage.edit_library_script(lid, {'lesson_id': lesson_id, 'variant_label': ''},
+                                {'origin': 'generated', 'source_url': '', 'scenes': [{'type': 'say', 'text': SCRIPT_WORDS}],
+                                 'model': '', 'attempts': 0, 'note': '', 'minutes': 1})
+
+
+def library_script_read_probe(rid, fx, rkey, col):
+    """The template, to any active member, and nothing of the run beside it."""
+    from access_signed_in import request
+    if col == 'house':
+        return 'skip'
+    lid = fx.library[rkey]
+    lesson_id = storage.get_library_program(lid)['lessons'][0]['id']
+    _seed_script(lid, lesson_id)
+    r = request(fx, col, 'GET', rid[-1].replace('{id}', lid).replace('{lesson_id}', lesson_id) + '?variant_label=')
+    if r is None or r.status_code in (401, 404):
+        return None
+    if r.status_code == 403:
+        return 'FORBIDDEN-NOT-404'
+    if not 200 <= r.status_code < 300:
+        return f'HTTP {r.status_code}: {r.text[:140]}'
+    if fx.secret(rkey) in r.text:
+        return 'LEAK: the run starting point reached a script payload'
+    script = (r.json() or {}).get('script') or {}
+    if [s.get('text') for s in script.get('scenes') or []] != [SCRIPT_WORDS]:
+        return f'NO-SCRIPT: {r.text[:140]}'
+    return 'script'
+
+
+def library_script_write_probe(rid, fx, rkey, col):
+    """PUT, DELETE and Write lessons: the creating adult or a parent, read back from storage.
+    The job's worker is stubbed (`library_scripts._run`) so no lesson is written and no model is
+    called; the real `write` still decides who may start it."""
+    from unittest.mock import patch
+    from access_signed_in import request
+    from services import library_scripts
+    if col == 'house':
+        return 'skip'
+    fx = build()                          # every write starts with a fresh household
+    lid = fx.library[rkey]
+    lesson_id = storage.get_library_program(lid)['lessons'][0]['id']
+    slot = {'lesson_id': lesson_id, 'variant_label': ''}
+    method, path = rid[1], rid[-1].replace('{id}', lid).replace('{lesson_id}', lesson_id)
+    body = {}
+    if method == 'PUT':
+        body = {'scenes': [{'type': 'say', 'text': f'Edited by {col}'}], 'variant_label': ''}
+    elif method == 'DELETE':
+        _seed_script(lid, lesson_id)
+        path += '?variant_label='
+    storage.set_app_state(library_scripts.JOBS_KEY, {})
+    before = storage.get_library_script(lid, slot)
+    with patch.object(library_scripts, '_run', lambda *a, **k: None):
+        r = request(fx, col, method, path, **({'json': body} if method != 'DELETE' else {}))
+    after = storage.get_library_script(lid, slot)
+    job = library_scripts.job_state(lid)
+    storage.set_app_state(library_scripts.JOBS_KEY, {})
+    if r is None or r.status_code in (401, 404):
+        return None
+    if r.status_code == 403:
+        if EDIT_REFUSAL not in r.text:
+            return f'FORBIDDEN-WRONG-WORDS: {r.text[:140]}'
+        if after != before or job is not None:
+            return 'REFUSED-BUT-CHANGED'
+        return 'FORBIDDEN-NOT-404'
+    if not 200 <= r.status_code < 300:
+        return f'HTTP {r.status_code}: {r.text[:140]}'
+    if (r.json() or {}).get('status') in ('error', 'refused', 'not_found'):
+        return f'ACTION-NOT-ACCEPTED: {r.text[:160]}'
+    if method == 'PUT':
+        ok = bool(after and after.get('edited') and [s.get('text') for s in after.get('scenes') or []] == [f'Edited by {col}'])
+    elif method == 'DELETE':
+        ok = after is None
+    else:
+        ok = r.status_code == 202 and job is not None and (r.json().get('job') or {}).get('job_id') == job.get('job_id')
+    return 'full' if ok else 'ACCEPTED-BUT-NOT-STORED'
+
+
 def register_library(probe):
     """Attach the library probes to the matrix (tests/test_access_matrix.py)."""
     for rid, what in LIBRARY_ROUTES.items():
-        fn = library_read_probe if what == 'read' else library_write_probe
+        fn = {'read': library_read_probe, 'script-read': library_script_read_probe,
+              'script-edit': library_script_write_probe}.get(what, library_write_probe)
 
         def run(fx, rkey, col, rid=rid, fn=fn):
-            return fn(rid, fx if fn is library_write_probe else build(), rkey, col)
+            return fn(rid, fx if fn in (library_write_probe, library_script_write_probe) else build(), rkey, col)
         probe(rid)(run)
     @probe(('reader', 'services.library.in_use_message'))
     def in_use_probe(fx, rkey, col):

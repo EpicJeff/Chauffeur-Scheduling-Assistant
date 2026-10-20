@@ -594,8 +594,9 @@ def scenario_a_new_library_row_schedules_one_write_and_lesson_edits_schedule_non
     POST /api/programs (hand; controller ruling 2026-10-20), the run edit's Look again (recurate) and
     Argyle's propose_program each start the job for the row they minted, once; add_lesson and
     update_lesson start nothing. propose_program does not go through library.create (it mints in
-    agent_tools_v2._start_program_choice with storage.add_library_program), so its call site is
-    exercised directly."""
+    agent_tools_v2._start_program_choice with storage.add_library_program); that helper names the
+    row and schedules nothing (Task 4 review ruling), and its two callers are pinned in
+    scenario_argyle_schedules_a_new_row_after_its_transaction."""
     from services import library_scripts, library, programs_curate, agent_tools_v2
     rid, lid, lesson = _reset()
     mom = storage.get_member('mom')
@@ -630,11 +631,14 @@ def scenario_a_new_library_row_schedules_one_write_and_lesson_edits_schedule_non
         choice = {'title': 'Learn cello', 'member_id': 'kate', 'starting_point': '', 'project_id': 'prj', 'created_by': 'mom',
                   'shape': {'minutes': 30, 'sessions_per_week': 3, 'preferred_days': []},
                   'profile': {'title': 'Learn cello', 'minutes': 30, 'sessions_per_week': 3, 'assumes': '', 'age_band': 'any'}}
+        # Task 4 review ruling: the job never starts inside a caller's open transaction, so the
+        # shared helper only returns the new row's id and schedules nothing itself; its callers
+        # schedule after it returns (scenario_argyle_schedules_a_new_row_after_its_transaction).
         out = agent_tools_v2._start_program_choice(choice, mom, make_new=True, prepared=prepared)
         check(out.get('status') == 'success', f'Argyle started a run on a new row, got {out}')
         argyle_lid = storage.get_program(out['run_id'])['library_id']
-        check(calls == [argyle_lid], f"Argyle's new row is scheduled once, got {calls}")
-        del calls[:]
+        check(out.get('library_id') == argyle_lid, f'and names the new row it minted, got {out}')
+        check(calls == [], f'_start_program_choice itself schedules nothing, got {calls}')
         phase_id = storage.get_library_program(lid)['phases'][0]['id']
         check(library.add_lesson(lid, {'phase_id': phase_id, 'title': 'Scales', 'steps': ['C major']}, mom)['status'] == 'success',
               'a lesson added')
@@ -982,6 +986,48 @@ def scenario_lesson_help_reads_a_teach_beat_through_the_resolver():
     check(r.status_code == 200 and 'two black keys' in seen['prompt'] and 'Play C, rest, C' in seen['prompt'], f'the teach beat, got {seen}')
 
 
+
+def scenario_argyle_schedules_a_new_row_after_its_transaction():
+    """Spec section 6, Triggers, with the Task 4 review ruling: the job never starts inside a
+    caller's open transaction. propose_program's direct make-new path schedules the new row after
+    _start_program_choice returns; planned.answer_program_choice's Make new schedules it after its
+    `with db_lock, transaction()` block exits, on success only. Each exactly once. Reached the way
+    test_library_flows.py reaches them (its fixture, curate stubbed); its global stubs are put back
+    afterwards so the scenarios after this one see the real modules."""
+    import test_library_flows as flows
+    from services import library_scripts, agent_tools_v2 as tools, missions, web, threads, programs_curate
+    saved = (missions._post, web.research, threads.draft_message, programs_curate.curate, storage.get_settings)
+    spy, calls = _write_spy()
+
+    def ids():
+        return {r['id'] for r in storage.get_library_programs()}
+    try:
+        with patch.object(library_scripts, 'write', spy):
+            flows._fresh()
+            project = flows._project('mom', audience='private', title='Music at home')
+            before = ids()
+            res = tools.propose_program(title='Learn piano', for_member_name='Kate', sessions_per_week=3, minutes=20,
+                                        acting_member=dict(flows.MOM), project_id=project['id'])
+            made = ids() - before
+            check(res.get('status') == 'success' and len(made) == 1, f'no match: Argyle made a new row, got {res}')
+            check(calls == list(made), f'the direct path schedules that row once, after the helper returns, got {calls}')
+            del calls[:]
+            flows._fresh()
+            flows._library()
+            mid, _ = flows._staged()
+            check(calls == [], f'a waiting choice schedules nothing, got {calls}')
+            opts = flows._choice(mid)
+            before = ids()
+            r = flows._answer(mid, 'make_new', opts)
+            made = ids() - before
+            check(r.status_code == 200 and len(made) == 1, f'Make new through the card made one row, got {r.status_code} {r.text[:200]}')
+            check(calls == list(made), f'answer_program_choice schedules it once, after its transaction, got {calls}')
+            del calls[:]
+            flows._answer(mid, 'make_new', opts)
+            check(calls == [], f'a repeated Make new makes and schedules nothing more, got {calls}')
+    finally:
+        missions._post, web.research, threads.draft_message, programs_curate.curate, storage.get_settings = saved
+
 if __name__ == '__main__':
     scenario_claim_then_commit_then_nobody_else()
     scenario_failure_record_lands_only_on_an_empty_slot()
@@ -1019,4 +1065,5 @@ if __name__ == '__main__':
     scenario_library_script_routes_and_who_may()
     scenario_library_view_carries_script_state()
     scenario_lesson_help_reads_a_teach_beat_through_the_resolver()
+    scenario_argyle_schedules_a_new_row_after_its_transaction()
     print('test_library_scripts OK')

@@ -65,6 +65,9 @@ def base(rkey, col):
     return dict(zip(COLS, TABLE[rkey]))[col]
 
 
+LIBRARY_409 = 'LIBRARY-409'
+
+
 def act_expected(rkey, col, verb):
     value = ACT[rkey][col]
     kind = KIND[rkey]
@@ -177,7 +180,12 @@ def expected(rid, fx, rkey, col, value):
         if path.endswith(('view', 'piece_cards')):
             return K if value and project_visible(fx, rkey, col) else None
         return value
-    if rid[1] not in ('GET',) and path != '/api/programs/lessons/sweep':
+    if rid[1] not in ('GET',):
+        if path == '/api/programs/{program_id}/lesson':
+            # Lesson depth spec section 7: every fixture program is a library run, so whoever
+            # passes the gate is answered 409 "Scripts live in the library."; the gate is unchanged.
+            want = act_expected(rkey, col, verb_for(rid))
+            return LIBRARY_409 if want == F else want
         if path == '/api/action-proposals/{proposal_id}/act' and KIND[rkey] == 'program':
             return act_expected(rkey, col, 'session')
         if KIND[rkey] == 'thread' and path in ('/api/asks/{ask_id}/sent', '/api/asks/{ask_id}/answer'):
@@ -199,8 +207,6 @@ def expected(rid, fx, rkey, col, value):
         return ('FORBIDDEN-NOT-404' if col == 'kid' else F) if value else None
     if path == '/api/action-proposals':
         return F if value == F else None  # a keeper never reads proposal words
-    if path == '/api/programs/lessons/sweep' and col in ('kid', 'hal'):
-        return 'FORBIDDEN-NOT-404'
     return value
 
 
@@ -237,7 +243,6 @@ IDS = {
     ('route', 'GET', '/api/programs/{program_id}/lesson'),
     ('route', 'PUT', '/api/programs/{program_id}/lesson'),
     ('route', 'DELETE', '/api/programs/{program_id}/lesson'),
-    ('route', 'POST', '/api/programs/lessons/sweep'),
     ('route', 'GET', '/api/programs/{program_id}/footprint'),
     ('route', 'GET', '/api/deletion/{kind}/{id}/preview'),
     ('route', 'DELETE', '/api/programs/{program_id}'),
@@ -313,9 +318,13 @@ def read_probe(rid, fx, rkey, col):
                                'asked_by': 'mom', 'what': fx.secret(rkey), 'channel': 'text'})
         path = f'/api/asks/{aid}/channels'
     elif path == '/api/programs/{program_id}/lesson':
+        # Lesson depth spec section 7: a library run reads its library's script, through the run's
+        # own visibility gate; the probe words ride on that script.
         lesson_id = row['progress']['current']
-        storage.upsert_program_lesson(sid, {'lesson_id': lesson_id, 'variant_label': ''},
-                                      {'scenes': [{'say': fx.secret(rkey)}]})
+        storage.edit_library_script(row['library_id'], {'lesson_id': lesson_id, 'variant_label': ''},
+                                    {'origin': 'generated', 'source_url': '', 'model': '', 'attempts': 0,
+                                     'note': '', 'minutes': 1,
+                                     'scenes': [{'type': 'say', 'text': fx.secret(rkey)}]})
         path += '?lesson_id=' + lesson_id
     elif path == '/api/action-proposals':
         storage.add_action_proposal({'action_type': 'skip_occurrence', 'summary': fx.secret(rkey),
@@ -324,12 +333,6 @@ def read_probe(rid, fx, rkey, col):
     with ExitStack() as stack:
         if path.endswith('/footprint'):
             stack.enter_context(patch.object(programs, 'footprint', side_effect=lambda p: p))
-        if path == '/api/programs/lessons/sweep':
-            # Real sweep aggregation, one cached window per program, no LLM.
-            from services import program_lessons as pl
-            stack.enter_context(patch.object(pl, '_windows_to_scan', return_value=[
-                (row, {'phase_name': fx.secret(rkey), 'date': '2026-10-16'}, None)]))
-            stack.enter_context(patch.object(pl, 'needs_lesson', return_value=False))
         r = request(fx, col, rid[1], path, **({'json': {}} if rid[1] == 'POST' else {}))
     if path.endswith('/channels') or '/shots/' in path:
         return result(r)
@@ -448,6 +451,11 @@ def write_probe(rid, fx, rkey, col, forced_verb=None):
         else:
             r = request(fx, col, method, path, json=body)
     outcome = result(r)
+    if (r is not None and rid[-1] == '/api/programs/{program_id}/lesson' and r.status_code == 409
+            and r.json().get('detail') == 'Scripts live in the library.'):
+        if any(x.get('program_id') == sid for x in storage.program_lessons_table.all()):
+            return 'REFUSED-BUT-WRITTEN'
+        return LIBRARY_409
     if r is not None and rid[-1] == '/api/action-proposals/{proposal_id}/act' and r.status_code == 200 and r.json() == {
             'status': 'error', 'message': 'That action is no longer available.'}:
         return None
@@ -579,22 +587,13 @@ def extra_contracts():
     storage.update_mission(fx.ids['R2'], {'origin_kind': 'thread', 'origin_ref': fx.ids['R5t'], 'status': 'waiting_user'})
     r = request(fx, 'dad', 'GET', f"/api/situations/thread/{fx.ids['R5t']}")
     check(r.status_code == 200 and fx.secret('R2') not in r.text, f'hidden forwarded question: {r.text}')
-    from services import program_lessons as pl
-    windows = [(storage.get_program(fx.ids[key]), {'phase_name': fx.secret(key), 'date': '2026-10-16'}, None)
-               for key in ('R3', 'R5p')]
-    storage.set_app_state('program_lessons_swept', 'before')
-    with patch.object(pl, '_windows_to_scan', return_value=windows), patch.object(pl, 'needs_lesson', return_value=False):
-        r = request(fx, 'aunt', 'POST', '/api/programs/lessons/sweep', json={})
-    check(r.status_code == 200 and r.json()['skipped'] == 1 and len(r.json()['slots']) == 1
-          and fx.secret('R3') not in r.text and fx.secret('R5p') in r.text, 'scoped sweep words and counts')
-    check(storage.get_app_state('program_lessons_swept') == 'before', 'scoped sweep does not claim the household pass')
 
 
 def register(probe):
     for rid in IDS:
         if rid[0] == 'reader':
             fn = function_probe
-        elif rid[1] == 'GET' or rid[-1] == '/api/programs/lessons/sweep':
+        elif rid[1] == 'GET':
             fn = read_probe
         else:
             fn = write_probe
