@@ -2655,9 +2655,7 @@ def scenario_the_room_voice_is_a_panel_only_fork():
     check(m, "roomSay(text, lang, tone) exists")
     body = m.group(1) if m else ''
     # the one speak route lives in handOff, the net both rungs share (v2.499.595)
-    h = re.search(r'
-        handOff\(body, text, lang, tone\) \{(.*?)
-        \},', src, re.S)
+    h = re.search(r'\n        handOff\(body, text, lang, tone\) \{(.*?)\n        \},', src, re.S)
     body = body + (h.group(1) if h else '')
     check('this.panel' in body, "and it is panel-only")
     check('this.room' in body, "and needs a room to speak into")

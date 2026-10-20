@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.595 (2026-10-19).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.596 (2026-10-19).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 **FIXED (device-found 2026-10-19, a phone): a lesson whose handset is a registered Music Assistant player no longer goes silent.** The PWA registers the phone as a player; the lesson found the entity, handed every line to it through Home Assistant and stopped looking, so a phone whose Sendspin socket was not live played to nobody and the session had no voice at all. The device rung now opens only while the handset player is live (lesson_player.deviceRung, pure, Node-executed), both the device and the room rung hand off through one net (handOff) that reads the line in the browser the moment Home Assistant answers 429 one-line-at-a-time, an error status or nothing, and a non-panel surface shows a voice chip (this device / browser) that swaps the voice for this session only.
 
