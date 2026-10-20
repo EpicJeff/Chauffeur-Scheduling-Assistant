@@ -312,136 +312,148 @@
                                                      (lesson_player.html's own comments) and this form
                                                      does not reach for it -- the player is the show,
                                                      the editor is a form. -->
-                                                <div class="mt-2 space-y-1.5" x-show="onThisPhase(p, ph) && canAct(p) && !sec.archived">
-                                                    <template x-for="label in lessonSlotsFor(p, ph)" :key="label">
-                                                        <div class="bg-gray-950/60 border border-gray-800 rounded-lg p-2">
-                                                            <div class="flex items-center gap-2">
-                                                                <button type="button" @click="toggleLesson(p, ph, label)"
-                                                                    class="flex-1 min-w-0 flex items-center justify-between text-[11px] font-bold text-gray-400">
-                                                                    <span x-text="'Lesson' + (label ? ' · ' + label : '')"></span>
-                                                                    <span x-text="lessonOpen[lessonKey(p, ph, label)] ? '▾ hide' : '▸ edit'"></span>
-                                                                </button>
-                                                                <!-- The hand path's own preview: opens the player on
-                                                                     THIS slot's stored scenes, in preview, without
-                                                                     opening the disclosure first -- a fresh read
-                                                                     straight off storage (playLesson below), never
-                                                                     lessonDraft, which may hold an edit not yet
-                                                                     saved. A slot with no stored script previews the
-                                                                     plan's own steps instead (the same fallback
-                                                                     ladder tonight's own Start-session tap already
-                                                                     falls back to) rather than being hidden or
-                                                                     opening onto nothing. -->
-                                                                <button type="button" @click="playLesson(p, ph, label)"
-                                                                    class="shrink-0 text-[10px] font-bold px-2 py-1 rounded-lg bg-teal-700 text-white active:bg-teal-800">
-                                                                    ▶ Play
-                                                                </button>
-                                                            </div>
-                                                            <div class="mt-2 space-y-2" x-show="lessonOpen[lessonKey(p, ph, label)]" x-cloak>
-                                                                <template x-if="!lessonLoaded[lessonKey(p, ph, label)]">
-                                                                    <div class="text-[11px] text-gray-500 italic">Loading…</div>
-                                                                </template>
-                                                                <template x-if="lessonLoaded[lessonKey(p, ph, label)]">
-                                                                    <div class="space-y-2">
-                                                                        <!-- Where this script came from, which the family
-                                                                             could not see anywhere: the cited/generated
-                                                                             split is the whole reason the curate module
-                                                                             exists, and Task 9's "honest label" for an
-                                                                             uncited unit labelled nothing on any screen.
-                                                                             Metadata + chip vocabulary from
-                                                                             docs/ui_design_guide.md. -->
-                                                                        <div class="flex items-center gap-1.5 flex-wrap"
-                                                                            x-show="lessonOriginLabel(p, ph, label)">
-                                                                            <span class="text-[11px] font-semibold text-gray-500"
-                                                                                x-text="lessonOriginLabel(p, ph, label)"></span>
-                                                                            <template x-if="(lessonMeta[lessonKey(p, ph, label)] || {}).source_url">
-                                                                                <a :href="(lessonMeta[lessonKey(p, ph, label)] || {}).source_url"
-                                                                                    target="_blank" rel="noopener"
-                                                                                    class="text-[11px] font-bold text-blue-400 underline underline-offset-2 truncate"
-                                                                                    x-text="lessonSourceHost(p, ph, label)"></a>
+                                                <!-- A library run's scripts belong to its library program (spec
+                                                     2026-10-20-lesson-depth §8): one button to the library page,
+                                                     where they are played, edited and rewritten. A run without a
+                                                     library program keeps its own editor below. -->
+                                                <template x-if="p.library_id">
+                                                    <button type="button" data-scripts-in-library @click="openLibrary(p.library_id)"
+                                                        x-show="onThisPhase(p, ph) && !sec.archived"
+                                                        class="mt-2 w-full text-left text-[11px] font-bold text-teal-300 border border-teal-700/60 rounded-lg px-2 py-1.5 hover:bg-teal-900/20"
+                                                        x-text="'Scripts live in the library: ' + (p.title || '')"></button>
+                                                </template>
+                                                <template x-if="!p.library_id">
+                                                    <div class="mt-2 space-y-1.5" x-show="onThisPhase(p, ph) && canAct(p) && !sec.archived">
+                                                        <template x-for="label in lessonSlotsFor(p, ph)" :key="label">
+                                                            <div class="bg-gray-950/60 border border-gray-800 rounded-lg p-2">
+                                                                <div class="flex items-center gap-2">
+                                                                    <button type="button" @click="toggleLesson(p, ph, label)"
+                                                                        class="flex-1 min-w-0 flex items-center justify-between text-[11px] font-bold text-gray-400">
+                                                                        <span x-text="'Lesson' + (label ? ' · ' + label : '')"></span>
+                                                                        <span x-text="lessonOpen[lessonKey(p, ph, label)] ? '▾ hide' : '▸ edit'"></span>
+                                                                    </button>
+                                                                    <!-- The hand path's own preview: opens the player on
+                                                                         THIS slot's stored scenes, in preview, without
+                                                                         opening the disclosure first -- a fresh read
+                                                                         straight off storage (playLesson below), never
+                                                                         lessonDraft, which may hold an edit not yet
+                                                                         saved. A slot with no stored script previews the
+                                                                         plan's own steps instead (the same fallback
+                                                                         ladder tonight's own Start-session tap already
+                                                                         falls back to) rather than being hidden or
+                                                                         opening onto nothing. -->
+                                                                    <button type="button" @click="playLesson(p, ph, label)"
+                                                                        class="shrink-0 text-[10px] font-bold px-2 py-1 rounded-lg bg-teal-700 text-white active:bg-teal-800">
+                                                                        ▶ Play
+                                                                    </button>
+                                                                </div>
+                                                                <div class="mt-2 space-y-2" x-show="lessonOpen[lessonKey(p, ph, label)]" x-cloak>
+                                                                    <template x-if="!lessonLoaded[lessonKey(p, ph, label)]">
+                                                                        <div class="text-[11px] text-gray-500 italic">Loading…</div>
+                                                                    </template>
+                                                                    <template x-if="lessonLoaded[lessonKey(p, ph, label)]">
+                                                                        <div class="space-y-2">
+                                                                            <!-- Where this script came from, which the family
+                                                                                 could not see anywhere: the cited/generated
+                                                                                 split is the whole reason the curate module
+                                                                                 exists, and Task 9's "honest label" for an
+                                                                                 uncited unit labelled nothing on any screen.
+                                                                                 Metadata + chip vocabulary from
+                                                                                 docs/ui_design_guide.md. -->
+                                                                            <div class="flex items-center gap-1.5 flex-wrap"
+                                                                                x-show="lessonOriginLabel(p, ph, label)">
+                                                                                <span class="text-[11px] font-semibold text-gray-500"
+                                                                                    x-text="lessonOriginLabel(p, ph, label)"></span>
+                                                                                <template x-if="(lessonMeta[lessonKey(p, ph, label)] || {}).source_url">
+                                                                                    <a :href="(lessonMeta[lessonKey(p, ph, label)] || {}).source_url"
+                                                                                        target="_blank" rel="noopener"
+                                                                                        class="text-[11px] font-bold text-blue-400 underline underline-offset-2 truncate"
+                                                                                        x-text="lessonSourceHost(p, ph, label)"></a>
+                                                                                </template>
+                                                                                <span x-show="(lessonMeta[lessonKey(p, ph, label)] || {}).edited"
+                                                                                    class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300">edited by hand</span>
+                                                                            </div>
+                                                                            <p class="text-[11px] text-gray-500 italic"
+                                                                                x-show="!(lessonDraft[lessonKey(p, ph, label)] || []).length">
+                                                                                No script yet — tonight plays the plain steps above.
+                                                                            </p>
+                                                                            <!-- Why there is no script, when the answer is not
+                                                                                 "nothing has tried yet". An empty
+                                                                                 llm_gemini_api_key fails every call forever
+                                                                                 while the toggle says lessons are being
+                                                                                 written, and that used to be indistinguishable
+                                                                                 from a sweep that had not reached this slot.
+                                                                                 program_lessons._record_attempt writes the
+                                                                                 reason down; this is where a person reads it. -->
+                                                                            <p class="text-[11px] text-amber-300/80"
+                                                                                x-show="(lessonMeta[lessonKey(p, ph, label)] || {}).note"
+                                                                                x-text="(lessonMeta[lessonKey(p, ph, label)] || {}).note"></p>
+                                                                            <template x-for="(row, i) in (lessonDraft[lessonKey(p, ph, label)] || [])" :key="i">
+                                                                                <div class="flex items-center gap-1.5">
+                                                                                    <span class="text-[9px] font-bold uppercase tracking-wide text-gray-500 w-10 shrink-0"
+                                                                                        x-text="row.type"></span>
+                                                                                    <input x-show="row.type === 'say' || row.type === 'do'" x-model="row.text"
+                                                                                        type="text" placeholder="Says…"
+                                                                                        class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-white text-[11px]">
+                                                                                    <input x-show="row.type === 'check'" x-model="row.ask"
+                                                                                        type="text" placeholder="Asks…"
+                                                                                        class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-white text-[11px]">
+                                                                                    <input x-show="row.type === 'show'" x-model="row.caption"
+                                                                                        type="text" placeholder="Caption…"
+                                                                                        class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-white text-[11px]">
+                                                                                    <!-- Reorder: the verb the spec named, the
+                                                                                         capabilities doc claimed, and this form
+                                                                                         did not have. The draft array IS the
+                                                                                         order and Save sends it whole, so a
+                                                                                         splice is the entire change. -->
+                                                                                    <button type="button" @click="moveLessonRow(p, ph, label, i, -1)"
+                                                                                        :disabled="!!(i === 0)"
+                                                                                        aria-label="Move this beat up"
+                                                                                        class="text-[10px] font-bold px-1.5 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 disabled:opacity-30 shrink-0">
+                                                                                        ▲
+                                                                                    </button>
+                                                                                    <button type="button" @click="moveLessonRow(p, ph, label, i, 1)"
+                                                                                        :disabled="!!(i === (lessonDraft[lessonKey(p, ph, label)] || []).length - 1)"
+                                                                                        aria-label="Move this beat down"
+                                                                                        class="text-[10px] font-bold px-1.5 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 disabled:opacity-30 shrink-0">
+                                                                                        ▼
+                                                                                    </button>
+                                                                                    <button type="button" @click="removeLessonRow(p, ph, label, i)"
+                                                                                        aria-label="Delete this beat"
+                                                                                        class="text-[10px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 shrink-0">
+                                                                                        ✕
+                                                                                    </button>
+                                                                                </div>
                                                                             </template>
-                                                                            <span x-show="(lessonMeta[lessonKey(p, ph, label)] || {}).edited"
-                                                                                class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300">edited by hand</span>
-                                                                        </div>
-                                                                        <p class="text-[11px] text-gray-500 italic"
-                                                                            x-show="!(lessonDraft[lessonKey(p, ph, label)] || []).length">
-                                                                            No script yet — tonight plays the plain steps above.
-                                                                        </p>
-                                                                        <!-- Why there is no script, when the answer is not
-                                                                             "nothing has tried yet". An empty
-                                                                             llm_gemini_api_key fails every call forever
-                                                                             while the toggle says lessons are being
-                                                                             written, and that used to be indistinguishable
-                                                                             from a sweep that had not reached this slot.
-                                                                             program_lessons._record_attempt writes the
-                                                                             reason down; this is where a person reads it. -->
-                                                                        <p class="text-[11px] text-amber-300/80"
-                                                                            x-show="(lessonMeta[lessonKey(p, ph, label)] || {}).note"
-                                                                            x-text="(lessonMeta[lessonKey(p, ph, label)] || {}).note"></p>
-                                                                        <template x-for="(row, i) in (lessonDraft[lessonKey(p, ph, label)] || [])" :key="i">
-                                                                            <div class="flex items-center gap-1.5">
-                                                                                <span class="text-[9px] font-bold uppercase tracking-wide text-gray-500 w-10 shrink-0"
-                                                                                    x-text="row.type"></span>
-                                                                                <input x-show="row.type === 'say' || row.type === 'do'" x-model="row.text"
-                                                                                    type="text" placeholder="Says…"
-                                                                                    class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-white text-[11px]">
-                                                                                <input x-show="row.type === 'check'" x-model="row.ask"
-                                                                                    type="text" placeholder="Asks…"
-                                                                                    class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-white text-[11px]">
-                                                                                <input x-show="row.type === 'show'" x-model="row.caption"
-                                                                                    type="text" placeholder="Caption…"
-                                                                                    class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-white text-[11px]">
-                                                                                <!-- Reorder: the verb the spec named, the
-                                                                                     capabilities doc claimed, and this form
-                                                                                     did not have. The draft array IS the
-                                                                                     order and Save sends it whole, so a
-                                                                                     splice is the entire change. -->
-                                                                                <button type="button" @click="moveLessonRow(p, ph, label, i, -1)"
-                                                                                    :disabled="!!(i === 0)"
-                                                                                    aria-label="Move this beat up"
-                                                                                    class="text-[10px] font-bold px-1.5 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 disabled:opacity-30 shrink-0">
-                                                                                    ▲
+                                                                            <div class="flex items-center gap-1.5 pt-1 flex-wrap">
+                                                                                <select x-model="lessonAddType[lessonKey(p, ph, label)]"
+                                                                                    class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-white text-[11px]">
+                                                                                    <option value="say">Say</option>
+                                                                                    <option value="do">Do</option>
+                                                                                    <option value="check">Check</option>
+                                                                                </select>
+                                                                                <button type="button" @click="addLessonRow(p, ph, label)"
+                                                                                    class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">
+                                                                                    Add a beat
                                                                                 </button>
-                                                                                <button type="button" @click="moveLessonRow(p, ph, label, i, 1)"
-                                                                                    :disabled="!!(i === (lessonDraft[lessonKey(p, ph, label)] || []).length - 1)"
-                                                                                    aria-label="Move this beat down"
-                                                                                    class="text-[10px] font-bold px-1.5 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 disabled:opacity-30 shrink-0">
-                                                                                    ▼
+                                                                                <span class="flex-1"></span>
+                                                                                <button type="button" @click="regenerateLesson(p, ph, label)"
+                                                                                    class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">
+                                                                                    Regenerate
                                                                                 </button>
-                                                                                <button type="button" @click="removeLessonRow(p, ph, label, i)"
-                                                                                    aria-label="Delete this beat"
-                                                                                    class="text-[10px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 shrink-0">
-                                                                                    ✕
+                                                                                <button type="button" @click="saveLesson(p, ph, label)"
+                                                                                    :disabled="!!(lessonSaving[lessonKey(p, ph, label)])"
+                                                                                    class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-teal-700 text-white active:bg-teal-800 disabled:opacity-50">
+                                                                                    Save
                                                                                 </button>
                                                                             </div>
-                                                                        </template>
-                                                                        <div class="flex items-center gap-1.5 pt-1 flex-wrap">
-                                                                            <select x-model="lessonAddType[lessonKey(p, ph, label)]"
-                                                                                class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-white text-[11px]">
-                                                                                <option value="say">Say</option>
-                                                                                <option value="do">Do</option>
-                                                                                <option value="check">Check</option>
-                                                                            </select>
-                                                                            <button type="button" @click="addLessonRow(p, ph, label)"
-                                                                                class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">
-                                                                                Add a beat
-                                                                            </button>
-                                                                            <span class="flex-1"></span>
-                                                                            <button type="button" @click="regenerateLesson(p, ph, label)"
-                                                                                class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">
-                                                                                Regenerate
-                                                                            </button>
-                                                                            <button type="button" @click="saveLesson(p, ph, label)"
-                                                                                :disabled="!!(lessonSaving[lessonKey(p, ph, label)])"
-                                                                                class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-teal-700 text-white active:bg-teal-800 disabled:opacity-50">
-                                                                                Save
-                                                                            </button>
                                                                         </div>
-                                                                    </div>
-                                                                </template>
+                                                                    </template>
+                                                                </div>
                                                             </div>
-                                                        </div>
-                                                    </template>
-                                                </div>
+                                                        </template>
+                                                    </div>
+                                                </template>
 
                                                 <!-- The ladder. A phase used to be a bucket of
                                                      weeks with a flat list in it, which is not how
@@ -754,13 +766,6 @@
                 proposing: false,
                 archiveOpen: false,
                 settingsLoaded: false,
-                // The forced lesson sweep gets a busy flag of its own,
-                // never `proposing` -- that one already means "a network
-                // write is in flight, most buttons on this page are
-                // disabled", and a sweep that can run for minutes would
-                // freeze the whole page rather than just its own button.
-                sweeping: false,
-                sweepReport: null,
                 s: {
                     programs_enabled: true,
                     programs_ask_grace_hours: 2,
@@ -770,6 +775,9 @@
                     programs_generate_enabled: true,
                     program_lessons_enabled: true,
                     lesson_help_daily_cap: 20,
+                    lesson_max_attempts: 3,
+                    // The lesson writing pool; unset reads as the default.
+                    lesson_pool: 'heavy',
                 },
                 draft: { title: '', for_member_id: '', starting_point: '', sessions_per_week: 3, minutes: 25, preferred_days: [], target_date: '' },
                 sessionOpen: {}, sessionMinutes: {},
@@ -958,68 +966,6 @@
                     } catch (e) {
                         if (!window.chfSettingsSaved(false, 'Could not save that just now.')) showGlobalAlert('Could not save that just now.');
                     }
-                },
-
-                // The hand path onto program_lessons.sweep_report: force
-                // tonight's sweep to run now, against every active program,
-                // and show exactly what it did -- the whole reason this
-                // exists is that generation only otherwise runs overnight,
-                // unseen. Its own busy flag rather than `proposing`, since
-                // this can run for whole minutes and every other action on
-                // the page has nothing to do with it.
-                async runLessonSweep() {
-                    const ok = await promptConfirm('Write lessons now?',
-                        'Runs tonight\'s sweep immediately, for every active program. It spends real model calls and can take a couple of minutes.',
-                        'Write lessons', 'Cancel');
-                    if (!ok) return;
-                    this.sweeping = true;
-                    this.sweepReport = null;
-                    try {
-                        const r = await fetch(this.apiBase + 'api/programs/lessons/sweep', {
-                            method: 'POST', headers: this.authHeaders(),
-                            body: JSON.stringify({ member_id: this.myId || null })
-                        });
-                        const d = await r.json().catch(() => ({}));
-                        if (!r.ok || d.status === 'error') {
-                            showGlobalAlert(d.detail || d.message || "Couldn't write those lessons.");
-                            return;
-                        }
-                        this.sweepReport = d;
-                    } catch (e) {
-                        showGlobalAlert("Couldn't write those lessons just now.");
-                    } finally {
-                        this.sweeping = false;
-                    }
-                },
-
-                // The report's own preview: exactly the slot a forced pass
-                // just wrote, which is where a person is looking right after
-                // running one. The report entry itself carries no scenes
-                // (only a count) and no more than a program TITLE -- not an
-                // id, and not guaranteed unique -- so this reads the same
-                // `program_id` sweep_report now names and fetches through
-                // the identical scoped GET the editor's own Play uses. Only
-                // ever called for a slot with `slot.origin` set (the
-                // template gates the button on that already), which is only
-                // ever set once generate_for has actually stored at least
-                // one scene -- so the fallback ladder below is a safety net
-                // for a race (the row edited or cleared between the sweep
-                // and this tap), never the expected path.
-                async playSweepSlot(slot) {
-                    try {
-                        const qs = new URLSearchParams(this.slotParams(slot));
-                        const r = await fetch(this.apiBase + `api/programs/${slot.program_id}/lesson?${qs}`,
-                                              { headers: this.authHeaders() });
-                        const body = r.ok ? await r.json() : {};
-                        window.dispatchEvent(new CustomEvent('lesson-player:open', {
-                            detail: {
-                                preview: true,
-                                window: { title: slot.program || '', session_label: slot.session_label || '',
-                                         phase_name: slot.phase || '', steps: [], unit_title: '', milestone: '' },
-                                lesson: body.lesson || null,
-                            }
-                        }));
-                    } catch (e) { showGlobalAlert("Couldn't load that lesson to preview."); }
                 },
 
                 async loadFootprint(id) {
@@ -1589,6 +1535,9 @@
                     const key = this.lessonKey(p, ph, label);
                     try {
                         const qs = new URLSearchParams(this.editorSlot(p, ph, label));
+                        // The unfilled template: a hand edit never bakes a
+                        // filled {name} into the stored script.
+                        qs.set('raw', '1');
                         const r = await fetch(this.apiBase + `api/programs/${p.id}/lesson?${qs}`,
                                               { headers: this.authHeaders() });
                         const body = r.ok ? await r.json() : {};

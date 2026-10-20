@@ -8,7 +8,11 @@
    reorder with Up/Down beside it for touch, Add lesson and Remove. Remove
    names a visible runner on the lesson ("Kate is on this lesson; her run moves
    to the next one.") and counts hidden ones. The creator or a parent edits;
-   anyone else reads the refusal in place. No browser dialogs. Vocabulary:
+   anyone else reads the refusal in place. Each lesson carries its scripts
+   (spec 2026-10-20-lesson-depth §8): a state chip and Play for everyone; on
+   the admin page Edit (the script editor, moved here from the Rhythms run
+   card) and Regenerate for an editor, and Write lessons on the card. The
+   host page includes the lesson player once. No browser dialogs. Vocabulary:
    projects_page.html (cards, the detail view's back link and step rows). #}
 {% from 'components/library_card.html' import library_card, library_profile_fields, library_script %}
 {# The phone loads when its library home opens (setView('library') sends
@@ -116,6 +120,89 @@
                                                 <li class="text-[11px] text-gray-400 flex gap-1.5"><span class="text-gray-600 shrink-0">·</span><span x-text="st"></span></li>
                                             </template>
                                         </ul>
+                                        <!-- The lesson's scripts (spec 2026-10-20-lesson-depth §8): one line
+                                             per rotation label with steps, else one unlabelled line. A state
+                                             chip, Play for everyone (preview, filled for the viewer), and on
+                                             the admin page Edit and Regenerate for whoever may change the
+                                             program. The phone shows the chip and Play only. -->
+                                        <template x-for="lab in scriptLabels(l)" :key="lab">
+                                            <div class="space-y-1.5">
+                                                <div data-lesson-script :data-variant="lab" class="flex items-center gap-1.5 flex-wrap text-[11px]">
+                                                    <span class="text-gray-500" x-show="lab" x-text="lab"></span>
+                                                    <span data-script-chip class="text-[10px] font-bold px-1.5 py-0.5 rounded" :class="scriptChipClass(lp, l, lab)" x-text="scriptChip(lp, l, lab)"></span>
+                                                    <span data-script-edited x-show="scriptOf(lp, l, lab).edited" class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300">edited by hand</span>
+                                                    <button type="button" data-script-play @click="playScript(lp, l, lab)" :disabled="!!busy"
+                                                            class="text-[11px] font-bold px-2 py-1 rounded-lg bg-teal-700 text-white active:bg-teal-800 disabled:opacity-50">▶ Play</button>
+                                                    <template x-if="lp.can_edit && host === 'admin'">
+                                                        <span class="flex items-center gap-1.5">
+                                                            <button type="button" data-script-edit @click="editScript(lp, l, lab)"
+                                                                    class="text-[11px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700"
+                                                                    x-text="scriptEdits[scriptKey(l, lab)] ? 'Close' : 'Edit'"></button>
+                                                            <button type="button" data-script-regenerate @click="regenerateScript(lp, l, lab)"
+                                                                    :disabled="!!(busy || lp.writing || scriptOf(lp, l, lab).state === 'writing')"
+                                                                    class="text-[11px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 disabled:opacity-50">Regenerate</button>
+                                                        </span>
+                                                    </template>
+                                                </div>
+                                                <template x-if="lp.can_edit && host === 'admin' && scriptEdits[scriptKey(l, lab)]">
+                                                    <div data-script-editor :data-variant="lab" class="bg-gray-900 border border-gray-800 rounded-lg p-2 space-y-2">
+                                                        <p class="text-[11px] text-gray-500 italic" x-show="scriptEdits[scriptKey(l, lab)].loading">Loading…</p>
+                                                        <p class="text-[11px] text-gray-500 italic" x-show="!scriptEdits[scriptKey(l, lab)].loading && !scriptEdits[scriptKey(l, lab)].rows.length">
+                                                            No script yet. Add a beat, or Regenerate to have the app write one.</p>
+                                                        <template x-for="(row, ri) in scriptEdits[scriptKey(l, lab)].rows" :key="row._k">
+                                                            <div data-script-row :data-type="row.type" class="bg-gray-950/60 border border-gray-800 rounded-lg px-2 py-1.5 space-y-1">
+                                                                <div class="flex items-center gap-1.5">
+                                                                    <span class="text-[9px] font-bold uppercase tracking-wide text-gray-500 flex-1" x-text="row.type"></span>
+                                                                    <button type="button" data-script-row-up @click="moveScriptRow(l, lab, ri, -1)" :disabled="!!(ri === 0)" aria-label="Move this beat up"
+                                                                            class="text-[10px] font-bold px-1.5 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 disabled:opacity-30 shrink-0">▲</button>
+                                                                    <button type="button" data-script-row-down @click="moveScriptRow(l, lab, ri, 1)"
+                                                                            :disabled="!!(ri === scriptEdits[scriptKey(l, lab)].rows.length - 1)" aria-label="Move this beat down"
+                                                                            class="text-[10px] font-bold px-1.5 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 disabled:opacity-30 shrink-0">▼</button>
+                                                                    <button type="button" data-script-row-remove @click="scriptEdits[scriptKey(l, lab)].rows.splice(ri, 1)" aria-label="Delete this beat"
+                                                                            class="text-[10px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 shrink-0">✕</button>
+                                                                </div>
+                                                                <template x-if="row.type === 'say' || row.type === 'do'">
+                                                                    <input name="scene_text" x-model="row.text" placeholder="Says…" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-gray-100 text-[11px]">
+                                                                </template>
+                                                                <template x-if="row.type === 'check'">
+                                                                    <input name="scene_ask" x-model="row.ask" placeholder="Asks…" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-gray-100 text-[11px]">
+                                                                </template>
+                                                                <template x-if="row.type === 'show'">
+                                                                    <input name="scene_caption" x-model="row.caption" placeholder="Caption…" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-gray-100 text-[11px]">
+                                                                </template>
+                                                                <template x-if="row.type === 'wait'">
+                                                                    <div class="flex gap-1.5">
+                                                                        <input name="scene_text" x-model="row.text" placeholder="While you wait…" class="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-gray-100 text-[11px]">
+                                                                        <label class="flex items-center gap-1 text-[11px] text-gray-500 shrink-0">
+                                                                            <input name="scene_minutes" type="number" min="1" max="60" x-model.number="row.minutes" class="w-14 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-gray-100 text-[11px] text-center">min
+                                                                        </label>
+                                                                    </div>
+                                                                </template>
+                                                                <template x-if="row.type === 'teach'">
+                                                                    <div class="space-y-1">
+                                                                        <input name="teach_title" x-model="row.title" placeholder="Title (optional)" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-gray-100 text-[11px]">
+                                                                        <textarea name="teach_text" x-model="row.text" rows="3" placeholder="What is new, why, what good looks like" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-gray-100 text-[11px]"></textarea>
+                                                                        <textarea name="teach_examples" x-model="row._examples" rows="2" placeholder="One example per line; add | pt-BR for another language" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-gray-100 text-[11px]"></textarea>
+                                                                        <input name="teach_speak" x-model="row.speak" placeholder="What Argyle says (optional)" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-gray-100 text-[11px]">
+                                                                    </div>
+                                                                </template>
+                                                            </div>
+                                                        </template>
+                                                        <div class="flex items-center gap-1.5 flex-wrap pt-1">
+                                                            <select name="scene_add_type" x-model="scriptEdits[scriptKey(l, lab)].addType" class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-gray-100 text-[11px]">
+                                                                <option value="say">Say</option><option value="do">Do</option><option value="teach">Teach</option>
+                                                                <option value="check">Check</option><option value="wait">Wait</option>
+                                                            </select>
+                                                            <button type="button" data-script-add @click="addScriptRow(lp, l, lab)"
+                                                                    class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Add a beat</button>
+                                                            <span class="flex-1"></span>
+                                                            <button type="button" data-script-save @click="saveScript(lp, l, lab)" :disabled="!!(busy || scriptEdits[scriptKey(l, lab)].loading)"
+                                                                    class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-teal-700 text-white active:bg-teal-800 disabled:opacity-50">Save</button>
+                                                        </div>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                        </template>
                                         <template x-if="edits[l.id]">
                                             <form data-lesson-form class="space-y-2 pt-1" @submit.prevent="saveLesson(lp, l)">
                                                 <label class="block text-[11px] text-gray-400">Title
@@ -184,6 +271,8 @@ function libraryPage(host = 'admin') {
         loading: false, busy: false, error: '', creating: false, opened: null,
         draft: {title: '', age_band: 'any', minutes: 20, sessions_per_week: 3, assumes: ''},
         profile: null, edits: {}, dragId: null, _pending: null,
+        // The script editor, keyed by scriptKey(): {loading, rows, addType}.
+        scriptEdits: {}, _rowSeq: 0, _poll: null,
         headers() {
             const token = window.chfPersonToken ? window.chfPersonToken() : localStorage.getItem('chauffeur_member_token');
             return {'Content-Type': 'application/json', ...(token ? {'X-Member-Token': token} : {})};
@@ -198,11 +287,11 @@ function libraryPage(host = 'admin') {
         me() { return this.members.find(m => m.id === this.myId) || null; },
         canCreate() { const m = this.me(); return !!m && ['parent', 'adult'].includes(m.role) && (m.status || 'active') === 'active'; },
         get detail() { return this.programs.find(p => p.id === this.opened) || null; },
-        async load() {
+        async load(quiet = false) {
             const who = window.chfPersonId ? window.chfPersonId() : (localStorage.getItem('chauffeur_member_id') || '');
             if (!who) return;
-            this.loading = true; this.error = '';
-            if (this.myId !== who) { this.opened = null; this.edits = {}; this.profile = null; this.creating = false; }
+            if (!quiet) { this.loading = true; this.error = ''; }
+            if (this.myId !== who) { this.opened = null; this.edits = {}; this.scriptEdits = {}; this.profile = null; this.creating = false; }
             this.myId = who;
             try {
                 const [data, members] = await Promise.all([this.request('api/library'), this.request('api/members')]);
@@ -211,8 +300,15 @@ function libraryPage(host = 'admin') {
                 this.members = members || [];
                 if (this._pending === null && this.host === 'admin') this._pending = new URLSearchParams(location.search).get('id') || '';
                 if (this._pending) { const id = this._pending; this._pending = ''; if (this.programs.some(p => p.id === id)) this.opened = id; }
-            } catch (e) { this.error = e.message; }
-            finally { this.loading = false; }
+            } catch (e) { if (!quiet) this.error = e.message; }
+            finally { this.loading = false; this.syncPoll(); }
+        },
+        // While any program on screen is writing its lessons, read the
+        // library again every 10 seconds; stop once none is.
+        syncPoll() {
+            const writing = this.programs.some(p => p.writing);
+            if (writing && !this._poll) this._poll = setInterval(() => this.load(true), 10000);
+            else if (!writing && this._poll) { clearInterval(this._poll); this._poll = null; }
         },
         // The phone's "from the library" button and More -> Library land here.
         async openFromEvent(d) {
@@ -227,8 +323,8 @@ function libraryPage(host = 'admin') {
             const s = q.toString();
             history.replaceState(history.state, '', location.pathname + (s ? '?' + s : '') + location.hash);
         },
-        openProgram(lp) { this.opened = lp.id; this.edits = {}; this.profile = null; this.setAddress(lp.id); window.scrollTo && window.scrollTo(0, 0); },
-        back() { this.opened = null; this.edits = {}; this.profile = null; this.setAddress(null); },
+        openProgram(lp) { this.opened = lp.id; this.edits = {}; this.scriptEdits = {}; this.profile = null; this.setAddress(lp.id); window.scrollTo && window.scrollTo(0, 0); },
+        back() { this.opened = null; this.edits = {}; this.scriptEdits = {}; this.profile = null; this.setAddress(null); },
         lessonsOf(lp, phaseId) { return (lp.lessons || []).filter(l => l.phase_id === phaseId); },
         async mutate(path, body, method = 'POST') {
             if (this.busy) return null;
@@ -300,6 +396,140 @@ function libraryPage(host = 'admin') {
             const say = lines.length ? lines.join('\n') : 'It leaves this program for everyone running it.';
             if (!await promptConfirm('Remove ' + l.title + '?', chfLibrary.asText(say), 'Remove', 'Keep it')) return;
             await this.mutate(this.lib(lp, '/lessons/' + encodeURIComponent(l.id)), undefined, 'DELETE');
+        },
+        // --- Scripts (spec 2026-10-20-lesson-depth §8) -------------------
+        // One script per (lesson, rotation label with steps), or one
+        // unlabelled: library_scripts.slots_of, said the same way.
+        scriptLabels(l) {
+            const labs = (l.variants || []).filter(v => (v.steps || []).length).map(v => v.label || '');
+            return labs.length ? labs : [''];
+        },
+        scriptKey(l, lab) { return l.id + '|' + (lab || ''); },
+        scriptOf(lp, l, lab) { return ((lp.scripts || {})[l.id] || {})[lab || ''] || {state: 'none'}; },
+        scriptChip(lp, l, lab) {
+            const sc = this.scriptOf(lp, l, lab);
+            if (sc.state === 'writing') return 'writing…';
+            if (sc.state === 'ready') return 'ready · about ' + Math.max(1, sc.minutes || 0) + ' min';
+            if (sc.state === 'failed') return sc.note ? 'failed · ' + sc.note : 'failed';
+            return 'no script yet';
+        },
+        scriptChipClass(lp, l, lab) {
+            const st = this.scriptOf(lp, l, lab).state;
+            if (st === 'ready') return 'bg-teal-500/20 text-teal-300';
+            if (st === 'failed') return 'bg-amber-500/20 text-amber-300';
+            return 'bg-gray-700 text-gray-300';
+        },
+        scriptPath(lp, l, lab, fill) {
+            return this.lib(lp, '/lessons/' + encodeURIComponent(l.id) + '/script?variant_label=' + encodeURIComponent(lab || '')
+                            + (fill ? '&fill=1' : ''));
+        },
+        // Play: the stored script filled for the viewer, in preview, on a
+        // window-shaped stand-in (programs_page.html playLesson's shape).
+        // No script plays the lesson's own steps (the player's fallback).
+        async playScript(lp, l, lab) {
+            let script = null;
+            try { script = (await this.request(this.scriptPath(lp, l, lab, true))).script || null; }
+            catch (e) { showGlobalAlert(e.message); return; }
+            const ph = (lp.phases || []).find(x => x.id === l.phase_id) || {};
+            const v = lab ? (l.variants || []).find(x => (x.label || '') === lab) : null;
+            window.dispatchEvent(new CustomEvent('lesson-player:open', {detail: {
+                preview: true,
+                window: {title: lp.title || '', session_label: lab || '', lesson_id: l.id, variant_label: lab || '',
+                         phase_name: ph.name || '', steps: (v && v.steps) || l.steps || [], unit_title: l.title || '',
+                         milestone: ph.milestone || ''},
+                lesson: script,
+            }}));
+        },
+        // A beat as the form holds it: every field it loaded with stays
+        // (seconds, metronome_bpm, a show's primitive, cues), so Save never
+        // clobbers what generation put there; `_k` keys the row, and a
+        // teach's examples are one per line, "text | lang".
+        scriptRow(scene) {
+            const row = {...scene, _k: ++this._rowSeq};
+            if (row.type === 'teach') {
+                row.title = row.title || ''; row.text = row.text || ''; row.speak = row.speak || '';
+                row._examples = (row.examples || []).map(e => (typeof e === 'string' ? e : (e.text || '') + (e.speak_lang ? ' | ' + e.speak_lang : ''))).join('\n');
+            }
+            return row;
+        },
+        async editScript(lp, l, lab) {
+            const key = this.scriptKey(l, lab);
+            if (this.scriptEdits[key]) { delete this.scriptEdits[key]; return; }
+            this.scriptEdits[key] = {loading: true, rows: [], addType: 'say'};
+            await this.loadScriptDraft(lp, l, lab);
+        },
+        async loadScriptDraft(lp, l, lab) {
+            const key = this.scriptKey(l, lab);
+            try {
+                const d = await this.request(this.scriptPath(lp, l, lab, false));
+                if (!this.scriptEdits[key]) return;
+                this.scriptEdits[key].rows = (((d.script || {}).scenes) || []).map(sc => this.scriptRow(sc));
+            } catch (e) { showGlobalAlert(e.message); }
+            finally { if (this.scriptEdits[key]) this.scriptEdits[key].loading = false; }
+        },
+        scriptCap(lp) { return Math.max(12, Math.min(40, (lp.made_for || {}).minutes || 12)); },
+        addScriptRow(lp, l, lab) {
+            const ed = this.scriptEdits[this.scriptKey(l, lab)];
+            if (!ed) return;
+            const cap = this.scriptCap(lp), minutes = (lp.made_for || {}).minutes;
+            if (ed.rows.length >= cap) {
+                showGlobalAlert(cap + ' beats is the most a ' + (minutes ? minutes + '-minute ' : '') + 'lesson holds.');
+                return;
+            }
+            const type = ed.addType || 'say';
+            const blank = {check: {ask: ''}, show: {caption: ''}, wait: {text: '', minutes: 1},
+                           teach: {title: '', text: '', examples: [], speak: ''}}[type] || {text: ''};
+            ed.rows.push(this.scriptRow({type, ...blank}));
+        },
+        moveScriptRow(l, lab, i, delta) {
+            const rows = (this.scriptEdits[this.scriptKey(l, lab)] || {}).rows || [];
+            const j = i + delta;
+            if (j < 0 || j >= rows.length) return;
+            rows.splice(j, 0, rows.splice(i, 1)[0]);
+        },
+        sceneOf(row) {
+            const {_k, _examples, ...scene} = row;
+            if (scene.type === 'teach') {
+                scene.examples = this.lines(_examples).map(line => {
+                    const bar = line.lastIndexOf('|');
+                    const lang = bar > 0 ? line.slice(bar + 1).trim() : '';
+                    // Only a language tag after the bar is one ("Dó | pt-BR");
+                    // any other bar is part of the example's words.
+                    return bar > 0 && /^[a-z]{2}(-[A-Z]{2})?$/.test(lang)
+                        ? {text: line.slice(0, bar).trim(), speak_lang: lang} : {text: line};
+                }).filter(e => e.text);
+            }
+            return scene;
+        },
+        async saveScript(lp, l, lab) {
+            const key = this.scriptKey(l, lab);
+            const ed = this.scriptEdits[key];
+            if (!ed) return;
+            const scenes = ed.rows.map(r => this.sceneOf(r));
+            if (!scenes.length) { showGlobalAlert('Add a beat first.'); return; }
+            if (await this.mutate(this.scriptPath(lp, l, lab, false), {variant_label: lab || '', scenes}, 'PUT')) {
+                if (this.scriptEdits[key]) { this.scriptEdits[key].loading = true; await this.loadScriptDraft(lp, l, lab); }
+            }
+        },
+        // Regenerate asks first (a hand edit is said to go), then starts
+        // the program's writing job on this one lesson.
+        async regenerateScript(lp, l, lab) {
+            const ok = this.scriptOf(lp, l, lab).edited
+                ? await promptConfirm('Rewrite this hand-edited script?', 'Your edit goes away and the app writes a fresh script.', 'Rewrite', 'Keep it')
+                : await promptConfirm('Rewrite this lesson?', 'The app writes a fresh script. Anyone practising keeps the plain steps until it lands.', 'Rewrite', 'Cancel');
+            if (!ok) return;
+            if (await this.mutate(this.lib(lp, '/scripts/write'), {lesson_id: l.id, variant_label: lab || ''}))
+                delete this.scriptEdits[this.scriptKey(l, lab)];
+        },
+        // Write lessons: every lesson of this program still lacking a
+        // script, as one background job the card follows.
+        async writeLessons(lp) {
+            if (lp.writing) return;
+            await this.mutate(this.lib(lp, '/scripts/write'), {});
+        },
+        writingLine(lp) {
+            const w = lp.writing || {};
+            return 'Writing lessons · ' + (w.done || 0) + ' of ' + (w.total || 0);
         },
         // Reordering moves a lesson within its own phase; the server takes
         // the whole order, every lesson once.

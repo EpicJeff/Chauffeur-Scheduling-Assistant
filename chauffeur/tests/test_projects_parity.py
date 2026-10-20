@@ -305,11 +305,11 @@ PARITY += [
     ('Settings: programs on and generation', S.format('programs'),
      within("{% call settings_section('programs-settings',", '{% endcall %}',
             'x-model="s.programs_enabled"', 'x-model="s.programs_generate_enabled"', bound('saveProgramSettings'))),
-    ('Settings: lessons and write lessons now', S.format('programs'),
+    # Write lessons now and its report retired for the per-program job on the library page
+    # (spec 2026-10-20-lesson-depth §8, ruling e); the pool that job writes with is set here.
+    ('Settings: lessons and the writing model', S.format('programs'),
      within('<section id="lessons"', '</section>',
-            'x-model="s.program_lessons_enabled"', bound('saveProgramSettings'), bound('runLessonSweep'))),
-    ('Settings: play a swept slot', S.format('programs'),
-     within('<section id="lessons"', '</section>', bound('playSweepSlot', 'slot'))),
+            'x-model="s.program_lessons_enabled"', 'x-model="s.lesson_pool"', bound('saveProgramSettings'))),
     ('Settings: pacing', S.format('programs'),
      within("{% call settings_section('programs-pacing',", '{% endcall %}',
             'x-model.number="s.programs_research_pages"', bound('saveProgramSettings'))),

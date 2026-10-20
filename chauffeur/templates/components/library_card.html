@@ -5,7 +5,8 @@
    both create forms reuse library_profile_fields() and the chfLibrary words.
 
    library_card()            one card; the caller's scope holds `lp` (a row of
-                             GET /api/library) and libraryPage()'s methods.
+                             GET /api/library) and libraryPage()'s methods
+                             (writeLessons/writingLine and `host` included).
    library_profile_fields(d, bands)
                              the public profile a library program is curated
                              for, with the publication line ABOVE the title:
@@ -56,6 +57,15 @@
                     class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700"
                     x-text="lp.can_edit ? 'Edit' : 'Open'"></button>
         </template>
+        <!-- Write lessons: the program's scripts as one background job
+             (spec 2026-10-20-lesson-depth §8), the button saying how far it
+             has got while it runs. The admin page only: the phone shows
+             chips and Play. -->
+        <template x-if="lp.can_edit && !lp.archived && host === 'admin'">
+            <button type="button" data-library-write @click="writeLessons(lp)" :disabled="!!(busy || lp.writing)"
+                    class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-teal-300 border border-teal-700/60 active:bg-gray-700 disabled:opacity-60"
+                    x-text="lp.writing ? writingLine(lp) : 'Write lessons'"></button>
+        </template>
         <template x-if="lp.can_edit && !lp.archived">
             <button type="button" data-library-archive @click="archiveProgram(lp)" :disabled="!!busy"
                     class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 disabled:opacity-50">Archive</button>
@@ -66,6 +76,9 @@
                     class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-900 text-red-400 border border-red-900/60 active:bg-red-950 disabled:opacity-50">Delete</button>
         </template>
     </div>
+    <template x-if="lp.writing && !(lp.can_edit && !lp.archived && host === 'admin')">
+        <p data-library-writing class="text-[11px] text-gray-500 mt-1" x-text="writingLine(lp)"></p>
+    </template>
     <template x-if="lp.can_edit && lp.in_use">
         <p data-library-in-use :id="'library-in-use-' + lp.id" class="text-[11px] text-gray-500 italic mt-1" x-text="lp.in_use"></p>
     </template>

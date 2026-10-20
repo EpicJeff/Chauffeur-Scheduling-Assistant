@@ -23,6 +23,9 @@
     <div class="flex-1 overflow-y-auto bg-gray-900/50">
         {% include 'components/library_page.html' %}
     </div>
+    {# Play on a lesson's script opens the shared player in preview; the
+       page includes it once (the phone's app.html has its own). #}
+    {% include 'components/lesson_player.html' %}
     {% include 'components/control_center.html' %}
     {% include 'components/moments_hearth.html' %}
 </body>

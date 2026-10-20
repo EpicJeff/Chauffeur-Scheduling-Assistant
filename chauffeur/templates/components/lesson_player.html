@@ -212,6 +212,26 @@
             </div>
         </template>
 
+        <!-- teach: what is new, why, and what good looks like. A heading,
+             a paragraph at READING size (not the say beat's display size)
+             and the examples as a list; a tap on an example says it in its
+             own language through say(), queued behind the sentence in
+             progress (spec 2026-10-20-lesson-depth §4). Never drawn
+             through the say branch above. -->
+        <template x-if="scene().type === 'teach'">
+            <div class="w-full max-w-md text-left space-y-3">
+                <div data-teach-title x-show="scene().title" class="font-bold text-gray-100" :class="panel ? 'text-2xl' : 'text-lg'" x-text="scene().title"></div>
+                <p data-teach-text class="text-gray-200 leading-relaxed" :class="panel ? 'text-xl' : 'text-base'" x-text="scene().text"></p>
+                <ul class="space-y-1.5" x-show="(scene().examples || []).length">
+                    <template x-for="(ex, i) in (scene().examples || [])" :key="i">
+                        <li><button type="button" data-teach-example @click.stop="speakExample(i)"
+                                    class="w-full text-left rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-gray-100 active:bg-gray-700"
+                                    :class="panel ? 'text-xl' : 'text-sm'" x-text="ex.text"></button></li>
+                    </template>
+                </ul>
+            </div>
+        </template>
+
         <!-- do: the drill itself, live. The one control on it is the
              commonest thing a person wants mid-drill and the one no model
              has to be asked for: the same beat again, slower. Deterministic
@@ -907,6 +927,19 @@ function lessonPlayer() {
             return scenes;
         },
 
+        // A line as its sentences: split after . ! or ? when whitespace and
+        // more words follow, so "2.5" stays whole. Pure (no `this`), Node-run.
+        splitSentences(text) {
+            const s = String(text || '').trim();
+            if (!s) return [];
+            return s.split(/(?<=[.!?])\s+(?=\S)/).map(x => x.trim()).filter(Boolean);
+        },
+        // A tapped teach example: said through say() in its own language,
+        // else the scene's, and queued like every other between-beat line.
+        speakExample(i) {
+            const ex = (this.scene().examples || [])[i] || {};
+            if (ex.text) this.say(ex.text, ex.speak_lang || this.scene().speak_lang, this.scene().tone);
+        },
         scene() { return this.scenes[this.idx] || {type: 'say', text: ''}; },
         isLast() { return this.idx >= this.scenes.length - 1; },
         // What a tap on the scene itself does. Pure (no `this`), Node-run:
@@ -2188,8 +2221,21 @@ function lessonPlayer() {
             // mid-sentence, and the sentence it would cut off is the one
             // about the knife.
             const lead = this.needsGrownUp() ? 'Get a grown-up for this part.' : '';
-            const line = [lead, s.speak].filter(Boolean).join(' ');
-            if (line) this.say(line, s.speak_lang, s.tone);
+            if (this.panel) {
+                // A panel's say() hands each line to the room or reads it
+                // at once (no queue there), so a second call would cut the
+                // first off: one utterance, the hand-off first.
+                const line = [lead, s.speak].filter(Boolean).join(' ');
+                if (line) this.say(line, s.speak_lang, s.tone);
+            } else {
+                // Off a panel say() queues, one line at a time: the hand-off
+                // first, then the speak sentence by sentence, so the browser
+                // voice's 12-second guard bounds a sentence rather than a
+                // paragraph, and a tapped example waits for the sentence in
+                // progress instead of cancelling the explanation.
+                if (lead) this.say(lead, s.speak_lang, s.tone);
+                for (const part of this.splitSentences(s.speak)) this.say(part, s.speak_lang, s.tone);
+            }
             if (s.chime) this.playChime(s.chime);
             // Armed BEFORE the timer starts, so a cue written for second
             // 0 lands with the beat rather than a tick behind it.
