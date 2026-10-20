@@ -2665,6 +2665,31 @@ console.log(JSON.stringify(out));
     check(out['optedIn'] is False, f"a device that chose itself speaks through its player, got {out}")
 
 
+def scenario_the_browser_voice_is_woken_by_the_first_tap():
+    """Device-found 2026-10-19 (a phone, browser voice selected): no sound
+    at all. Mobile browsers refuse speech that does not descend from a
+    user gesture until one gesture-born utterance has played, and the
+    PWA's Start awaits the lesson fetch before the player opens, so the
+    greeting never was. The player now speaks one silent utterance on the
+    page's first tap (capture, passive, self-removing), and sayLocal never
+    cancels and speaks in the same tick (iOS drops the new line)."""
+    import re
+    src = _read('components/lesson_player.html')
+    check('window.chfPrimeVoice' in src and "new SpeechSynthesisUtterance(' ')" in src and 'u.volume = 0' in src,
+          "one silent utterance is the primer")
+    check("['touchend', 'click']" in src and '{capture: true, passive: true}' in src
+          and 'removeEventListener(ev, once, true)' in src,
+          "wired to the first touch or click on the page, capture + passive, once")
+    m = re.search(r'\n        sayLocal\(text, lang, tone\) \{(.*?)\n        \},', src, re.S)
+    body = m.group(1) if m else ''
+    check('synth.speaking || synth.pending' in body and 'if (busy) synth.cancel();' in body,
+          f"cancel only what is sounding, got {body!r}")
+    check('setTimeout(() => { try { synth.speak(u); }' in body and 'else synth.speak(u);' in body,
+          "and never speak in the same tick as a cancel")
+    check('                synth.cancel();\n                const u' not in body.replace('\r\n', '\n'),
+          "the old unconditional cancel-then-speak pair is gone")
+
+
 def scenario_no_music_logic_is_not_an_error():
     """A host that loads no music logic (the house exterior quick lesson,
     any future include) still plays the lesson, in the browser's own
@@ -2877,6 +2902,7 @@ if __name__ == '__main__':
     scenario_a_computer_reuses_its_screen_registration()
     scenario_the_device_rung_needs_a_live_player_and_a_failed_line_is_read_locally()
     scenario_a_phone_or_computer_speaks_through_the_browser_until_it_opts_in()
+    scenario_the_browser_voice_is_woken_by_the_first_tap()
     scenario_only_session_level_lines_reach_the_room()
     scenario_the_room_voice_is_a_panel_only_fork()
     scenario_the_room_is_asked_once_and_remembered_on_the_device()

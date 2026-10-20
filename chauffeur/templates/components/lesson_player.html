@@ -634,6 +634,33 @@
 </div>
 
 <script>
+    // The browser voice has to be woken by a tap before it will say anything
+    // that is not itself inside a tap (iOS above all; the PWA's Start awaits
+    // the lesson fetch, so the greeting never was). One silent utterance on
+    // the page's FIRST tap or click -- any tap, on anything -- unlocks the
+    // rest of the session. Capture phase so no handler can stop it, passive
+    // so no scroll is delayed, and it removes itself after the first run.
+    (function () {
+        if (window.chfPrimeVoice) return;
+        let primed = false;
+        window.chfPrimeVoice = function () {
+            if (primed) return;
+            primed = true;
+            try {
+                const synth = window.speechSynthesis;
+                if (!synth) return;
+                const u = new SpeechSynthesisUtterance(' ');
+                u.volume = 0;
+                synth.speak(u);
+            } catch (e) { /* no voice on this device */ }
+        };
+        ['touchend', 'click'].forEach(function (ev) {
+            document.addEventListener(ev, function once() {
+                document.removeEventListener(ev, once, true);
+                window.chfPrimeVoice();
+            }, {capture: true, passive: true});
+        });
+    })();
 function lessonPlayer() {
     // Shared by keyboardSvg()/fretboardSvg()'s SVG <text> -- pinned
     // explicitly rather than left to inherit, see fretboardSvg's own
@@ -1550,7 +1577,12 @@ function lessonPlayer() {
             try {
                 const synth = window.speechSynthesis;
                 if (!synth) return;
-                synth.cancel();
+                // Only cancel what is actually sounding, and never in the
+                // same tick as the new line: iOS Safari drops an utterance
+                // queued right behind a cancel(), which read as "no voice
+                // at all" on a phone (2026-10-19).
+                const busy = !!(synth.speaking || synth.pending);
+                if (busy) synth.cancel();
                 const u = new SpeechSynthesisUtterance(String(text));
                 if (lang) {
                     const v = (synth.getVoices() || []).find(
@@ -1563,7 +1595,8 @@ function lessonPlayer() {
                 // slower and a shade lower; `coach` is the ordinary one.
                 u.rate = tone === 'calm' ? 0.85 : 1.0;
                 u.pitch = tone === 'calm' ? 0.9 : 1.0;
-                synth.speak(u);
+                if (busy) setTimeout(() => { try { synth.speak(u); } catch (e) {} }, 60);
+                else synth.speak(u);
             } catch (e) { /* a voiceless device still runs the scene */ }
         },
 
