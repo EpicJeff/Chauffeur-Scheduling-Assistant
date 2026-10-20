@@ -279,10 +279,13 @@ def scenario_the_last_scene_is_never_an_ambient_tap():
     "near the end" and a generated script routinely ends on say/do/show."""
     import re
     src = _read('components/lesson_player.html')
-    m = re.search(r'@click="scene\(\)\.type !== \'check\'([^"]*)"', src)
-    check(m, "the scene area's tap handler is findable")
-    check('!isLast()' in (m.group(1) if m else ''),
-          "and it does nothing on the last scene")
+    check('@click="ambientTap()"' in src, "the scene area's tap handler is findable")
+    a = re.search(r'\n        ambientTap\(\) \{(.*?)\n        \},', src, re.S)
+    check(a and 'this.isLast()' in a.group(1) and 'tapAction(' in a.group(1),
+          "and it asks tapAction with the last-scene fact")
+    t = re.search(r'\n        tapAction\(type, kind, cardIdx, pairs, last\) \{(.*?)\n        \},', src, re.S)
+    check(t and "if (type === 'check' || last) return 'none';" in t.group(1),
+          "which does nothing on the last scene (executed under Node in the cards-tap scenario)")
 
 
 def scenario_finishing_asks_before_it_logs():
@@ -1794,6 +1797,13 @@ def scenario_a_cue_stores_nothing():
                       src, re.S)
         check(m, f"{fn} exists")
         body = m.group(1) if m else ''
+        # The one call allowed: rendering a cue's own words as a clip of
+        # the house voice (fetchClip -> /api/lessons/voice), which stores
+        # nothing anywhere -- the route is screened and stateless, the
+        # clip lives in memory for the beat. Anything else that reaches
+        # the network or the browser's storage is still a trace.
+        body = '\n'.join(l for l in body.replace('\r\n', '\n').splitlines()
+                         if not l.strip().startswith('//')).replace('this.fetchClip(', '')
         for forbidden in ('fetch', 'localStorage', 'api'):
             check(forbidden not in body,
                   f"a cue is said and forgotten -- {fn} must not {forbidden}")
@@ -2902,6 +2912,78 @@ console.log(JSON.stringify(out));
           f"only an armed, non-preview, non-override session plays clips, got {out}")
 
 
+def scenario_off_a_panel_lines_play_one_after_another_and_a_cards_tap_turns_the_card():
+    """Device-found 2026-10-20: the Portuguese word came in over Argyle's
+    line, a do-beat's Portuguese cues came out in the English browser
+    voice, and a three-card scene showed one card and jumped. Off a panel
+    every between-beat line now goes through ONE queue (say -> voiceQueue
+    -> pumpVoice -> speakOne), each line awaited to its end, a scene change
+    empties it; a do-beat's cue clips are fetched when the beat opens and
+    played on their second; and an ambient tap on a cards scene turns the
+    next card before it ever advances (tapAction, pure, Node-run)."""
+    import json
+    import os
+    import re
+    import shutil
+    import subprocess
+    import tempfile
+    src = _read('components/lesson_player.html')
+    s = re.search(r'\n        say\(text, lang, tone\) \{(.*?)\n        \},', src, re.S)
+    sb = s.group(1) if s else ''
+    check('this.voiceQueue.push(' in sb and 'this.pumpVoice()' in sb and sb.index('!this.panel') < sb.index('deviceSay('),
+          "off a panel say() queues instead of racing the channels")
+    p = re.search(r'\n        async pumpVoice\(\) \{(.*?)\n        \},', src, re.S)
+    check(p and 'await this.speakOne(' in p.group(1) and 'this.voiceBusy' in p.group(1), "one pump, one line at a time, awaited")
+    so = re.search(r'\n        async speakOne\(text, lang, tone\) \{(.*?)\n        \},', src, re.S)
+    check(so and 'await this.playClipAwait(blob, tone)' in so.group(1) and 'await this.sayLocalAwait(text, lang, tone)' in so.group(1),
+          "a clip is awaited to its end, else the browser line is awaited to its end")
+    pa = re.search(r'\n        playClipAwait\(blob, tone\) \{(.*?)\n        \},', src, re.S)
+    check(pa and "a.onended = () => finish(true)" in pa.group(1) and 'finish(false)' in pa.group(1), "a clip resolves on ended, false when refused")
+    la = re.search(r'\n        sayLocalAwait\(text, lang, tone\) \{(.*?)\n        \},', src, re.S)
+    check(la and 'u.onend = finish' in la.group(1) and 'setTimeout(finish, 12000)' in la.group(1), "a browser line resolves on end, with a cap")
+    es = re.search(r'\n        enterScene\(\) \{(.*?)\n        \},', src, re.S)
+    check(es and 'this.stopVoice();' in es.group(1) and es.group(1).index('this.stopVoice();') < es.group(1).index('this.hintIdx = 0'),
+          "a scene change empties the queue first")
+    sc = re.search(r'\n        startCues\(cues\) \{(.*?)\n        \},', src, re.S)
+    check(sc and 'this.fetchClip(c.say, c.speak_lang || this.scene().speak_lang)' in sc.group(1) and 'this.cueClips[i] = blob' in sc.group(1),
+          "a do-beat fetches its cue clips when it opens")
+    rc = re.search(r'\n        runCue\(c, elapsed\) \{(.*?)\n        \},', src, re.S)
+    check(rc and 'this.cueClips[i]' in rc.group(1) and 'this.playClip(blob' in rc.group(1) and 'else this.sayLocal(c.say' in rc.group(1),
+          "a cue plays its fetched clip on its second, else the browser voice as before")
+    check('@click="ambientTap()"' in src, "the scene's ambient tap goes through tapAction")
+    m = re.search(r'\n        tapAction\(type, kind, cardIdx, pairs, last\) \{(.*?)\n        \},', src, re.S)
+    check(m, "tapAction(type, kind, cardIdx, pairs, last) is findable")
+    body = m.group(1)
+    check('this.' not in body, f"and pure, got {body!r}")
+    node = shutil.which('node')
+    if not node:
+        print('  skip  node is not installed')
+        return
+    harness = r'''
+const out = {};
+out.cardsFirst = tapAction('show', 'cards', 0, 3, false);
+out.cardsMiddle = tapAction('show', 'cards', 1, 3, false);
+out.cardsLast = tapAction('show', 'cards', 2, 3, false);
+out.oneCard = tapAction('show', 'cards', 0, 1, false);
+out.say = tapAction('say', undefined, 0, 0, false);
+out.check = tapAction('check', undefined, 0, 0, false);
+out.last = tapAction('say', undefined, 0, 0, true);
+out.lastCards = tapAction('show', 'cards', 0, 3, true);
+console.log(JSON.stringify(out));
+'''
+    scratch = tempfile.mkdtemp(prefix='chauffeur_tap_')
+    path = os.path.join(scratch, 'run.mjs')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write('function tapAction(type, kind, cardIdx, pairs, last) {' + body + '\n}\n' + harness)
+    proc = subprocess.run([node, path], capture_output=True, text=True,
+                          encoding='utf-8', errors='replace', timeout=60)
+    check(proc.returncode == 0, f"tapAction threw:\n{proc.stderr[-1500:]}")
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    check(out['cardsFirst'] == 'card' and out['cardsMiddle'] == 'card', f"a tap turns the next card while cards remain, got {out}")
+    check(out['cardsLast'] == 'advance' and out['oneCard'] == 'advance' and out['say'] == 'advance', f"the last card, one card and a plain beat advance, got {out}")
+    check(out['check'] == 'none' and out['last'] == 'none' and out['lastCards'] == 'none', f"a check and the last scene never advance by an ambient tap, got {out}")
+
+
 def scenario_no_music_logic_is_not_an_error():
     """A host that loads no music logic (the house exterior quick lesson,
     any future include) still plays the lesson, in the browser's own
@@ -3118,6 +3200,7 @@ if __name__ == '__main__':
     scenario_a_player_home_assistant_does_not_know_is_said_so_and_the_browser_speaks()
     scenario_the_device_lookup_is_bounded_and_has_a_second_rung()
     scenario_off_a_panel_the_browser_plays_the_house_voice_itself()
+    scenario_off_a_panel_lines_play_one_after_another_and_a_cards_tap_turns_the_card()
     scenario_only_session_level_lines_reach_the_room()
     scenario_the_room_voice_is_a_panel_only_fork()
     scenario_the_room_is_asked_once_and_remembered_on_the_device()

@@ -162,7 +162,7 @@
     <div x-show="started"
          class="flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-center gap-5 p-6 text-center lp-beat-in"
          x-effect="idx, $nextTick(() => replayBeat($el))"
-         @click="scene().type !== 'check' && !isLast() && advance()">
+         @click="ambientTap()">
 
         <div class="uppercase tracking-widest text-teal-400 font-black"
              :class="panel ? 'text-sm' : 'text-[11px]'" x-show="kicker()" x-text="kicker()"></div>
@@ -752,6 +752,9 @@ function lessonPlayer() {
         deviceWhy: '',       // 'not listed' | 'did not connect' -- which fact the notice states
         deviceArmed: false,  // audio unlocked by the Start tap (and by the chip tap)
         started: false,      // the Start tap has happened; nothing speaks or advances before it
+        voiceQueue: [],      // off a panel: between-beat lines waiting their turn
+        voiceBusy: false,
+        cueClips: {},        // a do-beat's cue clips, fetched when the beat opens, keyed by cue index
         lastSpeak: '',       // what the speak route last answered, for the voice detail line
         // A wait beat's on-screen countdown. Cosmetic only -- the call
         // into the room is armed on the server and outlives this.
@@ -906,6 +909,22 @@ function lessonPlayer() {
 
         scene() { return this.scenes[this.idx] || {type: 'say', text: ''}; },
         isLast() { return this.idx >= this.scenes.length - 1; },
+        // What a tap on the scene itself does. Pure (no `this`), Node-run:
+        // a cards scene with cards still to turn turns the next card; a
+        // check never advances by an ambient tap; the last scene never
+        // advances at all (finish() is the footer button alone).
+        tapAction(type, kind, cardIdx, pairs, last) {
+            if (type === 'check' || last) return 'none';
+            if (type === 'show' && kind === 'cards' && cardIdx < Math.max(0, (pairs | 0) - 1)) return 'card';
+            return 'advance';
+        },
+        ambientTap() {
+            const s = this.scene() || {};
+            const prim = s.primitive || {};
+            const act = this.tapAction(s.type, prim.kind, this.cardIdx, (prim.pairs || []).length, this.isLast());
+            if (act === 'card') this.cardNext();
+            else if (act === 'advance') this.advance();
+        },
 
         // A `show` whose kind this renderer draws -- every kind
         // services/program_lessons.py's PRIMITIVES dict validates, now
@@ -1382,9 +1401,119 @@ function lessonPlayer() {
         // the moment it was about is worse than one nobody heard.
         say(text, lang, tone) {
             if (this.muted || !text) return;
+            if (!this.panel) {
+                // Off a panel every between-beat line goes through ONE
+                // queue, so a scene's own line, a card's word and a cue
+                // never cut or cover each other: each plays to its end
+                // (clip or browser voice), then the next. A scene change
+                // empties the queue (enterScene -> stopVoice).
+                this.voiceQueue.push({text: String(text), lang: lang || '', tone: tone || ''});
+                this.pumpVoice();
+                return;
+            }
             if (this.deviceSay(text, lang, tone)) return;
             if (this.roomSay(text, lang, tone)) return;
             this.sayLocal(text, lang, tone);
+        },
+        // The queue's pump: one line at a time, each awaited to its end.
+        // A clip ends on the element's `ended`; a browser line ends on the
+        // utterance's `end` (or a 12 s cap, because some engines never
+        // fire it). Whatever fails is read locally, still in turn.
+        async pumpVoice() {
+            if (this.voiceBusy) return;
+            this.voiceBusy = true;
+            try {
+                while (this.voiceQueue.length) {
+                    const line = this.voiceQueue.shift();
+                    if (this.muted) continue;
+                    await this.speakOne(line.text, line.lang, line.tone);
+                }
+            } finally { this.voiceBusy = false; }
+        },
+        async speakOne(text, lang, tone) {
+            if (this.clipRung(this.voiceLocal, this.preview, this.deviceArmed)) {
+                const blob = await this.fetchClip(text, lang);
+                if (blob) {
+                    const played = await this.playClipAwait(blob, tone);
+                    if (played) return;
+                }
+            }
+            await this.sayLocalAwait(text, lang, tone);
+        },
+        async fetchClip(text, lang) {
+            try {
+                const r = await fetch((window.chfBase || '') + 'api/lessons/voice', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({text: String(text), lang: lang || ''}),
+                });
+                if (!r.ok) {
+                    let d = {};
+                    try { d = await r.json(); } catch (e) { d = {}; }
+                    this.lastSpeak = r.status + (d.detail ? ' - ' + d.detail : '');
+                    return null;
+                }
+                const blob = await r.blob();
+                this.lastSpeak = r.status + ' ' + (blob.type || 'audio') + ' ' + blob.size + 'B';
+                return blob;
+            } catch (e) { this.lastSpeak = 'no answer'; return null; }
+        },
+        // Play one clip and resolve true when it has ended, false when the
+        // browser refused to play it (audio never unlocked, a codec it lacks).
+        playClipAwait(blob, tone) {
+            return new Promise(resolve => {
+                let done = false;
+                const finish = (ok) => { if (!done) { done = true; resolve(ok); } };
+                try {
+                    const a = this.voiceAudio();
+                    if (this._voiceUrl) { try { URL.revokeObjectURL(this._voiceUrl); } catch (e) {} }
+                    this._voiceUrl = URL.createObjectURL(blob);
+                    a.pause();
+                    try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) {}
+                    a.onended = () => finish(true);
+                    a.onerror = () => finish(false);
+                    a.src = this._voiceUrl;
+                    a.muted = false;
+                    a.playbackRate = tone === 'calm' ? 0.9 : 1.0;
+                    const p = a.play();
+                    if (p && typeof p.catch === 'function') p.catch(() => { this.lastSpeak += ' (play refused)'; finish(false); });
+                    setTimeout(() => finish(true), 30000);   // a clip never holds the queue for ever
+                } catch (e) { finish(false); }
+            });
+        },
+        // The browser voice, awaited to the end of the utterance.
+        sayLocalAwait(text, lang, tone) {
+            return new Promise(resolve => {
+                let done = false;
+                const finish = () => { if (!done) { done = true; resolve(); } };
+                try {
+                    const synth = window.speechSynthesis;
+                    if (!synth || this.muted || !text) { finish(); return; }
+                    try { if (this._voiceAudio && !this._voiceAudio.paused) this._voiceAudio.pause(); } catch (e) {}
+                    const busy = !!(synth.speaking || synth.pending);
+                    if (busy) synth.cancel();
+                    const u = new SpeechSynthesisUtterance(String(text));
+                    if (lang) {
+                        const v = (synth.getVoices() || []).find(
+                            v => v.lang && v.lang.toLowerCase().startsWith(String(lang).slice(0, 2).toLowerCase()));
+                        if (v) u.voice = v;
+                        u.lang = lang;
+                    }
+                    u.rate = tone === 'calm' ? 0.85 : 1.0;
+                    u.pitch = tone === 'calm' ? 0.9 : 1.0;
+                    u.onend = finish; u.onerror = finish;
+                    const go = () => { try { synth.speak(u); } catch (e) { finish(); } };
+                    if (busy) setTimeout(go, 60); else go();
+                    setTimeout(finish, 12000);
+                } catch (e) { finish(); }
+            });
+        },
+        // A scene change: whatever is queued or sounding belongs to the
+        // scene that just ended.
+        stopVoice() {
+            this.voiceQueue = [];
+            try { if (this._voiceAudio) { this._voiceAudio.onended = null; this._voiceAudio.pause(); } } catch (e) {}
+            try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) {}
         },
 
         // The device channel, and the first rung of the ladder. Every
@@ -1874,6 +2003,18 @@ function lessonPlayer() {
         startCues(cues) {
             this.cues = Array.isArray(cues) ? cues : [];
             this.cuesFired = 0;
+            // Off a panel the cues are known now, so their clips are fetched
+            // now and played exactly on their second -- the house voice
+            // inside the beat without the round trip the room rung cannot
+            // afford. A clip that has not arrived by its second is read
+            // locally, as before.
+            if (!this.panel && this.clipRung(this.voiceLocal, this.preview, this.deviceArmed)) {
+                this.cues.forEach((c, i) => {
+                    if (!c || !c.say) return;
+                    this.fetchClip(c.say, c.speak_lang || this.scene().speak_lang)
+                        .then(blob => { if (blob && this.cues === this.cues) this.cueClips[i] = blob; });
+                });
+            }
             // A cue written for second 0 belongs to the moment the beat
             // opens, not to its first tick a whole second later.
             this.fireCuesTo(0);
@@ -1892,9 +2033,12 @@ function lessonPlayer() {
             // sayLocal, never say: a cue is IN the beat, and a line that
             // has to reach a speaker through Home Assistant first arrives
             // after the moment it was about.
-            if (c.say) this.sayLocal(c.say,
-                                     c.speak_lang || this.scene().speak_lang,
-                                     this.scene().tone);
+            if (c.say) {
+                const i = this.cues.indexOf(c);
+                const blob = i >= 0 ? this.cueClips[i] : null;
+                if (blob) this.playClip(blob, this.scene().tone, () => this.sayLocal(c.say, c.speak_lang || this.scene().speak_lang, this.scene().tone));
+                else this.sayLocal(c.say, c.speak_lang || this.scene().speak_lang, this.scene().tone);
+            }
             if (c.count) this.sayLocal(String(Math.max(0, Math.round(elapsed))));
             if (c.chime) this.playClick();
         },
@@ -2017,6 +2161,8 @@ function lessonPlayer() {
             // the way IN, so a fresh open() -- which never calls
             // stopSound() first -- cannot inherit a running interval from
             // nowhere.
+            this.stopVoice();
+            this.cueClips = {};
             this.hintIdx = 0;
             this.cardIdx = 0; this.cardFlipped = false; this.counterVal = 0;
             this.counterRunning = false;
