@@ -1383,6 +1383,31 @@ def scenario_generated_units_carry_the_material_itself():
     check(cited and cited[0]['body'] == '', 'a cited rung still never carries our prose')
 
 
+def scenario_unit_bodies_do_not_count_as_language_drift():
+    """Task 2 review ruling: a language program's material is foreign by design, so a unit's
+    `body` is left out of the language-drift measure. Name, what, milestone, steps and rotation
+    steps still count -- a plan whose instructions drift into another language is still caught."""
+    aim = 'Learn Japanese'
+    body = ('Say: こんにちは (konnichiwa), ありがとう (arigatou), さようなら. '
+            'ひらがな あいうえお かきくけこ さしすせそ たちつてと なにぬねの. ' * 30)[:1399] + '.'
+    check(len(body) == 1400, 'the fixture is the length it claims')
+    phase = {'name': 'First sounds', 'what': 'Greetings and the first rows of hiragana',
+             'milestone': 'Read the first ten kana aloud', 'progression': 'One new row a week',
+             'steps': ['Say each greeting twice', 'Read the row out loud'],
+             'rotation': [{'label': 'Session A', 'steps': ['Greetings drill']},
+                          {'label': 'Session B', 'steps': ['Kana flashcards']}],
+             'units': [{'title': 'Greetings', 'body': body}, {'title': 'The a and ka rows', 'body': body}]}
+    whole = ' '.join([body, body, 'First sounds Greetings and the first rows of hiragana'])
+    foreign = sum(1 for ch in whole if ord(ch) > 127)
+    check(foreign / len(whole) > 0.3, f'the bodies are mostly kana: {foreign}/{len(whole)}')
+    check(programs_curate._looks_foreign(programs_curate._phase_text(phase), aim) is False,
+          'unit bodies in the target language are the material, not drift')
+    drifted = dict(phase, steps=['あいさつを にかい いいましょう', 'ひらがなの ぎょうを こえに だして よみましょう',
+                                   'カードを みて こたえましょう'])
+    check(programs_curate._looks_foreign(programs_curate._phase_text(drifted), aim) is True,
+          'steps written in kana are still flagged as drift')
+
+
 if __name__ == '__main__':
     scenario_a_body_aim_is_refused_before_any_research()
     scenario_a_behaviour_aim_passes_the_screen()
@@ -1431,4 +1456,5 @@ if __name__ == '__main__':
     scenario_a_cited_plan_comes_back_with_its_lessons()
     scenario_exclude_books_routes_a_stubborn_book_plan_to_generated()
     scenario_generated_units_carry_the_material_itself()
+    scenario_unit_bodies_do_not_count_as_language_drift()
     print("test_programs_curate OK")
