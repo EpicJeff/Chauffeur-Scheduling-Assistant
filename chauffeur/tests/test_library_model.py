@@ -45,6 +45,7 @@ import main
 
 SAM = {'id': 'sib', 'name': 'Sam', 'role': 'child', 'is_child': True}
 MOVED = "That lesson moved; open it again."
+LIBRARY_409 = "Scripts live in the library."
 UNRESOLVED = "Its library program is missing"
 HEX = re.compile(r'[0-9a-f]{32}')
 SLOTS = [{'day': 0, 'time_start': '17:00'}, {'day': 2, 'time_start': '17:00'}, {'day': 4, 'time_start': '17:00'}]
@@ -510,6 +511,7 @@ def scenario_reached_it_finishes_only_when_every_phase_is_judged():
 
 
 def scenario_completion_credits_the_named_lesson_and_a_moved_lesson_is_409():
+    """Its last check retargeted to lesson depth spec section 7: a library run's script PUT is the library 409."""
     _fresh()
     ids = _library()
     rid = _run(ids, current='A', state='active')
@@ -525,34 +527,49 @@ def scenario_completion_credits_the_named_lesson_and_a_moved_lesson_is_409():
     r = _http('kid', 'POST', f'/api/programs/{rid}/session', json={'lesson_id': ids['E']})
     check(r.status_code == 409 and MOVED in r.text, f'a removed lesson: {r.status_code} {r.text[:200]}')
     check(len(storage.get_program(rid)['sessions']) == logged, 'a refused completion logs nothing')
+    # Lesson depth spec section 7: a library run's PUT answers 409 before any slot resolution.
     r = _http('mom', 'PUT', f'/api/programs/{rid}/lesson',
               json={'lesson_id': ids['E'], 'variant_label': '', 'scenes': _say('Both hands now.')})
-    check(r.status_code == 409 and MOVED in r.text, f'a script for a moved lesson: {r.status_code} {r.text[:200]}')
+    check(r.status_code == 409 and r.json().get('detail') == LIBRARY_409,
+          f'a script for a moved lesson on a library run: {r.status_code} {r.text[:200]}')
 
 
-def scenario_scripts_are_keyed_by_run_lesson_and_variant():
+def scenario_scripts_are_keyed_by_library_lesson_and_variant():
+    """Lesson depth spec sections 1 and 7: one script per (library, lesson, variant), read by every
+    run of that library, filled for each run's member; the run PUT/DELETE answer 409."""
     _fresh()
+    storage.library_scripts_table.truncate()
+    from services import library_scripts
     ids = _library()
     kate, sam = _run(ids, member='kid'), _run(ids, member='sib')
     b_a = {'lesson_id': ids['B'], 'variant_label': 'Session A'}
     b_b = {'lesson_id': ids['B'], 'variant_label': 'Session B'}
-    storage.upsert_program_lesson(kate, b_a, {'scenes': _say('Up words.'), 'origin': 'generated'})
-    storage.upsert_program_lesson(kate, b_b, {'scenes': _say('Down words.'), 'origin': 'generated'})
-    check('Up words.' in json.dumps(storage.get_program_lesson(kate, b_a))
-          and 'Down words.' in json.dumps(storage.get_program_lesson(kate, b_b)), 'one script per variant')
-    check(storage.get_program_lesson(sam, b_a) is None, 'two runs of one program never share a script')
-    check(storage.get_program_lesson(kate, {'lesson_id': ids['A'], 'variant_label': ''}) is None, 'nor two lessons')
+
+    def data(text):
+        return {'origin': 'generated', 'source_url': '', 'scenes': _say(text), 'model': '', 'attempts': 0,
+                'note': '', 'minutes': 1}
+    check(storage.edit_library_script(ids['L'], b_a, data('Up words, {name}.')), 'seeded A')
+    check(storage.edit_library_script(ids['L'], b_b, data('Down words, {name}.')), 'seeded B')
+    for run in (kate, sam):
+        a = library_scripts.script_for_run(storage.get_program(run), ids['B'], 'Session A') or {}
+        b = library_scripts.script_for_run(storage.get_program(run), ids['B'], 'Session B') or {}
+        check('Up words, {name}.' in json.dumps(a.get('scenes')) and 'Down words, {name}.' in json.dumps(b.get('scenes')),
+              f'one script per variant, the same template for every run of the library: {run} {a} {b}')
+        check(library_scripts.script_for_run(storage.get_program(run), ids['A'], '') is None, 'nor two lessons')
+    for run, name_ in ((kate, 'Kate'), (sam, 'Sam')):
+        r = _http('mom', 'GET', f'/api/programs/{run}/lesson', params={'lesson_id': ids['B'], 'variant_label': 'Session A'})
+        got = (r.json() or {}).get('lesson') or {}
+        check(r.status_code == 200 and got.get('scenes') == _say(f'Up words, {name_}.'),
+              f"the run GET reads the library script, filled for {name_}: {r.status_code} {r.text[:200]}")
+    check(storage.program_lessons_table.all() == [], 'nothing is stored per run')
     r = _http('mom', 'PUT', f'/api/programs/{kate}/lesson',
               json={'lesson_id': ids['A'], 'variant_label': '', 'scenes': _say('Sit tall, Kate.')})
-    check(r.status_code == 200, f'a hand edit by lesson id: {r.status_code} {r.text[:200]}')
-    r = _http('mom', 'GET', f'/api/programs/{kate}/lesson', params={'lesson_id': ids['A'], 'variant_label': ''})
-    check(r.status_code == 200 and 'Sit tall, Kate.' in r.text, f'read back by lesson id: {r.text[:200]}')
-    r = _http('mom', 'GET', f'/api/programs/{sam}/lesson', params={'lesson_id': ids['A'], 'variant_label': ''})
-    check(r.status_code == 200 and r.json().get('lesson') is None, f"Sam's run has no script of Kate's: {r.text[:200]}")
-    r = _http('mom', 'DELETE', f'/api/programs/{kate}/lesson', params={'lesson_id': ids['A'], 'variant_label': ''})
-    check(r.status_code == 200 and storage.get_program_lesson(kate, {'lesson_id': ids['A'], 'variant_label': ''}) is None,
-          f'cleared by lesson id: {r.text[:200]}')
-    check(storage.get_program_lesson(kate, b_a) and storage.get_program_lesson(kate, b_b), 'the other scripts stay')
+    check(r.status_code == 409 and r.json().get('detail') == LIBRARY_409, f'no hand edit through the run: {r.status_code} {r.text[:200]}')
+    r = _http('mom', 'DELETE', f'/api/programs/{kate}/lesson', params={'lesson_id': ids['B'], 'variant_label': 'Session A'})
+    check(r.status_code == 409 and r.json().get('detail') == LIBRARY_409, f'no clear through the run: {r.status_code} {r.text[:200]}')
+    check(storage.get_library_script(ids['L'], b_a) and storage.get_library_script(ids['L'], b_b), 'the library scripts stay')
+    check(storage.get_library_script(ids['L'], {'lesson_id': ids['A'], 'variant_label': ''}) is None,
+          'and the refused PUT wrote nothing')
 
 
 def scenario_generation_help_and_legacy_slots_keep_lesson_identity():

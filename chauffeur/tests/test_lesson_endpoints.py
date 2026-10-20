@@ -6,9 +6,13 @@ is a rule those two modules already enforce (sanitize_script's caps and
 screens, upsert_program_lesson's edited:true refusal); this file is only
 proving the endpoint asks them correctly and gates who is asking.
 
-The tuple-based calls below pin the one-release legacy translation on real
-library/run pairs, including malformed legacy numerals and keeper gates.
-Named-id route behavior is covered by test_library_model and test_library_cutover.
+Lesson depth spec section 7: a library run's script lives in the library, so
+PUT and DELETE here answer 409 "Scripts live in the library." for a library run
+(scenario_a_library_run_cannot_be_hand_edited_here) and GET reads the library
+script (test_library_scripts, test_library_model). The tuple-based calls below
+therefore run on an UNCONVERTED run -- no library_id, the curriculum on the row,
+the shape the pre-library code stored -- which keeps today's read, hand edit and
+clear for this one release, including malformed legacy numerals and keeper gates.
 """
 from program_fixture import add_run
 from harness import check  # noqa: F401  (isolates CHAUFFEUR_DATA_DIR)
@@ -35,14 +39,35 @@ def _denied(fn, *a, **kw):
         return e.status_code
 
 
+def _legacy_add(data):
+    """add_run's signature, but the run is stored the way the pre-library code
+    stored it: no library_id, `title` and `phases` on the row, written past
+    every door (storage.add_program's Program schema carries neither field).
+    Lesson depth spec section 7: these runs keep the legacy lesson verbs."""
+    import uuid
+    rid = 'legacy-' + uuid.uuid4().hex[:10]
+    storage.programs_table.insert({
+        'id': rid, 'member_id': data['member_id'], 'title': data['title'], 'state': data.get('state', 'proposed'),
+        'created_by': data.get('created_by', 'mom'), 'starting_point': '', 'sessions': [], 'progress': {},
+        'shape': {'preferred_days': [], 'slots': [], **(data.get('shape') or {'sessions_per_week': 2, 'minutes': 20})},
+        'baseline': {'start_date': None, 'target_date': None, 'target_event_id': None,
+                     'rebaselined_at': None, 'rebaselines': 0},
+        'emissions': {'commitment_ids': [], 'thread_ids': [], 'event_ids': []},
+        'phases': [{'weeks': 2, **p} for p in data.get('phases') or []]})
+    row = storage.get_program(rid)
+    check(row.get('library_id') is None and row.get('phases'), f'the fixture really is unconverted, got {row}')
+    return rid
+
+
 def _reset():
+    """Lesson depth spec section 7: the fixture run is unconverted, so the legacy verbs apply."""
     storage.programs_table.truncate()
     storage.library_programs_table.truncate()
     storage.program_lessons_table.truncate()
     storage.members_table.truncate()
     storage.add_member({'id': 'mom', 'name': 'Mom', 'role': 'parent'})
     storage.add_member({'id': 'kid', 'name': 'Lily', 'role': 'child'})
-    pid = add_run({'member_id': 'kid', 'title': 'Play guitar', 'phases': [{'name': 'F', 'units': [{'title': 'One'}, {'title': 'Two'}]}],
+    pid = _legacy_add({'member_id': 'kid', 'title': 'Play guitar', 'phases': [{'name': 'F', 'units': [{'title': 'One'}, {'title': 'Two'}]}],
                                'shape': {'sessions_per_week': 2, 'minutes': 20}})
     storage.upsert_program_lesson(pid, {'phase_name': 'F', 'unit_n': 1,
                                         'session_label': ''},
@@ -111,6 +136,45 @@ def scenario_an_unconverted_run_still_edits_by_hand():
     check(c.get(q, headers=hdr).json()['lesson'] is None, 'gone after the delete')
     check(storage.get_program_lesson(rid, {'phase_name': 'F', 'unit_n': 1, 'session_label': ''}) is None,
           'and gone from storage, not only from the read')
+
+
+def scenario_a_library_run_cannot_be_hand_edited_here():
+    """Lesson depth spec section 7 (Codex 6): PUT and DELETE /api/programs/{id}/lesson answer 409
+    "Scripts live in the library." for a library run, before any slot resolution -- so a moved or
+    unknown lesson gets the same 409, and nothing is written to either table. Access comes first:
+    a hidden library run still matches missing."""
+    _reset()
+    import main
+    pid = add_run({'member_id': 'kid', 'title': 'Play guitar', 'phases': [{'name': 'F', 'units': [{'title': 'One'}, {'title': 'Two'}]}],
+                   'shape': {'sessions_per_week': 2, 'minutes': 20}})
+    run = storage.get_program(pid)
+    lesson = storage.get_library_program(run['library_id'])['lessons'][0]
+    mom = storage.create_member_token('mom')
+
+    def refused(fn, *a, **kw):
+        try:
+            fn(*a, **kw)
+        except HTTPException as exc:
+            return exc.status_code, exc.detail
+        return None, None
+    for label, body in (('by lesson id', {'lesson_id': lesson['id'], 'variant_label': ''}),
+                        ('by the legacy tuple', {'phase_name': 'F', 'unit_n': 1, 'session_label': ''}),
+                        ('for a moved lesson', {'lesson_id': 'f' * 32, 'variant_label': ''})):
+        got = refused(main.put_program_lesson_api, pid, body={**body, 'scenes': [{'type': 'say', 'text': 'mine'}]},
+                      request=Req(mom))
+        check(got == (409, 'Scripts live in the library.'), f'PUT {label}: 409, got {got}')
+    for label, kw in (('by lesson id', {'lesson_id': lesson['id'], 'variant_label': ''}),
+                      ('by the legacy tuple', {'phase_name': 'F', 'unit_n': 1, 'session_label': ''})):
+        got = refused(main.delete_program_lesson_api, pid, request=Req(mom), **kw)
+        check(got == (409, 'Scripts live in the library.'), f'DELETE {label}: 409, got {got}')
+    check(storage.program_lessons_table.all() == [], 'nothing was written per run')
+    check(storage.get_library_scripts(run['library_id']) == [], 'and nothing reached the library through this door')
+    mom_pid = add_run({'member_id': 'mom', 'title': 'Spanish', 'phases': [{'name': 'F', 'units': [{'title': 'One'}, {'title': 'Two'}]}],
+                       'shape': {'sessions_per_week': 1, 'minutes': 20}})
+    got = refused(main.put_program_lesson_api, mom_pid, body={'phase_name': 'F', 'unit_n': 1, 'session_label': '',
+                                                              'scenes': [{'type': 'say', 'text': 'nope'}]},
+                  request=Req(storage.create_member_token('kid')))
+    check(got[0] == 404, f"a hidden library run still matches missing (access rule section 4), got {got}")
 
 
 def scenario_the_wall_route_exists_and_is_wall_tier():
@@ -271,7 +335,7 @@ def scenario_a_none_unit_n_is_treated_as_zero_on_get():
     that it stopped crashing."""
     _reset()
     import main
-    pid = add_run({'member_id': 'kid', 'title': 'Guitar', 'phases': [{'name': 'F', 'steps': []}],
+    pid = _legacy_add({'member_id': 'kid', 'title': 'Guitar', 'phases': [{'name': 'F', 'steps': []}],
                                'shape': {'sessions_per_week': 2, 'minutes': 20}})
     storage.upsert_program_lesson(pid, {'phase_name': 'F', 'unit_n': 0,
                                         'session_label': ''},
@@ -313,7 +377,7 @@ def scenario_editing_a_cited_lesson_keeps_cited_screening():
     would otherwise silently drop that scene)."""
     _reset()
     import main
-    pid = add_run({'member_id': 'kid', 'title': 'Guitar', 'phases': [{'name': 'F', 'steps': []}],
+    pid = _legacy_add({'member_id': 'kid', 'title': 'Guitar', 'phases': [{'name': 'F', 'steps': []}],
                                'shape': {'sessions_per_week': 2, 'minutes': 20}})
     storage.upsert_program_lesson(pid, {'phase_name': 'F', 'unit_n': 1,
                                         'session_label': ''},
@@ -405,7 +469,7 @@ def scenario_a_none_unit_n_is_treated_as_zero_on_put():
     lock the shared behaviour in across all three verbs together."""
     _reset()
     import main
-    pid = add_run({'member_id': 'kid', 'title': 'Guitar', 'phases': [{'name': 'F', 'steps': []}],
+    pid = _legacy_add({'member_id': 'kid', 'title': 'Guitar', 'phases': [{'name': 'F', 'steps': []}],
                                'shape': {'sessions_per_week': 2, 'minutes': 20}})
     res = main.put_program_lesson_api(pid, body={
         'phase_name': 'F', 'unit_n': None, 'session_label': '',
@@ -437,7 +501,7 @@ def scenario_delete_clears_the_slot():
                                    session_label='', request=None)
     check(storage.get_program_lesson(pid, {'phase_name': 'F', 'unit_n': 1,
                                            'session_label': ''}) is None,
-          "gone; the sweep will write a fresh one")
+          "gone; the nightly pass will write a fresh one")
 
 
 def scenario_a_huge_finite_unit_n_is_a_400_on_delete():
@@ -475,7 +539,7 @@ def scenario_a_none_unit_n_is_treated_as_zero_on_delete():
     unrelated real slot at unit_n=1."""
     _reset()
     import main
-    pid = add_run({'member_id': 'kid', 'title': 'Guitar', 'phases': [{'name': 'F', 'steps': []}],
+    pid = _legacy_add({'member_id': 'kid', 'title': 'Guitar', 'phases': [{'name': 'F', 'steps': []}],
                                'shape': {'sessions_per_week': 2, 'minutes': 20}})
     storage.upsert_program_lesson(pid, {'phase_name': 'F', 'unit_n': 0,
                                         'session_label': ''},
@@ -507,7 +571,7 @@ def scenario_a_non_numeric_unit_n_is_a_400_on_delete():
 def scenario_a_child_cannot_edit_a_siblings_lesson():
     _reset()
     import main
-    mom_pid = add_run({'member_id': 'mom', 'title': 'Spanish', 'phases': [{'name': 'F', 'units': [{'title': 'One'}, {'title': 'Two'}]}],
+    mom_pid = _legacy_add({'member_id': 'mom', 'title': 'Spanish', 'phases': [{'name': 'F', 'units': [{'title': 'One'}, {'title': 'Two'}]}],
                                    'shape': {'sessions_per_week': 1, 'minutes': 20}})
     kid_token = storage.create_member_token('kid')
     code = _denied(main.put_program_lesson_api, mom_pid, body={
@@ -524,7 +588,7 @@ def scenario_a_child_cannot_edit_a_siblings_lesson():
 def scenario_a_child_cannot_delete_a_siblings_lesson():
     _reset()
     import main
-    mom_pid = add_run({'member_id': 'mom', 'title': 'Spanish', 'phases': [{'name': 'F', 'units': [{'title': 'One'}, {'title': 'Two'}]}],
+    mom_pid = _legacy_add({'member_id': 'mom', 'title': 'Spanish', 'phases': [{'name': 'F', 'units': [{'title': 'One'}, {'title': 'Two'}]}],
                                    'shape': {'sessions_per_week': 1, 'minutes': 20}})
     storage.upsert_program_lesson(mom_pid, {'phase_name': 'F', 'unit_n': 1,
                                             'session_label': ''},
@@ -556,219 +620,6 @@ def scenario_a_parent_can_edit_a_childs_lesson():
     check(row['scenes'][0]['text'] == 'from mom', f"got {row}")
 
 
-# --- POST /api/programs/lessons/sweep: the forced, seen sweep -----------
-# The verb itself (which slots get written, why the rest were skipped) is
-# program_lessons.sweep_report's own job and is proven in depth over in
-# test_program_lessons.py; this file's job, same as every scenario above
-# it, is only that the endpoint asks it correctly and gates who is asking.
-# sweep_report is monkeypatched throughout so these never spend a model
-# call and never need a real practice-window fixture to prove the wiring.
-
-def _fake_sweep_report(report=None):
-    """A stand-in for program_lessons.sweep_report that records every call
-    it received (kwargs only -- the endpoint calls it that way) and hands
-    back a fixed, well-shaped report."""
-    calls = []
-    def fake(**kw):
-        calls.append(kw)
-        return dict(report or {'wrote': 0, 'skipped': 0, 'slots': []})
-    return calls, fake
-
-
-def scenario_forced_sweep_endpoint_exists_as_post():
-    import main
-    routes = [r for r in main.app.routes
-             if getattr(r, 'path', None) == '/api/programs/lessons/sweep']
-    methods = set()
-    for r in routes:
-        methods |= (getattr(r, 'methods', None) or set())
-    check('POST' in methods,
-          f"the forced sweep must be reachable by hand, got {methods}")
-
-
-def scenario_forced_sweep_refuses_a_child():
-    """Household-wide work, same rule as approve_program: a child cannot
-    force a sweep across every active program, only a parent/adult (or the
-    control-center standing in for one) can."""
-    _reset()
-    import main
-    kid_token = storage.create_member_token('kid')
-    code = _denied(main.sweep_program_lessons_now, body={},
-                   request=Req(kid_token))
-    check(code == 403, f"a child cannot force the household sweep, got {code}")
-
-
-def scenario_forced_sweep_allows_a_parent():
-    _reset()
-    import main
-    from services import program_lessons as pl
-    calls, fake = _fake_sweep_report()
-    orig = pl.sweep_report
-    pl.sweep_report = fake
-    try:
-        mom_token = storage.create_member_token('mom')
-        res = main.sweep_program_lessons_now(body={}, request=Req(mom_token))
-    finally:
-        pl.sweep_report = orig
-    check(len(calls) == 1, f"a parent reaches sweep_report, got {calls}")
-    check(res == {'wrote': 0, 'skipped': 0, 'slots': []}, f"got {res}")
-
-
-def scenario_forced_sweep_allows_the_control_center_with_no_claim():
-    """request=None is the trusted-place reading _mind_actor already gives
-    every other control-center admin action; _approver_of_record stands in
-    the household's own parent of record, exactly like approve_program
-    already does."""
-    _reset()
-    import main
-    from services import program_lessons as pl
-    calls, fake = _fake_sweep_report()
-    orig = pl.sweep_report
-    pl.sweep_report = fake
-    try:
-        res = main.sweep_program_lessons_now(body={}, request=None)
-    finally:
-        pl.sweep_report = orig
-    check(len(calls) == 1, f"the control-center reaches sweep_report, got {calls}")
-    check(res == {'wrote': 0, 'skipped': 0, 'slots': []}, f"got {res}")
-
-
-def scenario_forced_sweep_refuses_when_programs_are_off():
-    """The switches are never bypassed, only the day marker is -- and the
-    refusal has to happen BEFORE sweep_report is ever called, in words,
-    rather than a quiet empty-looking report indistinguishable from 'ran
-    and found nothing due'."""
-    _reset()
-    import main
-    from services import program_lessons as pl
-    calls, fake = _fake_sweep_report()
-    orig_sweep = pl.sweep_report
-    pl.sweep_report = fake
-    orig_settings = storage.get_settings
-    storage.get_settings = lambda: {'calendar_ids': ['primary'],
-                                    'programs_enabled': False}
-    try:
-        res = main.sweep_program_lessons_now(body={}, request=None)
-    finally:
-        storage.get_settings = orig_settings
-        pl.sweep_report = orig_sweep
-    check(res.get('status') == 'error' and res.get('message'),
-          f"a clear refusal, got {res}")
-    check(len(calls) == 0,
-          "sweep_report is never called once the switch says no")
-
-
-def scenario_forced_sweep_refuses_when_lessons_are_off():
-    _reset()
-    import main
-    from services import program_lessons as pl
-    calls, fake = _fake_sweep_report()
-    orig_sweep = pl.sweep_report
-    pl.sweep_report = fake
-    orig_settings = storage.get_settings
-    storage.get_settings = lambda: {'calendar_ids': ['primary'],
-                                    'program_lessons_enabled': False}
-    try:
-        res = main.sweep_program_lessons_now(body={}, request=None)
-    finally:
-        storage.get_settings = orig_settings
-        pl.sweep_report = orig_sweep
-    check(res.get('status') == 'error' and res.get('message'),
-          f"a clear refusal, got {res}")
-    check(len(calls) == 0,
-          "sweep_report is never called once the switch says no")
-
-
-def scenario_forced_sweep_passes_start_offset_zero_and_force_true():
-    """The two things that make this button different from waiting for
-    tonight: it scans from TODAY (start_offset=0, not generate_due's own
-    1) and it runs regardless of whether today's automatic pass already
-    happened (force=True). Defaults for days/limit mirror the docstring:
-    three days, MAX_SLOTS_PER_PASS slots."""
-    _reset()
-    import main
-    from services import program_lessons as pl
-    calls, fake = _fake_sweep_report()
-    orig = pl.sweep_report
-    pl.sweep_report = fake
-    try:
-        res = main.sweep_program_lessons_now(body={}, request=None)
-    finally:
-        pl.sweep_report = orig
-    check(len(calls) == 1, f"called once, got {calls}")
-    kw = calls[0]
-    check(kw.get('start_offset') == 0, f"scans from today, got {kw}")
-    check(kw.get('force') is True, f"bypasses the marker, got {kw}")
-    check(kw.get('days') == 3, f"default days, got {kw}")
-    check(kw.get('limit') == pl.MAX_SLOTS_PER_PASS, f"default limit, got {kw}")
-    check(res == {'wrote': 0, 'skipped': 0, 'slots': []},
-          "the report comes back exactly as sweep_report returned it")
-
-
-def scenario_forced_sweep_passes_custom_days_and_limit():
-    _reset()
-    import main
-    from services import program_lessons as pl
-    calls, fake = _fake_sweep_report()
-    orig = pl.sweep_report
-    pl.sweep_report = fake
-    try:
-        main.sweep_program_lessons_now(body={'days': 7, 'limit': 2},
-                                       request=None)
-    finally:
-        pl.sweep_report = orig
-    check(calls[0].get('days') == 7 and calls[0].get('limit') == 2,
-          f"a caller's own days/limit reach sweep_report, got {calls[0]}")
-
-
-def scenario_forced_sweep_a_non_numeric_days_is_a_400():
-    """Same shape as unit_n's own boundary above: a bad TYPE must land as
-    a 400, never a 500 out of a bare int()."""
-    _reset()
-    import main
-    code = _denied(main.sweep_program_lessons_now,
-                   body={'days': 'abc'}, request=None)
-    check(code == 400, f"a non-numeric days must be a 400, got {code}")
-
-
-def scenario_forced_sweep_a_non_numeric_limit_is_a_400():
-    _reset()
-    import main
-    code = _denied(main.sweep_program_lessons_now,
-                   body={'limit': 'abc'}, request=None)
-    check(code == 400, f"a non-numeric limit must be a 400, got {code}")
-
-
-def scenario_forced_sweep_an_infinite_limit_is_a_400():
-    """int(float('inf')) raises OverflowError, not ValueError or
-    TypeError -- and JSON hands this door exactly that shape for free, a
-    bare Infinity token parsing cleanly under json.loads."""
-    _reset()
-    import main
-    code = _denied(main.sweep_program_lessons_now,
-                   body={'limit': float('inf')}, request=None)
-    check(code == 400, f"an infinite limit must be a 400, got {code}")
-
-
-def scenario_forced_sweep_a_huge_finite_days_is_a_400():
-    """The failure shape the try/except alone does not catch: int(10**30)
-    raises nothing, so only the explicit range check stops it reaching
-    datetime.timedelta downstream."""
-    _reset()
-    import main
-    code = _denied(main.sweep_program_lessons_now,
-                   body={'days': 10**30}, request=None)
-    check(code == 400, f"a huge finite days must be a 400, got {code}")
-
-
-def scenario_forced_sweep_a_negative_days_is_a_400():
-    _reset()
-    import main
-    code = _denied(main.sweep_program_lessons_now,
-                   body={'days': -1}, request=None)
-    check(code == 400, f"a negative days must be a 400, got {code}")
-
-
 # --- the room voice -----------------------------------------------------
 # A speaker endpoint is a prank vector, so everything here is about the
 # door rather than the words: who may knock, how often, how long, and
@@ -782,7 +633,9 @@ def _speak(**kw):
 
 
 def scenario_the_voice_route_renders_the_house_voice_as_audio():
-    """Device-found 2026-10-19/20: a phone or desktop reached by Home
+    """Length retargeted to lesson depth spec section 4: up to 500 characters, 501 refused.
+
+    Device-found 2026-10-19/20: a phone or desktop reached by Home
     Assistant only as a Music Assistant player was silence with a
     registration. The browser is its own speaker, so this route renders
     one screened line through the SAME engine, language and voice the
@@ -817,8 +670,11 @@ def scenario_the_voice_route_renders_the_house_voice_as_audio():
               f"a same-language tag keeps the house voice, got {calls}")
         r = c.post('/api/lessons/voice', json={'text': ''})
         check(r.status_code == 400, "nothing to say is 400")
-        r = c.post('/api/lessons/voice', json={'text': 'x' * 300})
-        check(r.status_code == 400, "a line longer than a scene is 400")
+        # Lesson depth spec section 4: a teach scene's speak runs to 500 characters.
+        r = c.post('/api/lessons/voice', json={'text': _line(500)})
+        check(r.status_code == 200, f"a 500-character line is a teach scene's speech, got {r.status_code}")
+        r = c.post('/api/lessons/voice', json={'text': 'x' * 501})
+        check(r.status_code == 400, f"501 characters is 400, got {r.status_code}")
         r = c.post('/api/lessons/voice', json={'text': 'Lose weight fast.'})
         check(r.status_code == 400, "the same screen as the speak route")
         ha_api._request = lambda *a, **k: None
@@ -867,10 +723,34 @@ def scenario_the_speak_route_routes_through_announce():
           f"and its answer comes back, got {out}")
 
 
+def _line(n):
+    """A screen-clean sentence run to exactly n characters."""
+    s = ('Find the two black keys and step left. ' * (n // 30 + 2))[:n]
+    s = s[:-1] + '.' if s.endswith(' ') else s
+    check(len(s) == n, f'the fixture line is {n} characters')
+    return s
+
+
 def scenario_the_speak_route_refuses_a_speech_longer_than_a_scene():
-    from services import program_lessons as pl
-    code = _denied(_speak, room='kitchen', text='x' * (pl.MAX_SPEAK + 1))
-    check(code == 400, f"a 400, got {code}")
+    """Lesson depth spec section 4: the route takes MAX_TEACH_SPEAK (500), a teach scene's speech,
+    and refuses 501."""
+    from services import program_lessons as pl, announce
+    check(pl.MAX_TEACH_SPEAK == 500, 'the teach cap')
+    code = _denied(_speak, room='kitchen', text='x' * (pl.MAX_TEACH_SPEAK + 1))
+    check(code == 400, f"a 501-character line is a 400, got {code}")
+    seen = {}
+
+    def fake(room, message):
+        seen['message'] = message
+        return {'status': 'success', 'area': 'Kitchen'}
+    orig = announce.announce
+    announce.announce = fake
+    try:
+        out = _speak(room='kitchen', text=_line(500))
+    finally:
+        announce.announce = orig
+    check((out or {}).get('status') == 'success' and seen.get('message') == _line(500),
+          f"a 500-character line reaches announce whole, got {out} {len(seen.get('message') or '')}")
 
 
 def scenario_the_speak_route_screens_what_it_is_asked_to_say():
@@ -1264,6 +1144,7 @@ def scenario_a_wait_is_armed_on_no_program_row():
 if __name__ == '__main__':
     scenario_endpoints_exist()
     scenario_an_unconverted_run_still_edits_by_hand()
+    scenario_a_library_run_cannot_be_hand_edited_here()
     scenario_the_wall_route_exists_and_is_wall_tier()
     scenario_the_wall_route_returns_scenes_only()
     scenario_the_wall_route_hides_missing_programs_and_reads_null_for_missing_slots()
@@ -1291,19 +1172,6 @@ if __name__ == '__main__':
     scenario_a_child_cannot_edit_a_siblings_lesson()
     scenario_a_child_cannot_delete_a_siblings_lesson()
     scenario_a_parent_can_edit_a_childs_lesson()
-    scenario_forced_sweep_endpoint_exists_as_post()
-    scenario_forced_sweep_refuses_a_child()
-    scenario_forced_sweep_allows_a_parent()
-    scenario_forced_sweep_allows_the_control_center_with_no_claim()
-    scenario_forced_sweep_refuses_when_programs_are_off()
-    scenario_forced_sweep_refuses_when_lessons_are_off()
-    scenario_forced_sweep_passes_start_offset_zero_and_force_true()
-    scenario_forced_sweep_passes_custom_days_and_limit()
-    scenario_forced_sweep_a_non_numeric_days_is_a_400()
-    scenario_forced_sweep_a_non_numeric_limit_is_a_400()
-    scenario_forced_sweep_an_infinite_limit_is_a_400()
-    scenario_forced_sweep_a_huge_finite_days_is_a_400()
-    scenario_forced_sweep_a_negative_days_is_a_400()
     scenario_the_voice_route_renders_the_house_voice_as_audio()
     scenario_the_speak_route_exists_and_is_wall_tier()
     scenario_the_speak_route_routes_through_announce()
