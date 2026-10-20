@@ -2576,8 +2576,8 @@ def scenario_the_device_rung_needs_a_live_player_and_a_failed_line_is_read_local
     r = re.search(r'\n        roomSay\(text, lang, tone\) \{(.*?)\n        \},', src, re.S)
     check(d and 'deviceRung(' in d.group(1) and 'handOff(' in d.group(1), "deviceSay asks the rung and hands off through the net")
     check(r and 'voiceLocal' in r.group(1) and 'handOff(' in r.group(1), "roomSay honours the override and uses the same net")
-    check('x-show="!panel && deviceEntity"' in src and 'voiceLocal = !voiceLocal' in src,
-          "a non-panel surface with a device player shows the voice chip, and a tap swaps to the browser")
+    check('x-show="!panel && canDeviceVoice"' in src and '@click="toggleVoice()"' in src,
+          "a non-panel surface that could have a device player shows the voice chip, and a tap swaps")
     node = shutil.which('node')
     if not node:
         print('  skip  node is not installed')
@@ -2604,6 +2604,66 @@ console.log(JSON.stringify(out));
     check(out['dead'] is False and out['none'] is False, f"a registered but silent player does not, got {out}")
     check(out['noEntity'] is False and out['override'] is False and out['preview'] is False,
           f"no entity, the browser override and a preview all stay local, got {out}")
+
+
+def scenario_a_phone_or_computer_speaks_through_the_browser_until_it_opts_in():
+    """Device-found 2026-10-19, twice (a phone, then a computer on the admin
+    Projects page): a device player Home Assistant accepts lines for but
+    that never unlocked its audio is silence with a registration. So a
+    surface that is not a panel uses the BROWSER voice until somebody taps
+    "this device" and hears it -- the choice is per device and remembered
+    -- and the tap itself is the gesture that unlocks the player's audio.
+    voiceChoice is executed under Node; the gesture ordering in open() and
+    toggleVoice() is read from the source."""
+    import json
+    import os
+    import re
+    import shutil
+    import subprocess
+    import tempfile
+    src = _read('components/lesson_player.html')
+    m = re.search(r'\n        voiceChoice\(panel, storage\) \{(.*?)\n        \},', src, re.S)
+    check(m, "voiceChoice(panel, storage) is findable")
+    body = m.group(1)
+    check('this.' not in body, f"and pure, got {body!r}")
+    o = re.search(r'\n        open\(w, lesson, preview\) \{(.*?)\n        \},', src, re.S)
+    ob = o.group(1) if o else ''
+    check('voiceChoice(' in ob and ob.index('unlockDevice()') < ob.index('ensureDevicePlayer()'),
+          "open() reads the choice and unlocks the player inside the Start tap, before the player is (re)started")
+    code_before = '
+'.join(l for l in ob[:ob.index('unlockDevice()')].splitlines() if not l.strip().startswith('//'))
+    check('await ' not in code_before, "nothing is awaited before the unlock spends the gesture")
+    t = re.search(r'\n        toggleVoice\(\) \{(.*?)\n        \},', src, re.S)
+    tb = t.group(1) if t else ''
+    check("localStorage.setItem('chf-lesson-voice'" in tb and 'unlockDevice()' in tb and 'ensureDevicePlayer()' in tb,
+          "the chip remembers the choice per device and unlocks + starts the player in the same tap")
+    node = shutil.which('node')
+    if not node:
+        print('  skip  node is not installed')
+        return
+    harness = r'''
+const mem = (obj) => ({getItem: (k) => (k in obj ? obj[k] : null)});
+const out = {};
+out.panel = voiceChoice(true, mem({'chf-lesson-voice': 'browser'})).local;
+out.fresh = voiceChoice(false, mem({})).local;
+out.optedIn = voiceChoice(false, mem({'chf-lesson-voice': 'device'})).local;
+out.optedOut = voiceChoice(false, mem({'chf-lesson-voice': 'browser'})).local;
+out.noStorage = voiceChoice(false, null).local;
+out.throwing = voiceChoice(false, {getItem: () => { throw new Error('private'); }}).local;
+console.log(JSON.stringify(out));
+'''
+    scratch = tempfile.mkdtemp(prefix='chauffeur_voice_choice_')
+    path = os.path.join(scratch, 'run.mjs')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write('function voiceChoice(panel, storage) {' + body + '\n}\n' + harness)
+    proc = subprocess.run([node, path], capture_output=True, text=True,
+                          encoding='utf-8', errors='replace', timeout=60)
+    check(proc.returncode == 0, f"voiceChoice threw:\n{proc.stderr[-1500:]}")
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    check(out['panel'] is False, f"a panel is the house voice whatever is stored, got {out}")
+    check(out['fresh'] is True and out['optedOut'] is True and out['noStorage'] is True and out['throwing'] is True,
+          f"a fresh, opted-out, storage-less or private device speaks through the browser, got {out}")
+    check(out['optedIn'] is False, f"a device that chose itself speaks through its player, got {out}")
 
 
 def scenario_no_music_logic_is_not_an_error():
@@ -2817,6 +2877,7 @@ if __name__ == '__main__':
     scenario_admin_lesson_hosts_carry_the_device_voice()
     scenario_a_computer_reuses_its_screen_registration()
     scenario_the_device_rung_needs_a_live_player_and_a_failed_line_is_read_locally()
+    scenario_a_phone_or_computer_speaks_through_the_browser_until_it_opts_in()
     scenario_only_session_level_lines_reach_the_room()
     scenario_the_room_voice_is_a_panel_only_fork()
     scenario_the_room_is_asked_once_and_remembered_on_the_device()

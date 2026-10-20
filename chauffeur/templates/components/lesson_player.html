@@ -111,11 +111,11 @@
              session only -- a handset whose player is registered but not
              actually sounding tonight needs a way to be heard that does not
              go through Music Assistant settings. -->
-        <button type="button" x-show="!panel && deviceEntity" @click="voiceLocal = !voiceLocal"
+        <button type="button" x-show="!panel && canDeviceVoice" @click="toggleVoice()"
                 class="shrink-0 rounded-full border font-bold px-4 h-14 text-base"
                 :class="!voiceLocal ? 'bg-teal-500/20 border-teal-500/40 text-teal-300'
                                     : 'bg-gray-800 border-gray-700 text-gray-400'"
-                x-text="voiceLocal ? '🔈 browser' : '🔈 this device'"></button>
+                x-text="voiceLocal ? '🔈 browser' : (deviceEntity ? '🔈 this device' : '🔈 starting…')"></button>
         <!-- Argyle's voice, off for this session. Always visible, never a
              setting: a lesson in a quiet house is the same lesson, and a
              person who wants the voice back gets it by tapping again or
@@ -704,7 +704,8 @@ function lessonPlayer() {
         // so empty is the ordinary state on day one and the voice ladder
         // simply falls through it.
         deviceEntity: '',
-        voiceLocal: false,   // this session only: speak through the browser instead of the device
+        voiceLocal: true,    // browser voice unless this device opted into its own player (see voiceChoice)
+        canDeviceVoice: false,
         // A wait beat's on-screen countdown. Cosmetic only -- the call
         // into the room is armed on the server and outlives this.
         waitLeft: 0, waitTimer: null,
@@ -761,11 +762,25 @@ function lessonPlayer() {
             this.idx = 0; this.openFlag = true;
             this.room = this.loadRoom();
             this.deviceEntity = '';
+            // Which voice this surface uses. A panel is the house voice by
+            // design (room, else its own screen). A phone or a computer on
+            // an admin page defaults to the BROWSER until somebody taps the
+            // chip and hears the device play -- a handset or desktop player
+            // that Home Assistant accepts lines for but that never unlocked
+            // its audio is silence with a registration (2026-10-19, twice).
+            this.canDeviceVoice = (typeof MusicLogic !== 'undefined');
+            let stored = null;
+            try { stored = localStorage; } catch (e) { stored = null; }
+            this.voiceLocal = this.voiceChoice(this.panel, stored).local;
+            // The Start tap IS the gesture browsers demand before audio
+            // may play. Unlock an already-built device player here,
+            // synchronously, before any await spends that gesture.
+            if (!this.voiceLocal) this.unlockDevice();
             // Not awaited: the session starts on time and the first
             // lines come out of the browser, which is what would have
             // happened anyway. Once the entity resolves, everything from
             // that beat on is the house voice.
-            this.ensureDevicePlayer();
+            if (!this.voiceLocal || this.panel) this.ensureDevicePlayer();
             // Asked ONCE per device, and never again whatever the answer
             // was -- a household that wants the panel to stay quiet says
             // so by cancelling, and the header chip is how they change
@@ -1330,6 +1345,39 @@ function lessonPlayer() {
         // accepts the line and the phone plays it to nobody, which is the
         // "no voice at all" a phone gave on 2026-10-19. A session-level
         // browser override wins outright.
+        // Pure (no `this`): a panel speaks through the house; any other
+        // surface speaks through the browser unless THIS device said
+        // "this device" once (kept in localStorage, per device, because a
+        // phone that plays is a phone that plays tomorrow too).
+        voiceChoice(panel, storage) {
+            if (panel) return {local: false, stored: ''};
+            let v = '';
+            try { v = (storage && storage.getItem('chf-lesson-voice')) || ''; } catch (e) { v = ''; }
+            return {local: v !== 'device', stored: v};
+        },
+        // A tap on the chip: swap, remember, and -- when swapping TO the
+        // device -- unlock and start its player inside this very gesture.
+        toggleVoice() {
+            this.voiceLocal = !this.voiceLocal;
+            try { localStorage.setItem('chf-lesson-voice', this.voiceLocal ? 'browser' : 'device'); } catch (e) {}
+            if (!this.voiceLocal) {
+                this.unlockDevice();
+                this.ensureDevicePlayer();
+            }
+        },
+        // Resume the device player's audio while a user gesture is live.
+        // Harmless when there is no player yet (start() will unlock on
+        // connect if the gesture still counts) and when it is already open.
+        unlockDevice() {
+            try {
+                const lp = window.chfLocalPlayer;
+                const player = lp && lp.player;
+                if (player && typeof player.unlock === 'function') {
+                    const r = player.unlock();
+                    if (r && typeof r.catch === 'function') r.catch(() => {});
+                }
+            } catch (e) { /* a page with no player still runs the scene */ }
+        },
         deviceRung(entity, localPlayer, voiceLocal, preview) {
             if (!entity || preview || voiceLocal) return false;
             return !!(localPlayer && localPlayer.active);
