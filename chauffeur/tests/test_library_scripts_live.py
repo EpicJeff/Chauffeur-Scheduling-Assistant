@@ -10,7 +10,8 @@ dialogs anywhere (showGlobalAlert, promptConfirm, promptInput); buttons, not anc
      an entry.
   3. Edit: add a teach row, fill title, text, two examples (`Dó | pt-BR`), speak; Save; reload;
      the fields come back; the thirteenth row on a 30-minute profile is accepted; the thirty-first
-     refused.
+     refused. (Task 5 review) A failed read of the script shows Retry, draws no rows, keeps Add
+     and Save off, and can never lead to a PUT.
   4. Play opens the player in preview with `{name}` filled with the viewer's name.
   5. Rhythms (`/rhythms`): a library run shows `Scripts live in the library: Learn piano` and no
      editor; an unconverted run still shows the editor. (The run editor lives in programs_page.html,
@@ -398,6 +399,61 @@ def scenario_the_editor_writes_a_teach_beat_and_honours_the_length():
         check(served.errors() == [], f"no page errors: {served.errors()}")
 
 
+# 3b (Task 5 review) ----------------------------------------------------------
+def scenario_a_failed_read_can_never_become_a_save():
+    """A transient failure reading a script is not an empty script: the editor says so with
+    Retry, draws no rows, keeps Add and Save off, and even a direct call to addScriptRow and
+    saveScript sends no PUT; the stored script is untouched. Retry reads it and editing opens."""
+    served = serve()
+    if served is None:
+        return
+    slot = _slot(SCALES, 'Session A')
+    before = storage.get_library_script(PIANO, slot)['scenes']
+    with served.browser() as page:
+        _library(page, served, 'mom', '?id=' + PIANO)
+        page.wait_for_selector('[data-library-detail] [data-lesson-script]', timeout=10000)
+        puts = []
+        page.on('request', lambda r: puts.append(r.url) if r.method == 'PUT' and '/script' in r.url else None)
+
+        def outage(route):
+            if route.request.method == 'GET':
+                route.fulfill(status=500, content_type='application/json', body='{"detail": "test outage"}')
+            else:
+                route.continue_()
+        target = lambda url: f'/lessons/{SCALES}/script' in url and 'fill=1' not in url  # noqa: E731
+        page.route(target, outage)
+        _line(page, SCALES, 'Session A').locator('[data-script-edit]').click()
+        ed = _editor(page, SCALES, 'Session A')
+        failed = ed.locator('[data-script-load-failed]')
+        failed.wait_for(state='visible', timeout=10000)
+        check('test outage' in failed.inner_text() and failed.locator('[data-script-retry]').count() == 1,
+              f"the failure is said, with Retry: {failed.inner_text()}")
+        check(ed.locator('[data-script-row]').count() == 0, "no rows from a read that failed")
+        check(not ed.get_by_text('No script yet').is_visible(), "and it is not mistaken for an empty script")
+        check(ed.locator('[data-script-add]').is_disabled() and ed.locator('[data-script-save]').is_disabled(),
+              "Add and Save stay off")
+        page.evaluate("""async ([lid, lesson, lab]) => {
+            const d = Alpine.$data(document.querySelector('[data-library-page]'));
+            const lp = d.programs.find(p => p.id === lid);
+            const l = lp.lessons.find(x => x.id === lesson);
+            d.addScriptRow(lp, l, lab);
+            await d.saveScript(lp, l, lab);
+        }""", [PIANO, SCALES, 'Session A'])
+        page.wait_for_timeout(500)
+        check(puts == [], f"a failed read can never lead to a PUT: {puts}")
+        check(ed.locator('[data-script-row]').count() == 0, "not even a forced Add draws a row")
+        check(storage.get_library_script(PIANO, slot)['scenes'] == before, "the stored script is untouched")
+        shot_el(ed, 'scripts-editor-read-failed-dark')
+        page.unroute(target, outage)
+        failed.locator('[data-script-retry]').click()
+        ed.locator('[data-script-row]').first.wait_for(state='visible', timeout=10000)
+        check(ed.locator('[data-script-row]').count() == len(before) and not failed.is_visible(), "Retry reads the stored script")
+        check(ed.locator('[data-script-save]').is_enabled() and ed.locator('[data-script-add]').is_enabled(), "and editing opens")
+        refused = 'the server responded with a status of 500'
+        others = [e for e in served.errors() if refused not in e]
+        check(others == [], f"no page errors beyond the faked outage: {served.errors()}")
+
+
 # 4 -------------------------------------------------------------------------
 def scenario_play_previews_the_script_filled_for_the_viewer():
     served = serve()
@@ -535,6 +591,7 @@ def scenario_the_phone_shows_chips_and_play_light_and_dark():
 SCENARIOS = [scenario_each_lesson_row_says_where_its_script_stands,
              scenario_the_card_writes_lessons_and_says_how_far_it_has_got,
              scenario_the_editor_writes_a_teach_beat_and_honours_the_length,
+             scenario_a_failed_read_can_never_become_a_save,
              scenario_play_previews_the_script_filled_for_the_viewer,
              scenario_a_library_run_points_at_the_library_and_a_legacy_run_keeps_its_editor,
              scenario_the_drawer_picks_the_writing_model,

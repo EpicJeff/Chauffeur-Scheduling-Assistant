@@ -147,9 +147,18 @@
                                                 <template x-if="lp.can_edit && host === 'admin' && scriptEdits[scriptKey(l, lab)]">
                                                     <div data-script-editor :data-variant="lab" class="bg-gray-900 border border-gray-800 rounded-lg p-2 space-y-2">
                                                         <p class="text-[11px] text-gray-500 italic" x-show="scriptEdits[scriptKey(l, lab)].loading">Loading…</p>
-                                                        <p class="text-[11px] text-gray-500 italic" x-show="!scriptEdits[scriptKey(l, lab)].loading && !scriptEdits[scriptKey(l, lab)].rows.length">
+                                                        <!-- A read that failed is not an empty script: nothing here can be
+                                                             added or saved until the stored script has actually been read,
+                                                             or Save would replace it (a hand edit included) with a draft. -->
+                                                        <div data-script-load-failed x-show="!scriptEdits[scriptKey(l, lab)].loading && scriptEdits[scriptKey(l, lab)].failed"
+                                                             class="flex items-center gap-2 flex-wrap text-[11px] text-amber-300">
+                                                            <span x-text="'The script did not load (' + scriptEdits[scriptKey(l, lab)].failed + '), so it cannot be changed yet.'"></span>
+                                                            <button type="button" data-script-retry @click="loadScriptDraft(lp, l, lab)"
+                                                                    class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Retry</button>
+                                                        </div>
+                                                        <p class="text-[11px] text-gray-500 italic" x-show="scriptEdits[scriptKey(l, lab)].loaded && !scriptEdits[scriptKey(l, lab)].rows.length">
                                                             No script yet. Add a beat, or Regenerate to have the app write one.</p>
-                                                        <template x-for="(row, ri) in scriptEdits[scriptKey(l, lab)].rows" :key="row._k">
+                                                        <template x-for="(row, ri) in (scriptEdits[scriptKey(l, lab)].loaded ? scriptEdits[scriptKey(l, lab)].rows : [])" :key="row._k">
                                                             <div data-script-row :data-type="row.type" class="bg-gray-950/60 border border-gray-800 rounded-lg px-2 py-1.5 space-y-1">
                                                                 <div class="flex items-center gap-1.5">
                                                                     <span class="text-[9px] font-bold uppercase tracking-wide text-gray-500 flex-1" x-text="row.type"></span>
@@ -193,10 +202,10 @@
                                                                 <option value="say">Say</option><option value="do">Do</option><option value="teach">Teach</option>
                                                                 <option value="check">Check</option><option value="wait">Wait</option>
                                                             </select>
-                                                            <button type="button" data-script-add @click="addScriptRow(lp, l, lab)"
-                                                                    class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Add a beat</button>
+                                                            <button type="button" data-script-add @click="addScriptRow(lp, l, lab)" :disabled="!!(scriptEdits[scriptKey(l, lab)].loading || !scriptEdits[scriptKey(l, lab)].loaded)"
+                                                                    class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 disabled:opacity-50">Add a beat</button>
                                                             <span class="flex-1"></span>
-                                                            <button type="button" data-script-save @click="saveScript(lp, l, lab)" :disabled="!!(busy || scriptEdits[scriptKey(l, lab)].loading)"
+                                                            <button type="button" data-script-save @click="saveScript(lp, l, lab)" :disabled="!!(busy || scriptEdits[scriptKey(l, lab)].loading || !scriptEdits[scriptKey(l, lab)].loaded)"
                                                                     class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-teal-700 text-white active:bg-teal-800 disabled:opacity-50">Save</button>
                                                         </div>
                                                     </div>
@@ -455,22 +464,31 @@ function libraryPage(host = 'admin') {
         async editScript(lp, l, lab) {
             const key = this.scriptKey(l, lab);
             if (this.scriptEdits[key]) { delete this.scriptEdits[key]; return; }
-            this.scriptEdits[key] = {loading: true, rows: [], addType: 'say'};
+            this.scriptEdits[key] = {loading: true, loaded: false, failed: '', rows: [], addType: 'say'};
             await this.loadScriptDraft(lp, l, lab);
         },
+        // `loaded` means the stored script was actually READ; finishing a
+        // request is not enough. A failed read leaves no rows, says so with
+        // Retry, and keeps Add and Save off, so a draft can never replace a
+        // script nobody has seen.
         async loadScriptDraft(lp, l, lab) {
             const key = this.scriptKey(l, lab);
+            const ed = this.scriptEdits[key];
+            if (!ed) return;
+            ed.loading = true; ed.loaded = false; ed.failed = ''; ed.rows = [];
             try {
                 const d = await this.request(this.scriptPath(lp, l, lab, false));
-                if (!this.scriptEdits[key]) return;
-                this.scriptEdits[key].rows = (((d.script || {}).scenes) || []).map(sc => this.scriptRow(sc));
-            } catch (e) { showGlobalAlert(e.message); }
-            finally { if (this.scriptEdits[key]) this.scriptEdits[key].loading = false; }
+                if (this.scriptEdits[key] !== ed) return;
+                ed.rows = (((d.script || {}).scenes) || []).map(sc => this.scriptRow(sc));
+                ed.loaded = true;
+            } catch (e) {
+                if (this.scriptEdits[key] === ed) ed.failed = e.message || 'no answer';
+            } finally { ed.loading = false; }
         },
         scriptCap(lp) { return Math.max(12, Math.min(40, (lp.made_for || {}).minutes || 12)); },
         addScriptRow(lp, l, lab) {
             const ed = this.scriptEdits[this.scriptKey(l, lab)];
-            if (!ed) return;
+            if (!ed || !ed.loaded || ed.loading) return;
             const cap = this.scriptCap(lp), minutes = (lp.made_for || {}).minutes;
             if (ed.rows.length >= cap) {
                 showGlobalAlert(cap + ' beats is the most a ' + (minutes ? minutes + '-minute ' : '') + 'lesson holds.');
@@ -504,11 +522,11 @@ function libraryPage(host = 'admin') {
         async saveScript(lp, l, lab) {
             const key = this.scriptKey(l, lab);
             const ed = this.scriptEdits[key];
-            if (!ed) return;
+            if (!ed || !ed.loaded || ed.loading) return;
             const scenes = ed.rows.map(r => this.sceneOf(r));
             if (!scenes.length) { showGlobalAlert('Add a beat first.'); return; }
             if (await this.mutate(this.scriptPath(lp, l, lab, false), {variant_label: lab || '', scenes}, 'PUT')) {
-                if (this.scriptEdits[key]) { this.scriptEdits[key].loading = true; await this.loadScriptDraft(lp, l, lab); }
+                if (this.scriptEdits[key]) await this.loadScriptDraft(lp, l, lab);
             }
         },
         // Regenerate asks first (a hand edit is said to go), then starts

@@ -1503,8 +1503,8 @@ def scenario_the_speech_wrapper_can_never_break_a_scene():
     cannot afford a round trip; see the room-voice scenarios below."""
     src = _read('components/lesson_player.html')
     import re
-    m = re.search(r'\n        say\(text, lang, tone\) \{(.*?)\n        \},', src, re.S)
-    check(m, "say(text, lang, tone) exists as the one session-level door")
+    m = re.search(r'\n        say\(text, lang, tone, ahead\) \{(.*?)\n        \},', src, re.S)
+    check(m, "say(text, lang, tone, ahead) exists as the one session-level door")
     check('this.muted' in (m.group(1) if m else ''),
           "and the mute tap silences it at that door")
     m = re.search(r'\n        sayLocal\(text, lang, tone\) \{(.*?)\n        \},',
@@ -2347,7 +2347,7 @@ def scenario_the_voice_ladder_tries_the_device_first():
     because the room channel was panel-only and nothing else answered."""
     src = _read('components/lesson_player.html')
     import re
-    m = re.search(r'\n        say\(text, lang, tone\) \{(.*?)\n        \},', src, re.S)
+    m = re.search(r'\n        say\(text, lang, tone, ahead\) \{(.*?)\n        \},', src, re.S)
     check(m, "say() is the ladder")
     body = m.group(1) if m else ''
     check(body.index('deviceSay') < body.index('roomSay') < body.index('sayLocal'),
@@ -2868,7 +2868,7 @@ def scenario_off_a_panel_lines_play_one_after_another_and_a_cards_tap_turns_the_
     import subprocess
     import tempfile
     src = _read('components/lesson_player.html')
-    s = re.search(r'\n        say\(text, lang, tone\) \{(.*?)\n        \},', src, re.S)
+    s = re.search(r'\n        say\(text, lang, tone, ahead\) \{(.*?)\n        \},', src, re.S)
     sb = s.group(1) if s else ''
     check('this.voiceQueue.push(' in sb and 'this.pumpVoice()' in sb and sb.index('!this.panel') < sb.index('deviceSay('),
           "off a panel say() queues instead of racing the channels")
@@ -2956,7 +2956,7 @@ def scenario_only_session_level_lines_reach_the_room():
         check(m, f"{fn} is findable")
         check(('roomSay' in m.group(1)) == wanted,
               f"{fn} must not send an in-beat line through a room")
-    m = re.search(r'\n        say\(text, lang, tone\) \{(.*?)\n        \},',
+    m = re.search(r'\n        say\(text, lang, tone, ahead\) \{(.*?)\n        \},',
                   src, re.S)
     check('roomSay' in (m.group(1) if m else ''),
           "and say() is the one place the room fork lives, so every "
@@ -3091,7 +3091,7 @@ const calls = [];
 const ctx = {
   scene: () => ({type: 'teach', tone: 'calm', speak_lang: '', text: 'x',
                  examples: [{text: 'Play C, rest, C'}, {text: 'Dó', speak_lang: 'pt-BR'}]}),
-  say(text, lang, tone) { calls.push(['say', text, lang || '', tone || '']); },
+  say(text, lang, tone, ahead) { calls.push(['say', text, lang || '', tone || '', !!ahead]); },
   stopVoice() { calls.push(['stop']); },
   sayLocal(text) { calls.push(['local', text]); },
   panel: false, muted: false,
@@ -3107,8 +3107,8 @@ console.log(JSON.stringify({calls}));
     if got is None:
         return
     calls = got['calls']
-    check(calls[:2] == [['say', 'Dó', 'pt-BR', 'calm'], ['say', 'Play C, rest, C', '', 'calm']],
-          f"each tap says its own text in its own language through say(), got {calls}")
+    check(calls[:2] == [['say', 'Dó', 'pt-BR', 'calm', True], ['say', 'Play C, rest, C', '', 'calm', True]],
+          f"each tap says its own text in its own language through say(), ahead of waiting narration, got {calls}")
     check(len(calls) == 2, f"an index past the list says nothing, and nothing is stopped or bypassed, got {calls}")
 
 
@@ -3146,6 +3146,77 @@ console.log(JSON.stringify({said}));
     check(said == [['Find the two black keys.', 'en-GB', 'calm'], ['Step left of them!', 'en-GB', 'calm'],
                    ['Is that C?', 'en-GB', 'calm']],
           f"one say() per sentence of speak, in order, in the scene's voice, got {got['said']}")
+
+
+def scenario_a_tapped_example_plays_next_not_after_the_explanation():
+    """enterScene, speakExample, say and the real pumpVoice, run together in Node with each
+    utterance's end under the test's control: two examples tapped during the first sentence of
+    a three-sentence explanation play right after that sentence, in tap order, and the rest of
+    the explanation follows. A tap never cuts the sentence in progress (Task 5 review)."""
+    import re
+    src = _read('components/lesson_player.html')
+    split = _player_method('splitSentences', 'text')
+    enter = _player_method('enterScene', '')
+    example = _player_method('speakExample', 'i')
+    say = re.search(r'\n        say\(text, lang, tone, ahead\) \{(.*?)\n        \},', src, re.S)
+    pump = re.search(r'\n        async pumpVoice\(\) \{(.*?)\n        \},', src, re.S)
+    check(say and pump, "say() and pumpVoice() are findable")
+    harness = r"""
+function splitSentences(text) {""" + split + r"""
+}
+const started = [];
+const pending = [];
+const SCENE = {type: 'teach', title: 'Middle C', text: 'C sits left of the two black keys.',
+               examples: [{text: 'Play C, rest, C'}, {text: 'Dó', speak_lang: 'pt-BR'}],
+               tone: 'calm', speak_lang: 'en-GB',
+               speak: 'Find the two black keys. Step left of them! Is that C?'};
+const base = {
+  scene: () => SCENE,
+  needsGrownUp: () => false,
+  splitSentences,
+  voiceQueue: [], voiceBusy: false,
+  panel: false, muted: false, preview: true,
+  // One utterance: recorded when it starts, ended only when the test says so.
+  speakOne(text, lang, tone) {
+    started.push([text, lang]);
+    return new Promise(resolve => pending.push(resolve));
+  },
+};
+base.say = function (text, lang, tone, ahead) {""" + say.group(1) + r"""
+};
+base.pumpVoice = async function () {""" + pump.group(1) + r"""
+};
+const noop = () => undefined;
+const ctx = new Proxy(base, {get: (t, k) => (k in t ? t[k] : noop),
+                             set: (t, k, v) => { t[k] = v; return true; }});
+const enterScene = function () {""" + enter + r"""
+};
+const speakExample = function (i) {""" + example + r"""
+};
+const tick = () => new Promise(r => setTimeout(r, 0));
+const finishOne = async () => { const done = pending.shift(); if (done) done(); await tick(); await tick(); };
+(async () => {
+  enterScene.call(ctx);
+  await tick();
+  const during = started.length;          // sentence one is sounding
+  speakExample.call(ctx, 1);              // tapped during sentence one
+  speakExample.call(ctx, 0);              // and another
+  await tick();
+  const stillOne = started.length;        // nothing cut in
+  for (let n = 0; n < 8; n++) await finishOne();
+  console.log(JSON.stringify({during, stillOne, started}));
+})();
+"""
+    got = _run_node('chauffeur_queue_', harness)
+    if got is None:
+        return
+    check(got['during'] == 1 and got['stillOne'] == 1,
+          f"one line sounds at a time and a tap never cuts it, got {got}")
+    order = [t for t, _ in got['started']]
+    check(order == ['Find the two black keys.', 'Dó', 'Play C, rest, C', 'Step left of them!', 'Is that C?'],
+          f"the taps play next, in tap order, ahead of the waiting explanation, got {order}")
+    langs = dict(got['started'])
+    check(langs['Dó'] == 'pt-BR' and langs['Find the two black keys.'] == 'en-GB', f"each in its own language, got {got['started']}")
 
 
 def scenario_a_mounted_teach_scene_shows_its_words_and_speaks_an_example():
@@ -3346,5 +3417,6 @@ if __name__ == '__main__':
     scenario_split_sentences_is_pure_and_keeps_numbers()
     scenario_an_example_tap_speaks_in_its_language()
     scenario_a_scene_speak_is_queued_sentence_by_sentence()
+    scenario_a_tapped_example_plays_next_not_after_the_explanation()
     scenario_a_mounted_teach_scene_shows_its_words_and_speaks_an_example()
     print("test_lesson_player_runtime OK")

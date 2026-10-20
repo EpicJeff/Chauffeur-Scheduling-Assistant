@@ -935,10 +935,11 @@ function lessonPlayer() {
             return s.split(/(?<=[.!?])\s+(?=\S)/).map(x => x.trim()).filter(Boolean);
         },
         // A tapped teach example: said through say() in its own language,
-        // else the scene's, and queued like every other between-beat line.
+        // else the scene's, queued after the line in progress and ahead of
+        // the narration still waiting (say's `ahead`).
         speakExample(i) {
             const ex = (this.scene().examples || [])[i] || {};
-            if (ex.text) this.say(ex.text, ex.speak_lang || this.scene().speak_lang, this.scene().tone);
+            if (ex.text) this.say(ex.text, ex.speak_lang || this.scene().speak_lang, this.scene().tone, true);
         },
         scene() { return this.scenes[this.idx] || {type: 'say', text: ''}; },
         isLast() { return this.idx >= this.scenes.length - 1; },
@@ -1432,7 +1433,7 @@ function lessonPlayer() {
         // Everything in-beat -- a cue at 0:30, a rep count -- calls
         // sayLocal() directly instead, because a line that arrives after
         // the moment it was about is worse than one nobody heard.
-        say(text, lang, tone) {
+        say(text, lang, tone, ahead) {
             if (this.muted || !text) return;
             if (!this.panel) {
                 // Off a panel every between-beat line goes through ONE
@@ -1440,7 +1441,21 @@ function lessonPlayer() {
                 // never cut or cover each other: each plays to its end
                 // (clip or browser voice), then the next. A scene change
                 // empties the queue (enterScene -> stopVoice).
-                this.voiceQueue.push({text: String(text), lang: lang || '', tone: tone || ''});
+                //
+                // `ahead` is a line somebody tapped for (a teach example):
+                // it goes after the line in progress (already shifted off
+                // the queue by pumpVoice) and after any earlier taps, but
+                // AHEAD of the narration still waiting, so a tap during
+                // sentence one is heard next rather than after the whole
+                // explanation.
+                const line = {text: String(text), lang: lang || '', tone: tone || '', ahead: !!ahead};
+                if (ahead) {
+                    let at = 0;
+                    while (at < this.voiceQueue.length && this.voiceQueue[at].ahead) at++;
+                    this.voiceQueue.splice(at, 0, line);
+                } else {
+                    this.voiceQueue.push(line);
+                }
                 this.pumpVoice();
                 return;
             }
