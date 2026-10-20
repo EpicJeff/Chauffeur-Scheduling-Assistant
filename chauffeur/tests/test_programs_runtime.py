@@ -268,6 +268,32 @@ def scenario_a_session_done_ahead_of_its_window_files_under_that_window():
         'the earlier future-filed entry is the only thing that counts for tomorrow')
 
 
+def scenario_sessions_done_ahead_of_their_window_are_not_a_shortfall():
+    """Three Wednesday windows, each done on the Tuesday before. The plan is
+    on track; weekday_shortfall must read the slot a session was for, not
+    the day it happened, or the watcher would say Wednesdays keep getting
+    eaten and the plan would stretch by a week."""
+    import datetime
+    from services import programs
+    storage.programs_table.truncate(); storage.library_programs_table.truncate()
+    today = datetime.date.today()
+    wednesday = today - datetime.timedelta(days=(today.weekday() - 2) % 7 or 7)
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar', 'state': 'active',
+                   'phases': [{'name': 'F', 'units': [{'title': 'One', 'sessions': 9}]}],
+                   'shape': {'sessions_per_week': 1, 'minutes': 20, 'preferred_days': [2]},
+                   'baseline': {'start_date': (today - datetime.timedelta(days=35)).isoformat()}})
+    for back in (0, 7, 14):
+        slot = wednesday - datetime.timedelta(days=back)
+        done_on = datetime.datetime.combine(slot - datetime.timedelta(days=1), datetime.time(19, 0))
+        storage.append_program_session(pid, {'ts': done_on.timestamp(), 'minutes': 20, 'source': 'asked',
+                                             'slot_date': slot.isoformat()})
+    row = storage.get_program(pid)
+    check(all(programs._already_logged(row, wednesday - datetime.timedelta(days=b)) for b in (0, 7, 14)),
+          'every Wednesday window reads logged')
+    short = programs.weekday_shortfall(row)
+    check(short is None, 'no shortfall when every window was done early, got %r' % (short,))
+
+
 if __name__ == '__main__':
     scenario_the_pwa_reaches_a_members_own_programs()
     scenario_the_pwa_shows_no_streak()
@@ -278,4 +304,5 @@ if __name__ == '__main__':
     scenario_the_wall_reads_a_celebration_only_projection()
     scenario_the_wall_card_fetches_only_that_projection()
     scenario_a_session_done_ahead_of_its_window_files_under_that_window()
+    scenario_sessions_done_ahead_of_their_window_are_not_a_shortfall()
     print("test_programs_runtime OK")

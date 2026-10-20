@@ -1518,8 +1518,15 @@ def weekday_shortfall(program: dict, now=None) -> dict:
     weeks = max(1, (now.date() - window_start).days // 7)
     done = {}
     for s in sessions_between(program, window_start, now.date()):
+        # The slot a session was FOR decides which weekday it fills: a
+        # Wednesday window done on the Tuesday before is a Wednesday kept,
+        # not a Tuesday extra and a Wednesday missed. Entries without a slot
+        # (added practice, older rows) fill the day they happened.
         try:
-            wd = datetime.datetime.fromtimestamp(float(s['ts'])).weekday()
+            if s.get('slot_date'):
+                wd = datetime.date.fromisoformat(str(s['slot_date'])).weekday()
+            else:
+                wd = datetime.datetime.fromtimestamp(float(s['ts'])).weekday()
         except (KeyError, TypeError, ValueError):
             continue
         done[wd] = done.get(wd, 0) + 1
