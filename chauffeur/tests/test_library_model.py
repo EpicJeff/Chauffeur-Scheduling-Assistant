@@ -556,9 +556,18 @@ def scenario_scripts_are_keyed_by_run_lesson_and_variant():
 
 
 def scenario_generation_help_and_legacy_slots_keep_lesson_identity():
-    """Generation, the player's help, the wall's scenes and the legacy slot tuple, by lesson id."""
+    """Generation, the player's help, the wall's scenes and the legacy slot tuple, by lesson id.
+
+    Retargeted to the lesson depth contract (spec 2026-10-20 sections 6-7): a library run plays
+    the library's ONE script per (library, lesson, variant), written from the public profile, so
+    two runs of one library share it and no run's private starting point reaches any prompt. The
+    legacy (phase_name, unit_n, session_label) tuple still translates to the lesson for one
+    release and reads the same script. The GET-by-tuple, lesson-scenes, lesson-help and library
+    DELETE assertions below read through the run resolver and the library script routes, which
+    Task 4 builds: until it lands they are red on that, and only on that."""
     _fresh()
-    from services import model_pools, program_lessons as pl
+    storage.library_scripts_table.truncate()
+    from services import model_pools, program_lessons as pl, library_scripts
     ids = _library()
     rid = _run(ids, current='B')
     _approve(rid, [{'day': 0, 'time_start': '17:00'}, {'day': 2, 'time_start': '17:00'}])
@@ -572,34 +581,37 @@ def scenario_generation_help_and_legacy_slots_keep_lesson_identity():
 
     def fake_pool(pool, key, system, prompt, **kw):
         # The script says which private inputs and which steps its own prompt carried, so each
-        # stored row can be traced back to the prompt that wrote it.
+        # stored row can be traced back to the prompt that wrote it. Full length for the
+        # 30-minute profile, so no shortfall retry spends a second call.
         prompts.append(prompt)
         who = '+'.join(sp for sp in ('SECRET-START-kid', 'SECRET-START-sib') if sp in prompt) or 'nobody'
-        steps = '+'.join(m for m in marks if m in prompt) or 'no steps'
-        return {'scenes': [{'type': 'say', 'text': f'Generated script for {who} with {steps}.'}], '_model': 'stub'}
+        steps = '+'.join(mk for mk in marks if mk in prompt) or 'no steps'
+        return {'scenes': [{'type': 'say', 'text': f'Generated script for {who} with {steps}.'}]
+                + [{'type': 'do', 'text': 'Play the scale slowly', 'seconds': 600}] * 3, '_model': 'stub'}
     eve = datetime.datetime.combine(MON - datetime.timedelta(days=1), datetime.time(21, 0))
     with patch.object(model_pools, 'call_pool_json', side_effect=fake_pool):
         wrote = pl.generate_due(now=eve)
-    check(wrote == 4 and len(prompts) == 4, f'one script per run, lesson and variant: {wrote} {len(prompts)}')
-    for run in (rid, other):
-        for day in (MON, WED):
-            slot = {'lesson_id': ids['B'], 'variant_label': labels[day]}
-            check((storage.get_program_lesson(run, slot) or {}).get('scenes'), f'stored under (run, lesson, variant): {run} {slot}')
-    check(sum('SECRET-START-kid' in p for p in prompts) == 2 and sum('SECRET-START-sib' in p for p in prompts) == 2,
-          "each run's private starting point reaches its own generation, and only its own")
+    check(wrote == 2 and len(prompts) == 2,
+          f'one script per (library, lesson, variant), shared by both runs: {wrote} written, {len(prompts)} calls')
+    check(storage.program_lessons_table.all() == [], 'nothing is written per run')
+    check(not any('SECRET-START' in p for p in prompts), f"no run's private starting point reaches any prompt: {prompts}")
     check(any('Scale up slowly' in p for p in prompts) and any('Scale down slowly' in p for p in prompts),
-          "the projection's steps reach the generation input")
+          "the variants' steps reach the generation input")
     variant_steps = {'Session A': 'Scale up slowly', 'Session B': 'Scale down slowly'}
-    for run, member in ((rid, 'kid'), (other, 'sib')):
-        for day in (MON, WED):
-            stored = storage.get_program_lesson(run, {'lesson_id': ids['B'], 'variant_label': labels[day]}) or {}
-            want = f'Generated script for SECRET-START-{member} with {variant_steps[labels[day]]}.'
-            check(json.dumps(stored.get('scenes')).count(want) == 1,
-                  f"the script under ({member}'s run, B, {labels[day]}) came from a prompt carrying that run's "
-                  f"starting point and that variant's steps, and nothing of the other's: {stored.get('scenes')}")
+    for day in (MON, WED):
+        slot = {'lesson_id': ids['B'], 'variant_label': labels[day]}
+        stored = storage.get_library_script(ids['L'], slot) or {}
+        want = f'Generated script for nobody with {variant_steps[labels[day]]}.'
+        check(json.dumps(stored.get('scenes')).count(want) == 1,
+              f"the script under (library, B, {labels[day]}) came from a prompt carrying that variant's steps "
+              f"and nobody's starting point: {stored.get('scenes')}")
+        for run in (rid, other):
+            read = library_scripts.script_for_run(storage.get_program(run), ids['B'], labels[day]) or {}
+            check(read.get('scenes') == stored.get('scenes'), f'both runs read the same script: {run} {slot} {read}')
     hand, regen = labels[MON], labels[WED]
-    storage.upsert_program_lesson(rid, {'lesson_id': ids['B'], 'variant_label': hand},
-                                  {'scenes': _say('Thumb on C, then climb.'), 'origin': 'generated', 'edited': True})
+    storage.edit_library_script(ids['L'], {'lesson_id': ids['B'], 'variant_label': hand},
+                                {'origin': 'generated', 'source_url': '', 'scenes': _say('Thumb on C, then climb.'),
+                                 'model': '', 'attempts': 0, 'note': '', 'minutes': 1})
     # Legacy (phase_name, unit_n, session_label), translated for one release: unit 2 of Foundations is B.
     r = _http('mom', 'GET', f'/api/programs/{rid}/lesson',
               params={'phase_name': 'Foundations', 'unit_n': 2, 'session_label': hand})
@@ -620,6 +632,7 @@ def scenario_generation_help_and_legacy_slots_keep_lesson_identity():
         check(r.status_code == 200 and r.json().get('answer'), f'help answers: {r.status_code} {r.text[:200]}')
         check(helped and 'Thumb on C, then climb.' in helped[0] and 'Learn piano' in helped[0],
               f"help reads the beat of the named lesson and the library title: {helped}")
+        check(not any('SECRET-START' in p for p in helped), f'and no starting point reaches the help prompt: {helped}')
         _main._lesson_help_at.clear()
         r = _http('kid', 'POST', f'/api/programs/{rid}/lesson-help', json={'lesson_id': 'f' * 32, 'variant_label': ''})
         check(r.status_code == 409 and MOVED in r.text, f'help for a moved lesson: {r.status_code} {r.text[:200]}')
@@ -631,17 +644,17 @@ def scenario_generation_help_and_legacy_slots_keep_lesson_identity():
     _svc().update_lesson(ids['L'], ids['B'], {'variants': [{'label': 'Session A', 'steps': ['Up, both hands']},
                                                            {'label': 'Session B', 'steps': ['Down, both hands']}]}, dict(AUNT))
     for label, words in ((hand, 'Thumb on C, then climb.'), (regen, 'Generated script')):
-        kept = storage.get_program_lesson(rid, {'lesson_id': ids['B'], 'variant_label': label})
+        kept = storage.get_library_script(ids['L'], {'lesson_id': ids['B'], 'variant_label': label})
         check(words in json.dumps(kept), f'{label}: kept through the library edit: {kept}')
-    r = _http('mom', 'DELETE', f'/api/programs/{rid}/lesson', params={'lesson_id': ids['B'], 'variant_label': regen})
-    check(r.status_code == 200, f'Regenerate clears one slot: {r.text[:200]}')
+    r = _http('mom', 'DELETE', f"/api/library/{ids['L']}/lessons/{ids['B']}/script", params={'variant_label': regen})
+    check(r.status_code == 200, f'Regenerate clears one slot: {r.status_code} {r.text[:200]}')
     prompts.clear()
     storage.set_app_state('program_lessons_swept', '')
     with patch.object(model_pools, 'call_pool_json', side_effect=fake_pool):
         pl.generate_due(now=eve)
     want = {'Session A': 'Up, both hands', 'Session B': 'Down, both hands'}[regen]
     check(len(prompts) == 1 and want in prompts[0], f'only the cleared slot is written again, from the edited steps: {prompts}')
-    check('Thumb on C, then climb.' in json.dumps(storage.get_program_lesson(rid, {'lesson_id': ids['B'], 'variant_label': hand})),
+    check('Thumb on C, then climb.' in json.dumps(storage.get_library_script(ids['L'], {'lesson_id': ids['B'], 'variant_label': hand})),
           'the hand edit is still there')
 
 

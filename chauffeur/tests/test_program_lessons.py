@@ -954,10 +954,18 @@ def scenario_the_sweep_is_capped_per_pass():
     _due_fixture_many(3)
     calls = {'n': 0}
 
+    # A full-length answer for the fixture's 20-minute session (lesson depth
+    # section 3): a short script would now spend a second call on the
+    # shortfall retry, and this scenario is about the per-pass cap on slots,
+    # not about that retry (test_library_scripts pins the retry's accounting).
+    full = [{'type': 'teach', 'title': 'Two chords',
+             'text': 'Chords are shapes. G and C share a finger, so the change is one move, not three.',
+             'examples': [{'text': 'G, then C'}]}] +            [{'type': 'do', 'text': 'Change G to C and back, slowly', 'seconds': 400}] * 3
+    check(pl.estimate_seconds(full) >= 20 * 60 * 0.9, f"the answer runs about the session, got {pl.estimate_seconds(full)}s")
+
     def fake_pool(*a, **k):
         calls['n'] += 1
-        return {'scenes': [{'type': 'say', 'text': 'Chords are shapes.'}],
-                '_model': 'gemma-4-31b-it'}
+        return {'scenes': full, '_model': 'gemma-4-31b-it'}
 
     orig = mp.call_pool_json
     mp.call_pool_json = fake_pool
