@@ -115,7 +115,9 @@
                 class="shrink-0 rounded-full border font-bold px-4 h-14 text-base"
                 :class="!voiceLocal ? 'bg-teal-500/20 border-teal-500/40 text-teal-300'
                                     : 'bg-gray-800 border-gray-700 text-gray-400'"
-                x-text="voiceChip(voiceLocal, deviceLookup)"></button>
+                x-text="voiceChip(voiceLocal, deviceLookup, deviceArmed)"></button>
+        <div x-show="!panel && canDeviceVoice && !voiceLocal" x-cloak
+             class="basis-full text-[11px] text-gray-400 truncate" x-text="voiceDetail()"></div>
         <!-- Argyle's voice, off for this session. Always visible, never a
              setting: a lesson in a quiet house is the same lesson, and a
              person who wants the voice back gets it by tapping again or
@@ -736,6 +738,8 @@ function lessonPlayer() {
         deviceLookup: '',    // '' | 'starting' | 'ready' | 'missing' -- what ensureDevicePlayer found
         deviceName: '',      // the player's Music Assistant name, for the not-set-up notice
         deviceWhy: '',       // 'not listed' | 'did not connect' -- which fact the notice states
+        deviceArmed: false,  // a non-panel device player has been unlocked by a tap AFTER it was built
+        lastSpeak: '',       // what the speak route last answered, for the voice detail line
         // A wait beat's on-screen countdown. Cosmetic only -- the call
         // into the room is armed on the server and outlives this.
         waitLeft: 0, waitTimer: null,
@@ -794,6 +798,8 @@ function lessonPlayer() {
             this.deviceEntity = '';
             this.deviceLookup = '';
             this.deviceWhy = '';
+            this.deviceArmed = false;
+            this.lastSpeak = '';
             // Which voice this surface uses. A panel is the house voice by
             // design (room, else its own screen). A phone or a computer on
             // an admin page defaults to the BROWSER until somebody taps the
@@ -1390,6 +1396,16 @@ function lessonPlayer() {
         // A tap on the chip: swap, remember, and -- when swapping TO the
         // device -- unlock and start its player inside this very gesture.
         toggleVoice() {
+            // Ready but never unlocked by a tap taken AFTER the player was
+            // built: this tap is that gesture. Arm it, unlock inside the
+            // gesture, and say one line through it so the person hears at
+            // once whether this device really plays.
+            if (!this.voiceLocal && this.deviceLookup === 'ready' && !this.deviceArmed) {
+                this.deviceArmed = true;
+                this.unlockDevice();
+                this.deviceSay('Argyle here.', '', this.scene().tone);
+                return;
+            }
             this.voiceLocal = !this.voiceLocal;
             try { localStorage.setItem('chf-lesson-voice', this.voiceLocal ? 'browser' : 'device'); } catch (e) {}
             if (!this.voiceLocal) {
@@ -1411,12 +1427,14 @@ function lessonPlayer() {
                 }
             } catch (e) { /* a page with no player still runs the scene */ }
         },
-        deviceRung(entity, localPlayer, voiceLocal, preview) {
+        deviceRung(entity, localPlayer, voiceLocal, preview, armed) {
             if (!entity || preview || voiceLocal) return false;
+            if (armed === false) return false;
             return !!(localPlayer && localPlayer.active);
         },
         deviceSay(text, lang, tone) {
-            if (!this.deviceRung(this.deviceEntity, window.chfLocalPlayer, this.voiceLocal, this.preview)) return false;
+            if (!this.deviceRung(this.deviceEntity, window.chfLocalPlayer, this.voiceLocal, this.preview,
+                                 this.panel ? true : this.deviceArmed)) return false;
             this.handOff({entity_id: this.deviceEntity, text: String(text)}, text, lang, tone);
             return true;
         },
@@ -1434,8 +1452,9 @@ function lessonPlayer() {
                 }).then(async (r) => {
                     let d = {};
                     try { d = await r.json(); } catch (e) { d = {}; }
+                    this.lastSpeak = r.status + (d.status ? ' ' + d.status : '') + (d.message || d.detail ? ' - ' + (d.message || d.detail) : '');
                     if (!r.ok || d.status === 'error') this.sayLocal(text, lang, tone);
-                }).catch(() => this.sayLocal(text, lang, tone));
+                }).catch(() => { this.lastSpeak = 'no answer'; this.sayLocal(text, lang, tone); });
             } catch (e) { this.sayLocal(text, lang, tone); }
         },
 
@@ -1493,12 +1512,34 @@ function lessonPlayer() {
             const deadline = new Promise(resolve => { timer = setTimeout(() => resolve('timeout'), 12000); });
             const outcome = await Promise.race([this.ensureDevicePlayer(), deadline]);
             clearTimeout(timer);
-            if (outcome === 'timeout') {
+            if (outcome === 'timeout' || (this.deviceLookup !== 'ready' && this.deviceLookup !== 'missing')) {
                 this.deviceEntity = '';
                 this.deviceLookup = 'missing';
-                this.deviceWhy = 'did not connect';
+                this.deviceWhy = this.deviceWhy || 'did not connect';
             }
             this.settleDeviceVoice();
+        },
+
+        // One line of truth under the chip while the device is chosen: what
+        // the local player says about itself and what the speak route last
+        // answered. Read-only, for the person standing there and for a bug
+        // report -- the seven rounds of 2026-10-19 were guessed without it.
+        voiceDetail() {
+            try {
+                const lp = window.chfLocalPlayer;
+                const bits = [];
+                if (!lp) bits.push('no local player');
+                else {
+                    bits.push(lp.connecting ? 'connecting' : (lp.active ? 'socket live' : 'socket not live'));
+                    const why = typeof lp.closeReason === 'function' ? lp.closeReason() : '';
+                    if (why) bits.push(why);
+                    if (lp.playerId) bits.push('id ' + String(lp.playerId).slice(-6));
+                }
+                bits.push(this.deviceEntity ? ('entity ' + this.deviceEntity.replace('media_player.', '')) : 'no entity');
+                if (!this.deviceArmed && this.deviceLookup === 'ready' && !this.panel) bits.push('tap the chip once more to unlock audio');
+                if (this.lastSpeak) bits.push('last line: ' + this.lastSpeak);
+                return bits.join(' · ');
+            } catch (e) { return ''; }
         },
 
         // The Sendspin rung, then the person's own configured player. Resolves
@@ -1582,9 +1623,9 @@ function lessonPlayer() {
         // when a registered player had never been exposed in Music
         // Assistant -- the lookup finished with nothing and the chip never
         // said so.
-        voiceChip(voiceLocal, lookup) {
+        voiceChip(voiceLocal, lookup, armed) {
             if (voiceLocal) return '🔈 browser';
-            if (lookup === 'ready') return '🔈 this device';
+            if (lookup === 'ready') return armed ? '🔈 this device' : '🔈 tap to hear';
             if (lookup === 'missing') return '🔈 not set up';
             return '🔈 starting…';
         },

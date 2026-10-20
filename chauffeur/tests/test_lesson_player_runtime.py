@@ -2562,9 +2562,9 @@ def scenario_the_device_rung_needs_a_live_player_and_a_failed_line_is_read_local
     import subprocess
     import tempfile
     src = _read('components/lesson_player.html')
-    m = re.search(r'\n        deviceRung\(entity, localPlayer, voiceLocal, preview\) \{(.*?)\n        \},',
+    m = re.search(r'\n        deviceRung\(entity, localPlayer, voiceLocal, preview, armed\) \{(.*?)\n        \},',
                   src, re.S)
-    check(m, "deviceRung(entity, localPlayer, voiceLocal, preview) is findable")
+    check(m, "deviceRung(entity, localPlayer, voiceLocal, preview, armed) is findable")
     body = m.group(1)
     check('this.' not in body, f"and pure, got {body!r}")
     h = re.search(r'\n        handOff\(body, text, lang, tone\) \{(.*?)\n        \},', src, re.S)
@@ -2584,18 +2584,20 @@ def scenario_the_device_rung_needs_a_live_player_and_a_failed_line_is_read_local
         return
     harness = r'''
 const out = {};
-out.live = deviceRung('media_player.phone', {active: true}, false, false);
-out.dead = deviceRung('media_player.phone', {active: false}, false, false);
-out.none = deviceRung('media_player.phone', null, false, false);
-out.noEntity = deviceRung('', {active: true}, false, false);
-out.override = deviceRung('media_player.phone', {active: true}, true, false);
-out.preview = deviceRung('media_player.phone', {active: true}, false, true);
+out.live = deviceRung('media_player.phone', {active: true}, false, false, true);
+out.dead = deviceRung('media_player.phone', {active: false}, false, false, true);
+out.none = deviceRung('media_player.phone', null, false, false, true);
+out.noEntity = deviceRung('', {active: true}, false, false, true);
+out.override = deviceRung('media_player.phone', {active: true}, true, false, true);
+out.preview = deviceRung('media_player.phone', {active: true}, false, true, true);
+out.unarmed = deviceRung('media_player.phone', {active: true}, false, false, false);
+out.panelish = deviceRung('media_player.phone', {active: true}, false, false, undefined);
 console.log(JSON.stringify(out));
 '''
     scratch = tempfile.mkdtemp(prefix='chauffeur_rung_')
     path = os.path.join(scratch, 'run.mjs')
     with open(path, 'w', encoding='utf-8') as f:
-        f.write('function deviceRung(entity, localPlayer, voiceLocal, preview) {' + body + '\n}\n' + harness)
+        f.write('function deviceRung(entity, localPlayer, voiceLocal, preview, armed) {' + body + '\n}\n' + harness)
     proc = subprocess.run([node, path], capture_output=True, text=True,
                           encoding='utf-8', errors='replace', timeout=60)
     check(proc.returncode == 0, f"deviceRung threw:\n{proc.stderr[-1500:]}")
@@ -2604,6 +2606,8 @@ console.log(JSON.stringify(out));
     check(out['dead'] is False and out['none'] is False, f"a registered but silent player does not, got {out}")
     check(out['noEntity'] is False and out['override'] is False and out['preview'] is False,
           f"no entity, the browser override and a preview all stay local, got {out}")
+    check(out['unarmed'] is False and out['panelish'] is True,
+          f"a non-panel device must be armed by a tap after it was built; a panel (armed undefined) needs none, got {out}")
 
 
 def scenario_a_phone_or_computer_speaks_through_the_browser_until_it_opts_in():
@@ -2636,6 +2640,11 @@ def scenario_a_phone_or_computer_speaks_through_the_browser_until_it_opts_in():
     tb = t.group(1) if t else ''
     check("localStorage.setItem('chf-lesson-voice'" in tb and 'unlockDevice()' in tb and 'startDeviceVoice()' in tb,
           "the chip remembers the choice per device and unlocks + starts the player in the same tap")
+    check("this.deviceLookup === 'ready' && !this.deviceArmed" in tb and 'this.deviceArmed = true' in tb
+          and tb.index('this.deviceArmed = true') < tb.index('this.unlockDevice()') and "deviceSay('Argyle here.'" in tb,
+          "a ready-but-unarmed device is armed by its own tap: unlock inside the gesture, then one spoken line to prove it")
+    check('x-text="voiceDetail()"' in src and 'this.lastSpeak = r.status' in src,
+          "a detail line under the chip shows the local player's state and the speak route's last answer")
     node = shutil.which('node')
     if not node:
         print('  skip  node is not installed')
@@ -2706,8 +2715,8 @@ def scenario_a_player_home_assistant_does_not_know_is_said_so_and_the_browser_sp
     import subprocess
     import tempfile
     src = _read('components/lesson_player.html')
-    m = re.search(r'\n        voiceChip\(voiceLocal, lookup\) \{(.*?)\n        \},', src, re.S)
-    check(m, "voiceChip(voiceLocal, lookup) is findable")
+    m = re.search(r'\n        voiceChip\(voiceLocal, lookup, armed\) \{(.*?)\n        \},', src, re.S)
+    check(m, "voiceChip(voiceLocal, lookup, armed) is findable")
     body = m.group(1)
     check('this.' not in body, f"and pure, got {body!r}")
     e = re.search(r'\n        async ensureDevicePlayer\(\) \{(.*?)\n        \},', src, re.S)
@@ -2729,24 +2738,26 @@ def scenario_a_player_home_assistant_does_not_know_is_said_so_and_the_browser_sp
         return
     harness = r'''
 const out = {};
-out.local = voiceChip(true, 'ready');
-out.ready = voiceChip(false, 'ready');
-out.missing = voiceChip(false, 'missing');
-out.starting = voiceChip(false, 'starting');
-out.blank = voiceChip(false, '');
+out.local = voiceChip(true, 'ready', true);
+out.ready = voiceChip(false, 'ready', true);
+out.unarmed = voiceChip(false, 'ready', false);
+out.missing = voiceChip(false, 'missing', false);
+out.starting = voiceChip(false, 'starting', false);
+out.blank = voiceChip(false, '', false);
 console.log(JSON.stringify(out));
 '''
     scratch = tempfile.mkdtemp(prefix='chauffeur_chip_')
     path = os.path.join(scratch, 'run.mjs')
     with open(path, 'w', encoding='utf-8') as f:
-        f.write('function voiceChip(voiceLocal, lookup) {' + body + '\n}\n' + harness)
+        f.write('function voiceChip(voiceLocal, lookup, armed) {' + body + '\n}\n' + harness)
     proc = subprocess.run([node, path], capture_output=True, text=True,
                           encoding='utf-8', errors='replace', timeout=60)
     check(proc.returncode == 0, f"voiceChip threw:\n{proc.stderr[-1500:]}")
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     check(out['local'].endswith('browser') and out['ready'].endswith('this device')
-          and out['missing'].endswith('not set up') and out['starting'].endswith('starting…') and out['blank'].endswith('starting…'),
-          f"four honest readings, got {out}")
+          and out['missing'].endswith('not set up') and out['starting'].endswith('starting…') and out['blank'].endswith('starting…')
+          and out['unarmed'].endswith('tap to hear'),
+          f"five honest readings, got {out}")
 
 
 def scenario_the_device_lookup_is_bounded_and_has_a_second_rung():
@@ -2768,7 +2779,7 @@ def scenario_the_device_lookup_is_bounded_and_has_a_second_rung():
     eb = e.group(1) if e else ''
     check('Promise.race([this.ensureDevicePlayer(), deadline])' in eb and 'setTimeout(() => resolve(\'timeout\'), 12000)' in eb,
           "the lookup is raced against a 12 s deadline")
-    check("if (outcome === 'timeout')" in eb and "this.deviceLookup = 'missing'" in eb and "'did not connect'" in eb,
+    check("outcome === 'timeout'" in eb and "this.deviceLookup = 'missing'" in eb and "'did not connect'" in eb,
           "a timeout is a missing player that did not connect")
     l = re.search(r'\n        async ensureDevicePlayer\(\) \{(.*?)\n        \},', src, re.S)
     lb = l.group(1) if l else ''
