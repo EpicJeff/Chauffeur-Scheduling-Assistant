@@ -69,6 +69,11 @@
     <!-- Alpine powers the pairing overlay nav brings in (auth arc S8): this
          page runs no Alpine of its own, so without this tag a refused kiosk
          here could never draw its pairing code. -->
+    <!-- The lesson player's device voice: this machine's own Music Assistant
+         player (static/music_logic.js), the same script app.html and home.html
+         load. Without it a lesson on an admin page could only ever speak through
+         the browser, however many players the household had set up. -->
+    <script src="{{ 'static/music_logic.js'|ver }}"></script>
     <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
 </head>
 <body class="flex flex-col">

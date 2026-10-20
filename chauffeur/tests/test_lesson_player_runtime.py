@@ -2473,9 +2473,80 @@ def scenario_the_hosts_announce_their_one_player():
           "and the board announces its screen player")
 
 
+def scenario_admin_lesson_hosts_carry_the_device_voice():
+    """Device-found 2026-10-19: a lesson started from the admin Programs
+    page on a computer that already had its own Sendspin player spoke in
+    the browser voice, because work.html, projects.html, rhythms.html and
+    calendar.html never loaded music_logic.js -- the device rung of the
+    voice ladder was unreachable there by construction. They load it now,
+    the same script app.html and home.html load, served through the real
+    page routes."""
+    from fastapi.testclient import TestClient
+    import main
+    c = TestClient(main.app)
+    for page in ('/work', '/projects', '/rhythms', '/calendar'):
+        r = c.get(page)
+        check(r.status_code == 200, f"{page} serves: {r.status_code}")
+        check('static/music_logic.js' in r.text, f"{page} loads the Music Assistant player logic")
+        check(r.text.index('static/music_logic.js') < r.text.index('static/vendor/alpine.min.js'),
+              f"{page} loads it before Alpine mounts the player")
+
+
+def scenario_a_computer_reuses_its_screen_registration():
+    """The identity a lesson speaks through, executed under Node against a
+    fake storage: a panel is a screen; a page that is not a panel but whose
+    device already holds a screen registration (the home board ran on this
+    same machine) reuses THAT key rather than minting a second 'phone'
+    player the household would have to expose in Music Assistant again;
+    a bare handset stays a phone."""
+    import json
+    import os
+    import re
+    import shutil
+    import subprocess
+    import tempfile
+    node = shutil.which('node')
+    if not node:
+        print('  skip  node is not installed')
+        return
+    src = _read('components/lesson_player.html')
+    m = re.search(r'\n        deviceIdentity\(panel, storage, deviceId, tag\) \{(.*?)\n        \},',
+                  src, re.S)
+    check(m, "deviceIdentity(panel, storage, deviceId, tag) is findable")
+    body = m.group(1)
+    check('this.' not in body, f"and pure, got {body!r}")
+    harness = r'''
+const mem = (obj) => ({getItem: (k) => (k in obj ? obj[k] : null)});
+const out = {};
+out.panel = deviceIdentity(true, mem({}), 'abc-1234', '1234');
+out.screenOnAdmin = deviceIdentity(false, mem({'chauffeur_sendspin_id::screen::abc-1234': 'sp-1'}), 'abc-1234', '1234');
+out.otherScreen = deviceIdentity(false, mem({'chauffeur_sendspin_id::screen::zzz': 'sp-9'}), 'abc-1234', '1234');
+out.phone = deviceIdentity(false, mem({}), 'abc-1234', '1234');
+out.noStorage = deviceIdentity(false, null, 'abc-1234', '1234');
+out.throwing = deviceIdentity(false, {getItem: () => { throw new Error('private'); }}, 'abc-1234', '1234');
+console.log(JSON.stringify(out));
+'''
+    scratch = tempfile.mkdtemp(prefix='chauffeur_voice_')
+    path = os.path.join(scratch, 'run.mjs')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write('function deviceIdentity(panel, storage, deviceId, tag) {' + body + '\n}\n' + harness)
+    proc = subprocess.run([node, path], capture_output=True, text=True,
+                          encoding='utf-8', errors='replace', timeout=60)
+    check(proc.returncode == 0, f"deviceIdentity threw:\n{proc.stderr[-1500:]}")
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    screen = {'key': 'chauffeur_sendspin_id::screen::abc-1234', 'name': 'Chauffeur screen 1234'}
+    phone = {'key': 'chauffeur_sendspin_id::device', 'name': 'Chauffeur phone 1234'}
+    check(out['panel'] == screen, f"a panel is a screen, got {out['panel']}")
+    check(out['screenOnAdmin'] == screen, f"an admin page on a registered screen reuses it, got {out['screenOnAdmin']}")
+    check(out['otherScreen'] == phone, f"another device's screen id is not this machine's, got {out['otherScreen']}")
+    check(out['phone'] == phone and out['noStorage'] == phone and out['throwing'] == phone,
+          f"a bare handset, no storage or a throwing one all stay a phone, got {out}")
+
+
 def scenario_no_music_logic_is_not_an_error():
-    """programs.html and calendar.html load no music logic at all. The
-    lesson still plays there, in the browser's own voice."""
+    """A host that loads no music logic (the house exterior quick lesson,
+    any future include) still plays the lesson, in the browser's own
+    voice -- the sentinel stays."""
     src = _read('components/lesson_player.html')
     import re
     m = re.search(r'\n        async ensureDevicePlayer\(\) \{(.*?)\n        \},',
@@ -2677,6 +2748,8 @@ if __name__ == '__main__':
     scenario_a_created_player_says_the_same_thing_the_music_tab_says()
     scenario_the_hosts_announce_their_one_player()
     scenario_no_music_logic_is_not_an_error()
+    scenario_admin_lesson_hosts_carry_the_device_voice()
+    scenario_a_computer_reuses_its_screen_registration()
     scenario_only_session_level_lines_reach_the_room()
     scenario_the_room_voice_is_a_panel_only_fork()
     scenario_the_room_is_asked_once_and_remembered_on_the_device()

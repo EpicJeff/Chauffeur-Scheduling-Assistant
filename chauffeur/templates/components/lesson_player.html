@@ -1349,18 +1349,35 @@ function lessonPlayer() {
         // Never in a preview, and never where there is no music logic at
         // all -- programs.html and calendar.html load none, and a lesson
         // still plays there in the browser's own voice.
+        // Which Sendspin registration this page should speak through. A
+        // wall panel is a screen. A phone is a handset. A computer on an
+        // admin page is neither by URL, but it is very often a screen the
+        // home board already registered on this same machine -- so when a
+        // screen id is stored under this device, that registration is
+        // reused rather than minting a second player the household would
+        // have to expose in Music Assistant all over again. Pure on
+        // purpose (no `this` beyond the arguments), so Node can execute
+        // it against a fake storage (tests/test_lesson_player_runtime.py).
+        deviceIdentity(panel, storage, deviceId, tag) {
+            const screenKey = 'chauffeur_sendspin_id::screen::' + deviceId;
+            let hasScreen = false;
+            try { hasScreen = !!(storage && storage.getItem(screenKey)); } catch (e) { hasScreen = false; }
+            if (panel || hasScreen) {
+                return {key: screenKey, name: 'Chauffeur screen ' + tag};
+            }
+            return {key: 'chauffeur_sendspin_id::device', name: 'Chauffeur phone ' + tag};
+        },
+
         async ensureDevicePlayer() {
             if (this.preview) return;
             if (typeof MusicLogic === 'undefined') return;
             try {
                 let local = window.chfLocalPlayer;
                 if (!local) {
-                    const key = this.panel
-                        ? 'chauffeur_sendspin_id::screen::' + MusicLogic.deviceId()
-                        : 'chauffeur_sendspin_id::device';
-                    const name = this.panel
-                        ? 'Chauffeur screen ' + MusicLogic.deviceTag()
-                        : 'Chauffeur phone ' + MusicLogic.deviceTag();
+                    let stored = null;
+                    try { stored = localStorage; } catch (e) { stored = null; }
+                    const {key, name} = this.deviceIdentity(
+                        this.panel, stored, MusicLogic.deviceId(), MusicLogic.deviceTag());
                     local = MusicLogic.localPlayer({name, key}, {
                         get apiBase() { return window.chfBase || ''; },
                         onNotice: (msg) => {

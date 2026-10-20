@@ -7,6 +7,11 @@
     <title>Rhythms</title>
     <link href="{{ 'static/vendor/fonts/inter/inter.css'|ver }}" rel="stylesheet">
     {% include 'ha_theme.html' %}
+    <!-- The lesson player's device voice: this machine's own Music Assistant
+         player (static/music_logic.js), the same script app.html and home.html
+         load. Without it a lesson on an admin page could only ever speak through
+         the browser, however many players the household had set up. -->
+    <script src="{{ 'static/music_logic.js'|ver }}"></script>
     <script src="{{ 'static/vendor/alpine.min.js'|ver }}" defer></script>
     <style>
         body { background-color: #111827; color: #e5e7eb; }
