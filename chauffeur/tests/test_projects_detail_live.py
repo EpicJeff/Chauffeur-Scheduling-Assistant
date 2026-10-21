@@ -1,34 +1,100 @@
-"""The Projects page: lanes, a project's detail with its pieces, Add a piece
-(front door spec §2, slice 2, Task 2). Run from chauffeur/:
-python tests/test_projects_detail_live.py   (PROJECTS_SHOTS=<dir> for screenshots)"""
+"""The Projects page as one list (one-list spec §3-§4, Task 4): a project's
+detail is Now / Next / Later / Linked / Logbook rows with a checkbox each, one
+⋯ and one + Add, a step sheet and a link sheet; the list page groups Needs you
+then everything else, with no state chip and no Programs filter. Run from
+chauffeur/: python tests/test_projects_detail_live.py   (PROJECTS_SHOTS=<dir> for screenshots)"""
 from project_sheets_fixture import IDS, admin, check, pwa, serve, shot, storage
 
 
-def _opened(page):
-    return page.evaluate("() => { const out = []; window.addEventListener('chf-record-sheet-open', e => out.push(e.detail)); window.__sheets = out; }")
-
-
-def scenario_lanes_and_the_programs_filter():
+def scenario_detail_is_one_list():
     served = serve()
     if served is None:
         return
     with served.browser() as page:
         page.on('dialog', lambda d: d.dismiss())
         admin(page, served, 'mom')
-        page.goto(served.url('projects'), wait_until='load')
-        page.wait_for_selector('[data-lane="needs_you"]', timeout=15000)
-        needs = page.locator('[data-lane="needs_you"]').inner_text()
-        check('Ride a bike' in needs and 'Bathroom' in needs, f"Kate's unplanned project and the program to approve: {needs}")
-        check('Needs a plan' in needs, "the card says what it needs")
-        check(not any('0 of 0 done' in text for text in page.locator('[data-project-card]').all_inner_texts()),
-              "an empty project has no zero-step progress line")
-        page.locator('[data-lane-filter="programs"]').click()
-        body = page.locator('[data-lane]').all_inner_texts()
-        check(any('Bathroom' in t for t in body) and not any('Ride a bike' in t for t in body), f"Programs filter: {body}")
-        shot(page, 'slice2-lanes')
-        page.goto(served.url('projects?lane=programs'), wait_until='load')
-        page.wait_for_selector('[data-lane-filter="programs"][aria-pressed="true"]', timeout=10000)
+        page.goto(served.url('projects?id=prj-bath'), wait_until='load')
+        page.wait_for_selector('[data-project-detail]', timeout=15000)
+        page.wait_for_selector('[data-row]', timeout=15000)
+        buttons = page.locator('[data-project-detail] button:visible')
+        rows = page.locator('[data-row]')
+        n_rows, n_buttons = rows.count(), buttons.count()
+        asking = page.locator('[data-row-box][data-box-state="asking"]').count()
+        # box + title per row, the ⋯, + Add and the back link, plus asking rows' own buttons
+        check(n_buttons <= 2 * n_rows + 3 + 3 * asking, f"{n_buttons} buttons for {n_rows} rows ({asking} asking)")
+        check(page.locator('[data-project-menu]').count() == 1 and page.locator('[data-project-add]').count() == 1, "one ⋯ and one + Add")
+        check(page.locator('[data-new-project]').count() == 0, "no New project accordion on the detail")
+        groups = [g for g in ('now', 'next', 'later', 'linked', 'logbook') if page.locator(f'[data-row-group="{g}"]').count()]
+        check('now' in groups, f"the fixture's waiting mission makes a Now group: {groups}")
+        texts = ' '.join(page.locator('[data-row]').all_inner_texts())
+        check('waiting_user' not in texts and 'active' not in texts.split(), f"no state codes on rows: {texts[:200]}")
+        shot(page, 'one-list-detail')
         check(served.errors() == [], f"no page errors: {served.errors()}")
+
+
+def scenario_menu_and_add():
+    served = serve()
+    if served is None:
+        return
+    with served.browser() as page:
+        admin(page, served, 'mom')
+        page.goto(served.url('projects?id=prj-bath'), wait_until='load')
+        page.wait_for_selector('[data-project-menu]', timeout=15000)
+        page.locator('[data-project-menu]').click()
+        page.wait_for_selector('#cc-choice-modal:not(.hidden)', timeout=5000)
+        labels = page.locator('#cc-choice-modal button').all_inner_texts()
+        for want in ('Plan it with Argyle', 'Who sees it', 'Pause', 'Mark done', 'Drop', 'Delete'):
+            check(any(want in l for l in labels), f"⋯ holds {want}: {labels}")
+        page.keyboard.press('Escape')
+        page.locator('[data-project-add]').click()
+        page.wait_for_selector('#cc-choice-modal:not(.hidden)', timeout=5000)
+        labels = page.locator('#cc-choice-modal button').all_inner_texts()
+        for want in ('Step', 'Conversation', 'Ask Argyle', 'Program', 'Something already in Chauffeur'):
+            check(any(want in l for l in labels), f"+ Add offers {want}: {labels}")
+        page.keyboard.press('Escape')
+        shot(page, 'one-list-add')
+
+
+def scenario_tick_a_step_and_open_sheets():
+    served = serve()
+    if served is None:
+        return
+    from services import projects
+    step = projects.add_step('prj-bath', {'title': 'Demo the old tile', 'owner': 'mom'}, storage.get_member('mom'))['step']
+    with served.browser() as page:
+        admin(page, served, 'mom')
+        page.goto(served.url('projects?id=prj-bath'), wait_until='load')
+        row = page.locator(f'[data-row="step:{step["id"]}"]')
+        row.wait_for(timeout=15000)
+        row.locator('[data-row-box]').click()
+        page.wait_for_selector(f'[data-row="step:{step["id"]}"][data-row-group="logbook"]', timeout=10000)
+        check(storage.get_project('prj-bath')['steps'][-1]['state'] == 'done', "the tick landed")
+        row.locator('[data-row-title]').click()
+        page.wait_for_selector('[data-step-sheet]', timeout=5000)
+        check(page.locator('[data-step-sheet]').inner_text().count('Put it on the calendar') == 1, "the step sheet holds the calendar control")
+        page.keyboard.press('Escape')
+        thread = page.locator(f'[data-row="conversation:{IDS["thread"]}"]')
+        thread.locator('[data-row-title]').click()
+        page.wait_for_selector('[data-record-sheet][data-open="true"][data-kind="thread"]', timeout=5000)
+        check('Draft a message' in page.locator('[data-record-sheet]').inner_text(), "the thread sheet keeps its verbs")
+        shot(page, 'one-list-sheets')
+
+
+def scenario_list_page_groups():
+    served = serve()
+    if served is None:
+        return
+    with served.browser() as page:
+        admin(page, served, 'mom')
+        page.goto(served.url('projects'), wait_until='load')
+        page.wait_for_selector('[data-project-card]', timeout=15000)
+        check(page.locator('[data-lane-filter="programs"]').count() == 0, "the Programs filter is gone (R5)")
+        check(page.locator('[data-list-group="needs_you"]').count() == 1, "Needs you first")
+        check(page.locator('[data-list-group="rest"]').count() <= 1, "then everything else")
+        check(page.locator('[data-project-card] .chip-state').count() == 0, "no state chip on cards")
+        page.locator('[data-new-project]').click()
+        page.wait_for_selector('[data-create-project]', timeout=5000)
+        shot(page, 'one-list-list')
 
 
 def scenario_closed_projects_are_hidden_folded_and_remembered():
@@ -54,7 +120,7 @@ def scenario_closed_projects_are_hidden_folded_and_remembered():
             page.wait_for_selector(f'[data-project-id="{IDS["bath"]}"]', timeout=15000)
             toggle = page.get_by_role('checkbox', name='Show closed', exact=True)
             toggle.wait_for(state='visible', timeout=10000)
-            lane = page.locator('[data-lane="closed"]')
+            lane = page.locator('[data-list-group="closed"]')
             card = page.locator(f'[data-project-id="{project_id}"]')
             check(not toggle.is_checked(), "Show closed starts unchecked")
             check(card.count() == 0 and lane.count() == 0,
@@ -91,102 +157,8 @@ def scenario_closed_projects_are_hidden_folded_and_remembered():
         served.stop()
 
 
-def scenario_the_detail_view_and_its_pieces():
-    served = serve()
-    if served is None:
-        return
-    with served.browser() as page:
-        page.on('dialog', lambda d: d.dismiss())
-        admin(page, served, 'mom')
-        page.goto(served.url('projects'), wait_until='load')
-        page.wait_for_selector(f'[data-project-id="{IDS["bath"]}"]', timeout=15000)
-        page.locator(f'[data-project-id="{IDS["bath"]}"]').first.click()
-        page.wait_for_selector('[data-project-detail]', timeout=10000)
-        check('id=' + IDS['bath'] in page.url, f"the address names the project: {page.url}")
-        for key in (f'thread:{IDS["thread"]}', f'mission:{IDS["mission"]}', 'program:pr-prop', 'program:pr-live'):
-            check(page.locator(f'[data-piece="{key}"]').count() == 1, f"a card for {key}")
-            check(page.locator(f'[data-piece-open="{key}"]').count() == 1, f"Open on {key}")
-            action = page.locator(f'[data-piece-open="{key}"]')
-            check(action.evaluate("el => el.parentElement.classList.contains('justify-end')"),
-                  f"Open belongs to a right-aligned card action row: {key}")
-            if key.startswith('program:'):
-                check(page.locator(f'[data-piece="{key}"] .bg-gray-900 [data-piece-open]').count() == 1,
-                      f"Open is inside the program card: {key}")
-        check('Tiler' in page.locator(f'[data-piece="thread:{IDS["thread"]}"]').inner_text(), "the thread's situation card")
-        _opened(page)
-        page.locator(f'[data-piece-open="thread:{IDS["thread"]}"]').click()
-        sheets = page.evaluate('() => window.__sheets')
-        check(sheets and sheets[0]['kind'] == 'thread' and sheets[0]['id'] == IDS['thread'] and sheets[0]['projectId'] == IDS['bath'],
-              f"Open asks for the sheet: {sheets}")
-        page.keyboard.press('Escape')
-        page.wait_for_function("() => !document.querySelector('[data-record-sheet]').hasAttribute('data-open')", timeout=5000)
-        shot(page, 'slice2-detail')
-        # Exercise the delegated card handler itself, not just the sheet's Open.
-        act_url = served.url(f'api/situations/thread/{IDS["thread"]}/act')
-        acts = []
-
-        def is_card_act(request):
-            return request.method == 'POST' and request.url == act_url
-
-        page.on('requestfinished', lambda request: acts.append(request) if is_card_act(request) else None)
-        piece = f'[data-piece="thread:{IDS["thread"]}"]'
-        card = page.locator(piece)
-        with page.expect_event('requestfinished', predicate=is_card_act, timeout=10000):
-            card.locator('button[data-sit-act="own"]').click()
-        check(len(acts) == 1 and acts[0].post_data_json.get('verb') == 'own',
-              f"the Tiler card posted own exactly once: {[r.post_data_json for r in acts]}")
-        response = acts[0].response()
-        check(response.status == 200 and response.json().get('status') == 'success',
-              f"own succeeded: {response.status} {response.text()}")
-        card.locator('button[data-sit-act="own"]').wait_for(state='detached')
-        card.locator('button[data-sit-act="done"]').wait_for(state='visible')
-        check(served.errors() == [], f"no page errors after the card acts and refreshes: {served.errors()}")
-
-        page.locator('[data-project-back]').click()
-        page.wait_for_selector(f'[data-project-id="{IDS["bath"]}"]', timeout=10000)
-        check('id=' not in page.url, f"back drops the project from the address: {page.url}")
-        # Traverse the filter as well, then recreate detail in this same document.
-        programs = page.locator('[data-lane-filter="programs"]')
-        programs.click()
-        page.wait_for_selector('[data-lane-filter="programs"][aria-pressed="true"]', timeout=10000)
-        check(programs.get_attribute('aria-pressed') == 'true', "Programs filter is on")
-        programs.click()
-        page.wait_for_selector('[data-lane-filter="programs"][aria-pressed="false"]', timeout=10000)
-        check(programs.get_attribute('aria-pressed') == 'false', "Programs filter is off")
-        page.locator(f'[data-project-id="{IDS["bath"]}"]').click()
-        page.wait_for_selector('[data-project-detail]', timeout=10000)
-        card.locator('button[data-sit-act="done"]').wait_for(state='visible')
-        # Handled closes a thread. Change its next step instead: a reversible
-        # action through the real shared dialogs, with no outside send/model call.
-        next_step = 'Confirm the tile measurements with Ace'
-        with page.expect_event('requestfinished', predicate=is_card_act, timeout=10000):
-            card.locator('button[data-sit-act="advance"]').click()
-            page.locator('#cc-input-modal').wait_for(state='visible')
-            page.locator('#cc-input-field').fill(next_step)
-            page.locator('#cc-input-ok-btn').click()
-            page.wait_for_function("""() => document.getElementById('cc-input-title').textContent === 'By when? (YYYY-MM-DD, or blank)'
-                && !document.getElementById('cc-input-modal').classList.contains('hidden')""", timeout=10000)
-            page.locator('#cc-input-field').fill('')
-            page.locator('#cc-input-ok-btn').click()
-        check(len(acts) == 2 and acts[1].post_data_json.get('verb') == 'advance',
-              f"the recreated card posted advance exactly once: {[r.post_data_json for r in acts]}")
-        response = acts[1].response()
-        check(response.status == 200 and response.json().get('status') == 'success',
-              f"advance succeeded: {response.status} {response.text()}")
-        page.wait_for_function("""({selector, text}) => {
-            const card = document.querySelector(selector);
-            return card && card.innerText.includes(text);
-        }""", arg={'selector': piece, 'text': next_step}, timeout=10000)
-        check(next_step in card.inner_text(), "the recreated card refreshed its next step after the POST")
-        check(served.errors() == [], f"no page errors after recreation and the second act: {served.errors()}")
-        page.locator('#cc-alert-modal').get_by_role('button', name='OK', exact=True).click()
-
-        page.goto(served.url('projects?id=' + IDS['bath']), wait_until='load')
-        page.wait_for_selector('[data-project-detail]', timeout=10000)
-        check(served.errors() == [], f"no page errors: {served.errors()}")
-
-
-def scenario_add_a_piece_inside_the_project():
+def scenario_add_through_the_one_add():
+    """+ Add opens today's thread, mission and program forms inside the project."""
     served = serve()
     if served is None:
         return
@@ -194,9 +166,9 @@ def scenario_add_a_piece_inside_the_project():
         page.on('dialog', lambda d: d.dismiss())
         admin(page, served, 'mom')
         page.goto(served.url('projects?id=' + IDS['bath']), wait_until='load')
-        page.wait_for_selector('[data-add-piece]', timeout=15000)
-        page.locator('[data-add-piece]').click()
-        page.locator('[data-prompt-choice]', has_text='A conversation with someone outside').first.click()
+        page.wait_for_selector('[data-project-add]', timeout=15000)
+        page.locator('[data-project-add]').click()
+        page.locator('[data-prompt-choice]', has_text='Conversation').first.click()
         form = page.locator('[data-piece-form="thread"]')
         form.locator('input[name="title"]').fill('Plumber')
         form.locator('input[name="counterparty_name"]').fill('Bob Pipes')
@@ -207,9 +179,9 @@ def scenario_add_a_piece_inside_the_project():
                 break
             page.wait_for_timeout(250)
         check(rows and rows[0]['project_id'] == IDS['bath'] and rows[0]['counterparty_name'] == 'Bob Pipes', f"made inside: {rows}")
-        page.wait_for_selector(f'[data-piece="thread:{rows[0]["id"]}"]', timeout=10000)
-        page.locator('[data-add-piece]').click()
-        page.locator('[data-prompt-choice]', has_text='Work for Argyle').first.click()
+        page.wait_for_selector(f'[data-row="conversation:{rows[0]["id"]}"]', state='attached', timeout=10000)
+        page.locator('[data-project-add]').click()
+        page.locator('[data-prompt-choice]', has_text='Ask Argyle').first.click()
         form = page.locator('[data-piece-form="mission"]')
         form.locator('textarea[name="goal"]').fill('Compare three plumbers')
         form.locator('select[name="tier"]').select_option('flash')
@@ -223,9 +195,8 @@ def scenario_add_a_piece_inside_the_project():
         form.wait_for(state='detached')
         # Every field (including the program's day controls) must survive the
         # extra binding pass while Alpine removes a cancelled form.
-        for kind, label in (('thread', 'A conversation with someone outside'),
-                            ('mission', 'Work for Argyle'), ('program', 'A practice program')):
-            page.locator('[data-add-piece]').click()
+        for kind, label in (('thread', 'Conversation'), ('mission', 'Ask Argyle'), ('program', 'Program')):
+            page.locator('[data-project-add]').click()
             page.locator('[data-prompt-choice]', has_text=label).first.click()
             form = page.locator(f'[data-piece-form="{kind}"]')
             form.wait_for(state='visible')
@@ -237,7 +208,7 @@ def scenario_add_a_piece_inside_the_project():
         check(served.errors() == [], f"no page errors: {served.errors()}")
 
 
-def scenario_add_a_piece_for_a_child():
+def scenario_add_for_a_child():
     served = serve()
     if served is None:
         return
@@ -251,17 +222,21 @@ def scenario_add_a_piece_for_a_child():
         page.wait_for_selector('[data-project-id="prj-bike"]', timeout=15000)
         page.locator('[data-project-id="prj-bike"]').click()
         page.wait_for_selector('[data-project-detail]', timeout=10000)
-        page.wait_for_selector('[data-add-piece]', timeout=15000)
-        page.locator('[data-add-piece]').click()
+        page.wait_for_selector('[data-project-add]', timeout=15000)
+        page.locator('[data-project-add]').click()
+        page.wait_for_selector('[data-pick]', timeout=5000)
         choices = page.locator('[data-pick]').all_inner_texts()
-        check('Work for Argyle' not in choices and 'A conversation with someone outside' not in choices,
+        check(not any('Ask Argyle' in c or 'Conversation' in c for c in choices),
               f"a child adds no Argyle work and no outside conversation: {choices}")
-        check(any('practice program' in c for c in choices), f"but may propose their own program: {choices}")
+        check(any('Step' in c for c in choices) and any('Program' in c for c in choices),
+              f"but may add a step or propose their own program: {choices}")
+        shot(page, 'one-list-phone-kid')
 
 
-SCENARIOS = [scenario_lanes_and_the_programs_filter, scenario_closed_projects_are_hidden_folded_and_remembered,
-             scenario_the_detail_view_and_its_pieces,
-             scenario_add_a_piece_inside_the_project, scenario_add_a_piece_for_a_child]
+SCENARIOS = [scenario_detail_is_one_list, scenario_menu_and_add, scenario_tick_a_step_and_open_sheets,
+             scenario_list_page_groups, scenario_closed_projects_are_hidden_folded_and_remembered,
+             scenario_add_through_the_one_add, scenario_add_for_a_child]
+
 
 if __name__ == "__main__":
     import traceback

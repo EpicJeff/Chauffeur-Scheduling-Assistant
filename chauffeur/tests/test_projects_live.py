@@ -4,15 +4,16 @@ One shared component (`components/projects_page.html`) draws the admin Work
 group's Projects tab, `/projects`, and the phone app's Projects tab. Markers the
 test relies on (exact):
   * a project card `[data-project-id="<id>"]` (tap to open it);
-  * in the open project: the goal and done-when text; each step
-    `[data-step-id="<id>"]` with its title and owner; a tick control
-    `[data-step-tick="<id>"]` on a person's step; what an Argyle step found;
-    `[data-step-skip="<id>"]` and `[data-step-stop="<id>"]` on a running
-    (doing) Argyle step; `[data-step-hold="<id>"]` on a person's step, which
-    shows the suggested time and `[data-hold-confirm]` to keep it;
-  * `[data-new-project]` opens the New project form: inputs named title, goal,
-    done_when, the shared audience picker (`[data-create-audience] [data-audience-value]`),
-    and `[data-create-project]`;
+  * in the open project (one-list spec §3): the goal and done-when text; each
+    step a row `[data-row="step:<id>"]` whose checkbox `[data-row-box]` ticks a
+    person's step and whose title `[data-row-title]` opens the step sheet
+    `[data-step-sheet]`; what an Argyle step found on its row;
+    `[data-step-skip="<id>"]` and `[data-step-stop="<id>"]` in a running
+    (doing) Argyle step's sheet; `[data-step-hold="<id>"]` in a person's step
+    sheet, which shows the suggested time and `[data-hold-confirm]` to keep it;
+  * on the list page `[data-new-project]` opens the New project sheet: inputs
+    named title, goal, done_when, the shared audience picker
+    (`[data-create-audience] [data-audience-value]`), and `[data-create-project]`;
   * the phone app has a tab `#tab-projects`;
   * an old Programs link opens its piece sheet inside the owning project.
 No browser dialogs anywhere (alert/confirm/prompt).
@@ -129,20 +130,25 @@ def scenario_the_admin_tab():
             text = page.locator('body').inner_text()
             check('Bathroom' in text and 'Learn to ride a bike' in text and 'Get down to 185 lbs' in text, "Mom's cards")
             page.locator(f'[data-project-id="{IDS["bath"]}"]').first.click()
-            page.wait_for_selector('[data-step-id="demo"]', timeout=10000)
-            body = page.locator('body').inner_text()
+            page.wait_for_selector('[data-row="step:demo"]', timeout=10000)
+            body = page.locator('[data-project-detail]').inner_text()
             check('a new bathroom' in body and 'we use it every day' in body, "goal and done-when")
-            check('Ivory matte' in body, "what Argyle's step found")
+            check('Ivory matte' in page.locator('[data-row="step:tile"]').inner_text(), "what Argyle's step found, on its row")
+            page.locator('[data-row="step:tile"] [data-row-title]').click()
+            page.wait_for_selector('[data-step-sheet]', timeout=5000)
             check(page.locator('[data-step-skip="tile"]').count() == 1 and page.locator('[data-step-stop="tile"]').count() == 1,
-                  "Skip and Stop on a running Argyle step")
-            page.locator('[data-step-tick="demo"]').first.click()
-            page.wait_for_function('() => true')
+                  "Skip and Stop in a running Argyle step's sheet")
+            page.keyboard.press('Escape')
+            page.wait_for_selector('[data-step-sheet]', state='detached', timeout=5000)
+            page.locator('[data-row="step:demo"] [data-row-box]').click()
             for _ in range(40):
                 if _step(IDS['bath'], 'demo')['state'] == 'done':
                     break
                 page.wait_for_timeout(250)
             check(_step(IDS['bath'], 'demo')['state'] == 'done', f"the tick reached the server: {calls[-6:]}")
-            page.locator('[data-step-hold="lay"]').first.click()
+            page.locator('[data-row="step:lay"] [data-row-title]').click()
+            page.wait_for_selector('[data-step-sheet]', timeout=5000)
+            page.locator('[data-step-hold="lay"]').click()
             page.wait_for_selector('[data-hold-confirm]', timeout=10000)
             page.locator('[data-hold-confirm]').first.click()
             for _ in range(40):
@@ -150,9 +156,13 @@ def scenario_the_admin_tab():
                     break
                 page.wait_for_timeout(250)
             check(_step(IDS['bath'], 'lay').get('hold'), "the suggested time was kept")
+            page.wait_for_function("() => (document.querySelector('[data-step-sheet]') || {innerText: ''}).innerText.includes('On the calendar')",
+                                   timeout=10000)
             if SHOTS:
                 Path(SHOTS).mkdir(parents=True, exist_ok=True)
                 Path(SHOTS, 'projects-admin.png').write_bytes(page.screenshot(full_page=True))
+            page.keyboard.press('Escape')
+            page.locator('[data-project-back]').click()
             page.locator('[data-new-project]').first.click()
             page.fill('[name="title"]', 'Garage clear-out')
             page.fill('[name="goal"]', 'park the car inside')
@@ -194,8 +204,8 @@ def scenario_the_phone_tab_for_a_child_and_a_parent():
             check('Learn to ride a bike' in text and 'Bathroom' in text and '185' not in text,
                   "Kate sees her project and the household one, never Mom's private one")
             page.locator(f'[data-project-id="{IDS["bike"]}"]').first.click()
-            page.wait_for_selector('[data-step-tick="prac"]', timeout=10000)
-            page.locator('[data-step-tick="prac"]').first.click()
+            page.wait_for_selector('[data-row="step:prac"] [data-row-box]', timeout=10000)
+            page.locator('[data-row="step:prac"] [data-row-box]').click()
             for _ in range(40):
                 if _step(IDS['bike'], 'prac')['state'] == 'done':
                     break

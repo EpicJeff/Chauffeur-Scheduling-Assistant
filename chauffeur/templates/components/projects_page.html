@@ -1,13 +1,16 @@
 {# One builder for /work, /projects and the phone app. Hosts own chrome.
-   Programs supplies the disclosure, card, checklist, form and chip vocabulary.
-   Who sees a project is the shared people picker (components/audience_picker.html):
-   inline in the create form, in the audience sheet from the detail page.
-   Delete (projects delete spec §7) is the shared chfDeleteRecord
-   (components/record_delete.html): the project's own red Delete beside Drop,
-   Delete on a thread, mission or program piece, Remove (unlink only) on every
-   other linked kind. A mission launched from a thread of this project folds
-   into that thread's card only when the card is drawn here in full and the
-   host's thread sheet lists its missions; otherwise it keeps its own card. #}
+   A project's detail is one list (spec 2026-10-20-projects-one-list §3): the
+   `rows` GET /api/projects/{id} returns, grouped Now / Next / Later / Linked /
+   Logbook, each with a checkbox that completes its next moment
+   (POST /api/projects/{id}/tick), one ⋯ (promptChoice, as the music widget's
+   ⋯) and one + Add. A row's title opens its sheet: the record sheet for a
+   thread, mission or program (their verbs and Delete live there), the step
+   sheet for a step, the link sheet (Open, Remove) for a trip, occasion or
+   list. Folding a thread's mission into its row is the server's
+   (projects._fold_target). Who sees a project is the shared people picker
+   (components/audience_picker.html): inline in the New project sheet, in the
+   audience sheet from ⋯ › Who sees it. Delete (projects delete spec §7) is
+   the shared chfDeleteRecord (components/record_delete.html) from ⋯. #}
 {% from 'components/audience_picker.html' import audience_picker, audience_picker_script %}
 {% from 'components/record_delete.html' import record_delete_script %}
 {% from 'components/library_card.html' import library_profile_fields, library_script %}
@@ -17,69 +20,30 @@
     <h2 class="panel-page-title">Projects</h2>
     <p class="text-xs text-gray-500 italic px-1" x-show="loading">Loading projects…</p>
     <p class="text-xs text-gray-500 italic px-1" x-show="error" x-text="error" role="status"></p>
-    <div class="bg-gray-800 rounded-2xl border border-gray-700 p-4 mb-6">
-        <button type="button" data-new-project @click="creating = !creating" :aria-expanded="creating"
-                class="w-full flex items-center justify-between text-sm font-bold text-gray-200">
-            <span>+ New project</span><span class="text-gray-500 text-xs" x-text="creating ? 'Hide' : 'Show'"></span>
-        </button>
-        <template x-if="creating">
-            <form class="mt-3 space-y-2.5" @submit.prevent="create()">
-                <label class="block text-xs text-gray-400">Title
-                    <input name="title" required x-model="draft.title" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm">
-                </label>
-                <label class="block text-xs text-gray-400">Goal
-                    <textarea name="goal" x-model="draft.goal" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm"></textarea>
-                </label>
-                <label class="block text-xs text-gray-400">Done when
-                    <textarea name="done_when" x-model="draft.done_when" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm"></textarea>
-                </label>
-                <template x-if="isParent()">
-                    <label class="block text-xs text-gray-400">Owner
-                        <select name="owner_member_id" x-model="draft.owner_member_id" @change="defaultAudience()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm">
-                            <template x-for="m in owners()" :key="m.id"><option :value="m.id" x-text="m.name"></option></template>
-                        </select>
-                    </label>
-                </template>
-                <div class="text-xs text-gray-400" data-create-audience>Who can see it
-                    <div class="mt-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2">
-                        {{ audience_picker("audienceCfg(draft.owner_member_id, draft.audience, draft.shared_with)", "draft.audience = $event.detail.audience; draft.shared_with = $event.detail.shared_with") }}
-                    </div>
-                </div>
-                <label class="block text-xs text-gray-400">Target date (optional)
-                    <input name="target_date" type="date" x-model="draft.target_date" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm">
-                </label>
-                <button data-create-project :disabled="!!busy" class="w-full text-sm font-bold px-3 py-2 rounded-lg bg-teal-700 text-white active:bg-teal-800 disabled:opacity-50">Create project</button>
-            </form>
-        </template>
-    </div>
     <template x-if="!opened">
         <div>
             <div class="flex flex-wrap items-center gap-2 mb-3">
-                <button type="button" data-lane-filter="programs" @click="programsOnly = !programsOnly; bindCards()" :aria-pressed="programsOnly ? 'true' : 'false'"
-                        :class="programsOnly ? 'bg-teal-700 text-white border-teal-600' : 'bg-gray-800 text-gray-300 border-gray-700'"
-                        class="text-xs font-bold px-2.5 py-1.5 rounded-lg border">Programs</button>
+                <button type="button" data-new-project @click="creating = true" :disabled="!!busy"
+                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800 disabled:opacity-50">+ New project</button>
                 <label class="ml-auto flex items-center gap-2 text-[11px] text-gray-500 cursor-pointer select-none">
-                    <input type="checkbox" x-model="showClosed" @change="rememberClosed(); bindCards()" class="h-3.5 w-3.5 accent-teal-400"><span>Show closed</span>
+                    <input type="checkbox" x-model="showClosed" @change="rememberClosed()" class="h-3.5 w-3.5 accent-teal-400"><span>Show closed</span>
                 </label>
             </div>
             <p class="text-xs text-gray-500 italic px-1" x-show="!loading && !error && !shownProjects.length">No projects yet.</p>
-            <template x-for="ln in lanes" :key="ln.key">
-                <div class="mb-5" :data-lane="ln.key">
-                    <button type="button" x-show="ln.key === 'closed'" @click="closedOpen = !closedOpen"
+            <template x-for="g in listGroups" :key="g.key">
+                <div class="mb-5" :data-list-group="g.key">
+                    <button type="button" x-show="g.key === 'closed'" @click="closedOpen = !closedOpen"
                             class="w-full flex items-center justify-between text-xs font-black uppercase tracking-widest px-1 mb-2 text-gray-600">
-                        <span x-text="ln.label + ' (' + ln.items.length + ')'"></span>
+                        <span x-text="g.label + ' (' + g.items.length + ')'"></span>
                         <span class="normal-case font-semibold" x-text="closedOpen ? 'Hide' : 'Show'"></span>
                     </button>
-                    <div x-show="ln.key !== 'closed'" class="text-xs font-black uppercase tracking-widest px-1 mb-2" :class="ln.titleClass" x-text="ln.label"></div>
-                    <div class="space-y-2" x-show="ln.key !== 'closed' || closedOpen">
-                        <template x-for="project in ln.items" :key="project.id">
+                    <div x-show="g.key !== 'closed'" class="text-xs font-black uppercase tracking-widest px-1 mb-2" :class="g.cls" x-text="g.label"></div>
+                    <div class="space-y-2" x-show="g.key !== 'closed' || closedOpen">
+                        <template x-for="project in g.items" :key="project.id">
                             <article data-project-card class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
                                 <button type="button" :data-project-id="project.id" @click="open(project)" class="w-full text-left">
-                                    <span class="flex items-start justify-between gap-2">
-                                        <span class="text-sm font-bold text-gray-100" x-text="project.title"></span>
-                                        <span class="text-xs font-bold px-1.5 py-0.5 rounded shrink-0" :class="chip(project.state)" x-text="project.state"></span>
-                                    </span>
-                                    <span class="block text-[11px] text-gray-500 mt-0.5" x-text="memberName(project.owner_member_id)"></span>
+                                    <span class="block text-sm font-bold text-gray-100" x-text="project.title"></span>
+                                    <span class="block text-[11px] text-gray-500 mt-0.5" x-text="[memberName(project.owner_member_id), project.lane_word].filter(Boolean).join(' · ')"></span>
                                     <span class="block text-xs text-gray-400 mt-1" x-text="project.card_next || ''"></span>
                                     <span class="block text-xs text-gray-500 mt-1" x-show="project.steps_total > 0" x-text="project.steps_done + ' of ' + project.steps_total + ' done'"></span>
                                 </button>
@@ -88,16 +52,20 @@
                     </div>
                 </div>
             </template>
-            <template x-if="visibleElsewhere.length && !programsOnly">
-                <div class="mb-5" data-lane="elsewhere">
-                    <div class="text-xs font-black uppercase tracking-widest px-1 mb-2 text-gray-500">Your work elsewhere</div>
-                    <div class="space-y-2" data-pieces>
+            <!-- Argyle's work this person started in a project they cannot see: rows, its verbs in its sheet. -->
+            <template x-if="visibleElsewhere.length">
+                <div class="mb-5" data-list-group="elsewhere">
+                    <div class="text-xs font-black uppercase tracking-widest px-1 mb-2 text-gray-500">Argyle work you started elsewhere</div>
+                    <div class="space-y-1.5">
                         <template x-for="s in visibleElsewhere" :key="s.id">
-                            <div :data-piece="'mission:' + s.id">
-                                <div x-html="window.Situations.cardHtml(s, sitCtx())"></div>
-                                <div class="flex justify-end px-3 mt-1">
+                            <div data-elsewhere-row :data-piece="'mission:' + s.id"
+                                 class="bg-gray-950/60 border border-gray-800 rounded-lg px-2.5 py-1.5 flex items-start gap-2.5"
+                                 :class="elsewhereBox(s) === 'asking' ? 'border-amber-500/50' : ''">
+                                <span class="row-box mt-0.5 shrink-0" :class="'row-box-' + elsewhereBox(s)" aria-hidden="true"></span>
+                                <div class="min-w-0 flex-1">
                                     <button type="button" :data-piece-open="'mission:' + s.id" @click="openSheet('mission', s.id, s.title, null)"
-                                            class="text-xs font-bold text-teal-300 underline underline-offset-2">Open</button>
+                                            class="block w-full text-left text-xs font-semibold text-gray-200" x-text="s.title"></button>
+                                    <div class="text-[11px] text-gray-500" x-text="s.status_note || 'Argyle'"></div>
                                 </div>
                             </div>
                         </template>
@@ -106,189 +74,216 @@
             </template>
         </div>
     </template>
+    <!-- New project: today's create form in a sheet framed like the record sheet. -->
+    <template x-if="creating">
+        <div data-create-sheet class="fixed inset-0 z-[82] bg-black/40 flex justify-end items-end md:items-stretch"
+             @click.self="creating = false" @keydown.escape.window="if (!promptOpen()) creating = false">
+            <div role="dialog" aria-modal="true" aria-label="New project"
+                 class="bg-gray-800 w-full md:w-[40rem] h-[88vh] md:h-full overflow-y-auto border-t md:border-t-0 md:border-l border-gray-700 rounded-t-2xl md:rounded-none p-4 space-y-3">
+                <div class="flex items-center gap-3">
+                    <h2 class="flex-1 min-w-0 text-lg font-extrabold text-white truncate">New project</h2>
+                    <button type="button" @click="creating = false" title="Close" aria-label="Close"
+                            class="w-8 h-8 shrink-0 rounded-full bg-gray-900 text-white hover:bg-gray-700 font-bold">✕</button>
+                </div>
+                <form class="space-y-2.5" @submit.prevent="create()">
+                    <label class="block text-xs text-gray-400">Title
+                        <input name="title" required x-model="draft.title" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm">
+                    </label>
+                    <label class="block text-xs text-gray-400">Goal
+                        <textarea name="goal" x-model="draft.goal" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm"></textarea>
+                    </label>
+                    <label class="block text-xs text-gray-400">Done when
+                        <textarea name="done_when" x-model="draft.done_when" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm"></textarea>
+                    </label>
+                    <template x-if="isParent()">
+                        <label class="block text-xs text-gray-400">Owner
+                            <select name="owner_member_id" x-model="draft.owner_member_id" @change="defaultAudience()" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm">
+                                <template x-for="m in owners()" :key="m.id"><option :value="m.id" x-text="m.name"></option></template>
+                            </select>
+                        </label>
+                    </template>
+                    <div class="text-xs text-gray-400" data-create-audience>Who can see it
+                        <div class="mt-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2">
+                            {{ audience_picker("audienceCfg(draft.owner_member_id, draft.audience, draft.shared_with)", "draft.audience = $event.detail.audience; draft.shared_with = $event.detail.shared_with") }}
+                        </div>
+                    </div>
+                    <label class="block text-xs text-gray-400">Target date (optional)
+                        <input name="target_date" type="date" x-model="draft.target_date" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm">
+                    </label>
+                    <button data-create-project :disabled="!!busy" class="w-full text-sm font-bold px-3 py-2 rounded-lg bg-teal-700 text-white active:bg-teal-800 disabled:opacity-50">Create project</button>
+                </form>
+            </div>
+        </div>
+    </template>
     <template x-if="opened && detail">
         <div data-project-detail class="space-y-3">
             <button type="button" data-project-back @click="back()" class="text-xs font-semibold text-gray-400 underline underline-offset-2">← All projects</button>
             <template x-for="project in [detail]" :key="project.id">
-                <article data-project-card class="bg-gray-900 border border-gray-800 rounded-2xl p-3 space-y-2.5">
+                <article data-project-card class="bg-gray-900 border border-gray-800 rounded-2xl p-3 space-y-3">
                     <div class="flex items-start justify-between gap-2">
-                        <h3 class="text-base font-bold text-gray-100" x-text="project.title"></h3>
-                        <span class="text-xs font-bold px-1.5 py-0.5 rounded shrink-0" :class="chip(project.state)" x-text="project.state"></span>
+                        <div class="min-w-0">
+                            <h3 class="text-base font-bold text-gray-100" x-text="project.title"></h3>
+                            <p class="text-[11px] text-gray-500 mt-0.5" data-project-header x-text="headerLine(project)"></p>
+                            <p class="text-xs text-gray-400 mt-0.5" x-show="project.goal && project.goal !== project.title" x-text="project.goal"></p>
+                        </div>
+                        <button type="button" data-project-menu @click="menu(project)" x-show="menuItems(project).length" :disabled="!!busy" aria-label="More" title="More"
+                                class="w-8 h-8 p-2 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700 shrink-0 text-sm font-black leading-none disabled:opacity-50">⋯</button>
                     </div>
-                        <template x-if="project.body_goal || project.can_edit_audience">
-                            <div data-audience-row class="flex items-center justify-between gap-2 text-sm">
-                                <p class="min-w-0 text-gray-300"><span class="text-gray-500">Who sees it: </span><span data-audience-label x-text="project.body_goal ? 'Only you' : project.audience_label"></span></p>
-                                <template x-if="!project.body_goal">
-                                    <button type="button" data-audience-change @click="chooseAudience(project)" :disabled="!!busy"
-                                            class="text-xs font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 shrink-0 disabled:opacity-50">Change</button>
-                                </template>
-                            </div>
-                        </template>
-                        <p class="text-sm text-gray-300"><span class="text-gray-500">Goal: </span><span x-text="project.goal"></span></p>
-                        <p class="text-sm text-gray-300"><span class="text-gray-500">Done when: </span><span x-text="project.done_when"></span></p>
-                        <p class="text-xs text-gray-500" x-show="project.target_date" x-text="project.target_date ? 'Target: ' + project.target_date : ''"></p>
-                        <ol class="space-y-1">
-                            <template x-for="step in ordered(project)" :key="step.id">
-                                <li :data-step-id="step.id" class="text-xs bg-gray-950/60 border border-gray-800 rounded-lg px-2.5 py-1.5 space-y-1">
-                                    <div class="flex items-start justify-between gap-2">
-                                        <div class="min-w-0">
-                                            <div class="font-semibold text-gray-300" x-text="step.title"></div>
-                                            <div class="text-gray-500"><span x-text="step.owner_label"></span><span x-text="step.due_date ? ' · Due ' + step.due_date : ''"></span></div>
-                                        </div>
-                                        <template x-if="step.owner !== 'argyle' && step.can_edit">
-                                            <button type="button" :data-step-tick="step.id" @click="tick(project, step)" :disabled="!!busy"
-                                                    :aria-pressed="step.state === 'done'" :aria-label="(step.state === 'done' ? 'Reopen ' : 'Complete ') + step.title"
-                                                    class="text-xs font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 disabled:opacity-50"
-                                                    x-text="step.state === 'done' ? '✓ Done' : 'Tick'"></button>
+                    <div data-progress x-show="project.steps_total > 0" class="flex items-center gap-2 text-[11px] text-gray-500">
+                        <div class="flex-1 h-1.5 rounded bg-gray-800 overflow-hidden"><div class="h-full bg-teal-500" :style="'width:' + Math.round(100 * project.steps_done / Math.max(1, project.steps_total)) + '%'"></div></div>
+                        <span x-text="project.steps_done + ' of ' + project.steps_total + ' done'"></span>
+                    </div>
+                    <template x-for="g in groups(project)" :key="g.key">
+                        <div :data-row-group-section="g.key">
+                            <button type="button" x-show="g.key === 'logbook'" @click="logOpen = !logOpen" :aria-expanded="logOpen ? 'true' : 'false'"
+                                    class="w-full flex items-center justify-between text-[10px] font-black uppercase tracking-widest px-1 mb-1.5 text-gray-600">
+                                <span x-text="'Logbook · ' + g.rows.length"></span><span class="normal-case font-semibold" x-text="logOpen ? 'Hide' : 'Show'"></span>
+                            </button>
+                            <div x-show="g.key !== 'logbook'" class="text-[10px] font-black uppercase tracking-widest px-1 mb-1.5" :class="g.cls" x-text="g.label"></div>
+                            <div class="space-y-1.5">
+                                <template x-for="r in g.rows" :key="rowKey(r)">
+                                    <!-- The Logbook stays folded; the row just ticked stays in view until the next visit. -->
+                                    <div :data-row="r.kind + ':' + r.id" :data-row-group="r.group" :data-moment="JSON.stringify(r.moment)"
+                                         x-show="g.key !== 'logbook' || logOpen || justDone === rowKey(r)"
+                                         class="bg-gray-950/60 border border-gray-800 rounded-lg px-2.5 py-1.5 flex items-start gap-2.5"
+                                         :class="r.group === 'later' ? 'opacity-60' : (r.box === 'asking' ? 'border-amber-500/50' : '')">
+                                        <template x-if="r.box">
+                                            <button type="button" data-row-box :data-box-state="r.box" @click="tick(project, r)"
+                                                    :disabled="!!boxDisabled(project, r)"
+                                                    :aria-label="(r.box === 'done' ? 'Reopen ' : 'Complete ') + r.title" :aria-pressed="r.box === 'done' ? 'true' : 'false'"
+                                                    class="row-box mt-0.5 shrink-0" :class="'row-box-' + r.box"></button>
                                         </template>
-                                    </div>
-                                    <div class="text-gray-400" x-text="stepState(step.state)"></div>
-                                    <template x-if="step.owner === 'argyle'">
-                                        <div class="space-y-1">
-                                            <template x-for="(line, i) in foundLines(step.found)" :key="i"><p class="text-gray-300" x-text="line"></p></template>
-                                            <p class="text-gray-300" x-show="step.question" x-text="step.question ? 'Argyle needs you: ' + step.question : ''"></p>
-                                            <template x-if="step.mission_id && !isChild()"><button type="button" :data-piece-open="'mission:' + step.mission_id" @click="openSheet('mission', step.mission_id, step.title, project.id)" class="text-blue-400 underline underline-offset-2">Open Argyle’s work and answer</button></template>
-                                            <template x-if="step.state === 'doing' && step.can_cancel">
-                                                <div class="flex flex-wrap gap-2">
-                                                    <button type="button" :data-step-skip="step.id" @click="cancel(project, step, 'skip')" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Skip</button>
-                                                    <button type="button" :data-step-stop="step.id" @click="cancel(project, step, 'stop')" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Stop</button>
+                                        <template x-if="!r.box"><span class="row-glyph mt-0.5 shrink-0 text-gray-500 text-xs" aria-hidden="true" x-text="glyph(r)"></span></template>
+                                        <div class="min-w-0 flex-1">
+                                            <button type="button" data-row-title :data-piece-open="pieceKey(project, r)" @click="openRow(project, r)"
+                                                    class="block w-full text-left text-xs font-semibold text-gray-200"
+                                                    :class="r.box === 'done' ? 'line-through text-gray-500' : ''" x-text="r.title"></button>
+                                            <div class="text-[11px] text-gray-500" x-text="subtitle(r)"></div>
+                                            <template x-if="r.kind !== 'link' && r.actions.length && r.box !== 'done'">
+                                                <div class="flex flex-wrap gap-1.5 mt-1">
+                                                    <template x-for="(a, i) in r.actions" :key="a.id">
+                                                        <button type="button" :data-row-action="a.id" @click="rowAction(project, r, a)" :disabled="!!busy"
+                                                                class="text-[11px] font-bold px-2.5 py-1 rounded-lg disabled:opacity-50"
+                                                                :class="i === 0 ? 'bg-teal-700 text-white active:bg-teal-800' : 'bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700'"
+                                                                x-text="actionLabel(a)"></button>
+                                                    </template>
                                                 </div>
                                             </template>
                                         </div>
-                                    </template>
-                                    <template x-if="step.owner !== 'argyle'">
-                                        <div class="space-y-1">
-                                            <p class="text-gray-400" x-show="step.hold" x-text="step.hold ? 'On the calendar: ' + windowLabel(step.hold) : ''"></p>
-                                            <template x-if="step.can_edit">
-                                                <div class="flex flex-wrap gap-2">
-                                                    <button type="button" :data-step-hold="step.id" @click="suggest(project, step)" :disabled="!!busy" class="text-xs font-semibold text-gray-500 underline underline-offset-2">Put it on the calendar</button>
-                                                    <template x-if="step.hold"><button type="button" @click="writeStep(project, step, 'hold/clear', {})" :disabled="!!busy" class="text-xs font-semibold text-gray-500 underline underline-offset-2">Clear time</button></template>
-                                                </div>
-                                            </template>
-                                            <template x-if="hold && hold.projectId === project.id && hold.stepId === step.id">
-                                                <div class="mt-2 space-y-2">
-                                                    <p class="text-gray-300" x-text="hold ? (hold.window ? windowLabel(hold.window) : hold.message) : ''"></p>
-                                                    <div class="flex flex-wrap gap-2">
-                                                        <template x-if="hold && hold.window"><button type="button" data-hold-confirm @click="keepHold(project, step)" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800">Keep this time</button></template>
-                                                        <button type="button" @click="pickTime()" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Pick another time</button>
-                                                        <button type="button" @click="hold = null" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Cancel</button>
-                                                    </div>
-                                                </div>
-                                            </template>
-                                        </div>
-                                    </template>
-                                </li>
-                            </template>
-                        </ol>
-                        <template x-if="project.can_act"><button type="button" @click="addStep(project)" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Add a step</button></template>
-                    <div class="space-y-2" data-pieces>
-                        <div class="text-sm font-bold text-gray-300">Pieces</div>
-                        <p class="text-xs text-gray-500 italic" x-show="!(pieces[project.id] || []).length">No pieces attached yet.</p>
-                        <template x-for="card in standalonePieces(project)" :key="card.kind + ':' + card.id">
-                            <div :data-piece="card.kind + ':' + card.id">
-                                <template x-if="card.situation">
-                                    <div>
-                                        <div x-html="window.Situations.cardHtml(card.situation, sitCtx())"></div>
-                                        <template x-if="card.sheet">
-                                            <div class="flex justify-end gap-4 px-3 mt-1">
-                                                <button type="button" :data-piece-open="card.kind + ':' + card.id" @click="openSheet(card.kind, card.id, card.title, project.id)"
-                                                        class="text-xs font-bold text-teal-300 underline underline-offset-2">Open</button>
-                                                <template x-if="pieceDeletable(project, card)">
-                                                    <button type="button" :data-piece-delete="card.kind + ':' + card.id" @click="deletePiece(project, card)"
-                                                            class="text-xs font-bold text-red-400 underline underline-offset-2">Delete</button>
-                                                </template>
-                                            </div>
-                                        </template>
-                                        <!-- Argyle's work launched from this thread, folded under it with its own open and Delete. -->
-                                        <template x-if="card.kind === 'thread' && foldedUnder(project, card).length">
-                                            <div data-folded-missions class="mt-2 ml-3 pl-3 border-l border-gray-800 space-y-2">
-                                                <template x-for="m in foldedUnder(project, card)" :key="'mission:' + m.id">
-                                                    <div :data-piece="'mission:' + m.id" :data-folded-in="card.id">
-                                                        <div x-html="window.Situations.cardHtml(m.situation, sitCtx())"></div>
-                                                        <div class="flex justify-end gap-4 px-3 mt-1">
-                                                            <button type="button" :data-piece-open="'mission:' + m.id" @click="openSheet('mission', m.id, m.title, project.id)"
-                                                                    class="text-xs font-bold text-teal-300 underline underline-offset-2">Open</button>
-                                                            <button type="button" :data-piece-delete="'mission:' + m.id" @click="deletePiece(project, m)"
-                                                                    class="text-xs font-bold text-red-400 underline underline-offset-2">Delete</button>
-                                                        </div>
-                                                    </div>
-                                                </template>
-                                            </div>
-                                        </template>
-                                    </div>
-                                </template>
-                                <template x-if="card.kind === 'program'">
-                                    <div data-run-card class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
-                                        <div class="flex items-start justify-between gap-2">
-                                            <span class="text-sm font-bold text-gray-100" x-text="card.title"></span>
-                                            <span class="text-xs font-bold px-1.5 py-0.5 rounded shrink-0" :class="chip(card.program.state)" x-text="card.program.state"></span>
-                                        </div>
-                                        <!-- The run reads its library program: a button to it, and the
-                                             current lesson by name under its phase -- never a count. -->
-                                        <template x-if="!card.program.unresolved && card.program.library_id">
-                                            <button type="button" data-library-link :data-library-id="card.program.library_id" @click="chfLibrary.open(card.program.library_id)"
-                                                    class="block text-left text-xs font-semibold text-teal-300 underline underline-offset-2 mt-1"
-                                                    x-text="'from the library: ' + card.program.library_title"></button>
-                                        </template>
-                                        <p data-current-lesson class="text-xs text-gray-400 mt-1" x-show="lessonLine(card)" x-text="lessonLine(card)"></p>
-                                        <p data-ready-to-judge class="text-xs text-blue-300 mt-1" x-show="card.program.ready_to_judge"
-                                           x-text="'ready to judge: ' + (card.program.ready_to_judge || '')"></p>
-                                        <template x-if="card.program.unresolved">
-                                            <div data-run-unresolved class="mt-1 space-y-1.5">
-                                                <p class="text-xs text-gray-400">Pick a program to carry on, or delete this run.</p>
-                                                <template x-if="canRebind(project, card)">
-                                                    <button type="button" data-run-rebind @click="rebind(project, card)" :disabled="!!busy"
-                                                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 disabled:opacity-50">Pick a program</button>
-                                                </template>
-                                            </div>
-                                        </template>
-                                        <p class="text-xs text-blue-300 mt-1" x-show="card.program.state === 'proposed'">Proposed: see its week and approve it here.</p>
-                                        <template x-if="card.sheet">
-                                            <div class="flex justify-end gap-4 mt-1">
-                                                <button type="button" :data-piece-open="card.kind + ':' + card.id" @click="openSheet(card.kind, card.id, card.title, project.id)"
-                                                        class="text-xs font-bold text-teal-300 underline underline-offset-2">Open</button>
-                                                <template x-if="pieceDeletable(project, card)">
-                                                    <button type="button" :data-piece-delete="card.kind + ':' + card.id" @click="deletePiece(project, card)"
-                                                            class="text-xs font-bold text-red-400 underline underline-offset-2">Delete</button>
-                                                </template>
-                                            </div>
-                                        </template>
-                                    </div>
-                                </template>
-                                <template x-if="!card.sheet">
-                                    <div class="flex items-center justify-between gap-3">
-                                        <button type="button" :data-piece-link="card.kind + ':' + card.id" @click="openLink(card)" class="text-xs text-blue-400 underline underline-offset-2 min-w-0 text-left" x-text="card.title"></button>
-                                        <template x-if="project.can_act">
-                                            <button type="button" :data-piece-remove="card.kind + ':' + card.id" @click="removePiece(project, card)" :disabled="!!busy"
-                                                    class="text-xs font-bold text-gray-400 underline underline-offset-2 shrink-0 disabled:opacity-50">Remove</button>
-                                        </template>
+                                        <span class="text-[11px] text-gray-500 shrink-0 mt-0.5" x-text="whenLabel(r)"></span>
                                     </div>
                                 </template>
                             </div>
-                        </template>
-                    </div>
+                        </div>
+                    </template>
+                    <p class="text-xs text-gray-500 italic" x-show="!(rows[project.id] || []).length">Nothing here yet. Add a step, or plan it with Argyle.</p>
                     <template x-if="project.can_act && project.state === 'active'">
                         <div class="space-y-2">
-                            <button type="button" data-add-piece @click="addPiece(project)" :disabled="!!busy"
-                                    class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 disabled:opacity-50">Add a piece</button>
+                            <button type="button" data-project-add @click="add(project)" :disabled="!!busy"
+                                    class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800 disabled:opacity-50">+ Add</button>
                             {% include 'components/project_piece_forms.html' %}
                         </div>
                     </template>
-                        <template x-if="project.can_act || canDelete(project)">
-                            <div class="flex flex-wrap gap-2 mt-2.5">
-                                <template x-if="project.can_act && !isChild() && project.state === 'active'"><button type="button" @click="plan(project)" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Plan it with Argyle</button></template>
-                                <template x-if="project.can_act && project.state === 'active'"><button type="button" @click="state(project, 'paused', 'Pause')" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Pause</button></template>
-                                <template x-if="project.can_act && project.state === 'paused'"><button type="button" @click="state(project, 'active', 'Resume')" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800">Resume</button></template>
-                                <template x-if="project.can_act && ['active', 'paused'].includes(project.state)"><button type="button" @click="state(project, 'done', 'Mark done')" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-700 text-white active:bg-emerald-800">Done</button></template>
-                                <template x-if="project.can_act && ['active', 'paused'].includes(project.state)"><button type="button" @click="state(project, 'dropped', 'Drop')" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Drop</button></template>
-                                <template x-if="canDelete(project)"><button type="button" data-project-delete @click="deleteProject(project)" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-900 text-red-400 border border-red-900/60 active:bg-red-950 disabled:opacity-50">Delete</button></template>
+                </article>
+            </template>
+            <!-- The step sheet: a step's own controls, framed like the record sheet (components/record_sheet.html). -->
+            <template x-if="stepSheet">
+                <div data-step-sheet class="fixed inset-0 z-[82] bg-black/40 flex justify-end items-end md:items-stretch"
+                     @click.self="stepSheet = null" @keydown.escape.window="if (!promptOpen()) stepSheet = null">
+                    <div role="dialog" aria-modal="true" :aria-label="stepSheet.step.title"
+                         class="bg-gray-800 w-full md:w-[40rem] h-[70vh] md:h-full overflow-y-auto border-t md:border-t-0 md:border-l border-gray-700 rounded-t-2xl md:rounded-none p-4 space-y-3">
+                        <div class="flex items-center gap-3">
+                            <h2 class="flex-1 min-w-0 text-lg font-extrabold text-white truncate" x-text="stepSheet.step.title"></h2>
+                            <button type="button" @click="stepSheet = null" title="Close" aria-label="Close"
+                                    class="w-8 h-8 shrink-0 rounded-full bg-gray-900 text-white hover:bg-gray-700 font-bold">✕</button>
+                        </div>
+                        <p class="text-sm text-gray-300"><span class="text-gray-500">Who: </span><span x-text="stepSheet.step.owner_label"></span><span x-text="stepSheet.step.due_date ? ' · due ' + stepSheet.step.due_date : ''"></span></p>
+                        <p class="text-sm text-gray-400" x-text="stepState(stepSheet.step.state)"></p>
+                        <template x-if="stepSheet.step.owner === 'argyle'">
+                            <div class="space-y-1 text-sm">
+                                <template x-for="(line, i) in foundLines(stepSheet.step.found)" :key="i"><p class="text-gray-300" x-text="line"></p></template>
+                                <p class="text-gray-300" x-show="stepSheet.step.question" x-text="stepSheet.step.question ? 'Argyle needs you: ' + stepSheet.step.question : ''"></p>
+                                <template x-if="stepSheet.step.mission_id && !isChild()">
+                                    <button type="button" :data-piece-open="'mission:' + stepSheet.step.mission_id" @click="openSheet('mission', stepSheet.step.mission_id, stepSheet.step.title, stepSheet.project.id)"
+                                            class="text-xs font-bold text-teal-300 underline underline-offset-2">Open Argyle’s work</button>
+                                </template>
+                                <template x-if="stepSheet.step.state === 'doing' && stepSheet.step.can_cancel">
+                                    <div class="flex flex-wrap gap-2 pt-1">
+                                        <button type="button" :data-step-skip="stepSheet.step.id" @click="cancel(stepSheet.project, stepSheet.step, 'skip')" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 disabled:opacity-50">Skip</button>
+                                        <button type="button" :data-step-stop="stepSheet.step.id" @click="cancel(stepSheet.project, stepSheet.step, 'stop')" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 disabled:opacity-50">Stop</button>
+                                    </div>
+                                </template>
                             </div>
                         </template>
-                </article>
+                        <template x-if="stepSheet.step.owner !== 'argyle' && stepSheet.step.can_edit">
+                            <div class="space-y-2 text-sm">
+                                <p class="text-gray-400" x-show="stepSheet.step.hold" x-text="stepSheet.step.hold ? 'On the calendar: ' + windowLabel(stepSheet.step.hold) : ''"></p>
+                                <div class="flex flex-wrap gap-2">
+                                    <button type="button" :data-step-hold="stepSheet.step.id" @click="suggest(stepSheet.project, stepSheet.step)" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 disabled:opacity-50">Put it on the calendar</button>
+                                    <template x-if="stepSheet.step.hold"><button type="button" data-step-clear @click="writeStep(stepSheet.project, stepSheet.step, 'hold/clear', {})" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 disabled:opacity-50">Clear time</button></template>
+                                    <template x-if="isParent() && stepSheet.row && stepSheet.row.box === 'not_yet' && ['todo', 'blocked'].includes(stepSheet.step.state)">
+                                        <button type="button" data-step-override @click="tick(stepSheet.project, stepSheet.row, true)" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 disabled:opacity-50">Complete anyway</button>
+                                    </template>
+                                    <button type="button" data-step-remove @click="removeStep(stepSheet.project, stepSheet.step)" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-900 text-red-400 border border-red-900/60 active:bg-red-950 disabled:opacity-50">Remove step</button>
+                                </div>
+                                <template x-if="hold && hold.projectId === stepSheet.project.id && hold.stepId === stepSheet.step.id">
+                                    <div class="space-y-2">
+                                        <p class="text-gray-300" x-text="hold ? (hold.window ? windowLabel(hold.window) : hold.message) : ''"></p>
+                                        <div class="flex flex-wrap gap-2">
+                                            <template x-if="hold && hold.window"><button type="button" data-hold-confirm @click="keepHold(stepSheet.project, stepSheet.step)" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800 disabled:opacity-50">Keep this time</button></template>
+                                            <button type="button" @click="pickTime()" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Pick another time</button>
+                                            <button type="button" @click="hold = null" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Cancel</button>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </template>
+            <!-- The link sheet: a trip, occasion or list attached here (R1): Open, Remove. -->
+            <template x-if="linkSheet">
+                <div data-link-sheet class="fixed inset-0 z-[82] bg-black/40 flex justify-end items-end md:items-stretch"
+                     @click.self="linkSheet = null" @keydown.escape.window="if (!promptOpen()) linkSheet = null">
+                    <div role="dialog" aria-modal="true" :aria-label="linkSheet.row.title"
+                         class="bg-gray-800 w-full md:w-[40rem] h-[40vh] md:h-full overflow-y-auto border-t md:border-t-0 md:border-l border-gray-700 rounded-t-2xl md:rounded-none p-4 space-y-3">
+                        <div class="flex items-center gap-3">
+                            <h2 class="flex-1 min-w-0 text-lg font-extrabold text-white truncate" x-text="linkSheet.row.title"></h2>
+                            <button type="button" @click="linkSheet = null" title="Close" aria-label="Close"
+                                    class="w-8 h-8 shrink-0 rounded-full bg-gray-900 text-white hover:bg-gray-700 font-bold">✕</button>
+                        </div>
+                        <p class="text-sm text-gray-400" x-text="linkSheet.row.subtitle"></p>
+                        <div class="flex flex-wrap gap-2">
+                            <template x-if="linkSheet.card && linkSheet.card.link">
+                                <button type="button" data-link-open :data-piece-link="linkSheet.card.kind + ':' + linkSheet.card.id" @click="openLink(linkSheet.card)" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800">Open</button>
+                            </template>
+                            <template x-if="linkSheet.project.can_act">
+                                <button type="button" data-link-remove @click="removeLink(linkSheet.project, linkSheet.card)" :disabled="!!busy" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 disabled:opacity-50">Remove</button>
+                            </template>
+                        </div>
+                    </div>
+                </div>
             </template>
         </div>
     </template>
 </section>
+<style>
+/* The row checkbox (one-list spec §1, mockup project-detail-v3). Colours read
+   the PWA theme tokens (rgb(var(--c-*)), as static/pwa_child_shell.css does)
+   and fall back to the admin palette's values where no token layer loads. */
+.row-box { display:inline-block; width:16px; height:16px; padding:0; border:1.5px solid rgb(var(--c-gray-500, 107 114 128)); border-radius:4px; position:relative; background:transparent; }
+.row-box:disabled { cursor:default; }
+button.row-box-open { cursor:pointer; }
+.row-box-done { background:rgb(var(--c-teal-500, 20 184 166)); border-color:rgb(var(--c-teal-500, 20 184 166)); }
+.row-box-done::after { content:"✓"; color:#fff; font-size:11px; font-weight:900; line-height:1; position:absolute; left:2px; top:1px; }
+.row-box-argyle, .row-box-asking { border-color:rgb(var(--c-teal-300, 94 234 212)); border-style:dashed; }
+.row-box-argyle::after { content:""; position:absolute; inset:3px; border-radius:50%; border:2px solid rgb(var(--c-teal-300, 94 234 212)); border-right-color:transparent; animation:row-spin 1.2s linear infinite; }
+.row-box-not_yet { border-color:rgb(var(--c-gray-700, 55 65 81)); background:rgb(var(--c-gray-900, 17 24 39)); }
+.row-box-not_yet::after { content:"·"; color:rgb(var(--c-gray-600, 75 85 99)); position:absolute; left:4px; top:-6px; font-size:18px; line-height:1.4; }
+.row-glyph { display:inline-block; width:16px; text-align:center; }
+@keyframes row-spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .row-box-argyle::after { animation:none; } }
+</style>
 {{ audience_picker_script() }}
 {{ record_delete_script() }}
 {{ library_script() }}
@@ -298,6 +293,10 @@ function projectsPage(host = 'admin') {
         host, rootEl: null, apiBase: window.chfBase !== undefined ? window.chfBase : '',
         projects: [], members: [], myId: '', loading: false, busy: false, error: '',
         creating: false, opened: null, hold: null, pieces: {}, elsewhere: [], contacts: [], pieceForm: null,
+        // The one list (spec §1): rows per project id, the Logbook fold, the
+        // step and link sheets, the row just ticked (kept in view in a folded
+        // Logbook), and each conversation's finished entry for its untick.
+        rows: {}, logOpen: false, stepSheet: null, linkSheet: null, justDone: '', _completed: {},
         emptyPieceForm: {title: '', goal: '', thread_kind: 'vendor', owner_member_id: '', contact_id: '',
                          counterparty_name: '', counterparty_email: '', next_action: '', next_action_at: '',
                          tier: 'mission', for_member_id: '', starting_point: '', sessions_per_week: 3, minutes: 25,
@@ -305,7 +304,6 @@ function projectsPage(host = 'admin') {
                          making: false, age_band: 'any', assumes: ''},
         // Alpine can evaluate form bindings once more while their x-if tears down.
         get pieceDraft() { return this.pieceForm || this.emptyPieceForm; },
-        programsOnly: new URLSearchParams(location.search).get('lane') === 'programs',
         closedOpen: false,
         showClosed: (() => { try { return localStorage.getItem('chf_projects_show_closed') === '1'; } catch (e) { return false; } })(),
         sproutSection: document.documentElement.dataset.childStage === 'sprout',
@@ -316,7 +314,7 @@ function projectsPage(host = 'admin') {
             return {'Content-Type': 'application/json', ...(token ? {'X-Member-Token': token} : {})};
         },
         async request(path, body, method = 'POST') {
-            const r = await fetch(this.apiBase + path, {method: body === undefined ? 'GET' : method,
+            const r = await fetch(this.apiBase + path, {method: body === undefined && method === 'POST' ? 'GET' : method,
                 headers: this.headers(), ...(body === undefined ? {} : {body: JSON.stringify(body)})});
             const data = await r.json();
             if (!r.ok || ['error','refused'].includes(data.status)) throw new Error(data.detail || data.message || 'Could not complete that request.');
@@ -326,6 +324,12 @@ function projectsPage(host = 'admin') {
         isParent() { return !this.isChild() && this.members.some(m => m.id === this.myId && m.role === 'parent'); },
         owners() { return this.members.filter(m => ['parent','adult','child'].includes(m.role) && (m.status || 'active') === 'active' && !m.system); },
         defaultAudience() { const m = this.members.find(m => m.id === this.draft.owner_member_id); this.draft.audience = m && (m.role === 'child' || m.is_child) ? 'parents' : 'private'; this.draft.shared_with = []; },
+        // A sheet's Escape waits while a shared prompt is open above it (record_sheet.html rsEscape).
+        promptOpen() {
+            if (typeof window.chfPromptOpen === 'function') return window.chfPromptOpen();
+            return !!document.querySelector('#cc-confirm-modal:not(.hidden), #cc-alert-modal:not(.hidden),' +
+                ' #cc-input-modal:not(.hidden), #cc-choice-modal:not(.hidden)');
+        },
         // The picker's config for a project (chfProjectAudience mirrors the
         // server's list rules); every save sends the list the picker shows.
         audienceCfg(ownerId, audience, list) {
@@ -347,6 +351,7 @@ function projectsPage(host = 'admin') {
             const who = window.chfPersonId ? window.chfPersonId() : localStorage.getItem('chauffeur_member_id') || '';
             if (this.myId !== who) {
                 this.projects = []; this.members = []; this.opened = null; this.hold = null; this.pieces = {}; this.elsewhere = []; this.contacts = []; this.pieceForm = null; this._addressed = false;
+                this.rows = {}; this.stepSheet = null; this.linkSheet = null; this.justDone = ''; this._completed = {};
                 this.creating = false;
                 this.draft = {title:'', goal:'', done_when:'', audience:'private', shared_with:[], owner_member_id:who, target_date:''};
             }
@@ -356,27 +361,30 @@ function projectsPage(host = 'admin') {
                 if (this.myId !== who) return;
                 this.projects = data.projects || []; this.members = members;
                 this.elsewhere = this.isChild() ? [] : ((await this.request('api/projects/elsewhere').catch(() => ({situations: []}))).situations || []);
-                this.bindCards();
                 if (!this.draft.owner_member_id || !this.creating) { this.draft.owner_member_id = who; this.defaultAudience(); }
-                if (this.opened && this.detail) await this.loadPieces(this.detail);
+                if (this.opened && this.detail) { const p = this.detail; await Promise.all([this.loadPieces(p), this.loadRows(p)]); }
                 if (!this._addressed) { this._addressed = true; await this.fromAddress(); }
             } catch (e) { this.projects = []; this.error = e.message; }
             finally { this.loading = false; }
         },
         rememberClosed() { try { localStorage.setItem('chf_projects_show_closed', this.showClosed ? '1' : '0'); } catch (e) { /* private window */ } },
         get visibleElsewhere() { return this.elsewhere.filter(s => this.showClosed || s.group !== 'done'); },
+        elsewhereBox(s) {
+            if (s.group === 'now') return 'asking';
+            if (s.group === 'done') return 'done';
+            return ['running', 'browsing'].includes(s.state) ? 'argyle' : 'not_yet';
+        },
         get detail() { return this.projects.find(p => p.id === this.opened) || null; },
-        get lanes() {
-            const rows = this.shownProjects.filter(p => !this.programsOnly || p.has_program);
-            const by = key => rows.filter(p => (p.lane || 'waiting') === key);
-            const all = [
-                {key: 'needs_you', label: 'Needs you', titleClass: 'text-amber-400', items: by('needs_you')},
-                {key: 'moving', label: 'Moving', titleClass: 'text-teal-300', items: by('moving')},
-                {key: 'waiting', label: 'Waiting', titleClass: 'text-gray-500', items: by('waiting')},
-                {key: 'paused', label: 'Paused', titleClass: 'text-gray-500', items: by('paused')},
-                {key: 'closed', label: 'Done & dropped', titleClass: 'text-gray-600', items: by('closed')},
-            ];
-            return all.filter(l => l.items.length && (l.key !== 'closed' || this.showClosed));
+        // The list page (spec §4): Needs you, then everything else (the lane's
+        // word on the card), then Done & dropped behind Show closed.
+        get listGroups() {
+            const rows = this.shownProjects;
+            const word = p => ({needs_you: 'needs you', moving: 'moving', waiting: 'waiting', paused: 'paused', closed: ''}[p.lane || 'waiting']);
+            const by = f => rows.filter(f).map(p => ({...p, lane_word: word(p)}));
+            const out = [{key: 'needs_you', label: 'Needs you', cls: 'text-amber-400', items: by(p => p.lane === 'needs_you')},
+                         {key: 'rest', label: 'Everything else', cls: 'text-gray-500', items: by(p => !['needs_you', 'closed'].includes(p.lane))}];
+            if (this.showClosed) out.push({key: 'closed', label: 'Done & dropped', cls: 'text-gray-600', items: by(p => p.lane === 'closed')});
+            return out.filter(g => g.items.length);
         },
         memberName(id) { const m = this.members.find(m => m.id === id); return m ? m.name : ''; },
         setAddress(params) {
@@ -395,55 +403,22 @@ function projectsPage(host = 'admin') {
             for (const cards of Object.values(this.pieces)) { const c = cards.find(c => c.id === id && c.situation); if (c) return c.situation; }
             return this.elsewhere.find(s => s.id === id) || null;
         },
-        bindCards() {
-            const root = this.rootEl;
-            if (!root) return;
-            this.$nextTick(() => {
-                if (!root.isConnected || !window.Situations) return;
-                root.querySelectorAll('[data-pieces]').forEach(el => window.Situations.bind(el, this.sitCtx()));
-            });
-        },
-        // Delete (projects delete spec §7). The server decides; these only
-        // choose who is shown the button. A project: its owner or a parent.
-        // A thread or mission: a parent or adult (children never see missions
-        // and may not delete threads). A program: the project's owner or a parent.
-        myRole() { const m = this.members.find(m => m.id === this.myId); return m ? m.role : ''; },
+        // Delete (projects delete spec §7). The server decides; this only
+        // chooses who is offered it in ⋯: the project's owner or a parent.
+        // A thread's, mission's or program's Delete lives in its record sheet.
         canDelete(p) { return !!this.myId && (p.owner_member_id === this.myId || this.isParent()); },
-        pieceDeletable(p, card) {
-            if (card.kind === 'program') return this.canDelete(p);
-            return ['thread', 'mission'].includes(card.kind) && !this.isChild() && ['parent', 'adult'].includes(this.myRole());
-        },
-        // Folding: a mission launched from a thread of this project sits inside
-        // that thread's card only when (a) the thread's card is drawn here, read
-        // in full (a keeper's card drops mission actions), (b) the mission is
-        // read in full and carries its own open and Delete, and (c) this host's
-        // thread sheet lists the thread's missions (window.chfThreadSheetHistory,
-        // set by the admin record sheet and the phone app). Otherwise the
-        // mission keeps its own card.
-        foldTarget(p, card) {
-            if (card.kind !== 'mission' || !card.origin_thread || !card.situation || !card.sheet) return null;
-            if (card.view !== 'full' || !this.pieceDeletable(p, card) || window.chfThreadSheetHistory !== true) return null;
-            const thread = (this.pieces[p.id] || []).find(c => c.kind === 'thread' && c.id === card.origin_thread);
-            if (!thread || !thread.situation || !thread.sheet || thread.view !== 'full') return null;
-            return thread.id;
-        },
-        standalonePieces(p) { return (this.pieces[p.id] || []).filter(c => !this.foldTarget(p, c)); },
-        foldedUnder(p, thread) { return (this.pieces[p.id] || []).filter(c => this.foldTarget(p, c) === thread.id); },
         deleteProject(p) {
             return window.chfDeleteRecord({kind: 'project', id: p.id, title: p.title, apiBase: this.apiBase, onDone: async () => {
-                this.opened = null; this.hold = null; this.pieceForm = null;
+                this.opened = null; this.hold = null; this.pieceForm = null; this.stepSheet = null; this.linkSheet = null;
                 this.setAddress({id: null, piece: null});
                 await this.load();
             }});
         },
-        deletePiece(p, card) {
-            return window.chfDeleteRecord({kind: card.kind, id: card.id, title: card.title, apiBase: this.apiBase,
-                                           onDone: () => this.load()});
-        },
         async removePiece(p, card) {
-            if (!await promptConfirm('Remove “' + (card.title || card.kind) + '”?', 'It stays in Chauffeur. Only its link to this project goes.', 'Remove', 'Keep it')) return;
-            if (await this.mutate('api/projects/' + encodeURIComponent(p.id) + '/pieces/remove', {kind: card.kind, id: card.id})) await this.loadPieces(p);
+            if (!await promptConfirm('Remove “' + (card.title || card.kind) + '”?', 'It stays in Chauffeur. Only its link to this project goes.', 'Remove', 'Keep it')) return false;
+            return this.mutate('api/projects/' + encodeURIComponent(p.id) + '/pieces/remove', {kind: card.kind, id: card.id});
         },
+        async removeLink(p, card) { if (await this.removePiece(p, card)) this.linkSheet = null; },
         // A linked piece opens its own page, as its link always did (buttons only, no anchors).
         openLink(card) { window.location.href = this.apiBase + card.link; },
         openSheet(kind, id, title, projectId) {
@@ -452,18 +427,147 @@ function projectsPage(host = 'admin') {
         async loadPieces(p) {
             try { this.pieces[p.id] = (await this.request('api/projects/' + encodeURIComponent(p.id) + '/pieces')).pieces || []; }
             catch (e) { this.error = e.message; }
-            this.bindCards();
+        },
+        // The one list (spec §1, §3): the server's rows beside the project.
+        takeDetail(id, d) {
+            this.rows[id] = d.rows || [];
+            if (d.project) this.projects = this.projects.map(x => x.id === id ? {...x, ...d.project} : x);
+            this.syncSheets(id);
+        },
+        async loadRows(p) {
+            try { this.takeDetail(p.id, await this.request('api/projects/' + encodeURIComponent(p.id))); }
+            catch (e) { this.error = e.message; }
+        },
+        // An open step sheet follows the fresh step (its hold, its state), or closes when the step is gone.
+        syncSheets(id) {
+            if (!this.stepSheet || this.stepSheet.project.id !== id) return;
+            const project = this.projects.find(x => x.id === id);
+            const step = project && (project.steps || []).find(s => s.id === this.stepSheet.step.id);
+            const row = (this.rows[id] || []).find(r => r.kind === 'step' && r.id === this.stepSheet.step.id) || null;
+            this.stepSheet = step ? {project, step, row} : null;
+        },
+        headerLine(p) {
+            return [this.memberName(p.owner_member_id), p.body_goal ? 'Only you' : p.audience_label, p.done_when,
+                    p.target_date ? 'target ' + p.target_date : ''].filter(Boolean).join(' · ');
+        },
+        rowKey(r) { return r.kind + ':' + r.id + ':' + (r.moment.window_date || '') + ':' + (r.moment.slot_rank || 0); },
+        groups(p) {
+            const all = this.rows[p.id] || [];
+            const defs = [['now', 'Now', 'text-amber-400'], ['next', 'Next', 'text-teal-300'], ['later', 'Later', 'text-gray-500'], ['linked', 'Linked', 'text-gray-500'], ['logbook', 'Logbook', 'text-gray-600']];
+            return defs.map(([key, label, cls]) => ({key, label, cls, rows: all.filter(r => r.group === key)})).filter(g => g.rows.length);
+        },
+        subtitle(r) { return r.reason ? (r.subtitle ? r.subtitle + ' · ' : '') + r.reason : r.subtitle; },
+        whenLabel(r) {
+            if (r.when === 'running') return 'running';
+            if (r.when === 'now' || !r.when) return '';
+            const d = new Date(r.when.date + 'T12:00:00'), today = new Date(); today.setHours(12, 0, 0, 0);
+            const day = d.toDateString() === today.toDateString() ? 'today' : d.toLocaleDateString(undefined, {weekday: 'short', month: 'short', day: 'numeric'});
+            return r.when.time ? day + ' ' + (window.formatClock ? window.formatClock(r.when.time) : r.when.time) : day;
+        },
+        glyph(r) { return {trip: '✈', occasion: '🎉', list: '☰'}[r.glyph] || '›'; },
+        // The row's record, for hosts and tests that open a piece by key; a
+        // run with several windows answers on its first row only.
+        pieceKey(p, r) {
+            if (!r.sheet || !['conversation', 'argyle', 'program'].includes(r.kind)) return null;
+            const first = (this.rows[p.id] || []).find(x => x.sheet && x.sheet.kind === r.sheet.kind && x.sheet.id === r.sheet.id);
+            return first === r ? r.sheet.kind + ':' + r.sheet.id : null;
+        },
+        // What a box may do (the server is the gate; this keeps a dead tap off the row):
+        // Argyle's rows fill themselves, a run's session is removed in its sheet (R3),
+        // a closed conversation does not reopen from here, a step needs its editor.
+        boxDisabled(p, r) {
+            if (this.busy || ['argyle', 'asking', 'not_yet'].includes(r.box) || r.kind === 'argyle') return true;
+            if (r.kind === 'program') return r.box === 'done';
+            if (r.kind === 'conversation') return this.isChild() || (r.box === 'done' && !this._completed[r.id]);
+            if (r.kind === 'step') { const s = (p.steps || []).find(s => s.id === r.id); return !s || s.owner === 'argyle' || !s.can_edit; }
+            return false;
+        },
+        tickKey() { return window.crypto && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2); },
+        async tick(p, r, override = false) {
+            if (this.busy) return;
+            const done = r.box !== 'done';
+            const moment = {...r.moment, ...(r.kind === 'conversation' && !done ? {entry_id: this._completed[r.id] || ''} : {})};
+            this.busy = true; this.error = '';
+            try {
+                const d = await this.request('api/projects/' + encodeURIComponent(p.id) + '/tick', {kind: r.kind, id: r.id, moment, done, key: this.tickKey(), override});
+                this.rows[p.id] = d.rows || [];
+                this.justDone = done ? this.rowKey(r) : '';
+                if (r.kind === 'conversation' && done) {
+                    this._completed[r.id] = (d.result || {}).entry_id || '';
+                    const who = r.subtitle.includes(' · ') ? r.subtitle.split(' · ')[0] : 'them';
+                    const next = await promptInput("What's next with " + who + '?', '', {okText: 'Set it'});
+                    if (next && next.trim()) { await this.request('api/threads/' + encodeURIComponent(r.id) + '/advance', {next_action: next.trim()}); }
+                }
+                await this.loadRows(p);
+                this.stepSheet = null;
+            } catch (e) {
+                this.error = e.message;
+                await this.loadRows(p);   // a 409 carries fresh rows; re-reading is simplest and always right
+            } finally { this.busy = false; }
+        },
+        openRow(p, r) {
+            if (r.kind === 'step') { const step = (p.steps || []).find(s => s.id === r.id); if (step) this.stepSheet = {project: p, step, row: r}; return; }
+            if (r.kind === 'link') {
+                const card = (this.pieces[p.id] || []).find(c => c.id === r.id && !['thread', 'mission', 'program'].includes(c.kind));
+                const open = r.actions.find(a => a.verb === 'link') || {payload: {}};
+                this.linkSheet = {project: p, row: r, card: card || {kind: r.subtitle, id: r.id, title: r.title, link: open.payload.link}};
+                return;
+            }
+            if (r.sheet) this.openSheet(r.sheet.kind, r.sheet.id, r.title, p.id);
+        },
+        // A question's option carries the question as its label (situations._options_mission);
+        // the row's title already says it, so its button says Answer. A program choice keeps Use / Make new / Not now.
+        actionLabel(a) { return a.verb === 'answer' && (a.payload || {}).ask !== 'program_choice' ? 'Answer' : a.label; },
+        async rowAction(p, r, a) {
+            if (a.verb === 'rebind') { const card = (this.pieces[p.id] || []).find(c => c.kind === 'program' && c.id === r.id); if (card) return this.rebind(p, card); }
+            if (a.verb === 'approve') { return this.openSheet('program', r.id, r.title, p.id); }
+            if (r.sheet) this.openSheet(r.sheet.kind, r.sheet.id, r.title, p.id);   // Answer / Use / Approve plan: the sheet's own buttons act
+        },
+        // ⋯ (spec decision 4): what used to be a row of project buttons.
+        menuItems(p) {
+            const items = [];
+            if (p.can_act && !this.isChild() && p.state === 'active') items.push({value: 'plan', label: 'Plan it with Argyle'});
+            if (p.can_edit_audience && !p.body_goal) items.push({value: 'audience', label: 'Who sees it'});
+            if (p.can_act && p.state === 'active') items.push({value: 'paused', label: 'Pause'});
+            if (p.can_act && p.state === 'paused') items.push({value: 'active', label: 'Resume'});
+            if (p.can_act && ['active', 'paused'].includes(p.state)) items.push({value: 'done', label: 'Mark done'}, {value: 'dropped', label: 'Drop'});
+            if (this.canDelete(p)) items.push({value: 'delete', label: 'Delete'});
+            return items;
+        },
+        async menu(p) {
+            const items = this.menuItems(p);
+            if (!items.length) return;
+            const pick = await promptChoice(p.title, '', items);
+            if (!pick) return;
+            if (pick === 'plan') return this.plan(p);
+            if (pick === 'audience') return this.chooseAudience(p);
+            if (pick === 'delete') return this.deleteProject(p);
+            return this.state(p, pick, {paused: 'Pause', active: 'Resume', done: 'Mark done', dropped: 'Drop'}[pick]);
+        },
+        // + Add (spec decision 5): one sheet of five kinds; the forms behind it are today's.
+        async add(p) {
+            const options = [{value: 'step', label: 'Step'}];
+            if (!this.isChild()) options.push({value: 'thread', label: 'Conversation'}, {value: 'mission', label: 'Ask Argyle'});
+            options.push({value: 'program', label: 'Program'}, {value: 'existing', label: 'Something already in Chauffeur'});
+            const pick = await promptChoice('Add to ' + p.title, '', options);
+            if (!pick) return;
+            if (pick === 'step') return this.addStep(p);
+            return this.addPieceKind(p, pick);
+        },
+        async removeStep(p, s) {
+            if (!await promptConfirm('Remove “' + s.title + '”?', 'It leaves the project.', 'Remove', 'Keep it')) return;
+            if (await this.mutate('api/projects/' + encodeURIComponent(p.id) + '/steps/' + encodeURIComponent(s.id), undefined, 'DELETE')) this.stepSheet = null;
         },
         async open(p) {
             try {
                 const data = await this.request('api/projects/' + encodeURIComponent(p.id));
-                this.projects = this.projects.map(row => row.id === p.id ? {...row, ...data.project} : row);
-                this.opened = p.id; this.hold = null; this.pieceForm = null;
+                this.opened = p.id; this.hold = null; this.pieceForm = null; this.stepSheet = null; this.linkSheet = null; this.justDone = ''; this.logOpen = false;
+                this.takeDetail(p.id, data);
                 this.setAddress({id: p.id});
                 await this.loadPieces(p);
             } catch (e) { this.error = e.message; }
         },
-        back() { this.opened = null; this.hold = null; this.pieceForm = null; this.setAddress({id: null, piece: null}); this.bindCards(); },
+        back() { this.opened = null; this.hold = null; this.pieceForm = null; this.stepSheet = null; this.linkSheet = null; this.justDone = ''; this.setAddress({id: null, piece: null}); },
         async fromAddress() {
             if (this.host !== 'admin') return;
             const q = new URLSearchParams(location.search);
@@ -478,12 +582,9 @@ function projectsPage(host = 'admin') {
             }
             this.openSheet(kind, rid, '', this.opened);
         },
-        async addPiece(p) {
-            const options = [{value: 'existing', label: 'Something already in Chauffeur'}];
-            if (!this.isChild()) options.push({value: 'thread', label: 'A conversation with someone outside'}, {value: 'mission', label: 'Work for Argyle'});
-            options.push({value: 'program', label: 'A practice program'});
-            const pick = await promptChoice('Add a piece', '', options);
-            if (!pick) return;
+        // + Add › Conversation / Ask Argyle / Program / Something already in Chauffeur.
+        // Program keeps today's library picker until the programs spec's setup sheet ships.
+        async addPieceKind(p, pick) {
             if (pick === 'existing') return this.pickExisting(p);
             if (pick === 'thread' && !this.contacts.length) this.contacts = await this.request('api/assist-contacts').catch(() => []) || [];
             this.pieceForm = {projectId: p.id, kind: pick, title: '', goal: '', thread_kind: 'vendor', owner_member_id: this.myId,
@@ -493,7 +594,7 @@ function projectsPage(host = 'admin') {
                               making: false, age_band: 'any', assumes: ''};
             if (pick === 'program') await this.loadLibrary();
         },
-        // Add a piece -> Program: the library first (archived programs never
+        // + Add › Program: the library first (archived programs never
         // offered), "Make a new one" at the bottom for adults and parents.
         async loadLibrary() {
             const form = this.pieceForm;
@@ -510,21 +611,12 @@ function projectsPage(host = 'admin') {
         async pickLibrary(lp) {
             const f = this.pieceForm;
             if (!f || this.busy) return;
-            const project = this.detail;
             const body = {library_id: lp.id, for_member_id: f.for_member_id || this.myId, member_id: this.myId || null,
                           preferred_days: f.preferred_days, target_date: f.target_date || null, project_id: f.projectId};
-            if (await this.mutate('api/programs', body)) { this.pieceForm = null; if (project) await this.loadPieces(project); }
+            if (await this.mutate('api/programs', body)) this.pieceForm = null;
         },
-        // The run card's current lesson by name under its phase ("Scales · Foundations").
-        lessonLine(card) {
-            const program = card.program || {};
-            const title = (program.current_lesson || {}).title || '';
-            if (program.unresolved || !title) return '';
-            return program.phase && program.phase !== title ? title + ' · ' + program.phase : title;
-        },
-        canRebind(p, card) { return !!this.myId && (p.can_act || (card.program || {}).member_id === this.myId); },
         async rebind(p, card) {
-            if (await window.chfLibrary.rebind(card.id, this.myId, this.headers())) await this.loadPieces(p);
+            if (await window.chfLibrary.rebind(card.id, this.myId, this.headers())) await this.load();
         },
         async openById(id) {
             if (!id) return;
@@ -543,13 +635,12 @@ function projectsPage(host = 'admin') {
                 const pick = await promptChoice('Which one?', '', found.map(c => ({value: c.kind + ':' + c.id, label: c.title + ' (' + c.kind + ')'})));
                 if (!pick) return;
                 const [kind, id] = pick.split(':', 2);
-                if (await this.mutate('api/projects/' + encodeURIComponent(p.id) + '/pieces', {kind, id})) await this.loadPieces(p);
+                await this.mutate('api/projects/' + encodeURIComponent(p.id) + '/pieces', {kind, id});
             } catch (e) { this.error = e.message; }
         },
         async createPiece() {
             const f = this.pieceForm;
             if (!f || this.busy) return;
-            const project = this.detail;
             const body = f.kind === 'thread'
                 ? {title: f.title.trim(), goal: f.goal, kind: f.thread_kind, owner_member_id: f.owner_member_id, contact_id: f.contact_id || null,
                    counterparty_name: f.counterparty_name, counterparty_email: f.counterparty_email, next_action: f.next_action,
@@ -562,10 +653,8 @@ function projectsPage(host = 'admin') {
                    preferred_days: f.preferred_days, target_date: f.target_date || null, project_id: f.projectId};
             if (f.kind === 'program' && !f.making) return;
             const path = {thread: 'api/threads', mission: 'api/missions/launch', program: 'api/programs'}[f.kind];
-            if (await this.mutate(path, body)) { this.pieceForm = null; if (project) await this.loadPieces(project); }
+            if (await this.mutate(path, body)) this.pieceForm = null;
         },
-        ordered(p) { return [...p.steps].sort((a,b) => a.order - b.order); },
-        chip(state) { return {active:'bg-teal-500/20 text-teal-300', paused:'bg-amber-500/20 text-amber-300'}[state] || 'bg-gray-700 text-gray-300'; },
         foundLines(value, label = '') {
             if (value === null || value === undefined || value === '') return [];
             if (Array.isArray(value)) return value.flatMap(v => this.foundLines(v, label));
@@ -580,10 +669,10 @@ function projectsPage(host = 'admin') {
                 : new Date(w.date + 'T' + value).toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'});
             return date + ', ' + time(w.start) + '–' + time(w.end);
         },
-        async mutate(path, body) {
+        async mutate(path, body, method = 'POST') {
             if (this.busy) return false;
             this.busy = true; this.error = '';
-            try { await this.request(path, body); await this.load(); return true; }
+            try { await this.request(path, body, method); await this.load(); return true; }
             catch (e) { this.error = e.message; return false; }
             finally { this.busy = false; }
         },
@@ -604,7 +693,6 @@ function projectsPage(host = 'admin') {
         },
         stepPath(p,s) { return 'api/projects/' + encodeURIComponent(p.id) + '/steps/' + encodeURIComponent(s.id) + '/'; },
         writeStep(p,s,path,body) { return this.mutate(this.stepPath(p,s) + path, body); },
-        tick(p,s) { return this.writeStep(p,s,'state',{state: s.state === 'done' ? 'todo' : 'done'}); },
         async cancel(p,s,outcome) {
             if (await promptConfirm(outcome === 'skip' ? 'Skip this step?' : 'Stop this work?', outcome === 'skip' ? 'This ends this step and lets its dependent steps go on.' : 'This stops the work and leaves this step blocked.', outcome === 'skip' ? 'Skip' : 'Stop', 'Cancel'))
                 await this.writeStep(p,s,'cancel',{outcome});
@@ -624,7 +712,7 @@ function projectsPage(host = 'admin') {
         },
         async keepHold(p,s) { if (await this.writeStep(p,s,'hold',this.hold.window)) this.hold = null; },
         async state(p,state,label) {
-            if (await promptConfirm(label + ' this project?', ['done','dropped'].includes(state) ? 'Argyle’s running work ends. Pieces and records stay.' : state === 'paused' ? 'Argyle’s work pauses until you resume.' : 'Argyle’s ready work can continue.', label, 'Cancel'))
+            if (await promptConfirm(label + ' this project?', ['done','dropped'].includes(state) ? 'Argyle’s running work ends. Its records stay.' : state === 'paused' ? 'Argyle’s work pauses until you resume.' : 'Argyle’s ready work can continue.', label, 'Cancel'))
                 await this.mutate('api/projects/' + encodeURIComponent(p.id) + '/state', {state});
         },
         async addStep(p) {
@@ -638,9 +726,8 @@ function projectsPage(host = 'admin') {
             await this.mutate('api/projects/' + encodeURIComponent(p.id) + '/steps', {title:title.trim(), owner, goal});
         },
         async plan(p) {
-            if (await promptConfirm('Plan it with Argyle?', 'Argyle will help plan the next part. You approve the plan before its steps are added.', 'Plan it', 'Cancel')) {
-                if (await this.mutate('api/projects/' + encodeURIComponent(p.id) + '/plan', {})) await this.loadPieces(p);
-            }
+            if (await promptConfirm('Plan it with Argyle?', 'Argyle will help plan the next part. You approve the plan before its steps are added.', 'Plan it', 'Cancel'))
+                await this.mutate('api/projects/' + encodeURIComponent(p.id) + '/plan', {});
         },
     };
 }
