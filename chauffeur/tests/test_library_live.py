@@ -1307,6 +1307,113 @@ def scenario_make_a_variant_and_start_it_for_from_the_menu():
                 storage.delete_library_program(r['id'])
 
 
+NONE_ID = 'lib-none'
+
+
+def scenario_practice_time_only_offers_look_again():
+    """Spec §1 + §10: a program whose research could not run reads "Practice time only ·
+    {reason}" with Look again (a fresh curation from the same profile, asked first, never a
+    browser dialog; this row stays), and Edit by hand still opens on its empty curriculum."""
+    served = serve()
+    if served is None:
+        return
+    if not storage.get_library_program(NONE_ID):
+        row = _library_row(NONE_ID, 'Learn juggling', [], [], origin='none')
+        row['source']['reason'] = 'research could not run'
+        storage.add_library_program(row)
+    before = {r['id'] for r in storage.get_library_programs()}
+    try:
+        with served.browser() as page:
+            admin(page, served, 'mom')
+            dialogs = []
+            page.on('dialog', lambda d: (dialogs.append(d.message), d.dismiss()))
+            page.goto(served.url(f'library?id={NONE_ID}'), wait_until='load')
+            page.wait_for_selector('[data-course-header]', timeout=15000)
+            source = page.locator('[data-course-source]').inner_text()
+            check(source.startswith('Practice time only · research could not run') and '0 lessons' in source,
+                  f"the source line says why there is no plan: {source}")
+            check(page.locator('[data-look-again]').count() == 1, "with Look again on the source row")
+            page.locator('[data-course-why]').click()
+            why = page.locator('[data-course-why-text]').inner_text()
+            check('Make a variant' not in why and 'no lessons yet' in why, f"the fold says what it means: {why}")
+            page.locator('[data-course-menu]').click()
+            page.wait_for_selector('#cc-choice-modal:not(.hidden)', timeout=5000)
+            check('Look again' in page.locator('#cc-choice-options button').all_inner_texts(), "and in ⋯")
+            page.locator('#cc-choice-cancel-btn').click()
+            shot(page, 'course-practice-time-only')
+            page.locator('[data-look-again]').click()
+            text = _confirm_text(page)
+            check('Look again makes a fresh program from the same profile. This one stays in the library until you archive it.' in text,
+                  f"Look again says what it does: {text}")
+            page.locator('#cc-confirm-cancel-btn').click()
+            check({r['id'] for r in storage.get_library_programs()} == before, "Not now makes nothing")
+            _edit_by_hand(page)
+            check(page.locator('[data-edit-by-hand] [data-library-lesson]').count() == 0, "Edit by hand opens on no lessons")
+            page.locator('[data-edit-done]').click()
+            page.wait_for_selector('[data-edit-by-hand]', state='detached', timeout=5000)
+            page.locator('[data-look-again]').click()
+            _confirm_text(page)
+            page.locator('#cc-confirm-execute-btn').click()
+            fresh = _wait(lambda: [r for r in storage.get_library_programs() if r['id'] not in before], "a fresh program was curated")[0]
+            check(fresh['title'] == 'Learn juggling' and fresh['made_for'] == storage.get_library_program(NONE_ID)['made_for'],
+                  f"from the same profile: {fresh}")
+            check(storage.get_library_program(NONE_ID) and not storage.get_library_program(NONE_ID).get('archived'), "this one stays")
+            page.wait_for_function(f"() => new URLSearchParams(location.search).get('id') === '{fresh['id']}'", timeout=10000)
+            check(dialogs == [], f"no browser dialog: {dialogs}")
+            check(served.errors() == [], f"no page errors: {served.errors()}")
+    finally:
+        for r in storage.get_library_programs():
+            if r['id'] not in before or r['id'] == NONE_ID:
+                storage.delete_library_program(r['id'])
+
+
+def scenario_edit_by_hand_reaches_the_profile_and_reorder_and_asks_before_dropping():
+    """Every hand verb stays reachable behind Edit by hand: the profile form and ▼ (the
+    others are driven by the scenarios above). Done editing with an open form asks first."""
+    served = serve()
+    if served is None:
+        return
+    _restore_piano()
+    with served.browser() as page:
+        admin(page, served, 'mom')
+        page.goto(served.url(f'library?id={PIANO}'), wait_until='load')
+        page.wait_for_selector('[data-course-header]', timeout=15000)
+        _edit_by_hand(page)
+        toggle = page.locator('[data-library-profile-toggle]')
+        check(toggle.count() == 1, "The name and who it's made for is reachable")
+        toggle.click()
+        form = page.locator('[data-library-profile]')
+        form.wait_for(state='visible', timeout=5000)
+        check(form.locator('input[name="title"]').input_value() == 'Learn piano', "and opens on the program's profile")
+        form.get_by_role('button', name='Cancel', exact=True).click()
+        form.wait_for(state='detached', timeout=5000)
+        page.locator(f'[data-library-lesson][data-lesson-id="{SCALES}"] [data-lesson-down]').click()
+        _wait(lambda: [l['id'] for l in storage.get_library_program(PIANO)['lessons']][:2] == [CHORDS, SCALES], "▼ reorders")
+        page.wait_for_function(f"() => document.querySelector('[data-phase-id=\"{FOUND}\"] [data-library-lesson]').dataset.lessonId === '{CHORDS}'", timeout=10000)
+        page.locator(f'[data-library-lesson][data-lesson-id="{SCALES}"] [data-lesson-up]').click()
+        _wait(lambda: [l['id'] for l in storage.get_library_program(PIANO)['lessons']][:2] == [SCALES, CHORDS], "and ▲ puts it back")
+        # An open lesson form holds typing: Done editing asks before dropping it.
+        chords = page.locator(f'[data-library-lesson][data-lesson-id="{CHORDS}"]')
+        chords.locator('[data-lesson-edit]').click()
+        chords.locator('input[name="lesson_title"]').fill('Chords, typed but not saved')
+        page.locator('[data-edit-done]').click()
+        text = _confirm_text(page)
+        check('Drop the unsaved changes?' in text, f"Done editing asks first: {text}")
+        page.locator('#cc-confirm-cancel-btn').click()
+        check(chords.locator('input[name="lesson_title"]').input_value() == 'Chords, typed but not saved', "Keep editing keeps the typing")
+        page.locator('[data-edit-done]').click()
+        _confirm_text(page)
+        page.locator('#cc-confirm-execute-btn').click()
+        page.wait_for_selector('[data-edit-by-hand]', state='detached', timeout=5000)
+        check(next(l for l in storage.get_library_program(PIANO)['lessons'] if l['id'] == CHORDS)['title'] == 'Chords', "nothing was saved")
+        # Nothing open: Done editing just leaves.
+        _edit_by_hand(page)
+        page.locator('[data-edit-done]').click()
+        page.wait_for_selector('[data-edit-by-hand]', state='detached', timeout=5000)
+        check(not page.locator('#cc-confirm-modal').is_visible(), "without asking when nothing is open")
+        check(served.errors() == [], f"no page errors: {served.errors()}")
+
+
 SCENARIOS = [scenario_the_library_page_lists_each_program, scenario_a_new_program_says_what_the_household_will_see,
              scenario_editing_a_program_inline, scenario_archive_leaves_the_picker_not_the_library,
              scenario_delete_waits_until_nobody_runs_it, scenario_the_picker_starts_the_program,
@@ -1322,7 +1429,8 @@ SCENARIOS = [scenario_the_library_page_lists_each_program, scenario_a_new_progra
              scenario_course_page_at_rest, scenario_steer_posts_and_shows_changes, scenario_brief_box_on_the_list_page,
              scenario_phone_keeps_edit_by_hand_without_scripts, scenario_preview_offers_each_session_and_each_runner,
              scenario_a_steer_on_a_changed_program_says_read_again, scenario_find_a_plan_offers_to_start_it_for_the_person,
-             scenario_make_a_variant_and_start_it_for_from_the_menu]
+             scenario_make_a_variant_and_start_it_for_from_the_menu, scenario_practice_time_only_offers_look_again,
+             scenario_edit_by_hand_reaches_the_profile_and_reorder_and_asks_before_dropping]
 
 if __name__ == "__main__":
     import traceback

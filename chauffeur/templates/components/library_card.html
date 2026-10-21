@@ -176,7 +176,7 @@
         whyText(lp) {
             const src = (lp || {}).source || {};
             const why = (src.why_this_one || '').trim();
-            if (src.origin === 'none') return "The app couldn't find or build a plan, so this program keeps practice time with no lessons yet. Make a variant to look again.";
+            if (src.origin === 'none') return "The app couldn't find or build a plan, so this program keeps practice time with no lessons yet.";
             if (why) return why;
             if (src.origin === 'generated') return "No published program fit this aim, so this plan is the app's own — not anyone's real curriculum.";
             return 'Built from pages the app read.';
