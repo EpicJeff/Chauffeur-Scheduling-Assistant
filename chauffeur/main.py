@@ -8144,21 +8144,14 @@ def create_program(body: dict = Body(default={}), request: Request = None,
             if activate:
                 actor_row = storage.get_member(actor.get('id')) or {}
                 if actor_row.get('role') in ('parent', 'adult'):
-                    try:
-                        approved = _prog.approve(pid, actor.get('id'), slots=body.get('slots'))
-                        if approved.get('status') != 'success':
-                            if approved.get('message') == 'There is no time to claim.':
-                                no_time = True
-                            else:
-                                raise ActivationFailed(approved.get('message') or 'Could not start the program.')
-                    except ActivationFailed:
-                        # Nested transactions have no savepoint. Remove our rows
-                        # before returning an error even if a caller owns the commit.
-                        # approve has already reverted this attempt's emissions.
-                        storage.delete_program(pid)
-                        if made:
-                            storage.delete_library_program(lid)
-                        raise
+                    approved = _prog.approve(pid, actor.get('id'), slots=body.get('slots'))
+                    if approved.get('status') != 'success':
+                        if approved.get('message') == 'There is no time to claim.':
+                            no_time = True
+                        else:
+                            # Let the outer transaction roll back the run and any
+                            # new library row. approve reverted its emissions.
+                            raise ActivationFailed(approved.get('message') or 'Could not start the program.')
     except RunRefused:
         return {'status': 'error', 'message': 'That project or library program is no longer here.'}
     except ActivationFailed as e:
@@ -8909,6 +8902,21 @@ def program_footprint(program_id: str, request: Request = None):
         raise HTTPException(status_code=404, detail="No such program")
     _program_permission_or_refuse(request, {}, row)
     return _prog.footprint(row)
+
+
+@app.get('/api/programs/{program_id}/monitor')
+def program_monitor(program_id: str, request: Request = None):
+    row, _ = _piece_or_404('program', program_id, request)
+    from services import programs as _prog
+    return _prog.monitor(row, viewer=_piece_viewer(request))
+
+
+@app.delete('/api/programs/{program_id}/sessions/{session_id}')
+def remove_program_session(program_id: str, session_id: str, request: Request = None):
+    row, _ = _piece_or_404('program', program_id, request, 'edit')
+    _program_permission_or_refuse(request, {}, row)
+    from services import programs as _prog
+    return _library_result(_prog.remove_session(program_id, session_id))
 
 
 def _program_refresh(result: dict, background_tasks) -> dict:

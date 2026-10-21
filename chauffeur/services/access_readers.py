@@ -27,12 +27,15 @@ READERS = [
         'services.library_scripts.script_for_run', 'services.library._script_view']],
     ((F, 'services.migrations.migrate_library_scripts_v2499'), 'INTERNAL', ('program',),
      'retires private-derived per-run scripts; logs ids and scene counts only'),
+    ((F, 'services.migrations.migrate_program_session_ids_v2499'), 'INTERNAL', ('program',),
+     'startup migration; assigns stable session ids without changing the log'),
     ((F, 'services.library.runners'), '4.1-signed-in', ('program',), 'project_visible and record_view'),
     ((F, 'services.library.in_use_message'), '4.1-signed-in', ('program',), "names only library.runners' visible runners"),
     ((F, 'services.migrations.migrate_program_library_v2499'), 'INTERNAL', ('program',), 'startup migration; no viewer, ids and curricula only'),
     *[((F, name), 'INTERNAL', ('program',), 'curriculum resolution or authorized mutation; callers own access') for name in [
         'services.library.get', 'services.library.list_programs', 'services.library.create', 'services.library._write',
         'services.library.delete', 'services.programs.load', 'services.programs.create_row',
+        'services.programs.monitor', 'services.programs.remove_session', 'services.programs._adjust_lesson_credit',
         'services.agent_tools_v2._program_choice_question', 'services.agent_tools_v2._start_program_choice',
         'services.planned.answer_program_choice',
         'services.planned._offer_program_choice',
@@ -80,6 +83,9 @@ READERS = [
     ((R, 'PUT', '/api/programs/{program_id}/lesson'), '4.1-signed-in', ('program',), 'record_actable'),
     ((R, 'DELETE', '/api/programs/{program_id}/lesson'), '4.1-signed-in', ('program',), 'record_actable'),
     ((R, 'GET', '/api/programs/{program_id}/footprint'), '4.1-signed-in', ('program',), 'record_view'),
+    ((R, 'GET', '/api/programs/{program_id}/monitor'), '4.1-signed-in', ('program',), 'record_view'),
+    ((R, 'DELETE', '/api/programs/{program_id}/sessions/{session_id}'), '4.1-signed-in', ('program',),
+     '_piece_or_404 edit; _program_permission_or_refuse'),
     # Projects delete (spec 2026-10-18 §6): the preview names closure titles to whoever may delete;
     # a program is deleted by its project's owner or a parent who reads it.
     ((R, 'GET', '/api/deletion/{kind}/{id}/preview'), '4.1-signed-in', ('thread', 'mission', 'program'), 'deletion.preview'),

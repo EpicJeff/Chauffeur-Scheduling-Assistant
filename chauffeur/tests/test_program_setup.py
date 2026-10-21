@@ -109,7 +109,9 @@ def scenario_activation_failure_keeps_nothing():
     before_libs = len(storage.get_library_programs())
     def boom(data):
         raise RuntimeError('calendar down')
-    with patch.object(storage, 'add_protected_commitment', boom):
+    with patch.object(storage, 'add_protected_commitment', boom), \
+         patch.object(storage, 'delete_program', side_effect=RuntimeError('delete must not mask activation error')), \
+         patch.object(storage, 'delete_library_program', side_effect=RuntimeError('delete must not mask activation error')):
         r = _c().post('/api/programs', headers=_h('mom'), json={'title': 'Learn drums', 'for_member_id': 'kid', 'project_id': pid, 'activate': True,
                                                                'slots': [{'day': 0, 'time_start': '18:00'}]})
     check(r.status_code == 200 and r.json()['status'] == 'error', f"the error is reported: {r.text}")

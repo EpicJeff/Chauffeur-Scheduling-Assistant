@@ -3841,6 +3841,7 @@ def update_program(program_id: str, data: dict) -> bool:
         return bool(programs_table.update(data, Query().id == program_id))
 
 def append_program_session(program_id: str, entry: dict) -> bool:
+    import uuid
     _check_program_keys(entry)
     with db_lock:
         if not _admit_child('program', program_id):
@@ -3851,6 +3852,7 @@ def append_program_session(program_id: str, entry: dict) -> bool:
         row = dict(res[0])
         entry = {'ts': time.time(), 'minutes': 0, 'source': 'added',
                  'note': '', **entry}
+        entry.setdefault('id', uuid.uuid4().hex)
         row['sessions'].append(entry)
         deletion.check()
         programs_table.update({'sessions': row['sessions']},

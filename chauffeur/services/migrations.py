@@ -665,6 +665,20 @@ def migrate_library_scripts_v2499():
         logger.info(f"[migrations] library scripts: {gone} per-run rows retired ({edited} hand-edited)")
 
 
+def migrate_program_session_ids_v2499():
+    """Every logged session gets a stable id so one can be removed by name (programs spec §5.1)."""
+    import uuid
+    with storage.db_lock, storage.db.transaction():
+        if storage.get_app_state('program_session_ids_v2499'):
+            return
+        for run in storage.get_programs(include_finished=True):
+            sessions = run.get('sessions') or []
+            if all(s.get('id') for s in sessions):
+                continue
+            storage.update_program(run['id'], {'sessions': [{**s, 'id': s.get('id') or uuid.uuid4().hex} for s in sessions]})
+        storage.set_app_state('program_session_ids_v2499', time.time())
+
+
 async def run_all_migrations():
     """Runs all data migrations in the background after startup"""
     await asyncio.sleep(5) # Let the app start up completely
@@ -742,3 +756,7 @@ async def run_all_migrations():
         migrate_library_scripts_v2499()
     except Exception as e:
         logger.error(f"Error retiring per-run library scripts: {e}")
+    try:
+        migrate_program_session_ids_v2499()
+    except Exception as e:
+        logger.error(f"Error assigning program session ids: {e}")

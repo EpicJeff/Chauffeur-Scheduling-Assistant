@@ -410,6 +410,112 @@ def progress(program: dict) -> dict:
             'phase': current}
 
 
+def monitor(run: dict, viewer=None) -> dict:
+    """The admin sheet's monitoring view (spec §5.1): counts, the ladder, the log. Never a fraction."""
+    row = load(run)
+    sessions = list(row.get('sessions') or [])
+    def day_of(s):
+        if s.get('slot_date'):
+            return str(s['slot_date'])
+        try:
+            return datetime.datetime.fromtimestamp(float(s['ts'])).date().isoformat()
+        except (KeyError, TypeError, ValueError):
+            return ''
+    today = datetime.date.today()
+    now = datetime.datetime.now()
+    monday = today - datetime.timedelta(days=today.weekday())
+    days = [day_of(s) for s in sessions]
+    this_week = sum(1 for d in days if d and monday.isoformat() <= d <= (monday + datetime.timedelta(days=6)).isoformat())
+    windows = [w for w in practice_windows(today, today + datetime.timedelta(days=13), row.get('member_id'), viewer=viewer)
+               if w.get('program_id') == row.get('id') and not w.get('logged')
+               and (w.get('date') != today.isoformat() or not w.get('time_end')
+                    or datetime.time.fromisoformat(w['time_end']) >= now.time())] if row.get('state') == 'active' else []
+    nxt = windows[0] if windows else None
+    lessons_by_id = {l['id']: l for l in row.get('lessons') or []}
+    titles = {lid: l.get('title') or '' for lid, l in lessons_by_id.items()}
+    counts = (row.get('progress') or {}).get('lessons') or {}
+    current = (row.get('progress') or {}).get('current')
+    logged_variants = {}
+    for s in sessions:
+        if s.get('lesson_id'):
+            logged_variants.setdefault(s['lesson_id'], []).append(s.get('variant_label') or '')
+    phases = []
+    first_unjudged = next((p['id'] for p in row.get('phases') or [] if not p.get('milestone_hit_at')), None)
+    for ph in row.get('phases') or []:
+        ls = []
+        for l in (row.get('lessons') or []):
+            if l['phase_id'] != ph['id']:
+                continue
+            c = counts.get(l['id']) or {}
+            ls.append({'id': l['id'], 'title': l.get('title') or '', 'sessions': int(l.get('sessions') or 1),
+                       'done_sessions': int(c.get('done_sessions') or 0), 'completed': bool(c.get('completed_at')),
+                       'current': l['id'] == current,
+                       'next_variant': (nxt.get('variant_label') or None) if nxt and nxt.get('lesson_id') == l['id'] else None,
+                       'logged_variants': [v for v in logged_variants.get(l['id'], []) if v]})
+        phases.append({'id': ph['id'], 'name': ph.get('name') or '', 'milestone': ph.get('milestone') or '',
+                       'milestone_hit_at': ph.get('milestone_hit_at'), 'progression': ph.get('progression') or '',
+                       'current': ph['id'] == first_unjudged, 'lessons': ls})
+    log = []
+    for s in sorted(sessions, key=lambda s: float(s.get('ts') or 0), reverse=True):
+        logged_on = ''
+        try:
+            logged_on = datetime.datetime.fromtimestamp(float(s['ts'])).date().isoformat()
+        except (KeyError, TypeError, ValueError):
+            pass
+        log.append({'id': s.get('id'), 'when': day_of(s), 'logged_on': logged_on, 'minutes': int(s.get('minutes') or 0),
+                    'lesson_title': titles.get(s.get('lesson_id'), ''), 'variant_label': s.get('variant_label') or '',
+                    'source': s.get('source') or '', 'note': s.get('note') or ''})
+    return {'last_practised': next((s['logged_on'] for s in log if s['logged_on']), None), 'sessions_this_week': this_week,
+            'next_window': ({'date': nxt['date'], 'time_start': nxt.get('time_start') or '', 'lesson_title': nxt.get('unit_title') or '',
+                             'variant_label': nxt.get('variant_label') or ''} if nxt else None),
+            'sessions_total': len(sessions), 'minutes_total': sum(int(s.get('minutes') or 0) for s in sessions),
+            'phases': phases, 'log': log, 'ready_to_judge': ready_to_judge(row)}
+
+
+def _adjust_lesson_credit(row, lesson, delta):
+    """Change one lesson's credit, preserving migrated offsets and judgements."""
+    progress_ = row['progress']
+    count = progress_.setdefault('lessons', {}).setdefault(lesson['id'], {'done_sessions': 0, 'completed_at': None})
+    count['done_sessions'] = int(count.get('done_sessions') or 0) + delta
+    if delta > 0 and count['done_sessions'] >= int(lesson.get('sessions') or 1):
+        count['completed_at'] = count.get('completed_at') or time.time()
+    elif delta < 0 and count['done_sessions'] < int(lesson.get('sessions') or 1):
+        judged = ((progress_.get('phases') or {}).get(lesson['phase_id']) or {}).get('milestone_hit_at')
+        if not judged:
+            count['completed_at'] = None
+    return count
+
+
+def remove_session(program_id: str, session_id: str) -> dict:
+    """Undo only this session's credit; preserve unrelated progress and bookmarks."""
+    with storage.db_lock, storage.db.transaction():
+        raw = storage.get_program(program_id)
+        if not raw:
+            return {'status': 'error', 'code': 404, 'message': 'That program is no longer here.'}
+        kept = [s for s in raw.get('sessions') or [] if s.get('id') != session_id]
+        if len(kept) == len(raw.get('sessions') or []):
+            return {'status': 'error', 'code': 404, 'message': 'No such session.'}
+        row = load(raw)
+        if not raw.get('library_id') or row.get('unresolved'):
+            storage.update_program(program_id, {'sessions': kept})
+            return {'status': 'success', 'message': 'Removed the session.'}
+        removed = next(s for s in raw['sessions'] if s.get('id') == session_id)
+        lesson = next((l for l in row['lessons'] if l['id'] == removed.get('lesson_id')), None)
+        progress_ = row['progress']
+        if lesson:
+            completed = bool((progress_.get('lessons', {}).get(lesson['id']) or {}).get('completed_at'))
+            count = _adjust_lesson_credit(row, lesson, -1)
+            if completed and not count.get('completed_at'):
+                phase = next((p for p in row['phases'] if not p.get('milestone_hit_at')), None)
+                candidates = [l['id'] for l in row['lessons'] if phase and l['phase_id'] == phase['id']]
+                current = progress_.get('current')
+                if lesson['id'] in candidates and current in candidates and candidates.index(lesson['id']) <= candidates.index(current):
+                    progress_['current'] = lesson['id']
+        progress_ = reconcile_progress({**raw, 'progress': progress_}, row)
+        storage.update_program(program_id, {'sessions': kept, 'progress': progress_})
+    return {'status': 'success', 'message': 'Removed. Progress follows the sessions that are left.'}
+
+
 def sessions_between(program: dict, start: datetime.date,
                      end: datetime.date) -> list:
     """The log entries inside a date window, for the derived read in
@@ -480,10 +586,8 @@ def log_session(program_id: str, minutes: int = None, source: str = 'added',
             return {'status': 'error', 'message': 'That program is no longer here.'}
         if lesson:
             progress_ = row['progress']
-            count = progress_['lessons'].setdefault(selected, {'done_sessions': 0, 'completed_at': None})
-            count['done_sessions'] = int(count.get('done_sessions') or 0) + 1
+            count = _adjust_lesson_credit(row, lesson, 1)
             if count['done_sessions'] >= int(lesson.get('sessions') or 1):
-                count['completed_at'] = count.get('completed_at') or time.time()
                 if selected == progress_['current']:
                     nxt = next_in_phase(row)
                     candidates = [l for l in row['lessons'] if l['phase_id'] == lesson['phase_id']]
