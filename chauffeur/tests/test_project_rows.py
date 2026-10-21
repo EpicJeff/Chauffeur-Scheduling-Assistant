@@ -465,6 +465,43 @@ def uuid_hex():
     return uuid.uuid4().hex
 
 
+def scenario_planned_ask_on_a_step_backed_mission_is_one_asking_row():
+    _fresh()
+    p = _bath()
+    from services import planned
+    plan = {'state': 'approved', 'rev': 1, 'stages': [
+        {'id': 's1', 'kind': 'work', 'state': 'proposed', 'title': 'Find tile', 'snapshot': 'snap', 'rows': []},
+        {'id': 's2', 'kind': 'work', 'state': 'pending', 'title': 'Order tile', 'snapshot': 'snap', 'rows': []}]}
+    mid = _mission(p['id'], 'find and order tile', status='running', plan=plan)
+    proj = storage.get_project(p['id'])
+    base = {'owner': 'argyle', 'needs': [], 'mission_id': mid, 'found': None, 'question': None, 'state': 'todo', 'goal': 'x'}
+    proj['steps'] = [{**base, 'id': 'st1', 'title': 'Find tile', 'stage_id': 's1', 'order': 1},
+                     {**base, 'id': 'st2', 'title': 'Order tile', 'stage_id': 's2', 'order': 2}]
+    storage.update_project(p['id'], {'steps': proj['steps']})
+    with patch('services.missions._dm_person', lambda *a, **k: None):
+        planned._ask(mid, 'stage', 'Do this part?', stage_id='s1')
+    rows = _rows(p['id'])
+    asking = [r for r in rows if r['box'] == 'asking']
+    check(len(asking) == 1 and asking[0]['kind'] == 'step' and asking[0]['id'] == 'st1' and asking[0]['group'] == 'now'
+          and asking[0]['actions'] and asking[0]['sheet'] == {'kind': 'mission', 'id': mid}
+          and asking[0]['title'] == 'Argyle needs you: Do this part?', f"one asking row, on the asked stage's step: {asking}")
+    check(not any(r['kind'] == 'argyle' for r in rows), "the step owns the mission's row")
+    other = _by(rows, 'step', 'st2')
+    check(other['box'] != 'asking', f"the other stage's step does not also ask: {other}")
+
+
+def scenario_thread_asking_with_no_buttons_falls_back_to_answer():
+    _fresh()
+    p = _bath()
+    tid = threads.create(title='Tiler', owner_member_id='mom', created_by='mom', project_id=p['id'], next_action='Call')
+    mid = _mission(p['id'], 'draft to the tiler', launch={'origin_kind': 'thread', 'origin_ref': tid}, status='waiting_user')
+    storage.add_mission_step(mid, {'kind': 'ask', 'name': 'question', 'result_json': {'question': 'Send it?'}})
+    from services import projects
+    with patch.object(projects, '_ask_actions', lambda sit: []):
+        r = _by(_rows(p['id']), 'conversation', tid)
+    check(r['box'] == 'asking' and [a['verb'] for a in r['actions']] == ['answer'], f"an ask with no buttons offers Answer: {r}")
+
+
 def scenario_groups_order():
     check(_p().ROW_GROUPS == ('now', 'next', 'later', 'linked', 'logbook'), "the five groups in order")
 

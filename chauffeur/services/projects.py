@@ -1289,10 +1289,32 @@ def _group_of(row, today):
     return 'later'
 
 
+def _asking_steps(steps):
+    """{mission_id: step_id}: the one step that carries an asking mission's
+    ask. A planned mission shares its id across every work-stage step, so the
+    ask goes to the step of the stage asked about, else the one under way,
+    else the first not yet finished."""
+    out = {}
+    for mid in {st.get('mission_id') for st in steps if st.get('owner') == 'argyle' and st.get('mission_id')}:
+        raw = storage.get_mission(mid)
+        if not _mission_asking(raw):
+            continue
+        mine = [st for st in steps if st.get('mission_id') == mid and st.get('state') not in ('done', 'skipped')]
+        if not mine:
+            continue
+        asked = next((x for x in reversed(storage.get_mission_steps(mid) or []) if x.get('kind') == 'ask'), None)
+        stage_id = ((asked or {}).get('result_json') or {}).get('stage_id')
+        pick = (next((st for st in mine if stage_id and st.get('stage_id') == stage_id), None)
+                or next((st for st in mine if st.get('state') == 'doing'), None) or mine[0])
+        out[mid] = pick['id']
+    return out
+
+
 def _step_rows(project, project_view, viewer, cards_by_mission):
     from services import access
     steps = sorted(project_view.get('steps') or [], key=lambda s: s.get('order', 0))
     titles = {s['id']: s.get('title') or '' for s in steps}
+    asker = _asking_steps(steps)
     out = []
     for s in steps:
         sid, state, owner = s['id'], s.get('state'), s.get('owner')
@@ -1307,6 +1329,14 @@ def _step_rows(project, project_view, viewer, cards_by_mission):
                 row = _row('step', sid, s.get('title') or goal, subtitle='Argyle', box='done', reason='skipped')
             elif gone:
                 row = _row('step', sid, s.get('title') or goal, subtitle='Argyle', box='not_yet', reason="Argyle's work is gone")
+            elif asker.get(s.get('mission_id')) == sid:
+                # The backing mission waits on a person (planned asks do not
+                # write step.question): this step is its one asking row.
+                sit = cards_by_mission.get(s['mission_id']) or {}
+                actions = _ask_actions(sit) or [{'id': 'answer', 'label': 'Answer', 'verb': 'answer', 'payload': {}}]
+                words = _ask_question(mission) or (sit.get('next_step') or {}).get('label') or goal
+                row = _row('step', sid, 'Argyle needs you: ' + words, subtitle='Argyle', box='asking', when='now',
+                           actions=actions, sheet={'kind': 'mission', 'id': s['mission_id']})
             elif s.get('question') and state in ('doing', 'blocked'):
                 sit = cards_by_mission.get(s.get('mission_id')) or {}
                 row = _row('step', sid, 'Argyle needs you: ' + s['question'], subtitle='Argyle', box='asking', when='now',
@@ -1412,6 +1442,7 @@ def _thread_row(card, project, viewer, folded):
     asking = bool(actions) if keeper else (forwarded_asks or bool(askers))
     if asking:
         mission = forwarded if forwarded_asks else storage.get_mission(askers[0]['id'])
+        actions = actions or [{'id': 'answer', 'label': 'Answer', 'verb': 'answer', 'payload': {}}]
         row = _row('conversation', card['id'], _ask_title(mission, actions, card.get('title') or ''), subtitle=sub,
                    box='asking', when='now', actions=actions)
     elif state in ('done', 'dropped'):
