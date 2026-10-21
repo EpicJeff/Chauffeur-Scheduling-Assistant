@@ -97,9 +97,9 @@ ADMIN_ACTIONS = {
     # services.programs.log_session a hand-typed confirmation would use.
     "log_program_session",
     # Programs: the tap on the drift finding. A window somebody deleted by
-    # hand is never silently put back -- this returns the program to
-    # `proposed` so the whole footprint goes back in front of a person.
+    # hand is never silently put back: these offers open the days editor.
     "reshape_program",
+    "change_program_days",
 }
 
 # Human-friendly label shown as the card's action badge.
@@ -123,7 +123,8 @@ ACTION_LABELS = {
     "skip_occurrence": "Skip this one",
     "ask_deal": "Ask them",
     "log_program_session": "Yes, it happened",
-    "reshape_program": "Re-shape the week",
+    "reshape_program": "Change the days",
+    "change_program_days": "Change the days",
 }
 
 
@@ -315,9 +316,10 @@ def _execute(action_type: str, payload: dict, approver=None) -> dict:
         from services import programs as _prog
         return _prog.log_session(payload.get('program_id'), source='asked',
                                  slot_date=payload.get('slot_date'))
-    if action_type == "reshape_program":
-        from services import programs as _prog
-        return _prog.reshape(payload.get('program_id'))
+    if action_type in ('change_program_days', 'reshape_program'):
+        return {'status': 'success', 'schedule_dirty': False,
+                'open': {'kind': 'program', 'id': payload.get('program_id'), 'menu': 'change_days'},
+                'message': 'Open the program and choose Change the days.'}
     if action_type in agent_tools_v2.TOOL_HANDLERS:
         return agent_tools_v2.execute_tool(action_type, payload, actor=approver)
     return {"status": "error", "message": f"Unknown action type '{action_type}'."}
@@ -482,10 +484,10 @@ def act_on_proposal(proposal_id: str, act: str, approver_member: Optional[dict])
     prop = storage.get_action_proposal(proposal_id)
     if not prop:
         return {"status": "error", "message": "That action is no longer available."}
-    if prop.get('action_type') in ('log_program_session', 'reshape_program'):
+    if prop.get('action_type') in ('log_program_session', 'reshape_program', 'change_program_days'):
         from services import access
         row = access.KINDS['program'].load((prop.get('payload') or {}).get('program_id'))
-        verb = 'session' if prop['action_type'] == 'log_program_session' else 'reshape'
+        verb = 'session' if prop['action_type'] == 'log_program_session' else 'edit'
         if not access.record_actable('program', row, approver_member, verb):
             return {'status': 'error', 'message': 'That action is no longer available.'}
     if prop.get('stage_id'):
@@ -532,6 +534,8 @@ def act_on_proposal(proposal_id: str, act: str, approver_member: Optional[dict])
                 "card": build_card(proposal_id, a_type, summary, current_status)}
     result = {"status": "success", "message": res.get("message") or f"Done: {summary}",
               "created": res.get("created") or []}
+    if "open" in res:
+        result["open"] = res["open"]
     storage.update_action_proposal(proposal_id, {
         "status": "approved",
         "result": result,
@@ -539,4 +543,4 @@ def act_on_proposal(proposal_id: str, act: str, approver_member: Optional[dict])
     })
     return {**result,
             "card": build_card(proposal_id, a_type, summary, "approved"),
-            "schedule_dirty": a_type in ADMIN_ACTIONS}
+            "schedule_dirty": res.get("schedule_dirty", a_type in ADMIN_ACTIONS)}

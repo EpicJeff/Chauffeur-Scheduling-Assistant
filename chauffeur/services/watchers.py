@@ -621,26 +621,16 @@ def _program_findings(now: datetime.datetime):
                 gone = _prog.orphaned_emissions(row)
                 if gone:
                     _prog.forget_emissions(row['id'], gone)
-                    # The offer in the sentence has to be one the app can actually
-                    # perform. It asked "want it back, or shall I re-shape the
-                    # week?" carrying no action and with no endpoint behind it --
-                    # and `forget_emissions` had just erased the ids, so even a
-                    # hand-restored commitment could never re-link and the program
-                    # became an active zombie that still re-baselined every
-                    # fortnight. `reshape` returns it to `proposed` so the
-                    # existing approve path can rebuild the footprint, which also
-                    # keeps the promise that nothing is silently re-created: a
-                    # person still sees the whole footprint and taps.
+                    # A person chooses new times in the program editor.
                     out.append(Finding(
                         key=f"program_drift:{row['id']}",
                         line=(f"📅 {row.get('title')}: that practice time isn't on "
                               f"the calendar any more, so it isn't reserved. "
-                              f"Re-shape the week and I'll put the footprint back "
-                              f"up for approval."),
+                              f"Change the days and I'll put the new windows on the calendar."),
                         kind='program_drift', severity='decide', dm=True,
                         subject_type='program', subject_id=str(row['id']),
-                        action={'label': 'Re-shape the week',
-                                'action_type': 'reshape_program',
+                        action={'label': 'Change the days',
+                                'action_type': 'change_program_days',
                                 'payload': {'program_id': row['id']}}))
                     continue
                 bent = _prog.maybe_rebaseline(row, now)

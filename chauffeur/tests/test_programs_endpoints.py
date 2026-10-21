@@ -287,7 +287,7 @@ def scenario_the_new_endpoints_exist():
     import main
     paths = {r.path for r in main.app.routes}
     for p in ('/api/programs/{program_id}/finish',
-              '/api/programs/{program_id}/reshape',
+              '/api/programs/{program_id}/schedule',
               '/api/programs/{program_id}/edit',
               '/api/programs/celebrations'):
         check(p in paths, f"{p} must be reachable by hand")

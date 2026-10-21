@@ -6023,9 +6023,9 @@ def _proposal_piece_visible(prop, viewer, verb=None):
     refs = []
     if prop.get('origin_kind') == 'mission':
         refs.append(('mission', prop.get('origin_id'), verb or 'approve'))
-    if prop.get('action_type') in ('log_program_session', 'reshape_program'):
+    if prop.get('action_type') in ('log_program_session', 'reshape_program', 'change_program_days'):
         refs.append(('program', (prop.get('payload') or {}).get('program_id'),
-                     'session' if prop['action_type'] == 'log_program_session' else 'reshape'))
+                     'session' if prop['action_type'] == 'log_program_session' else 'edit'))
     return all(access.record_actable(kind, _PIECE_LOAD[kind](rid), viewer, action)
                for kind, rid, action in refs)
 
@@ -8946,19 +8946,18 @@ def finish_program(program_id: str, background_tasks: BackgroundTasks = None,
     return _program_refresh(_prog.finish(program_id), background_tasks)
 
 
-@app.post("/api/programs/{program_id}/reshape")
-def reshape_program(program_id: str, background_tasks: BackgroundTasks = None,
-                    body: dict = Body(default={}), request: Request = None):
-    """The drift finding's offer, made real: hand the program back to
-    `proposed` so the footprint can be rebuilt and approved again. Nothing is
-    silently re-created — a person still sees the whole footprint and taps."""
-    _piece_or_404('program', program_id, request, 'reshape')
+@app.patch("/api/programs/{program_id}/schedule")
+def program_schedule(program_id: str, background_tasks: BackgroundTasks = None,
+                     body: dict = Body(default={}), request: Request = None):
+    """Change the days (programs spec §5.3): the run's keeper or a parent/adult stand-in."""
+    _piece_or_404('program', program_id, request, 'edit')
     from services import programs as _prog
     row = storage.get_program(program_id)
     if not row:
-        return {'status': 'error', 'message': 'That program is no longer here.'}
+        raise HTTPException(status_code=404, detail='No such program')
     _program_permission_or_refuse(request, body, row)
-    return _program_refresh(_prog.reshape(program_id), background_tasks)
+    actor = _approver_of_record(storage.get_member(_acting_id(request, body.get('member_id'))))
+    return _program_refresh(_prog.replace_schedule(program_id, body.get('slots') or [], actor), background_tasks)
 
 
 @app.post("/api/programs/{program_id}/pause")

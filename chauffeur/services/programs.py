@@ -783,6 +783,96 @@ def reshape(program_id: str) -> dict:
                        f"week again."}
 
 
+def _claimer(actor) -> bool:
+    return bool(actor) and actor.get('role') in ('parent', 'adult') and (actor.get('status') or 'active') == 'active'
+
+
+@_program_work
+def replace_schedule(program_id: str, slots: list, actor: dict) -> dict:
+    """Change the days (spec §5.3): active = release + claim in one bracket with a
+    snapshot restore; paused = remember only; a child keeper's wish goes to proposed."""
+    try:
+        with storage.db_lock, storage.db.transaction():
+            row = load(storage.get_program(program_id))
+            if not row:
+                return {'status': 'error', 'code': 404, 'message': 'That program is no longer here.'}
+            if row.get('unresolved'):
+                return {'status': 'error', 'message': 'Needs a program. Pick a program first.'}
+            state = row.get('state')
+            if state not in ('active', 'paused'):
+                return {'status': 'error', 'message': 'There are no days to change for this program.'}
+            if not _claimer(actor) and (actor or {}).get('id') != row.get('member_id'):
+                return {'status': 'error', 'code': 403,
+                        'message': 'Only the person practising or a parent or adult can change these days.'}
+            shape = dict(row.get('shape') or {})
+            minutes = int(shape.get('minutes') or 25)
+            wanted = sanitize_slots(slots, minutes) or propose_slots(row.get('member_id'), {**shape, 'slots': []})
+            if not wanted:
+                return {'status': 'error', 'message': 'No free time was found. Pick days and times to continue.'}
+            new_shape = clamp_shape({**shape, 'slots': wanted, 'preferred_days': [s['day'] for s in wanted]})
+            today = datetime.date.today().isoformat()
+            baseline = dict(row.get('baseline') or {})
+            history = list(baseline.get('schedule_history') or [])
+            history.append({'until': today, 'preferred_days': list(shape.get('preferred_days') or [])})
+            new_baseline = {**baseline, 'schedule_changed_on': today, 'schedule_history': history[-12:]}
+
+            if not _claimer(actor):
+                # A child keeper (own run): the wish is kept, the week is handed back for approval.
+                # A failed release must leave the transaction before it is handled.
+                released = release_commitments(program_id) if state == 'active' else 0
+                storage.update_program(program_id, {'state': 'proposed', 'paused_at': None, 'paused_slots': [],
+                                                    'shape': new_shape, 'baseline': new_baseline})
+                return {'status': 'success', 'schedule_dirty': bool(released), 'state': 'proposed', 'slots': wanted,
+                        'message': 'Saved your times; a parent or adult puts them on the calendar.'}
+
+            if state == 'paused':
+                storage.update_program(program_id, {'paused_slots': wanted, 'shape': new_shape, 'baseline': new_baseline})
+                return {'status': 'success', 'schedule_dirty': False, 'state': 'paused', 'slots': wanted,
+                        'message': 'Saved. These times go on the calendar when you resume.'}
+
+            # Active, claimer: one bracket. Snapshot what the week holds now.
+            live = {pc['id']: pc for pc in storage.get_protected_commitments(member_id=row.get('member_id'), include_inactive=True)}
+            emissions = dict(storage.get_program(program_id).get('emissions') or {})
+            old_ids = [cid for cid in (emissions.get('commitment_ids') or []) if cid in live]
+            snapshot = [dict(live[cid]) for cid in old_ids]
+            # Orphans (deleted by hand) are forgotten, never re-created.
+            emissions['commitment_ids'] = old_ids
+            storage.update_program(program_id, {'emissions': emissions})
+            made = []
+            try:
+                release_commitments(program_id)
+                fresh = {'commitment_ids': [], 'thread_ids': list(emissions.get('thread_ids') or []),
+                         'event_ids': list(emissions.get('event_ids') or [])}
+                _emit_commitments(program_id, row, wanted, fresh, made)
+                storage.update_program(program_id, {'shape': new_shape, 'baseline': new_baseline, 'emissions': fresh})
+            except deletion.Cancelled:
+                raise
+            except Exception as e:
+                # Put the old week back exactly: delete what this attempt made, re-insert the snapshot.
+                remaining = []
+                for cid in made:
+                    _quietly('undo new commitment', storage.delete_protected_commitment, cid)
+                    if storage.get_protected_commitment(cid) is not None:
+                        remaining.append(cid)
+                restored = []
+                failed = []
+                for pc in snapshot:
+                    if storage.get_protected_commitment(pc['id']) is None:
+                        _quietly('restore commitment', storage.add_protected_commitment, pc)
+                    if storage.get_protected_commitment(pc['id']) is None:
+                        failed.append(pc['id'])
+                    restored.append(pc['id'])
+                storage.update_program(program_id, {'emissions': {**emissions, 'commitment_ids': restored + remaining}})
+                if failed or remaining:
+                    return {'status': 'error', 'schedule_dirty': True,
+                            'message': f"Couldn't restore practice times {failed} or remove new times {remaining}: {e}. Please try again."}
+                return {'status': 'error', 'message': f"Couldn't change the days, so the old ones were kept: {e}"}
+            return {'status': 'success', 'schedule_dirty': True, 'state': 'active', 'slots': wanted,
+                    'message': f"Changed. {len(wanted)} practice window(s) on the calendar."}
+    except RuntimeError:
+        return {'status': 'error', 'message': RELEASE_ERROR}
+
+
 # --- The footprint: what a program does to the week ------------------------
 # A program is a generator. It emits reserved practice time, a thread for the
 # kit, and a real dated event to aim at -- and the parent sees all of it on one
@@ -1511,6 +1601,13 @@ def weekday_shortfall(program: dict, now=None) -> dict:
         began = datetime.date.fromisoformat(start) if start else None
     except (TypeError, ValueError):
         began = None
+    changed = (program.get('baseline') or {}).get('schedule_changed_on')
+    if changed:
+        try:
+            changed = datetime.date.fromisoformat(changed)
+            began = max(began, changed) if began else changed
+        except (TypeError, ValueError):
+            pass
     window_days = int(storage.get_settings().get(
         'programs_rebaseline_days', REBASELINE_WINDOW_DAYS) or REBASELINE_WINDOW_DAYS)
     window_start = max(began or now.date(),
