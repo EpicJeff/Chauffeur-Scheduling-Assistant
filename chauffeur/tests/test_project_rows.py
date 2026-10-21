@@ -497,9 +497,30 @@ def scenario_thread_asking_with_no_buttons_falls_back_to_answer():
     mid = _mission(p['id'], 'draft to the tiler', launch={'origin_kind': 'thread', 'origin_ref': tid}, status='waiting_user')
     storage.add_mission_step(mid, {'kind': 'ask', 'name': 'question', 'result_json': {'question': 'Send it?'}})
     from services import projects
-    with patch.object(projects, '_ask_actions', lambda sit: []):
+    with patch.object(projects, '_ask_actions', lambda sit, mission=None: []):
         r = _by(_rows(p['id']), 'conversation', tid)
     check(r['box'] == 'asking' and [a['verb'] for a in r['actions']] == ['answer'], f"an ask with no buttons offers Answer: {r}")
+
+
+def scenario_stage_buttons_stay_off_non_stage_asks():
+    _fresh()
+    p = _bath()
+    from services import situations
+    mid = _mission(p['id'], 'book the tiler', status='waiting_user', plan=_WORK_PLAN)
+    storage.add_mission_step(mid, {'kind': 'ask', 'name': 'release', 'result_json': {'question': 'Share your phone number?'}})
+    verbs = [o['verb'] for o in situations.view('mission', mid, dict(MOM))['options']]
+    check('run_stage' in verbs and 'release' in verbs, f"precondition: the sheet carries Skip/Stop beside the release: {verbs}")
+    r = _by(_rows(p['id']), 'argyle', mid)
+    check(r['box'] == 'asking' and r['actions'] and {a['verb'] for a in r['actions']} == {'release'},
+          f"a release ask's row carries release buttons only: {r['actions']}")
+    # The same ask through a thread and through a step.
+    tid = threads.create(title='Tiler', owner_member_id='mom', created_by='mom', project_id=p['id'], next_action='Call')
+    mid2 = _mission(p['id'], 'draft to the tiler', launch={'origin_kind': 'thread', 'origin_ref': tid}, status='waiting_user', plan=_WORK_PLAN)
+    storage.add_mission_step(mid2, {'kind': 'ask', 'name': 'release', 'result_json': {'question': 'Share your email?'}})
+    t = _by(_rows(p['id']), 'conversation', tid)
+    check(t['box'] == 'asking' and t['actions'] and 'run_stage' not in {a['verb'] for a in t['actions']},
+          f"and its thread row: {t['actions']}")
+    # A stage ask keeps its own run_stage buttons (covered by the planned-ask scenario).
 
 
 def scenario_groups_order():

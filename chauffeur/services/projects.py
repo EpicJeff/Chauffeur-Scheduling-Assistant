@@ -1238,9 +1238,19 @@ def _due_words(iso):
     return d.strftime('%b ') + str(d.day)
 
 
-def _ask_actions(situation):
+STAGE_ASKS = ('stage', 'stage_check')
+
+
+def _ask_actions(situation, mission=None):
+    """The ask's own buttons. A running work stage adds Skip/Stop to every
+    waiting mission (situations._options_mission); on a row they belong only
+    to a stage ask, so with the mission given they are dropped for any other
+    ask (release, submit, question, budget...). They stay in the sheet."""
     opts = (situation or {}).get('options') or []
-    return [o for o in opts if o.get('verb') in ASK_VERBS and (o.get('payload') or {}).get('ask') != 'steer']
+    out = [o for o in opts if o.get('verb') in ASK_VERBS and (o.get('payload') or {}).get('ask') != 'steer']
+    if mission is not None and _last_ask_name(mission) not in STAGE_ASKS:
+        out = [o for o in out if o.get('verb') != 'run_stage']
+    return out
 
 
 def _mission_asking(raw):
@@ -1252,11 +1262,18 @@ def _mission_asking(raw):
                           or (bool(raw.get('id')) and missions.verify_open(raw)))
 
 
+def _last_ask(raw):
+    steps = storage.get_mission_steps((raw or {}).get('id') or '') if raw else []
+    return next((x for x in reversed(steps or []) if x.get('kind') == 'ask'), None) or {}
+
+
+def _last_ask_name(raw):
+    return _last_ask(raw).get('name')
+
+
 def _ask_question(raw):
     """The words of the mission's newest ask, else ''."""
-    steps = storage.get_mission_steps((raw or {}).get('id') or '') if raw else []
-    asked = next((x for x in reversed(steps or []) if x.get('kind') == 'ask'), None)
-    return ((asked or {}).get('result_json') or {}).get('question') or ''
+    return (_last_ask(raw).get('result_json') or {}).get('question') or ''
 
 
 def _ask_title(raw, actions, fallback):
@@ -1333,14 +1350,14 @@ def _step_rows(project, project_view, viewer, cards_by_mission):
                 # The backing mission waits on a person (planned asks do not
                 # write step.question): this step is its one asking row.
                 sit = cards_by_mission.get(s['mission_id']) or {}
-                actions = _ask_actions(sit) or [{'id': 'answer', 'label': 'Answer', 'verb': 'answer', 'payload': {}}]
+                actions = _ask_actions(sit, mission) or [{'id': 'answer', 'label': 'Answer', 'verb': 'answer', 'payload': {}}]
                 words = _ask_question(mission) or (sit.get('next_step') or {}).get('label') or goal
                 row = _row('step', sid, 'Argyle needs you: ' + words, subtitle='Argyle', box='asking', when='now',
                            actions=actions, sheet={'kind': 'mission', 'id': s['mission_id']})
             elif s.get('question') and state in ('doing', 'blocked'):
                 sit = cards_by_mission.get(s.get('mission_id')) or {}
                 row = _row('step', sid, 'Argyle needs you: ' + s['question'], subtitle='Argyle', box='asking', when='now',
-                           actions=_ask_actions(sit) or [{'id': 'answer', 'label': 'Answer', 'verb': 'answer', 'payload': {}}],
+                           actions=_ask_actions(sit, mission) or [{'id': 'answer', 'label': 'Answer', 'verb': 'answer', 'payload': {}}],
                            sheet={'kind': 'mission', 'id': s.get('mission_id')} if s.get('mission_id') else None)
             elif state == 'doing':
                 row = _row('step', sid, 'Argyle is ' + _gerund(goal), subtitle=_found_short(s.get('found')) or 'Argyle', box='argyle', when='running',
@@ -1436,9 +1453,9 @@ def _thread_row(card, project, viewer, folded):
     forwarded = access.thread_mission(raw)
     askers = [m for m in folded if _mission_asking(storage.get_mission(m['id']))]
     forwarded_asks = _mission_asking(forwarded)
-    actions = _ask_actions(sit) if forwarded_asks else []
+    actions = _ask_actions(sit, forwarded) if forwarded_asks else []
     if not actions:
-        actions = [a for m in askers for a in _ask_actions(m.get('situation'))]
+        actions = [a for m in askers for a in _ask_actions(m.get('situation'), storage.get_mission(m['id']))]
     asking = bool(actions) if keeper else (forwarded_asks or bool(askers))
     if asking:
         mission = forwarded if forwarded_asks else storage.get_mission(askers[0]['id'])
@@ -1466,7 +1483,7 @@ def _mission_row(card):
     status = raw.get('status')
     goal = card.get('title') or ''
     if _mission_asking(raw):
-        actions = _ask_actions(sit) or [{'id': 'answer', 'label': 'Answer', 'verb': 'answer', 'payload': {}}]
+        actions = _ask_actions(sit, raw) or [{'id': 'answer', 'label': 'Answer', 'verb': 'answer', 'payload': {}}]
         row = _row('argyle', card['id'], _ask_title(raw, actions, goal), subtitle='Argyle', box='asking', when='now', actions=actions)
     elif status == 'blocked':
         row = _row('argyle', card['id'], goal, subtitle='Argyle', box='not_yet', reason=sit.get('status_note') or 'stopped')
