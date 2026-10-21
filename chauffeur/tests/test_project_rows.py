@@ -82,12 +82,13 @@ def scenario_argyle_steps_by_state():
     check(not [x for x in rows if x['kind'] == 'argyle'], f"a step's mission has no second row: {rows}")
     # missions are on in _fresh(); advance launched it, so it is doing.
     check(r['box'] == 'argyle' and r['when'] == 'running' and r['group'] == 'next'
-          and r['title'] == 'Argyle is finding ivory matte tile', f"a running Argyle step: {r}")
+          and r['title'] == 'Argyle is working on find ivory matte tile', f"a running Argyle step: {r}")
     mid = storage.get_project(p['id'])['steps'][0]['mission_id']
     _p().on_question(mid, 'Matte or gloss?')
     r = _by(_rows(p['id']), 'step', todo['id'])
     check(r['box'] == 'asking' and r['group'] == 'now' and r['title'] == 'Argyle needs you: Matte or gloss?'
-          and r['actions'] and r['actions'][0]['label'] == 'Answer', f"an asking Argyle step: {r}")
+          and r['actions'] and r['actions'][0]['label'] == 'Answer' and r['subtitle'] == 'Argyle asks · find ivory matte tile',
+          f"an asking Argyle step: {r}")
     _p().on_stage_done(mid, None, {'tiles': 'Ivory matte'})
     r = _by(_rows(p['id']), 'step', todo['id'])
     check(r['box'] == 'done' and r['group'] == 'logbook' and r['title'] == 'tiles: Ivory matte', f"a done Argyle step shows its found line: {r}")
@@ -168,7 +169,8 @@ def scenario_mission_rows_and_precedence():
     storage.add_mission_step(mid, {'kind': 'ask', 'name': 'question', 'result_json': {'question': 'Which day suits the tiler?'}})
     r = _by(_rows(p['id']), 'argyle', mid)
     check(r['box'] == 'asking' and r['group'] == 'now' and r['title'] == 'Which day suits the tiler?'
-          and any(a['verb'] == 'answer' for a in r['actions']), f"an asking mission carries its buttons: {r}")
+          and any(a['verb'] == 'answer' for a in r['actions']) and r['subtitle'].startswith('Argyle asks · '),
+          f"an asking mission carries its buttons: {r}")
     storage.update_mission(mid, {'status': 'done'})
     with patch.object(missions, 'verify_open', lambda row: True):
         r = _by(_rows(p['id']), 'argyle', mid)

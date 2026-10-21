@@ -60,10 +60,13 @@ def scenario_links_land_on_projects():
     import re
     house = open(os.path.join(ROOT, 'static/house.js'), encoding='utf-8').read()
     overlay = open(os.path.join(ROOT, 'static/kitchen_overlay.js'), encoding='utf-8').read()
-    check(re.search(r"study_binders:\s*\['Program binders',\s*'projects\?lane=programs'\]", house),
-          "the House study binders open the Projects programs lane")
-    check(re.search(r"study_binders:\s*'projects\?lane=programs'", overlay),
-          "the overlay study binders open the Projects programs lane")
+    # The Programs lane filter is gone (one-list spec R5): the binders open the Library, which lists every program.
+    check(re.search(r"study_binders:\s*\['Program binders',\s*'library'\]", house),
+          "the House study binders open the Library")
+    check(re.search(r"study_binders:\s*'library'", overlay),
+          "the overlay study binders open the Library")
+    study = open(os.path.join(ROOT, 'static/study.js'), encoding='utf-8').read()
+    check('lane=programs' not in study and "'/library'" in study, "the Study binders open the Library")
     watchers = open(os.path.join(ROOT, 'services', 'watchers.py'), encoding='utf-8').read()
     check('/missions' not in watchers, "the watcher's words name the Projects page")
 

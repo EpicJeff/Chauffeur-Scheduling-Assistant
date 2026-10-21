@@ -144,7 +144,7 @@
       `${f.stickies.count} open (${f.stickies.worst || 'low'})`, false]);
     f.keys.filter(k => k.low).forEach(k => rows.push(['/dashboard_v2#cars', 'Car', `${k.name} low`, false]));
     if (f.contracts.count) rows.push(['/dashboard', 'Deals', `${f.contracts.count} awaiting answers`, false]);
-    f.binders.filter(b => b.pulled).forEach(b => rows.push(['/projects?lane=programs', 'Program', `${b.title} needs a look`, false]));
+    f.binders.filter(b => b.pulled).forEach(b => rows.push(['/library', 'Program', `${b.title} needs a look`, false]));
     // The window: the week measured against the family's OWN baseline. Only
     // once there is a baseline to measure against (`ready`) — "early days"
     // is not a thing that needs you, so a young install stays silent here
@@ -633,7 +633,7 @@
     window:    { meshes: [], url: '/mind',        parts: {}, summary: '' },
     keys:      { meshes: [], url: '/dashboard_v2#cars', parts: {}, summary: '' },
     contracts: { meshes: [], url: '/dashboard',   parts: {}, summary: '' },
-    binders:   { meshes: [], url: '/projects?lane=programs',    parts: {}, summary: '' },
+    binders:   { meshes: [], url: '/library',    parts: {}, summary: '' },
     gauges:    { meshes: [], url: '/mind',        parts: {}, summary: '' },
     // The screen is the one zone that opens no page. There is no "Argyle's
     // graph" page to send anybody to, and inventing a destination for a tap

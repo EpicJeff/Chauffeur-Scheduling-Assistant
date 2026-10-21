@@ -97,14 +97,14 @@ def scenario_the_overview_row():
     rows = {r['id']: r for r in main.projects_list(request=_as('mom'))['projects']}
     row = rows[p['id']]
     check(row['lane'] == 'waiting' and row['has_program'] is True and 'card_next' in row, f"overview row: {row}")
-    check(row['card_next'] != 'Needs a plan' and row['needs_plan'] is False, "a project holding a program is not empty")
+    check(row['card_next'] != "Argyle hasn't planned this yet" and row['needs_plan'] is False, "a project holding a program is not empty")
     tid = threads.create(title='Tiler', owner_member_id='mom', created_by='mom')
     wrapper = _p().overview_row(_p().project_for('thread', tid), dict(DAD))
-    check(wrapper['lane'] != 'needs_you' and wrapper['card_next'] != 'Needs a plan' and wrapper['needs_plan'] is False,
+    check(wrapper['lane'] != 'needs_you' and wrapper['card_next'] != "Argyle hasn't planned this yet" and wrapper['needs_plan'] is False,
           f"a thread wrapper has its own work already: {wrapper}")
     kid = _p().create({'title': 'Ride a bike', 'goal': 'ride', 'done_when': 'x', 'owner_member_id': 'kid'}, dict(KID))['project']
     kid_row = _p().overview_row(storage.get_project(kid['id']), dict(MOM))
-    check(kid_row['lane'] == 'needs_you' and kid_row['card_next'] == 'Needs a plan' and kid_row['needs_plan'] is True,
+    check(kid_row['lane'] == 'needs_you' and kid_row['card_next'] == "Argyle hasn't planned this yet" and kid_row['needs_plan'] is True,
           f"a child's empty project still needs a plan: {kid_row}")
 
 

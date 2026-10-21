@@ -1096,7 +1096,7 @@ def overview_row(project, viewer):
              else piece_cards(project, viewer, project_view=row))
     nxt = (row.get('next_step') or {}).get('title') or ''
     if not nxt and is_planless:
-        nxt = 'Needs a plan'
+        nxt = "Argyle hasn't planned this yet"
     if not nxt:
         nxt = next(((c['situation'].get('next_step') or {}).get('label') or ''
                     for c in cards if (c.get('situation') or {}).get('next_step')), '')
@@ -1354,15 +1354,15 @@ def _step_rows(project, project_view, viewer, cards_by_mission):
                 sit = cards_by_mission.get(s['mission_id']) or {}
                 actions = _ask_actions(sit, mission) or [{'id': 'answer', 'label': 'Answer', 'verb': 'answer', 'payload': {}}]
                 words = _ask_question(mission) or (sit.get('next_step') or {}).get('label') or goal
-                row = _row('step', sid, 'Argyle needs you: ' + words, subtitle='Argyle', box='asking', when='now',
+                row = _row('step', sid, 'Argyle needs you: ' + words, subtitle=_asks_line(goal), box='asking', when='now',
                            actions=actions, sheet={'kind': 'mission', 'id': s['mission_id']})
             elif s.get('question') and state in ('doing', 'blocked'):
                 sit = cards_by_mission.get(s.get('mission_id')) or {}
-                row = _row('step', sid, 'Argyle needs you: ' + s['question'], subtitle='Argyle', box='asking', when='now',
+                row = _row('step', sid, 'Argyle needs you: ' + s['question'], subtitle=_asks_line(goal), box='asking', when='now',
                            actions=_ask_actions(sit, mission) or [{'id': 'answer', 'label': 'Answer', 'verb': 'answer', 'payload': {}}],
                            sheet={'kind': 'mission', 'id': s.get('mission_id')} if s.get('mission_id') else None)
             elif state == 'doing':
-                row = _row('step', sid, 'Argyle is ' + _gerund(goal), subtitle=_found_short(s.get('found')) or 'Argyle', box='argyle', when='running',
+                row = _row('step', sid, _working_line(goal), subtitle=_found_short(s.get('found')) or 'Argyle', box='argyle', when='running',
                            sheet={'kind': 'mission', 'id': s.get('mission_id')} if s.get('mission_id') else None)
             elif state == 'blocked':
                 row = _row('step', sid, s.get('title') or goal, subtitle='Argyle', box='not_yet', reason=s.get('reason') or 'blocked')
@@ -1407,17 +1407,14 @@ def _step_rows(project, project_view, viewer, cards_by_mission):
     return out
 
 
-def _gerund(goal):
-    """'find tile' -> 'finding tile'; a goal that already reads as a phrase is kept."""
-    words = goal.split()
-    if not words:
-        return 'working'
-    verb = words[0].lower()
-    if verb.endswith('ing'):
-        return goal
-    if verb.endswith('e') and not verb.endswith('ee'):
-        verb = verb[:-1]
-    return ' '.join([verb + 'ing'] + words[1:])
+def _working_line(goal):
+    """A running Argyle step in plain words, the goal as written (no inflection)."""
+    return 'Argyle is working on ' + goal if goal else 'Argyle is working on it'
+
+
+def _asks_line(goal):
+    """An asking row's subtitle: who asks, and about what (mockup project-detail-v3)."""
+    return 'Argyle asks · ' + goal if goal else 'Argyle asks'
 
 
 def _found_first(value):
@@ -1486,7 +1483,7 @@ def _mission_row(card):
     goal = card.get('title') or ''
     if _mission_asking(raw):
         actions = _ask_actions(sit, raw) or [{'id': 'answer', 'label': 'Answer', 'verb': 'answer', 'payload': {}}]
-        row = _row('argyle', card['id'], _ask_title(raw, actions, goal), subtitle='Argyle', box='asking', when='now', actions=actions)
+        row = _row('argyle', card['id'], _ask_title(raw, actions, goal), subtitle=_asks_line(goal), box='asking', when='now', actions=actions)
     elif status == 'blocked':
         row = _row('argyle', card['id'], goal, subtitle='Argyle', box='not_yet', reason=sit.get('status_note') or 'stopped')
     elif status in missions.TERMINAL:

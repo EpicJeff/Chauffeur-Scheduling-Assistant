@@ -80,6 +80,68 @@ def scenario_tick_a_step_and_open_sheets():
         shot(page, 'one-list-sheets')
 
 
+def scenario_conversation_ticks_and_unticks():
+    """A conversation's box finishes its next step; left with no successor the
+    row reads done in the Logbook, and one more tap restores the step (spec §2.2)."""
+    served = serve()
+    if served is None:
+        return
+    tid = IDS['thread']
+    with served.browser() as page:
+        admin(page, served, 'mom')
+        page.goto(served.url('projects?id=prj-bath'), wait_until='load')
+        row = page.locator(f'[data-row="conversation:{tid}"]')
+        row.wait_for(timeout=15000)
+        check(row.locator('[data-row-box]').get_attribute('data-box-state') == 'open', "the next step is open")
+        row.locator('[data-row-box]').click()
+        page.locator('#cc-input-modal:not(.hidden)').wait_for(timeout=10000)
+        check("What's next with Ace Tile?" in page.locator('#cc-input-title').inner_text(), "it asks for the successor")
+        page.locator('#cc-input-cancel-btn').click()
+        page.wait_for_selector(f'[data-row="conversation:{tid}"][data-row-group="logbook"] [data-row-box][data-box-state="done"]:not([disabled])',
+                               timeout=10000)
+        check(not storage.get_thread(tid).get('next_action'), "the next step was finished")
+        check('Call Ace back' in row.inner_text(), f"the done row keeps the step's words: {row.inner_text()}")
+        shot(page, 'one-list-conversation-done')
+        row.locator('[data-row-box]').click()
+        page.wait_for_selector(f'[data-row="conversation:{tid}"] [data-row-box][data-box-state="open"]', timeout=10000)
+        check(storage.get_thread(tid).get('next_action') == 'Call Ace back', f"the untick restored it: {storage.get_thread(tid)}")
+        check(served.errors() == [], f"no page errors: {served.errors()}")
+
+
+def scenario_asking_row_posts_through_the_situation():
+    """An asking row's button posts the situation card's own act (spec §1.3),
+    never only opening the sheet. The act is intercepted: the fixture stays asking."""
+    served = serve()
+    if served is None:
+        return
+    mid = IDS['mission']
+    with served.browser() as page:
+        admin(page, served, 'mom')
+        posted = []
+
+        def fake(route):
+            posted.append(route.request.post_data_json)
+            route.fulfill(status=200, content_type='application/json', body='{"status": "success"}')
+
+        page.route(f'**/api/situations/mission/{mid}/act', fake)
+        page.goto(served.url('projects?id=prj-bath'), wait_until='load')
+        row = page.locator(f'[data-row="argyle:{mid}"]')
+        row.wait_for(timeout=15000)
+        check(row.locator('[data-row-box]').get_attribute('data-box-state') == 'asking', "the mission asks")
+        row.locator('[data-row-action]', has_text='Answer').click()
+        page.locator('#cc-input-modal:not(.hidden)').wait_for(timeout=10000)
+        page.locator('#cc-input-field').fill('Thursday')
+        page.locator('#cc-input-ok-btn').click()
+        for _ in range(40):
+            if posted:
+                break
+            page.wait_for_timeout(250)
+        check(posted and posted[0].get('verb') == 'answer' and posted[0].get('payload', {}).get('text') == 'Thursday',
+              f"Answer posted the situation act with the typed answer: {posted}")
+        check(page.locator('[data-record-sheet][data-open="true"]').count() == 0, "no sheet opened instead")
+        check(served.errors() == [], f"no page errors: {served.errors()}")
+
+
 def scenario_list_page_groups():
     served = serve()
     if served is None:
@@ -234,6 +296,7 @@ def scenario_add_for_a_child():
 
 
 SCENARIOS = [scenario_detail_is_one_list, scenario_menu_and_add, scenario_tick_a_step_and_open_sheets,
+             scenario_conversation_ticks_and_unticks, scenario_asking_row_posts_through_the_situation,
              scenario_list_page_groups, scenario_closed_projects_are_hidden_folded_and_remembered,
              scenario_add_through_the_one_add, scenario_add_for_a_child]
 

@@ -295,8 +295,9 @@ function projectsPage(host = 'admin') {
         creating: false, opened: null, hold: null, pieces: {}, elsewhere: [], contacts: [], pieceForm: null,
         // The one list (spec §1): rows per project id, the Logbook fold, the
         // step and link sheets, the row just ticked (kept in view in a folded
-        // Logbook), and each conversation's finished entry for its untick.
-        rows: {}, logOpen: false, stepSheet: null, linkSheet: null, justDone: '', _completed: {},
+        // Logbook), and a conversation just completed with no successor yet:
+        // its finished entry (for the untick, spec §2.2) and the words it had.
+        rows: {}, logOpen: false, stepSheet: null, linkSheet: null, justDone: '', _completed: {}, _doneTitles: {},
         emptyPieceForm: {title: '', goal: '', thread_kind: 'vendor', owner_member_id: '', contact_id: '',
                          counterparty_name: '', counterparty_email: '', next_action: '', next_action_at: '',
                          tier: 'mission', for_member_id: '', starting_point: '', sessions_per_week: 3, minutes: 25,
@@ -348,10 +349,11 @@ function projectsPage(host = 'admin') {
         },
         async load() {
             this.loading = true; this.error = '';
+            this._completed = {}; this._doneTitles = {};
             const who = window.chfPersonId ? window.chfPersonId() : localStorage.getItem('chauffeur_member_id') || '';
             if (this.myId !== who) {
                 this.projects = []; this.members = []; this.opened = null; this.hold = null; this.pieces = {}; this.elsewhere = []; this.contacts = []; this.pieceForm = null; this._addressed = false;
-                this.rows = {}; this.stepSheet = null; this.linkSheet = null; this.justDone = ''; this._completed = {};
+                this.rows = {}; this.stepSheet = null; this.linkSheet = null; this.justDone = '';
                 this.creating = false;
                 this.draft = {title:'', goal:'', done_when:'', audience:'private', shared_with:[], owner_member_id:who, target_date:''};
             }
@@ -431,12 +433,25 @@ function projectsPage(host = 'admin') {
         // The one list (spec §1, §3): the server's rows beside the project.
         takeDetail(id, d) {
             this.rows[id] = d.rows || [];
+            this.forgetMoved(this.rows[id]);
             if (d.project) this.projects = this.projects.map(x => x.id === id ? {...x, ...d.project} : x);
             this.syncSheets(id);
         },
         async loadRows(p) {
             try { this.takeDetail(p.id, await this.request('api/projects/' + encodeURIComponent(p.id))); }
             catch (e) { this.error = e.message; }
+        },
+        forgetMoved(rows) {
+            for (const tid of Object.keys(this._completed)) {
+                const row = rows.find(x => x.kind === 'conversation' && x.id === tid);
+                if (!row || row.box !== 'not_yet') { delete this._completed[tid]; delete this._doneTitles[tid]; }
+            }
+        },
+        // A conversation completed with no next step yet draws as done in the
+        // Logbook, so one more tap unticks it (restore with its entry id).
+        shownRows(p) {
+            return (this.rows[p.id] || []).map(r => r.kind === 'conversation' && r.box === 'not_yet' && this._completed[r.id]
+                ? {...r, title: this._doneTitles[r.id] || r.title, box: 'done', group: 'logbook', reason: '', actions: []} : r);
         },
         // An open step sheet follows the fresh step (its hold, its state), or closes when the step is gone.
         syncSheets(id) {
@@ -452,7 +467,7 @@ function projectsPage(host = 'admin') {
         },
         rowKey(r) { return r.kind + ':' + r.id + ':' + (r.moment.window_date || '') + ':' + (r.moment.slot_rank || 0); },
         groups(p) {
-            const all = this.rows[p.id] || [];
+            const all = this.shownRows(p);
             const defs = [['now', 'Now', 'text-amber-400'], ['next', 'Next', 'text-teal-300'], ['later', 'Later', 'text-gray-500'], ['linked', 'Linked', 'text-gray-500'], ['logbook', 'Logbook', 'text-gray-600']];
             return defs.map(([key, label, cls]) => ({key, label, cls, rows: all.filter(r => r.group === key)})).filter(g => g.rows.length);
         },
@@ -470,7 +485,7 @@ function projectsPage(host = 'admin') {
         pieceKey(p, r) {
             if (!r.sheet || !['conversation', 'argyle', 'program'].includes(r.kind)) return null;
             const first = (this.rows[p.id] || []).find(x => x.sheet && x.sheet.kind === r.sheet.kind && x.sheet.id === r.sheet.id);
-            return first === r ? r.sheet.kind + ':' + r.sheet.id : null;
+            return first && this.rowKey(first) === this.rowKey(r) ? r.sheet.kind + ':' + r.sheet.id : null;
         },
         // What a box may do (the server is the gate; this keeps a dead tap off the row):
         // Argyle's rows fill themselves, a run's session is removed in its sheet (R3),
@@ -490,13 +505,20 @@ function projectsPage(host = 'admin') {
             this.busy = true; this.error = '';
             try {
                 const d = await this.request('api/projects/' + encodeURIComponent(p.id) + '/tick', {kind: r.kind, id: r.id, moment, done, key: this.tickKey(), override});
-                this.rows[p.id] = d.rows || [];
                 this.justDone = done ? this.rowKey(r) : '';
+                if (r.kind === 'conversation') {
+                    delete this._completed[r.id]; delete this._doneTitles[r.id];
+                    const entry = (d.result || {}).entry_id || '';
+                    if (done && entry) { this._completed[r.id] = entry; this._doneTitles[r.id] = r.title; }
+                }
+                this.rows[p.id] = d.rows || [];
                 if (r.kind === 'conversation' && done) {
-                    this._completed[r.id] = (d.result || {}).entry_id || '';
                     const who = r.subtitle.includes(' · ') ? r.subtitle.split(' · ')[0] : 'them';
                     const next = await promptInput("What's next with " + who + '?', '', {okText: 'Set it'});
-                    if (next && next.trim()) { await this.request('api/threads/' + encodeURIComponent(r.id) + '/advance', {next_action: next.trim()}); }
+                    if (next && next.trim()) {
+                        await this.request('api/threads/' + encodeURIComponent(r.id) + '/advance', {next_action: next.trim()});
+                        delete this._completed[r.id]; delete this._doneTitles[r.id];   // a successor is set: the row is open again
+                    }
                 }
                 await this.loadRows(p);
                 this.stepSheet = null;
@@ -518,10 +540,22 @@ function projectsPage(host = 'admin') {
         // A question's option carries the question as its label (situations._options_mission);
         // the row's title already says it, so its button says Answer. A program choice keeps Use / Make new / Not now.
         actionLabel(a) { return a.verb === 'answer' && (a.payload || {}).ask !== 'program_choice' ? 'Answer' : a.label; },
+        // An asking row's buttons post where the situation card posts (spec §1.3,
+        // Situations.act): the option belongs to the row's record, or, on a thread
+        // row carrying a folded mission's ask, to that mission. No situation: the sheet.
         async rowAction(p, r, a) {
             if (a.verb === 'rebind') { const card = (this.pieces[p.id] || []).find(c => c.kind === 'program' && c.id === r.id); if (card) return this.rebind(p, card); }
             if (a.verb === 'approve') { return this.openSheet('program', r.id, r.title, p.id); }
-            if (r.sheet) this.openSheet(r.sheet.kind, r.sheet.id, r.title, p.id);   // Answer / Use / Approve plan: the sheet's own buttons act
+            const s = this.askOwner(p, r, a);
+            if (!s || !window.Situations) { if (r.sheet) this.openSheet(r.sheet.kind, r.sheet.id, r.title, p.id); return; }
+            await window.Situations.act(s, a, this.sitCtx());
+            await this.loadRows(p);
+        },
+        askOwner(p, r, a) {
+            const has = s => !!s && (s.options || []).some(o => o.id === a.id && o.verb === a.verb);
+            const own = r.sheet ? this.situationById(r.sheet.id) : null;
+            if (has(own)) return own;
+            return (this.pieces[p.id] || []).map(c => c.situation).find(has) || null;
         },
         // ⋯ (spec decision 4): what used to be a row of project buttons.
         menuItems(p) {

@@ -243,7 +243,7 @@
     study_calendar:  ['Coverage calendar','dashboard'],
     study_window:    ['Family baseline','mind'],
     study_contracts: ['Agreements','dashboard'],
-    study_binders:   ['Program binders','projects?lane=programs'],
+    study_binders:   ['Program binders','library'],
     study_gauges:    ['Argyle gauges','mind'],
     study_monitor:   ['Household monitor','mind'],
     study_map:       ['Travel map','trips']

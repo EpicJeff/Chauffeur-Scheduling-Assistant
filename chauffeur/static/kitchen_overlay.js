@@ -91,7 +91,7 @@ window.kitchenTileIsland = function () {
                 study_board: 'mind', study_desk: 'mind', study_tray: 'intake',
                 study_stickies: 'dashboard', study_calendar: 'dashboard',
                 study_window: 'mind', study_contracts: 'dashboard',
-                study_binders: 'projects?lane=programs', study_map: 'trips' };
+                study_binders: 'library', study_map: 'trips' };
   /* ADMIN destinations are desktop-only. A wall panel is the most shared
      screen in the house and must never land on Config, so the open-chip
      simply does not appear there — the fleet card already answers. */
