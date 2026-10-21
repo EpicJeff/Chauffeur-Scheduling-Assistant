@@ -122,21 +122,36 @@ def public_profile(fields):
             'assumes': str(fields.get('assumes') or '').strip()}
 
 
-def prepare(fields, actor):
-    """Curate public content without a write lock; callers publish atomically."""
-    from services import programs_curate
+def create_refusal(actor):
+    """Who may publish a library program: an active adult or parent. None, or the refusal."""
     if not actor or actor.get('role') not in ('adult', 'parent') or actor.get('status', 'active') != 'active':
         return {'status': 'error', 'code': 403, 'message': 'An adult or a parent can make a library program.'}
+    return None
+
+
+def prepare(fields, actor):
+    """Curate public content without a write lock; callers publish atomically.
+
+    A brief's `notes` and `based_on` (programs spec §1) are screened like the
+    title and reach the curator's public context; they are not stored."""
+    from services import programs_curate, program_brief
+    refusal = create_refusal(actor)
+    if refusal:
+        return refusal
     title = str(fields.get('title') or '').strip()
-    for screen in (programs_curate.screen_aim(title),
-                   programs_curate.screen_starting_point(str(fields.get('assumes') or ''))):
-        if not screen.get('ok'):
-            return {'status': 'error', **{k: screen[k] for k in ('message', 'alternatives') if k in screen}}
+    if not title:
+        screen = programs_curate.screen_aim(title)
+        return {'status': 'error', **{k: screen[k] for k in ('message', 'alternatives') if k in screen}}
+    refusal = program_brief.screen_fields({k: fields.get(k) for k in ('title', 'assumes', 'based_on', 'notes')})
+    if refusal:
+        return refusal
     try:
         profile = public_profile(fields)
     except ValueError as exc:
         return {'status': 'error', 'message': str(exc)}
-    curated = programs_curate.curate(title, profile, **({'exclude_books': True} if fields.get('exclude_books') else {}))
+    brief = {k: str(fields.get(k) or '').strip() for k in ('notes', 'based_on')}
+    curated = programs_curate.curate(title, profile, **({'exclude_books': True} if fields.get('exclude_books') else {}),
+                                     **({'brief': brief} if any(brief.values()) else {}))
     row = from_curated(title, profile, curated, actor['id'])
     return {'status': 'success', 'program': row,
             'message': f'Everyone in the household will see this program as: {title}'}

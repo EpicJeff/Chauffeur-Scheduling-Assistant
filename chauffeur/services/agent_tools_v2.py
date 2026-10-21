@@ -2641,7 +2641,8 @@ def program_progress(program_title: str, acting_member: dict = None, focus_key: 
 def propose_program(title: str, for_member_name: str = None,
                     sessions_per_week: int = None, minutes: int = None,
                     starting_point: str = None,
-                    acting_member: dict = None, project_id: str = None, focus_key: str = None) -> Dict[str, Any]:
+                    acting_member: dict = None, project_id: str = None, focus_key: str = None,
+                    brief: dict = None) -> Dict[str, Any]:
     """Screen the aim, then curate a real plan for it — the chat mirror of
     `POST /api/programs`. The body-goal screen (`programs_curate.screen_aim`)
     runs BEFORE anything else, same as the endpoint and for the same reason:
@@ -2652,7 +2653,11 @@ def propose_program(title: str, for_member_name: str = None,
     the private starting point belongs only to the person's run.
     Nothing is claimed here — approving is deliberately not a
     chat tool at all; the program sits `proposed` until a person taps
-    approve on the Programs page after seeing the footprint."""
+    approve on the Programs page after seeing the footprint.
+
+    `brief` carries a plain-language brief's `notes`, `based_on` and
+    `exclude_books` (programs spec §1): screened here like the aim, kept on
+    the waiting choice, and what Make new curates from."""
     refusal = _program_writer(acting_member, 'start a program')
     if refusal:
         return refusal
@@ -2679,6 +2684,13 @@ def propose_program(title: str, for_member_name: str = None,
     if not screen.get('ok'):
         return {"status": "error", "message": screen.get('message'),
                 "alternatives": screen.get('alternatives') or []}
+    from services import program_brief
+    brief = {'notes': str((brief or {}).get('notes') or '').strip()[:program_brief.CAPS['notes']],
+             'based_on': str((brief or {}).get('based_on') or '').strip()[:program_brief.CAPS['based_on']],
+             'exclude_books': (brief or {}).get('exclude_books') is True}
+    refusal = program_brief.screen_fields(brief)
+    if refusal:
+        return refusal
     from services import storage as _storage
     member_id = acting_member.get('id')
     member = acting_member
@@ -2702,6 +2714,8 @@ def propose_program(title: str, for_member_name: str = None,
               'profile': {'title': title, 'minutes': shape['minutes'],
                           'sessions_per_week': shape['sessions_per_week'], 'assumes': '',
                           'age_band': stages.stage_for_age(age) if age is not None else 'any'}}
+    if any(brief.values()):
+        choice['brief'] = brief
     matches = [r for r in _storage.get_library_programs() if not r.get('archived')
                and library.valid_curriculum(r) and _same_goal(title, r)]
     voice = (_mission_context.get() or {}).get('interaction') == 'voice'
@@ -2730,13 +2744,18 @@ def _program_choice_question(choice):
             f"Use it for {member.get('name') or 'you'}, or make a new one?")
 
 
+def choice_fields(choice):
+    """What Make new curates from: the public profile plus the brief (spec §1)."""
+    return {**(choice.get('profile') or {}), **(choice.get('brief') or {})}
+
+
 def _start_program_choice(choice, actor, make_new=False, prepared=None):
     """The caller owns choice binding and schedules scripts after its commit."""
     from services import storage, programs, library
     if make_new and actor.get('role') not in ('adult', 'parent'):
         return {'status': 'error', 'message': library.EDIT_REFUSAL, 'created': []}
     if make_new and prepared is None:
-        prepared = library.prepare(choice['profile'], actor)
+        prepared = library.prepare(choice_fields(choice), actor)
     if make_new and prepared.get('status') != 'success':
         return prepared
     with storage.db_lock, storage.db.transaction():
@@ -6929,6 +6948,9 @@ class ProposeProgramTool(BaseModel):
     sessions_per_week: Optional[int] = Field(None, ge=1, le=7, description="How many times a week to practise, 1-7. Defaults to 3.")
     minutes: Optional[int] = Field(None, ge=5, le=240, description="Minutes per session, 5-240. Defaults to 25.")
     starting_point: Optional[str] = Field(None, description="What they can already DO, in their own words. Never a weight, a size or a calorie number.")
+    based_on: Optional[str] = Field(None, description="A book, site or method they named to base it on, if any.")
+    notes: Optional[str] = Field(None, description="Anything else they said that should shape the plan (e.g. 'songs over drills'). Never a weight, a size or a calorie number.")
+    exclude_books: Optional[bool] = Field(None, description="True only if they said no books.")
 
 class ListProgramsTool(BaseModel):
     """
@@ -9247,12 +9269,18 @@ def handle_log_program_session(args: dict, actor=None, focus_key=None) -> dict:
                                 acting_member=actor if actor is not None else access.HOUSE_PARENT, focus_key=focus_key)
 
 
+def brief_args(args: dict) -> dict:
+    """A propose_program call's brief fields (spec §1), or None."""
+    brief = {k: args.get(k) for k in ('notes', 'based_on', 'exclude_books') if args.get(k)}
+    return brief or None
+
+
 def handle_propose_program(args: dict, actor=None, focus_key=None) -> dict:
     return propose_program(args.get('title') or '', for_member_name=args.get('for_member_name'),
                             sessions_per_week=args.get('sessions_per_week'), minutes=args.get('minutes'),
                             starting_point=args.get('starting_point'),
                             acting_member=actor if actor is not None else access.HOUSE_PARENT,
-                            project_id=args.get('project_id'), focus_key=focus_key)
+                            project_id=args.get('project_id'), focus_key=focus_key, brief=brief_args(args))
 
 
 TOOL_HANDLERS = {

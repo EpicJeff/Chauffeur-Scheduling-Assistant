@@ -314,6 +314,40 @@ window.Situations = (function () {
     ).join('');
   }
 
+  // The DM course card (programs spec §7): what a chat-made program is, with
+  // Preview (the course page) and Set it up on the run the choice already
+  // made. Markup is the project card's (app.html renderProjectCard). `me` is
+  // the viewer's member id: your own program reads "Set it up".
+  function programCourseHtml(card, me) {
+    const phases = (card.phases || []).map(p =>
+      `<li>${esc(p.name)} · ${esc(p.lessons)} ${p.lessons === 1 ? 'lesson' : 'lessons'}</li>`).join('');
+    const setup = card.run_id
+      ? `<button data-course-setup="${esc(card.run_id)}" data-project-id="${esc(card.project_id || '')}" class="px-3 py-1 rounded-lg text-xs font-semibold bg-blue-600 text-white">${
+          esc(card.for_member_id && card.for_member_id === me ? 'Set it up' : 'Set it up for ' + (card.for_name || 'them'))}</button>` : '';
+    return `<div class="mt-1 px-3 py-2 rounded-xl bg-gray-900 border border-gray-700" data-course-card="${esc(card.library_id)}">
+        <span class="text-xs uppercase tracking-wide text-teal-300 font-bold">Program</span>
+        <div class="text-sm text-gray-100 font-semibold mt-1">${esc(card.title)}</div>
+        <div class="text-xs text-gray-500 mt-0.5">${esc(card.source_line)}</div>
+        ${phases ? `<ul class="text-xs text-gray-300 mt-1">${phases}</ul>` : ''}
+        <div class="flex flex-wrap gap-2 mt-2">${setup}
+          <button data-course-preview="${esc(card.library_id)}" class="px-3 py-1 rounded-lg text-xs font-semibold bg-gray-700 text-gray-200">Preview</button></div></div>`;
+  }
+
+  // One listener for every course card, wherever a DM draws it.
+  if (typeof document !== 'undefined' && !window.__chfCourseCards) {
+    window.__chfCourseCards = true;
+    document.addEventListener('click', ev => {
+      const b = ev.target.closest && ev.target.closest('button[data-course-preview], button[data-course-setup]');
+      if (!b) return;
+      if (b.dataset.coursePreview) {
+        if (window.chfLibrary) window.chfLibrary.open(b.dataset.coursePreview);
+        return;
+      }
+      if (window.chfProgramSetup) window.chfProgramSetup.open({runId: b.dataset.courseSetup, projectId: b.dataset.projectId || null});
+      else alert_('Open the program from its project to set it up.');
+    });
+  }
+
   // One delegated listener per lane element. Pages that draw the cards
   // themselves (Alpine x-html) call bind() with a lookup; render() calls it
   // for its own map. Re-binding only swaps the ctx: never a second listener.
@@ -368,5 +402,5 @@ window.Situations = (function () {
     bind(el, ctx);
   }
 
-  return { VERB_LABELS, verbLabel, cardHtml, planPreviewHtml, planStepperHtml, threadPhotoUrl, render, bind, act, ask };
+  return { VERB_LABELS, verbLabel, cardHtml, planPreviewHtml, planStepperHtml, programCourseHtml, threadPhotoUrl, render, bind, act, ask };
 })();

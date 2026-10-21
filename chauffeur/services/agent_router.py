@@ -1099,7 +1099,8 @@ sending or claiming, and never pass from_member/member_name for them.
                                                     sessions_per_week=args.get("sessions_per_week"),
                                                     minutes=args.get("minutes"),
                                                     starting_point=args.get("starting_point"),
-                                                    acting_member=actor, focus_key=focus_key)
+                                                    acting_member=actor, focus_key=focus_key,
+                                                    brief=_atv2.brief_args(args))
                     elif func_name == "log_program_session":
                         res = _atv2.log_program_session(args.get("program_title", "") or "",
                                                          minutes=args.get("minutes"),

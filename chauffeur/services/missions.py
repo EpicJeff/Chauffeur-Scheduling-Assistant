@@ -589,6 +589,60 @@ def _dm_person(mission: dict, text: str) -> None:
         _notice_refs.reset(token)
 
 
+def course_card(run: dict, curriculum: dict) -> dict:
+    """The DM course card (programs spec §7): what the chat just made, with
+    Preview (the course page) and Set it up bound to THIS run -- the sheet
+    configures and approves it; it never creates a second one."""
+    from services import library
+    member = storage.get_member(run.get('member_id')) or {}
+    counts = {}
+    for lesson in curriculum.get('lessons') or []:
+        counts[lesson.get('phase_id')] = counts.get(lesson.get('phase_id'), 0) + 1
+    return {'kind': 'program_course', 'library_id': curriculum['id'], 'run_id': run['id'],
+            'project_id': run.get('project_id'), 'for_member_id': run.get('member_id'),
+            'for_name': member.get('name') or '', 'title': curriculum.get('title') or '',
+            'source_line': library.source_line(curriculum),
+            'phases': [{'name': p.get('name') or '', 'lessons': counts.get(p.get('id'), 0)}
+                       for p in curriculum.get('phases') or []],
+            'setup': {'run_id': run['id'], 'project_id': run.get('project_id')}}
+
+
+def post_course_card(mission: dict, run_id: str, actor: dict) -> None:
+    """After a chat-made program (Use, Make new, or a no-match curation), its
+    course card goes to the person who made it happen and to whoever started
+    the mission, each only if they can see the run. Voice keeps its deferred
+    notice instead (library spec §3). Never raises."""
+    from services import access
+    try:
+        if not mission or mission.get('interaction') == 'voice':
+            return
+        run = storage.get_program(run_id)
+        curriculum = storage.get_library_program((run or {}).get('library_id'))
+        if not run or not curriculum or access.gone('program', run):
+            return
+        card = course_card(run, curriculum)
+        people = [actor, storage.get_member(mission.get('created_by') or '')]
+        seen, argyle = set(), storage.ensure_argyle_member()
+        refs = [{'kind': 'mission', 'id': mission['id']}, {'kind': 'library', 'id': curriculum['id']},
+                {'kind': 'program', 'id': run['id']}]
+        token = _notice_refs.set(tuple(refs))
+        try:
+            for m in people:
+                m = storage.get_member((m or {}).get('id') or '')
+                if not m or m['id'] in seen or not access._active(m) or not access.record_visible('program', run, m):
+                    continue
+                seen.add(m['id'])
+                who = 'you' if m['id'] == run.get('member_id') else (card['for_name'] or 'them')
+                _post(storage.get_or_create_dm(argyle['id'], m['id']), argyle,
+                      f"{card['title']} is ready for {who}. Preview it, or set up the days.", card=card)
+        finally:
+            _notice_refs.reset(token)
+    except deletion.Cancelled:
+        raise
+    except Exception as e:
+        logger.warning(f"[missions] course card failed: {e}")
+
+
 def _released_for(mission: dict, site: str) -> dict:
     """The contact-card values a parent already released to this site in
     this mission (one approval per site per mission)."""

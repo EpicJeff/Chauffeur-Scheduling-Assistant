@@ -1233,7 +1233,7 @@ def answer_program_choice(mid, choice_id, option, actor):
             return _refused(library.EDIT_REFUSAL)
         try:
             with budget_guard.guard():
-                prepared = library.prepare(choice['profile'], actor)
+                prepared = library.prepare(agent_tools_v2.choice_fields(choice), actor)
         except deletion.Cancelled:
             raise
         except Exception as exc:
@@ -1297,6 +1297,9 @@ def answer_program_choice(mid, choice_id, option, actor):
         if outcome.get('status') == 'success' and outcome.get('library_id'):
             from services import library_scripts
             library_scripts.write(outcome['library_id'], actor)
+        if outcome.get('status') == 'success' and outcome.get('run_id'):
+            # Before the stage carries on, so the card sits above its next ask.
+            missions.post_course_card(storage.get_mission(mid), outcome['run_id'], actor)
         continued = _continue_program_choice(mid, stage['id']) if stage is not None else {'status': 'success'}
         return {'status': 'success', 'run_id': result.get('run_id'), 'message': outcome['message'],
                 'continued': continued.get('status')}

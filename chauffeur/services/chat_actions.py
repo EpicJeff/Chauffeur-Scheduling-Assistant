@@ -460,6 +460,11 @@ def run_row(proposal_id, approver, idem):
             'result': result, 'approved_by_member_id': (approver or {}).get('id')})
         if result['status'] == 'waiting_choice' and not prop.get('stage_id') and prop.get('origin_kind') == 'mission':
             planned.record_program_choice(prop, result)
+    if (prop['action_type'] == 'propose_program' and result['status'] == 'success'
+            and result.get('run_id') and prop.get('origin_kind') == 'mission'):
+        # A no-match curation made the run at once: its course card (spec §7).
+        from services import missions
+        missions.post_course_card(storage.get_mission(prop.get('origin_id')), result['run_id'], approver)
     return result
 
 

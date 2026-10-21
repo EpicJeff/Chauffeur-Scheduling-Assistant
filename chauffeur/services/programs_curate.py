@@ -660,9 +660,37 @@ def _source_generated(why: str, answer: str = '', reason: str = 'no_plan') -> di
             'hand_written': True, 'book_spine': ''}
 
 
+def public_context(profile: dict, notes: str = '', based_on: str = '') -> str:
+    """The one context a library curation is given (spec §1): the public
+    profile, what it is based on and the brief's other notes -- never a named
+    person's private starting point, which belongs only to their run."""
+    profile = profile or {}
+    per_week = int(profile.get('sessions_per_week') or 3)
+    minutes = int(profile.get('minutes') or 25)
+    band = profile.get('age_band') or 'any'
+    if band in stages.STAGE_KEYS:
+        index = stages.STAGE_KEYS.index(band)
+        cuts = stages.cutoffs()
+        lower = 0 if index == 0 else cuts[index - 1]
+        audience = f"ages {lower}–{cuts[index] - 1}" if index < len(cuts) else f"ages {lower} and up"
+    else:
+        audience = 'any age'
+    lines = [f"Public profile: {audience}.",
+             f"Their week: {per_week} sessions, {minutes} minutes each. "
+             f"What a session contains has to FIT {minutes} minutes.",
+             f"Assumes: {str(profile.get('assumes') or '')[:STARTING_POINT_CHARS]}"]
+    based_on = str(based_on or '').strip()[:STARTING_POINT_CHARS]
+    if based_on:
+        lines.append(f"Based on: {based_on}")
+    notes = str(notes or '').strip()[:STARTING_POINT_CHARS]
+    if notes:
+        lines.append(f"Also: {notes}")
+    return "\n".join(lines)
+
+
 def curate(title: str, shape: dict, member_name: str = '',
            member: dict = None, starting_point: str = '',
-           exclude_books: bool = False) -> dict:
+           exclude_books: bool = False, brief: dict = None) -> dict:
     """One research run, turned into cited phases -- or an honest fallback.
 
     Returns {'phases': [...], 'source': {...}}. Phase CONTENT comes from pages
@@ -681,24 +709,17 @@ def curate(title: str, shape: dict, member_name: str = '',
     the answer is checked too, with the same `book_spine_of` a family's own
     "no books" tap uses, and a plan that still fails it is handed to the
     generated tier instead of back to the family.
+
+    `brief` carries a plain-language brief's `notes` and `based_on` (spec
+    §1): both reach the public context, and a named method is searched for.
     """
+    brief = brief or {}
+    based_on = str(brief.get('based_on') or '').strip()[:STARTING_POINT_CHARS]
     per_week = int((shape or {}).get('sessions_per_week') or 3)
     minutes = int((shape or {}).get('minutes') or 25)
     if 'age_band' in (shape or {}):
         # Library curation has public assumptions, never a named person's input.
-        band = shape.get('age_band') or 'any'
-        if band in stages.STAGE_KEYS:
-            index = stages.STAGE_KEYS.index(band)
-            cuts = stages.cutoffs()
-            lower = 0 if index == 0 else cuts[index - 1]
-            upper = f"{cuts[index] - 1}" if index < len(cuts) else 'and up'
-            audience = f"ages {lower}–{upper}" if index < len(cuts) else f"ages {lower} and up"
-        else:
-            audience = 'any age'
-        context = (f"Public profile: {audience}.\n"
-                   f"Their week: {per_week} sessions, {minutes} minutes each. "
-                   f"What a session contains has to FIT {minutes} minutes.\n"
-                   f"Assumes: {str(shape.get('assumes') or '')[:STARTING_POINT_CHARS]}")
+        context = public_context(shape, brief.get('notes') or '', based_on)
     else:
         context = _context_block(member, member_name, per_week, minutes,
                                  starting_point)
@@ -707,6 +728,8 @@ def curate(title: str, shape: dict, member_name: str = '',
                 f"and its phases. Prefer pages that actually teach the "
                 f"material over pages that merely list or review books. "
                 f"Do not invent one.")
+    if based_on:
+        question += f" If it exists, follow {based_on}."
     if exclude_books:
         question += (" Only consider programs that can be followed without "
                      "buying a book — free online curricula with the "

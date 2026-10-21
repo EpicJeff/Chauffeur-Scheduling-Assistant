@@ -7958,8 +7958,29 @@ def list_library_api(request: Request, include_archived: bool = True):
 
 @app.post('/api/library')
 def create_library_api(request: Request, body: dict = Body(default={})):
+    """The hand form's fields, or `{brief: text}` (programs spec §1, P6): a
+    brief is parsed and screened, then makes a library program only, never a
+    run; `for_member_id` names whoever it was for so the page can offer
+    Start it for them."""
     from services import library
-    return _library_result(library.create(body, _library_actor(request)))
+    actor = _library_actor(request)
+    if 'brief' not in body:
+        return _library_result(library.create(body, actor))
+    from services import program_brief
+    refusal = library.create_refusal(actor)
+    if refusal:
+        return _library_result(refusal)
+    members = [m for m in storage.get_all_members()
+               if m.get('status', 'active') == 'active' and not m.get('system')]
+    parsed = program_brief.parse(body.get('brief'), actor, members, surface='library')
+    if parsed.get('status') != 'success':
+        return _library_result(parsed)
+    brief = parsed['brief']
+    result = _library_result(library.create({**brief['profile'], 'title': brief['title'], 'notes': brief['notes'],
+                                             'based_on': brief['based_on'], 'exclude_books': brief['exclude_books']}, actor))
+    if result.get('status') == 'success':
+        result = {**result, 'for_member_id': brief['for_member_id']}
+    return result
 
 
 @app.get('/api/library/{id}')

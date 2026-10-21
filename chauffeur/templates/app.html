@@ -5526,6 +5526,7 @@
             if (card.kind === 'ask') return renderAskCard(card);
             if (card.kind === 'mission_ask') return renderMissionAskCard(card);
             if (card.kind === 'mission_done') return renderMissionDoneCard(card);
+            if (card.kind === 'program_course') return window.Situations.programCourseHtml(card, selectedMemberId);
             if (card.kind === 'project') return renderProjectCard(card);
             if (card.kind !== 'action_proposal') return '';
             let footer;

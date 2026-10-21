@@ -482,6 +482,153 @@ def scenario_reconcile_does_not_interrupt_a_live_choice_continuation():
     check((mid, 's1') not in planned._active_stages, 'live continuation releases its claim')
 
 
+# --- Task 7: the brief through the waiting choice, and the DM course card -------------------
+
+BRIEF = {'notes': 'songs over drills', 'based_on': 'Piano Adventures'}
+
+
+def _brief_rows():
+    rows = copy.deepcopy(ROWS)
+    rows[0]['args'].update(BRIEF)
+    return rows
+
+
+def scenario_make_new_curates_from_the_brief():
+    import json
+    import test_library_flows as flows
+    from test_library_flows import SECRET, CURATED
+    from services import programs_curate
+    _fresh()
+    _library()
+    project = _project('mom', audience='private')
+    res = tools.propose_program('Learn piano', for_member_name='Kate', brief=dict(BRIEF),
+                                acting_member=dict(MOM), project_id=project['id'])
+    check(res['status'] == 'waiting_choice' and res['choice'].get('brief', {}).get('based_on') == 'Piano Adventures'
+          and res['choice']['brief'].get('notes') == 'songs over drills', f'the brief rides on the choice: {res}')
+    refused = tools.propose_program('Learn piano', for_member_name='Kate', brief={'notes': 'lose 10 kg by June'},
+                                    acting_member=dict(MOM), project_id=project['id'])
+    check(refused['status'] == 'error' and not _runs(), f'a body target in the brief is refused before any choice: {refused}')
+    with patch.object(flows, 'ROWS', _brief_rows()):
+        mid, _ = _staged()
+    stored = _row(mid, 'r1')['result']['choice']
+    check(stored.get('brief', {}).get('based_on') == 'Piano Adventures', f'the planner row persists the brief: {stored}')
+    calls = []
+
+    def curate(*a, **k):
+        calls.append((a, k))
+        return json.loads(json.dumps(CURATED))
+    with patch.object(programs_curate, 'curate', curate):
+        response = answer_as(mid, 'mom', _choice(mid)['make_new'])
+    check(response.status_code == 200 and len(_runs()) == 1, f'Make new made one run: {response.text}')
+    check(len(calls) == 1 and (calls[0][1].get('brief') or {}).get('based_on') == 'Piano Adventures'
+          and (calls[0][1].get('brief') or {}).get('notes') == 'songs over drills',
+          f'Make new curates from the brief, not the title alone: {calls}')
+    check(SECRET not in repr(calls), 'the private starting point never reaches the curator')
+
+
+def _course_cards(member_id='mom'):
+    dm = storage.get_or_create_dm(storage.ensure_argyle_member()['id'], member_id)
+    return [m for m in storage.get_channel_messages(dm['id']) if (m.get('card') or {}).get('kind') == 'program_course']
+
+
+def scenario_dm_course_card_binds_the_run():
+    from test_library_flows import REAL_POST
+    _fresh()
+    lid = _library()
+    with patch.object(missions, '_post', REAL_POST):
+        mid, project = _staged()
+        check(not _course_cards(), 'no course card before the choice is answered')
+        opts = _choice(mid)
+        response = answer_as(mid, 'mom', opts['use'])
+        check(response.status_code == 200, f'Use: {response.text}')
+        answer_as(mid, 'mom', opts['use'])
+    runs = _runs()
+    cards = _course_cards()
+    check(len(runs) == 1 and len(cards) == 1, f'one run and one course card, even after a repeated answer: {runs} {cards}')
+    message, card = cards[0], cards[0]['card']
+    refs = [{k: r.get(k) for k in ('kind', 'id')} for r in message.get('refs') or []]
+    check({'kind': 'library', 'id': lid} in refs and {'kind': 'program', 'id': runs[0]['id']} in refs,
+          f'the card refers to the library row and the run: {refs}')
+    check(card['setup'] == {'run_id': runs[0]['id'], 'project_id': project['id']} and card['library_id'] == lid
+          and card['for_name'] == 'Kate', f"Set it up binds the run Use made, never a new one: {card}")
+    check(card['title'] == 'Learn piano' and card['phases'] == [{'name': 'Foundations', 'lessons': 2}]
+          and card['source_line'] == library.source_line(storage.get_library_program(lid)),
+          f'title, source line and phases with lesson counts: {card}')
+    check(storage.message_visible(message), 'the card passes the delivery re-check')
+    _fresh()
+    with patch.object(missions, '_post', REAL_POST):
+        mid, project = _staged()
+    runs = _runs()
+    cards = _course_cards()
+    check(len(runs) == 1 and len(cards) == 1 and cards[0]['card']['setup']['run_id'] == runs[0]['id']
+          and cards[0]['card']['library_id'] == runs[0]['library_id'],
+          f'a no-match curation posts the card for the run it made: {cards}')
+
+
+COURSE = {'kind': 'program_course', 'library_id': 'lib<1>', 'run_id': 'run1', 'project_id': 'proj1',
+          'for_member_id': 'kid', 'for_name': 'Kate', 'title': 'Learn <piano>', 'source_line': 'Based on Faber · cited',
+          'phases': [{'name': 'Foundations', 'lessons': 2}, {'name': 'Songs', 'lessons': 1}],
+          'setup': {'run_id': 'run1', 'project_id': 'proj1'}}
+
+COURSE_HARNESS = r"""
+const fs = require('fs');
+const { JSDOM } = require('jsdom');
+const [,, chunkPath, sitPath, cardPath] = process.argv;
+const dom = new JSDOM('<!doctype html><body></body>');
+global.window = dom.window; global.document = dom.window.document;
+var selectedMemberId = 'mom';
+function myRole() { return 'parent'; }
+function mfEscape(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+eval(fs.readFileSync(chunkPath, 'utf8'));
+eval(fs.readFileSync(sitPath, 'utf8'));
+const card = JSON.parse(fs.readFileSync(cardPath, 'utf8'));
+const calls = [];
+window.chfLibrary = { open: id => calls.push(['preview', id]) };
+window.chfProgramSetup = { open: o => calls.push(['setup', o]) };
+window.fetch = () => { calls.push(['fetch']); return Promise.reject(new Error('no fetch')); };
+const html = renderCard(card);
+document.body.innerHTML = html;
+document.querySelector('[data-course-preview]').click();
+document.querySelector('[data-course-setup]').click();
+const mine = renderCard({...card, for_member_id: 'mom', for_name: 'Mom'});
+console.log(JSON.stringify({html, mine, calls}));
+"""
+
+
+def scenario_course_card_renders_and_its_buttons_open():
+    import json
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+    node = shutil.which('node')
+    scratch = tempfile.mkdtemp(prefix='chauffeur_course_card_')
+    if not node or subprocess.run([node, '-e', "require.resolve('jsdom')"], capture_output=True, cwd=scratch).returncode != 0:
+        print('  skip  node/jsdom not available')
+        return
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(root, 'templates', 'app.html'), encoding='utf-8').read()
+    start = src.index('function renderCard(card)')
+    files = {'chunk.js': src[start:src.index('async function answerAsk(', start)], 'harness.js': COURSE_HARNESS,
+             'card.json': json.dumps(COURSE)}
+    for name, text in files.items():
+        with open(os.path.join(scratch, name), 'w', encoding='utf-8') as f:
+            f.write(text)
+    proc = subprocess.run([node, os.path.join(scratch, 'harness.js'), os.path.join(scratch, 'chunk.js'),
+                           os.path.join(root, 'static', 'situations.js'), os.path.join(scratch, 'card.json')],
+                          capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=scratch, timeout=120)
+    check(proc.returncode == 0, f'render threw:\n{proc.stderr[-1500:]}')
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    html = out['html']
+    check('Learn &lt;piano&gt;' in html and '<piano>' not in html, f'the title is escaped: {html}')
+    check('Based on Faber · cited' in html and 'Foundations' in html and '2 lessons' in html and '1 lesson' in html,
+          f'source line and phases with lesson counts: {html}')
+    check('Preview' in html and 'Set it up for Kate' in html, f'the two buttons: {html}')
+    check(out['calls'] == [['preview', 'lib<1>'], ['setup', {'runId': 'run1', 'projectId': 'proj1'}]],
+          f'Preview opens the library program; Set it up opens the sheet on the run, nothing posted: {out["calls"]}')
+    check('Set it up for Mom' not in out['mine'] and 'Set it up' in out['mine'], f'your own program: Set it up: {out["mine"]}')
+
+
 if __name__ == '__main__':
     cases = [v for k, v in list(globals().items()) if k.startswith('scenario_')]
     failures = 0
