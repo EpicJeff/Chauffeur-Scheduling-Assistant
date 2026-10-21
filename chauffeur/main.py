@@ -6370,6 +6370,161 @@ def project_pieces(project_id: str, request: Request = None):
 
 
 
+_TICK_KEYS = 'projects_tick_results'   # app_state: {key: {'at': ts, 'status': int, 'body': dict}}
+_TICK_RECORD_KINDS = {'conversation': 'thread', 'argyle': 'mission', 'program': 'program'}
+
+
+def _tick_remember(project_id, key, status, body, actor_id):
+    from services import access
+    import time as _time
+    with storage.db_lock:
+        kept = storage.get_app_state(_TICK_KEYS, {}) or {}
+        cutoff = _time.time() - 86400
+        kept = {k: v for k, v in kept.items() if v.get('at', 0) > cutoff}
+        actor = storage.get_member(actor_id)
+        kinds = _TICK_RECORD_KINDS
+        views = [(kinds[r['kind']], r['id'], access.record_view(kinds[r['kind']], _PIECE_LOAD[kinds[r['kind']]](r['id']), actor))
+                 for r in body['rows'] if r['kind'] in kinds]
+        kept[f'{project_id}:{key}'] = {'at': _time.time(), 'status': status, 'body': body,
+                                      'actor_id': actor_id, 'views': views,
+                                      'links': [(r['subtitle'], r['id']) for r in body['rows'] if r['kind'] == 'link']}
+        storage.set_app_state(_TICK_KEYS, kept)
+
+
+@app.post("/api/projects/{project_id}/tick")
+def project_tick(project_id: str, body: Any = Body(default={}), request: Request = None):
+    """The row's checkbox (one-list spec §2): completes the row's next moment under the record's own gate."""
+    from services import access, projects, threads as _threads, programs as _prog
+    import datetime
+    import time as _time
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail='Send a row to tick.')
+    kind, rid, moment, key = body.get('kind'), body.get('id'), body.get('moment'), body.get('key')
+    done = body.get('done', True)
+    if (kind not in ('step', 'conversation', 'program', 'argyle')
+            or not isinstance(rid, str) or not rid or not isinstance(key, str) or not key
+            or not isinstance(moment, dict) or type(done) is not bool
+            or type(body.get('override', False)) is not bool):
+        raise HTTPException(status_code=400, detail='Say which row, and send a key.')
+    identity = {'step': 'step_id', 'conversation': 'thread_id', 'program': 'run_id', 'argyle': 'mission_id'}[kind]
+    if not isinstance(moment.get(identity), str) or not moment[identity]:
+        raise HTTPException(status_code=400, detail='Send the row moment.')
+    if kind == 'conversation' and (type(moment.get('rev')) is not int or moment['rev'] < 0
+                                    or (not done and not isinstance(moment.get('entry_id'), str))
+                                    or (not done and not moment.get('entry_id'))):
+        raise HTTPException(status_code=400, detail='Send the conversation revision and finished entry for undo.')
+    if kind == 'program' and done:
+        try:
+            day = datetime.date.fromisoformat(moment['window_date'])
+            if day.isoformat() != moment['window_date'] or type(moment.get('slot_rank')) is not int or moment['slot_rank'] < 0:
+                raise ValueError
+            if not isinstance(moment.get('lesson_id'), str) or not isinstance(moment.get('variant_label'), str):
+                raise ValueError
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(status_code=400, detail='Send the practice window moment.')
+    # Read the project and record, check their gates and moment, mutate and save
+    # the replay body under the same reentrant lock. Writers nest transactions.
+    with storage.db_lock, storage.db.transaction():
+        actor = _piece_viewer(request)
+        if actor is access.HOUSE:
+            raise HTTPException(status_code=403, detail='Sign in to tick.')
+        project = _project_for_actor(project_id, actor, writing=True)
+        if project.get('state') != 'active':
+            raise HTTPException(status_code=403, detail='Resume the project before ticking.')
+        if kind == 'step':
+            step = next((s for s in project.get('steps') or [] if s['id'] == rid), None)
+            if step is None:
+                raise HTTPException(status_code=404, detail='No such step')
+            if not projects._can_edit_step(project, step, actor):
+                raise HTTPException(status_code=403, detail='A child can only tick their own steps')
+        else:
+            record_kind = _TICK_RECORD_KINDS[kind]
+            record = _PIECE_LOAD[record_kind](rid)
+            if not record or record.get('project_id') != project_id or access.gone(record_kind, record):
+                raise HTTPException(status_code=404, detail='That is not part of this project.')
+            if kind == 'conversation' and (projects._child(actor) or actor.get('role') not in ('parent', 'adult')
+                                          or not access.record_actable('thread', record, actor, 'advance')):
+                raise HTTPException(status_code=403, detail="That isn't yours to tick.")
+            if kind == 'program':
+                _program_permission_or_refuse(request, {'member_id': actor.get('id')}, record)
+                if not access.record_actable('program', record, actor, 'session'):
+                    raise HTTPException(status_code=403, detail="That isn't yours to tick.")
+                if not done:
+                    raise HTTPException(status_code=405, detail='Remove the session from the program instead.')
+        kept = (storage.get_app_state(_TICK_KEYS, {}) or {}).get(f'{project_id}:{key}')
+        if kept and kept.get('at', 0) > _time.time() - 86400:
+            # The saved body contains every row. A key never grants another
+            # person's projection, or words a subject change has since hidden.
+            safe = kept.get('actor_id') == actor['id'] and all(
+                access.record_view(k, _PIECE_LOAD[k](i), actor) == view for k, i, view in kept.get('views', []))
+            if safe and kept.get('links'):
+                visible = {(p['kind'], p['id']) for p in projects.view(project, actor)['pieces']}
+                safe = all(tuple(link) in visible for link in kept['links'])
+            if safe:
+                return JSONResponse(status_code=kept['status'], content=kept['body'])
+            return JSONResponse(status_code=409, content={'detail': 'That changed; look again.', 'rows': projects.rows(project, actor)})
+        rows = projects.rows(project, actor)
+        def stale(message='That changed; look again.'):
+            return JSONResponse(status_code=409, content={'detail': message, 'rows': rows})
+        if moment[identity] != rid:
+            return stale()
+        row = next((r for r in rows if r['kind'] == kind and r['id'] == rid and
+                    (kind != 'program' or r['moment'].get('window_date') == moment.get('window_date')
+                     and r['moment'].get('slot_rank') == moment.get('slot_rank'))), None)
+        if kind == 'argyle':
+            detail = 'Argyle is waiting on you, not on a tick.' if row and row['box'] == 'asking' else 'Argyle fills this one in.'
+            raise HTTPException(status_code=405, detail=detail)
+        if row is None:
+            return stale()
+        if row['box'] == 'asking':
+            raise HTTPException(status_code=405, detail='Argyle is waiting on you, not on a tick.')
+        if kind == 'step':
+            if step.get('owner') == 'argyle':
+                raise HTTPException(status_code=405, detail='Argyle fills this one in.')
+            override = bool(body.get('override'))
+            if override and not projects._parent(actor):
+                raise HTTPException(status_code=403, detail='Only a parent can complete a step ahead of its needs.')
+            if row['box'] == 'not_yet' and not override:
+                return JSONResponse(status_code=409, content={'detail': row['reason'], 'rows': rows})
+            if (step.get('state') == 'done') == done:
+                return JSONResponse(status_code=409, content={'detail': 'That changed; look again.', 'rows': rows})
+            if done and step.get('state') not in ('todo', 'doing') and not (override and step.get('state') == 'blocked'):
+                return stale()
+            result = projects.set_step_state(project_id, rid, 'done' if done else 'todo', actor, override=override)
+        elif kind == 'conversation':
+            thread = record
+            if (thread.get('state') in ('done', 'dropped')
+                    or int(thread.get('next_action_rev') or 0) != moment['rev']):
+                return stale()
+            if done:
+                if row['box'] != 'open':
+                    return JSONResponse(status_code=409, content={'detail': row['reason'] or 'That changed; look again.', 'rows': rows})
+                result = _threads.complete_next_action(rid, moment['rev'], actor.get('id'))
+            else:
+                result = _threads.restore_next_action(rid, moment.get('entry_id') or '', actor.get('id'))
+        else:   # program
+            run = record
+            if (row['box'] != 'open' or moment.get('window_date', '') > datetime.date.today().isoformat()
+                    or _prog._already_logged(run, day)):
+                return JSONResponse(status_code=409, content={'detail': row['reason'] or 'That window is not today.', 'rows': rows})
+            if row['moment'] != moment:
+                return stale()
+            loaded = _prog.load(run)
+            proj = _prog.lesson_for(loaded, datetime.date.fromisoformat(moment['window_date']), slot_rank=int(moment.get('slot_rank') or 0))
+            if (proj.get('lesson_id') or '') != (moment.get('lesson_id') or '') or (proj.get('variant_label') or '') != (moment.get('variant_label') or ''):
+                return JSONResponse(status_code=409, content={'detail': 'That lesson moved; look again.', 'rows': rows})
+            result = _prog.log_session(rid, source='ticked', slot_date=moment['window_date'],
+                                       lesson_id=moment.get('lesson_id') or None, variant_label=moment.get('variant_label') or '')
+        if result.get('status') == 'error':
+            status = int(result.get('code') or 400)
+            if status == 409:
+                return JSONResponse(status_code=409, content={'detail': result['message'], 'rows': projects.rows(storage.get_project(project_id), actor)})
+            raise HTTPException(status_code=status, detail=result['message'])
+        out = {'status': 'success', 'result': result, 'rows': projects.rows(storage.get_project(project_id), actor)}
+        _tick_remember(project_id, key, 200, out, actor['id'])
+    return out
+
+
 @app.get("/api/projects/{project_id}")
 def project_detail(project_id: str, request: Request = None):
     from services import access

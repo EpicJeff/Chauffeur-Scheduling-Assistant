@@ -617,8 +617,10 @@ def remove_step(project_id, step_id, actor):
         return {'status': 'success', 'step': step, **_dirty_driver_holds(step)}
 
 
-def set_step_state(project_id, step_id, state, actor):
+def set_step_state(project_id, step_id, state, actor, override=False):
     with storage.db_lock:
+        if override and not _parent(actor):
+            return {**_error('Only a parent can complete a step ahead of its needs.'), 'code': 403}
         project = storage.get_project(project_id)
         if not can_act(project, actor):
             return _error('You cannot change this project')
@@ -632,7 +634,7 @@ def set_step_state(project_id, step_id, state, actor):
             return _error('Choose todo, doing, done, skipped or blocked')
         if step.get('state') == state:
             return {'status': 'success', 'step': step, 'advanced': []}
-        if not _parent(actor) and not _needs_satisfied(step, steps):
+        if not override and not _parent(actor) and not _needs_satisfied(step, steps):
             return _error('Finish or skip this step\'s needs first')
         if (step.get('owner') == 'argyle' and step.get('state') not in ('todo', 'doing')
                 and state in ('todo', 'doing')):

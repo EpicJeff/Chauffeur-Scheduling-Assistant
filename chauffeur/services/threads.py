@@ -431,6 +431,8 @@ def restore_next_action(thread_id: str, entry_id: str, who: str = None) -> dict:
         if not completed or completed[-1].get('entry_id') != entry_id:
             return {'status': 'error', 'code': 409, 'message': 'That is not the latest finished step.'}
         entry = completed[-1]
+        if int(row.get('next_action_rev') or 0) != entry['rev_before'] + 1:
+            return {'status': 'error', 'code': 409, 'message': 'That changed; look again.'}
         storage.append_thread_history(thread_id, {'kind': 'restored', 'text': f"Back to: {entry['next_action']}", 'who': who, 'entry_id': entry_id})
         rev = int(row.get('next_action_rev') or 0) + 1
         storage.update_thread(thread_id, {'next_action': entry['next_action'], 'next_action_at': entry.get('next_action_at'),

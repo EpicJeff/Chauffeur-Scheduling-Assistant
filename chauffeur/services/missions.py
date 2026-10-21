@@ -1789,19 +1789,19 @@ def _apply_planner_action(mission, res, settings, action, stage_id):
         mission = storage.get_mission(mid)
         # The draft and finish are separate scheduler steps; use the captured
         # revision saved with the draft, never a new read at finish time.
-        drafts = [s.get('result_json') or {} for s in storage.get_mission_steps(mid)
+        drafts = [(s.get('ts') or 0, s.get('result_json') or {}) for s in storage.get_mission_steps(mid)
                   if s.get('kind') == 'draft'
                   and (s.get('args_json') or {}).get('thread_id') == mission.get('origin_ref')
                   and (s.get('result_json') or {}).get('status') == 'ok']
         # Planned thread drafts reach draft_message through the approved tool
         # wrapper. Plain draft_message stage rows only save supplied words and
         # have no thread revision, so they retain the None/legacy behavior.
-        drafts.extend(row.get('result') or {}
+        drafts.extend((row.get('done_at') or 0, row.get('result') or {})
                       for stage in (mission.get('plan') or {}).get('stages', [])
                       for row in stage.get('rows', [])
                       if row.get('tool') == 'draft_thread_message' and row.get('state') == 'done'
                       and (row.get('result') or {}).get('thread_id') == mission.get('origin_ref'))
-        draft = drafts[-1] if drafts else {}
+        draft = max(drafts, key=lambda item: item[0])[1] if drafts else {}
         _land_finish(mission, res, next_action_rev=draft.get('next_action_rev'))
         return row
 

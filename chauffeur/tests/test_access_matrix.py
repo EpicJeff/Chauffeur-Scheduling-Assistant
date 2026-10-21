@@ -80,6 +80,8 @@ def scenario_every_probe_matches_the_table():
             for col in COLS:
                 want = signed_in.expected(rid, fx, rkey, col, expect(cls, rkey, col))
                 want = access_fixture.library_expected(rid, fx, rkey, col, want)
+                if rid == access_fixture.TICK_READER:
+                    want = access_fixture.tick_expected(rkey, col)
                 try:
                     got = PROBES[rid](fx, rkey, col)
                 except Exception as exc:
@@ -115,6 +117,7 @@ calendar.register(probe)
 
 # Program library routes (spec 2026-10-19 §4): inert until their READERS rows exist.
 access_fixture.register_library(probe)
+probe(access_fixture.TICK_READER)(access_fixture.tick_probe)
 
 
 def scenario_shared_contracts():

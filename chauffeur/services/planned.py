@@ -1386,6 +1386,8 @@ def run_stage(mission_id, stage_id, snap, actor):
                 row = next(r for r in stage['rows'] if r['id'] == row_id)
                 row.update(result=result, state='waiting_choice' if result['status'] == 'waiting_choice'
                            else 'done' if result['status'] == 'success' else 'failed')
+                if row['tool'] == 'draft_thread_message' and row['state'] == 'done':
+                    row['done_at'] = time.time()
                 storage.update_mission(mission_id, {'plan': plan})
                 if row['state'] == 'failed':
                     _dismiss_rows({'rows': [row]})

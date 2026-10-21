@@ -93,6 +93,7 @@ READERS = [
     ((R, 'GET', '/api/projects/elsewhere'), '4.1-signed-in', ('mission',), 'record_view'),
     ((R, 'GET', '/api/projects/for/{kind}/{record_id}'), '4.1-signed-in', ('thread', 'mission', 'program'), 'record_view'),
     ((R, 'GET', '/api/projects/{project_id}/pieces'), '4.1-signed-in', ('thread', 'mission', 'program'), 'record_view'),
+    ((R, 'POST', '/api/projects/{project_id}/tick'), '4.1-signed-in', ('project', 'thread', 'mission', 'program'), '_piece_viewer; projects.can_act; record_actable(thread, advance) | _program_permission_or_refuse'),
     ((R, 'GET', '/api/projects/{project_id}'), '4.1-signed-in', ('thread', 'mission', 'program'), 'record_view'),
     ((R, 'POST', '/api/projects/{project_id}/pieces'), '4.1-signed-in', (), 'record_actable'),
     ((R, 'POST', '/api/projects/{project_id}/pieces/remove'), '4.1-signed-in', (), 'record_actable'),
@@ -423,6 +424,11 @@ READERS = [
         'services.agent_tools_v2._render_at',
         'services.situations.options_for', 'services.situations._thread_mission', 'services.subjects.load',
         'services.subjects.subject_records', 'services.projects.adopt', 'services.projects.adopt_existing',
+        # One-list row helpers: projects.rows / GET project detail apply the viewer's projection.
+        'services.projects._asking_steps', 'services.projects._last_ask', 'services.projects._mission_row',
+        'services.projects._program_rows', 'services.projects._step_rows', 'services.projects._thread_row',
+        # Revision writers are internal to the registered, gated thread and project tick routes.
+        'services.threads._bump_rev', 'services.threads.complete_next_action', 'services.threads.restore_next_action',
         'services.projects._work_missions', 'services.projects.advance', 'services.projects.resume_waiting',
         'services.projects._busy_intervals', 'services.projects.find_window', 'services.threads.match_inbound',
         'services.email_ingest._match_thread', 'services.threads.is_stalled', 'services.threads.stalled',

@@ -183,6 +183,71 @@ def build():
     return fx
 
 
+TICK_READER = ('route', 'POST', '/api/projects/{project_id}/tick')
+
+
+def tick_expected(rkey, col):
+    """Tick gates from the fixture table, independent of production gate code."""
+    from access_signed_in import project_visible
+    from test_access_core import TABLE, COLS, KIND
+    if col == 'pat':
+        return None
+    if col == 'house':
+        return 403
+    if not project_visible(None, rkey, col):
+        return 404
+    if col == 'hal' or (col == 'kid' and rkey not in ('R6', 'R11', 'R14', 'R15')):
+        return 403
+    kind = KIND[rkey]
+    view = dict(zip(COLS, TABLE[rkey]))[col]
+    if kind == 'mission':
+        return 405
+    if kind == 'thread':
+        if col == 'kid' or view is None:
+            return 403
+        # Task 1's keeper projection carries no next action, so no open box.
+        return 409 if view == 'keeper' else 200
+    return 200 if view else 403
+
+
+def tick_probe(fx, rkey, col):
+    import datetime
+    from unittest.mock import patch
+    from access_signed_in import request
+    from test_access_core import load
+    from services import programs
+    fx = build()  # every write gets its own untouched record and revision
+    kind, row = load(fx, rkey)
+    today = datetime.date.today().isoformat()
+    if kind == 'thread':
+        moment = {'thread_id': row['id'], 'rev': 0}
+        tick_kind = 'conversation'
+    elif kind == 'mission':
+        moment = {'mission_id': row['id']}
+        tick_kind = 'argyle'
+    else:
+        lesson_id = row['progress']['current']
+        moment = {'run_id': row['id'], 'window_date': today, 'slot_rank': 0,
+                  'lesson_id': lesson_id, 'variant_label': ''}
+        tick_kind = 'program'
+    before = row
+    with patch.object(programs, 'practice_windows', return_value=[{
+            'program_id': row['id'], 'date': today, 'time_start': '08:00', 'logged': False,
+            'lesson_id': moment.get('lesson_id', ''), 'variant_label': '', 'unit_title': 'Practice'}]):
+        response = request(fx, col, 'POST', f"/api/projects/{row['project_id']}/tick", json={
+            'kind': tick_kind, 'id': row['id'], 'moment': moment, 'done': True, 'key': uuid.uuid4().hex})
+    if response is None:
+        return None
+    if response.status_code == 200:
+        after = load(fx, rkey)[1]
+        assert (after['next_action'] == '' and after['next_action_rev'] == 1) if kind == 'thread' else len(after['sessions']) == 1
+    else:
+        assert load(fx, rkey)[1] == before, 'refused ticks must not change the record'
+        if col == 'house' or (kind == 'thread' and rkey == 'R10' and col == 'dad'):
+            assert fx.secret(rkey) not in response.text, 'hidden next action leaked'
+    return response.status_code
+
+
 # --- Program library routes (spec 2026-10-19 §2, §4): expectations and matrix probes ----------
 # Rows for routes that do not exist yet: the matrix only runs a probe for a READERS row, so
 # these stay inert until the library routes and their READERS rows land (Task 2), and then

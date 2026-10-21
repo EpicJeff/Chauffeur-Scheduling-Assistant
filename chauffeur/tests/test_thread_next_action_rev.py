@@ -164,6 +164,7 @@ def scenario_planned_thread_draft_revision_reaches_the_finisher():
         check(stage['rows'][0]['state'] == 'done', f'the real draft tool runs: {stage}')
         if tool == 'draft_thread_message':
             check(stage['rows'][0]['result'].get('next_action_rev') == 0, 'the tool wrapper preserves the draft revision')
+            check(stage['rows'][0]['done_at'] > 0, 'the planned draft keeps its completion timestamp')
         threads.complete_next_action(tid, 0, 'mom')
         threads.advance(tid, 'Email Ace', None, who='mom')
         with patch.object(missions, '_llm', return_value={'action': 'finish', 'summary': 'Draft ready',
@@ -173,6 +174,41 @@ def scenario_planned_thread_draft_revision_reaches_the_finisher():
         expected = 'Email Ace' if tool == 'draft_thread_message' else 'Review the draft'
         check(storage.get_thread(tid)['next_action'] == expected,
               f'only a real thread draft constrains the finisher ({tool})')
+
+
+def scenario_later_planned_draft_uses_wall_clock_and_wins_at_finish():
+    from services import missions, planned
+    from test_planned_missions import _fresh as fresh_plan, _approved
+    fresh_plan()
+    tid = _t()
+    mid = _approved([{'id': 's1', 'kind': 'build', 'title': 'Draft', 'why': '', 'makes': ['a draft']}])
+    storage.update_mission(mid, {'origin_kind': 'thread', 'origin_ref': tid})
+    with patch.object(threads, '_pool_call', return_value={'subject': 'Old', 'body': 'Older draft'}):
+        direct = threads.draft_message(tid, 'say hello')
+    storage.add_mission_step(mid, {'kind': 'draft', 'args_json': {'thread_id': tid}, 'result_json': direct})
+    direct_step = next(s for s in storage.get_mission_steps(mid) if s['kind'] == 'draft')
+    check(direct['next_action_rev'] == 0, 'the direct draft captures the original action')
+    threads.advance(tid, 'Email Ace', None, who='mom')
+    proposed = planned.propose_stage(mid, 's1', [{'id': 'd1', 'tool': 'draft_thread_message',
+        'args': {'thread_id': tid, 'intent': 'write the newer draft'}, 'summary': 'Draft to Ace'}])
+    check(proposed['status'] == 'success', f'the planned draft is proposed: {proposed}')
+    stage = storage.get_mission(mid)['plan']['stages'][0]
+    later_wall_time = direct_step['ts'] + 10
+    with patch.object(planned.time, 'time', return_value=later_wall_time), \
+            patch.object(threads, '_pool_call', return_value={'subject': 'New', 'body': 'Newer draft'}):
+        planned.run_stage(mid, 's1', stage['snapshot'], storage.get_member('mom'))
+    draft = storage.get_mission(mid)['plan']['stages'][0]['rows'][0]
+    check(draft['state'] == 'done' and draft['result']['next_action_rev'] == 1,
+          f'the real planned draft captures the successor: {draft}')
+    with patch.object(missions, '_llm', return_value={'action': 'finish', 'summary': 'Ready',
+                                                     'next_action': 'Review the newer planned draft'}), \
+            patch.object(missions, '_dm_person'):
+        missions.step(storage.get_mission(mid))
+    check(storage.get_mission(mid)['status'] == 'done', 'the real mission finishes')
+    check(storage.get_thread(tid)['next_action'] == 'Review the newer planned draft',
+          'the finisher uses the newer planned draft revision instead of the older direct draft')
+    check(draft['done_at'] == later_wall_time and draft['done_at'] > direct_step['ts'],
+          'real planned and direct draft timestamps share the wall clock')
 
 
 def scenario_completion_and_restore_rollback_the_history_on_failure():
@@ -208,6 +244,44 @@ def scenario_finisher_without_a_draft_keeps_legacy_behavior():
         missions._land_finish({'id': 'm1', 'origin_kind': 'thread', 'origin_ref': tid, 'goal': 'g'},
                               {'summary': 'Called Ace', 'next_action': 'Wait for the quote'}, next_action_rev=None)
     check(storage.get_thread(tid)['next_action'] == 'Wait for the quote', 'None keeps the existing advance')
+
+
+def scenario_restore_refuses_after_an_empty_advance():
+    _fresh()
+    tid = _t()
+    done = threads.complete_next_action(tid, 0, 'mom')
+    threads.advance(tid, '', None, who='mom')
+    before = storage.get_thread(tid)
+    result = threads.restore_next_action(tid, done['entry_id'], 'mom')
+    check(result.get('code') == 409 and storage.get_thread(tid) == before,
+          f'an empty successor still invalidates restore: {result}')
+
+
+def scenario_finisher_uses_the_chronologically_latest_draft():
+    from services import missions
+    for direct_latest in (False, True):
+        _fresh()
+        tid = _t()
+        threads.advance(tid, 'Email Ace', None, who='mom')
+        # Storage returns direct steps separately from planned rows. Either source
+        # may be newest; concatenation order cannot decide the captured revision.
+        direct_rev, planned_rev = (1, 0) if direct_latest else (0, 1)
+        mid = storage.add_mission({'goal': 'Contact Ace', 'created_by': 'mom', 'status': 'running',
+                                  'origin_kind': 'thread', 'origin_ref': tid,
+                                  'plan': {'state': 'done', 'rev': 1, 'stages': [{'id': 's1', 'kind': 'build', 'title': 'Draft', 'state': 'done', 'rows': [{
+                                      'id': 'd1', 'tool': 'draft_thread_message', 'state': 'done',
+                                      'result': {'status': 'success', 'thread_id': tid,
+                                                 'next_action_rev': planned_rev},
+                                      'done_at': 10 if direct_latest else 20}]}]}})
+        storage.add_mission_step(mid, {'kind': 'draft', 'ts': 20 if direct_latest else 10,
+                                      'args_json': {'thread_id': tid},
+                                      'result_json': {'status': 'ok', 'next_action_rev': direct_rev}})
+        with patch.object(missions, '_llm', return_value={'action': 'finish', 'summary': 'Ready',
+                                                         'next_action': 'Review the newest draft'}), \
+                patch.object(missions, '_dm_person'):
+            missions.step(storage.get_mission(mid))
+        check(storage.get_thread(tid)['next_action'] == 'Review the newest draft',
+              f'finish uses the newest draft revision (direct_latest={direct_latest})')
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith('scenario_')]

@@ -49,6 +49,11 @@ def scenario_a_every_route_is_classified():
           + "\n  ".join(f"{m} {p}" for m, p in sorted(unclassified)))
 
 
+def scenario_project_tick_is_signed_in():
+    rule = auth.resolve('POST', '/api/projects/a-project/tick')
+    check(rule == auth.SIGNED_IN, 'the projects wildcard covers tick as SIGNED_IN')
+
+
 def scenario_b_audit_mode_refuses_nothing():
     """S1 ships dark. Every route, no credentials, and not one refusal."""
     orig = auth.enforcing
