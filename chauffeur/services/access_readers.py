@@ -72,6 +72,7 @@ READERS = [
     # §4.1 programs
     ((R, 'GET', '/api/programs'), '4.1-signed-in', ('program',), 'record_view'),
     ((R, 'POST', '/api/programs'), '4.1-signed-in', ('program',), 'record_actable'),
+    ((R, 'POST', '/api/programs/preview-slots'), '4.1-signed-in', (), '_library_actor; self or parent/adult'),
     ((P, 'POST', '/api/programs/{program_id}/'), '4.1-signed-in', ('program',), 'record_actable'),
     ((R, 'PATCH', '/api/programs/{program_id}/schedule'), '4.1-signed-in', ('program',),
      '_piece_or_404 edit; _program_permission_or_refuse'),

@@ -54,6 +54,11 @@ def scenario_project_tick_is_signed_in():
     check(rule == auth.SIGNED_IN, 'the projects wildcard covers tick as SIGNED_IN')
 
 
+def scenario_program_preview_is_signed_in():
+    rule = auth.resolve('POST', '/api/programs/preview-slots')
+    check(rule == auth.SIGNED_IN, 'the programs wildcard covers preview as SIGNED_IN')
+
+
 def scenario_b_audit_mode_refuses_nothing():
     """S1 ships dark. Every route, no credentials, and not one refusal."""
     orig = auth.enforcing

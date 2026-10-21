@@ -8085,7 +8085,8 @@ def write_library_scripts_api(id: str, request: Request, body: dict = Body(defau
 
 
 @app.post("/api/programs")
-def create_program(body: dict = Body(default={}), request: Request = None):
+def create_program(body: dict = Body(default={}), request: Request = None,
+                   background_tasks: BackgroundTasks = None):
     from services import programs as _prog, programs_curate as _cur, library, stages
     if not storage.get_settings().get('programs_enabled', True):
         return {'status': 'error', 'message': 'Programs are switched off for this household.'}
@@ -8107,6 +8108,9 @@ def create_program(body: dict = Body(default={}), request: Request = None):
         _approver_of_record(_mind_actor(request, body.get('member_id')))
     project_id = _project_to_join(body, actor)
     made = None
+    activate = bool(body.get('activate'))
+    no_time = False
+    approved = None
     if not body.get('library_id'):
         member = storage.get_member(member_id) or {}
         age = stages.age_of(member)
@@ -8115,6 +8119,8 @@ def create_program(body: dict = Body(default={}), request: Request = None):
         if prepared.get('status') != 'success':
             return _library_result(prepared)
     class RunRefused(Exception):
+        pass
+    class ActivationFailed(Exception):
         pass
     try:
         with storage.db_lock, storage.db.transaction():
@@ -8135,13 +8141,37 @@ def create_program(body: dict = Body(default={}), request: Request = None):
                              'rebaselined_at': None, 'rebaselines': 0}}, project_id=project_id)
             if not pid:
                 raise RunRefused()
+            if activate:
+                actor_row = storage.get_member(actor.get('id')) or {}
+                if actor_row.get('role') in ('parent', 'adult'):
+                    try:
+                        approved = _prog.approve(pid, actor.get('id'), slots=body.get('slots'))
+                        if approved.get('status') != 'success':
+                            if approved.get('message') == 'There is no time to claim.':
+                                no_time = True
+                            else:
+                                raise ActivationFailed(approved.get('message') or 'Could not start the program.')
+                    except ActivationFailed:
+                        # Nested transactions have no savepoint. Remove our rows
+                        # before returning an error even if a caller owns the commit.
+                        # approve has already reverted this attempt's emissions.
+                        storage.delete_program(pid)
+                        if made:
+                            storage.delete_library_program(lid)
+                        raise
     except RunRefused:
         return {'status': 'error', 'message': 'That project or library program is no longer here.'}
+    except ActivationFailed as e:
+        return {'status': 'error', 'message': str(e)}
+    if approved and approved.get('status') == 'success':
+        _program_refresh(approved, background_tasks)
     if made:
         from services import library_scripts
         library_scripts.write(lid, actor)
     return {'status': 'success', 'id': pid, 'program': _prog.load(storage.get_program(pid)),
-            **({'message': made['message']} if made else {})}
+            **({'message': made['message']} if made else {}),
+            **({'state': 'proposed', 'message': 'Made it, but found no free time this week; pick times to start it.'}
+               if no_time else {})}
 
 
 @app.post("/api/programs/{program_id}/edit")
@@ -8845,6 +8875,26 @@ def program_celebrations(request: Request = None):
     """
     from services import programs as _prog
     return _prog.celebrations(viewer=_piece_viewer(request))
+
+
+@app.post("/api/programs/preview-slots")
+def program_preview_slots(body: dict = Body(default={}), request: Request = None):
+    """The week the app would propose, before a run exists (programs spec §4)."""
+    from services import programs as _prog
+    actor = _library_actor(request)
+    member_id = body.get('member_id') or actor.get('id')
+    me = storage.get_member(actor.get('id')) or {}
+    if member_id != actor.get('id') and me.get('role') not in ('parent', 'adult'):
+        raise HTTPException(status_code=403, detail='You can only look at your own week.')
+    if not storage.get_member(member_id):
+        raise HTTPException(status_code=404, detail='No such member')
+    profile = {}
+    if body.get('library_id'):
+        row = storage.get_library_program(body['library_id']) or {}
+        profile = dict(row.get('made_for') or {})
+    shape = _prog.clamp_shape({**{k: profile[k] for k in ('minutes', 'sessions_per_week') if k in profile},
+                               **{k: body[k] for k in ('minutes', 'sessions_per_week', 'preferred_days') if k in body}})
+    return {'slots': _prog.propose_slots(member_id, {**shape, 'slots': []}), 'minutes': shape['minutes']}
 
 
 @app.get("/api/programs/{program_id}/footprint")

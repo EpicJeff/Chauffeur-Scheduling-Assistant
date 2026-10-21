@@ -38,6 +38,12 @@ def scenario_every_keyword_route_is_classified():
     check(not missing, 'unclassified routes:\n' + '\n'.join(missing))
 
 
+def scenario_program_preview_has_its_member_gate():
+    row = reg.resolve_route('POST', '/api/programs/preview-slots')
+    check(row == ((reg.R, 'POST', '/api/programs/preview-slots'), '4.1-signed-in', (),
+                  '_library_actor; self or parent/adult'), 'preview declares its own member authorization')
+
+
 def scenario_every_keyword_tool_is_classified():
     names = sorted(getattr(tools, 'TOOL_HANDLERS', {}).keys())
     check(names, 'the registry is enumerable')
