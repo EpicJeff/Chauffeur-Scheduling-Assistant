@@ -414,6 +414,46 @@ def scenario_a_piece_delete_and_remove():
         clean(served)
 
 
+def scenario_a_run_delete_follows_the_project_owner():
+    """A run's Delete sits in its sheet on both hosts, for the project's owner or a parent
+    (deletion._authority), never for the run's own member alone; it deletes the run only."""
+    served = serve()
+    if served is None:
+        return
+    owned = _project('Aunt Jo’s garden', owner='aunt')
+    run = _program('Pruning practice', owned, member='mom')
+    other = _project('Mom’s fitness')
+    theirs = _program('Stretching practice', other, member='aunt')
+    for who in ('aunt', 'dad'):   # a fresh browser per person: one signed-in admin at a time
+        with served.browser() as page:
+            _admin_project(page, served, who, owned)
+            sheet = _open_sheet(page, f'program:{run}', 'Pruning practice')
+            sheet.get_by_role('button', name='Delete', exact=True).first.wait_for(state='visible', timeout=10000)   # {who} has it
+            clean(served)
+    with served.browser() as page:
+        _admin_project(page, served, 'aunt', other)
+        sheet = _open_sheet(page, f'program:{theirs}', 'Stretching practice')
+        sheet.get_by_role('button', name='Log a session', exact=True).first.wait_for(state='visible', timeout=10000)
+        check(sheet.get_by_role('button', name='Delete', exact=True).count() == 0,
+              "the run's own member who neither owns the project nor is a parent has no Delete")
+        clean(served)
+    dialogs = []
+    with served.browser() as page:
+        _no_dialogs(page, dialogs)
+        _phone_project(page, served, 'aunt', owned)
+        page.locator(f'[data-piece-open="program:{run}"]').click()
+        delete = page.locator(f'[data-piece-sheet-delete="program:{run}"]')
+        delete.wait_for(state='visible', timeout=10000)
+        delete.click()
+        overlay = _phone_confirm(page)
+        check('Pruning practice' in overlay.inner_text() and STAY in overlay.inner_text(), f"the run's preview: {overlay.inner_text()}")
+        overlay.locator('[data-yes]').click()
+        page.wait_for_selector(f'[data-row="program:{run}"]', state='detached', timeout=10000)
+        check(_gone('program', run) and not _gone('project', owned), "the run goes; the project stays")
+        check(dialogs == [], f"no browser dialogs: {dialogs}")
+        clean(served)
+
+
 def scenario_a_changed_project_previews_again():
     served = serve()
     if served is None:
@@ -736,7 +776,8 @@ def scenario_light_and_dark_at_phone_width():
 
 
 SCENARIOS = [scenario_project_delete_names_its_pieces_and_deletes, scenario_who_sees_the_project_delete,
-             scenario_a_piece_delete_and_remove, scenario_a_changed_project_previews_again,
+             scenario_a_piece_delete_and_remove, scenario_a_run_delete_follows_the_project_owner,
+             scenario_a_changed_project_previews_again,
              scenario_folding_when_the_thread_card_renders, scenario_standalone_for_a_keeper_only_viewer,
              scenario_standalone_for_a_missing_thread_piece, scenario_phone_folds_and_falls_back_without_history,
              scenario_the_phone_thread_sheet_lists_every_mission, scenario_the_admin_thread_sheet_lists_every_mission,

@@ -716,6 +716,16 @@
                                     <span x-text="p.state === 'done' ? 'Done' : 'Dropped — the record stays'"></span>
                                     <span x-show="p.finished_at" x-text="' · ' + fmtTs(p.finished_at)"></span>
                                 </div>
+                                <!-- The run's own Delete (projects delete spec §7), as the project's
+                                     piece card offered it: the project's owner or a parent. It
+                                     deletes this run, never the library program. An unresolved
+                                     run keeps its Delete beside Pick a program, above. -->
+                                <template x-if="!p.unresolved && canDeleteRun(p) && window.chfDeleteRecord">
+                                    <div class="flex justify-end mt-2">
+                                        <button type="button" data-run-delete @click="deleteRun(p)"
+                                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-900 text-red-400 border border-red-900/60 active:bg-red-950">Delete</button>
+                                    </div>
+                                </template>
                             </div>
                         </template>
                     </div>
@@ -824,6 +834,22 @@
                 // a KNOWN identity acting on a program that is neither
                 // theirs nor one they parent.
                 canAct(p) { return !this.myId || this.isMine(p) || this.iAmParent(); },
+                // Delete follows the server's rule (deletion._authority): the run's
+                // project's owner or a parent. Without the project's owner on hand,
+                // a parent only.
+                projectOwners: {},
+                canDeleteRun(p) {
+                    if (!this.myId || this.iAmParent()) return true;
+                    return !!p.project_id && this.projectOwners[p.project_id] === this.myId;
+                },
+                async loadProjectOwner(p) {
+                    if (!p || !p.project_id || p.project_id in this.projectOwners) return;
+                    this.projectOwners[p.project_id] = '';
+                    try {
+                        const r = await fetch(this.apiBase + 'api/projects/' + encodeURIComponent(p.project_id));
+                        if (r.ok) this.projectOwners[p.project_id] = ((await r.json()).project || {}).owner_member_id || '';
+                    } catch (e) { /* a parent only, then */ }
+                },
 
                 // Approving is never an ownership matter -- even the program's
                 // own owner needs a parent/adult to claim the week.
@@ -862,6 +888,8 @@
                                 this.sessionMinutes[p.id] = (p.shape || {}).minutes || 25;
                             }
                         });
+                        if (this.sheet && this.only && this.myId && !this.iAmParent())
+                            await this.loadProjectOwner(this.programs.find(p => p.id === this.only));
                         await Promise.all([
                             ...this.programs.filter(p => p.state === 'proposed')
                                 .map(p => this.loadFootprint(p.id)),

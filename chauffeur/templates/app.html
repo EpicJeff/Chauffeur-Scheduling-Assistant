@@ -2013,7 +2013,11 @@
                 const r = await fetch(`${apiBase}api/programs?include_finished=true`);
                 const d = r.ok ? await r.json() : { programs: [] };
                 const p = (d.programs || []).find(x => x.id === id);
-                return p ? renderProgramCard(p, {}) : '';
+                if (!p) return '';
+                // The run's own Delete, as the project's piece card offered it (an
+                // unresolved run keeps its Delete inside the card).
+                const deletable = !p.unresolved && await pieceSheetCanDeleteRun(p);
+                return renderProgramCard(p, {}) + (deletable ? pieceSheetDeleteRow('program', id, p.title || '') : '');
             }
             const r = await fetch(`${apiBase}api/situations/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`);
             if (!r.ok || !window.Situations) return '';
@@ -2066,11 +2070,22 @@
         // The record's own Delete, for the people the server lets delete a
         // thread or a mission (parents and adults).
         function pieceSheetDeleteRow(kind, id, title) {
-            if (!['thread', 'mission'].includes(kind) || !['parent', 'adult'].includes(currentMemberRole())) return '';
+            // A program's gate is pieceSheetCanDeleteRun, decided by the caller.
+            if (kind !== 'program' && (!['thread', 'mission'].includes(kind) || !['parent', 'adult'].includes(currentMemberRole()))) return '';
             pieceSheetTitles[id] = title;
             return `<div class="flex justify-end pt-2">
                 <button type="button" data-piece-sheet-delete="${mfEscape(kind)}:${mfEscape(id)}" class="text-xs font-bold text-red-400 underline underline-offset-2">Delete</button>
             </div>`;
+        }
+        // A run is deleted by its project's owner or a parent (deletion._authority);
+        // with no project to read, a parent only. The server decides either way.
+        async function pieceSheetCanDeleteRun(p) {
+            if (currentMemberRole() === 'parent') return true;
+            if (!p.project_id || !selectedMemberId) return false;
+            try {
+                const r = await fetch(`${apiBase}api/projects/${encodeURIComponent(p.project_id)}`);
+                return r.ok && (((await r.json()).project || {}).owner_member_id === selectedMemberId);
+            } catch (e) { return false; }
         }
         // Delete through the shared two-step (components/record_delete.html).
         // A deleted mission re-reads the sheet it was listed in; a deleted
