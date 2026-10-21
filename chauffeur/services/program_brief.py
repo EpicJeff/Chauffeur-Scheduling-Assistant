@@ -21,8 +21,7 @@ DEFAULT_PER_WEEK = 3
 CAPS = {'title': 80, 'assumes': programs_curate.STARTING_POINT_CHARS,
         'starting_point': programs_curate.STARTING_POINT_CHARS, 'based_on': 120, 'notes': 400}
 FIELD_NAMES = {'assumes': 'the starting level', 'based_on': 'what it is based on', 'notes': 'the notes'}
-PRIVATE = ("What they can already do stays private to their program; say a generic level "
-           "for everyone instead (for example 'complete beginner').")
+PUBLIC_FIELDS = ('assumes', 'notes', 'based_on')
 
 
 def _text(raw, field):
@@ -82,9 +81,15 @@ def parse(text, actor, members, *, surface='library'):
     refusal = screen_fields(fields)
     if refusal:
         return refusal
-    starting, assumes = fields['starting_point'], fields['assumes']
-    if starting and assumes and (assumes.lower() in starting.lower() or starting.lower() in assumes.lower()):
-        return {'status': 'error', 'message': PRIVATE}
+    # The starting point is private to the run; a public field that repeats it
+    # (assumes, notes, based_on all reach the public context) is dropped, never
+    # refused, so the public stays generic and the brief still goes through.
+    starting = fields['starting_point']
+    if starting:
+        for field in PUBLIC_FIELDS:
+            if starting.lower() in fields[field].lower():
+                fields[field] = ''
+    assumes = fields['assumes']
     name = str(raw.get('for') or '').strip().lower()
     member = next((m for m in members or [] if name and str(m.get('name') or '').strip().lower().startswith(name)), None)
     if member is None and surface == 'chat':

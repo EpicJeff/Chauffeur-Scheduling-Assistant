@@ -42,7 +42,20 @@ def scenario_every_free_text_is_screened():
     check(res['status'] == 'error', f"a body target in notes is refused: {res}")
     with _model({'title': 'Learn piano', 'starting_point': 'plays Twinkle', 'assumes': 'plays Twinkle'}):
         res = program_brief.parse('x', MOM, MEMBERS, surface='library')
-    check(res['status'] == 'error' and 'private' in res['message'].lower(), f"the starting point copied into the public assumes is refused: {res}")
+    check(res['status'] == 'success' and res['brief']['profile']['assumes'] == '' and res['brief']['starting_point'] == 'plays Twinkle',
+          f"the starting point copied into the public assumes is dropped from it, never refused: {res}")
+
+
+def scenario_public_fields_never_echo_the_starting_point():
+    with _model({'title': 'Learn piano', 'starting_point': 'Plays Twinkle with her right hand', 'assumes': 'complete beginner',
+                 'notes': 'she plays twinkle with her right hand already', 'based_on': 'Piano Adventures'}):
+        res = program_brief.parse('x', MOM, MEMBERS, surface='library')
+    b = res.get('brief') or {}
+    check(res['status'] == 'success' and b['notes'] == '' and b['starting_point'] == 'Plays Twinkle with her right hand'
+          and b['based_on'] == 'Piano Adventures' and b['profile']['assumes'] == 'complete beginner',
+          f"notes echoing the starting point are dropped; the rest stays: {res}")
+    ctx = programs_curate.public_context(b['profile'], b['notes'], b['based_on'])
+    check('twinkle' not in ctx.lower() and 'Piano Adventures' in ctx, f"the public context never carries the starting point: {ctx}")
 
 
 def scenario_public_context_and_research_question():
