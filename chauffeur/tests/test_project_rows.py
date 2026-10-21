@@ -620,6 +620,30 @@ def scenario_child_step_row_never_quotes_its_mission():
     check('SECRET' not in r['title'] + r['subtitle'] and r['actions'] == [], f"nor the step's copied question: {r}")
 
 
+def scenario_step_question_hidden_from_non_full_readers():
+    _fresh()
+    import main
+    from services import access
+    p = _project('Hire a tiler', 'mom', 'household')
+    s = _step(p['id'], 'Find a tiler', owner='argyle', goal='find a tiler')
+    mid = storage.get_project(p['id'])['steps'][0]['mission_id']
+    storage.update_mission(mid, {'status': 'waiting_user'})
+    _p().on_question(mid, 'offer $40 an hour?')
+    project = storage.get_project(p['id'])
+    i = next(n for n, st in enumerate(project['steps']) if st['id'] == s['id'])
+    check(access.record_view('mission', storage.get_mission(mid), dict(KID)) != access.FULL,
+          "precondition: the child does not read the mission in full")
+    check(_p().view(project, dict(KID))['steps'][i]['question'] is None, "a child's view blanks the step question")
+    check(_p().view(project, dict(MOM))['steps'][i]['question'] == 'offer $40 an hour?', "the mission's reader keeps the question")
+    check(storage.get_project(p['id'])['steps'][i]['question'] == 'offer $40 an hour?', "the stored row is untouched")
+    settings = dict(storage.get_settings(), auth_enforce=True)
+    with patch.object(storage, 'get_settings', return_value=settings):
+        kid = TestClient(main.app).get(f"/api/projects/{p['id']}", headers={'X-Member-Token': storage.create_member_token(KID['id'])})
+        mom = TestClient(main.app).get(f"/api/projects/{p['id']}", headers={'X-Member-Token': storage.create_member_token('mom')})
+    check(kid.status_code == 200 and 'offer $40' not in kid.text, f"the child's GET carries no mission words: {kid.text[:300]}")
+    check(mom.status_code == 200 and 'offer $40 an hour?' in mom.text, f"the parent's GET keeps them: {mom.text[:300]}")
+
+
 def scenario_pick_a_program_is_gated_like_the_old_card():
     _fresh()
     from services import access

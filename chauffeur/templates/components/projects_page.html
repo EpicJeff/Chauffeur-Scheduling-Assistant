@@ -202,7 +202,7 @@
                         <template x-if="stepSheet.step.owner === 'argyle'">
                             <div class="space-y-1 text-sm">
                                 <template x-for="(line, i) in foundLines(stepSheet.step.found)" :key="i"><p class="text-gray-300" x-text="line"></p></template>
-                                <p class="text-gray-300" x-show="stepSheet.step.question" x-text="stepSheet.step.question ? 'Argyle needs you: ' + stepSheet.step.question : ''"></p>
+                                <p class="text-gray-300" x-show="!isChild() && stepSheet.step.question" x-text="!isChild() && stepSheet.step.question ? 'Argyle needs you: ' + stepSheet.step.question : ''"></p>
                                 <template x-if="stepSheet.step.mission_id && !isChild()">
                                     <button type="button" :data-piece-open="'mission:' + stepSheet.step.mission_id" @click="openSheet('mission', stepSheet.step.mission_id, stepSheet.step.title, stepSheet.project.id)"
                                             class="text-xs font-bold text-teal-300 underline underline-offset-2">Open Argyle’s work</button>

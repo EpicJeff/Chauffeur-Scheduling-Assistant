@@ -1156,6 +1156,11 @@ def view(project, viewer):
         owner = storage.get_member(step.get('owner')) or {}
         step['owner_label'] = ('Argyle' if step.get('owner') == 'argyle' else
                                owner.get('name') if _active(owner) else 'Unassigned')
+        if step.get('owner') == 'argyle' and step.get('mission_id'):
+            # The ask question is mission words: only a viewer who reads the mission in full gets it.
+            mission = storage.get_mission(step['mission_id']) or {}
+            if viewer is None or access.record_view('mission', mission, viewer) != access.FULL:
+                step['question'] = None
     result['pieces'] = []
     for piece in project.get('pieces') or []:
         kind, sid = piece.get('kind'), piece.get('id')
