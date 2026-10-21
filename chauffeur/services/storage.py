@@ -3786,7 +3786,7 @@ def get_library_programs() -> List[dict]:
 def update_library_program(library_id: str, data: dict) -> bool:
     _check_program_keys(data)
     # A curriculum update cannot smuggle personal run fields into a public row.
-    allowed = {'title', 'made_for', 'source', 'phases', 'lessons', 'archived'}
+    allowed = {'title', 'made_for', 'source', 'phases', 'lessons', 'archived', 'revision'}
     fields = {k: v for k, v in data.items() if k in allowed}
     fields['updated_at'] = time.time()
     with db_lock:
@@ -4040,11 +4040,14 @@ def _script_row(library_id, slot, data, claim, edited, row_id=None, created_at=N
             'created_at': created_at if created_at is not None else time.time()}
 
 
-def claim_library_script(library_id: str, slot: dict):
+def claim_library_script(library_id: str, slot: dict, revision=None):
     import uuid
     with db_lock, db.transaction():
         deletion.check()   # a carried source deleted under us: refuse inside the lock
         if not _library_slot_alive(library_id, slot):
+            return None
+        current_revision = int(get_library_program(library_id).get('revision') or 0)
+        if revision is not None and int(revision) != current_revision:
             return None
         cond = _library_script_query(library_id, slot)
         existing = library_scripts_table.search(cond)
@@ -4052,9 +4055,9 @@ def claim_library_script(library_id: str, slot: dict):
             return None
         token = uuid.uuid4().hex
         if existing:
-            library_scripts_table.update({'claim': token}, cond)
+            library_scripts_table.update({'claim': token, 'revision': current_revision}, cond)
         else:
-            library_scripts_table.insert(_script_row(library_id, slot, {}, token, False))
+            library_scripts_table.insert({**_script_row(library_id, slot, {}, token, False), 'revision': current_revision})
         return token
 
 
@@ -4070,10 +4073,13 @@ def _guarded_replace(library_id, slot, token, data):
             return ''
         if existing[0].get('edited'):
             return ''
+        revision = int(existing[0].get('revision') or 0)
+        if int(get_library_program(library_id).get('revision') or 0) != revision:
+            return ''
         new = uuid.uuid4().hex
-        library_scripts_table.update(_script_row(
+        library_scripts_table.update({**_script_row(
             library_id, slot, data, new, False, row_id=existing[0]['id'],
-            created_at=existing[0].get('created_at')), cond)
+            created_at=existing[0].get('created_at')), 'revision': revision}, cond)
         return new
 
 

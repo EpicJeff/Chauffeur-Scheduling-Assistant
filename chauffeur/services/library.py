@@ -64,7 +64,9 @@ def valid_curriculum(row):
         for lesson in lessons:
             if (lesson['phase_id'] not in phase_ids or int(lesson.get('sessions') or 1) < 1
                     or not isinstance(lesson.get('steps', []), list)
-                    or not isinstance(lesson.get('variants', []), list)):
+                    or not isinstance(lesson.get('variants', []), list)
+                    or not isinstance(lesson.get('summary', ''), str)
+                    or lesson.get('origin', 'none') not in ('cited', 'generated', 'none')):
                 return False
             for variant in lesson.get('variants', []):
                 if not isinstance(variant, dict) or not isinstance(variant.get('steps', []), list):
@@ -85,11 +87,16 @@ def from_curated(title, profile, curated, created_by):
         phases.append(phase)
         units = raw.get('units') or [{'title': raw.get('name') or title, 'sessions': 1}]
         for unit in units:
+            sessions = max(1, int(unit.get('sessions') or 1))
+            steps = copy.deepcopy(unit.get('steps', raw.get('steps') or []))
+            summary = ((steps[0] + '. ' if steps else '') + f"{sessions} session{'s' if sessions != 1 else ''}.")
             lessons.append({
                 'id': uuid.uuid4().hex, 'phase_id': phase['id'],
                 'title': unit.get('title') or raw.get('name') or title,
-                'sessions': max(1, int(unit.get('sessions') or 1)),
-                'steps': copy.deepcopy(unit.get('steps', raw.get('steps') or [])),
+                'sessions': sessions,
+                'steps': steps,
+                'summary': unit.get('summary') or summary,
+                'origin': unit.get('origin') or (curated.get('source') or {}).get('origin') or 'none',
                 **{k: unit[k] for k in ('body', 'url') if unit.get(k)},
                 'variants': copy.deepcopy([v for v in raw.get('rotation') or []
                                            if isinstance(v, dict) and v.get('steps')])})
@@ -156,7 +163,7 @@ def runners(library_id, viewer):
                        if run.get('state') in LIVE_RUN_STATES else None)
             if project and access.project_visible(project, viewer) and projection:
                 member = storage.get_member(run.get('member_id')) or {}
-                named.append({'name': member.get('name') or '', 'project_id': project['id'],
+                named.append({'name': member.get('name') or '', 'run_id': run['id'], 'project_id': project['id'],
                               'project_title': project.get('title') or '', 'current': current})
             else:
                 hidden += 1
@@ -219,7 +226,8 @@ def _invalidate():
     home_board.invalidate_cache()
 
 
-def _write(library_id, actor, change):
+def _commit(library_id, candidate_row, actor, *, expect_revision=None):
+    """Validate and publish one curriculum, reconciling its runs atomically."""
     from services import programs
     with storage.db_lock, storage.db.transaction():
         before = storage.get_library_program(library_id)
@@ -227,21 +235,39 @@ def _write(library_id, actor, change):
             return {'status': 'error', 'code': 404, 'message': 'No such library program.'}
         if not can_edit(before, actor):
             return {'status': 'error', 'code': 403, 'message': EDIT_REFUSAL}
-        row = copy.deepcopy(before)
-        try:
-            change(row)
-            if not valid_curriculum(row):
-                raise ValueError('Every phase needs a lesson, with a valid phase and session count.')
-        except ValueError as exc:
-            return {'status': 'error', 'message': str(exc)}
+        if expect_revision is not None and int(before.get('revision') or 0) != int(expect_revision):
+            return {'status': 'error', 'code': 409, 'message': 'The program changed; read it again.'}
+        if before.get('archived') and candidate_row.get('archived') is not False:
+            return {'status': 'error', 'message': 'This program is archived.'}
+        row = copy.deepcopy(candidate_row)
+        if not valid_curriculum(row):
+            return {'status': 'error', 'message': 'Every phase needs a lesson, with a valid phase and session count.'}
+        row['revision'] = int(before.get('revision') or 0) + 1
         storage.update_library_program(library_id, row)
         for run in storage.get_programs(include_finished=True):
             if run.get('library_id') == library_id and not access.gone('program', run):
                 progress = programs.reconcile_progress(run, row, before)
                 if progress != run.get('progress'):
                     storage.update_program(run['id'], {'progress': progress})
+        result = storage.get_library_program(library_id)
     _invalidate()
-    return {'status': 'success', 'program': storage.get_library_program(library_id)}
+    return {'status': 'success', 'program': result}
+
+
+def _write(library_id, actor, change):
+    """Build hand edits under the lock so concurrent edits cannot lose a write."""
+    with storage.db_lock, storage.db.transaction():
+        row = storage.get_library_program(library_id)
+        if not row:
+            return {'status': 'error', 'code': 404, 'message': 'No such library program.'}
+        if not can_edit(row, actor):
+            return {'status': 'error', 'code': 403, 'message': EDIT_REFUSAL}
+        row = copy.deepcopy(row)
+        try:
+            change(row)
+        except ValueError as exc:
+            return {'status': 'error', 'message': str(exc)}
+        return _commit(library_id, row, actor)
 
 
 def update(library_id, fields, actor):
@@ -265,11 +291,20 @@ def archive(library_id, actor):
     return _write(library_id, actor, lambda row: row.update(archived=True))
 
 
-def add_lesson(library_id, fields, actor):
+def add_lesson(library_id, fields, actor, after=None):
     def change(row):
-        row['lessons'].append({'id': uuid.uuid4().hex, 'steps': [], 'variants': [], 'sessions': 1,
-                               **{k: v for k, v in fields.items() if k in
-                                  ('phase_id', 'title', 'sessions', 'steps', 'variants', 'body', 'url')}})
+        lesson = {'id': uuid.uuid4().hex, 'steps': [], 'variants': [], 'sessions': 1,
+                  'summary': '', 'origin': (row.get('source') or {}).get('origin') or 'none',
+                  **{k: copy.deepcopy(v) for k, v in fields.items() if k in
+                     ('phase_id', 'title', 'sessions', 'steps', 'variants', 'body', 'url', 'summary', 'origin')}}
+        if after is None:
+            row['lessons'].append(lesson)
+        else:
+            index = next((i for i, l in enumerate(row['lessons'])
+                          if l['id'] == after and l['phase_id'] == lesson.get('phase_id')), None)
+            if index is None:
+                raise ValueError('Choose a lesson in the same phase to insert after.')
+            row['lessons'].insert(index + 1, lesson)
     return _write(library_id, actor, change)
 
 
@@ -279,7 +314,16 @@ def update_lesson(library_id, lesson_id, fields, actor):
         if lesson is None:
             raise ValueError('No such lesson.')
         lesson.update({k: v for k, v in fields.items() if k in
-                       ('title', 'sessions', 'steps', 'variants', 'body', 'url')})
+                       ('title', 'sessions', 'steps', 'variants', 'body', 'url', 'summary', 'origin')})
+    return _write(library_id, actor, change)
+
+
+def update_phase(library_id, phase_id, fields, actor):
+    def change(row):
+        phase = next((p for p in row['phases'] if p['id'] == phase_id), None)
+        if phase is None:
+            raise ValueError('No such phase.')
+        phase.update({k: v for k, v in fields.items() if k in ('name', 'milestone', 'what', 'progression')})
     return _write(library_id, actor, change)
 
 

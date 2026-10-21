@@ -349,7 +349,7 @@ def scenario_a_cited_lesson_still_needs_its_page():
     rid, lid, lesson = _reset()
     row = storage.get_library_program(lid)
     storage.update_library_program(lid, {'source': {**row['source'], 'origin': 'cited'},
-                                         'lessons': [{**row['lessons'][0], 'url': 'https://example.test/c'}] + row['lessons'][1:]})
+                                         'lessons': [{**row['lessons'][0], 'origin': 'cited', 'url': 'https://example.test/c'}] + row['lessons'][1:]})
     call, calls = _fake_pool([_long()])
     with patch.object(model_pools, 'call_pool_json', call), patch.object(web, 'read_page', lambda u: ''):
         out = library_scripts.generate_script(storage.get_library_program(lid), storage.get_library_program(lid)['lessons'][0],
@@ -1098,7 +1098,137 @@ def scenario_the_job_never_reaches_the_paid_key():
     check(not row.get('scenes') and row.get('attempts', 0) == 0,
           f'a throttle is transient: no scenes and no attempt spent, got {row}')
 
+
+
+def scenario_claim_bound_to_revision():
+    from services import library
+    _, lid, lesson = _reset()
+    token = storage.claim_library_script(lid, _slot(lesson))
+    check(token, 'claimed the current revision')
+    library.update(lid, {'title': 'Piano basics'}, storage.get_member('mom'))
+    check(storage.commit_library_script(lid, _slot(lesson), token, _data()) == '',
+          'a result from before the curriculum edit is refused')
+
+
+def scenario_run_reloads_lessons():
+    from services import library, library_scripts
+    _, lid, lesson = _reset()
+    seen = []
+
+    class DeferredThread:
+        def __init__(self, target, args, **kwargs):
+            self.target, self.args = target, args
+
+        def start(self):
+            library.update_lesson(lid, lesson['id'], {'title': 'Fresh middle C'}, storage.get_member('mom'))
+            self.target(*self.args)
+
+    def generate(row, current, label, settings):
+        seen.append((current['id'], current['title']))
+        return _data()
+
+    with patch.object(library_scripts.threading, 'Thread', DeferredThread), \
+            patch.object(library_scripts, 'generate_script', generate):
+        library_scripts.write(lid, storage.get_member('mom'))
+    titles = [title for lesson_id, title in seen if lesson_id == lesson['id']]
+    check(titles and set(titles) == {'Fresh middle C'}, f'the current lesson reaches generation: {seen}')
+    check(not _raw_jobs(), 'the refreshed job finishes')
+
+def _queued_job(lid, lesson):
+    from services import library_scripts
+    with patch.object(library_scripts.threading, 'Thread') as worker:
+        result = library_scripts.write(lid, storage.get_member('mom'), lesson_id=lesson['id'], variant_label='Session A')
+    check(result['status'] == 'ok', f'queued: {result}')
+    args = worker.call_args.kwargs['args']
+    check(args[2][0][2] == int(storage.get_library_program(lid).get('revision') or 0), 'queue carries its revision')
+    return lambda: library_scripts._run(*args)
+
+
+def scenario_revision_change_during_generation_requeues_once():
+    from services import library, library_scripts
+    _, lid, lesson = _reset()
+    run_job = _queued_job(lid, lesson)
+    prompts = []
+
+    def call(tier, settings, system, prompt):
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            library.update_lesson(lid, lesson['id'], {'title': 'Fresh keys'}, storage.get_member('mom'))
+        return _long()
+
+    with patch.object(library_scripts, '_call', call):
+        run_job()
+    row = storage.get_library_script(lid, _slot(lesson))
+    check(len(prompts) == 2 and 'Fresh keys' in prompts[1], 'a changed in-flight result is retried from the new lesson')
+    check(row and row['scenes'] and row['revision'] == storage.get_library_program(lid)['revision'], 'only current result commits')
+    check(not _raw_jobs(), 'job finishes after retry')
+
+
+def scenario_revision_churn_stops_after_one_extra_pass():
+    from services import library, library_scripts
+    _, lid, lesson = _reset()
+    run_job = _queued_job(lid, lesson)
+    calls = []
+
+    def call(tier, settings, system, prompt):
+        calls.append(prompt)
+        library.update(lid, {'title': f'Piano {len(calls)}'}, storage.get_member('mom'))
+        return _long()
+
+    with patch.object(library_scripts, '_call', call):
+        run_job()
+    row = storage.get_library_script(lid, _slot(lesson)) or {}
+    check(len(calls) == 2 and not row.get('scenes'), 'continuous edits stop after one retry and no stale result lands')
+    check(not _raw_jobs(), 'the bounded job clears its ownership')
+
+
+def scenario_removed_queued_lesson_is_dropped():
+    from services import library, library_scripts
+    _, lid, lesson = _reset()
+    run_job = _queued_job(lid, lesson)
+    library.remove_lesson(lid, lesson['id'], storage.get_member('mom'))
+    with patch.object(library_scripts, 'generate_script') as generate:
+        run_job()
+    check(not generate.called and not storage.get_library_script(lid, _slot(lesson)), 'removed lesson is never generated')
+    check(not _raw_jobs(), 'dropped pair still finishes the job')
+
+
+def scenario_claim_and_replacement_reject_obsolete_revision():
+    from services import library, library_scripts
+    _, lid, lesson = _reset()
+    old = storage.get_library_program(lid)
+    token = storage.claim_library_script(lid, _slot(lesson), revision=old['revision'])
+    token = storage.commit_library_script(lid, _slot(lesson), token, _data())
+    ready = storage.get_library_script(lid, _slot(lesson))
+    library.update(lid, {'title': 'Changed course'}, storage.get_member('mom'))
+    check(storage.replace_library_script(lid, _slot(lesson), token, _data(minutes=2)) == '', 'shortfall retry is revision-bound too')
+    check(storage.get_library_script(lid, _slot(lesson)) == ready, 'ready script untouched by obsolete retry')
+    storage.delete_library_script(lid, _slot(lesson))
+    check(storage.claim_library_script(lid, _slot(lesson), revision=old['revision']) is None, 'stale work cannot claim')
+    with patch.object(library_scripts, '_call') as call:
+        library_scripts.generate_script(old, lesson, 'Session A', {})
+    check(not call.called, 'stale work spends no model call')
+
+
+def scenario_lesson_origin_controls_citation_fetch():
+    from services import library_scripts, web
+    _, lid, lesson = _reset()
+    row = storage.get_library_program(lid)
+    row['source']['origin'] = 'cited'
+    lesson = {**lesson, 'origin': 'generated', 'url': 'https://example.test/old-source'}
+    with patch.object(web, 'read_page') as read, patch.object(library_scripts, '_call', return_value=_long()):
+        result = library_scripts.generate_script(row, lesson, 'Session A', {})
+    check(result and result['origin'] == 'generated' and not read.called, 'lesson provenance takes precedence over course provenance')
+
+
 if __name__ == '__main__':
+    scenario_claim_bound_to_revision()
+    scenario_run_reloads_lessons()
+    scenario_revision_change_during_generation_requeues_once()
+    scenario_revision_churn_stops_after_one_extra_pass()
+    scenario_removed_queued_lesson_is_dropped()
+    scenario_claim_and_replacement_reject_obsolete_revision()
+    scenario_lesson_origin_controls_citation_fetch()
     scenario_claim_then_commit_then_nobody_else()
     scenario_failure_record_lands_only_on_an_empty_slot()
     scenario_commit_after_library_delete_archive_or_lesson_removal_is_dropped()

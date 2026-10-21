@@ -770,6 +770,7 @@ class LibraryProgram(BaseModel):
     created_at: float = Field(default_factory=time.time)
     updated_at: float = Field(default_factory=time.time)
     archived: bool = False
+    revision: int = 0
     made_for: Dict[str, Any] = Field(default_factory=lambda: {
         'age_band': 'any', 'minutes': 25, 'sessions_per_week': 3, 'assumes': ''})
     source: Dict[str, Any] = Field(default_factory=lambda: {

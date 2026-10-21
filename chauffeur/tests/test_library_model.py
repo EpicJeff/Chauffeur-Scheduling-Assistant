@@ -895,6 +895,146 @@ def scenario_two_runs_same_program():
           'one library edit reaches the run on that lesson and only it')
 
 
+
+
+from services import library
+
+
+def _phase(lid):
+    return storage.get_library_program(lid)['phases'][0]['id']
+
+
+def scenario_revision_bumps_on_every_write():
+    _fresh(); lid = _library('Piano')['L']
+    r0 = storage.get_library_program(lid).get('revision', 0)
+    library.update(lid, {'title': 'Piano basics'}, MOM)
+    r1 = storage.get_library_program(lid)['revision']
+    library.add_lesson(lid, {'phase_id': _phase(lid), 'title': 'New'}, MOM)
+    r2 = storage.get_library_program(lid)['revision']
+    check(r1 == r0 + 1 and r2 == r1 + 1, f"revision counts writes: {r0} {r1} {r2}")
+    res = library._commit(lid, storage.get_library_program(lid), MOM, expect_revision=r0)
+    check(res['status'] == 'error' and res['code'] == 409, f"a stale expectation is refused: {res}")
+
+
+def scenario_add_lesson_after_and_update_phase():
+    _fresh(); lid = _library('Piano')['L']
+    ph = _phase(lid)
+    ids = [l['id'] for l in storage.get_library_program(lid)['lessons'] if l['phase_id'] == ph]
+    res = library.add_lesson(lid, {'phase_id': ph, 'title': 'Duet', 'summary': 'She plays the tune, you play chords.'}, MOM, after=ids[0])
+    lessons = [l for l in storage.get_library_program(lid)['lessons'] if l['phase_id'] == ph]
+    check(res['status'] == 'success' and lessons[1]['title'] == 'Duet' and lessons[1]['summary'].startswith('She plays'), f"placed after: {[l['title'] for l in lessons]}")
+    res = library.update_phase(lid, ph, {'milestone': 'plays Twinkle both hands', 'progression': 'one less reminder'}, MOM)
+    phase = next(p for p in storage.get_library_program(lid)['phases'] if p['id'] == ph)
+    check(res['status'] == 'success' and phase['milestone'] == 'plays Twinkle both hands' and phase['progression'] == 'one less reminder', f"phase updated: {phase}")
+    check(library.update_phase(lid, 'nope', {'milestone': 'x'}, MOM)['status'] == 'error', "unknown phase")
+
+
+def scenario_archived_refuses_every_edit():
+    _fresh(); lid = _library('Piano')['L']
+    library.archive(lid, MOM)
+    for res in (library.update(lid, {'title': 'x'}, MOM), library.add_lesson(lid, {'phase_id': _phase(lid), 'title': 'x'}, MOM),
+                library.order_lessons(lid, [l['id'] for l in storage.get_library_program(lid)['lessons']], MOM)):
+        check(res['status'] == 'error' and 'archived' in res['message'].lower(), f"archived: {res}")
+
+
+def scenario_migration_fills_summary_and_origin():
+    _fresh(); lid = _library('Piano')['L']
+    row = storage.get_library_program(lid)
+    storage.library_programs_table.update({'lessons': [{k: v for k, v in l.items() if k not in ('summary', 'origin')} for l in row['lessons']],
+                                           'revision': None}, storage.Query().id == lid)
+    from services import migrations
+    migrations.migrate_library_revision_summary_v2499()
+    row = storage.get_library_program(lid)
+    check(row['revision'] == 0 and all(l.get('summary') and l.get('origin') == row['source']['origin'] for l in row['lessons']), f"filled: {row['lessons'][0]}")
+    check('session' in row['lessons'][0]['summary'], f"the summary names the session count: {row['lessons'][0]['summary']}")
+
+
+def scenario_runners_carry_run_id():
+    _fresh(); lid = _library('Piano')['L']; pid = _project(owner='kid', title='Piano for Kate', audience='household')
+    rid = programs.create_row({'member_id': 'kid', 'library_id': lid, 'shape': {}, 'created_by': 'mom', 'starting_point': '',
+                               'baseline': {'start_date': None, 'target_date': None, 'target_event_id': None, 'rebaselined_at': None, 'rebaselines': 0}}, project_id=pid['id'])
+    named = library.runners(lid, MOM)['named']
+    check(named and named[0]['run_id'] == rid, f"a visible runner names its run: {named}")
+
+
+def scenario_commit_validates_once_and_reconciles_each_run_once():
+    _fresh(); ids = _library(); lid = ids['L']
+    runs = [_run(ids, member=member) for member in ('kid', 'sib')]
+    before = storage.get_library_program(lid)
+    import copy
+    candidate = copy.deepcopy(before)
+    # Removing and replacing the phase's lessons is valid as one whole candidate.
+    candidate['lessons'] = [l for l in candidate['lessons'] if l['phase_id'] != ids['P2']]
+    candidate['lessons'].append({'id': uuid.uuid4().hex, 'phase_id': ids['P2'], 'title': 'New tune',
+                                 'sessions': 1, 'steps': [], 'summary': 'Play a new tune.', 'origin': 'generated'})
+    with patch.object(library, 'valid_curriculum', wraps=library.valid_curriculum) as valid, \
+            patch.object(programs, 'reconcile_progress', wraps=programs.reconcile_progress) as reconcile:
+        result = library._commit(lid, candidate, MOM, expect_revision=before['revision'])
+    check(result['status'] == 'success' and valid.call_count == 1, f'one validation: {result}')
+    check(sorted(call.args[0]['id'] for call in reconcile.call_args_list) == sorted(runs), 'each run reconciled once')
+    check(candidate == {**before, 'lessons': candidate['lessons']}, 'the caller candidate was not mutated')
+    after = storage.get_library_program(lid)
+    check(after['revision'] == before['revision'] + 1 and after['updated_at'] > before['updated_at'], 'one revision and timestamp')
+    invalid = copy.deepcopy(after); invalid['lessons'] = []
+    check(library._commit(lid, invalid, MOM)['status'] == 'error', 'invalid curriculum refused')
+    check(library._commit(lid, after, KID)['code'] == 403, 'child refused')
+    check(library._commit('no-such-program', after, MOM)['code'] == 404, 'missing row refused')
+    check(storage.get_library_program(lid) == after, 'refusals change nothing')
+    with patch.object(programs, 'reconcile_progress', side_effect=RuntimeError('reconcile failed')):
+        try:
+            library._commit(lid, {**after, 'title': 'Rollback'}, MOM)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError('reconciliation must not silently fail')
+    check(storage.get_library_program(lid) == after, 'failed reconciliation rolls back the curriculum and revision')
+
+
+def scenario_hand_writes_keep_ids_metadata_and_revision():
+    _fresh(); ids = _library(); lid = ids['L']
+    revision = storage.get_library_program(lid)['revision']
+    writes = [
+        lambda: library.update_lesson(lid, ids['A'], {'id': 'forged', 'summary': 'A gentle start.', 'origin': 'generated'}, MOM),
+        lambda: library.update_phase(lid, ids['P1'], {'id': 'forged', 'name': 'Keys'}, MOM),
+        lambda: library.order_lessons(lid, [ids[k] for k in 'ADBCE'], MOM),
+        lambda: library.remove_lesson(lid, ids['D'], MOM),
+        lambda: library.archive(lid, MOM),
+    ]
+    for write in writes:
+        check(write()['status'] == 'success', 'hand write succeeds')
+        revision += 1
+        check(storage.get_library_program(lid)['revision'] == revision, 'every hand write bumps once')
+    row = storage.get_library_program(lid)
+    lesson = next(l for l in row['lessons'] if l['id'] == ids['A'])
+    check(lesson['summary'] == 'A gentle start.' and lesson['origin'] == 'generated', 'metadata carried, lesson identity preserved')
+    check(row['phases'][0]['id'] == ids['P1'], 'phase identity preserved')
+    for write in writes:
+        check(write()['status'] == 'error', 'archived row refuses every hand writer')
+    check(storage.get_library_program(lid) == row, 'archived refusals change nothing')
+    result = library._commit(lid, {**row, 'archived': False}, MOM, expect_revision=revision)
+    check(result['status'] == 'success' and result['program']['revision'] == revision + 1, 'unarchive is allowed')
+    before = storage.get_library_program(lid)
+    for after in ('missing', ids['C']):
+        check(library.add_lesson(lid, {'phase_id': ids['P1'], 'title': 'Wrong placement'}, MOM, after=after)['status'] == 'error',
+              'placement requires a known lesson in the same phase')
+    check(storage.get_library_program(lid) == before, 'bad placement changes nothing')
+
+
+def scenario_summary_migration_preserves_authored_fields_and_is_idempotent():
+    from services import migrations
+    _fresh(); ids = _library(); lid = ids['L']
+    library.update_lesson(lid, ids['A'], {'summary': 'My summary.', 'origin': 'generated'}, MOM)
+    row = storage.get_library_program(lid)
+    migrations.migrate_library_revision_summary_v2499()
+    migrated = storage.get_library_program(lid)
+    check(migrated['revision'] == row['revision'], 'migration preserves a revision already present')
+    check(migrated['lessons'][0]['summary'] == 'My summary.' and migrated['lessons'][0]['origin'] == 'generated',
+          'authored summary and lesson provenance survive')
+    check([l['id'] for l in migrated['lessons']] == [l['id'] for l in row['lessons']], 'migration keeps identities')
+    migrations.migrate_library_revision_summary_v2499()
+    check(storage.get_library_program(lid) == migrated, 'second migration does not write again')
+
+
 SCENARIOS = [v for k, v in list(globals().items()) if k.startswith('scenario_')]
 if __name__ == '__main__':
     failed = 0

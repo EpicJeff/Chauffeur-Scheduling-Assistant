@@ -8,6 +8,7 @@ import logging
 import threading
 import time
 import uuid
+from collections import deque
 
 from services import deletion, storage, program_lessons as pl
 
@@ -54,7 +55,7 @@ def generate_script(row: dict, lesson: dict, variant_label: str, settings: dict,
     from services import web
     slot = {'lesson_id': lesson['id'], 'variant_label': variant_label or ''}
     minutes = int((row.get('made_for') or {}).get('minutes') or 25)
-    origin = (row.get('source') or {}).get('origin') or 'generated'
+    origin = lesson.get('origin') or (row.get('source') or {}).get('origin') or 'generated'
     variant = next((v for v in lesson.get('variants') or [] if isinstance(v, dict) and (v.get('label') or '') == (variant_label or '')), {}) if variant_label else {}
     url = (variant.get('url') or lesson.get('url') or '') if origin == 'cited' else ''
     source_url = ''
@@ -70,7 +71,7 @@ def generate_script(row: dict, lesson: dict, variant_label: str, settings: dict,
     else:
         origin = 'generated'
         prompt = pl.lesson_prompt(row, lesson, variant_label or '')
-    token = storage.claim_library_script(row['id'], slot)
+    token = storage.claim_library_script(row['id'], slot, revision=int(row.get('revision') or 0))
     if not token:
         return None
     tier = pool_tier(settings)
@@ -188,6 +189,8 @@ def write(library_id: str, actor: dict, lesson_id: str = None, variant_label: st
                  'variant_label': pairs[0][1] if pairs else ''}
         jobs[library_id] = entry
         storage.set_app_state(JOBS_KEY, jobs)
+    revision = int(row.get('revision') or 0)
+    pairs = [(lesson, label, revision) for lesson, label in pairs]
     threading.Thread(target=_run, args=(library_id, job_id, pairs, settings), daemon=True,
                      name=f'library-scripts-{library_id[:8]}').start()
     return {'status': 'ok', 'job': dict(entry)}
@@ -195,16 +198,34 @@ def write(library_id: str, actor: dict, lesson_id: str = None, variant_label: st
 
 def _run(library_id, job_id, pairs, settings):
     done = failed = 0
+    pending = deque((lesson, label, revision, False) for lesson, label, revision in pairs)
     try:
-        for lesson, label in pairs:
+        while pending:
+            queued, label, revision, retried = pending.popleft()
             row = storage.get_library_program(library_id)
-            if not row or row.get('archived') or not _progress(library_id, job_id, lesson_id=lesson['id'], variant_label=label):
+            if not row or row.get('archived') or not _progress(library_id, job_id, lesson_id=queued['id'], variant_label=label):
                 return
+            lesson = next((l for l in row.get('lessons') or [] if l['id'] == queued['id']), None)
+            current_revision = int(row.get('revision') or 0)
+            moved = current_revision != revision
+            if lesson is not None and moved and not retried:
+                pending.append((lesson, label, current_revision, True))
+                continue
+            slot = {'lesson_id': queued['id'], 'variant_label': label}
+            valid_slot = lesson is not None and any(l['id'] == queued['id'] and lab == label for l, lab in slots_of(row))
+            written = None
             try:
-                written = generate_script(row, lesson, label, settings)
+                if valid_slot and not moved and needs_script(library_id, slot):
+                    written = generate_script(row, lesson, label, settings)
+                elif valid_slot and not moved:
+                    written = storage.get_library_script(library_id, slot)
             except Exception:                     # never let one lesson kill the job
-                logger.exception("Library %s lesson %s failed", library_id, lesson.get('id'))
-                written = None
+                logger.exception("Library %s lesson %s failed", library_id, queued['id'])
+            fresh = storage.get_library_program(library_id)
+            if (valid_slot and not retried and fresh and not fresh.get('archived')
+                    and int(fresh.get('revision') or 0) != current_revision):
+                pending.append((lesson, label, int(fresh.get('revision') or 0), True))
+                continue
             done += 1
             if not (written and written.get('scenes')):
                 failed += 1

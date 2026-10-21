@@ -679,6 +679,23 @@ def migrate_program_session_ids_v2499():
         storage.set_app_state('program_session_ids_v2499', time.time())
 
 
+def migrate_library_revision_summary_v2499():
+    """Library rows gain a revision counter and lessons a parent-facing summary and origin (programs spec §6)."""
+    with storage.db_lock, storage.db.transaction():
+        if storage.get_app_state('library_revision_summary_v2499'):
+            return
+        for row in storage.get_library_programs():
+            origin = (row.get('source') or {}).get('origin') or 'none'
+            lessons = []
+            for l in row.get('lessons') or []:
+                n = int(l.get('sessions') or 1)
+                first = (l.get('steps') or [''])[0]
+                summary = l.get('summary') or ((first + '. ' if first else '') + f"{n} session{'s' if n != 1 else ''}.")
+                lessons.append({**l, 'summary': summary, 'origin': l.get('origin') or origin})
+            storage.update_library_program(row['id'], {'lessons': lessons, 'revision': int(row.get('revision') or 0)})
+        storage.set_app_state('library_revision_summary_v2499', time.time())
+
+
 async def run_all_migrations():
     """Runs all data migrations in the background after startup"""
     await asyncio.sleep(5) # Let the app start up completely
@@ -760,3 +777,7 @@ async def run_all_migrations():
         migrate_program_session_ids_v2499()
     except Exception as e:
         logger.error(f"Error assigning program session ids: {e}")
+    try:
+        migrate_library_revision_summary_v2499()
+    except Exception as e:
+        logger.error(f"Error assigning library revisions and summaries: {e}")
