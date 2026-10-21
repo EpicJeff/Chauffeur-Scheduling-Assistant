@@ -29,7 +29,7 @@
                 const a = document.createElement(phone ? 'button' : 'a');
                 if (phone) {
                     a.type = 'button';
-                    a.onclick = () => { window.chfPwaOpenProjects(); window.dispatchEvent(new CustomEvent('chf-project-open', {detail: {id: p.id}})); };
+                    a.onclick = () => { if (window.chfPwaOpenProjects() !== false) window.dispatchEvent(new CustomEvent('chf-project-open', {detail: {id: p.id}})); };
                 } else a.href = base() + 'projects?id=' + encodeURIComponent(p.id);
                 a.className = 'text-blue-400 underline underline-offset-2';
                 a.textContent = p.title; line.append(a); el.append(line);

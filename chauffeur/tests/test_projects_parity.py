@@ -430,7 +430,198 @@ def scenario_the_sheets_mount_the_components():
         check("components/projects_admin.html" in open(os.path.join(ROOT, host), encoding='utf-8').read(), f"{host} hosts the sheet")
 
 
-SCENARIOS = [scenario_every_inventory_line_has_a_home, scenario_the_hidden_regions_are_only_chrome, scenario_the_sheets_mount_the_components]
+# --- The one list (spec 2026-10-20 §3-§5, §8): the never-drop guard, live. ---
+# The piece cards' seven verbs, the project's row of buttons and Add a step /
+# Add a piece all moved one tap deeper. Every one must still be reachable from
+# a row's record sheet, the step sheet, the link sheet, ⋯, + Add or the list
+# page, read off the rendered DOM of the Bathroom fixture. One scenario per surface.
+THREAD_VERBS = ('Draft a message', 'Change the next step', 'Look something up', 'Link to something in Chauffeur',
+                'Done with it', "I'll handle it myself", 'Drop it')
+MENU_VERBS = ('Plan it with Argyle', 'Who sees it', 'Pause', 'Mark done', 'Drop', 'Delete')
+ADD_VERBS = ('Step', 'Conversation', 'Ask Argyle', 'Program', 'Something already in Chauffeur')
+_LIVE = {}
+
+
+def _live():
+    """One served app for every live scenario (project_sheets_fixture's seed);
+    None when playwright is missing, and the scenarios skip."""
+    if 'served' not in _LIVE:
+        from project_sheets_fixture import serve
+        _LIVE['served'] = serve()
+    return _LIVE['served']
+
+
+def _detail(page, served, path='projects?id=prj-bath'):
+    from project_sheets_fixture import admin
+    page.on('dialog', lambda d: d.dismiss())
+    admin(page, served, 'mom')
+    page.goto(served.url(path), wait_until='load')
+    page.wait_for_selector('[data-row]' if 'id=' in path else '[data-project-card]', timeout=15000)
+
+
+def _shows(page, selector, labels, where):
+    """Wait for the surface to draw its first label, then every label must be in its text."""
+    page.wait_for_function('([sel, label]) => { const el = document.querySelector(sel); return !!el && el.innerText.includes(label); }',
+                           arg=[selector, labels[0]], timeout=10000)
+    text = page.locator(selector).inner_text()
+    missing = [label for label in labels if label not in text]
+    check(not missing, f"{where} lacks {missing}: {text[:800]}")
+
+
+def _choices(page):
+    page.wait_for_selector('#cc-choice-modal:not(.hidden)', timeout=5000)
+    labels = [label.strip() for label in page.locator('#cc-choice-modal [data-prompt-choice]').all_inner_texts()]
+    page.keyboard.press('Escape')
+    page.wait_for_selector('#cc-choice-modal.hidden', state='attached', timeout=5000)
+    return labels
+
+
+def scenario_live_thread_sheet_holds_its_verbs():
+    served = _live()
+    if served is None:
+        return
+    from project_sheets_fixture import IDS
+    with served.browser() as page:
+        _detail(page, served)
+        page.locator(f'[data-row="conversation:{IDS["thread"]}"] [data-row-title]').click()
+        _shows(page, '[data-record-sheet][data-open="true"][data-kind="thread"]', THREAD_VERBS, 'the thread sheet')
+        check(served.errors() == [], f"no page errors: {served.errors()}")
+
+
+def scenario_live_mission_sheet_answers_steers_and_drops():
+    served = _live()
+    if served is None:
+        return
+    from project_sheets_fixture import IDS, storage
+    sheet = '[data-record-sheet][data-open="true"][data-kind="mission"]'
+    mid = IDS['mission']
+    with served.browser() as page:
+        _detail(page, served)
+        page.locator(f'[data-row="argyle:{mid}"] [data-row-title]').click()
+        # Answer: the question and the free-text answer box with its Send.
+        _shows(page, sheet, ('Which day suits the tiler?', 'Send', 'Drop the mission'), 'the waiting mission sheet')
+        check(page.locator(f'{sheet} #mission-answer-{mid}').count() == 1, "the answer box")
+        check(served.errors() == [], f"no page errors: {served.errors()}")
+    # Steer: a working mission takes a word mid-run. Missions are switched off
+    # while it reads running, so the push loop never steps the fixture.
+    storage.update_settings({'missions_enabled': False})
+    storage.update_mission(mid, {'status': 'running'})
+    try:
+        with served.browser() as page:
+            _detail(page, served)
+            page.locator(f'[data-row="argyle:{mid}"] [data-row-title]').click()
+            _shows(page, sheet, ('Tell it something', 'Tell Argyle something', 'Send', 'Drop the mission'), 'the running mission sheet')
+            check(served.errors() == [], f"no page errors: {served.errors()}")
+    finally:
+        storage.update_mission(mid, {'status': 'waiting_user'})
+        storage.update_settings({'missions_enabled': True})
+
+
+def scenario_live_step_sheet_holds_the_step_controls():
+    served = _live()
+    if served is None:
+        return
+    import datetime
+    from project_sheets_fixture import storage
+    day = (datetime.date.today() + datetime.timedelta(days=3)).isoformat()
+    original = storage.get_project('prj-bath').get('steps') or []
+    base = {'due_date': None, 'done_by': None, 'done_at': None}
+    storage.update_project('prj-bath', {'steps': original + [
+        {**base, 'id': 'st-held', 'order': 10, 'title': 'Order the tiles', 'owner': 'mom', 'needs': [], 'state': 'todo',
+         'hold': {'date': day, 'start': '10:00', 'end': '11:00', 'confirmed_by': 'mom'}},
+        {**base, 'id': 'st-waits', 'order': 11, 'title': 'Lay the tiles', 'owner': 'mom', 'needs': ['st-held'], 'state': 'todo', 'hold': None},
+        {**base, 'id': 'st-argyle', 'order': 12, 'title': 'Find grout', 'goal': 'finding grout', 'owner': 'argyle', 'needs': [],
+         'state': 'doing', 'mission_id': None, 'stage_id': None, 'found': None, 'question': None}]})
+    try:
+        with served.browser() as page:
+            _detail(page, served)
+
+            def open_step(sid):
+                page.locator(f'[data-row="step:{sid}"] [data-row-title]').click()
+                page.wait_for_selector('[data-step-sheet]', timeout=5000)
+
+            def close_step():
+                page.locator('[data-step-sheet] button[aria-label="Close"]').click()
+                page.wait_for_selector('[data-step-sheet]', state='detached', timeout=5000)
+
+            open_step('st-held')
+            _shows(page, '[data-step-sheet]', ('Put it on the calendar', 'Clear time', 'Remove step'), 'a held step\'s sheet')
+            page.locator('[data-step-hold="st-held"]').click()   # a suggestion, then the typed time
+            _shows(page, '[data-step-sheet]', ('Pick another time',), 'a step being put on the calendar')
+            close_step()
+            open_step('st-waits')   # waiting on its need: a parent may complete it anyway (R2)
+            _shows(page, '[data-step-sheet]', ('Put it on the calendar', 'Complete anyway', 'Remove step'), 'a waiting step\'s sheet')
+            close_step()
+            open_step('st-argyle')
+            _shows(page, '[data-step-sheet]', ('Skip', 'Stop'), 'Argyle\'s working step\'s sheet')
+            close_step()
+            check(served.errors() == [], f"no page errors: {served.errors()}")
+    finally:
+        storage.update_project('prj-bath', {'steps': original})
+
+
+def scenario_live_link_sheet_opens_and_removes():
+    served = _live()
+    if served is None:
+        return
+    from project_sheets_fixture import storage
+    lst = storage.ensure_default_shopping_list()
+    pieces = storage.get_project('prj-bath').get('pieces') or []
+    storage.update_project('prj-bath', {'pieces': pieces + [{'kind': 'list', 'id': lst['id'], 'added_by': 'mom'}]})
+    try:
+        with served.browser() as page:
+            _detail(page, served)
+            page.locator(f'[data-row="link:{lst["id"]}"] [data-row-title]').click()
+            _shows(page, '[data-link-sheet]', ('Open', 'Remove'), 'the link sheet')
+            check(page.locator('[data-link-sheet] [data-link-open]').count() == 1
+                  and page.locator('[data-link-sheet] [data-link-remove]').count() == 1, "Open and Remove are its buttons")
+            check(served.errors() == [], f"no page errors: {served.errors()}")
+    finally:
+        storage.update_project('prj-bath', {'pieces': pieces})
+
+
+def scenario_live_menu_holds_the_project_buttons():
+    served = _live()
+    if served is None:
+        return
+    with served.browser() as page:
+        _detail(page, served)
+        page.locator('[data-project-menu]').click()
+        labels = _choices(page)
+        missing = [want for want in MENU_VERBS if want not in labels]
+        check(not missing, f"⋯ lacks {missing}: {labels}")
+        check(served.errors() == [], f"no page errors: {served.errors()}")
+
+
+def scenario_live_add_offers_every_kind():
+    served = _live()
+    if served is None:
+        return
+    with served.browser() as page:
+        _detail(page, served)
+        page.locator('[data-project-add]').click()
+        labels = _choices(page)
+        missing = [want for want in ADD_VERBS if want not in labels]
+        check(not missing, f"+ Add lacks {missing}: {labels}")
+        check(served.errors() == [], f"no page errors: {served.errors()}")
+
+
+def scenario_live_list_page_shows_closed():
+    served = _live()
+    if served is None:
+        return
+    with served.browser() as page:
+        _detail(page, served, 'projects')
+        _shows(page, '#projects-container, section[x-data^="projectsPage"]', ('Show closed',), 'the list page')
+        check(page.get_by_role('checkbox', name='Show closed', exact=True).count() == 1, "Show closed is a checkbox")
+        check(served.errors() == [], f"no page errors: {served.errors()}")
+
+
+SCENARIOS = [scenario_every_inventory_line_has_a_home, scenario_the_hidden_regions_are_only_chrome, scenario_the_sheets_mount_the_components,
+             scenario_live_thread_sheet_holds_its_verbs, scenario_live_mission_sheet_answers_steers_and_drops,
+             scenario_live_step_sheet_holds_the_step_controls, scenario_live_link_sheet_opens_and_removes,
+             scenario_live_menu_holds_the_project_buttons, scenario_live_add_offers_every_kind,
+             scenario_live_list_page_shows_closed]
 
 if __name__ == "__main__":
     import traceback

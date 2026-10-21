@@ -2122,13 +2122,22 @@
         // Where a record opens on the phone (one-list spec §5): its piece
         // sheet, the Projects view, or the kind's own phone home; never an
         // admin page. A kind with no phone home yet says where to find it.
-        const phoneRecordWords = {trip: 'trip', occasion: 'occasions', event: 'calendar', member: 'people', contact: 'contacts', list: 'shopping'};
+        const phoneRecordWords = {trip: 'trip', occasion: 'occasions', event: 'calendar', member: 'people', contact: 'contacts', list: 'shopping', project: 'projects'};
+        // Projects' door is More, closed to a helper or a guest (pwaAllowed);
+        // a sprout's projects sit in More's own slot, where setView lands it.
+        function phoneOpenProjects() {
+            if (!pwaAllowed('projects')) {
+                showGlobalAlert('Open that from the ' + phoneRecordWords.project + ' page on a computer.');
+                return false;
+            }
+            setView('projects');
+            return true;
+        }
         function phoneOpenRecord(kind, id) {
             if (['thread', 'mission', 'program'].includes(kind)) return openPieceSheet({kind, id, title: ''});
             if (pieceSheet) pieceSheet.close();
             if (kind === 'project') {
-                setView('projects');
-                window.dispatchEvent(new CustomEvent('chf-project-open', {detail: {id}}));
+                if (phoneOpenProjects()) window.dispatchEvent(new CustomEvent('chf-project-open', {detail: {id}}));
                 return;
             }
             if (kind === 'list' && pwaAllowed('chores')) return phoneOpenList(id);
@@ -2144,7 +2153,7 @@
             if (pwaChildStage()) pwaChildSelectTasks('lists'); else pwaSelectHouse('lists');
         }
         window.phoneOpenRecord = phoneOpenRecord;
-        window.chfPwaOpenProjects = () => setView('projects');
+        window.chfPwaOpenProjects = phoneOpenProjects;
         async function openPieceSheet(detail) {
             if (!detail || !['thread', 'mission', 'program'].includes(detail.kind) || !detail.id) return;
             if (pieceSheet) pieceSheet.close();

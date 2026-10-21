@@ -437,6 +437,14 @@ def scenario_a_run_delete_follows_the_project_owner():
         check(sheet.get_by_role('button', name='Delete', exact=True).count() == 0,
               "the run's own member who neither owns the project nor is a parent has no Delete")
         clean(served)
+    with served.browser() as page:   # the same refusal on the phone's piece sheet
+        _phone_project(page, served, 'aunt', other)
+        page.locator(f'[data-piece-open="program:{theirs}"]').click()
+        page.wait_for_function("() => { const b = document.querySelector('[data-piece-sheet-body]');"
+                               " return !!b && b.innerText.includes('Stretching practice'); }", timeout=10000)
+        check(page.locator('[data-piece-sheet-delete]').count() == 0,
+              "on the phone too, the run's own member who neither owns the project nor is a parent has no Delete")
+        clean(served)
     dialogs = []
     with served.browser() as page:
         _no_dialogs(page, dialogs)
