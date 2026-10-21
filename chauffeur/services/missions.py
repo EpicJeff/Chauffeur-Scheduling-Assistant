@@ -1401,7 +1401,7 @@ def _finish_too_early(mission: dict, res: dict):
             "scheduling or pricing page you know, or ask the person. Finish only after that.")
 
 
-def _land_finish(mission: dict, res: dict) -> None:
+def _land_finish(mission: dict, res: dict, *, next_action_rev=None) -> None:
     """A finish reaches the thread (a `mission` history entry and a
     pre-filled next step) and the person (a DM). A `submitted` note is said
     outright ("Booked: {facts}, confirmation {n}"); otherwise "Nothing is
@@ -1425,23 +1425,31 @@ def _land_finish(mission: dict, res: dict) -> None:
     else:
         tail = ' Nothing is booked.' if touched_site else ''
     tid = mission.get('origin_ref') if mission.get('origin_kind') == 'thread' else None
-    thread = storage.get_thread(tid) if tid else None
-    if not thread:
-        _dm_person(mission, f"{summary} Next: {nxt}.{tail}")
-        return
     from services import situations as _sit, threads as _threads
-    if thread.get('state') not in ('done', 'dropped'):
-        _threads.advance(tid, nxt, next_action_at=when, who=None)
-        entry_next, entry_when = nxt, _threads._clean_next_action_at(when)
-        _dm_person(mission, f"{summary} Next: {nxt}.{tail}")
-    else:
-        # Closed by hand while the mission ran: the note lands, the thread
-        # stays closed and is not advanced.
-        entry_next, entry_when = None, None
-        _dm_person(mission, f"{summary} (The thread \"{thread.get('title')}\" was closed, so I left it closed.){tail}")
-    storage.append_thread_history(tid, {'kind': 'mission', 'text': summary + tail, 'next_action': entry_next,
-                                        'next_action_at': entry_when, 'mission_id': mission['id'], 'who': 'argyle'})
-    _sit.touched('thread', tid)
+    # Compare and advance under the same lock as a person's tick/advance.
+    with storage.db_lock, storage.db.transaction():
+        thread = storage.get_thread(tid) if tid else None
+        message = f"{summary} Next: {nxt}.{tail}"
+        if thread:
+            current = int(thread.get('next_action_rev') or 0)
+            stale = next_action_rev is not None and current != next_action_rev
+            if stale:
+                entry_next, entry_when = None, None
+                tail += ' (This was against an earlier next step; the newer one stands.)'
+                message = summary + tail
+            elif thread.get('state') not in ('done', 'dropped'):
+                _threads.advance(tid, nxt, next_action_at=when, who=None)
+                entry_next, entry_when = nxt, _threads._clean_next_action_at(when)
+            else:
+                # Closed by hand while the mission ran: the note lands, the
+                # thread stays closed and is not advanced.
+                entry_next, entry_when = None, None
+                message = f"{summary} (The thread \"{thread.get('title')}\" was closed, so I left it closed.){tail}"
+            storage.append_thread_history(tid, {'kind': 'mission', 'text': summary + tail, 'next_action': entry_next,
+                                                'next_action_at': entry_when, 'mission_id': mission['id'], 'who': 'argyle'})
+    _dm_person(mission, message)
+    if thread:
+        _sit.touched('thread', tid)
 
 
 @_mission_work
@@ -1740,7 +1748,7 @@ def _apply_planner_action(mission, res, settings, action, stage_id):
         out = _threads.draft_message(thread['id'],
                                      intent=(res.get('intent') or '').strip())
         storage.add_mission_step(mid, {'kind': 'draft', 'name': thread.get('title'),
-                                       'args_json': {'intent': res.get('intent')},
+                                       'args_json': {'intent': res.get('intent'), 'thread_id': thread['id']},
                                        'result_json': out})
         return storage.get_mission(mid)
 
@@ -1778,7 +1786,23 @@ def _apply_planner_action(mission, res, settings, action, stage_id):
                 plan['state'] = 'done'
             row = _close(mid, 'done', summary=(res.get('summary') or '').strip(),
                          **({'plan': plan} if plan else {}))
-        _land_finish(storage.get_mission(mid), res)
+        mission = storage.get_mission(mid)
+        # The draft and finish are separate scheduler steps; use the captured
+        # revision saved with the draft, never a new read at finish time.
+        drafts = [s.get('result_json') or {} for s in storage.get_mission_steps(mid)
+                  if s.get('kind') == 'draft'
+                  and (s.get('args_json') or {}).get('thread_id') == mission.get('origin_ref')
+                  and (s.get('result_json') or {}).get('status') == 'ok']
+        # Planned thread drafts reach draft_message through the approved tool
+        # wrapper. Plain draft_message stage rows only save supplied words and
+        # have no thread revision, so they retain the None/legacy behavior.
+        drafts.extend(row.get('result') or {}
+                      for stage in (mission.get('plan') or {}).get('stages', [])
+                      for row in stage.get('rows', [])
+                      if row.get('tool') == 'draft_thread_message' and row.get('state') == 'done'
+                      and (row.get('result') or {}).get('thread_id') == mission.get('origin_ref'))
+        draft = drafts[-1] if drafts else {}
+        _land_finish(mission, res, next_action_rev=draft.get('next_action_rev'))
         return row
 
     if action == 'give_up':

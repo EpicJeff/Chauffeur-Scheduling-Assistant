@@ -131,6 +131,7 @@ def draft_message(thread_id: str, intent: str = '', *, viewer: Optional[dict] = 
     thread = storage.get_thread(thread_id)
     if not thread:
         return {'status': 'not_found'}
+    next_action_rev = int(thread.get('next_action_rev') or 0)
     if viewer is not None:
         from services import access, situations
         if not access.record_actable('thread', thread, viewer, 'draft'):
@@ -152,13 +153,19 @@ def draft_message(thread_id: str, intent: str = '', *, viewer: Optional[dict] = 
     if not subject or not body:
         return {'status': 'error', 'reason': 'model returned an incomplete draft'}
 
-    storage.append_thread_history(thread_id, {
-        'kind': 'drafted',
-        'text': f'Drafted: {subject}',
-        'who': 'argyle',
-    })
+    with storage.db_lock:
+        current = int((storage.get_thread(thread_id) or {}).get('next_action_rev') or 0)
+        text = f'Drafted: {subject}'
+        if current != next_action_rev:
+            text += ' (drafted against an earlier next step)'
+        storage.append_thread_history(thread_id, {
+            'kind': 'drafted',
+            'text': text,
+            'who': 'argyle',
+        })
     return {'status': 'ok', 'subject': subject, 'body': body,
             'to': thread.get('counterparty_email', ''),
+            'next_action_rev': next_action_rev,
             'intent': (intent or '').strip()}
 
 
@@ -354,6 +361,12 @@ def create(title: str, owner_member_id: str = None, goal: str = '',
     return thread_id
 
 
+def _bump_rev(thread_id, fields):
+    row = storage.get_thread(thread_id) or {}
+    fields['next_action_rev'] = int(row.get('next_action_rev') or 0) + 1
+    return fields
+
+
 def advance(thread_id: str, next_action: str, next_action_at: str = None,
             note: str = None, who: str = None) -> bool:
     """Set the next thing that has to happen, and when, and log it.
@@ -363,25 +376,68 @@ def advance(thread_id: str, next_action: str, next_action_at: str = None,
     is what keeps the quiet clock honest.
     """
     next_action_at = _clean_next_action_at(next_action_at)
-    ok = storage.update_thread(thread_id, {
-        'next_action': next_action,
-        'next_action_at': next_action_at,
-    })
-    if not ok:
-        return False
     text = f'Next: {next_action}' if next_action else 'Next action updated'
     if next_action_at:
         text += f' by {next_action_at}'
     if note:
         text += f' — {note}'
-    storage.append_thread_history(thread_id, {
-        'kind': 'advance',
-        'text': text,
-        'who': who,
-    })
+    with storage.db_lock, storage.db.transaction():
+        ok = storage.update_thread(thread_id, _bump_rev(thread_id, {
+            'next_action': next_action,
+            'next_action_at': next_action_at,
+        }))
+        if not ok:
+            return False
+        storage.append_thread_history(thread_id, {
+            'kind': 'advance',
+            'text': text,
+            'who': who,
+        })
     from services import situations as _sit
     _sit.touched('thread', thread_id)
     return True
+
+
+def complete_next_action(thread_id: str, rev: int, who: str = None) -> dict:
+    """The row's checkbox: this next step is done. Logged, revision-checked (spec §2.2)."""
+    with storage.db_lock, storage.db.transaction():
+        row = storage.get_thread(thread_id)
+        if not row:
+            return {'status': 'error', 'code': 404, 'message': 'That conversation is no longer here.'}
+        current = int(row.get('next_action_rev') or 0)
+        if current != int(rev):
+            return {'status': 'error', 'code': 409, 'message': 'That changed; look again.'}
+        if not row.get('next_action'):
+            return {'status': 'error', 'code': 409, 'message': 'There is no next step to finish.'}
+        entry_id = uuid.uuid4().hex
+        storage.append_thread_history(thread_id, {
+            'kind': 'completed', 'text': f"Done: {row['next_action']}", 'who': who, 'entry_id': entry_id,
+            'next_action': row['next_action'], 'next_action_at': row.get('next_action_at'), 'rev_before': current})
+        storage.update_thread(thread_id, {'next_action': '', 'next_action_at': None, 'next_action_rev': current + 1})
+    from services import situations as _sit
+    _sit.touched('thread', thread_id)
+    return {'status': 'success', 'entry_id': entry_id, 'rev': current + 1}
+
+
+def restore_next_action(thread_id: str, entry_id: str, who: str = None) -> dict:
+    """Untick: put the completed next step back, only while nothing replaced it (spec §2.2)."""
+    with storage.db_lock, storage.db.transaction():
+        row = storage.get_thread(thread_id)
+        if not row:
+            return {'status': 'error', 'code': 404, 'message': 'That conversation is no longer here.'}
+        if row.get('next_action'):
+            return {'status': 'error', 'code': 409, 'message': 'A newer next step is set.'}
+        completed = [h for h in row.get('history') or [] if h.get('kind') == 'completed']
+        if not completed or completed[-1].get('entry_id') != entry_id:
+            return {'status': 'error', 'code': 409, 'message': 'That is not the latest finished step.'}
+        entry = completed[-1]
+        storage.append_thread_history(thread_id, {'kind': 'restored', 'text': f"Back to: {entry['next_action']}", 'who': who, 'entry_id': entry_id})
+        rev = int(row.get('next_action_rev') or 0) + 1
+        storage.update_thread(thread_id, {'next_action': entry['next_action'], 'next_action_at': entry.get('next_action_at'),
+                                          'next_action_rev': rev})
+    from services import situations as _sit
+    _sit.touched('thread', thread_id)
+    return {'status': 'success', 'entry_id': entry_id, 'rev': rev}
 
 
 def note(thread_id: str, text: str, who: str = None, url: str = None) -> bool:

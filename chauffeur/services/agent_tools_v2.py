@@ -2482,6 +2482,7 @@ def draft_thread_message(thread_title: str = '', intent: str = None,
     to_line = f"\nTo: {to}" if to else ''
     return {"status": "success", "subject": res['subject'], "body": res['body'],
             "to": to,
+            "thread_id": thread['id'], "next_action_rev": res.get('next_action_rev'),
             "message": (f"Here's a draft for \"{thread['title']}\" — nothing has "
                         f"been sent, and I can't send it: a person reviews and "
                         f"sends it from the Threads page.{to_line}\n"

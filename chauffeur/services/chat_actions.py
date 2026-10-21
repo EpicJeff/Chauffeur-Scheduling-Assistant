@@ -426,9 +426,12 @@ def run_row(proposal_id, approver, idem):
         requester = storage.get_member((agent_tools_v2._mission_context.get() or {}).get('created_by'))
         principal = requester if prop['action_type'] == 'propose_program' and (requester or {}).get('role') == 'child' else approver
         result = _execute(prop['action_type'], payload, approver=principal)
+        draft_revision = ({k: result[k] for k in ('thread_id', 'next_action_rev') if k in result}
+                          if prop['action_type'] == 'draft_thread_message' else {})
         budget = result.get('budget') is True
         ok = result.get('status') == 'success'
         result = {**{k: result[k] for k in ('choice_id', 'options', 'choice', 'run_id', 'notice') if k in result},
+                  **draft_revision,
                   'status': 'waiting_choice' if result.get('status') == 'waiting_choice' else 'success' if ok else 'error',
                   'message': result.get('message') or ('Done.' if ok else 'That action failed.'),
                   'created': result.get('created') or []}
