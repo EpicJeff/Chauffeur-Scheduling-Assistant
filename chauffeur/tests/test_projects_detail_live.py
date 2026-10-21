@@ -316,17 +316,24 @@ def scenario_add_through_the_one_add():
             page.wait_for_timeout(250)
         check(ms and ms[0]['project_id'] == IDS['bath'] and ms[0]['tier'] == 'flash', f"launched inside, Flash kept: {ms}")
         form.wait_for(state='detached')
-        # Every field (including the program's day controls) must survive the
-        # extra binding pass while Alpine removes a cancelled form.
-        for kind, label in (('thread', 'Conversation'), ('mission', 'Ask Argyle'), ('program', 'Program')):
+        # Every field must survive the extra binding pass while Alpine removes a
+        # cancelled form; Program is the one-pass setup sheet (programs spec §4).
+        for kind, label in (('thread', 'Conversation'), ('mission', 'Ask Argyle')):
             page.locator('[data-project-add]').click()
             page.locator('[data-prompt-choice]', has_text=label).first.click()
             form = page.locator(f'[data-piece-form="{kind}"]')
             form.wait_for(state='visible')
-            if kind == 'program':
-                form.get_by_role('button', name='Mon', exact=True).click()
             form.get_by_role('button', name='Cancel', exact=True).click()
             form.wait_for(state='detached')
+        page.locator('[data-project-add]').click()
+        page.locator('[data-prompt-choice]', has_text='Program').first.click()
+        sheet = page.locator('[data-setup-sheet]')
+        sheet.wait_for(state='visible')
+        check(page.locator('[data-piece-form="program"]').count() == 0, "no inline program form any more")
+        sheet.locator('[data-setup-pick]').first.click()
+        sheet.locator('[data-setup-slot]').first.wait_for(state='visible', timeout=10000)
+        sheet.locator('[data-setup-close]').click()
+        sheet.wait_for(state='detached')
         page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
         check(served.errors() == [], f"no page errors: {served.errors()}")
 

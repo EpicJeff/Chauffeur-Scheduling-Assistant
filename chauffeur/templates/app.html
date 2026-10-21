@@ -449,6 +449,9 @@
             <script>window.chfLibraryHost = 'phone';</script>
             {% include 'components/library_page.html' %}
         </div>
+        <!-- One-pass setup (programs spec §4): + Add › Program on the phone's
+             project and the library's Start it for… open this one builder. -->
+        {% include 'components/program_setup_sheet.html' %}
         <!-- Bottom Tab Bar -->
         <div id="pwa-tab-bar" role="navigation" aria-label="Main navigation" class="flex bg-gray-900 border-t border-gray-800 shrink-0 z-10 shadow-nav"
             style="padding-bottom: env(safe-area-inset-bottom)">

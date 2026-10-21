@@ -492,9 +492,12 @@ def scenario_a_library_run_points_at_the_library_and_a_legacy_run_keeps_its_edit
         page.wait_for_selector('[data-project-detail]', timeout=20000)
         page.locator('[data-piece-open="program:run-kate"]').click()
         sheet = page.locator('[data-record-sheet]')
-        link = sheet.locator('[data-scripts-in-library]:visible')
+        # The monitoring sheet (programs spec §5.1): the header's "in the library ›" is the
+        # run's one way to its library program, where the scripts live.
+        link = sheet.locator('[data-library-link]:visible')
         link.wait_for(state='visible', timeout=15000)
-        check(link.count() == 1 and link.inner_text().strip() == 'Scripts live in the library: Learn piano',
+        check(link.count() == 1 and link.inner_text().strip() == 'in the library ›'
+              and sheet.locator('[data-monitor]').inner_text().startswith('Learn piano'),
               f"one link to the library: {link.all_inner_texts()}")
         check(link.evaluate('el => el.tagName') == 'BUTTON', "a button, not an anchor")
         body = sheet.inner_text()

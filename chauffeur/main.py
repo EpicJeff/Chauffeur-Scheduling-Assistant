@@ -8168,7 +8168,8 @@ def create_program(body: dict = Body(default={}), request: Request = None,
 
 
 @app.post("/api/programs/{program_id}/edit")
-def edit_program(program_id: str, body: dict = Body(default={}), request: Request = None):
+def edit_program(program_id: str, body: dict = Body(default={}), request: Request = None,
+                 background_tasks: BackgroundTasks = None):
     _piece_or_404('program', program_id, request, 'edit')
     from services import programs as _prog, programs_curate as _cur, library
     row = _prog.load(storage.get_program(program_id))
@@ -8187,8 +8188,22 @@ def edit_program(program_id: str, body: dict = Body(default={}), request: Reques
         previous = storage.get_library_program(row.get('library_id'))
         if row.get('unresolved') or not row.get('library_id') or not library.valid_curriculum(previous):
             return {'status': 'error', 'message': 'Its library program is missing'}
-    if row.get('state') != 'proposed':
-        return {'status': 'error', 'message': 'Only a proposal can be edited. Re-shape the week to bring this one back to a proposal first.'}
+    # A program on the calendar (programs spec P4): Program settings change its
+    # private starting point, its minutes and its target date; Look again and
+    # Plan without the book re-plan it (the times stay). Its days are Change
+    # the days (PATCH /schedule), never this route.
+    on_calendar = row.get('state') in ('active', 'paused')
+    if on_calendar and body.get('recurate'):
+        body = {k: body[k] for k in ('recurate', 'exclude_books', 'member_id') if k in body}
+    elif on_calendar:
+        if any(body.get(k) is not None for k in ('slots', 'preferred_days', 'sessions_per_week')):
+            return {'status': 'error', 'message': "Change the days from the program's ⋯ to change when it happens."}
+        if body.get('minutes') is not None and int(_prog.clamp_shape({'minutes': body['minutes']})['minutes']) != int((row.get('shape') or {}).get('minutes') or 25):
+            claimer = _approver_of_record(storage.get_member(_acting_id(request, body.get('member_id'))))
+            if not _prog._claimer(claimer):
+                return {'status': 'error', 'message': 'A parent or adult changes how long practice runs on the calendar.'}
+    elif row.get('state') != 'proposed':
+        return {'status': 'error', 'message': 'Only a proposal or a program under way can be edited.'}
     title = str(body.get('title') or '').strip()
     if title and title != row.get('title'):
         screen = _cur.screen_aim(title)
@@ -8240,7 +8255,15 @@ def edit_program(program_id: str, body: dict = Body(default={}), request: Reques
             updates = {}
         else:
             kept = True
-    if updates:
+    retimed = None
+    if updates and on_calendar and 'shape' in updates:
+        # The minutes moved under times already on the calendar: the row and
+        # its windows change in one write, so the two never disagree.
+        retimed = _prog.retime(program_id, updates)
+        if retimed.get('status') != 'success':
+            return retimed
+        _program_refresh(retimed, background_tasks)
+    elif updates:
         storage.update_program(program_id, updates)
     message = ('Looked again and found nothing new. The plan you had stands.' if kept else
                'Looked again.' if body.get('recurate') else

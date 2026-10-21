@@ -887,6 +887,40 @@ def reshape(program_id: str) -> dict:
                        f"week again."}
 
 
+@_program_work
+def retime(program_id: str, updates: dict) -> dict:
+    """Program settings on a program under way (spec P4): write `updates`
+    (its new minutes in `shape`, and any starting point or target date) and
+    move every window it holds to the new length, in one transaction. An
+    active run's own commitments get their new end; a paused run's remembered
+    windows do. The days and starts never move here (Change the days)."""
+    try:
+        with storage.db_lock, storage.db.transaction():
+            row = storage.get_program(program_id)
+            if not row:
+                return {'status': 'error', 'code': 404, 'message': 'That program is no longer here.'}
+            minutes = int(((updates.get('shape') or row.get('shape') or {}).get('minutes')) or 25)
+            changes = dict(updates)
+            moved = 0
+            if row.get('state') == 'paused':
+                changes['paused_slots'] = sanitize_slots(row.get('paused_slots') or [], minutes)
+            elif row.get('state') == 'active':
+                for cid in (row.get('emissions') or {}).get('commitment_ids') or []:
+                    pc = storage.get_protected_commitment(cid)
+                    if not pc:
+                        continue
+                    end = sanitize_slots([{'day': 0, 'time_start': pc.get('time_start')}], minutes)
+                    if end and end[0]['time_end'] != pc.get('time_end'):
+                        storage.update_protected_commitment(cid, {'time_end': end[0]['time_end']})
+                        moved += 1
+            storage.update_program(program_id, changes)
+    except deletion.Cancelled:
+        raise
+    except Exception as e:
+        return {'status': 'error', 'message': f"Couldn't change the minutes, so nothing moved: {e}"}
+    return {'status': 'success', 'schedule_dirty': bool(moved)}
+
+
 def _claimer(actor) -> bool:
     return bool(actor) and actor.get('role') in ('parent', 'adult') and (actor.get('status') or 'active') == 'active'
 

@@ -13,7 +13,7 @@
    the shared chfDeleteRecord (components/record_delete.html) from ⋯. #}
 {% from 'components/audience_picker.html' import audience_picker, audience_picker_script %}
 {% from 'components/record_delete.html' import record_delete_script %}
-{% from 'components/library_card.html' import library_profile_fields, library_script %}
+{% from 'components/library_card.html' import library_script %}
 <section x-data='projectsPage({{ (projects_host|default("admin"))|tojson }})' x-init="load()" @chf-projects-open.window="load()"
          @chf-projects-context.window="sproutSection = $event.detail" x-show="!sproutSection || shownProjects.length > 0"
          @chf-admin-ready.window="load()" @chf-project-open.window="openById($event.detail && $event.detail.id)" class="panel-page w-full max-w-2xl mx-auto px-4 py-6" x-cloak>
@@ -300,9 +300,7 @@ function projectsPage(host = 'admin') {
         rows: {}, logOpen: false, stepSheet: null, linkSheet: null, justDone: '', _completed: {}, _doneTitles: {},
         emptyPieceForm: {title: '', goal: '', thread_kind: 'vendor', owner_member_id: '', contact_id: '',
                          counterparty_name: '', counterparty_email: '', next_action: '', next_action_at: '',
-                         tier: 'mission', for_member_id: '', starting_point: '', sessions_per_week: 3, minutes: 25,
-                         preferred_days: [], target_date: '', library: [], bands: [], memberBands: {}, libraryLoaded: false,
-                         making: false, age_band: 'any', assumes: ''},
+                         tier: 'mission'},
         // Alpine can evaluate form bindings once more while their x-if tears down.
         get pieceDraft() { return this.pieceForm || this.emptyPieceForm; },
         closedOpen: false,
@@ -635,37 +633,19 @@ function projectsPage(host = 'admin') {
             this.openSheet(kind, rid, '', this.opened);
         },
         // + Add › Conversation / Ask Argyle / Program / Something already in Chauffeur.
-        // Program keeps today's library picker until the programs spec's setup sheet ships.
+        // Program is the one-pass setup sheet (components/program_setup_sheet.html,
+        // programs brief-and-course spec §4), the same builder on every host.
         async addPieceKind(p, pick) {
             if (pick === 'existing') return this.pickExisting(p);
+            if (pick === 'program') {
+                this.pieceForm = null;
+                if (window.chfProgramSetup) window.chfProgramSetup.open({projectId: p.id, projectTitle: p.title, forMemberId: this.myId});
+                return;
+            }
             if (pick === 'thread' && !this.contacts.length) this.contacts = await this.request('api/assist-contacts').catch(() => []) || [];
             this.pieceForm = {projectId: p.id, kind: pick, title: '', goal: '', thread_kind: 'vendor', owner_member_id: this.myId,
                               contact_id: '', counterparty_name: '', counterparty_email: '', next_action: '', next_action_at: '',
-                              tier: 'mission', for_member_id: this.myId, starting_point: '', sessions_per_week: 3, minutes: 25,
-                              preferred_days: [], target_date: '', library: [], bands: [], memberBands: {}, libraryLoaded: false,
-                              making: false, age_band: 'any', assumes: ''};
-            if (pick === 'program') await this.loadLibrary();
-        },
-        // + Add › Program: the library first (archived programs never
-        // offered), "Make a new one" at the bottom for adults and parents.
-        async loadLibrary() {
-            const form = this.pieceForm;
-            try {
-                const d = await this.request('api/library?include_archived=false');
-                if (this.pieceForm !== form) return;
-                form.library = d.programs || []; form.bands = d.age_bands || []; form.memberBands = d.member_bands || {};
-                form.age_band = this.libraryBand(form.for_member_id);
-            } catch (e) { if (this.pieceForm === form) this.error = e.message; }
-            finally { if (this.pieceForm === form) form.libraryLoaded = true; }
-        },
-        libraryBand(memberId) { return ((this.pieceForm || {}).memberBands || {})[memberId] || 'any'; },
-        forName() { return this.memberName((this.pieceForm || {}).for_member_id || this.myId) || 'their'; },
-        async pickLibrary(lp) {
-            const f = this.pieceForm;
-            if (!f || this.busy) return;
-            const body = {library_id: lp.id, for_member_id: f.for_member_id || this.myId, member_id: this.myId || null,
-                          preferred_days: f.preferred_days, target_date: f.target_date || null, project_id: f.projectId};
-            if (await this.mutate('api/programs', body)) this.pieceForm = null;
+                              tier: 'mission'};
         },
         async rebind(p, card) {
             if (await window.chfLibrary.rebind(card.id, this.myId, this.headers())) await this.load();
@@ -676,7 +656,6 @@ function projectsPage(host = 'admin') {
             const p = this.projects.find(p => p.id === id);
             if (p) await this.open(p);
         },
-        togglePieceDay(d) { if (!this.pieceForm) return; const days = this.pieceForm.preferred_days; const i = days.indexOf(d); if (i === -1) days.push(d); else days.splice(i, 1); },
         async pickExisting(p) {
             const q = await promptInput('Add something already in Chauffeur', 'A trip, an occasion, a list…', {okText: 'Find it'});
             if (!q || !q.trim()) return;
@@ -693,18 +672,13 @@ function projectsPage(host = 'admin') {
         async createPiece() {
             const f = this.pieceForm;
             if (!f || this.busy) return;
+            if (!['thread', 'mission'].includes(f.kind)) return;
             const body = f.kind === 'thread'
                 ? {title: f.title.trim(), goal: f.goal, kind: f.thread_kind, owner_member_id: f.owner_member_id, contact_id: f.contact_id || null,
                    counterparty_name: f.counterparty_name, counterparty_email: f.counterparty_email, next_action: f.next_action,
                    next_action_at: f.next_action_at || null, project_id: f.projectId}
-                : f.kind === 'mission'
-                ? {goal: f.goal.trim(), tier: f.tier, project_id: f.projectId}
-                : {title: f.title.trim(), for_member_id: f.for_member_id || this.myId, member_id: this.myId || null,
-                   age_band: f.age_band || 'any', assumes: (f.assumes || '').trim(),
-                   starting_point: f.starting_point.trim(), sessions_per_week: f.sessions_per_week || 3, minutes: f.minutes || 25,
-                   preferred_days: f.preferred_days, target_date: f.target_date || null, project_id: f.projectId};
-            if (f.kind === 'program' && !f.making) return;
-            const path = {thread: 'api/threads', mission: 'api/missions/launch', program: 'api/programs'}[f.kind];
+                : {goal: f.goal.trim(), tier: f.tier, project_id: f.projectId};
+            const path = {thread: 'api/threads', mission: 'api/missions/launch'}[f.kind];
             if (await this.mutate(path, body)) this.pieceForm = null;
         },
         foundLines(value, label = '') {

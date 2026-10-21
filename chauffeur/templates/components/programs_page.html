@@ -1,7 +1,9 @@
-{# The whole programs page body: the shelf, proposals, sessions, the
-   lesson player and its done-listener flag, and the Alpine island.
-   Included by the standalone /programs wrapper AND by /rhythms —
-   nav/control_center/hearth chrome belongs to the HOST page. #}
+{# A program's sheet body (the admin record sheet, sheet mode): proposals with
+   their approval block, the monitoring sheet for a library program under way
+   (programs brief-and-course spec §5: counts, the ladder, the session log, one
+   ⋯), legacy and archived runs, and the Alpine island. The Projects drawer's
+   Programs settings reuse the island (projects_admin.html). Chrome belongs to
+   the HOST page. #}
 <script src="{{ 'static/project_links.js'|ver }}"></script>
     <!-- This page turns a finished session into a write (onLessonDone,
          bound below via @lesson-player:done.window) -- announced here,
@@ -11,100 +13,13 @@
          is set. See lesson_player.html's `hostListens` for the other half. -->
     <script>window.chfHasLessonDoneListener = true;</script>
 {% set _sheet = sheet_mode|default(false) %}
+{% from 'components/program_setup_sheet.html' import slot_rows %}
 <div x-data="programsPage({{ 'true' if _sheet else 'false' }})" x-init="{{ 'readIdentity()' if _sheet else 'load()' }}"
      @lesson-player:done.window="onLessonDone($event.detail)"
      {% if _sheet %}@chf-record-sheet.window="onSheet($event.detail)"{% else %}x-effect="window.chfSetPageTabCount && window.chfSetPageTabCount('programs', programs.filter(p => p.state === 'proposed' && canAct(p)).length)"{% endif %}
      class="{{ 'px-1 py-1' if _sheet else 'panel-page max-w-2xl mx-auto px-4 py-6' }}" x-cloak>
 
-            {% if not _sheet %}{# sheet:hide #}
-            <h2 class="panel-page-title">Programs</h2>
-            <p class="text-sm text-gray-500 mb-5">
-                An ambition with a real plan attached — a cited curriculum, a
-                weekly shape, a session log. Propose an aim, see the plan that
-                was found and where it came from, read exactly what approving
-                will claim, then it's on. Pausing, resuming and dropping are
-                all just what a program can do next — none of them is a
-                failure.
-            </p>
 
-
-            <!-- Create form -->
-            <div class="bg-gray-800 rounded-2xl border border-gray-700 p-4 mb-6">
-                <button @click="creating = !creating"
-                    class="w-full flex items-center justify-between text-sm font-bold text-gray-200">
-                    <span>+ Propose a program</span>
-                    <span class="text-gray-500 text-xs" x-text="creating ? 'Hide' : 'Show'"></span>
-                </button>
-                <div class="mt-3 space-y-2.5" x-show="creating" x-cloak>
-                    <!-- The aim becomes a library program the whole household
-                         can see (spec 2026-10-19-program-library §2); the
-                         starting point stays on this one run. -->
-                    <p data-visibility-line class="text-xs font-semibold text-blue-300"
-                       x-text="'Everyone in the household will see this program as: ' + ((draft.title || '').trim() || '…')"></p>
-                    <input type="text" x-model="draft.title" placeholder="The aim (e.g. Learn guitar, Train for a 5K)"
-                        @keydown.enter="proposeProgram()"
-                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
-                    <select x-model="draft.for_member_id" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-2 text-white text-sm">
-                        <option value="">Whose program is this?</option>
-                        <template x-for="m in members" :key="m.id">
-                            <option :value="m.id" x-text="m.name"></option>
-                        </template>
-                    </select>
-                    <!-- The one thing that turns a generic beginner plan into
-                         theirs. Optional, and free text on purpose: every
-                         domain says "where you are" differently, and a set of
-                         levels would fit one of them. Screened for body
-                         targets server-side, same list as the aim. -->
-                    <input type="text" x-model="draft.starting_point"
-                        placeholder="Where they're starting from (optional — e.g. already plays open chords)"
-                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">
-                    <p data-private-label class="text-[11px] text-gray-500 -mt-1.5"
-                       x-text="'stays private to ' + (draft.for_member_id ? memberName(draft.for_member_id) : 'their') + &quot;'s run&quot;"></p>
-                    <div class="grid grid-cols-2 gap-2.5">
-                        <label class="text-xs text-gray-400 flex items-center gap-2">
-                            Sessions / week
-                            <input type="number" min="1" max="7" x-model.number="draft.sessions_per_week"
-                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm">
-                        </label>
-                        <label class="text-xs text-gray-400 flex items-center gap-2">
-                            Minutes
-                            <!-- The ceiling is real, not decoration: minutes
-                                 become a commitment's `time_end`, and a
-                                 window ending at '29:00' is a solver rule
-                                 nothing can parse. Bounded in
-                                 services/programs.py too -- an input's `max`
-                                 is a courtesy, never a guarantee. -->
-                            <input type="number" min="5" max="240" x-model.number="draft.minutes"
-                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm">
-                        </label>
-                    </div>
-                    <div>
-                        <div class="text-[11px] text-gray-500 mb-1">Preferred days (optional)</div>
-                        <div class="flex flex-wrap gap-1.5">
-                            <template x-for="d in 7" :key="d">
-                                <button type="button" @click="toggleDay(d - 1)"
-                                    class="text-xs font-bold px-2.5 py-1 rounded-lg border"
-                                    :class="draft.preferred_days.includes(d - 1)
-                                        ? 'bg-blue-600 border-blue-600 text-white'
-                                        : 'bg-gray-900 border-gray-700 text-gray-400'"
-                                    x-text="dayLabel(d - 1)"></button>
-                            </template>
-                        </div>
-                    </div>
-                    <label class="text-xs text-gray-400 flex items-center gap-2">
-                        Target date (optional — a real date to aim at)
-                        <input type="date" x-model="draft.target_date"
-                            class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm">
-                    </label>
-                    <button @click="proposeProgram()" :disabled="!!(proposing)"
-                        class="w-full text-sm font-bold px-3 py-2 rounded-lg bg-blue-600 text-white active:bg-blue-700 disabled:opacity-50">
-                        <span x-show="!proposing">Find a plan</span>
-                        <span x-show="proposing" x-cloak>Looking for a real plan…</span>
-                    </button>
-                </div>
-            </div>
-
-            {% endif %}{# /sheet:hide #}
 
             <!-- Live programs, then a collapsed archive -->
             <template x-for="sec in sections" :key="sec.key">
@@ -125,6 +40,204 @@
                     <div class="space-y-2">
                         <template x-for="p in sec.items" :key="p.id">
                             <div class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
+                                <!-- The monitoring sheet (programs brief-and-course spec §5): a
+                                     library run that is under way. Header, the four counts, the
+                                     ladder per phase with the lit rung and Reached it on every
+                                     unjudged phase (P2), the session log folded, and one ⋯ for
+                                     everything else. Never a fraction (P1). -->
+                                <template x-if="monitorMode(p)">
+                                    <div data-monitor class="space-y-3">
+                                        <div class="flex items-start justify-between gap-2">
+                                            <div class="min-w-0">
+                                                <div class="text-base font-bold text-gray-100" x-text="p.title"></div>
+                                                <div class="text-[11px] font-semibold text-gray-400 mt-0.5">
+                                                    <span x-text="headerLine(p) + ' · '"></span><button type="button" data-library-link :data-library-id="p.library_id" @click="openLibrary(p.library_id)"
+                                                        class="font-semibold text-teal-300">in the library ›</button>
+                                                </div>
+                                                <div class="text-[11px] text-gray-500 italic mt-0.5" x-show="tierLine(p)" x-text="tierLine(p)"></div>
+                                                <div class="text-[11px] font-semibold text-amber-300 mt-0.5" x-show="p.state === 'paused'">Paused · nothing is on the calendar until you resume</div>
+                                                <div class="text-[11px] text-teal-300 mt-0.5" role="status" x-show="notice[p.id]" x-text="notice[p.id] || ''"></div>
+                                            </div>
+                                            <button type="button" data-run-menu @click="menu(p)" x-show="menuItems(p).length" aria-label="More" title="More"
+                                                class="w-8 h-8 p-2 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700 shrink-0 text-sm font-black leading-none">⋯</button>
+                                        </div>
+
+                                        <!-- data-monitor-stats is set once the counts have been read (loaded or failed). -->
+                                        <div :data-monitor-stats="monitor[p.id] ? (monitor[p.id].failed ? 'failed' : 'loaded') : null" class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                            <template x-if="!monitor[p.id]">
+                                                <p class="col-span-2 sm:col-span-4 text-xs text-gray-500 italic">Working out how it's going…</p>
+                                            </template>
+                                            <template x-if="monitor[p.id] && monitor[p.id].failed">
+                                                <p class="col-span-2 sm:col-span-4 text-xs text-amber-300">Couldn't read how it's going. <span role="button" tabindex="0" @click="loadMonitor(p.id)" @keydown.enter.prevent="loadMonitor(p.id)" class="font-bold underline underline-offset-2 cursor-pointer">Retry</span></p>
+                                            </template>
+                                            <template x-for="st in stats(p)" :key="st.key">
+                                                <div :data-stat="st.key" class="bg-gray-950/60 border border-gray-800 rounded-lg px-2.5 py-1.5">
+                                                    <div class="text-sm font-extrabold text-white" x-text="st.value"></div>
+                                                    <div class="text-[11px] font-semibold text-gray-400" x-text="st.label"></div>
+                                                </div>
+                                            </template>
+                                        </div>
+
+                                        <!-- Program settings (P4): this program's private starting point,
+                                             its minutes and its target date. The days are Change the days. -->
+                                        <template x-if="settingsOpen[p.id] && settingsDraft[p.id]">
+                                            <div data-run-settings class="bg-gray-950/60 border border-gray-800 rounded-xl p-2.5 space-y-2">
+                                                <div class="text-xs font-bold text-gray-300">Program settings</div>
+                                                <label class="block text-xs text-gray-400">Where they're starting from
+                                                    <input name="starting_point" x-model="settingsDraft[p.id].starting_point" placeholder="What they can already do"
+                                                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm">
+                                                    <span class="block text-[11px] text-gray-500 mt-0.5" x-text="'stays private to ' + memberName(p.member_id) + '\'s program'"></span>
+                                                </label>
+                                                <div class="flex flex-wrap gap-2.5">
+                                                    <label class="text-xs text-gray-400">Minutes each
+                                                        <input name="minutes" type="number" min="5" max="240" x-model.number="settingsDraft[p.id].minutes"
+                                                            class="w-20 ml-1 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-gray-100 text-sm">
+                                                    </label>
+                                                    <label class="text-xs text-gray-400">Aim for a date (optional)
+                                                        <input name="target_date" type="date" x-model="settingsDraft[p.id].target_date"
+                                                            class="ml-1 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-gray-100 text-sm">
+                                                    </label>
+                                                </div>
+                                                <div class="flex gap-2">
+                                                    <button type="button" data-settings-save @click="saveSettings(p)" :disabled="!!proposing"
+                                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800 disabled:opacity-50">Save</button>
+                                                    <button type="button" @click="settingsOpen[p.id] = false"
+                                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Cancel</button>
+                                                </div>
+                                            </div>
+                                        </template>
+
+                                        <!-- Change the days (spec §5.3): the setup sheet's own rows. Emptying
+                                             the list hands the choice back to the app (P8). -->
+                                        <template x-if="daysOpen[p.id] && daysDraft[p.id]">
+                                            <div data-days-editor class="bg-gray-950/60 border border-gray-800 rounded-xl p-2.5 space-y-1.5">
+                                                <div class="text-xs font-bold text-gray-300">Change the days</div>
+                                                <p class="text-xs text-gray-500" x-text="p.state === 'paused' ? 'These go on the calendar when you resume. Empty the list and the app picks again.' : 'Change any of these; empty the list and the app picks again.'"></p>
+                                                {{ slot_rows('daysDraft[p.id]', '(p.shape || {}).minutes') }}
+                                                <div class="flex flex-wrap gap-2">
+                                                    <button type="button" @click="addDay(p)" :disabled="!!(daysDraft[p.id].length >= 7)"
+                                                        class="text-xs font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 disabled:opacity-50">+ Add a time</button>
+                                                    <span class="flex-1"></span>
+                                                    <button type="button" data-days-save @click="saveDays(p)" :disabled="!!proposing"
+                                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800 disabled:opacity-50">Save these days</button>
+                                                    <button type="button" @click="daysOpen[p.id] = false"
+                                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Cancel</button>
+                                                </div>
+                                            </div>
+                                        </template>
+
+                                        <!-- The ladder, phase by phase. The current phase's Reached it sits
+                                             beside the lit rung, every other unjudged phase's on its heading. -->
+                                        <template x-for="(ph, pi) in ((monitor[p.id] || {}).phases || [])" :key="ph.id">
+                                            <section :data-monitor-phase="ph.id" class="space-y-1">
+                                                <div class="flex items-center justify-between gap-2 px-1">
+                                                    <div class="min-w-0 text-[10px] font-black uppercase tracking-widest" :class="ph.milestone_hit_at ? 'text-teal-400' : 'text-gray-500'">
+                                                        <span x-text="ph.name"></span><span class="normal-case tracking-normal font-semibold text-gray-600" x-text="ph.milestone ? ' · done when ' + lowerFirst(ph.milestone) : ''"></span>
+                                                    </div>
+                                                    <span class="text-[10px] font-bold text-teal-400 shrink-0" x-show="ph.milestone_hit_at">🎉 reached</span>
+                                                    <template x-if="canJudge(p, ph) && !reachedAtRung(ph)">
+                                                        <button type="button" :data-reached-it="ph.id" @click="markMilestone(p, ph)"
+                                                            class="text-[10px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 shrink-0">Reached it</button>
+                                                    </template>
+                                                </div>
+                                                <div class="text-[11px] text-gray-500 px-1" x-show="ph.progression"><span class="text-gray-600">Next time:</span> <span x-text="ph.progression"></span></div>
+                                                <div class="text-[11px] text-gray-500 px-1" x-show="pi === 0 && p.starting_point && canAct(p)"><span class="text-gray-600">Started from:</span> <span x-text="p.starting_point"></span></div>
+                                                <ol class="space-y-1">
+                                                    <template x-for="l in ph.lessons" :key="l.id">
+                                                        <li :data-rung="l.id" :data-rung-current="l.current ? 'true' : null"
+                                                            class="bg-gray-950/60 border rounded-lg px-2.5 py-1.5"
+                                                            :class="l.current ? 'border-teal-500/60' : 'border-gray-800'">
+                                                            <div role="button" tabindex="0" :aria-expanded="rungOpen[p.id] === l.id ? 'true' : 'false'"
+                                                                @click="toggleRung(p, l)" @keydown.enter.prevent="toggleRung(p, l)" class="flex items-start gap-2 cursor-pointer">
+                                                                <span class="mt-1 w-2.5 h-2.5 rounded-full border-2 shrink-0"
+                                                                    :class="l.completed ? 'bg-teal-500 border-teal-500' : (l.current ? 'border-teal-300 bg-gray-900' : 'border-gray-600 bg-gray-800')"></span>
+                                                                <div class="min-w-0 flex-1 text-xs">
+                                                                    <span :class="l.completed ? 'line-through text-gray-500' : (l.current ? 'font-bold text-white' : 'text-gray-300')" x-text="l.title"></span>
+                                                                    <span class="text-[11px] text-gray-400" x-show="l.current && rungLine(p, l)" :data-ready-to-judge="l.current && monitor[p.id].ready_to_judge ? 'true' : null"
+                                                                        x-text="' · ' + rungLine(p, l)"></span>
+                                                                </div>
+                                                            </div>
+                                                            <template x-if="l.current && (p.state === 'active' || reachedAtRung(ph)) && canAct(p)">
+                                                                <div class="flex flex-wrap gap-2 mt-1.5 pl-4">
+                                                                    <template x-if="p.state === 'active'">
+                                                                        <button type="button" data-unit-move="back" @click="moveUnit(p, 'back')"
+                                                                            class="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Another session on this</button>
+                                                                    </template>
+                                                                    <template x-if="p.state === 'active'">
+                                                                        <button type="button" data-unit-move="next" @click="moveUnit(p, 'next')"
+                                                                            class="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Move on</button>
+                                                                    </template>
+                                                                    <template x-if="reachedAtRung(ph) && canJudge(p, ph)">
+                                                                        <button type="button" :data-reached-it="ph.id" @click="markMilestone(p, ph)"
+                                                                            class="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Reached it</button>
+                                                                    </template>
+                                                                </div>
+                                                            </template>
+                                                            <!-- That lesson as the person gets it: its steps, Preview, its page.
+                                                                 No bookmark control here (spec §5.1 4). -->
+                                                            <template x-if="rungOpen[p.id] === l.id">
+                                                                <div data-rung-lesson class="mt-2 pl-4 space-y-1.5">
+                                                                    <template x-for="part in lessonParts(p, l)" :key="part.label">
+                                                                        <div>
+                                                                            <div class="flex items-center gap-2" x-show="part.label">
+                                                                                <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300" x-text="part.label"></span>
+                                                                            </div>
+                                                                            <ul class="mt-0.5 space-y-0.5">
+                                                                                <template x-for="st in part.steps" :key="st">
+                                                                                    <li class="text-[11px] text-gray-300 flex gap-1.5"><span class="text-gray-600 shrink-0">·</span><span x-text="st"></span></li>
+                                                                                </template>
+                                                                            </ul>
+                                                                        </div>
+                                                                    </template>
+                                                                    <div class="text-[11px] text-gray-400" x-show="(lessonOf(p, l.id) || {}).body" x-text="(lessonOf(p, l.id) || {}).body"></div>
+                                                                    <div class="flex flex-wrap items-center gap-2">
+                                                                        <template x-for="part in lessonParts(p, l)" :key="'play' + part.label">
+                                                                            <button type="button" data-rung-preview @click="previewLesson(p, ph, l, part.label)"
+                                                                                class="text-[10px] font-bold px-2 py-1 rounded-lg bg-teal-700 text-white active:bg-teal-800"
+                                                                                x-text="'▶ Preview' + (part.label ? ' · ' + part.label : '')"></button>
+                                                                        </template>
+                                                                        <a x-show="(lessonOf(p, l.id) || {}).url" :href="(lessonOf(p, l.id) || {}).url" target="_blank" rel="noopener"
+                                                                            class="text-[11px] font-semibold text-blue-400 underline underline-offset-2">Open the lesson</a>
+                                                                    </div>
+                                                                </div>
+                                                            </template>
+                                                        </li>
+                                                    </template>
+                                                </ol>
+                                            </section>
+                                        </template>
+
+                                        <!-- The session log, folded (spec §5.1 5). Remove is the undo for a
+                                             ticked program row. -->
+                                        <section data-monitor-log x-show="monitor[p.id] && !monitor[p.id].failed">
+                                            <template x-if="((monitor[p.id] || {}).log || []).length">
+                                                <button type="button" @click="logOpen[p.id] = !logOpen[p.id]" :aria-expanded="logOpen[p.id] ? 'true' : 'false'"
+                                                    class="w-full flex items-center justify-between text-[10px] font-black uppercase tracking-widest px-1 mb-1.5 text-gray-600">
+                                                    <span x-text="'Session log · ' + monitor[p.id].log.length"></span><span class="normal-case font-semibold" x-text="logOpen[p.id] ? 'Hide' : 'Show'"></span>
+                                                </button>
+                                            </template>
+                                            <p class="text-xs text-gray-500 italic px-1" x-show="!((monitor[p.id] || {}).log || []).length">No sessions logged yet.</p>
+                                            <template x-if="logOpen[p.id]">
+                                                <div class="space-y-1">
+                                                    <template x-for="e in ((monitor[p.id] || {}).log || [])" :key="e.id || (e.when + e.logged_on + e.minutes)">
+                                                        <div data-session-row class="bg-gray-950/60 border border-gray-800 rounded-lg px-2.5 py-1.5 flex items-center gap-2">
+                                                            <div class="min-w-0 flex-1">
+                                                                <div class="text-xs font-semibold text-gray-200" x-text="logWhen(e)"></div>
+                                                                <div class="text-[11px] text-gray-500" x-text="logWhat(e)"></div>
+                                                            </div>
+                                                            <template x-if="e.id && canAct(p)">
+                                                                <button type="button" data-session-remove @click="removeSession(p, e)"
+                                                                    class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 shrink-0">Remove</button>
+                                                            </template>
+                                                        </div>
+                                                    </template>
+                                                </div>
+                                            </template>
+                                        </section>
+                                    </div>
+                                </template>
+                                <template x-if="!monitorMode(p)">
+                                <div>
                                 <div class="flex items-start justify-between gap-2">
                                     <div class="text-sm font-bold text-gray-100" x-text="p.title"></div>
                                     <span class="text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0" :class="stateChipClass(p.state)"
@@ -143,10 +256,10 @@
                                 </template>
                                 <div data-current-lesson class="text-xs text-gray-300 mt-1" x-show="!sec.archived && lessonLine(p)" x-text="lessonLine(p)"></div>
                                 <div data-ready-to-judge class="text-xs text-blue-300 mt-1" x-show="!sec.archived && p.ready_to_judge"
-                                    x-text="'ready to judge: ' + (p.ready_to_judge || '')"></div>
+                                    x-text="'every lesson done — reached it? ' + (p.ready_to_judge || '')"></div>
                                 <template x-if="p.unresolved">
                                     <div data-run-unresolved class="mt-1.5 space-y-1.5">
-                                        <p class="text-xs text-gray-400">Pick a program to carry on, or delete this run.</p>
+                                        <p class="text-xs text-gray-400">Pick a program to carry on, or delete it.</p>
                                         <div class="flex flex-wrap gap-2">
                                             <template x-if="canAct(p)">
                                                 <button type="button" data-run-rebind @click="rebindRun(p)" :disabled="!!(proposing)"
@@ -516,11 +629,14 @@
                                     </template>
                                 </div>
 
-                                <!-- The footprint: exactly what approving will claim, before the tap -->
+                                </div>
+                                </template>
+
+                                <!-- What approving adds to the week, before the tap -->
                                 <div class="mt-2.5 bg-gray-950/60 border border-gray-800 rounded-xl p-2.5 space-y-1.5"
                                     x-show="p.state === 'proposed'" x-cloak>
                                     <div class="text-[10px] font-bold uppercase tracking-wide text-blue-300">
-                                        Approving will claim
+                                        What it adds to the week
                                     </div>
                                     <template x-if="!footprints[p.id]">
                                         <div class="text-[11px] text-gray-500 italic">Working it out…</div>
@@ -596,10 +712,11 @@
 
                                             <button @click="approveProgram(p)" x-show="canApprove()"
                                                 class="w-full text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800">
-                                                Approve — claim this time
+                                                Approve
                                             </button>
+                                            <p class="text-[11px] text-gray-500" x-show="canApprove()" x-text="'Puts these times on ' + memberName(p.member_id) + '\'s calendar.'"></p>
                                             <p class="text-[11px] text-gray-500 italic" x-show="!canApprove()">
-                                                A parent or adult claims the time — ask one to approve this.
+                                                A parent or adult puts these times on the calendar — ask one to approve this.
                                             </p>
                                         </div>
                                     </template>
@@ -620,9 +737,9 @@
                                         class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Dismiss</button>
                                 </div>
 
-                                <!-- Editing a proposal. Editable precisely because nothing has
-                                     been claimed yet; an approved program's way back here is
-                                     Re-shape the week, which frees the time first. -->
+                                <!-- Editing a proposal. Editable precisely because nothing is on
+                                     the calendar yet; an approved program's days change from its
+                                     ⋯ › Change the days, its minutes from ⋯ › Program settings. -->
                                 <template x-if="p.state === 'proposed' && editOpen[p.id] && edits[p.id]">
                                     <div class="mt-2.5 bg-gray-950/60 border border-gray-800 rounded-xl p-2.5 space-y-2.5">
                                         <!-- The retitle control is gone (spec 2026-10-19-program-library
@@ -682,6 +799,8 @@
                                         class="text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700 shrink-0">Save</button>
                                 </div>
 
+                                <template x-if="!monitorMode(p)">
+                                <div>
                                 <!-- Actions. Gated by ownership (canAct), not by hiding the whole
                                      card -- a parent still sees every household program, they just
                                      cannot act on somebody else's from here unless it's theirs to
@@ -701,14 +820,7 @@
                                          is marking the last milestone, which finishes the
                                          program on its own. -->
                                     <button x-show="p.state === 'active' || p.state === 'paused'" @click="finishProgram(p)"
-                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-700 text-white active:bg-emerald-800">Finished</button>
-                                    <!-- The hand path for the drift finding's offer: when a
-                                         practice window has been deleted by hand, this puts
-                                         the program back to a proposal so the footprint can
-                                         be rebuilt and approved again. Nothing is ever
-                                         silently re-created. -->
-                                    <button x-show="p.state === 'active' || p.state === 'paused'" @click="reshapeProgram(p)"
-                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Re-shape the week</button>
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-700 text-white active:bg-emerald-800">Done with it</button>
                                     <button x-show="p.state === 'active' || p.state === 'paused'" @click="dropProgram(p)"
                                         class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700">Drop</button>
                                 </div>
@@ -725,6 +837,8 @@
                                         <button type="button" data-run-delete @click="deleteRun(p)"
                                             class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-900 text-red-400 border border-red-900/60 active:bg-red-950">Delete</button>
                                     </div>
+                                </template>
+                                </div>
                                 </template>
                             </div>
                         </template>
@@ -773,7 +887,6 @@
                 // same reason: a session that already happened offers
                 // nothing left to start.
                 practiceToday: [],
-                creating: false,
                 proposing: false,
                 archiveOpen: false,
                 settingsLoaded: false,
@@ -790,8 +903,11 @@
                     // The lesson writing pool; unset reads as the default.
                     lesson_pool: 'heavy',
                 },
-                draft: { title: '', for_member_id: '', starting_point: '', sessions_per_week: 3, minutes: 25, preferred_days: [], target_date: '' },
                 sessionOpen: {}, sessionMinutes: {},
+                // The monitoring sheet (spec §5): programs.monitor per run, the
+                // open rung, the folded log, Program settings and Change the days.
+                monitor: {}, rungOpen: {}, logOpen: {}, notice: {},
+                settingsOpen: {}, settingsDraft: {}, daysOpen: {}, daysDraft: {},
                 whyOpen: {}, editOpen: {}, edits: {},
                 slotOpen: {}, slotDraft: {},
                 // The lesson editor (Task 8): everything generation will do
@@ -851,9 +967,16 @@
                     } catch (e) { /* a parent only, then */ }
                 },
 
+                iAmAdult() {
+                    if (!this.myId) return false;
+                    const me = this.members.find(m => m.id === this.myId);
+                    return !!(me && me.role === 'adult');
+                },
+
                 // Approving is never an ownership matter -- even the program's
-                // own owner needs a parent/adult to claim the week.
-                canApprove() { return !this.myId || this.iAmParent(); },
+                // own owner needs a parent or an adult to put it on the
+                // calendar (P5; the server's rule, main.py approve_program).
+                canApprove() { return !this.myId || this.iAmParent() || this.iAmAdult(); },
 
                 async loadSettings() {
                     this.readIdentity();
@@ -890,10 +1013,12 @@
                         });
                         if (this.sheet && this.only && this.myId && !this.iAmParent())
                             await this.loadProjectOwner(this.programs.find(p => p.id === this.only));
+                        const sheetRun = this.sheet && this.only ? this.programs.find(p => p.id === this.only) : null;
                         await Promise.all([
                             ...this.programs.filter(p => p.state === 'proposed')
                                 .map(p => this.loadFootprint(p.id)),
                             this.loadPracticeToday(),
+                            ...(sheetRun && this.monitorMode(sheetRun) ? [this.loadMonitor(sheetRun.id)] : []),
                         ]);
                     } catch (e) { showGlobalAlert("Couldn't load programs."); }
                 },
@@ -1076,12 +1201,6 @@
 
                 dayLabel(d) { return ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][d] || ''; },
 
-                toggleDay(d) {
-                    const i = this.draft.preferred_days.indexOf(d);
-                    if (i === -1) this.draft.preferred_days.push(d);
-                    else this.draft.preferred_days.splice(i, 1);
-                },
-
                 fmtDate(ds) {
                     if (!ds) return '';
                     try {
@@ -1096,47 +1215,6 @@
                         return new Date(ts * 1000).toLocaleDateString(undefined,
                             { weekday: 'short', month: 'short', day: 'numeric' });
                     } catch (e) { return ''; }
-                },
-
-                blankDraft() {
-                    return { title: '', for_member_id: '', starting_point: '', sessions_per_week: 3, minutes: 25, preferred_days: [], target_date: '' };
-                },
-
-                async proposeProgram() {
-                    const title = (this.draft.title || '').trim();
-                    if (!title) { showGlobalAlert('What is the aim?'); return; }
-                    if (!this.draft.for_member_id) { showGlobalAlert('Whose program is this?'); return; }
-                    this.proposing = true;
-                    try {
-                        const r = await fetch(this.apiBase + 'api/programs', {
-                            method: 'POST', headers: this.authHeaders(),
-                            body: JSON.stringify({
-                                title, for_member_id: this.draft.for_member_id,
-                                member_id: this.myId || null,
-                                starting_point: (this.draft.starting_point || '').trim(),
-                                sessions_per_week: this.draft.sessions_per_week || 3,
-                                minutes: this.draft.minutes || 25,
-                                preferred_days: this.draft.preferred_days,
-                                target_date: this.draft.target_date || null,
-                            })
-                        });
-                        const d = await r.json().catch(() => ({}));
-                        if (!r.ok || d.status === 'error') {
-                            let msg = (d.detail || d.message || "Couldn't propose that.");
-                            if (d.alternatives && d.alternatives.length) {
-                                msg += ' Try instead: ' + d.alternatives.join('; ') + '.';
-                            }
-                            showGlobalAlert(msg);
-                            return;
-                        }
-                        this.draft = this.blankDraft();
-                        this.creating = false;
-                        await this.load();
-                    } catch (e) {
-                        showGlobalAlert("Couldn't propose that just now.");
-                    } finally {
-                        this.proposing = false;
-                    }
                 },
 
                 // Picking your own practice windows. The draft is seeded from
@@ -1213,6 +1291,278 @@
                     const l = p.current_lesson || {};
                     if (p.unresolved || !l.title) return '';
                     return l.phase_name && l.phase_name !== l.title ? l.title + ' · ' + l.phase_name : l.title;
+                },
+
+                // --- The monitoring sheet (programs brief-and-course spec §5) ---
+                monitorMode(p) {
+                    return !!(this.sheet && p && p.library_id && !p.unresolved && (p.state === 'active' || p.state === 'paused'));
+                },
+
+                async loadMonitor(id) {
+                    try {
+                        const r = await fetch(this.apiBase + `api/programs/${encodeURIComponent(id)}/monitor`, { headers: this.authHeaders() });
+                        this.monitor[id] = r.ok ? await r.json() : { failed: true };
+                    } catch (e) { this.monitor[id] = { failed: true }; }
+                },
+
+                // "Kate · Mon Wed Fri · 20 min": who, the days on the calendar, the one duration.
+                headerLine(p) {
+                    const shape = p.shape || {};
+                    const slots = (shape.slots || []).length ? shape.slots : (p.paused_slots || []);
+                    const days = [...new Set((slots.length ? slots.map(s => Number(s.day)) : (shape.preferred_days || []).map(Number)))]
+                        .sort((a, b) => a - b).map(d => this.dayLabel(d)).join(' ');
+                    return [this.memberName(p.member_id), days, (shape.minutes || 25) + ' min'].filter(Boolean).join(' · ');
+                },
+
+                tierLine(p) {
+                    const t = this.tier(p);
+                    if (t === 'generated') return 'Made by the app';
+                    if (t === 'none') return 'Practice time only · ' + ((p.source || {}).why_this_one || (p.source || {}).reason || 'no plan was found');
+                    return '';
+                },
+
+                lowerFirst(text) { return text ? text.charAt(0).toLowerCase() + text.slice(1) : ''; },
+
+                // A day as the sheet says it: the weekday within the last week, else the date.
+                shortDay(iso) {
+                    if (!iso) return '';
+                    try {
+                        const d = new Date(iso + 'T12:00:00'), today = new Date(); today.setHours(12, 0, 0, 0);
+                        const ago = Math.round((today - d) / 86400000);
+                        if (ago === 0) return 'Today';
+                        if (ago > 0 && ago < 7) return d.toLocaleDateString(undefined, { weekday: 'short' });
+                        if (ago < 0 && ago > -7) return d.toLocaleDateString(undefined, { weekday: 'short' });
+                        return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                    } catch (e) { return iso; }
+                },
+
+                clock(hhmm) {
+                    if (!hhmm) return '';
+                    return window.formatClock ? window.formatClock(hhmm) : hhmm.slice(0, 5);
+                },
+
+                duration(minutes) {
+                    const m = Math.max(0, Number(minutes) || 0), h = Math.floor(m / 60), r = m % 60;
+                    if (!h) return r + ' min';
+                    return h + ' h' + (r ? ' ' + r + ' min' : '');
+                },
+
+                // The four counts (spec §5.1 2). A count, never "N of M" (P1).
+                stats(p) {
+                    const m = this.monitor[p.id];
+                    if (!m || m.failed) return [];
+                    const n = m.sessions_this_week || 0, total = m.sessions_total || 0, nx = m.next_window;
+                    return [
+                        { key: 'last', value: m.last_practised ? this.shortDay(m.last_practised) : '—', label: m.last_practised ? 'last practised' : 'not practised yet' },
+                        { key: 'week', value: String(n), label: (n === 1 ? 'session' : 'sessions') + ' this week' },
+                        { key: 'next', value: nx ? this.shortDay(nx.date) + ' ' + this.clock(nx.time_start) : '—',
+                          label: nx ? 'next' : (p.state === 'paused' ? 'next · paused' : 'next · nothing ahead') },
+                        { key: 'total', value: String(total), label: (total === 1 ? 'session' : 'sessions') + ', ' + this.duration(m.minutes_total) },
+                    ];
+                },
+
+                // The current phase's Reached it sits beside its lit rung.
+                reachedAtRung(ph) { return !!(ph.current && (ph.lessons || []).some(l => l.current)); },
+                canJudge(p, ph) { return !ph.milestone_hit_at && (p.state === 'active' || p.state === 'paused') && this.canAct(p); },
+
+                // "Session A ✓ · Session B next": the lesson's own sessions, said in
+                // its sentence. Once the phase is all done, the person judges it.
+                rungLine(p, l) {
+                    const m = this.monitor[p.id] || {};
+                    if (l.current && m.ready_to_judge) return 'every lesson done — reached it?';
+                    const parts = [...new Set(l.logged_variants || [])].map(v => v + ' ✓');
+                    if (l.next_variant) parts.push(l.next_variant + ' next');
+                    return parts.join(' · ');
+                },
+
+                lessonOf(p, id) { return (p.lessons || []).find(x => x.id === id) || null; },
+
+                // What a rung opens onto: the lesson's steps, per session when it has several.
+                lessonParts(p, l) {
+                    const lesson = this.lessonOf(p, l.id) || {};
+                    const variants = (lesson.variants || []).filter(v => (v.steps || []).length);
+                    if (variants.length) return variants.map(v => ({ label: v.label || '', steps: v.steps || [] }));
+                    return [{ label: '', steps: lesson.steps || [] }];
+                },
+
+                toggleRung(p, l) { this.rungOpen[p.id] = this.rungOpen[p.id] === l.id ? null : l.id; },
+
+                // Preview any lesson on the ladder, as the person gets it: a fresh
+                // read of its script and the player in preview (no bookmark moves).
+                async previewLesson(p, ph, l, label) {
+                    const slot = { lesson_id: l.id, variant_label: label || '' };
+                    const lesson = this.lessonOf(p, l.id) || {};
+                    const part = this.lessonParts(p, l).find(x => x.label === (label || '')) || { steps: [] };
+                    try {
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/lesson?${new URLSearchParams(slot)}`,
+                                              { headers: this.authHeaders() });
+                        const body = r.ok ? await r.json() : {};
+                        window.dispatchEvent(new CustomEvent('lesson-player:open', { detail: {
+                            preview: true,
+                            window: { title: p.title || '', session_label: label || '', ...slot, program_id: p.id,
+                                      phase_name: ph.name || '', steps: part.steps, unit_title: lesson.title || '',
+                                      milestone: ph.milestone || '' },
+                            lesson: body.lesson || null } }));
+                    } catch (e) { showGlobalAlert("Couldn't load that lesson to preview."); }
+                },
+
+                logWhen(e) {
+                    const when = this.fmtDate(e.when) || 'A session';
+                    return e.logged_on && e.logged_on !== e.when ? when + ' (logged ' + this.fmtDate(e.logged_on) + ')' : when;
+                },
+
+                logWhat(e) {
+                    const source = { added: 'logged by hand', asked: 'from the session', ticked: 'ticked off' }[e.source] || e.source || '';
+                    const lesson = [e.lesson_title, e.variant_label].filter(Boolean).join(', ');
+                    return [(e.minutes || 0) + ' min', lesson, source, e.note].filter(Boolean).join(' · ');
+                },
+
+                async removeSession(p, e) {
+                    const ok = await promptConfirm('Remove this session?',
+                        this.logWhen(e) + ' — it comes off the log, and the lesson it counted for counts one fewer.',
+                        'Remove', 'Keep it');
+                    if (!ok) return;
+                    try {
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/sessions/${encodeURIComponent(e.id)}`,
+                                              { method: 'DELETE', headers: this.authHeaders() });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status === 'error') {
+                            showGlobalAlert(d.detail || d.message || "Couldn't remove that session.");
+                            return;
+                        }
+                        await this.load();
+                    } catch (err) { showGlobalAlert("Couldn't remove that session."); }
+                },
+
+                // ⋯ (spec §5.1 7), in this order, each offered only where it can act.
+                menuItems(p) {
+                    const items = [];
+                    const live = p.state === 'active' || p.state === 'paused';
+                    const grown = !this.myId || this.iAmParent() || this.iAmAdult();
+                    if (this.canAct(p)) {
+                        if (live) items.push({ value: 'days', label: 'Change the days' });
+                        items.push({ value: 'settings', label: 'Program settings' });
+                        if (live) items.push({ value: 'log', label: 'Log a session' });
+                        if (p.state === 'active') items.push({ value: 'start', label: 'Start a session' });
+                        if (grown) items.push({ value: 'again', label: 'Look again' });
+                        if (grown && (p.source || {}).book_spine) items.push({ value: 'nobook', label: 'Plan without the book' });
+                        if (p.state === 'active') items.push({ value: 'pause', label: 'Pause' });
+                        if (p.state === 'paused') items.push({ value: 'resume', label: 'Resume' });
+                        if (live) items.push({ value: 'done', label: 'Done with it' }, { value: 'drop', label: 'Drop' });
+                    }
+                    if (this.canDeleteRun(p) && window.chfDeleteRecord) items.push({ value: 'delete', label: 'Delete' });
+                    return items;
+                },
+
+                async menu(p) {
+                    const items = this.menuItems(p);
+                    if (!items.length) return;
+                    const pick = await promptChoice(p.title, '', items);
+                    if (!pick) return;
+                    const act = {
+                        days: () => this.changeDays(p), settings: () => this.settings(p),
+                        log: () => { this.sessionOpen[p.id] = true; },
+                        start: () => this.startSession(p), again: () => this.lookAgain(p), nobook: () => this.replanWithoutBooks(p),
+                        pause: () => this.pauseProgram(p), resume: () => this.resumeProgram(p),
+                        done: () => this.finishProgram(p), drop: () => this.dropProgram(p), delete: () => this.deleteRun(p),
+                    }[pick];
+                    if (act) return act();
+                },
+
+                settings(p) {
+                    this.daysOpen[p.id] = false;
+                    this.settingsDraft[p.id] = { starting_point: p.starting_point || '', minutes: (p.shape || {}).minutes || 25,
+                                                 target_date: (p.baseline || {}).target_date || '' };
+                    this.settingsOpen[p.id] = true;
+                },
+
+                async saveSettings(p) {
+                    const e = this.settingsDraft[p.id];
+                    if (!e) return;
+                    const shape = p.shape || {}, body = {};
+                    if ((e.starting_point || '').trim() !== (p.starting_point || '')) body.starting_point = (e.starting_point || '').trim();
+                    if ((e.minutes || 25) !== (shape.minutes || 25)) body.minutes = e.minutes;
+                    if ((e.target_date || '') !== ((p.baseline || {}).target_date || '')) body.target_date = e.target_date || null;
+                    if (!Object.keys(body).length) { this.settingsOpen[p.id] = false; return; }
+                    if (await this.patchProgram(p, body, "Couldn't save those settings.")) {
+                        this.settingsOpen[p.id] = false;
+                        this.notice[p.id] = 'Saved.';
+                    }
+                },
+
+                // Change the days (spec §5.3): seeded from the times on the calendar,
+                // else the ones a pause remembers, else what the app would propose.
+                async changeDays(p) {
+                    this.settingsOpen[p.id] = false;
+                    const shape = p.shape || {};
+                    let rows = (shape.slots || []).length ? shape.slots : (p.paused_slots || []);
+                    if (!rows.length) {
+                        try {
+                            const r = await fetch(this.apiBase + 'api/programs/preview-slots', { method: 'POST', headers: this.authHeaders(),
+                                body: JSON.stringify({ member_id: p.member_id, library_id: p.library_id, minutes: shape.minutes,
+                                                       sessions_per_week: shape.sessions_per_week }) });
+                            rows = r.ok ? ((await r.json()).slots || []) : [];
+                        } catch (e) { rows = []; }
+                    }
+                    this.daysDraft[p.id] = rows.map(s => ({ day: Number(s.day), time_start: s.time_start }));
+                    if (!this.daysDraft[p.id].length) this.addDay(p);
+                    this.daysOpen[p.id] = true;
+                },
+
+                addDay(p) {
+                    const draft = this.daysDraft[p.id] || (this.daysDraft[p.id] = []);
+                    const used = draft.map(s => s.day);
+                    const day = [0, 2, 4, 1, 3, 5, 6].find(d => !used.includes(d));
+                    const last = draft[draft.length - 1];
+                    draft.push({ day: day === undefined ? 0 : day, time_start: (last && last.time_start) || '19:00' });
+                },
+
+                async saveDays(p) {
+                    const slots = (this.daysDraft[p.id] || []).filter(s => s.time_start)
+                        .map(s => ({ day: Number(s.day), time_start: s.time_start }));
+                    this.proposing = true;
+                    try {
+                        const r = await fetch(this.apiBase + `api/programs/${p.id}/schedule`, {
+                            method: 'PATCH', headers: this.authHeaders(),
+                            body: JSON.stringify({ member_id: this.myId || null, slots }) });
+                        const d = await r.json().catch(() => ({}));
+                        if (!r.ok || d.status === 'error') {
+                            showGlobalAlert(d.detail || d.message || "Couldn't change the days.");
+                            return;
+                        }
+                        this.daysOpen[p.id] = false;
+                        this.notice[p.id] = d.message || '';
+                        await this.load();
+                    } catch (e) { showGlobalAlert("Couldn't change the days just now."); }
+                    finally { this.proposing = false; }
+                },
+
+                // Start a session (P7): the real Start, on a window chosen from the next
+                // two weeks, exactly what the phone's Start does (the slot's date kept).
+                async startSession(p) {
+                    const pad = n => String(n).padStart(2, '0');
+                    const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+                    const from = new Date(), to = new Date(); to.setDate(to.getDate() + 14);
+                    let windows = [];
+                    try {
+                        const r = await fetch(this.apiBase + `api/practice-windows?start_date=${iso(from)}&end_date=${iso(to)}`,
+                                              { headers: this.authHeaders() });
+                        windows = r.ok ? ((await r.json()).windows || []) : [];
+                    } catch (e) { windows = []; }
+                    windows = windows.filter(w => w.program_id === p.id && !w.logged)
+                        .sort((a, b) => (a.date + (a.time_start || '')).localeCompare(b.date + (b.time_start || '')));
+                    if (!windows.length) {
+                        showGlobalAlert('Nothing is on the calendar for this program in the next two weeks. Change the days, or log a session by hand.');
+                        return;
+                    }
+                    const pick = await promptChoice('Which session?', '', windows.map((w, i) => ({ value: String(i),
+                        label: this.windowDayLabel(w) + ' ' + this.clock(w.time_start) + ' · '
+                            + [w.unit_title || w.title || 'Practice', w.variant_label || w.session_label].filter(Boolean).join(', ') })));
+                    if (pick === null || pick === undefined || pick === '') return;
+                    const w = windows[Number(pick)];
+                    if (!w) return;
+                    await this.loadWindowLesson(w);
+                    window.dispatchEvent(new CustomEvent('lesson-player:open', { detail: { window: w, lesson: w._lesson || null } }));
                 },
 
                 openLibrary(id) {
@@ -1292,7 +1642,7 @@
                 // else on the card could ever try again.
                 async lookAgain(p) {
                     const ok = await promptConfirm('Look for a plan again?',
-                        'This spends one research run and makes a new library program from the same profile. Progress on this run starts over and its lesson scripts are regenerated. If nothing new turns up, the plan you have stays. The practice time is untouched.',
+                        'This spends one research pass and makes a new library program from the same profile. Progress on this program starts over and its lesson scripts are regenerated. If nothing new turns up, the plan you have stays. The practice times stay on the calendar.',
                         'Look again', 'Cancel');
                     if (!ok) return;
                     await this.patchProgram(p, { recurate: true },
@@ -1307,7 +1657,7 @@
                 // honestly rather than pretending the books were never there.
                 async replanWithoutBooks(p) {
                     const ok = await promptConfirm('Plan without the book?',
-                        'This spends one research run looking for a plan whose lessons are on free pages, made as a new library program. Progress on this run starts over and its lesson scripts are regenerated. If nothing bookless turns up, the app writes a plan and says so.',
+                        'This spends one research pass looking for a plan whose lessons are on free pages, made as a new library program. Progress on this program starts over and its lesson scripts are regenerated. If nothing bookless turns up, the app writes a plan and says so.',
                         'Look again', 'Cancel');
                     if (!ok) return;
                     await this.patchProgram(p, { recurate: true, exclude_books: true },
@@ -1357,7 +1707,7 @@
                 // because the facts differ: nothing was ever claimed.
                 async dismissProgram(p) {
                     const ok = await promptConfirm('Dismiss this proposal?',
-                        'Nothing has been claimed, so nothing comes back. It moves to the archive and the record stays.',
+                        'Nothing is on the calendar yet, so nothing comes off. It moves to the archive and the record stays.',
                         'Dismiss it', 'Cancel');
                     if (!ok) return;
                     try {
@@ -1377,7 +1727,7 @@
                 async approveProgram(p) {
                     const fp = this.footprints[p.id];
                     const ok = await promptConfirm('Approve this program?',
-                        'This claims the practice time shown above, right now.',
+                        'This puts the times shown above on ' + this.memberName(p.member_id) + '’s calendar now.',
                         'Approve', 'Cancel');
                     if (!ok) return;
                     try {
@@ -1485,8 +1835,8 @@
                 },
 
                 async finishProgram(p) {
-                    const ok = await promptConfirm('Finished?',
-                        'It goes to the archive as done, and the practice time it claimed goes back to open.',
+                    const ok = await promptConfirm('Done with it?',
+                        'It goes to the archive as done, and its practice times come off the calendar.',
                         "It's done", 'Cancel');
                     if (!ok) return;
                     try {
@@ -1503,28 +1853,9 @@
                     } catch (e) { showGlobalAlert("Couldn't finish that."); }
                 },
 
-                async reshapeProgram(p) {
-                    const ok = await promptConfirm('Re-shape the week?',
-                        'The claimed practice time goes back to open and the program returns to a proposal, so you can approve a fresh footprint.',
-                        'Re-shape it', 'Cancel');
-                    if (!ok) return;
-                    try {
-                        const r = await fetch(this.apiBase + `api/programs/${p.id}/reshape`, {
-                            method: 'POST', headers: this.authHeaders(),
-                            body: JSON.stringify({ member_id: this.myId || null })
-                        });
-                        const d = await r.json().catch(() => ({}));
-                        if (!r.ok || d.status === 'error') {
-                            showGlobalAlert(d.detail || d.message || "Couldn't re-shape that.");
-                            return;
-                        }
-                        await this.load();
-                    } catch (e) { showGlobalAlert("Couldn't re-shape that."); }
-                },
-
                 async dropProgram(p) {
                     const ok = await promptConfirm('Drop this program?',
-                        'The practice time it claimed goes back to open. The record stays.',
+                        'Its practice times come off the calendar. The record stays.',
                         'Drop it', 'Cancel');
                     if (!ok) return;
                     try {

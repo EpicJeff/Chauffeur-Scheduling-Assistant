@@ -18,19 +18,20 @@ promptConfirm, promptInput); buttons, not anchors, on the phone.
      sees, "In use by another project" otherwise; enabled and working once unused.
   6. Remove the current lesson: "{name} is on this lesson; her run moves to the next one." for a
      visible runner; a hidden runner is counted, never named.
-  7. The picker (project page, + Add -> Program): library programs (title, made-for, visible
-     runners; archived hidden) with "Make a new one" at the bottom; picking starts a proposed run.
-  8. The run's sheet (record sheet, phone): "from the library: {title}" as a button and the current
-     lesson by name under its phase ("Scales · Foundations"), never a count; the project's own row
-     is title, subtitle and when (one-list spec §1), never a count either.
+  7. The picker (project page, + Add -> Program, now the one-pass setup sheet): library programs
+     (title, made-for, visible runners; archived hidden) with "Make a new one" at the bottom; a
+     parent's pick starts the program active, a child's waits for approval.
+  8. The run's sheet (record sheet: "in the library ›" as a button and the lit rung; phone: "from
+     the library: {title}" and the current lesson by name under its phase), never a count; the
+     project's own row is title, subtitle and when (one-list spec §1), never a count either.
   9. The unresolved run: its row reads "Needs a program" with "Pick a program"; its sheet says "Its
      library program is missing" with Delete.
  10. Next / Back ("Another session on this") on the run; "Reached it" on a non-final phase keeps
      the run going.
  11. Phone: More -> Library opens the library home (buttons only).
  12. Light and dark themes, phone width (16px gutter, no horizontal scroll), screenshots inspected.
- 13. (Task 1 review) An exhausted phase reads "ready to judge: {milestone}" and never advances by
-     itself.
+ 13. (Task 1 review) An exhausted phase reads "every lesson done — reached it?" on its lit rung and
+     never advances by itself.
  14. (Task 1 review) Look again (re-curate) asks first, saying progress starts over and scripts
      are regenerated.
  15. (Task 6 review) "from the library" on the phone's run sheet closes the sheet: the library's
@@ -88,6 +89,9 @@ PIANO_ROW = _library_row(PIANO, 'Learn piano', [
      'variants': [{'label': 'Session A', 'steps': ['Right hand']}, {'label': 'Session B', 'steps': ['Left hand']}]},
     {'id': CHORDS, 'phase_id': FOUND, 'title': 'Chords', 'sessions': 1, 'steps': ['C, F and G'], 'variants': []},
     {'id': TWINKLE, 'phase_id': SONGS, 'title': 'Twinkle', 'sessions': 2, 'steps': ['The melody'], 'variants': []}])
+# The plan follows a lesson book, so the run sheet's ⋯ offers Plan without the book (P4).
+PIANO_ROW['source']['book_spine'] = 'Piano Adventures'
+KATE_SLOTS = [{'day': 0, 'time_start': '18:00'}, {'day': 2, 'time_start': '18:00'}, {'day': 4, 'time_start': '16:30'}]
 
 
 def _progress(current=SCALES, lessons=None, judged=None):
@@ -125,10 +129,16 @@ def seed():
     storage.add_library_program(_library_row(CHESS, 'Learn chess', [{'id': 'ph-open', 'name': 'Openings', 'weeks': 2, 'steps': [], 'milestone': 'Plays a game'}],
                                              [{'id': 'ls-open', 'phase_id': 'ph-open', 'title': 'The opening', 'sessions': 1, 'steps': ['Centre pawns'], 'variants': []}],
                                              origin='cited'))
-    _run('run-kate', 'kate', PIANO, 'prj-piano', _progress())
+    # Kate's run is on the calendar for real: approved on three windows, so Change the days
+    # has commitments to release and claim (programs spec §5.3).
+    _run('run-kate', 'kate', PIANO, 'prj-piano', _progress(), state='proposed')
     _run('run-sam', 'sam', PIANO, 'prj-sam', _progress())
     _run('run-sam-drums', 'sam', DRUMS, 'prj-sam', {'current': 'ls-beat', 'lessons': {}, 'phases': {'ph-beat': {'weeks': 2, 'milestone_hit_at': None}}})
     _run('run-lost', 'kate', 'lib-gone', 'prj-piano')
+    from services import programs
+    approved = programs.approve('run-kate', 'mom', slots=KATE_SLOTS)
+    check(approved['status'] == 'success' and storage.get_program('run-kate')['emissions']['commitment_ids'],
+          f"the fixture's run claims its windows: {approved}")
     storage.set_app_state('projects_adopted_rev', 1)   # the startup migration must not re-wrap the fixture
 
 
@@ -285,35 +295,36 @@ def scenario_a_new_program_says_what_the_household_will_see():
         check('First notes' in page.locator('[data-library-detail]').inner_text(), "and it opens on its lessons")
         check(served.errors() == [], f"no page errors: {served.errors()}")
 
-    # The project's Make a new one: the person's band, and the private starting point.
+    # The project's Make a new one (the setup sheet's): the person's band, and the private starting point.
     with served.browser() as page:
         _project(page, served, 'mom')
         page.locator('[data-project-add]').click()
         page.locator('[data-prompt-choice]', has_text='Program').first.click()
-        form = page.locator('[data-piece-form="program"]')
+        form = page.locator('[data-setup-sheet]')
         form.wait_for(state='visible')
-        page.wait_for_selector('[data-library-pick]', timeout=10000)
-        form.locator('select[name="for_member_id"]').select_option('kate')
-        form.locator('[data-library-make-new]').click()
-        fresh = form.locator('[data-library-new]')
+        page.wait_for_selector('[data-setup-pick]', timeout=10000)
+        form.locator('[data-setup-who]').select_option('kate')
+        form.locator('[data-setup-make-new]').click()
+        fresh = form.locator('[data-setup-new]')
         fresh.wait_for(state='visible')
         check(fresh.locator('select[name="age_band"]').input_value() == 'explorer', "Kate's band comes from her birthdate")
-        check(fresh.locator('[data-private-label]').inner_text() == "stays private to Kate's run", "the starting point is Kate's alone")
+        check(form.locator('[data-private-label]').inner_text() == "stays private to Kate's program", "the starting point is Kate's alone")
         line, title = fresh.locator('[data-visibility-line]'), fresh.locator('input[name="title"]')
         check(line.evaluate('(el, t) => !!(el.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING)', title.element_handle()),
               "the publication line sits above the title here too")
-        form.locator('select[name="for_member_id"]').select_option('sam')
+        form.locator('[data-setup-who]').select_option('sam')
         check(fresh.locator('select[name="age_band"]').input_value() == 'any', "no birthdate on file: any")
-        check(fresh.locator('[data-private-label]').inner_text() == "stays private to Sam's run", "the label follows the person")
-        form.locator('select[name="for_member_id"]').select_option('kate')
+        check(form.locator('[data-private-label]').inner_text() == "stays private to Sam's program", "the label follows the person")
+        form.locator('[data-setup-who]').select_option('kate')
         title.fill('Learn violin')
         check(line.inner_text() == 'Everyone in the household will see this program as: Learn violin', "the line follows")
-        fresh.locator('input[name="starting_point"]').fill('knows the open strings')
-        fresh.locator('[data-piece-create]').click()
+        form.locator('input[name="starting_point"]').fill('knows the open strings')
+        shot(page, 'setup-sheet-make-new')
+        form.locator('[data-setup-start]').click()
         lib = _wait(lambda: [r for r in storage.get_library_programs() if r['title'] == 'Learn violin'], "the violin program was made")[0]
         run = _wait(lambda: [r for r in storage.get_programs(include_finished=True) if r.get('library_id') == lib['id']], "and a run")[0]
-        check(run['member_id'] == 'kate' and run['state'] == 'proposed' and run['starting_point'] == 'knows the open strings',
-              f"Kate's proposed run carries her starting point: {run}")
+        check(run['member_id'] == 'kate' and run['state'] == 'active' and run['starting_point'] == 'knows the open strings',
+              f"Kate's program starts in one pass and carries her starting point: {run}")
         check('open strings' not in repr(lib) and lib['made_for']['age_band'] == 'explorer', f"the library row never does: {lib}")
         page.wait_for_selector(f'[data-row="program:{run["id"]}"]', timeout=10000)
         check(served.errors() == [], f"no page errors: {served.errors()}")
@@ -400,9 +411,9 @@ def scenario_archive_leaves_the_picker_not_the_library():
         _project(page, served, 'mom')
         page.locator('[data-project-add]').click()
         page.locator('[data-prompt-choice]', has_text='Program').first.click()
-        page.wait_for_selector('[data-library-pick]', timeout=10000)
-        picks = page.locator('[data-library-pick]')
-        ids = [picks.nth(i).get_attribute('data-library-id') for i in range(picks.count())]
+        page.wait_for_selector('[data-setup-pick]', timeout=10000)
+        picks = page.locator('[data-setup-pick]')
+        ids = [picks.nth(i).get_attribute('data-setup-pick') for i in range(picks.count())]
         check(CHESS not in ids and PIANO in ids, f"the archived program is not offered: {ids}")
         check(served.errors() == [], f"no page errors: {served.errors()}")
 
@@ -436,7 +447,7 @@ def scenario_delete_waits_until_nobody_runs_it():
 
 
 # 7 -------------------------------------------------------------------------
-def scenario_the_picker_starts_a_proposed_run():
+def scenario_the_picker_starts_the_program():
     served = serve()
     if served is None:
         return
@@ -444,29 +455,28 @@ def scenario_the_picker_starts_a_proposed_run():
         _project(page, served, 'mom')
         page.locator('[data-project-add]').click()
         page.locator('[data-prompt-choice]', has_text='Program').first.click()
-        form = page.locator('[data-piece-form="program"]')
-        page.wait_for_selector('[data-library-pick]', timeout=10000)
-        row = form.locator(f'[data-library-pick][data-library-id="{PIANO}"]')
+        form = page.locator('[data-setup-sheet]')
+        page.wait_for_selector('[data-setup-pick]', timeout=10000)
+        row = form.locator(f'[data-setup-pick="{PIANO}"]')
         text = row.inner_text()
         check('Learn piano' in text and 'Made for ages' in text and 'Running it: Kate and Sam' in text,
               f"title, made-for and visible runners: {text}")
-        order = form.evaluate("""f => [...f.querySelectorAll('[data-library-pick], [data-library-make-new]')]
-                                     .map(el => el.hasAttribute('data-library-make-new') ? 'new' : 'pick')""")
+        order = form.evaluate("""f => [...f.querySelectorAll('[data-setup-pick], [data-setup-make-new]')]
+                                     .map(el => el.hasAttribute('data-setup-make-new') ? 'new' : 'pick')""")
         check(order[-1] == 'new' and order.count('new') == 1, f"Make a new one comes after the list: {order}")
-        form.scroll_into_view_if_needed()
         shot(page, 'library-picker-dark')
         before = {r['id'] for r in storage.get_programs(include_finished=True)}
         row.click()
+        page.wait_for_selector('[data-setup-slot]', timeout=10000)
+        form.locator('[data-setup-start]').click()
         run = _wait(lambda: [r for r in storage.get_programs(include_finished=True) if r['id'] not in before], "a run")[0]
-        check(run['library_id'] == PIANO and run['member_id'] == 'mom' and run['state'] == 'proposed'
-              and run['shape']['minutes'] == 20, f"a proposed run with the program's defaults: {run}")
+        check(run['library_id'] == PIANO and run['member_id'] == 'mom' and run['state'] == 'active'
+              and run['shape']['minutes'] == 20, f"a parent's pick starts the program with its defaults: {run}")
         check(run['project_id'] == 'prj-piano', "in this project")
         piece = page.locator(f'[data-row="program:{run["id"]}"]')
-        piece.wait_for(state='visible', timeout=10000)
-        # One-list rows (spec §1): a proposed run reads "needs approval" with its Approve button.
-        check('needs approval' in piece.inner_text() and piece.locator('[data-row-action="approve"]').count() == 1,
-              f"and it lands in the approve flow: {piece.inner_text()}")
-        storage.set_app_state('library_live_picked', run['id'])
+        piece.first.wait_for(state='visible', timeout=10000)
+        check(page.locator(f'[data-row="program:{run["id"]}"] [data-row-action="approve"]').count() == 0,
+              f"nothing left to approve: {piece.first.inner_text()}")
         check(served.errors() == [], f"no page errors: {served.errors()}")
     with served.browser() as page:
         page.set_viewport_size({'width': 390, 'height': 844})
@@ -482,9 +492,14 @@ def scenario_the_picker_starts_a_proposed_run():
         page.wait_for_selector('[data-project-add]', timeout=10000)
         page.locator('[data-project-add]').click()
         page.locator('[data-pick]', has_text='Program').first.click()
-        page.wait_for_selector('[data-library-pick]', timeout=10000)
-        check(page.locator('[data-library-make-new], [data-library-new]').count() == 0, "a child picks; she never makes one")
-        check(page.locator(f'[data-library-pick][data-library-id="{PIANO}"]').count() == 1, "from the same library")
+        page.wait_for_selector('[data-setup-pick]', timeout=10000)
+        check(page.locator('[data-setup-make-new], [data-setup-new]').count() == 0, "a child picks; she never makes one")
+        check(page.locator(f'[data-setup-pick="{PIANO}"]').count() == 1, "from the same library")
+        check(page.locator('[data-setup-who]').is_disabled() and page.locator('[data-setup-who] option').count() == 1,
+              "she starts one for herself only")
+        check(page.locator('[data-setup-start]').inner_text().strip() == 'Ask to start the program', "and asks rather than starts")
+        width = page.evaluate('() => [document.documentElement.scrollWidth, window.innerWidth]')
+        check(width[0] <= width[1], f"no horizontal scroll on the phone: {width}")
         shot(page, 'library-picker-child-phone-dark')
         mine = [u for u in refused if '/library' in u or '/programs' in u or '/projects' in u]
         check(mine == [], f"nothing on these surfaces is refused: {mine}")
@@ -509,10 +524,10 @@ def scenario_the_run_card_names_the_lesson():
         shot(page, 'run-card-admin-dark')
         page.locator('[data-piece-open="program:run-kate"]').click()
         sheet = page.locator('[data-record-sheet]')
-        page.wait_for_selector('[data-record-sheet] [data-current-lesson]', timeout=15000)
-        page.wait_for_function("() => (document.querySelector('[data-record-sheet] [data-current-lesson]') || {}).innerText === 'Scales · Foundations'", timeout=15000)
+        page.wait_for_selector(f'[data-record-sheet] [data-monitor-phase="{FOUND}"] [data-rung-current][data-rung="{SCALES}"]', timeout=15000)
+        check(sheet.locator('[data-monitor]').inner_text().startswith('Learn piano'), "the program's name heads the sheet")
         link = sheet.locator('[data-library-link]')
-        check(link.evaluate('el => el.tagName') == 'BUTTON' and link.inner_text() == 'from the library: Learn piano',
+        check(link.evaluate('el => el.tagName') == 'BUTTON' and link.inner_text().strip() == 'in the library ›',
               f"the library link is a button: {link.inner_text()}")
         body = sheet.inner_text()
         check(not COUNT.search(body), f"no count in the sheet either: {body[:400]}")
@@ -641,10 +656,11 @@ def scenario_an_exhausted_phase_waits_for_judgement():
             page.locator('[data-piece-open="program:run-kate"]').click()
             page.wait_for_selector('[data-record-sheet] [data-ready-to-judge]', timeout=15000)
             page.wait_for_function("() => (document.querySelector('[data-record-sheet] [data-ready-to-judge]') || {}).offsetParent !== null", timeout=15000)
-            check(page.locator('[data-record-sheet] [data-ready-to-judge]').inner_text() == 'ready to judge: Plays a C scale hands together',
+            check(page.locator('[data-record-sheet] [data-ready-to-judge]').inner_text().strip() == '· every lesson done — reached it?',
                   "the phase waits on the person")
-            check(page.locator('[data-record-sheet] [data-current-lesson]').inner_text().endswith('· Foundations'),
-                  "and has not moved on by itself")
+            check(page.locator(f'[data-record-sheet] [data-monitor-phase="{FOUND}"] [data-rung-current]').get_attribute('data-rung') == CHORDS
+                  and page.locator(f'[data-record-sheet] [data-monitor-phase="{FOUND}"] [data-reached-it="{FOUND}"]').count() == 1,
+                  "and has not moved on by itself: Reached it is beside the lit rung")
             shot(page, 'run-ready-to-judge-dark')
             check(storage.get_program('run-kate')['progress']['phases'][FOUND]['milestone_hit_at'] is None, "nothing was judged for her")
             check(served.errors() == [], f"no page errors: {served.errors()}")
@@ -666,21 +682,19 @@ def scenario_next_back_and_reached_it():
             page.wait_for_selector('[data-record-sheet] [data-unit-move="next"]', state='attached', timeout=15000)
             sheet.locator('[data-unit-move="next"]:visible').click()
             _wait(lambda: storage.get_program('run-kate')['progress']['current'] == CHORDS, "Next moves one lesson on")
-            chords = next(l['title'] for l in storage.get_library_program(PIANO)['lessons'] if l['id'] == CHORDS)
-            page.wait_for_function("(want) => (document.querySelector('[data-record-sheet] [data-current-lesson]') || {}).innerText === want",
-                                   arg=chords + ' · Foundations', timeout=10000)
+            page.wait_for_selector(f'[data-record-sheet] [data-monitor-phase="{FOUND}"] [data-rung-current][data-rung="{CHORDS}"]', timeout=10000)
             back = sheet.locator('[data-unit-move="back"]:visible')
             check(back.inner_text().strip() == 'Another session on this', "Back keeps its name")
             back.click()
             _wait(lambda: storage.get_program('run-kate')['progress']['current'] == SCALES, "Back moves one lesson back")
-            page.wait_for_function("() => (document.querySelector('[data-record-sheet] [data-current-lesson]') || {}).innerText === 'Scales · Foundations'", timeout=10000)
+            page.wait_for_selector(f'[data-record-sheet] [data-monitor-phase="{FOUND}"] [data-rung-current][data-rung="{SCALES}"]', timeout=10000)
             sheet.locator(f'[data-reached-it="{FOUND}"]').click()
             _confirm_text(page)
             page.locator('#cc-confirm-execute-btn').click()
             run = _wait(lambda: (lambda r: r if r['progress']['phases'][FOUND].get('milestone_hit_at') else None)(storage.get_program('run-kate')),
                         "Reached it judges the phase by its id")
             check(run['state'] == 'active' and run['progress']['current'] == TWINKLE, f"a non-final phase keeps the run going: {run['state']} {run['progress']}")
-            page.wait_for_function("() => (document.querySelector('[data-record-sheet] [data-current-lesson]') || {}).innerText === 'Twinkle · Songs'", timeout=10000)
+            page.wait_for_selector(f'[data-record-sheet] [data-monitor-phase="{SONGS}"] [data-rung-current][data-rung="{TWINKLE}"]', timeout=10000)
             shot(page, 'run-sheet-reached-it-dark')
             check(served.errors() == [], f"no page errors: {served.errors()}")
     finally:
@@ -740,7 +754,7 @@ def scenario_an_unresolved_run_can_be_deleted_or_rebound():
         _wait(lambda: storage.get_program('run-lost')['library_id'] == PIANO, "rebound to the program picked")
         page.wait_for_function("() => ![...document.querySelectorAll('[data-row=\"program:run-lost\"]')].some(r => r.innerText.includes('Needs a program'))", timeout=10000)
         page.locator('[data-piece-open="program:run-lost"]').click()
-        page.wait_for_function("() => { const c = document.querySelector('[data-record-sheet] [data-library-link]'); return c && c.offsetParent !== null && c.innerText.includes('Learn piano'); }", timeout=10000)
+        page.wait_for_function("() => { const c = document.querySelector('[data-record-sheet] [data-monitor]'); return c && c.offsetParent !== null && c.innerText.startsWith('Learn piano') && !!c.querySelector('[data-library-link]'); }", timeout=10000)
         check(served.errors() == [], f"no page errors: {served.errors()}")
     storage.update_program('run-lost', {'library_id': 'lib-gone'})
     from services import library
@@ -822,21 +836,122 @@ def scenario_look_again_says_progress_starts_over():
         check(sheet.locator('input[placeholder="The aim"]').count() == 0, "no aim to type")
         sheet.get_by_role('button', name='Look again', exact=True).click()
         text = _confirm_text(page)
-        check('Progress on this run starts over' in text and 'regenerated' in text, f"Look again says what it costs: {text}")
+        check('new library program' in text and 'Progress on this program starts over' in text and 'regenerated' in text,
+              f"Look again says what it costs: {text}")
         shot(page, 'run-look-again-confirm-dark')
         page.locator('#cc-confirm-cancel-btn').click()
         check(storage.get_program(picked)['library_id'] == PIANO, "Not now changes nothing")
         check(served.errors() == [], f"no page errors: {served.errors()}")
 
 
+# Programs brief-and-course spec §4: one-pass setup ---------------------------
+def scenario_setup_sheet_lands_active():
+    served = serve()
+    if served is None:
+        return
+    with served.browser() as page:
+        admin(page, served, 'mom')
+        page.goto(served.url('projects?id=prj-piano'), wait_until='load')
+        page.wait_for_selector('[data-project-add]', timeout=15000)
+        page.locator('[data-project-add]').click()
+        page.wait_for_selector('#cc-choice-modal:not(.hidden)', timeout=5000)
+        page.locator('#cc-choice-modal button', has_text='Program').click()
+        page.wait_for_selector('[data-setup-sheet]', timeout=10000)
+        page.locator('[data-setup-who]').select_option('sam')
+        page.locator(f'[data-setup-pick="{DRUMS}"]').click()
+        page.wait_for_selector('[data-setup-slot]', timeout=10000)
+        n = page.locator('[data-setup-slot]').count()
+        check(n >= 1, "the app proposed days once who and which are chosen")
+        page.locator('[data-setup-slot]').first.locator('[data-slot-day]').select_option('4')
+        shot(page, 'setup-sheet-filled')
+        on_screen = sorted({(int(v), t) for v, t in page.evaluate("""() => [...document.querySelectorAll('[data-setup-slot]')]
+            .map(r => [r.querySelector('[data-slot-day]').value, r.querySelector('[data-slot-time]').value])""")})
+        page.locator('[data-setup-start]').click()
+        page.wait_for_selector('[data-setup-sheet]', state='detached', timeout=15000)
+        from services import storage
+        run = next(r for r in storage.get_programs(include_finished=True) if r['member_id'] == 'sam' and r['library_id'] == DRUMS and r['project_id'] == 'prj-piano')
+        check(run['state'] == 'active' and run['emissions']['commitment_ids'], f"one pass, active: {run['state']}")
+        claimed = sorted((x['day'], x['time_start']) for x in run['shape']['slots'])
+        check(claimed == on_screen and any(d == 4 for d, _ in claimed), f"the times on the sheet are the times claimed: {claimed} vs {on_screen}")
+        shot(page, 'setup-sheet-active')
+        check(served.errors() == [], f"no page errors: {served.errors()}")
+
+
+def scenario_setup_preview_failure_shows_retry():
+    served = serve()
+    if served is None:
+        return
+    with served.browser() as page:
+        admin(page, served, 'mom')
+        page.route('**/api/programs/preview-slots', lambda route: route.fulfill(status=500, body='{}'))
+        page.goto(served.url('projects?id=prj-piano'), wait_until='load')
+        page.locator('[data-project-add]').click()
+        page.locator('#cc-choice-modal button', has_text='Program').click()
+        page.locator(f'[data-setup-pick="{DRUMS}"]').click()
+        page.wait_for_selector('[data-setup-retry]', timeout=10000)
+        check("Couldn't look at the week" in page.locator('[data-setup-sheet]').inner_text(), "the failure is said, with Retry")
+        shot(page, 'setup-sheet-retry')
+
+
+# Programs brief-and-course spec §5: the monitoring sheet ---------------------
+def scenario_monitoring_sheet():
+    served = serve()
+    if served is None:
+        return
+    _reset_kate()
+    with served.browser() as page:
+        admin(page, served, 'mom')
+        page.goto(served.url(f'projects?id=prj-piano&piece=program:run-kate'), wait_until='load')
+        page.wait_for_selector('[data-record-sheet][data-open="true"] [data-monitor-stats]', timeout=15000)
+        sheet = page.locator('[data-record-sheet]')
+        text = sheet.inner_text()
+        for word in ('Re-shape', 'claim', 'footprint', 'ready to judge', 'rotation'):
+            check(word not in text, f"no '{word}' on the sheet")
+        check(page.locator('[data-reached-it]').count() == 2, "Reached it on every unjudged phase (P2)")
+        check(page.locator('[data-rung-current]').count() == 1, "one lit rung")
+        check(sheet.locator('button:visible').count() <= 8, f"a monitoring sheet, not a button wall: {sheet.locator('button:visible').count()}")
+        stats = sheet.locator('[data-monitor-stats]').inner_text()
+        check('sessions this week' in stats and ' of ' not in stats, f"a count, never a fraction (P1): {stats}")
+        page.locator('[data-run-menu]').click()
+        page.wait_for_selector('#cc-choice-modal:not(.hidden)', timeout=5000)
+        labels = page.locator('#cc-choice-modal button').all_inner_texts()
+        for want in ('Change the days', 'Program settings', 'Log a session', 'Start a session', 'Look again', 'Plan without the book', 'Pause', 'Done with it', 'Drop', 'Delete'):
+            check(any(want in l for l in labels), f"⋯ holds {want}: {labels}")
+        page.keyboard.press('Escape')
+        shot(page, 'monitor-sheet')
+        check(served.errors() == [], f"no page errors: {served.errors()}")
+
+
+def scenario_change_the_days_from_the_sheet():
+    served = serve()
+    if served is None:
+        return
+    with served.browser() as page:
+        admin(page, served, 'mom')
+        page.goto(served.url(f'projects?id=prj-piano&piece=program:run-kate'), wait_until='load')
+        page.wait_for_selector('[data-run-menu]', timeout=15000)
+        page.locator('[data-run-menu]').click()
+        page.locator('#cc-choice-modal button', has_text='Change the days').click()
+        page.wait_for_selector('[data-days-editor] [data-setup-slot]', timeout=10000)
+        page.locator('[data-days-editor] [data-setup-slot]').first.locator('[data-slot-day]').select_option('6')
+        shot(page, 'monitor-change-the-days')
+        page.locator('[data-days-save]').click()
+        page.wait_for_selector('[data-days-editor]', state='detached', timeout=10000)
+        from services import storage
+        check(6 in storage.get_program('run-kate')['shape']['preferred_days'], "the days changed in one write")
+        check(served.errors() == [], f"no page errors: {served.errors()}")
+
+
 SCENARIOS = [scenario_the_library_page_lists_each_program, scenario_a_new_program_says_what_the_household_will_see,
              scenario_editing_a_program_inline, scenario_archive_leaves_the_picker_not_the_library,
-             scenario_delete_waits_until_nobody_runs_it, scenario_the_picker_starts_a_proposed_run,
+             scenario_delete_waits_until_nobody_runs_it, scenario_the_picker_starts_the_program,
              scenario_the_run_card_names_the_lesson, scenario_an_exhausted_phase_waits_for_judgement,
              scenario_next_back_and_reached_it, scenario_look_again_says_progress_starts_over,
              scenario_a_library_edit_reaches_a_paused_runs_phone_card,
              scenario_removing_the_current_lesson_says_who_is_on_it, scenario_an_unresolved_run_can_be_deleted_or_rebound,
-             scenario_the_phone_library_home_light_and_dark]
+             scenario_the_phone_library_home_light_and_dark,
+             scenario_setup_sheet_lands_active, scenario_setup_preview_failure_shows_retry,
+             scenario_monitoring_sheet, scenario_change_the_days_from_the_sheet]
 
 if __name__ == "__main__":
     import traceback

@@ -606,18 +606,58 @@ def scenario_a_body_aim_is_refused_on_an_edit_too():
     check(loaded(pid)['title'] == 'Guitar', "and nothing moved")
 
 
-def scenario_only_a_proposal_is_editable():
-    """Once time is claimed, changing the plan under it would move windows
-    nobody re-approved. `reshape` is the way back, and it frees the time."""
+def scenario_a_program_under_way_takes_its_settings_not_its_days():
+    """Program settings (programs spec P4): on an active or paused run the edit
+    route takes exactly the starting point, the minutes and the target date.
+    The minutes move every window already on the calendar in the same write;
+    the days, the count and the windows stay Change the days' (PATCH /schedule).
+    A finished run is not editable, and a child keeper cannot stretch time a
+    parent put on the calendar."""
+    from services import programs
     _reset()
-    import main
-    pid = add_run({'member_id': 'kid', 'title': 'Guitar',
-                               'state': 'active'})
-    res = main.edit_program(pid, body={'member_id': 'mom', 'minutes': 45},
-                             request=None)
-    check(res.get('status') == 'error', f"an active program is not editable: {res}")
-    check(storage.get_program(pid).get('shape', {}).get('minutes') != 45,
-          "and nothing moved")
+    pid = add_run({'member_id': 'kid', 'title': 'Guitar', 'state': 'proposed',
+                   'shape': {'minutes': 20, 'sessions_per_week': 2, 'preferred_days': []}})
+    approved = programs.approve(pid, 'mom', slots=[{'day': 0, 'time_start': '18:00'}, {'day': 3, 'time_start': '17:30'}])
+    check(approved['status'] == 'success', f"the fixture is on the calendar: {approved}")
+    ids = storage.get_program(pid)['emissions']['commitment_ids']
+
+    response = _post_program_as('mom', pid, 'edit', {'minutes': 45, 'starting_point': 'knows three chords',
+                                                     'target_date': '2027-01-10'})
+    check(response.status_code == 200 and response.json()['status'] == 'success', f"settings save: {response.text}")
+    row = storage.get_program(pid)
+    check(row['state'] == 'active' and row['shape']['minutes'] == 45 and row['starting_point'] == 'knows three chords'
+          and row['baseline']['target_date'] == '2027-01-10', f"the three settings are written: {row}")
+    check(sorted((s['day'], s['time_start'], s['time_end']) for s in row['shape']['slots'])
+          == [(0, '18:00', '18:45'), (3, '17:30', '18:15')], f"the chosen windows keep their starts: {row['shape']}")
+    ends = sorted((storage.get_protected_commitment(c)['time_start'], storage.get_protected_commitment(c)['time_end']) for c in ids)
+    check(row['emissions']['commitment_ids'] == ids and ends == [('17:30', '18:15'), ('18:00', '18:45')],
+          f"the same windows on the calendar now run 45 minutes: {ends}")
+
+    before = storage.get_program(pid)
+    for refused in ({'sessions_per_week': 4}, {'preferred_days': [5]}, {'slots': [{'day': 5, 'time_start': '09:00'}]}):
+        response = _post_program_as('mom', pid, 'edit', refused)
+        check(response.status_code == 200 and response.json()['status'] == 'error'
+              and 'Change the days' in response.json()['message'], f"the days are Change the days': {refused} {response.text}")
+    check(storage.get_program(pid) == before, "and a refused edit moves nothing")
+
+    response = _post_program_as('kid', pid, 'edit', {'minutes': 90})
+    check(response.status_code == 200 and response.json()['status'] == 'error', f"a child keeper cannot stretch claimed time: {response.text}")
+    response = _post_program_as('kid', pid, 'edit', {'starting_point': 'knows four chords'})
+    check(response.status_code == 200 and response.json()['status'] == 'success'
+          and storage.get_program(pid)['starting_point'] == 'knows four chords', f"but keeps their own starting point: {response.text}")
+    check(storage.get_program(pid)['shape']['minutes'] == 45, "and the minutes stayed")
+
+    programs.pause(pid)
+    response = _post_program_as('mom', pid, 'edit', {'minutes': 30})
+    paused = storage.get_program(pid)
+    check(response.json()['status'] == 'success' and paused['shape']['minutes'] == 30
+          and sorted((s['day'], s['time_end']) for s in paused['paused_slots']) == [(0, '18:30'), (3, '18:00')],
+          f"a paused run's remembered windows follow the minutes: {paused.get('paused_slots')}")
+
+    storage.update_program(pid, {'state': 'done'})
+    response = _post_program_as('mom', pid, 'edit', {'minutes': 15})
+    check(response.json()['status'] == 'error' and storage.get_program(pid)['shape']['minutes'] == 30,
+          f"a finished program is not editable: {response.text}")
 
 
 def scenario_a_child_cannot_edit_a_siblings_proposal():
@@ -1055,7 +1095,7 @@ if __name__ == '__main__':
     scenario_an_edit_of_the_minutes_keeps_the_chosen_windows()
     scenario_a_slot_list_from_a_request_cannot_reach_the_solver_unchecked()
     scenario_a_body_aim_is_refused_on_an_edit_too()
-    scenario_only_a_proposal_is_editable()
+    scenario_a_program_under_way_takes_its_settings_not_its_days()
     scenario_a_child_cannot_edit_a_siblings_proposal()
     scenario_dismissing_a_proposal_is_reachable_and_honest()
     scenario_a_child_cannot_read_a_siblings_footprint()

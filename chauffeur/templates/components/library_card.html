@@ -195,6 +195,13 @@
             }
             window.location.href = base() + 'library' + (id ? '?id=' + encodeURIComponent(id) : '');
         },
+        // The one-pass setup sheet (components/program_setup_sheet.html) on
+        // this program; the host includes the sheet once.
+        openSetup(libraryId, opts) {
+            if (!window.chfProgramSetup) return false;
+            window.chfProgramSetup.open({...(opts || {}), libraryId});
+            return true;
+        },
         openProject(id) {
             if (phone()) {
                 if (typeof window.chfPhoneCloseSheets === 'function') window.chfPhoneCloseSheets();
