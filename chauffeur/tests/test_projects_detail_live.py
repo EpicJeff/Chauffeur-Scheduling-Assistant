@@ -17,11 +17,13 @@ def scenario_detail_is_one_list():
         page.wait_for_selector('[data-project-detail]', timeout=15000)
         page.wait_for_selector('[data-row]', timeout=15000)
         buttons = page.locator('[data-project-detail] button:visible')
-        rows = page.locator('[data-row]')
+        rows = page.locator('[data-row]:visible')
         n_rows, n_buttons = rows.count(), buttons.count()
-        asking = page.locator('[data-row-box][data-box-state="asking"]').count()
-        # box + title per row, the ⋯, + Add and the back link, plus asking rows' own buttons
-        check(n_buttons <= 2 * n_rows + 3 + 3 * asking, f"{n_buttons} buttons for {n_rows} rows ({asking} asking)")
+        asking = page.locator('[data-row-box][data-box-state="asking"]:visible').count()
+        toggle = page.locator('[data-row-group-section="logbook"] > button:visible').count()
+        # box + title per visible row, the ⋯, + Add, the back link and the Logbook toggle, plus asking rows' own buttons
+        check(n_buttons <= 2 * n_rows + 3 + toggle + 3 * asking,
+              f"{n_buttons} buttons for {n_rows} visible rows ({asking} asking, {toggle} Logbook toggle)")
         check(page.locator('[data-project-menu]').count() == 1 and page.locator('[data-project-add]').count() == 1, "one ⋯ and one + Add")
         check(page.locator('[data-new-project]').count() == 0, "no New project accordion on the detail")
         groups = [g for g in ('now', 'next', 'later', 'linked', 'logbook') if page.locator(f'[data-row-group="{g}"]').count()]
@@ -93,18 +95,32 @@ def scenario_conversation_ticks_and_unticks():
         row = page.locator(f'[data-row="conversation:{tid}"]')
         row.wait_for(timeout=15000)
         check(row.locator('[data-row-box]').get_attribute('data-box-state') == 'open', "the next step is open")
+        # Answered: the successor is set through /advance and becomes the row.
+        successor = 'Send Ace the floor plan'
         row.locator('[data-row-box]').click()
         page.locator('#cc-input-modal:not(.hidden)').wait_for(timeout=10000)
         check("What's next with Ace Tile?" in page.locator('#cc-input-title').inner_text(), "it asks for the successor")
+        with page.expect_response(lambda r: r.request.method == 'POST' and r.url.endswith(f'api/threads/{tid}/advance'), timeout=10000) as adv:
+            page.locator('#cc-input-field').fill(successor)
+            page.locator('#cc-input-ok-btn').click()
+        check(adv.value.status == 200, f"the successor was saved: {adv.value.status} {adv.value.text()}")
+        page.wait_for_function("""({sel, text}) => { const t = document.querySelector(sel + ' [data-row-title]');
+            const b = document.querySelector(sel + ' [data-row-box]');
+            return t && b && t.innerText.trim() === text && b.dataset.boxState === 'open'; }""",
+                               arg={'sel': f'[data-row="conversation:{tid}"]', 'text': successor}, timeout=10000)
+        check(storage.get_thread(tid).get('next_action') == successor, f"the thread carries the successor: {storage.get_thread(tid)}")
+        # Left empty: the finished step reads done in the Logbook until it is unticked.
+        row.locator('[data-row-box]').click()
+        page.locator('#cc-input-modal:not(.hidden)').wait_for(timeout=10000)
         page.locator('#cc-input-cancel-btn').click()
         page.wait_for_selector(f'[data-row="conversation:{tid}"][data-row-group="logbook"] [data-row-box][data-box-state="done"]:not([disabled])',
                                timeout=10000)
         check(not storage.get_thread(tid).get('next_action'), "the next step was finished")
-        check('Call Ace back' in row.inner_text(), f"the done row keeps the step's words: {row.inner_text()}")
+        check(successor in row.inner_text(), f"the done row keeps the step's words: {row.inner_text()}")
         shot(page, 'one-list-conversation-done')
         row.locator('[data-row-box]').click()
         page.wait_for_selector(f'[data-row="conversation:{tid}"] [data-row-box][data-box-state="open"]', timeout=10000)
-        check(storage.get_thread(tid).get('next_action') == 'Call Ace back', f"the untick restored it: {storage.get_thread(tid)}")
+        check(storage.get_thread(tid).get('next_action') == successor, f"the untick restored it: {storage.get_thread(tid)}")
         check(served.errors() == [], f"no page errors: {served.errors()}")
 
 
@@ -142,6 +158,41 @@ def scenario_asking_row_posts_through_the_situation():
         check(served.errors() == [], f"no page errors: {served.errors()}")
 
 
+def scenario_add_a_step_to_a_paused_project():
+    served = serve()
+    if served is None:
+        return
+    pid = 'prj-bike'
+    original = storage.get_project(pid)['state']
+    storage.update_project(pid, {'state': 'paused'})
+    try:
+        with served.browser() as page:
+            admin(page, served, 'mom')
+            page.goto(served.url('projects?id=' + pid), wait_until='load')
+            page.wait_for_selector('[data-project-add]', timeout=15000)
+            page.locator('[data-project-add]').click()
+            page.wait_for_selector('#cc-choice-modal:not(.hidden)', timeout=5000)
+            labels = [l.strip() for l in page.locator('#cc-choice-modal [data-prompt-choice]').all_inner_texts()]
+            check(labels == ['Step'], f"a paused project takes steps only: {labels}")
+            page.locator('[data-prompt-choice]', has_text='Step').first.click()
+            page.locator('#cc-input-modal:not(.hidden)').wait_for(timeout=5000)
+            page.locator('#cc-input-field').fill('Oil the chain')
+            page.locator('#cc-input-ok-btn').click()
+            page.wait_for_selector('#cc-choice-modal:not(.hidden)', timeout=5000)
+            page.locator('[data-prompt-choice]', has_text='Kate').first.click()
+            for _ in range(40):
+                if any(s.get('title') == 'Oil the chain' for s in storage.get_project(pid)['steps']):
+                    break
+                page.wait_for_timeout(250)
+            check(any(s.get('title') == 'Oil the chain' and s.get('owner') == 'kid' for s in storage.get_project(pid)['steps']),
+                  f"the step joined the paused project: {storage.get_project(pid)['steps']}")
+            page.wait_for_selector('[data-row^="step:"]', timeout=10000)
+            check(served.errors() == [], f"no page errors: {served.errors()}")
+    finally:
+        steps = [x for x in storage.get_project(pid)['steps'] if x.get('title') != 'Oil the chain']
+        storage.update_project(pid, {'state': original, 'steps': steps})
+
+
 def scenario_list_page_groups():
     served = serve()
     if served is None:
@@ -153,7 +204,15 @@ def scenario_list_page_groups():
         check(page.locator('[data-lane-filter="programs"]').count() == 0, "the Programs filter is gone (R5)")
         check(page.locator('[data-list-group="needs_you"]').count() == 1, "Needs you first")
         check(page.locator('[data-list-group="rest"]').count() <= 1, "then everything else")
-        check(page.locator('[data-project-card] .chip-state').count() == 0, "no state chip on cards")
+        import re
+        for card in page.locator('[data-project-card]').all():
+            pid = card.locator('[data-project-id]').get_attribute('data-project-id')
+            lines = [l for l in card.inner_text().splitlines() if l.strip() and not re.fullmatch(r'\d+ of \d+ done', l.strip())]
+            words = set(re.findall(r'[a-z_]+', ' '.join(lines)))
+            banned = {'active', 'paused', 'waiting_user', 'done', 'dropped'}
+            if storage.get_project(pid).get('state') == 'paused':
+                banned.discard('paused')   # a paused card says so in words (spec §4)
+            check(not (words & banned), f"no state words on the {pid} card: {lines}")
         page.locator('[data-new-project]').click()
         page.wait_for_selector('[data-create-project]', timeout=5000)
         shot(page, 'one-list-list')
@@ -297,6 +356,7 @@ def scenario_add_for_a_child():
 
 SCENARIOS = [scenario_detail_is_one_list, scenario_menu_and_add, scenario_tick_a_step_and_open_sheets,
              scenario_conversation_ticks_and_unticks, scenario_asking_row_posts_through_the_situation,
+             scenario_add_a_step_to_a_paused_project,
              scenario_list_page_groups, scenario_closed_projects_are_hidden_folded_and_remembered,
              scenario_add_through_the_one_add, scenario_add_for_a_child]
 

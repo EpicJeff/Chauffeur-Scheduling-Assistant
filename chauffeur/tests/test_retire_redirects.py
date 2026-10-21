@@ -30,9 +30,11 @@ def scenario_records_land_on_their_sheet():
 def scenario_bookmarks_without_an_id():
     check(_to('/threads') == 'projects', "Threads")
     check(_to('/missions') == 'projects', "Missions")
-    check(_to('/programs') == 'projects?lane=programs', "Programs keeps one place for all programs")
+    check(_to('/programs') == 'library', "Programs without an id lands on the Library (R5: no Programs lane)")
     check(_to('/work?tab=threads') == 'work?tab=projects', "the Work tab")
-    check(_to('/rhythms?tab=programs') == 'projects?lane=programs', "the Rhythms tab")
+    check(_to('/rhythms?tab=programs') == 'library', "the Rhythms tab")
+    check(_to('/programs?panel=true&kiosk=true&tabs=projects') == 'library?panel=true&kiosk=true&tabs=projects',
+          "the shell's options ride along to the Library")
     check(CLIENT.get('/work?tab=mind', follow_redirects=False).status_code == 200, "the Mind tab stays")
     check(CLIENT.get('/rhythms?tab=routines', follow_redirects=False).status_code == 200, "Routines stays")
 

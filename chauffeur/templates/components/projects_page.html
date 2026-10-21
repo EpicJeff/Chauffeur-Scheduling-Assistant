@@ -14,7 +14,7 @@
 {% from 'components/audience_picker.html' import audience_picker, audience_picker_script %}
 {% from 'components/record_delete.html' import record_delete_script %}
 {% from 'components/library_card.html' import library_profile_fields, library_script %}
-<section x-data='projectsPage({{ (projects_host|default("admin"))|tojson }})' x-init="rootEl = $el; load()" @chf-projects-open.window="load()"
+<section x-data='projectsPage({{ (projects_host|default("admin"))|tojson }})' x-init="load()" @chf-projects-open.window="load()"
          @chf-projects-context.window="sproutSection = $event.detail" x-show="!sproutSection || shownProjects.length > 0"
          @chf-admin-ready.window="load()" @chf-project-open.window="openById($event.detail && $event.detail.id)" class="panel-page w-full max-w-2xl mx-auto px-4 py-6" x-cloak>
     <h2 class="panel-page-title">Projects</h2>
@@ -177,7 +177,7 @@
                         </div>
                     </template>
                     <p class="text-xs text-gray-500 italic" x-show="!(rows[project.id] || []).length">Nothing here yet. Add a step, or plan it with Argyle.</p>
-                    <template x-if="project.can_act && project.state === 'active'">
+                    <template x-if="project.can_act">
                         <div class="space-y-2">
                             <button type="button" data-project-add @click="add(project)" :disabled="!!busy"
                                     class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800 disabled:opacity-50">+ Add</button>
@@ -290,7 +290,7 @@ button.row-box-open { cursor:pointer; }
 <script>
 function projectsPage(host = 'admin') {
     return {
-        host, rootEl: null, apiBase: window.chfBase !== undefined ? window.chfBase : '',
+        host, apiBase: window.chfBase !== undefined ? window.chfBase : '',
         projects: [], members: [], myId: '', loading: false, busy: false, error: '',
         creating: false, opened: null, hold: null, pieces: {}, elsewhere: [], contacts: [], pieceForm: null,
         // The one list (spec §1): rows per project id, the Logbook fold, the
@@ -349,11 +349,10 @@ function projectsPage(host = 'admin') {
         },
         async load() {
             this.loading = true; this.error = '';
-            this._completed = {}; this._doneTitles = {};
             const who = window.chfPersonId ? window.chfPersonId() : localStorage.getItem('chauffeur_member_id') || '';
             if (this.myId !== who) {
                 this.projects = []; this.members = []; this.opened = null; this.hold = null; this.pieces = {}; this.elsewhere = []; this.contacts = []; this.pieceForm = null; this._addressed = false;
-                this.rows = {}; this.stepSheet = null; this.linkSheet = null; this.justDone = '';
+                this.rows = {}; this.stepSheet = null; this.linkSheet = null; this.justDone = ''; this._completed = {}; this._doneTitles = {};
                 this.creating = false;
                 this.draft = {title:'', goal:'', done_when:'', audience:'private', shared_with:[], owner_member_id:who, target_date:''};
             }
@@ -548,8 +547,10 @@ function projectsPage(host = 'admin') {
             if (a.verb === 'approve') { return this.openSheet('program', r.id, r.title, p.id); }
             const s = this.askOwner(p, r, a);
             if (!s || !window.Situations) { if (r.sheet) this.openSheet(r.sheet.kind, r.sheet.id, r.title, p.id); return; }
-            await window.Situations.act(s, a, this.sitCtx());
-            await this.loadRows(p);
+            if (this.busy) return;
+            this.busy = true;
+            try { await window.Situations.act(s, a, this.sitCtx()); }   // its onChange reloads the page's rows
+            finally { this.busy = false; }
         },
         askOwner(p, r, a) {
             const has = s => !!s && (s.options || []).some(o => o.id === a.id && o.verb === a.verb);
@@ -579,10 +580,14 @@ function projectsPage(host = 'admin') {
             return this.state(p, pick, {paused: 'Pause', active: 'Resume', done: 'Mark done', dropped: 'Drop'}[pick]);
         },
         // + Add (spec decision 5): one sheet of five kinds; the forms behind it are today's.
+        // A project that is not active takes steps only (as Add a step always did);
+        // conversations, Argyle's work, programs and links join an active one.
         async add(p) {
             const options = [{value: 'step', label: 'Step'}];
-            if (!this.isChild()) options.push({value: 'thread', label: 'Conversation'}, {value: 'mission', label: 'Ask Argyle'});
-            options.push({value: 'program', label: 'Program'}, {value: 'existing', label: 'Something already in Chauffeur'});
+            if (p.state === 'active') {
+                if (!this.isChild()) options.push({value: 'thread', label: 'Conversation'}, {value: 'mission', label: 'Ask Argyle'});
+                options.push({value: 'program', label: 'Program'}, {value: 'existing', label: 'Something already in Chauffeur'});
+            }
             const pick = await promptChoice('Add to ' + p.title, '', options);
             if (!pick) return;
             if (pick === 'step') return this.addStep(p);

@@ -55,8 +55,8 @@ def main():
 
         # A reload with the tab opens straight onto it.
         page.goto(served.url('rhythms?tab=programs'), wait_until='domcontentloaded')
-        page.wait_for_selector('[data-lane-filter="programs"][aria-pressed="true"]')
-        check('projects?lane=programs' in page.url, 'Programs bookmark did not reach Projects')
+        page.wait_for_url('**/library**')
+        check('library' in page.url and 'lane=' not in page.url, 'Programs bookmark did not reach the Library')
         check(not _visible(page, '[data-page-tab="routines"]'), 'Routines shows beside Projects')
         page.goto(served.url('rhythms?tab=routines'), wait_until='domcontentloaded')
         check(_visible(page, '[data-page-tab="routines"]'), 'Routines bookmark did not open Routines')

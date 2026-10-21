@@ -1869,11 +1869,12 @@ def mind_page(request: Request):
 
 @app.get("/rhythms")
 def rhythms_page(request: Request):
-    """The Routines host; old Programs bookmarks follow them to Projects."""
+    """The Routines host; an old Programs bookmark lands on its run in Projects, or
+    on the Library (every program with its runners) without an id."""
     if request.query_params.get('tab') == 'growing-up':
         return RedirectResponse('config#growing-up')
     if request.query_params.get('tab') == 'programs':
-        return _retired_to('program', request, 'projects?lane=programs')
+        return _retired_to('program', request, 'library')
     return templates.TemplateResponse(request=request, name="rhythms.html")
 
 
@@ -1990,7 +1991,9 @@ def threads_page(request: Request):
 
 @app.get("/programs")
 def programs_page(request: Request):
-    return _retired_to('program', request, 'projects?lane=programs')
+    """A run's id opens its sheet in Projects; no id lands on the Library (the
+    Programs lane filter is gone, one-list spec R5)."""
+    return _retired_to('program', request, 'library')
 
 @app.get("/projects")
 def projects_page(request: Request):
