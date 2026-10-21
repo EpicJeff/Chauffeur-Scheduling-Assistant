@@ -583,13 +583,14 @@ eval(fs.readFileSync(chunkPath, 'utf8'));
 eval(fs.readFileSync(sitPath, 'utf8'));
 const card = JSON.parse(fs.readFileSync(cardPath, 'utf8'));
 const calls = [];
-window.chfLibrary = { open: id => calls.push(['preview', id]) };
+window.chfLibrary = { open: (id, o) => calls.push(o ? ['open', id, o] : ['preview', id]) };
 window.chfProgramSetup = { open: o => calls.push(['setup', o]) };
 window.fetch = () => { calls.push(['fetch']); return Promise.reject(new Error('no fetch')); };
 const html = renderCard(card);
 document.body.innerHTML = html;
 document.querySelector('[data-course-preview]').click();
 document.querySelector('[data-course-setup]').click();
+document.querySelector('[data-course-steer]').click();
 const mine = renderCard({...card, for_member_id: 'mom', for_name: 'Mom'});
 console.log(JSON.stringify({html, mine, calls}));
 """
@@ -623,9 +624,11 @@ def scenario_course_card_renders_and_its_buttons_open():
     check('Learn &lt;piano&gt;' in html and '<piano>' not in html, f'the title is escaped: {html}')
     check('Based on Faber · cited' in html and 'Foundations' in html and '2 lessons' in html and '1 lesson' in html,
           f'source line and phases with lesson counts: {html}')
-    check('Preview' in html and 'Set it up for Kate' in html, f'the two buttons: {html}')
-    check(out['calls'] == [['preview', 'lib<1>'], ['setup', {'runId': 'run1', 'projectId': 'proj1'}]],
-          f'Preview opens the library program; Set it up opens the sheet on the run, nothing posted: {out["calls"]}')
+    check('Preview' in html and 'Set it up for Kate' in html and '>Steer<' in html, f'the three buttons: {html}')
+    check(out['calls'] == [['preview', 'lib<1>'], ['setup', {'runId': 'run1', 'projectId': 'proj1'}],
+                           ['open', 'lib<1>', {'steer': True}]],
+          f'Preview opens the library program; Set it up opens the sheet on the run, nothing posted; '
+          f'Steer opens the course page with its Steer box: {out["calls"]}')
     check('Set it up for Mom' not in out['mine'] and 'Set it up' in out['mine'], f'your own program: Set it up: {out["mine"]}')
 
 

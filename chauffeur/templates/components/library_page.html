@@ -3,6 +3,19 @@
    library home (More -> Library); hosts own chrome. Cards come from
    components/library_card.html; the island and its program view live here.
 
+   New program is a brief box (programs brief-and-course spec §1): a paragraph
+   in words, Find a plan (POST /api/library {brief}); a brief that names a
+   person offers Start it for them (the setup sheet, their own words
+   prefilled). "Fill it in by hand" keeps the profile form.
+
+   A program opens as a COURSE PAGE (spec §3): a header (title, made-for,
+   the source line with Why this one, runners, ⋯), the phases numbered with
+   their done-when and progression, each lesson one parent-facing sentence
+   and one Preview (a chooser per session and per visible runner), chips only
+   while a script is writing or failed, and the Steer box (spec §2). ⋯ holds
+   Steer in words, Edit by hand, Write lessons (admin), Make a variant,
+   Archive, Delete and Start it for… . Edit by hand shows today's editor:
+
    A program's view lists its lessons in order under their phases, with inline
    edit (title, steps, body or link, sessions, rotation labels), drag to
    reorder with Up/Down beside it for touch, Add lesson and Remove. Remove
@@ -14,7 +27,7 @@
    card) and Regenerate for an editor, and Write lessons on the card. The
    host page includes the lesson player once. No browser dialogs. Vocabulary:
    projects_page.html (cards, the detail view's back link and step rows). #}
-{% from 'components/library_card.html' import library_card, library_profile_fields, library_script %}
+{% from 'components/library_card.html' import library_card, library_runners, library_profile_fields, library_script %}
 {# The phone loads when its library home opens (setView('library') sends
    chf-library-open), never at app start: nobody asked for it yet. #}
 <section x-data='libraryPage({{ (library_host|default("admin"))|tojson }})' x-init="if (host === 'admin') load()" data-library-page
@@ -34,12 +47,34 @@
                 <span>+ New program</span><span class="text-gray-500 text-xs" x-text="creating ? 'Hide' : 'Show'"></span>
             </button>
             <template x-if="creating">
-                <form data-library-create-form class="mt-3 space-y-2.5" @submit.prevent="create()">
-                    {{ library_profile_fields('draft', 'ageBands') }}
-                    <button data-library-create :disabled="!!busy"
-                            class="w-full text-sm font-bold px-3 py-2 rounded-lg bg-teal-700 text-white active:bg-teal-800 disabled:opacity-50"
-                            x-text="busy ? 'Looking for a real plan…' : 'Make the program'"></button>
-                </form>
+                <div class="mt-3 space-y-2.5">
+                    <!-- The brief (spec §1): words in, a program out. The answer's
+                         refusal is said here, never in a dialog. -->
+                    <label class="block text-xs text-gray-400">Describe the program
+                        <textarea data-brief-box x-model="briefText" rows="4"
+                                  placeholder="Describe the program: who it's for, what they can already do, how long and how often, anything you want it based on"
+                                  class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm"></textarea>
+                    </label>
+                    <template x-if="briefError">
+                        <p data-brief-error class="text-xs text-amber-300" role="status" x-text="briefError"></p>
+                    </template>
+                    <div class="flex flex-wrap items-center gap-3">
+                        <button type="button" data-brief-find @click="findPlan()" :disabled="!!(busy || !(briefText || '').trim())"
+                                class="text-sm font-bold px-3 py-2 rounded-lg bg-teal-700 text-white active:bg-teal-800 disabled:opacity-50"
+                                x-text="busy && !byHand ? 'Looking for a real plan…' : 'Find a plan'"></button>
+                        <button type="button" data-brief-by-hand @click="byHand = !byHand" :aria-expanded="byHand ? 'true' : 'false'"
+                                class="text-xs font-semibold text-gray-400 underline underline-offset-2"
+                                x-text="byHand ? 'Hide the form' : 'Fill it in by hand'"></button>
+                    </div>
+                    <template x-if="byHand">
+                        <form data-library-create-form class="space-y-2.5 border-t border-gray-700 pt-2.5" @submit.prevent="create()">
+                            {{ library_profile_fields('draft', 'ageBands') }}
+                            <button data-library-create :disabled="!!busy"
+                                    class="w-full text-sm font-bold px-3 py-2 rounded-lg bg-teal-700 text-white active:bg-teal-800 disabled:opacity-50"
+                                    x-text="busy ? 'Looking for a real plan…' : 'Make the program'"></button>
+                        </form>
+                    </template>
+                </div>
             </template>
         </div>
     </template>
@@ -56,10 +91,142 @@
             <button type="button" data-library-back @click="back()" class="text-xs font-semibold text-gray-400 underline underline-offset-2">← All programs</button>
             <template x-for="lp in [detail]" :key="lp.id">
                 <div class="space-y-3">
-                    {{ library_card() }}
+                    <!-- The course header (spec §3.1): the project detail's header
+                         (projects_page.html data-project-card) with the run sheet's ⋯
+                         (programs_page.html data-run-menu). -->
+                    <article data-course-header class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
+                        <div class="flex items-start justify-between gap-2">
+                            <div class="min-w-0">
+                                <h3 class="text-base font-bold text-gray-100" x-text="lp.title"></h3>
+                                <p data-library-made-for class="text-[11px] text-gray-500 mt-0.5" x-text="chfLibrary.madeFor(lp)"></p>
+                                <p class="text-[11px] text-gray-500" x-show="chfLibrary.assumes(lp)" x-text="chfLibrary.assumes(lp)"></p>
+                                <template x-for="sp in [chfLibrary.sourceParts(lp)]" :key="lp.id + ':source'">
+                                    <p data-course-source class="text-[11px] font-semibold text-gray-400 mt-0.5"><span x-text="sp.lead"></span><template x-if="sp.name && sp.url"><button type="button" data-course-plan @click="chfLibrary.openUrl(sp.url)" class="font-semibold text-teal-300" x-text="sp.name"></button></template><template x-if="sp.name && !sp.url"><span class="text-teal-300" x-text="sp.name"></span></template><span x-text="sp.rest"></span></p>
+                                </template>
+                            </div>
+                            <button type="button" data-course-menu @click="menu(lp)" x-show="menuItems(lp).length" :disabled="!!busy" aria-label="More" title="More"
+                                    class="w-8 h-8 p-2 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700 shrink-0 text-sm font-black leading-none disabled:opacity-50">⋯</button>
+                        </div>
+                        <!-- Why this one, and what it beat (programs_page.html's fold). -->
+                        <button type="button" data-course-why @click="whyOpen = !whyOpen" :aria-expanded="whyOpen ? 'true' : 'false'"
+                                class="mt-1 text-[11px] font-semibold text-gray-500 underline underline-offset-2">Why this one</button>
+                        <template x-if="whyOpen">
+                            <div data-course-why-text class="mt-1 space-y-1.5">
+                                <div class="text-[11px] text-gray-400" x-text="chfLibrary.whyText(lp)"></div>
+                                <div x-show="((lp.source || {}).runners_up || []).length">
+                                    <div class="text-[10px] font-black uppercase tracking-widest text-gray-600 mb-1">Also considered</div>
+                                    <template x-for="(r, ri) in ((lp.source || {}).runners_up || [])" :key="ri">
+                                        <div class="text-[11px] text-gray-500">
+                                            <button type="button" @click="chfLibrary.openUrl(r.url)" class="text-blue-400 underline underline-offset-2" x-text="r.name"></button>
+                                            <span x-text="r.why_not ? ' — ' + r.why_not : ''"></span>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+                        </template>
+                        {{ library_runners() }}
+                        <div class="flex flex-wrap items-center gap-1.5 mt-1.5" x-show="lp.archived || writingOf(lp)">
+                            <template x-if="lp.archived">
+                                <span data-library-archived class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-400">Archived</span>
+                            </template>
+                            <template x-if="writingOf(lp)">
+                                <span data-course-writing class="text-[11px] text-gray-500" x-text="writingLine(lp)"></span>
+                            </template>
+                        </div>
+                    </article>
                     <template x-if="!lp.can_edit">
                         <p data-library-refusal class="text-xs text-gray-500 italic px-1">Only the person who made this program, or a parent, can change it.</p>
                     </template>
+                    <!-- The course (spec §3.2-§3.4): phases, one sentence and one
+                         Preview per lesson, a chip only while writing or failed. -->
+                    <template x-if="editing !== lp.id">
+                        <div class="space-y-3">
+                            <template x-for="(ph, pi) in (lp.phases || [])" :key="ph.id">
+                                <section :data-course-phase="ph.id" class="bg-gray-900 border border-gray-800 rounded-2xl p-3 space-y-1.5">
+                                    <div class="text-sm font-bold text-gray-300"><span x-text="(pi + 1) + ' · ' + ph.name"></span><span class="text-[11px] font-semibold text-gray-500" x-show="ph.milestone" x-text="' · done when ' + lowerFirst(ph.milestone)"></span></div>
+                                    <template x-if="ph.progression">
+                                        <p data-phase-progression class="text-[11px] text-gray-500"><span class="text-gray-600">Next time:</span> <span x-text="ph.progression"></span></p>
+                                    </template>
+                                    <ol class="space-y-1">
+                                        <template x-for="l in lessonsOf(lp, ph.id)" :key="l.id">
+                                            <li :data-course-lesson="l.id" class="text-xs bg-gray-950/60 border border-gray-800 rounded-lg px-2.5 py-1.5 space-y-1">
+                                                <div class="flex items-start gap-2">
+                                                    <div class="min-w-0 flex-1">
+                                                        <div class="font-semibold text-gray-300" x-text="l.title"></div>
+                                                        <p data-lesson-summary class="text-[11px] text-gray-400 mt-0.5" x-text="summaryOf(l)"></p>
+                                                    </div>
+                                                    <button type="button" data-lesson-preview :data-preview-choice="previewOptions(lp, l).length > 1 ? 'true' : null"
+                                                            @click="preview(lp, l)" :disabled="!!busy" :aria-label="'Preview ' + l.title"
+                                                            class="text-[11px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 disabled:opacity-50 shrink-0">▶ Preview</button>
+                                                </div>
+                                                <template x-for="lab in scriptLabels(l).filter(x => restNotes(lp, l, x))" :key="lab">
+                                                    <div class="flex flex-wrap items-center gap-1.5">
+                                                        <template x-if="['writing', 'failed'].includes(scriptOf(lp, l, lab).state) && !canFix(lp, l, lab)">
+                                                            <span data-script-chip :data-variant="lab" class="text-[10px] font-bold px-1.5 py-0.5 rounded" :class="scriptChipClass(lp, l, lab)"
+                                                                  :title="scriptOf(lp, l, lab).note || null" x-text="restChip(lp, l, lab)"></span>
+                                                        </template>
+                                                        <template x-if="['writing', 'failed'].includes(scriptOf(lp, l, lab).state) && canFix(lp, l, lab)">
+                                                            <button type="button" data-script-chip :data-variant="lab" @click="regenerateScript(lp, l, lab)" :disabled="!!busy"
+                                                                    class="text-[10px] font-bold px-1.5 py-0.5 rounded disabled:opacity-50" :class="scriptChipClass(lp, l, lab)"
+                                                                    :title="scriptOf(lp, l, lab).note || null" x-text="restChip(lp, l, lab) + ' · Rewrite'"></button>
+                                                        </template>
+                                                        <template x-if="scriptOf(lp, l, lab).short">
+                                                            <span data-script-short :data-variant="lab" class="text-[11px] text-gray-500 italic"
+                                                                  x-text="(lab ? lab + ': ' : '') + 'about ' + Math.max(1, scriptOf(lp, l, lab).minutes || 0) + ' min, shorter than asked'"></span>
+                                                        </template>
+                                                        <template x-if="scriptOf(lp, l, lab).stale && !canFix(lp, l, lab)">
+                                                            <span data-script-stale :data-variant="lab" class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300"
+                                                                  x-text="(lab ? lab + ' · ' : '') + 'edited by hand · may be out of date'"></span>
+                                                        </template>
+                                                        <template x-if="scriptOf(lp, l, lab).stale && canFix(lp, l, lab)">
+                                                            <button type="button" data-script-stale :data-variant="lab" @click="regenerateScript(lp, l, lab)" :disabled="!!busy"
+                                                                    class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 disabled:opacity-50"
+                                                                    x-text="(lab ? lab + ' · ' : '') + 'edited by hand · may be out of date · Rewrite'"></button>
+                                                        </template>
+                                                    </div>
+                                                </template>
+                                            </li>
+                                        </template>
+                                    </ol>
+                                </section>
+                            </template>
+                            <!-- Steer (spec §2): words in, one change committed at the
+                                 revision this page read, the server's change list above. -->
+                            <template x-if="lp.can_edit && !lp.archived">
+                                <section data-steer class="bg-gray-900 border border-gray-800 rounded-2xl p-3 space-y-2">
+                                    <template x-if="steered && steered.id === lp.id">
+                                        <div data-steer-changes role="status" class="bg-gray-950/60 border border-gray-800 rounded-lg px-2.5 py-1.5 space-y-1">
+                                            <p class="text-xs font-semibold text-gray-300" x-show="steered.said" x-text="steered.said"></p>
+                                            <ul class="space-y-0.5">
+                                                <template x-for="(c, ci) in steered.changes" :key="ci">
+                                                    <li class="text-[11px]" :class="/^[−-]/.test(c) ? 'text-red-300' : 'text-teal-300'" x-text="c"></li>
+                                                </template>
+                                            </ul>
+                                            <p class="text-[11px] text-gray-500 italic" x-show="!steered.changes.length">Nothing changed.</p>
+                                        </div>
+                                    </template>
+                                    <label class="block text-xs font-bold text-gray-300">Steer it in words
+                                        <textarea data-steer-box x-model="steerText" rows="2" placeholder="Fewer theory bits, a duet with a parent, make Session B about songs…"
+                                                  class="mt-1 w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100 text-sm font-normal"></textarea>
+                                    </label>
+                                    <template x-if="steerError">
+                                        <p data-steer-error class="text-xs text-amber-300" role="status" x-text="steerError"></p>
+                                    </template>
+                                    <button type="button" data-steer-send @click="steer(lp)" :disabled="!!(busy || !(steerText || '').trim())"
+                                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800 disabled:opacity-50"
+                                            x-text="steering ? 'Working it out…' : 'Steer'"></button>
+                                </section>
+                            </template>
+                        </div>
+                    </template>
+                    <!-- Edit by hand: today's editor, unchanged, until Done editing. -->
+                    <template x-if="editing === lp.id">
+                    <div data-edit-by-hand class="space-y-3">
+                    <div class="flex items-center justify-between gap-2 px-1">
+                        <span class="text-xs font-bold text-gray-300">Editing by hand</span>
+                        <button type="button" data-edit-done @click="editing = null; edits = {}; scriptEdits = {}; profile = null"
+                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800">Done editing</button>
+                    </div>
                     <template x-if="lp.can_edit">
                         <div class="bg-gray-900 border border-gray-800 rounded-2xl p-3">
                             <button type="button" data-library-profile-toggle @click="toggleProfile(lp)" :aria-expanded="profile ? 'true' : 'false'"
@@ -275,6 +442,8 @@
                             </template>
                         </section>
                     </template>
+                    </div>
+                    </template>
                 </div>
             </template>
         </div>
@@ -289,6 +458,11 @@ function libraryPage(host = 'admin') {
         loading: false, busy: false, error: '', creating: false, opened: null,
         draft: {title: '', age_band: 'any', minutes: 20, sessions_per_week: 3, assumes: ''},
         profile: null, edits: {}, dragId: null, _pending: null,
+        // The course page (programs spec §3): which program is in Edit by
+        // hand, the Why this one fold, the Steer box and its last answer.
+        editing: null, whyOpen: false, steerText: '', steering: false, steered: null, steerError: '', _steerNext: false,
+        // The brief box (spec §1) and the hand form folded under it.
+        briefText: '', briefError: '', byHand: false,
         // The script editor, keyed by scriptKey(): {loading, rows, addType}.
         scriptEdits: {}, _rowSeq: 0, _poll: null,
         headers() {
@@ -299,7 +473,11 @@ function libraryPage(host = 'admin') {
             const r = await fetch(this.apiBase + path, {method: body === undefined && method === 'POST' ? 'GET' : method,
                 headers: this.headers(), ...(body === undefined ? {} : {body: JSON.stringify(body)})});
             const data = await r.json().catch(() => ({}));
-            if (!r.ok || ['error', 'refused'].includes(data.status)) throw new Error(data.detail || data.message || 'Could not complete that request.');
+            if (!r.ok || ['error', 'refused'].includes(data.status)) {
+                const err = new Error(data.detail || data.message || 'Could not complete that request.');
+                err.status = r.status; err.alternatives = data.alternatives || [];
+                throw err;
+            }
             return data;
         },
         me() { return this.members.find(m => m.id === this.myId) || null; },
@@ -309,15 +487,24 @@ function libraryPage(host = 'admin') {
             const who = window.chfPersonId ? window.chfPersonId() : (localStorage.getItem('chauffeur_member_id') || '');
             if (!who) return;
             if (!quiet) { this.loading = true; this.error = ''; }
-            if (this.myId !== who) { this.opened = null; this.edits = {}; this.scriptEdits = {}; this.profile = null; this.creating = false; }
+            if (this.myId !== who) {
+                this.opened = null; this.edits = {}; this.scriptEdits = {}; this.profile = null; this.creating = false;
+                this.editing = null; this.steered = null; this.steerText = ''; this.briefText = ''; this.briefError = '';
+            }
             this.myId = who;
             try {
                 const [data, members] = await Promise.all([this.request('api/library'), this.request('api/members')]);
                 if (this.myId !== who) return;
                 this.programs = data.programs || []; this.ageBands = data.age_bands || []; this.memberBands = data.member_bands || {};
                 this.members = members || [];
-                if (this._pending === null && this.host === 'admin') this._pending = new URLSearchParams(location.search).get('id') || '';
+                if (this._pending === null && this.host === 'admin') {
+                    const q = new URLSearchParams(location.search);
+                    this._pending = q.get('id') || '';
+                    this._steerNext = q.get('steer') === '1';
+                }
                 if (this._pending) { const id = this._pending; this._pending = ''; if (this.programs.some(p => p.id === id)) this.opened = id; }
+                // The DM card's Steer lands on the box once; the address forgets it.
+                if (this._steerNext && this.opened) { this._steerNext = false; this.setAddress(this.opened); this.focusSteer(); }
             } catch (e) { if (!quiet) this.error = e.message; }
             finally { this.loading = false; this.syncPoll(); }
         },
@@ -331,6 +518,7 @@ function libraryPage(host = 'admin') {
         // The phone's "from the library" button and More -> Library land here.
         async openFromEvent(d) {
             this._pending = (d && d.id) || '';
+            this._steerNext = !!(d && d.id && d.steer);
             if (!this._pending) this.back();
             await this.load();
         },
@@ -338,11 +526,18 @@ function libraryPage(host = 'admin') {
             if (this.host !== 'admin') return;
             const q = new URLSearchParams(location.search);
             if (id) q.set('id', id); else q.delete('id');
+            q.delete('steer');
             const s = q.toString();
             history.replaceState(history.state, '', location.pathname + (s ? '?' + s : '') + location.hash);
         },
-        openProgram(lp) { this.opened = lp.id; this.edits = {}; this.scriptEdits = {}; this.profile = null; this.setAddress(lp.id); window.scrollTo && window.scrollTo(0, 0); },
-        back() { this.opened = null; this.edits = {}; this.scriptEdits = {}; this.profile = null; this.setAddress(null); },
+        // Leaving a program (or opening another) leaves its edit mode, its
+        // fold, its draft steer and its last change list behind.
+        _leave() {
+            this.edits = {}; this.scriptEdits = {}; this.profile = null; this.editing = null;
+            this.whyOpen = false; this.steerText = ''; this.steerError = ''; this.steered = null;
+        },
+        openProgram(lp) { this._leave(); this.opened = lp.id; this.setAddress(lp.id); window.scrollTo && window.scrollTo(0, 0); },
+        back() { this._leave(); this.opened = null; this.setAddress(null); },
         lessonsOf(lp, phaseId) { return (lp.lessons || []).filter(l => l.phase_id === phaseId); },
         async mutate(path, body, method = 'POST') {
             if (this.busy) return null;
@@ -358,10 +553,164 @@ function libraryPage(host = 'admin') {
             const made = await this.mutate('api/library', {title: d.title.trim(), age_band: d.age_band || 'any', minutes: d.minutes || 20,
                                                            sessions_per_week: d.sessions_per_week || 3, assumes: (d.assumes || '').trim()});
             if (!made) return;
-            this.creating = false;
+            this.creating = false; this.byHand = false;
             this.draft = {title: '', age_band: 'any', minutes: 20, sessions_per_week: 3, assumes: ''};
             if (made.program) this.opened = made.program.id;
             this.setAddress(this.opened);
+        },
+        // --- The brief (spec §1, P6 on this page) -------------------------
+        // Find a plan: a library program only. A brief that names somebody
+        // offers Start it for them, the setup sheet prefilled with the
+        // requester's own words (never stored on the library row).
+        async findPlan() {
+            const text = (this.briefText || '').trim();
+            if (!text || this.busy) return;
+            this.busy = true; this.briefError = '';
+            let made = null;
+            try { made = await this.request('api/library', {brief: text}); }
+            catch (e) {
+                this.briefError = e.message + ((e.alternatives || []).length ? ' Try instead: ' + e.alternatives.join('; ') + '.' : '');
+            } finally { this.busy = false; }
+            if (!made || !made.program) return;
+            this.creating = false; this.byHand = false; this.briefText = '';
+            await this.load();
+            const lp = this.programs.find(p => p.id === made.program.id);
+            if (lp) this.openProgram(lp);
+            const who = made.for_member_id ? this.members.find(m => m.id === made.for_member_id) : null;
+            if (!who || !lp || !window.chfProgramSetup) return;
+            const b = made.brief || {};
+            if (!await promptConfirm('Start it for ' + who.name + '?',
+                chfLibrary.asText('Opens the setup with ' + who.name + ' chosen. Nothing goes on the calendar until you start it.'),
+                'Set it up', 'Not now')) return;
+            chfLibrary.openSetup(lp.id, {forMemberId: who.id, startingPoint: b.starting_point || '',
+                                         preferredDays: b.preferred_days || [], targetDate: b.target_date || ''});
+        },
+        // --- The course page's ⋯ (spec §3.5) ------------------------------
+        menuItems(lp) {
+            const items = [], open = lp.can_edit && !lp.archived;
+            if (open) items.push({value: 'steer', label: 'Steer in words'});
+            if (open) items.push(this.editing === lp.id ? {value: 'edit', label: 'Done editing'} : {value: 'edit', label: 'Edit by hand'});
+            if (open && this.host === 'admin' && !this.writingOf(lp)) items.push({value: 'write', label: 'Write lessons'});
+            if (this.canCreate()) items.push({value: 'variant', label: 'Make a variant'});
+            if (open) items.push({value: 'archive', label: 'Archive'});
+            if (lp.can_edit) items.push({value: 'delete', label: 'Delete'});
+            if (!lp.archived && window.chfProgramSetup) items.push({value: 'start', label: 'Start it for…'});
+            return items;
+        },
+        async menu(lp) {
+            const items = this.menuItems(lp);
+            if (!items.length) return;
+            const pick = await promptChoice(lp.title, '', items);
+            const act = {
+                steer: () => this.focusSteer(),
+                edit: () => { if (this.editing === lp.id) { this.editing = null; this.edits = {}; this.scriptEdits = {}; this.profile = null; }
+                              else this.editing = lp.id; },
+                write: () => this.writeLessons(lp), variant: () => this.makeVariant(lp),
+                archive: () => this.archiveProgram(lp), delete: () => this.deleteProgram(lp),
+                start: () => chfLibrary.openSetup(lp.id, {}),
+            }[pick];
+            if (act) return act();
+        },
+        focusSteer() {
+            this.editing = null;
+            this.$nextTick(() => {
+                const box = document.querySelector('[data-library-page] [data-steer-box]');
+                if (!box) return;
+                box.scrollIntoView && box.scrollIntoView({block: 'center'});
+                box.focus();
+            });
+        },
+        // Steer (spec §2): one change at the revision this page read. A 409
+        // means somebody changed it meanwhile: say so and read it again,
+        // never retry behind the person's back.
+        async steer(lp) {
+            const text = (this.steerText || '').trim();
+            if (!text || this.busy) return;
+            this.busy = true; this.steering = true; this.steerError = '';
+            try {
+                const d = await this.request(this.lib(lp, '/steer'), {text, revision: Number(lp.revision || 0)});
+                this.steered = {id: lp.id, changes: d.changes || [], said: d.said || ''};
+                this.steerText = '';
+                await this.load(true);
+            } catch (e) {
+                if (e.status === 409) { showGlobalAlert('The program changed; read it again.'); await this.load(true); }
+                else this.steerError = e.message;
+            } finally { this.busy = false; this.steering = false; }
+        },
+        // Make a variant: today's re-curate, a NEW library program from this
+        // one's profile plus what should differ; the original and anyone
+        // running it stay as they are.
+        async makeVariant(lp) {
+            const text = await promptInput('Make a variant of ' + lp.title,
+                'What should be different? The original, and anyone running it, stay as they are.',
+                {placeholder: 'Shorter sessions, more songs…', okText: 'Make it'});
+            if (!text || !text.trim()) return;
+            const m = lp.made_for || {};
+            const made = await this.mutate('api/library', {title: lp.title, age_band: m.age_band || 'any', minutes: m.minutes || 20,
+                                                           sessions_per_week: m.sessions_per_week || 3, assumes: m.assumes || '',
+                                                           notes: text.trim()});
+            const fresh = made && made.program && this.programs.find(p => p.id === made.program.id);
+            if (fresh) this.openProgram(fresh);
+        },
+        lowerFirst(text) { return text ? text.charAt(0).toLowerCase() + text.slice(1) : ''; },
+        // One parent-facing sentence (library.default_summary's fallback),
+        // the sessions named inside it.
+        summaryOf(l) {
+            let s = (l.summary || '').trim();
+            if (!s) {
+                const first = String((l.steps || [''])[0] || '').trim().replace(/\.+$/, '');
+                const n = Math.max(1, parseInt(l.sessions, 10) || 1);
+                s = (first ? first + '. ' : '') + n + (n === 1 ? ' session.' : ' sessions.');
+            }
+            const labels = (l.variants || []).map(v => (v.label || '').trim()).filter(Boolean);
+            if (labels.length && !labels.some(x => s.includes(x))) s = s.replace(/\.+$/, '') + ': ' + labels.join(' / ') + '.';
+            return s;
+        },
+        // --- Preview (spec §3.3) -----------------------------------------
+        // One script and nobody visible running it plays at once; otherwise
+        // a chooser: each session, and each visible runner ("as Kate"),
+        // whose run's own script plays through the run's route.
+        previewOptions(lp, l) {
+            const labs = this.scriptLabels(l);
+            const runners = ((lp.runners || {}).named || []).filter(r => r.run_id);
+            const opts = labs.map(lab => ({lab, run: null, label: labs.length > 1 ? lab : 'As me'}));
+            runners.forEach(r => labs.forEach(lab => opts.push({lab, run: r, label: labs.length > 1 ? lab + ', as ' + r.name : 'as ' + r.name})));
+            return opts;
+        },
+        async preview(lp, l) {
+            const opts = this.previewOptions(lp, l);
+            let pick = opts[0];
+            if (opts.length > 1) {
+                const i = await promptChoice('Preview ' + l.title, '', opts.map((o, n) => ({value: String(n), label: o.label})));
+                if (i === null || i === undefined) return;
+                pick = opts[+i];
+            }
+            if (!pick) return;
+            return pick.run ? this.playRun(lp, l, pick.lab, pick.run) : this.playScript(lp, l, pick.lab);
+        },
+        async playRun(lp, l, lab, runner) {
+            let script = null;
+            try {
+                script = (await this.request('api/programs/' + encodeURIComponent(runner.run_id) + '/lesson?lesson_id=' + encodeURIComponent(l.id)
+                                             + '&variant_label=' + encodeURIComponent(lab || ''))).lesson || null;
+            } catch (e) { showGlobalAlert(e.message); return; }
+            this.openPlayer(lp, l, lab, script);
+        },
+        // At rest a script line says something only when it is being written,
+        // failed, ran short or is a hand edit a change may have outdated.
+        restNotes(lp, l, lab) {
+            const sc = this.scriptOf(lp, l, lab);
+            return ['writing', 'failed'].includes(sc.state) || !!sc.short || !!sc.stale;
+        },
+        // Short at rest: the writer's raw failure note stays in the chip's
+        // title and in Edit by hand's chip, not on the course.
+        restChip(lp, l, lab) {
+            return (lab ? lab + ' · ' : '') + (this.scriptOf(lp, l, lab).state === 'writing' ? 'writing…' : 'failed');
+        },
+        // A failed or outdated script's chip is its Regenerate, where the
+        // admin page's editor would offer one.
+        canFix(lp, l, lab) {
+            return lp.can_edit && !lp.archived && this.host === 'admin' && !this.writingOf(lp) && this.scriptOf(lp, l, lab).state !== 'writing';
         },
         toggleProfile(lp) {
             if (this.profile) { this.profile = null; return; }
@@ -448,6 +797,9 @@ function libraryPage(host = 'admin') {
             let script = null;
             try { script = (await this.request(this.scriptPath(lp, l, lab, true))).script || null; }
             catch (e) { showGlobalAlert(e.message); return; }
+            this.openPlayer(lp, l, lab, script);
+        },
+        openPlayer(lp, l, lab, script) {
             const ph = (lp.phases || []).find(x => x.id === l.phase_id) || {};
             const v = lab ? (l.variants || []).find(x => (x.label || '') === lab) : null;
             window.dispatchEvent(new CustomEvent('lesson-player:open', {detail: {
@@ -542,7 +894,9 @@ function libraryPage(host = 'admin') {
         // the program's writing job on this one lesson.
         async regenerateScript(lp, l, lab) {
             const ok = this.scriptOf(lp, l, lab).edited
-                ? await promptConfirm('Rewrite this hand-edited script?', 'Your edit goes away and the app writes a fresh script.', 'Rewrite', 'Keep it')
+                ? await promptConfirm('Rewrite this hand-edited script?',
+                this.scriptOf(lp, l, lab).stale ? 'A change to the program may have outdated it. Your edit goes away and the app writes a fresh script.'
+                                                : 'Your edit goes away and the app writes a fresh script.', 'Rewrite', 'Keep it')
                 : await promptConfirm('Rewrite this lesson?', 'The app writes a fresh script. Anyone practising keeps the plain steps until it lands.', 'Rewrite', 'Cancel');
             if (!ok) return;
             if (await this.mutate(this.lib(lp, '/scripts/write'), {lesson_id: l.id, variant_label: lab || ''}))

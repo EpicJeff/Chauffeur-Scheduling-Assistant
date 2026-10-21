@@ -219,8 +219,13 @@ def _script_view(row):
             state = 'failed'
         else:
             state = 'none'
+        # `short`: the stored script ran under the shortfall rule, as the
+        # writer recorded it ("runs about N minutes of M", library_scripts),
+        # never recomputed here. The course page says "shorter than asked".
+        short = bool(s.get('scenes')) and str(s.get('note') or '').startswith('runs about ')
         scripts.setdefault(lesson['id'], {})[label] = {'state': state, 'minutes': int(s.get('minutes') or 0), 'note': s.get('note') or '',
-                                                        'origin': s.get('origin') or '', 'edited': bool(s.get('edited')), 'stale': bool(s.get('stale'))}
+                                                        'origin': s.get('origin') or '', 'edited': bool(s.get('edited')), 'stale': bool(s.get('stale')),
+                                                        'short': short}
     return scripts, job
 
 

@@ -82,7 +82,7 @@ def _library_row(lid, title, phases, lessons, origin='generated'):
 
 PIANO_ROW = _library_row(PIANO, 'Learn piano', [
     {'id': FOUND, 'name': 'Foundations', 'weeks': 2, 'what': 'Hands and keys', 'steps': ['Old phase warm-up'],
-     'milestone': 'Plays a C scale hands together'},
+     'milestone': 'Plays a C scale hands together', 'progression': 'One less reminder'},
     {'id': SONGS, 'name': 'Songs', 'weeks': 3, 'what': 'Whole tunes', 'steps': [],
      'milestone': 'Plays Twinkle for the family'}], [
     {'id': SCALES, 'phase_id': FOUND, 'title': 'Scales', 'sessions': 2, 'steps': ['C major, slowly'],
@@ -209,12 +209,25 @@ def _card(page, lid):
 def _library(page, served, who, query=''):
     admin(page, served, who)
     page.goto(served.url('library' + query), wait_until='load')
-    page.wait_for_selector('[data-library-card]', timeout=20000)
+    # The list draws cards; a program (?id=) opens on its course page (programs spec §3).
+    page.wait_for_selector('[data-library-card], [data-course-header]', timeout=20000)
 
 
 def _confirm_text(page):
     page.locator('#cc-confirm-modal').wait_for(state='visible', timeout=10000)
     return page.locator('#cc-confirm-modal').inner_text()
+
+
+def _edit_by_hand(page, scope=''):
+    """The course page keeps today's editor behind ⋯ › Edit by hand (spec §3.5): the admin
+    page's ⋯ is #cc-choice-modal, the phone's its own prompt (.pwa-prompt-overlay)."""
+    page.locator(f'{scope} [data-course-menu]'.strip()).first.click()
+    if page.locator('#cc-choice-modal').count():
+        page.wait_for_selector('#cc-choice-modal:not(.hidden)', timeout=5000)
+        page.locator('#cc-choice-modal button', has_text='Edit by hand').click()
+    else:
+        page.locator('.pwa-prompt-overlay [data-pick]', has_text='Edit by hand').click()
+    page.wait_for_selector(f'{scope} [data-edit-by-hand]'.strip(), timeout=5000)
 
 
 def _project(page, served, who, pid='prj-piano'):
@@ -227,6 +240,14 @@ def _reset_kate(progress=None):
     storage.update_program('run-kate', {'progress': progress or _progress()})
     from services import library
     library._invalidate()
+
+
+def _restore_piano():
+    """The course scenarios read Learn piano as seeded: earlier scenarios rename, add and remove
+    its lessons, so the fixture's phases and lessons go back first (and Kate onto Scales)."""
+    storage.update_library_program(PIANO, {'title': PIANO_ROW['title'], 'phases': copy.deepcopy(PIANO_ROW['phases']),
+                                           'lessons': copy.deepcopy(PIANO_ROW['lessons']), 'archived': False})
+    _reset_kate()
 
 
 # 1 -------------------------------------------------------------------------
@@ -253,7 +274,7 @@ def scenario_the_library_page_lists_each_program():
               "both runners Mom can see are buttons")
         labels = runners.all_inner_texts()
         check('Kate · Piano for Kate' in labels and "Sam · Sam's music" in labels, f"each runner with their project: {labels}")
-        check('Published plan' in _card(page, CHESS).inner_text(), "a cited plan's chip")
+        check('· cited' in _card(page, CHESS).inner_text(), "a cited plan's chip")
         check(not COUNT.search(text), f"no fraction on a library card: {text}")
         shot(page, 'library-admin-dark')
         check(served.errors() == [], f"no page errors: {served.errors()}")
@@ -278,6 +299,7 @@ def scenario_a_new_program_says_what_the_household_will_see():
     with served.browser() as page:
         _library(page, served, 'mom')
         page.locator('[data-library-new]').click()
+        page.locator('[data-brief-by-hand]').click()
         form = page.locator('[data-library-create-form]')
         form.wait_for(state='visible')
         line, title = form.locator('[data-visibility-line]'), form.locator('input[name="title"]')
@@ -338,6 +360,7 @@ def scenario_editing_a_program_inline():
     with served.browser() as page:
         _library(page, served, 'mom', '?id=' + PIANO)
         page.wait_for_selector('[data-library-detail]', timeout=10000)
+        _edit_by_hand(page)
         chords = page.locator(f'[data-library-lesson][data-lesson-id="{CHORDS}"]')
         chords.locator('[data-lesson-edit]').click()
         form = chords.locator('[data-lesson-form]')
@@ -384,6 +407,12 @@ def scenario_editing_a_program_inline():
         check(page.locator('[data-library-refusal]').inner_text() == REFUSAL, "Aunt Jo reads the refusal where the controls would be")
         check(page.locator('[data-lesson-edit], [data-lesson-remove], [data-library-add-lesson], [data-library-delete]').count() == 0,
               "and no edit control is drawn for her")
+        page.locator('[data-course-menu]').click()
+        page.wait_for_selector('#cc-choice-modal:not(.hidden)', timeout=5000)
+        offered = page.locator('#cc-choice-options button').all_inner_texts()
+        check(not any(w in l for l in offered for w in ('Edit by hand', 'Steer', 'Archive', 'Delete', 'Write lessons')),
+              f"and her ⋯ offers no editing: {offered}")
+        page.locator('#cc-choice-cancel-btn').click()
         status, detail = page.evaluate("""async (lid) => {
             const r = await fetch('api/library/' + lid, {method: 'PATCH', headers: {'Content-Type': 'application/json'},
                                                           body: JSON.stringify({title: 'Piano, my way'})});
@@ -561,6 +590,7 @@ def scenario_the_run_card_names_the_lesson():
         check(page.locator('#library-container').is_visible(), "the phone opens its library home on the program")
         page.wait_for_function("() => !document.querySelector('[data-piece-sheet]') && !document.querySelector('.pwa-prompt-overlay')", timeout=5000)
         # The library's own controls take the tap: nothing covers them.
+        _edit_by_hand(page, '#library-container')
         edit = page.locator(f'#library-container [data-lesson-id="{SCALES}"] [data-lesson-edit]')
         edit.click(timeout=5000)
         page.locator(f'#library-container [data-lesson-id="{SCALES}"] [data-lesson-form]').wait_for(state='visible', timeout=5000)
@@ -591,6 +621,7 @@ def scenario_a_library_edit_reaches_a_paused_runs_phone_card():
             page.locator('[data-feature="library"]').click()
             home = page.locator('#library-container')
             home.locator(f'[data-library-card][data-library-id="{PIANO}"] [data-library-view]').click()
+            _edit_by_hand(page, '#library-container')
             lesson = home.locator(f'[data-lesson-id="{CHORDS}"]')
             lesson.locator('[data-lesson-edit]').click()
             lesson.locator('textarea[name="lesson_steps"]').fill('Strum C, then F\nHold each for four')
@@ -629,6 +660,7 @@ def scenario_a_library_edit_reaches_a_paused_runs_phone_card():
         with served.browser() as page:
             _library(page, served, 'mom', '?id=' + PIANO)
             page.wait_for_selector('[data-library-detail]', timeout=10000)
+            _edit_by_hand(page)
             page.locator(f'[data-lesson-id="{duet_id}"] [data-lesson-remove]').click()
             _confirm_text(page)
             title = page.locator('#cc-confirm-title').inner_text()
@@ -710,6 +742,7 @@ def scenario_removing_the_current_lesson_says_who_is_on_it():
     with served.browser() as page:
         _library(page, served, 'dad', '?id=' + PIANO)
         page.wait_for_selector('[data-library-detail]', timeout=10000)
+        _edit_by_hand(page)
         page.locator(f'[data-library-lesson][data-lesson-id="{SCALES}"] [data-lesson-remove]').click()
         text = _confirm_text(page)
         check('Kate is on this lesson; her run moves to the next one.' in text, f"the runner Dad sees, by name: {text}")
@@ -811,7 +844,14 @@ def scenario_the_phone_library_home_light_and_dark():
             page.wait_for_selector('#library-container [data-library-detail]', timeout=10000)
             width = page.evaluate('() => [document.documentElement.scrollWidth, window.innerWidth]')
             check(width[0] <= width[1], f"no horizontal scroll in the program ({theme}): {width}")
+            check(home.locator('a[href]').count() == 0, f"buttons only on the phone's course page ({theme})")
+            box = home.locator('[data-course-header]').bounding_box()
+            check(box['x'] >= 15.5 and box['x'] + box['width'] <= 390 - 15.5, f"a 16px gutter on the course page ({theme}): {box}")
+            shot(page, f'library-phone-course-{theme}')
+            _edit_by_hand(page, '#library-container')
             check(home.locator('[data-lesson-up]').count() > 0, "Up and Down stand in for drag on the phone")
+            width = page.evaluate('() => [document.documentElement.scrollWidth, window.innerWidth]')
+            check(width[0] <= width[1], f"no horizontal scroll while editing ({theme}): {width}")
             shot(page, f'library-phone-detail-{theme}')
             check(served.errors() == [], f"no page errors ({theme}): {served.errors()}")
 
@@ -1028,6 +1068,245 @@ def scenario_escape_closes_only_the_top_sheet():
         check(served.errors() == [], f"no page errors: {served.errors()}")
 
 
+# Programs brief-and-course spec §1-§3: the course page, Steer and the brief box --------
+def scenario_course_page_at_rest():
+    served = serve()
+    if served is None:
+        return
+    _restore_piano()
+    with served.browser() as page:
+        admin(page, served, 'mom')
+        page.goto(served.url(f'library?id={PIANO}'), wait_until='load')
+        page.wait_for_selector('[data-course-header]', timeout=15000)
+        check(page.locator('[data-lesson-edit]').count() == 0 and page.locator('[data-lesson-up]').count() == 0, "no editor controls at rest")
+        n = page.locator('[data-course-lesson]').count()
+        check(n == 3 and page.locator('[data-lesson-preview]').count() == n, "one Preview per lesson")
+        check(page.locator('[data-lesson-summary]').first.inner_text().strip() != '', "a sentence per lesson")
+        check(page.locator('[data-script-chip]').count() <= 1, "chips only while writing or failed")
+        text = page.locator('[data-course-source]').inner_text()
+        check('lessons' in text and ('Based on' in text or 'Made by the app' in text or 'Practice time only' in text), f"source line: {text}")
+        page.locator('[data-course-why]').click()
+        check('Why' in page.locator('[data-course-header]').inner_text(), "Why this one unfolds")
+        page.locator('[data-course-menu]').click()
+        page.wait_for_selector('#cc-choice-modal:not(.hidden)', timeout=5000)
+        labels = page.locator('#cc-choice-modal button').all_inner_texts()
+        for want in ('Steer in words', 'Edit by hand', 'Write lessons', 'Make a variant', 'Archive', 'Delete', 'Start it for'):
+            check(any(want in l for l in labels), f"⋯ holds {want}: {labels}")
+        page.locator('#cc-choice-modal button', has_text='Edit by hand').click()
+        page.wait_for_selector('[data-lesson-edit]', timeout=5000)
+        check(page.locator('[data-lesson-up]').count() >= 1 and page.locator('[data-library-add-lesson]').count() >= 1, "Edit by hand reveals today's editor")
+        shot(page, 'course-page')
+
+
+def scenario_steer_posts_and_shows_changes():
+    served = serve()
+    if served is None:
+        return
+    with served.browser() as page:
+        admin(page, served, 'mom')
+        page.route('**/api/library/*/steer', lambda route: route.fulfill(status=200, content_type='application/json',
+            body='{"status":"success","changes":["Scales: 3 sessions → 2","+ Duet with a parent after Chords"],"said":"Done.","program":{}}'))
+        page.goto(served.url(f'library?id={PIANO}'), wait_until='load')
+        page.wait_for_selector('[data-steer-box]', timeout=15000)
+        page.locator('[data-steer-box]').fill('shorter scales and a duet')
+        page.locator('[data-steer-send]').click()
+        page.wait_for_selector('[data-steer-changes]', timeout=10000)
+        check('Duet with a parent' in page.locator('[data-steer-changes]').inner_text(), "the change list is shown")
+        shot(page, 'course-steer-changes')
+
+
+def scenario_brief_box_on_the_list_page():
+    served = serve()
+    if served is None:
+        return
+    with served.browser() as page:
+        admin(page, served, 'mom')
+        page.goto(served.url('library'), wait_until='load')
+        page.wait_for_selector('[data-library-new]', timeout=15000)
+        page.locator('[data-library-new]').click()
+        page.wait_for_selector('[data-brief-box]', timeout=5000)
+        check(page.locator('[data-brief-find]').count() == 1 and page.locator('[data-library-create-form] input[name="title"]').count() == 0, "the brief box leads; the form is folded")
+        page.locator('[data-brief-by-hand]').click()
+        page.wait_for_selector('[data-library-create-form] input[name="title"]', timeout=5000)
+        shot(page, 'library-brief')
+
+
+def scenario_phone_keeps_edit_by_hand_without_scripts():
+    """The brief's phone scenario. The phone carries its own prompt family (app.html
+    promptChoice: .pwa-prompt-overlay [data-pick]); #cc-choice-modal is the admin page's."""
+    served = serve()
+    if served is None:
+        return
+    with served.browser() as page:
+        pwa(page, served, 'mom')
+        page.goto(served.url('app?view=library'), wait_until='load')
+        page.wait_for_selector('[data-library-page]', timeout=15000)
+        page.locator(f'[data-library-open][data-library-id="{PIANO}"]').first.click()
+        page.wait_for_selector('[data-course-menu]', timeout=10000)
+        page.locator('[data-course-menu]').click()
+        page.wait_for_selector('.pwa-prompt-overlay [data-pick]', timeout=5000)
+        labels = page.locator('.pwa-prompt-overlay [data-pick]').all_inner_texts()
+        check(any('Edit by hand' in l for l in labels) and not any('Write lessons' in l for l in labels), f"phone: Edit by hand yes, Write lessons no (P3): {labels}")
+        page.locator('.pwa-prompt-overlay [data-pick]', has_text='Edit by hand').click()
+        page.wait_for_selector('[data-lesson-edit]', timeout=5000)
+        check(page.locator('[data-script-edit]').count() == 0, "no script editor on the phone")
+        check(served.errors() == [], f"no page errors: {served.errors()}")
+
+
+def scenario_preview_offers_each_session_and_each_runner():
+    """Spec §3.3: one script plays at once; variants or a visible runner open a chooser, and
+    "as Kate" plays her run's script through the run's own route."""
+    served = serve()
+    if served is None:
+        return
+    _restore_piano()
+    with served.browser() as page:
+        admin(page, served, 'dad')   # Dad sees Kate's run named, Sam's only counted
+        asked = []
+        page.on('request', lambda r: asked.append(r.url) if '/lesson' in r.url and r.method == 'GET' else None)
+        page.goto(served.url(f'library?id={PIANO}'), wait_until='load')
+        page.wait_for_selector('[data-course-header]', timeout=15000)
+        found = page.locator(f'[data-course-phase="{FOUND}"]')
+        check(found.inner_text().startswith('1 · Foundations · done when plays a C scale hands together'), f"the phase, numbered: {found.inner_text()[:120]}")
+        check(found.locator('[data-phase-progression]').inner_text().strip() == 'Next time: One less reminder', "and its progression")
+        check(page.locator(f'[data-course-phase="{SONGS}"] [data-phase-progression]').count() == 0, "only where one is set")
+        shot(page, 'course-page-rest')
+        scales = page.locator(f'[data-course-lesson="{SCALES}"]')
+        check(scales.locator('[data-lesson-preview]').get_attribute('data-preview-choice') is not None, "a lesson with sessions opens a chooser")
+        check('Session A' in scales.locator('[data-lesson-summary]').inner_text(), "the sessions are named inside the sentence")
+        scales.locator('[data-lesson-preview]').click()
+        page.wait_for_selector('#cc-choice-modal:not(.hidden)', timeout=5000)
+        labels = page.locator('#cc-choice-options button').all_inner_texts()
+        check('Session A' in labels and 'Session B' in labels, f"each session: {labels}")
+        check(any('as Kate' in l for l in labels) and not any('Sam' in l for l in labels), f"the visible runner only: {labels}")
+        page.locator('#cc-choice-options button', has_text='Session A, as Kate').click()
+        player = page.locator('[x-data="lessonPlayer()"]')
+        player.wait_for(state='visible', timeout=10000)
+        check(any('/api/programs/run-kate/lesson?lesson_id=' + SCALES in u and 'variant_label=Session%20A' in u for u in asked),
+              f"as Kate reads her run's script: {asked}")
+        check('Just a look' in player.inner_text(), "and it is a preview")
+        player.get_by_role('button', name='Close session', exact=True).click()
+        player.wait_for(state='hidden', timeout=5000)
+        check(served.errors() == [], f"no page errors: {served.errors()}")
+
+
+def scenario_a_steer_on_a_changed_program_says_read_again():
+    served = serve()
+    if served is None:
+        return
+    with served.browser() as page:
+        admin(page, served, 'mom')
+        # The DM course card's Steer lands here (chfLibrary.open(id, {steer: true})).
+        page.goto(served.url(f'library?id={PIANO}&steer=1'), wait_until='load')
+        page.wait_for_selector('[data-steer-box]', timeout=15000)
+        page.wait_for_function("() => document.activeElement && document.activeElement.hasAttribute('data-steer-box')", timeout=5000)
+        check('steer=' not in page.url, f"the address forgets the steer flag: {page.url}")
+        # Someone else changes the program after this page read it: the revision moves on.
+        from services import library
+        library.update(PIANO, {'title': 'Learn piano'}, storage.get_member('dad'))
+        sent = []
+        page.on('request', lambda r: sent.append(r.post_data_json) if r.url.endswith('/steer') else None)
+        page.locator('[data-steer-box]').fill('fewer scales')
+        page.locator('[data-steer-send]').click()
+        page.locator('#cc-alert-modal').wait_for(state='visible', timeout=15000)
+        said = page.locator('#cc-alert-message').inner_text()
+        check(said == 'The program changed; read it again.', f"a stale steer is refused in words: {said}")
+        check(sent and isinstance(sent[0].get('revision'), int), f"the steer sent the revision it read: {sent}")
+        check(page.locator('[data-steer-changes]').count() == 0, "and nothing claims to have changed")
+        others = [e for e in served.errors() if 'status of 409' not in e]
+        check(others == [], f"no page errors: {served.errors()}")
+
+
+def scenario_find_a_plan_offers_to_start_it_for_the_person():
+    """Spec §1 + P6 on the Library page: a brief naming Kate makes a library program, opens it,
+    and offers Start it for Kate; the setup sheet opens with her chosen and her own words
+    (starting point, days) prefilled. A refusal is said in the box, never a dialog."""
+    served = serve()
+    if served is None:
+        return
+    from services import program_brief
+    real = program_brief.parse
+    brief = {'title': 'Learn ukulele', 'for_member_id': 'kate',
+             'profile': {'age_band': 'explorer', 'minutes': 20, 'sessions_per_week': 2, 'assumes': ''},
+             'starting_point': 'knows two chords', 'preferred_days': [1, 3], 'target_date': None,
+             'based_on': '', 'exclude_books': False, 'notes': ''}
+    answers = [{'status': 'error', 'message': 'Say what Kate should learn.', 'alternatives': ['Learn ukulele']},
+               {'status': 'success', 'brief': brief}]
+    program_brief.parse = lambda *a, **k: answers.pop(0)
+    try:
+        with served.browser() as page:
+            admin(page, served, 'mom')
+            page.goto(served.url('library'), wait_until='load')
+            page.wait_for_selector('[data-library-new]', timeout=15000)
+            page.locator('[data-library-new]').click()
+            page.locator('[data-brief-box]').fill('Something for Kate.')
+            page.locator('[data-brief-find]').click()
+            page.wait_for_selector('[data-brief-error]', timeout=10000)
+            err = page.locator('[data-brief-error]').inner_text()
+            check('Say what Kate should learn.' in err and 'Learn ukulele' in err, f"the refusal is said in the box: {err}")
+            check(not page.locator('#cc-alert-modal').is_visible(), "never a dialog")
+            bodies = []
+            page.on('request', lambda r: bodies.append(r.post_data_json) if r.url.endswith('/api/programs/preview-slots') else None)
+            page.locator('[data-brief-box]').fill('Ukulele for Kate, she knows two chords, Tuesdays and Thursdays.')
+            page.locator('[data-brief-find]').click()
+            text = _confirm_text(page)
+            check('Start it for Kate?' in text, f"the page offers Start it for Kate: {text}")
+            made = next(r for r in storage.get_library_programs() if r['title'] == 'Learn ukulele')
+            check('knows two chords' not in repr(made), f"her starting point never reaches the library row: {made}")
+            page.wait_for_function("() => (document.querySelector('[data-course-header]') || {}).innerText?.includes('Learn ukulele')", timeout=10000)
+            page.locator('#cc-confirm-execute-btn').click()
+            page.wait_for_selector('[data-setup-sheet] [data-setup-slot]', timeout=10000)
+            sheet = page.locator('[data-setup-sheet]')
+            check(sheet.locator('[data-setup-who]').input_value() == 'kate', "Kate is chosen")
+            check(sheet.locator(f'[data-setup-pick="{made["id"]}"]').get_attribute('aria-pressed') == 'true', "on the program just made")
+            check(sheet.locator('input[name="starting_point"]').input_value() == 'knows two chords', "her starting point is prefilled")
+            check(bodies and bodies[-1].get('preferred_days') == [1, 3], f"the days she asked for seed the week: {bodies}")
+            shot(page, 'library-brief-start-for')
+            check(served.errors() == [], f"no page errors: {served.errors()}")
+    finally:
+        program_brief.parse = real
+        for r in storage.get_library_programs():
+            if r['title'] == 'Learn ukulele':
+                storage.delete_library_program(r['id'])
+
+
+def scenario_make_a_variant_and_start_it_for_from_the_menu():
+    """⋯ › Make a variant is today's re-curate: a NEW library program from this one's profile
+    plus the words typed, the original untouched. ⋯ › Start it for… opens the setup sheet on
+    the program."""
+    served = serve()
+    if served is None:
+        return
+    before = {r['id'] for r in storage.get_library_programs()}
+    original = copy.deepcopy(storage.get_library_program(DRUMS))
+    try:
+        with served.browser() as page:
+            admin(page, served, 'mom')
+            page.goto(served.url(f'library?id={DRUMS}'), wait_until='load')
+            page.wait_for_selector('[data-course-header]', timeout=15000)
+            page.locator('[data-course-menu]').click()
+            page.locator('#cc-choice-modal button', has_text='Make a variant').click()
+            page.locator('#cc-input-modal').wait_for(state='visible', timeout=5000)
+            page.locator('#cc-input-field').fill('more fills, fewer rests')
+            page.locator('#cc-input-ok-btn').click()
+            fresh = _wait(lambda: [r for r in storage.get_library_programs() if r['id'] not in before], "a variant was made")[0]
+            check(fresh['made_for'] == original['made_for'] and fresh['created_by'] == 'mom', f"from the same profile: {fresh['made_for']}")
+            now = storage.get_library_program(DRUMS)
+            check(now['lessons'] == original['lessons'] and now['phases'] == original['phases'], "the original is untouched")
+            page.wait_for_function(f"() => new URLSearchParams(location.search).get('id') === '{fresh['id']}'", timeout=10000)
+            page.wait_for_selector('[data-course-header]', timeout=10000)
+            page.locator('[data-course-menu]').click()
+            page.locator('#cc-choice-modal button', has_text='Start it for').click()
+            page.wait_for_selector(f'[data-setup-sheet] [data-setup-pick="{fresh["id"]}"][aria-pressed="true"]', timeout=10000)
+            page.keyboard.press('Escape')
+            page.wait_for_selector('[data-setup-sheet]', state='detached', timeout=5000)
+            check(served.errors() == [], f"no page errors: {served.errors()}")
+    finally:
+        for r in storage.get_library_programs():
+            if r['id'] not in before:
+                storage.delete_library_program(r['id'])
+
+
 SCENARIOS = [scenario_the_library_page_lists_each_program, scenario_a_new_program_says_what_the_household_will_see,
              scenario_editing_a_program_inline, scenario_archive_leaves_the_picker_not_the_library,
              scenario_delete_waits_until_nobody_runs_it, scenario_the_picker_starts_the_program,
@@ -1039,7 +1318,11 @@ SCENARIOS = [scenario_the_library_page_lists_each_program, scenario_a_new_progra
              scenario_setup_sheet_lands_active, scenario_setup_preview_failure_shows_retry,
              scenario_monitoring_sheet, scenario_change_the_days_from_the_sheet,
              scenario_start_a_session_from_the_sheet, scenario_a_failed_footprint_says_so_with_retry,
-             scenario_escape_closes_only_the_top_sheet]
+             scenario_escape_closes_only_the_top_sheet,
+             scenario_course_page_at_rest, scenario_steer_posts_and_shows_changes, scenario_brief_box_on_the_list_page,
+             scenario_phone_keeps_edit_by_hand_without_scripts, scenario_preview_offers_each_session_and_each_runner,
+             scenario_a_steer_on_a_changed_program_says_read_again, scenario_find_a_plan_offers_to_start_it_for_the_person,
+             scenario_make_a_variant_and_start_it_for_from_the_menu]
 
 if __name__ == "__main__":
     import traceback

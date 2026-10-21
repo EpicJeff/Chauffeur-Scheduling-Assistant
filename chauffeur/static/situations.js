@@ -315,9 +315,10 @@ window.Situations = (function () {
   }
 
   // The DM course card (programs spec §7): what a chat-made program is, with
-  // Preview (the course page) and Set it up on the run the choice already
-  // made. Markup is the project card's (app.html renderProjectCard). `me` is
-  // the viewer's member id: your own program reads "Set it up".
+  // Preview (the course page), Steer (the course page with its Steer box)
+  // and Set it up on the run the choice already made. Markup is the project
+  // card's (app.html renderProjectCard). `me` is the viewer's member id: your
+  // own program reads "Set it up".
   function programCourseHtml(card, me) {
     const phases = (card.phases || []).map(p =>
       `<li>${esc(p.name)} · ${esc(p.lessons)} ${p.lessons === 1 ? 'lesson' : 'lessons'}</li>`).join('');
@@ -330,17 +331,22 @@ window.Situations = (function () {
         <div class="text-xs text-gray-500 mt-0.5">${esc(card.source_line)}</div>
         ${phases ? `<ul class="text-xs text-gray-300 mt-1">${phases}</ul>` : ''}
         <div class="flex flex-wrap gap-2 mt-2">${setup}
-          <button data-course-preview="${esc(card.library_id)}" class="px-3 py-1 rounded-lg text-xs font-semibold bg-gray-700 text-gray-200">Preview</button></div></div>`;
+          <button data-course-preview="${esc(card.library_id)}" class="px-3 py-1 rounded-lg text-xs font-semibold bg-gray-700 text-gray-200">Preview</button>
+          <button data-course-steer="${esc(card.library_id)}" class="px-3 py-1 rounded-lg text-xs font-semibold bg-gray-700 text-gray-200">Steer</button></div></div>`;
   }
 
   // One listener for every course card, wherever a DM draws it.
   if (typeof document !== 'undefined' && !window.__chfCourseCards) {
     window.__chfCourseCards = true;
     document.addEventListener('click', ev => {
-      const b = ev.target.closest && ev.target.closest('button[data-course-preview], button[data-course-setup]');
+      const b = ev.target.closest && ev.target.closest('button[data-course-preview], button[data-course-steer], button[data-course-setup]');
       if (!b) return;
       if (b.dataset.coursePreview) {
         if (window.chfLibrary) window.chfLibrary.open(b.dataset.coursePreview);
+        return;
+      }
+      if (b.dataset.courseSteer) {
+        if (window.chfLibrary) window.chfLibrary.open(b.dataset.courseSteer, {steer: true});
         return;
       }
       if (window.chfProgramSetup) window.chfProgramSetup.open({runId: b.dataset.courseSetup, projectId: b.dataset.projectId || null});

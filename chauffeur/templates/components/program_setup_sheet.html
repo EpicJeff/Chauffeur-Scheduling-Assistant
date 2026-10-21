@@ -2,7 +2,12 @@
    and times, one Start. Included ONCE per host (projects.html, work.html,
    library.html, app.html) and opened from anywhere through
    window.chfProgramSetup.open({projectId, forMemberId?, libraryId?, runId?,
-   projectTitle?}). A parent's or adult's own pick lands active in one
+   projectTitle?, startingPoint?, preferredDays?, targetDate?}). The last three
+   are the requester's own words from a brief (POST /api/library {brief}
+   hands them back, never storing them on the library row): they prefill the
+   private starting point and the aim date, and preferred days (0-6, 0 is
+   Monday, or weekday names) seed the week the app proposes. A parent's or
+   adult's own pick lands active in one
    transaction (POST /api/programs with activate); a child's lands proposed for
    a parent or adult to approve. With runId the sheet configures THAT run's
    times and approves it if it is proposed; it never posts a second run (the
@@ -155,7 +160,7 @@ function programSetup() {
         apiBase: window.chfBase !== undefined ? window.chfBase : '',
         open: false, busy: false, error: '', myId: '',
         projectId: null, projectTitle: '', forMemberId: '', libraryId: '', runId: null, run: null,
-        making: false, draft: blankDraft(), startingPoint: '', slots: [], minutes: 25, targetDate: '',
+        making: false, draft: blankDraft(), startingPoint: '', slots: [], minutes: 25, targetDate: '', preferredDays: [],
         members: [], bands: {}, ageBands: [], library: [], libraryLoaded: false,
         previewFailed: false, previewing: false, _seq: 0,
         init() {
@@ -203,8 +208,18 @@ function programSetup() {
         },
         reset() {
             this.busy = false; this.error = ''; this.run = null; this.making = false; this.draft = blankDraft();
-            this.startingPoint = ''; this.slots = []; this.minutes = 25; this.targetDate = '';
+            this.startingPoint = ''; this.slots = []; this.minutes = 25; this.targetDate = ''; this.preferredDays = [];
             this.libraryId = ''; this.previewFailed = false; this.previewing = false;
+        },
+        // A brief's days, as weekday numbers (0 is Monday): numbers or names.
+        dayNumbers(days) {
+            const names = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+            const out = [];
+            (Array.isArray(days) ? days : []).forEach(d => {
+                const n = typeof d === 'number' ? d : names.indexOf(String(d || '').trim().toLowerCase().slice(0, 3));
+                if (Number.isInteger(n) && n >= 0 && n <= 6 && !out.includes(n)) out.push(n);
+            });
+            return out;
         },
         async start(detail) {
             const d = detail || {};
@@ -213,6 +228,9 @@ function programSetup() {
             this.projectId = d.projectId || null; this.projectTitle = d.projectTitle || '';
             this.runId = d.runId || null;
             this.forMemberId = d.forMemberId || this.myId || '';
+            this.startingPoint = String(d.startingPoint || '');
+            this.targetDate = /^\d{4}-\d{2}-\d{2}$/.test(d.targetDate || '') ? d.targetDate : '';
+            this.preferredDays = this.dayNumbers(d.preferredDays);
             this.open = true;
             const seq = ++this._seq;
             try {
@@ -277,6 +295,7 @@ function programSetup() {
             if (this.making) body.sessions_per_week = this.draft.sessions_per_week || 3;
             else if (this.libraryId) body.library_id = this.libraryId;
             else if (this.run) body.sessions_per_week = (this.run.shape || {}).sessions_per_week || 3;
+            if (this.preferredDays.length) body.preferred_days = this.preferredDays;
             try {
                 const r = await fetch(this.apiBase + 'api/programs/preview-slots', {method: 'POST', headers: this.headers(), body: JSON.stringify(body)});
                 if (seq !== this._seq) return;

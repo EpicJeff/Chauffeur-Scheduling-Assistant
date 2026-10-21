@@ -209,7 +209,8 @@ def _wait(cond, msg, tries=60):
 def _library(page, served, who, query=''):
     admin(page, served, who)
     page.goto(served.url('library' + query), wait_until='load')
-    page.wait_for_selector('[data-library-card]', timeout=20000)
+    # The list draws cards; a program (?id=) opens on its course page (programs spec §3).
+    page.wait_for_selector('[data-library-card], [data-course-header]', timeout=20000)
 
 
 def _line(page, lesson_id, label=''):
@@ -227,6 +228,28 @@ def _editor(page, lesson_id, label=''):
 def _confirm_text(page):
     page.locator('#cc-confirm-modal').wait_for(state='visible', timeout=10000)
     return page.locator('#cc-confirm-modal').inner_text()
+
+
+def _edit_by_hand(page, scope=''):
+    """Scripts live behind ⋯ › Edit by hand on the course page (programs spec §3.5): the
+    admin page's ⋯ is #cc-choice-modal, the phone's its own prompt (.pwa-prompt-overlay)."""
+    page.wait_for_selector(f'{scope} [data-course-menu]'.strip(), timeout=10000)
+    page.locator(f'{scope} [data-course-menu]'.strip()).first.click()
+    if page.locator('#cc-choice-modal').count():
+        page.wait_for_selector('#cc-choice-modal:not(.hidden)', timeout=5000)
+        page.locator('#cc-choice-modal button', has_text='Edit by hand').click()
+    else:
+        page.locator('.pwa-prompt-overlay [data-pick]', has_text='Edit by hand').click()
+    page.wait_for_selector(f'{scope} [data-edit-by-hand] [data-lesson-script]'.strip(), timeout=10000)
+
+
+def _menu_labels(page):
+    """What the course page's ⋯ offers (admin), closed again."""
+    page.locator('[data-course-menu]').click()
+    page.wait_for_selector('#cc-choice-modal:not(.hidden)', timeout=5000)
+    labels = page.locator('#cc-choice-options button').all_inner_texts()
+    page.locator('#cc-choice-cancel-btn').click()
+    return labels
 
 
 def _fake_job(library_id, done, total, lesson_id):
@@ -247,7 +270,12 @@ def scenario_each_lesson_row_says_where_its_script_stands():
         return
     with served.browser() as page:
         _library(page, served, 'mom', '?id=' + PIANO)
-        page.wait_for_selector('[data-library-detail] [data-lesson-script]', timeout=10000)
+        page.wait_for_selector('[data-course-header]', timeout=10000)
+        # At rest (spec §3.4): a chip only where a script failed or is being written.
+        chips = page.locator('[data-course-lesson] [data-script-chip]')
+        check(chips.count() == 1 and 'failed' in chips.inner_text() and 'Session B' in chips.inner_text(),
+              f"one chip at rest, on the failed script: {chips.all_inner_texts()}")
+        _edit_by_hand(page)
         check(_chip(page, SCALES, 'Session A') == 'ready · about 12 min', f"a ready script: {_chip(page, SCALES, 'Session A')}")
         check(_chip(page, SCALES, 'Session B') == 'failed · the model was busy', f"a failed one: {_chip(page, SCALES, 'Session B')}")
         check(_chip(page, CHORDS) == 'no script yet', f"none yet: {_chip(page, CHORDS)}")
@@ -286,10 +314,12 @@ def scenario_each_lesson_row_says_where_its_script_stands():
         check(served.errors() == [], f"no page errors: {served.errors()}")
     with served.browser() as page:
         _library(page, served, 'aunt', '?id=' + PIANO)
-        page.wait_for_selector('[data-library-detail] [data-lesson-script]', timeout=10000)
-        check(page.locator('[data-script-play]').count() == 4, "Play for everyone")
+        page.wait_for_selector('[data-course-header]', timeout=10000)
+        check(page.locator('[data-lesson-preview]').count() == 3, "Preview for everyone, one per lesson")
         check(page.locator('[data-script-edit], [data-script-regenerate], [data-library-write]').count() == 0,
               "no Edit, Regenerate or Write lessons for someone who may not change the program")
+        offered = _menu_labels(page)
+        check(not any(w in l for l in offered for w in ('Edit by hand', 'Write lessons')), f"nor behind her ⋯: {offered}")
         check(served.errors() == [], f"no page errors: {served.errors()}")
 
 
@@ -309,7 +339,12 @@ def scenario_the_card_writes_lessons_and_says_how_far_it_has_got():
             check(drums.inner_text().strip() == 'Write lessons' and drums.is_enabled(), "an idle program offers Write lessons")
             shot(page, 'scripts-card-writing-dark')
             page.locator(f'[data-library-list] [data-library-card][data-library-id="{PIANO}"] [data-library-view]').click()
-            page.wait_for_selector('[data-library-detail] [data-lesson-script]', timeout=10000)
+            page.wait_for_selector('[data-course-header]', timeout=10000)
+            check(page.locator('[data-course-writing]').inner_text().strip() == 'Writing lessons · 2 of 4',
+                  f"the course page says how far the job has got: {page.locator('[data-course-header]').inner_text()}")
+            check(page.locator(f'[data-course-lesson="{TWINKLE}"] [data-script-chip]').inner_text().strip() == 'writing…',
+                  "the lesson being written carries its chip at rest")
+            _edit_by_hand(page)
             check(_chip(page, TWINKLE) == 'writing…', f"the lesson being written: {_chip(page, TWINKLE)}")
             check(_line(page, TWINKLE).locator('[data-script-regenerate]').is_disabled(), "Regenerate waits for the job")
             # The page reads the library again every 10 seconds while a job shows, and stops after.
@@ -318,14 +353,14 @@ def scenario_the_card_writes_lessons_and_says_how_far_it_has_got():
                 const el = document.querySelector('[data-lesson-id="{TWINKLE}"] [data-lesson-script] [data-script-chip]');
                 return el && el.innerText === 'no script yet';
             }}""", timeout=15000)
-            check(page.locator('[data-library-detail] [data-library-write]').inner_text().strip() == 'Write lessons',
-                  "the card's button comes back once the job is done")
+            check(page.locator('[data-course-writing]').count() == 0 and 'Write lessons' in _menu_labels(page),
+                  "Write lessons comes back to ⋯ once the job is done")
             page.locator('[data-library-back]').click()
             page.locator(f'[data-library-list] [data-library-card][data-library-id="{DRUMS}"] [data-library-write]').click()
             _wait(lambda: WRITES and WRITES[-1] == (DRUMS, None, ''), "Write lessons starts the program's job")
             check((storage.get_library_script(DRUMS, _slot(BEAT)) or {}).get('scenes'), "and its lesson has a script")
             page.locator(f'[data-library-list] [data-library-card][data-library-id="{DRUMS}"] [data-library-view]').click()
-            page.wait_for_selector('[data-library-detail] [data-lesson-script]', timeout=10000)
+            _edit_by_hand(page)
             check(_chip(page, BEAT) == 'ready · about 3 min', f"the chip reads ready: {_chip(page, BEAT)}")
             check(served.errors() == [], f"no page errors: {served.errors()}")
         with served.browser() as page:
@@ -344,7 +379,7 @@ def scenario_the_editor_writes_a_teach_beat_and_honours_the_length():
     storage.delete_library_script(PIANO, _slot(TWINKLE))
     with served.browser() as page:
         _library(page, served, 'mom', '?id=' + PIANO)
-        page.wait_for_selector('[data-library-detail] [data-lesson-script]', timeout=10000)
+        _edit_by_hand(page)
         _line(page, TWINKLE).locator('[data-script-edit]').click()
         ed = _editor(page, TWINKLE)
         ed.wait_for(state='visible', timeout=10000)
@@ -365,7 +400,7 @@ def scenario_the_editor_writes_a_teach_beat_and_honours_the_length():
                          'examples': [{'text': 'Play C, rest, C'}, {'text': 'Dó', 'speak_lang': 'pt-BR'}],
                          'speak': 'Find the two black keys. Step left of them.'}], f"every field, the language tag split off: {saved}")
         page.reload(wait_until='load')
-        page.wait_for_selector('[data-library-detail] [data-lesson-script]', timeout=20000)
+        _edit_by_hand(page)
         _line(page, TWINKLE).locator('[data-script-edit]').click()
         row = _editor(page, TWINKLE).locator('[data-script-row][data-type="teach"]')
         row.wait_for(state='visible', timeout=10000)
@@ -413,7 +448,7 @@ def scenario_a_failed_read_can_never_become_a_save():
     before = storage.get_library_script(PIANO, slot)['scenes']
     with served.browser() as page:
         _library(page, served, 'mom', '?id=' + PIANO)
-        page.wait_for_selector('[data-library-detail] [data-lesson-script]', timeout=10000)
+        _edit_by_hand(page)
         puts = []
         page.on('request', lambda r: puts.append(r.url) if r.method == 'PUT' and '/script' in r.url else None)
 
@@ -464,8 +499,11 @@ def scenario_play_previews_the_script_filled_for_the_viewer():
     with served.browser() as page:
         page.set_viewport_size({'width': 390, 'height': 844})
         _library(page, served, 'mom', '?id=' + PIANO)
-        page.wait_for_selector('[data-library-detail] [data-lesson-script]', timeout=10000)
-        _line(page, SCALES, 'Session A').locator('[data-script-play]').click()
+        page.wait_for_selector('[data-course-header]', timeout=10000)
+        # Preview (spec §3.3): a lesson with sessions asks which one, then plays it filled for the viewer.
+        page.locator(f'[data-course-lesson="{SCALES}"] [data-lesson-preview]').click()
+        page.wait_for_selector('#cc-choice-modal:not(.hidden)', timeout=5000)
+        page.locator('#cc-choice-options').get_by_role('button', name='Session A', exact=True).click()
         player = page.locator('[x-data="lessonPlayer()"]')
         player.wait_for(state='visible', timeout=10000)
         page.wait_for_function("() => document.querySelector('[x-data=\"lessonPlayer()\"]').innerText.includes('Hello Mom, find middle C.')",
@@ -571,7 +609,12 @@ def scenario_the_phone_shows_chips_and_play_light_and_dark():
                 check(home.locator('[data-library-write]').count() == 0, "but Write lessons is the admin page's")
                 shot(page, f'scripts-phone-list-{theme}')
                 card.locator('[data-library-view]').click()
-                page.wait_for_selector('#library-container [data-library-detail] [data-lesson-script]', timeout=10000)
+                page.wait_for_selector('#library-container [data-course-header]', timeout=10000)
+                check(home.locator('[data-script-chip]').count() == 2 and home.locator('[data-lesson-preview]').count() == 3,
+                      f"at rest: chips only where writing or failed, Preview on every lesson: {home.locator('[data-script-chip]').all_inner_texts()}")
+                check(home.locator('[data-course-writing]').inner_text().strip() == 'Writing lessons · 2 of 4', "the phone says how far it has got")
+                shot(page, f'scripts-phone-course-{theme}')
+                _edit_by_hand(page, '#library-container')
                 check(home.locator('[data-script-chip]').count() == 4 and home.locator('[data-script-play]').count() == 4,
                       "chips and Play on every line")
                 check(home.locator('[data-script-edit], [data-script-regenerate], [data-script-editor]').count() == 0,
@@ -579,7 +622,7 @@ def scenario_the_phone_shows_chips_and_play_light_and_dark():
                 check(home.locator('a[href]').count() == 0, "buttons only on the phone")
                 width = page.evaluate('() => [document.documentElement.scrollWidth, window.innerWidth]')
                 check(width[0] <= width[1], f"no horizontal scroll ({theme}): {width}")
-                box = home.locator('[data-library-detail] [data-library-card]').first.bounding_box()
+                box = home.locator('[data-library-detail] [data-course-header]').first.bounding_box()
                 check(box['x'] >= 15.5 and box['x'] + box['width'] <= 390 - 15.5, f"a 16px gutter ({theme}): {box}")
                 shot(page, f'scripts-phone-detail-{theme}')
                 shot_el(home.locator('[data-library-detail]'), f'scripts-phone-detail-full-{theme}')
@@ -639,7 +682,7 @@ def scenario_reset_clears_a_script_and_an_archived_program_keeps_its_hands_off()
             _clear_jobs()
             # Reset: asks, Keep it keeps, Clear clears and the editor reads the empty slot again.
             page.locator(card + ' [data-library-view]').click()
-            page.wait_for_selector('[data-library-detail] [data-lesson-script]', timeout=10000)
+            _edit_by_hand(page)
             _line(page, BEAT).locator('[data-script-edit]').click()
             ed = _editor(page, BEAT)
             ed.locator('[data-script-row]').first.wait_for(state='visible', timeout=10000)
@@ -668,15 +711,56 @@ def scenario_reset_clears_a_script_and_an_archived_program_keeps_its_hands_off()
             flute.wait_for(state='visible', timeout=10000)
             check(flute.locator('[data-library-write]').count() == 0, "no Write lessons on an archived card")
             flute.locator('[data-library-view]').click()
-            page.wait_for_selector('[data-library-detail] [data-lesson-script]', timeout=10000)
+            page.wait_for_selector('[data-library-detail] [data-course-header]', timeout=10000)
             arch = page.locator('[data-library-detail]')
-            check(arch.locator('[data-script-play]').count() == 1, "Play stays on an archived program")
+            check(arch.locator('[data-lesson-preview]').count() == 1, "Preview stays on an archived program")
+            offered = _menu_labels(page)
+            check(not any(w in l for l in offered for w in ('Edit by hand', 'Steer', 'Write lessons', 'Archive')),
+                  f"and its ⋯ offers nothing that writes: {offered}")
+            check(arch.locator('[data-steer-box]').count() == 0, "no Steer box on an archived program")
             check(arch.locator('[data-script-edit], [data-script-regenerate], [data-script-reset], [data-script-editor], [data-library-write]').count() == 0,
                   "and no Edit, Regenerate, Reset or Write lessons")
             shot_el(arch, 'scripts-archived-dark')
             check(served.errors() == [], f"no page errors: {served.errors()}")
     finally:
         _clear_jobs()
+
+
+# 10 (programs brief-and-course spec §3.4) -----------------------------------
+def scenario_the_course_page_says_short_and_outdated_scripts():
+    """At rest a script that ran short says so ("about 8 min, shorter than asked", from the
+    writer's own note), and a hand edit a change touched says "edited by hand · may be out
+    of date"; tapping that offers the Regenerate confirm that names the hand edit."""
+    served = serve()
+    if served is None:
+        return
+    _clear_jobs()
+    storage.delete_library_script(DRUMS, _slot(BEAT))
+    _commit(DRUMS, _slot(BEAT), {'origin': 'generated', 'minutes': 8, 'note': 'runs about 8 minutes of 20',
+                                 'scenes': copy.deepcopy(STUB_SCENES)})
+    try:
+        with served.browser() as page:
+            _library(page, served, 'mom', '?id=' + DRUMS)
+            page.wait_for_selector('[data-course-header]', timeout=10000)
+            beat = page.locator(f'[data-course-lesson="{BEAT}"]')
+            check(beat.locator('[data-script-short]').inner_text().strip() == 'about 8 min, shorter than asked',
+                  f"a short script says so: {beat.inner_text()}")
+            check(beat.locator('[data-script-chip], [data-script-stale]').count() == 0, "and nothing else: it is ready")
+            storage.edit_library_script(DRUMS, _slot(BEAT), {'origin': 'generated', 'minutes': 3, 'scenes': copy.deepcopy(STUB_SCENES)})
+            storage.mark_library_script_stale(DRUMS, _slot(BEAT), True)
+            page.reload(wait_until='load')
+            page.wait_for_selector(f'[data-course-lesson="{BEAT}"] [data-script-stale]', timeout=10000)
+            stale = page.locator(f'[data-course-lesson="{BEAT}"] [data-script-stale]')
+            check('edited by hand · may be out of date' in stale.inner_text(), f"the outdated hand edit: {stale.inner_text()}")
+            check(page.locator(f'[data-course-lesson="{BEAT}"] [data-script-short]').count() == 0, "a hand edit carries no shortfall note")
+            shot(page, 'course-page-stale')
+            stale.click()
+            text = _confirm_text(page)
+            check('hand-edited' in text and 'outdated' in text, f"Regenerate's confirm names the hand edit: {text}")
+            page.locator('#cc-confirm-cancel-btn').click()
+            check(served.errors() == [], f"no page errors: {served.errors()}")
+    finally:
+        storage.delete_library_script(DRUMS, _slot(BEAT))
 
 
 SCENARIOS = [scenario_each_lesson_row_says_where_its_script_stands,
@@ -687,7 +771,8 @@ SCENARIOS = [scenario_each_lesson_row_says_where_its_script_stands,
              scenario_a_library_run_points_at_the_library_and_a_legacy_run_keeps_its_editor,
              scenario_the_drawer_picks_the_writing_model,
              scenario_the_phone_shows_chips_and_play_light_and_dark,
-             scenario_reset_clears_a_script_and_an_archived_program_keeps_its_hands_off]
+             scenario_reset_clears_a_script_and_an_archived_program_keeps_its_hands_off,
+             scenario_the_course_page_says_short_and_outdated_scripts]
 
 if __name__ == '__main__':
     import traceback

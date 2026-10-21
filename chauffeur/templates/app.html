@@ -4166,7 +4166,7 @@
                     // Capture-prompt deeplink: arm the camera affordance.
                     if (params.get('compose') === 'moment') armMomentCapture();
                 });
-            } else if (['messages', 'chores', 'family', 'projects'].includes(params.get('view')) && selectedMemberId) {
+            } else if (['messages', 'chores', 'family', 'projects', 'library'].includes(params.get('view')) && selectedMemberId) {
                 setView(params.get('view'));
             } else if (currentView === 'chores') {
                 fetchChores();  // restored from localStorage: setView early-returns

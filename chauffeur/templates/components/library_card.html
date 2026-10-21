@@ -7,6 +7,9 @@
    library_card()            one card; the caller's scope holds `lp` (a row of
                              GET /api/library) and libraryPage()'s methods
                              (writeLessons/writingOf/writingLine and `host`).
+   library_runners()         "Running it:" and each visible runner as a button
+                             to their project, the rest counted; the card and
+                             the course page's header (library_page.html).
    library_profile_fields(d, bands)
                              the public profile a library program is curated
                              for, with the publication line ABOVE the title:
@@ -28,8 +31,8 @@
     <div class="flex items-start justify-between gap-2">
         <button type="button" data-library-open :data-library-id="lp.id" @click="openProgram(lp)"
                 class="min-w-0 text-left text-sm font-bold text-gray-100" x-text="lp.title"></button>
-        <span data-library-source class="text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0"
-              :class="chfLibrary.source(lp).cls" x-text="chfLibrary.source(lp).label"></span>
+        <span data-library-source class="text-[10px] font-bold px-1.5 py-0.5 rounded min-w-0 max-w-[55%] truncate"
+              :class="chfLibrary.source(lp).cls" :title="chfLibrary.source(lp).label" x-text="chfLibrary.source(lp).label"></span>
     </div>
     <span data-library-made-for class="block text-[11px] text-gray-500 mt-0.5" x-text="chfLibrary.madeFor(lp)"></span>
     <span class="block text-[11px] text-gray-500" x-show="chfLibrary.assumes(lp)" x-text="chfLibrary.assumes(lp)"></span>
@@ -39,23 +42,11 @@
             <span data-library-archived class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-400">Archived</span>
         </template>
     </div>
-    <template x-if="chfLibrary.hasRunners(lp)">
-        <div data-library-runners class="flex flex-wrap items-center gap-1.5 mt-2">
-            <span class="text-[11px] text-gray-500">Running it:</span>
-            <template x-for="(r, ri) in ((lp.runners || {}).named || [])" :key="ri + ':' + r.project_id">
-                <button type="button" data-library-runner :data-project-id="r.project_id" @click="chfLibrary.openProject(r.project_id)"
-                        class="text-xs font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700"
-                        x-text="r.name + ' · ' + r.project_title"></button>
-            </template>
-            <span data-library-hidden x-show="(lp.runners || {}).hidden" class="text-[11px] text-gray-500"
-                  x-text="'and ' + ((lp.runners || {}).hidden || 0) + ' more'"></span>
-        </div>
-    </template>
+    {{ library_runners() }}
     <div class="flex flex-wrap gap-2 mt-2.5">
         <template x-if="!opened">
             <button type="button" data-library-view @click="openProgram(lp)"
-                    class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700"
-                    x-text="lp.can_edit ? 'Edit' : 'Open'"></button>
+                    class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Open</button>
         </template>
         <!-- Write lessons: the program's scripts as one background job
              (spec 2026-10-20-lesson-depth §8), the button saying how far it
@@ -83,6 +74,21 @@
         <p data-library-in-use :id="'library-in-use-' + lp.id" class="text-[11px] text-gray-500 italic mt-1" x-text="lp.in_use"></p>
     </template>
 </article>
+{% endmacro %}
+
+{% macro library_runners() %}
+<template x-if="chfLibrary.hasRunners(lp)">
+    <div data-library-runners class="flex flex-wrap items-center gap-1.5 mt-2">
+        <span class="text-[11px] text-gray-500">Running it:</span>
+        <template x-for="(r, ri) in ((lp.runners || {}).named || [])" :key="ri + ':' + r.project_id">
+            <button type="button" data-library-runner :data-project-id="r.project_id" @click="chfLibrary.openProject(r.project_id)"
+                    class="text-xs font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700"
+                    x-text="r.name + ' · ' + r.project_title"></button>
+        </template>
+        <span data-library-hidden x-show="(lp.runners || {}).hidden" class="text-[11px] text-gray-500"
+              x-text="'and ' + ((lp.runners || {}).hidden || 0) + ' more'"></span>
+    </div>
+</template>
 {% endmacro %}
 
 {% macro library_profile_fields(d, bands) %}
@@ -134,12 +140,52 @@
             return document.getElementById('cc-confirm-message') ? esc(message) : message;
         },
         // Where the curriculum came from, as a chip: the programs page's
-        // three tiers (tier() in programs_page.html), said the same way.
+        // three tiers (tier() in programs_page.html), in the course page's
+        // words (programs spec §8: "Based on {name} · cited").
         source(lp) {
-            const origin = ((lp || {}).source || {}).origin;
-            if (origin === 'generated') return {label: 'Made by the app', cls: 'bg-amber-500/20 text-amber-300'};
-            if (origin === 'none') return {label: 'Practice time only', cls: 'bg-gray-700 text-gray-400'};
-            return {label: 'Published plan', cls: 'bg-teal-500/20 text-teal-300'};
+            const src = (lp || {}).source || {};
+            if (src.origin === 'generated') return {label: 'Made by the app', cls: 'bg-amber-500/20 text-amber-300'};
+            if (src.origin === 'none') return {label: 'Practice time only', cls: 'bg-gray-700 text-gray-400'};
+            return {label: 'Based on ' + (src.plan_name || 'a published plan') + ' · cited', cls: 'bg-teal-500/20 text-teal-300'};
+        },
+        // Lessons the app wrote inside a cited program (a steer's own words;
+        // spec §2.4): the source line says how many. 0 outside a cited one.
+        mixedCount(lp) {
+            if ((((lp || {}).source || {}).origin || 'cited') !== 'cited') return 0;
+            return ((lp || {}).lessons || []).filter(l => l.origin === 'generated').length;
+        },
+        // The course page's source line (spec §3.1) in three parts so the
+        // plan's name can be a button to its page: lead, name (+ url), rest.
+        // "Based on X · cited · 9 lessons · about 6 weeks", "Made by the app
+        // · …", "Practice time only · {reason} · …"; weeks are the phases'.
+        sourceParts(lp) {
+            const src = (lp || {}).source || {};
+            const n = ((lp || {}).lessons || []).length;
+            const weeks = ((lp || {}).phases || []).reduce((t, ph) => t + (Number(ph.weeks) || 0), 0);
+            let rest = ' · ' + n + (n === 1 ? ' lesson' : ' lessons') + (weeks ? ' · about ' + weeks + (weeks === 1 ? ' week' : ' weeks') : '');
+            const mixed = this.mixedCount(lp);
+            if (mixed) rest += ' · ' + mixed + (mixed === 1 ? ' lesson' : ' lessons') + ' changed by the app';
+            if (src.origin === 'generated') return {lead: 'Made by the app', name: '', url: '', rest};
+            if (src.origin === 'none') {
+                return {lead: 'Practice time only · ' + (src.why_this_one || src.reason || 'no plan was found'), name: '', url: '', rest};
+            }
+            return {lead: 'Based on ', name: src.plan_name || 'a published plan', url: src.url || '', rest: ' · cited' + rest};
+        },
+        // What "Why this one" unfolds to: the stored argument when there is
+        // one (whyText in programs_page.html), else what the tier means.
+        whyText(lp) {
+            const src = (lp || {}).source || {};
+            const why = (src.why_this_one || '').trim();
+            if (src.origin === 'none') return "The app couldn't find or build a plan, so this program keeps practice time with no lessons yet. Make a variant to look again.";
+            if (why) return why;
+            if (src.origin === 'generated') return "No published program fit this aim, so this plan is the app's own — not anyone's real curriculum.";
+            return 'Built from pages the app read.';
+        },
+        // A page outside Chauffeur: a button that opens a new tab (buttons,
+        // not anchors, on the phone).
+        openUrl(url) {
+            if (!/^https?:\/\//i.test(String(url || ''))) return;
+            window.open(url, '_blank', 'noopener');
         },
         // The server words the band and minutes (library.made_for_line, the
         // same phrase Argyle's choice card uses); only the weekly rhythm is added.
@@ -184,19 +230,23 @@
             return lines;
         },
         // Buttons, not anchors: the phone switches to its library home; a
-        // browser opens the admin page on that program.
-        open(id) {
+        // browser opens the admin page on that program. {steer: true} lands
+        // on the course page's Steer box (the DM course card's Steer).
+        open(id, opts) {
+            const steer = !!(id && opts && opts.steer);
             if (phone()) {
                 // The run card that asked may sit in the phone's piece sheet.
                 if (typeof window.chfPhoneCloseSheets === 'function') window.chfPhoneCloseSheets();
                 if (typeof setView === 'function') setView('library');
-                window.dispatchEvent(new CustomEvent('chf-library-open', {detail: {id: id || null}}));
+                window.dispatchEvent(new CustomEvent('chf-library-open', {detail: {id: id || null, steer}}));
                 return;
             }
-            window.location.href = base() + 'library' + (id ? '?id=' + encodeURIComponent(id) : '');
+            window.location.href = base() + 'library' + (id ? '?id=' + encodeURIComponent(id) + (steer ? '&steer=1' : '') : '');
         },
         // The one-pass setup sheet (components/program_setup_sheet.html) on
-        // this program; the host includes the sheet once.
+        // this program; the host includes the sheet once. `opts` passes
+        // through: forMemberId, and a brief's startingPoint, preferredDays
+        // and targetDate (the requester's own words, prefilled).
         openSetup(libraryId, opts) {
             if (!window.chfProgramSetup) return false;
             window.chfProgramSetup.open({...(opts || {}), libraryId});
