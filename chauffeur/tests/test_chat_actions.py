@@ -255,7 +255,36 @@ def scenario_create_event_normalizes_datetimes():
               f"end-before-start explained, got {res}")
 
 
+def scenario_program_days_proposal_opens_editor_without_refresh():
+    from program_fixture import add_run
+    from services import programs
+    _seed()
+    storage.programs_table.truncate()
+    storage.library_programs_table.truncate()
+    storage.protected_commitments_table.truncate()
+    rid = add_run({'member_id': 'kid', 'title': 'Piano', 'state': 'proposed',
+                   'shape': {'minutes': 20, 'sessions_per_week': 1, 'preferred_days': [0]}})
+    approved = programs.approve(rid, 'mom', slots=[{'day': 0, 'time_start': '18:00'}])
+    check(approved['status'] == 'success', f"fixture approves: {approved}")
+    before = storage.get_program(rid)
+    windows = storage.get_protected_commitments(member_id='kid')
+    for action_type in ('change_program_days', 'reshape_program'):
+        prop = chat_actions.create_action_proposal(
+            action_type, 'Change the days', {'program_id': rid}, created_by_member_id='mom')
+        check(prop['status'] == 'success', f"offer is stored: {prop}")
+        res = chat_actions.act_on_proposal(prop['proposal_id'], 'approve', storage.get_member('mom'))
+        expected = {'kind': 'program', 'id': rid, 'menu': 'change_days'}
+        check(res['status'] == 'success' and res.get('open') == expected
+              and res.get('schedule_dirty') is False,
+              f"the actual offer tap opens the editor without requesting a refresh: {res}")
+        check(storage.get_action_proposal(prop['proposal_id'])['result']['open'] == expected,
+              'the stored result retains the editor destination')
+        check(storage.get_program(rid) == before and storage.get_protected_commitments(member_id='kid') == windows,
+              'both the new offer and the old stored action leave the program and times untouched')
+
+
 SCENARIOS = [
+    scenario_program_days_proposal_opens_editor_without_refresh,
     scenario_propose_builds_open_card,
     scenario_new_actions_proposable_and_labeled,
     scenario_create_event_requires_calendar,
