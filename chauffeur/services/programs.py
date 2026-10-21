@@ -890,7 +890,7 @@ def reshape(program_id: str) -> dict:
 @_program_work
 def retime(program_id: str, updates: dict) -> dict:
     """Program settings on a program under way (spec P4): write `updates`
-    (its new minutes in `shape`, and any starting point or target date) and
+    (its requested minutes, and any starting point or target date) and
     move every window it holds to the new length, in one transaction. An
     active run's own commitments get their new end; a paused run's remembered
     windows do. The days and starts never move here (Change the days)."""
@@ -899,8 +899,12 @@ def retime(program_id: str, updates: dict) -> dict:
             row = storage.get_program(program_id)
             if not row:
                 return {'status': 'error', 'code': 404, 'message': 'That program is no longer here.'}
-            minutes = int(((updates.get('shape') or row.get('shape') or {}).get('minutes')) or 25)
             changes = dict(updates)
+            minutes = changes.pop('minutes', (row.get('shape') or {}).get('minutes') or 25)
+            changes['shape'] = clamp_shape({**(row.get('shape') or {}), 'minutes': minutes})
+            minutes = changes['shape']['minutes']
+            if 'target_date' in changes:
+                changes['baseline'] = {**(row.get('baseline') or {}), 'target_date': changes.pop('target_date')}
             moved = 0
             if row.get('state') == 'paused':
                 changes['paused_slots'] = sanitize_slots(row.get('paused_slots') or [], minutes)

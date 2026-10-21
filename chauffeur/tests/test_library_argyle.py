@@ -565,7 +565,136 @@ def scenario_dm_course_card_binds_the_run():
           f'a no-match curation posts the card for the run it made: {cards}')
 
 
-COURSE = {'kind': 'program_course', 'library_id': 'lib<1>', 'run_id': 'run1', 'project_id': 'proj1',
+def scenario_chat_choice_drops_private_brief_echoes():
+    from services import programs_curate
+    _fresh(); _library()
+    project = _project('mom', audience='private')
+    secret = 'Plays Twinkle with her right hand'
+    res = tools.propose_program('Learn piano', for_member_name='Kate', starting_point=secret,
+        brief={'notes': 'She ' + secret.lower() + ' already', 'based_on': 'Piano Adventures'},
+        acting_member=dict(MOM), project_id=project['id'])
+    check(res['status'] == 'waiting_choice', f'choice: {res}')
+    choice = res['choice']
+    check(choice['brief']['notes'] == '', f'private echoes removed before choice storage: {choice}')
+    ctx = programs_curate.public_context(choice['profile'], choice['brief']['notes'], choice['brief']['based_on'])
+    check(secret.lower() not in ctx.lower() and 'twinkle' not in ctx.lower(), 'public context has no private detail')
+    import test_library_flows as flows
+    rows = copy.deepcopy(ROWS)
+    rows[0]['args'].update(starting_point=secret, notes='She ' + secret.lower() + ' already', based_on='Piano Adventures')
+    with patch.object(flows, 'ROWS', rows):
+        mid, _ = _staged()
+    stored = _row(mid, 'r1')['result']['choice']
+    check(stored['brief']['notes'] == '', f'persisted waiting choice is private too: {stored}')
+
+
+def scenario_plain_dm_no_match_posts_one_bound_course_card():
+    from test_library_flows import REAL_POST
+    _fresh()
+    project = _project('mom', audience='private')
+    made = chat_actions.create_action_proposal('propose_program', 'Piano for Kate',
+        {**ROWS[0]['args'], 'project_id': project['id']}, extra_allowed=missions.proposable_tools())
+    with patch.object(missions, '_post', REAL_POST), patch('services.library_scripts.write', return_value={'status': 'ok', 'job': None}):
+        result = chat_actions.act_on_proposal(made['proposal_id'], 'approve', storage.get_member('mom'))
+        chat_actions.act_on_proposal(made['proposal_id'], 'approve', storage.get_member('mom'))
+    cards = _course_cards()
+    check(result['status'] == 'success' and len(cards) == 1, f'one course card in plain DM: {result} {cards}')
+    run = _runs()[0]
+    card = cards[0]['card']
+    check(card['type'] == 'program_setup' and card['run_id'] == run['id'] and card['library_id'] == run['library_id'], 'card bound to new run')
+    refs = [{k: r.get(k) for k in ('kind', 'id')} for r in cards[0].get('refs') or []]
+    check({'kind': 'library', 'id': run['library_id']} in refs and {'kind': 'program', 'id': run['id']} in refs, f'bound refs: {refs}')
+    check(card['can_edit'] == library.can_edit(storage.get_library_program(run['library_id']), storage.get_member('mom')), 'recipient edit permission')
+    check('footprint' not in result['message'] and 'Programs page' not in result['message'] and 'claimed' not in result['message'], 'current vocabulary')
+    check('Set it up from the course card.' in result['message'] and 'below' not in result['message']
+          and 'above' not in result['message'], f'direction-free setup instruction: {result}')
+
+
+def scenario_plain_dm_tool_posts_course_card():
+    from test_library_flows import REAL_POST
+    _fresh()
+    project = _project('mom', audience='private')
+    with patch.object(missions, '_post', REAL_POST), patch('services.library_scripts.write', return_value={'status': 'ok', 'job': None}):
+        result = tools.propose_program('Learn piano', for_member_name='Kate', acting_member=dict(MOM), project_id=project['id'])
+    cards = _course_cards()
+    check(result['status'] == 'success' and len(cards) == 1 and cards[0]['card']['run_id'] == result['run_id'],
+          f'direct DM tool posts its new course card: {result} {cards}')
+
+
+def scenario_deleted_mission_proposal_posts_one_plain_dm_course_card():
+    from test_library_flows import REAL_POST
+    _fresh()
+    project = _project('mom', audience='private')
+    mid = _mission(project_id=project['id'])
+    made = chat_actions.create_action_proposal('propose_program', 'Piano for Kate',
+        {**ROWS[0]['args'], 'project_id': project['id']}, created_by_member_id='mom',
+        extra_allowed=missions.proposable_tools(), extra={'origin_kind': 'mission', 'origin_id': mid})
+    storage.missions_table.remove(storage.Query().id == mid)
+    check(storage.get_mission(mid) is None, 'origin mission is gone before approval')
+    with patch.object(missions, '_post', REAL_POST), patch('services.library_scripts.write', return_value={'status': 'ok', 'job': None}):
+        result = chat_actions.act_on_proposal(made['proposal_id'], 'approve', storage.get_member('mom'))
+    cards = _course_cards()
+    check(result['status'] == 'success' and len(_runs()) == 1 and len(cards) == 1,
+          f'deleted mission falls back to exactly one plain-DM card: {result} {cards}')
+    check(cards[0]['card']['run_id'] == _runs()[0]['id'] and
+          not any(ref.get('kind') == 'mission' for ref in cards[0].get('refs') or []), 'fallback card refers only to living work')
+
+
+def scenario_voice_program_reply_never_promises_a_card():
+    from test_library_flows import REAL_POST
+    for matched in (False, True):
+        _fresh()
+        project = _project('mom', audience='private')
+        if matched:
+            _library()
+        with patch.object(missions, '_post', REAL_POST), patch('services.library_scripts.write', return_value={'status': 'ok', 'job': None}):
+            token = tools._mission_context.set({'interaction': 'voice'})
+            try:
+                result = tools.propose_program('Learn piano', for_member_name='Kate', acting_member=dict(MOM), project_id=project['id'])
+            finally:
+                tools._mission_context.reset(token)
+        check(result['status'] == 'success' and 'card' not in result['message'].lower() and not _course_cards(),
+              f'voice has neither a card nor a promise of one: {result}')
+
+
+def scenario_program_reply_matches_voice_and_the_speaker():
+    from test_library_flows import REAL_POST
+    for voice in (False, True):
+        for matched in (False, True):
+            _fresh()
+            project = _project('mom', audience='private')
+            if matched:
+                _library()
+            with patch.object(missions, '_post', REAL_POST), patch('services.library_scripts.write', return_value={'status': 'ok', 'job': None}):
+                token = tools._mission_context.set({'interaction': 'voice'} if voice else None)
+                try:
+                    result = tools.propose_program('Learn piano', acting_member=dict(MOM), project_id=project['id'])
+                finally:
+                    tools._mission_context.reset(token)
+            if matched and not voice:
+                result = tools._start_program_choice(result['choice'], dict(MOM))
+            check(result['status'] == 'success', f'program made or selected: {result}')
+            message = result['message']
+            check('for you' in message and 'Mom' not in message, f'self addressed as you: {message}')
+            if voice:
+                check('card' not in message.lower() and not _course_cards(), f'voice promises no course card: {message}')
+            else:
+                check('Set it up from the course card.' in message and 'below' not in message and 'above' not in message,
+                      f'typed reply points to the card without a direction: {message}')
+
+
+def scenario_course_card_permissions_are_per_recipient():
+    from test_library_flows import REAL_POST
+    _fresh(); lid = _library()
+    with patch.object(missions, '_post', REAL_POST):
+        mid, _ = _staged()
+        answer_as(mid, 'mom', _choice(mid)['use'])
+        storage.update_mission(mid, {'created_by': 'kid'})
+        missions.post_course_card(storage.get_mission(mid), _runs()[0]['id'], storage.get_member('kid'))
+    cards = _course_cards('kid')
+    check(len(cards) == 1 and cards[0]['card'].get('can_edit') is False, f'child recipient cannot steer: {cards}')
+
+
+COURSE = {'kind': 'program_course', 'can_edit': True, 'library_id': 'lib<1>', 'run_id': 'run1', 'project_id': 'proj1',
           'for_member_id': 'kid', 'for_name': 'Kate', 'title': 'Learn <piano>', 'source_line': 'Based on Faber · cited',
           'phases': [{'name': 'Foundations', 'lessons': 2}, {'name': 'Songs', 'lessons': 1}],
           'setup': {'run_id': 'run1', 'project_id': 'proj1'}}
@@ -592,7 +721,8 @@ document.querySelector('[data-course-preview]').click();
 document.querySelector('[data-course-setup]').click();
 document.querySelector('[data-course-steer]').click();
 const mine = renderCard({...card, for_member_id: 'mom', for_name: 'Mom'});
-console.log(JSON.stringify({html, mine, calls}));
+const readOnly = renderCard({...card, can_edit: false});
+console.log(JSON.stringify({html, mine, calls, readOnly}));
 """
 
 
@@ -621,6 +751,7 @@ def scenario_course_card_renders_and_its_buttons_open():
     check(proc.returncode == 0, f'render threw:\n{proc.stderr[-1500:]}')
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     html = out['html']
+    check('data-course-steer' not in out['readOnly'] and 'data-course-preview' in out['readOnly'] and 'data-course-setup' in out['readOnly'], 'non-editor sees Preview and Set it up only')
     check('Learn &lt;piano&gt;' in html and '<piano>' not in html, f'the title is escaped: {html}')
     check('Based on Faber · cited' in html and 'Foundations' in html and '2 lessons' in html and '1 lesson' in html,
           f'source line and phases with lesson counts: {html}')

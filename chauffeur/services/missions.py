@@ -598,7 +598,7 @@ def course_card(run: dict, curriculum: dict) -> dict:
     counts = {}
     for lesson in curriculum.get('lessons') or []:
         counts[lesson.get('phase_id')] = counts.get(lesson.get('phase_id'), 0) + 1
-    return {'kind': 'program_course', 'library_id': curriculum['id'], 'run_id': run['id'],
+    return {'kind': 'program_course', 'type': 'program_setup', 'library_id': curriculum['id'], 'run_id': run['id'],
             'project_id': run.get('project_id'), 'for_member_id': run.get('member_id'),
             'for_name': member.get('name') or '', 'title': curriculum.get('title') or '',
             'source_line': library.source_line(curriculum),
@@ -612,18 +612,18 @@ def post_course_card(mission: dict, run_id: str, actor: dict) -> None:
     course card goes to the person who made it happen and to whoever started
     the mission, each only if they can see the run. Voice keeps its deferred
     notice instead (library spec §3). Never raises."""
-    from services import access
+    from services import access, library
     try:
-        if not mission or mission.get('interaction') == 'voice':
+        if (mission or {}).get('interaction') == 'voice':
             return
         run = storage.get_program(run_id)
         curriculum = storage.get_library_program((run or {}).get('library_id'))
         if not run or not curriculum or access.gone('program', run):
             return
         card = course_card(run, curriculum)
-        people = [actor, storage.get_member(mission.get('created_by') or '')]
+        people = [actor, storage.get_member((mission or {}).get('created_by') or '')]
         seen, argyle = set(), storage.ensure_argyle_member()
-        refs = [{'kind': 'mission', 'id': mission['id']}, {'kind': 'library', 'id': curriculum['id']},
+        refs = ([{'kind': 'mission', 'id': mission['id']}] if mission else []) + [{'kind': 'library', 'id': curriculum['id']},
                 {'kind': 'program', 'id': run['id']}]
         token = _notice_refs.set(tuple(refs))
         try:
@@ -634,7 +634,8 @@ def post_course_card(mission: dict, run_id: str, actor: dict) -> None:
                 seen.add(m['id'])
                 who = 'you' if m['id'] == run.get('member_id') else (card['for_name'] or 'them')
                 _post(storage.get_or_create_dm(argyle['id'], m['id']), argyle,
-                      f"{card['title']} is ready for {who}. Preview it, or set up the days.", card=card)
+                       f"{card['title']} is ready for {who}. Preview it, or set up the days.",
+                       card={**card, 'can_edit': library.can_edit(curriculum, m)})
         finally:
             _notice_refs.reset(token)
     except deletion.Cancelled:

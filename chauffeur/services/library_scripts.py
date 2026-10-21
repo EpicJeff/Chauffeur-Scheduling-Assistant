@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 JOBS_KEY = 'library_script_jobs'
 DEAD_AFTER_S = 30 * 60
 ALREADY = 'Already writing lessons for this program.'
+MAX_REVISION_RELOADS = 3
+REVISION_FAILURE = 'The lesson changed while its script was being written'
 # Only the nightly pass publishes this; background jobs use invocation-local lists.
 _PASS_SPENT = 0
 
@@ -219,7 +221,7 @@ def write(library_id: str, actor: dict, lesson_id: str = None, variant_label: st
 
 def _run(library_id, job_id, pairs, settings):
     done = failed = 0
-    pending = deque((lesson, label, revision, False) for lesson, label, revision in pairs)
+    pending = deque((lesson, label, revision, 0) for lesson, label, revision in pairs)
     try:
         while True:
             # Taking queued work and retiring an empty job share the writer's
@@ -236,20 +238,20 @@ def _run(library_id, job_id, pairs, settings):
                     for item in queued_items:
                         lesson = by_id.get(item['lesson_id'])
                         if lesson:
-                            pending.append((lesson, item['variant_label'], item['revision'], False))
+                            pending.append((lesson, item['variant_label'], item['revision'], 0))
                     storage.set_app_state(JOBS_KEY, jobs)
                 if not pending:
                     _finish(library_id, job_id)
                     return
-            queued, label, revision, retried = pending.popleft()
+            queued, label, revision, reloads = pending.popleft()
             row = storage.get_library_program(library_id)
             if not row or row.get('archived') or not _progress(library_id, job_id, lesson_id=queued['id'], variant_label=label):
                 return
             lesson = next((l for l in row.get('lessons') or [] if l['id'] == queued['id']), None)
             current_revision = int(row.get('revision') or 0)
             moved = current_revision != revision
-            if lesson is not None and moved and not retried:
-                pending.append((lesson, label, current_revision, True))
+            if lesson is not None and moved and reloads < MAX_REVISION_RELOADS:
+                pending.append((lesson, label, current_revision, reloads + 1))
                 continue
             slot = {'lesson_id': queued['id'], 'variant_label': label}
             valid_slot = lesson is not None and any(l['id'] == queued['id'] and lab == label for l, lab in slots_of(row))
@@ -262,10 +264,15 @@ def _run(library_id, job_id, pairs, settings):
             except Exception:                     # never let one lesson kill the job
                 logger.exception("Library %s lesson %s failed", library_id, queued['id'])
             fresh = storage.get_library_program(library_id)
-            if (valid_slot and not retried and fresh and not fresh.get('archived')
-                    and int(fresh.get('revision') or 0) != current_revision):
-                pending.append((lesson, label, int(fresh.get('revision') or 0), True))
-                continue
+            changed = fresh and int(fresh.get('revision') or 0) != current_revision
+            if valid_slot and fresh and not fresh.get('archived') and (moved or changed):
+                if reloads < MAX_REVISION_RELOADS:
+                    pending.append((lesson, label, int(fresh.get('revision') or 0), reloads + 1))
+                    continue
+                with storage.db_lock:
+                    if not _progress(library_id, job_id):
+                        return
+                    storage.fail_library_script_if_empty(library_id, slot, note=REVISION_FAILURE, attempts=pl.max_attempts())
             done += 1
             if not (written and written.get('scenes')):
                 failed += 1

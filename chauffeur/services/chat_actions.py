@@ -464,7 +464,9 @@ def run_row(proposal_id, approver, idem):
             and result.get('run_id') and prop.get('origin_kind') == 'mission'):
         # A no-match curation made the run at once: its course card (spec §7).
         from services import missions
-        missions.post_course_card(storage.get_mission(prop.get('origin_id')), result['run_id'], approver)
+        mission = storage.get_mission(prop.get('origin_id'))
+        if mission:
+            missions.post_course_card(mission, result['run_id'], approver)
     return result
 
 

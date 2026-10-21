@@ -2691,6 +2691,7 @@ def propose_program(title: str, for_member_name: str = None,
     refusal = program_brief.screen_fields(brief)
     if refusal:
         return refusal
+    program_brief.drop_private(brief, starting_point)
     from services import storage as _storage
     member_id = acting_member.get('id')
     member = acting_member
@@ -2714,8 +2715,7 @@ def propose_program(title: str, for_member_name: str = None,
               'profile': {'title': title, 'minutes': shape['minutes'],
                           'sessions_per_week': shape['sessions_per_week'], 'assumes': '',
                           'age_band': stages.stage_for_age(age) if age is not None else 'any'}}
-    if any(brief.values()):
-        choice['brief'] = brief
+    choice['brief'] = brief
     matches = [r for r in _storage.get_library_programs() if not r.get('archived')
                and library.valid_curriculum(r) and _same_goal(title, r)]
     voice = (_mission_context.get() or {}).get('interaction') == 'voice'
@@ -2732,6 +2732,9 @@ def propose_program(title: str, for_member_name: str = None,
     if result.get('status') == 'success' and result.get('library_id'):
         from services import library_scripts
         library_scripts.write(result['library_id'], acting_member)
+        if not _mission_context.get() and not voice:
+            from services import missions
+            missions.post_course_card(None, result['run_id'], acting_member)
     return result
 
 
@@ -2777,11 +2780,15 @@ def _start_program_choice(choice, actor, make_new=False, prepared=None):
             # Roll back a freshly curated library row as well as adoption.
             raise ValueError('That project is no longer here.')
     member = storage.get_member(choice['member_id']) or {}
-    notice = f"I started {member.get('name') or 'you'} on {curriculum['title']} from the library"
-    message = (f"I made a new library program: {curriculum['title']}. " if make_new else notice + '. ')
+    who = 'you' if choice['member_id'] == actor.get('id') else (member.get('name') or 'them')
+    notice = f"I started {who} on {curriculum['title']} from the library"
+    message = (f"I made a new library program: {curriculum['title']}. It's for {who}." if make_new
+               else f"{curriculum['title']} from the library is ready for {who}.")
+    if (_mission_context.get() or {}).get('interaction') != 'voice':
+        message += ' Set it up from the course card.'
     return {'status': 'success', 'id': pid, 'run_id': pid,
             **({'library_id': lid} if make_new else {}),
-            'message': message + "Nothing's claimed yet: see the footprint and approve it on the Programs page.",
+            'message': message,
             'notice': notice, 'created': [{'kind': 'program', 'id': pid}]}
 
 

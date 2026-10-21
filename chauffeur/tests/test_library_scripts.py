@@ -1164,7 +1164,7 @@ def scenario_revision_change_during_generation_requeues_once():
     check(not _raw_jobs(), 'job finishes after retry')
 
 
-def scenario_revision_churn_stops_after_one_extra_pass():
+def scenario_revision_churn_fails_visibly_after_three_reloads_and_regenerates():
     from services import library, library_scripts
     _, lid, lesson = _reset()
     run_job = _queued_job(lid, lesson)
@@ -1178,8 +1178,15 @@ def scenario_revision_churn_stops_after_one_extra_pass():
     with patch.object(library_scripts, '_call', call):
         run_job()
     row = storage.get_library_script(lid, _slot(lesson)) or {}
-    check(len(calls) == 2 and not row.get('scenes'), 'continuous edits stop after one retry and no stale result lands')
+    check(len(calls) == 4 and not row.get('scenes'), 'continuous edits stop after three reloads and no stale result lands')
     check(not _raw_jobs(), 'the bounded job clears its ownership')
+    slot_view = library.get(lid, storage.get_member('mom'))['scripts'][lesson['id']]['Session A']
+    check(slot_view['state'] == 'failed' and slot_view['note'] == 'The lesson changed while its script was being written',
+          f'failure is visible with a useful note: {slot_view}')
+    run_job = _queued_job(lid, lesson)
+    with patch.object(library_scripts, '_call', lambda *a: _long()):
+        run_job()
+    check(library.get(lid, storage.get_member('mom'))['scripts'][lesson['id']]['Session A']['state'] == 'ready', 'Regenerate succeeds after edits stop')
 
 
 def scenario_removed_queued_lesson_is_dropped():
@@ -1225,7 +1232,7 @@ if __name__ == '__main__':
     scenario_claim_bound_to_revision()
     scenario_run_reloads_lessons()
     scenario_revision_change_during_generation_requeues_once()
-    scenario_revision_churn_stops_after_one_extra_pass()
+    scenario_revision_churn_fails_visibly_after_three_reloads_and_regenerates()
     scenario_removed_queued_lesson_is_dropped()
     scenario_claim_and_replacement_reject_obsolete_revision()
     scenario_lesson_origin_controls_citation_fetch()

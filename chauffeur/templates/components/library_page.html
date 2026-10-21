@@ -58,6 +58,9 @@
                     <template x-if="briefError">
                         <p data-brief-error class="text-xs text-amber-300" role="status" x-text="briefError"></p>
                     </template>
+                    <template x-if="briefNotice">
+                        <p data-brief-notice class="text-xs text-amber-300" role="status" x-text="briefNotice"></p>
+                    </template>
                     <div class="flex flex-wrap items-center gap-3">
                         <button type="button" data-brief-find @click="findPlan()" :disabled="!!(busy || !(briefText || '').trim())"
                                 class="text-sm font-bold px-3 py-2 rounded-lg bg-teal-700 text-white active:bg-teal-800 disabled:opacity-50"
@@ -462,7 +465,7 @@ function libraryPage(host = 'admin') {
         // hand, the Why this one fold, the Steer box and its last answer.
         editing: null, whyOpen: false, steerText: '', steering: false, steered: null, steerError: '', _steerNext: false,
         // The brief box (spec §1) and the hand form folded under it.
-        briefText: '', briefError: '', byHand: false,
+        briefText: '', briefError: '', briefNotice: '', byHand: false,
         // The script editor, keyed by scriptKey(): {loading, rows, addType}.
         scriptEdits: {}, _rowSeq: 0, _poll: null,
         headers() {
@@ -489,7 +492,7 @@ function libraryPage(host = 'admin') {
             if (!quiet) { this.loading = true; this.error = ''; }
             if (this.myId !== who) {
                 this.opened = null; this.edits = {}; this.scriptEdits = {}; this.profile = null; this.creating = false;
-                this.editing = null; this.steered = null; this.steerText = ''; this.briefText = ''; this.briefError = '';
+                this.editing = null; this.steered = null; this.steerText = ''; this.briefText = ''; this.briefError = ''; this.briefNotice = '';
             }
             this.myId = who;
             try {
@@ -565,15 +568,18 @@ function libraryPage(host = 'admin') {
         async findPlan() {
             const text = (this.briefText || '').trim();
             if (!text || this.busy) return;
-            this.busy = true; this.briefError = '';
+            this.busy = true; this.briefError = ''; this.briefNotice = '';
             let made = null;
             try { made = await this.request('api/library', {brief: text}); }
             catch (e) {
                 this.briefError = e.message + ((e.alternatives || []).length ? ' Try instead: ' + e.alternatives.join('; ') + '.' : '');
             } finally { this.busy = false; }
             if (!made || !made.program) return;
-            this.creating = false; this.byHand = false; this.briefText = '';
+            const privateDropped = !made.for_member_id && !!(made.brief || {}).starting_point;
+            this.creating = privateDropped; this.byHand = false; this.briefText = '';
+            if (privateDropped) this.briefNotice = 'What they can already do was not kept; add it when you start it for someone.';
             await this.load();
+            if (privateDropped) return;
             const lp = this.programs.find(p => p.id === made.program.id);
             if (lp) this.openProgram(lp);
             const who = made.for_member_id ? this.members.find(m => m.id === made.for_member_id) : null;
@@ -661,8 +667,11 @@ function libraryPage(host = 'admin') {
         // through Make a variant's path; this row stays until archived.
         canLookAgain(lp) { return ((lp || {}).source || {}).origin === 'none' && this.canCreate(); },
         async lookAgain(lp) {
+            const runners = lp.runners || {};
+            const count = (runners.named || []).length + (runners.hidden || 0);
+            const consequence = count ? ' ' + count + (count === 1 ? ' run stays' : ' runs stay') + ' on this one; use Look again on the run itself to move a run.' : '';
             if (!await promptConfirm('Look again for ' + lp.title + '?',
-                chfLibrary.asText('Look again makes a fresh program from the same profile. This one stays in the library until you archive it.'),
+                chfLibrary.asText('Look again makes a fresh program from the same profile. This one stays in the library until you archive it.' + consequence),
                 'Look again', 'Not now')) return;
             await this.remake(lp, '');
         },

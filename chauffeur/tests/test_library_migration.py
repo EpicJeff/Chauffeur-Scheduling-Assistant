@@ -508,6 +508,18 @@ def scenario_emissions_kit_thread_and_ids_are_untouched():
     check(len(live) == 2 and all(c.get('active') for c in live), 'the commitments are still reserved')
 
 
+def scenario_summary_migration_survives_invalid_session_counts():
+    _fresh()
+    for n, sessions in enumerate(('oops', None, 2)):
+        storage.library_programs_table.insert({'id': f'bad-{n}', 'source': {'origin': 'generated'},
+            'lessons': [{'id': f'l-{n}', 'steps': ['Play a tune'], 'sessions': sessions}]})
+    migrations.migrate_library_revision_summary_v2499()
+    check(storage.get_app_state('library_revision_summary_v2499'), 'migration finishes despite legacy junk')
+    for n in range(3):
+        row = storage.get_library_program(f'bad-{n}')
+        check(row['revision'] == 0 and row['lessons'][0]['summary'] and row['lessons'][0]['origin'] == 'generated', 'every row migrates')
+
+
 SCENARIOS = [v for k, v in list(globals().items()) if k.startswith('scenario_')]
 if __name__ == '__main__':
     failed = 0

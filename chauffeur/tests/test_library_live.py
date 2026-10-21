@@ -1322,6 +1322,7 @@ def scenario_practice_time_only_offers_look_again():
         row['source']['reason'] = 'research could not run'
         storage.add_library_program(row)
     before = {r['id'] for r in storage.get_library_programs()}
+    _run('run-practice-only', 'kate', NONE_ID, 'prj-piano', state='proposed')
     try:
         with served.browser() as page:
             admin(page, served, 'mom')
@@ -1345,6 +1346,7 @@ def scenario_practice_time_only_offers_look_again():
             text = _confirm_text(page)
             check('Look again makes a fresh program from the same profile. This one stays in the library until you archive it.' in text,
                   f"Look again says what it does: {text}")
+            check('1 run stays on this one; use Look again on the run itself to move a run.' in text, f'runners consequence: {text}')
             page.locator('#cc-confirm-cancel-btn').click()
             check({r['id'] for r in storage.get_library_programs()} == before, "Not now makes nothing")
             _edit_by_hand(page)
@@ -1362,6 +1364,10 @@ def scenario_practice_time_only_offers_look_again():
             check(dialogs == [], f"no browser dialog: {dialogs}")
             check(served.errors() == [], f"no page errors: {served.errors()}")
     finally:
+        from services import projects
+        removed = projects.remove_piece('prj-piano', 'program', 'run-practice-only', storage.get_member('mom'))
+        check(removed['status'] == 'success', f'practice-only piece removed: {removed}')
+        storage.delete_program('run-practice-only')
         for r in storage.get_library_programs():
             if r['id'] not in before or r['id'] == NONE_ID:
                 storage.delete_library_program(r['id'])
@@ -1414,7 +1420,37 @@ def scenario_edit_by_hand_reaches_the_profile_and_reorder_and_asks_before_droppi
         check(served.errors() == [], f"no page errors: {served.errors()}")
 
 
-SCENARIOS = [scenario_the_library_page_lists_each_program, scenario_a_new_program_says_what_the_household_will_see,
+def scenario_unnamed_brief_explains_private_starting_point_once():
+    served = serve()
+    if served is None:
+        return
+    from unittest.mock import patch
+    from services import program_brief
+    brief = {'title': 'Learn harmonica', 'for_member_id': None,
+             'profile': {'age_band': 'any', 'minutes': 20, 'sessions_per_week': 2, 'assumes': ''},
+             'starting_point': 'knows two tunes', 'preferred_days': [], 'target_date': None,
+             'notes': '', 'based_on': '', 'exclude_books': False}
+    before = {r['id'] for r in storage.get_library_programs()}
+    try:
+        with patch.object(program_brief, 'parse', return_value={'status': 'success', 'brief': brief}), served.browser() as page:
+            admin(page, served, 'mom')
+            page.goto(served.url('library'), wait_until='load')
+            page.locator('[data-library-new]').click()
+            page.locator('[data-brief-box]').fill('Harmonica, already knows two tunes')
+            page.locator('[data-brief-find]').click()
+            notice = page.locator('[data-brief-notice]')
+            notice.wait_for(state='visible', timeout=15000)
+            check(notice.count() == 1 and notice.inner_text() == 'What they can already do was not kept; add it when you start it for someone.', 'once, inline in the brief box')
+            check(page.locator('[data-brief-box]').is_visible() and not page.locator('#cc-alert-modal').is_visible(), 'brief box stays open without dialog')
+            shot(page, 'brief-private-notice')
+    finally:
+        for row in storage.get_library_programs():
+            if row['id'] not in before:
+                storage.delete_library_program(row['id'])
+
+
+SCENARIOS = [scenario_unnamed_brief_explains_private_starting_point_once,
+             scenario_the_library_page_lists_each_program, scenario_a_new_program_says_what_the_household_will_see,
              scenario_editing_a_program_inline, scenario_archive_leaves_the_picker_not_the_library,
              scenario_delete_waits_until_nobody_runs_it, scenario_the_picker_starts_the_program,
              scenario_the_run_card_names_the_lesson, scenario_an_exhausted_phase_waits_for_judgement,

@@ -689,7 +689,11 @@ def migrate_library_revision_summary_v2499():
             origin = (row.get('source') or {}).get('origin') or 'none'
             lessons = []
             for l in row.get('lessons') or []:
-                summary = l.get('summary') or default_summary(l.get('steps'), l.get('sessions'))
+                try:
+                    sessions = int(l.get('sessions') or 1)
+                except (TypeError, ValueError, OverflowError):
+                    sessions = 1
+                summary = l.get('summary') or default_summary(l.get('steps'), sessions)
                 lessons.append({**l, 'summary': summary, 'origin': l.get('origin') or origin})
             storage.update_library_program(row['id'], {'lessons': lessons, 'revision': int(row.get('revision') or 0)})
         storage.set_app_state('library_revision_summary_v2499', time.time())

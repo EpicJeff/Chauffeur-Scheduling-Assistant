@@ -125,7 +125,14 @@ def scenario_chat_refuses_a_name_it_cannot_find():
         chat = program_brief.parse('piano for Grandpa', MOM, MEMBERS, surface='chat')
         lib = program_brief.parse('piano for Grandpa', MOM, MEMBERS, surface='library')
     check(chat['status'] == 'error' and 'Grandpa' in chat['message'], f"chat never hands a stranger's program to the speaker: {chat}")
-    check(lib['status'] == 'success' and lib['brief']['for_member_id'] is None, f"the library makes it for nobody: {lib}")
+    check(lib == {'status': 'error', 'message': "I couldn't find anyone called Grandpa.", 'alternatives': ['Mom', 'Kate']},
+          f"a named stranger is refused on the library too: {lib}")
+
+
+def scenario_public_notes_keep_the_whole_brief_cap():
+    notes = 'a' * 300 + ' songs at the end'
+    ctx = programs_curate.public_context({}, notes + 'x' * 400)
+    check(notes in ctx and len(ctx.split('Also: ')[1]) == program_brief.CAPS['notes'], 'one notes cap, including the back half')
 
 
 def scenario_the_brief_reaches_the_curator_prompt():

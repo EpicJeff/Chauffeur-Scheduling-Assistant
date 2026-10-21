@@ -8294,6 +8294,10 @@ def edit_program(program_id: str, body: dict = Body(default={}), request: Reques
     if updates and on_calendar and 'shape' in updates:
         # The minutes moved under times already on the calendar: the row and
         # its windows change in one write, so the two never disagree.
+        updates.pop('shape')
+        updates['minutes'] = shape['minutes']
+        if 'baseline' in updates:
+            updates['target_date'] = updates.pop('baseline')['target_date']
         retimed = _prog.retime(program_id, updates)
         if retimed.get('status') != 'success':
             return retimed

@@ -20,7 +20,7 @@
    same rows (one builder). `slots` is an Alpine expression for the array. #}
 {% macro slot_rows(slots, minutes) %}
 <template x-for="(slot, i) in {{ slots }}" :key="i">
-  <div data-setup-slot class="bg-gray-950/60 border border-gray-800 rounded-lg px-2.5 py-1.5 flex items-center gap-2">
+  <div data-setup-slot @input="typeof timesEdited === 'function' && timesEdited()" @change="typeof timesEdited === 'function' && timesEdited()" @click="if ($event.target.closest('button')) { typeof timesEdited === 'function' && timesEdited(); }" class="bg-gray-950/60 border border-gray-800 rounded-lg px-2.5 py-1.5 flex items-center gap-2">
     <select data-slot-day x-model.number="slot.day" aria-label="Day"
             class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-gray-100 text-sm">
       <template x-for="d in 7" :key="d"><option :value="d - 1" :selected="d - 1 === slot.day" x-text="['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][d - 1]"></option></template>
@@ -124,7 +124,7 @@ window.chfAddSlot = window.chfAddSlot || function (slots) {
                       class="text-xs font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Retry</button>
             </div>
             <label class="block text-xs text-gray-400">Minutes each
-              <input data-setup-minutes type="number" min="5" max="240" x-model.number="minutes"
+              <input data-setup-minutes type="number" min="5" max="240" x-model.number="minutes" @input="timesEdited()"
                      class="w-20 ml-1 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-gray-100 text-sm">
             </label>
             {{ slot_rows('slots', 'minutes') }}
@@ -162,7 +162,7 @@ function programSetup() {
         projectId: null, projectTitle: '', forMemberId: '', libraryId: '', runId: null, run: null,
         making: false, draft: blankDraft(), startingPoint: '', slots: [], minutes: 25, targetDate: '', preferredDays: [],
         members: [], bands: {}, ageBands: [], library: [], libraryLoaded: false,
-        previewFailed: false, previewing: false, _seq: 0,
+        previewFailed: false, previewing: false, _seq: 0, _previewSeq: 0,
         init() {
             // One duration per run: a new program's minutes are the run's minutes.
             this.$watch('draft.minutes', v => { if (this.making && v) this.minutes = v; });
@@ -286,10 +286,12 @@ function programSetup() {
             this.draft = {...blankDraft(), age_band: this.bands[this.forMemberId] || 'any', minutes: this.minutes || 25};
             this.preview();
         },
-        addTime() { window.chfAddSlot(this.slots); },
+        timesEdited() { this._previewSeq++; this.previewing = false; this.previewFailed = false; },
+        addTime() { this.timesEdited(); window.chfAddSlot(this.slots); },
         // The week the app would propose for this person and shape (spec §4.3).
         async preview() {
             const seq = this._seq;
+            const generation = ++this._previewSeq;
             this.previewFailed = false; this.previewing = true;
             const body = {member_id: this.forMemberId || this.myId || null, minutes: this.minutes || undefined};
             if (this.making) body.sessions_per_week = this.draft.sessions_per_week || 3;
@@ -301,10 +303,11 @@ function programSetup() {
                 if (seq !== this._seq) return;
                 if (!r.ok) throw new Error('HTTP ' + r.status);
                 const d = await r.json();
+                if (seq !== this._seq || generation !== this._previewSeq) return;
                 this.slots = (d.slots || []).map(s => ({day: Number(s.day), time_start: s.time_start}));
                 if (d.minutes) this.minutes = d.minutes;
-            } catch (e) { if (seq === this._seq) this.previewFailed = true; }
-            finally { if (seq === this._seq) this.previewing = false; }
+            } catch (e) { if (seq === this._seq && generation === this._previewSeq) this.previewFailed = true; }
+            finally { if (seq === this._seq && generation === this._previewSeq) this.previewing = false; }
         },
         chosen() {
             return this.slots.filter(s => s.time_start).map(s => ({day: Number(s.day), time_start: s.time_start}));

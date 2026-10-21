@@ -28,6 +28,16 @@ def _text(raw, field):
     return str(raw.get(field) or '').strip()[:CAPS[field]]
 
 
+def drop_private(fields, starting_point):
+    """Drop public fields echoing a run's private starting point, in place."""
+    starting = str(starting_point or '').strip().casefold()
+    if starting:
+        for field in PUBLIC_FIELDS:
+            if starting in str(fields.get(field) or '').casefold():
+                fields[field] = ''
+    return fields
+
+
 def _int(value, default):
     try:
         return int(value) if value not in (None, '') else default
@@ -85,16 +95,14 @@ def parse(text, actor, members, *, surface='library'):
     # (assumes, notes, based_on all reach the public context) is dropped, never
     # refused, so the public stays generic and the brief still goes through.
     starting = fields['starting_point']
-    if starting:
-        for field in PUBLIC_FIELDS:
-            if starting.lower() in fields[field].lower():
-                fields[field] = ''
+    drop_private(fields, starting)
     assumes = fields['assumes']
     name = str(raw.get('for') or '').strip().lower()
     member = next((m for m in members or [] if name and str(m.get('name') or '').strip().lower().startswith(name)), None)
+    if member is None and name:
+        return {'status': 'error', 'message': f"I couldn't find anyone called {str(raw.get('for')).strip()}.",
+                'alternatives': [m['name'] for m in members or [] if m.get('name')]}
     if member is None and surface == 'chat':
-        if name:
-            return {'status': 'error', 'message': f"I couldn't find {raw.get('for')} in the household."}
         member = actor
     from services import library
     try:

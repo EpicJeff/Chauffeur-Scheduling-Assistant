@@ -102,6 +102,12 @@ def _provenance(row, edit, fields):
     if not url:
         fields['origin'] = 'generated'
         fields['source_index'] = None
+        fields['url'] = ''
+        if 'variants' not in fields:
+            old = next((l for l in row.get('lessons') or [] if l['id'] == edit.get('lesson_id')), {})
+            fields['variants'] = copy.deepcopy(old.get('variants') or [])
+        for variant in fields.get('variants') or []:
+            variant.pop('url', None)
         return
     fields.update(origin='cited', url=url, source_index=next(n for n, fact in by_ref.items() if fact['url'] == url))
     for variant in fields.get('variants') or []:

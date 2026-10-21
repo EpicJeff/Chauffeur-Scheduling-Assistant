@@ -445,6 +445,23 @@ def scenario_hand_and_steer_use_the_same_candidate_mutations():
             check(helper.called and candidate != _row(lid), f'steer uses {helper_name} to change the candidate')
 
 
+def scenario_steer_drops_invented_lesson_and_variant_urls():
+    for cited in (False, True):
+        _fresh(); ids = _library(); lid = ids['L']
+        storage.update_library_program(lid, {'source': {'origin': 'cited', 'facts': [{'url': 'https://example.test/read'}]}})
+        fields = {'steps': ['Play gently'], 'url': 'https://invented.test/lesson',
+                  'variants': [{'label': 'Session A', 'steps': ['Play'], 'url': 'https://invented.test/a'}]}
+        if cited:
+            fields['source_index'] = 1
+            fields['variants'][0]['url'] = 'https://example.test/read/'
+        with patch.object(library_steer, 'plan', _plan([{'op': 'update_lesson', 'lesson_id': ids['A'], 'fields': fields}])):
+            result = library_steer.apply(lid, 'change', MOM, 0)
+        lesson = _row(lid)['lessons'][0]
+        check(result['status'] == 'success', f'steer committed: {result}')
+        check(lesson['origin'] == ('cited' if cited else 'generated') and lesson.get('url') == ('https://example.test/read' if cited else ''), 'lesson uses only canonical cited URLs')
+        check(lesson['variants'][0].get('url', '') == ('https://example.test/read' if cited else ''), 'variants use only cited URLs')
+
+
 _REAL_WRITE = library_scripts.write
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith('scenario_')]
 

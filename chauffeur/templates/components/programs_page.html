@@ -944,7 +944,7 @@
                 // all -- the control-center reading). The one case hidden is
                 // a KNOWN identity acting on a program that is neither
                 // theirs nor one they parent.
-                canAct(p) { return !this.myId || this.isMine(p) || this.iAmParent(); },
+                canAct(p) { return !this.myId || this.isMine(p) || this.iAmParent() || this.iAmAdult(); },
                 // Delete follows the server's rule (deletion._authority): the run's
                 // project's owner or a parent. Without the project's owner on hand,
                 // a parent only.

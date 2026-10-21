@@ -4083,6 +4083,28 @@ def _guarded_replace(library_id, slot, token, data):
         return new
 
 
+def fail_library_script_if_empty(library_id: str, slot: dict, *, note: str, attempts: int):
+    """Record exhausted revision retries without replacing ready or hand work."""
+    import uuid
+    with db_lock, db.transaction():
+        deletion.check()
+        if not _library_slot_alive(library_id, slot):
+            return
+        cond = _library_script_query(library_id, slot)
+        existing = library_scripts_table.search(cond)
+        old = existing[0] if existing else {}
+        if old.get('scenes') or old.get('edited'):
+            return
+        data = {**old, 'note': note, 'attempts': attempts}
+        row = {**_script_row(library_id, slot, data, uuid.uuid4().hex, False,
+                            row_id=old.get('id'), created_at=old.get('created_at')),
+               'revision': int(get_library_program(library_id).get('revision') or 0)}
+        if existing:
+            library_scripts_table.update(row, cond)
+        else:
+            library_scripts_table.insert(row)
+
+
 def commit_library_script(library_id: str, slot: dict, token: str, data: dict) -> str:
     """A generated success or a failure record, against the token the claim handed out.
     A failure (no scenes) is refused when the row already holds scenes."""

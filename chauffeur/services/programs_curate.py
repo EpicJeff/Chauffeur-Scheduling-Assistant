@@ -682,7 +682,8 @@ def public_context(profile: dict, notes: str = '', based_on: str = '') -> str:
     based_on = str(based_on or '').strip()[:STARTING_POINT_CHARS]
     if based_on:
         lines.append(f"Based on: {based_on}")
-    notes = str(notes or '').strip()[:STARTING_POINT_CHARS]
+    from services.program_brief import CAPS
+    notes = str(notes or '').strip()[:CAPS['notes']]
     if notes:
         lines.append(f"Also: {notes}")
     return "\n".join(lines)

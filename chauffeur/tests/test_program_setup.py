@@ -224,6 +224,104 @@ def scenario_preview_permissions_and_overrides():
     check(not _runs() and not storage.get_protected_commitments() and not SCRIPT_JOBS, 'preview writes nothing')
 
 
+def scenario_minutes_edit_preserves_a_concurrent_days_change():
+    pid, lib = _reset()
+    made = _c().post('/api/programs', headers=_h('mom'), json={'library_id': lib, 'for_member_id': 'kid',
+        'project_id': pid, 'activate': True, 'slots': [{'day': 0, 'time_start': '18:00'}]}).json()
+    rid = made['program']['id']
+    real = programs.retime
+    fresh_baseline = {}
+    def interleave(program_id, updates):
+        changed = programs.replace_schedule(program_id, [{'day': 4, 'time_start': '19:00'}, {'day': 6, 'time_start': '10:00'}], MOM)
+        check(changed['status'] == 'success', f'concurrent schedule saved: {changed}')
+        fresh_baseline.update(storage.get_program(program_id)['baseline'])
+        return real(program_id, updates)
+    with patch.object(programs, 'retime', interleave):
+        response = _c().post(f'/api/programs/{rid}/edit', headers=_h('mom'), json={'minutes': 35, 'target_date': '2027-06-01'})
+    row = storage.get_program(rid)
+    check(response.json()['status'] == 'success' and row['shape']['minutes'] == 35
+          and row['shape']['preferred_days'] == [4, 6] and row['shape']['sessions_per_week'] == 2,
+          f'new days and minutes both survive: {row["shape"]}')
+    check(row['baseline'] == {**fresh_baseline, 'target_date': '2027-06-01'}
+          and fresh_baseline.get('schedule_changed_on') and fresh_baseline.get('schedule_history'),
+          f'new target date and concurrent schedule history both survive: {row["baseline"]}')
+    check([(s['day'], s['time_start'], s['time_end']) for s in row['shape']['slots']] == [(4, '19:00', '19:35'), (6, '10:00', '10:35')], 'saved slots have new length')
+    pcs = [storage.get_protected_commitment(cid) for cid in row['emissions']['commitment_ids']]
+    check({(p['days_of_week'][0], p['time_start'], p['time_end']) for p in pcs} == {(4, '19:00', '19:35'), (6, '10:00', '10:35')}, 'commitments match shape')
+
+
+def scenario_preview_requests_and_hand_edits_cannot_be_overwritten():
+    import json, subprocess
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] / 'templates/components/program_setup_sheet.html').read_text(encoding='utf-8')
+    source = source[source.index('function programSetup()'):source.index('</script>', source.index('function programSetup()'))]
+    script = r'''
+global.window = {chfBase: '', chfPersonToken: () => ''};
+const assert = require('assert');
+const pending = [];
+global.fetch = () => new Promise(resolve => pending.push(resolve));
+window.chfAddSlot = slots => slots.push({day: 2, time_start: '17:00'});
+''' + source + r'''
+(async () => {
+ const s = programSetup(); s.forMemberId = 'kid';
+ const a = s.preview(); s.libraryId = 'second'; const b = s.preview();
+ pending[1]({ok:true,json: async () => ({minutes:10,slots:[{day:4,time_start:'19:00'}]})}); await b;
+ pending[0]({ok:true,json: async () => ({minutes:60,slots:[{day:0,time_start:'18:00'}]})}); await a;
+ assert.equal(s.minutes,10); assert.equal(s.slots[0].day,4); assert.equal(s.libraryId,'second');
+ let jsonDone; const c = s.preview();
+ pending[2]({ok:true,json: () => new Promise(resolve => jsonDone=resolve)}); await Promise.resolve();
+ const d = s.preview(); pending[3]({ok:true,json:async()=>({minutes:15,slots:[{day:3,time_start:'16:00'}]})}); await d;
+ jsonDone({minutes:55,slots:[{day:1,time_start:'20:00'}]}); await c;
+ assert.equal(s.minutes,15); assert.equal(s.slots[0].day,3);
+ const e = s.preview(); s.addTime();
+ pending[4]({ok:true,json:async()=>({minutes:60,slots:[]})}); await e;
+ assert.equal(s.slots.length,2); assert.equal(s.minutes,15); assert.equal(s.previewing,false);
+ const f = s.preview(); s.timesEdited(); s.slots[0].time_start='14:00';
+ pending[5]({ok:true,json:async()=>({minutes:60,slots:[]})}); await f;
+ assert.equal(s.slots[0].time_start,'14:00');
+ console.log('PASS out-of-order responses, delayed JSON, add and hand edit');
+})().catch(e => {console.error(e);process.exit(1)});
+'''
+    proc = subprocess.run(['node'], input=script, capture_output=True, text=True, encoding='utf-8', timeout=30)
+    check(proc.returncode == 0, f'real sheet JavaScript: {proc.stdout} {proc.stderr}')
+
+
+def scenario_library_brief_and_look_again_copy_and_adult_actions():
+    import subprocess, json, re
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1] / 'templates/components'
+    source = (root / 'library_page.html').read_text(encoding='utf-8')
+    source = source[source.index('function libraryPage('):source.index('</script>', source.index('function libraryPage('))]
+    programs_source = (root / 'programs_page.html').read_text(encoding='utf-8')
+    can_act = re.search(r'canAct\(p\) \{(.*?)\}', programs_source).group(1)
+    script = r'''
+const assert = require('assert');
+global.window = {chfBase:''};
+global.chfLibrary = {asText: s => s};
+const confirms = [];
+global.promptConfirm = async (...args) => {confirms.push(args); return false;};
+''' + source + r'''
+(async () => {
+ const l = libraryPage(); l.briefText='piano, knows a tune'; l.creating=true;
+ const program={id:'new'}; l.request=async()=>({program,brief:{starting_point:'knows a tune'},for_member_id:null});
+ l.load=async()=>{l.programs=[program]}; l.openProgram=()=>{l.opened='new'};
+ await l.findPlan();
+ assert.equal(l.briefNotice,'What they can already do was not kept; add it when you start it for someone.');
+ assert.equal(l.creating,true); assert.equal(l.opened,null); assert.equal(confirms.length,0);
+ await l.lookAgain({title:'Piano',runners:{named:[{name:'Kate'}],hidden:2}});
+ assert(confirms[0][1].includes('3 runs stay on this one; use Look again on the run itself to move a run.'));
+  await l.lookAgain({title:'Piano',runners:{named:[{name:'Kate'}],hidden:0}});
+  assert(confirms[1][1].includes('1 run stays on this one; use Look again on the run itself to move a run.'));
+ const canAct = new Function('p', CAN_ACT);
+ assert(canAct.call({myId:'aunt',isMine:()=>false,iAmParent:()=>false,iAmAdult:()=>true},{}));
+ assert(!canAct.call({myId:'kid',isMine:()=>false,iAmParent:()=>false,iAmAdult:()=>false},{}));
+ console.log('PASS inline notice, runner warning, adult actions');
+})().catch(e=>{console.error(e);process.exit(1)});
+'''.replace('CAN_ACT', json.dumps(can_act))
+    proc = subprocess.run(['node'], input=script, capture_output=True, text=True, encoding='utf-8', timeout=30)
+    check(proc.returncode == 0, f'real library JavaScript: {proc.stdout} {proc.stderr}')
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith('scenario_')]
 
 if __name__ == '__main__':

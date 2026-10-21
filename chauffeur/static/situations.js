@@ -332,7 +332,7 @@ window.Situations = (function () {
         ${phases ? `<ul class="text-xs text-gray-300 mt-1">${phases}</ul>` : ''}
         <div class="flex flex-wrap gap-2 mt-2">${setup}
           <button data-course-preview="${esc(card.library_id)}" class="px-3 py-1 rounded-lg text-xs font-semibold bg-gray-700 text-gray-200">Preview</button>
-          <button data-course-steer="${esc(card.library_id)}" class="px-3 py-1 rounded-lg text-xs font-semibold bg-gray-700 text-gray-200">Steer</button></div></div>`;
+          ${card.can_edit ? `<button data-course-steer="${esc(card.library_id)}" class="px-3 py-1 rounded-lg text-xs font-semibold bg-gray-700 text-gray-200">Steer</button>` : ''}</div></div>`;
   }
 
   // One listener for every course card, wherever a DM draws it.
