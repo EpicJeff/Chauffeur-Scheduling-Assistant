@@ -1212,3 +1212,333 @@ _subjects.register('project', _subjects.Adapter(
     facets=[],
     spoken_safe=lambda row: row.get('audience') == 'household',
 ))
+
+
+# --- One list (spec 2026-10-20-projects-one-list §1) -----------------------
+ROW_GROUPS = ('now', 'next', 'later', 'linked', 'logbook')
+THREAD_SHEET_HISTORY = True   # the admin host lists a thread's missions in its sheet (delete spec §7)
+ASK_VERBS = ('answer', 'release', 'submit', 'verify', 'approve_plan', 'run_stage')
+_GLYPHS = {'trip': 'trip', 'occasion': 'occasion', 'list': 'list'}
+
+
+def _row(kind, rid, title, *, subtitle='', box=None, reason='', when=None, moment=None, sheet=None, actions=None, glyph=''):
+    return {'kind': kind, 'id': rid, 'title': title, 'subtitle': subtitle, 'box': box, 'reason': reason,
+            'when': when, 'group': None, 'moment': moment or {}, 'sheet': sheet, 'actions': actions or [], 'glyph': glyph}
+
+
+def _date_or_today(value):
+    try:
+        return datetime.date.fromisoformat(str(value)).isoformat()
+    except (TypeError, ValueError):
+        return datetime.date.today().isoformat()
+
+
+def _due_words(iso):
+    d = datetime.date.fromisoformat(iso)
+    return d.strftime('%b ') + str(d.day)
+
+
+def _ask_actions(situation):
+    opts = (situation or {}).get('options') or []
+    return [o for o in opts if o.get('verb') in ASK_VERBS and (o.get('payload') or {}).get('ask') != 'steer']
+
+
+def _group_of(row, today):
+    if row['kind'] == 'link':
+        return 'linked'
+    if row['box'] == 'asking' or row['when'] == 'now':
+        return 'now'
+    if row['box'] == 'open' and isinstance(row['when'], dict) and row['when']['date'] <= today:
+        return 'now'
+    if row['box'] == 'done':
+        return 'logbook'
+    if row['box'] in ('open', 'argyle') and row['when'] is not None:
+        return 'next'
+    if row['kind'] == 'program' and isinstance(row['when'], dict):   # a window not yet open: Next
+        return 'next'
+    if row.pop('_doing', False):   # a person's step already under way is Next, dated or not
+        return 'next'
+    if row['kind'] == 'conversation' and row['reason'] == 'waiting on them':
+        return 'next'
+    return 'later'
+
+
+def _step_rows(project, project_view, viewer, cards_by_mission):
+    from services import missions, access
+    steps = sorted(project_view.get('steps') or [], key=lambda s: s.get('order', 0))
+    titles = {s['id']: s.get('title') or '' for s in steps}
+    out = []
+    for s in steps:
+        sid, state, owner = s['id'], s.get('state'), s.get('owner')
+        if owner == 'argyle':
+            goal = (s.get('goal') or s.get('title') or '').strip()
+            mission = storage.get_mission(s['mission_id']) if s.get('mission_id') else None
+            gone = bool(mission is None and s.get('mission_id')) or (mission is not None and access.gone('mission', mission))
+            if state in ('done',):
+                found = foundLines_first(s.get('found')) or s.get('title') or ''
+                row = _row('step', sid, found, subtitle='Argyle', box='done')
+            elif state == 'skipped':
+                row = _row('step', sid, s.get('title') or goal, subtitle='Argyle', box='done', reason='skipped')
+            elif gone:
+                row = _row('step', sid, s.get('title') or goal, subtitle='Argyle', box='not_yet', reason="Argyle's work is gone")
+            elif s.get('question') and state in ('doing', 'blocked'):
+                sit = cards_by_mission.get(s.get('mission_id')) or {}
+                row = _row('step', sid, 'Argyle needs you: ' + s['question'], subtitle='Argyle', box='asking', when='now',
+                           actions=_ask_actions(sit) or [{'id': 'answer', 'label': 'Answer', 'verb': 'answer', 'payload': {}}],
+                           sheet={'kind': 'mission', 'id': s.get('mission_id')} if s.get('mission_id') else None)
+            elif state == 'doing':
+                row = _row('step', sid, 'Argyle is ' + _gerund(goal), subtitle=_found_short(s.get('found')) or 'Argyle', box='argyle', when='running',
+                           sheet={'kind': 'mission', 'id': s.get('mission_id')} if s.get('mission_id') else None)
+            elif state == 'blocked':
+                row = _row('step', sid, s.get('title') or goal, subtitle='Argyle', box='not_yet', reason=s.get('reason') or 'blocked')
+            else:   # todo
+                unmet = [titles[n] for n in (s.get('needs') or []) if n in titles and
+                         next((x for x in steps if x['id'] == n), {}).get('state') not in ('done', 'skipped')]
+                if unmet:
+                    reason = 'waits for ' + unmet[0]
+                elif not (storage.get_settings() or {}).get('missions_enabled'):
+                    reason = "Argyle's work is switched off"
+                else:
+                    reason = 'waiting to start'
+                row = _row('step', sid, 'Argyle will ' + goal, subtitle='Argyle', box='not_yet', reason=reason)
+            row['moment'] = {'step_id': sid}
+            row['sheet'] = row['sheet'] or {'kind': 'step', 'id': sid}
+            out.append(row)
+            continue
+        label = s.get('owner_label') or ''
+        if state in ('done', 'skipped'):
+            row = _row('step', sid, s.get('title') or '', subtitle=label, box='done', reason='skipped' if state == 'skipped' else '')
+        elif state == 'blocked':
+            row = _row('step', sid, s.get('title') or '', subtitle=label, box='not_yet', reason=s.get('reason') or 'blocked')
+        else:
+            unmet = [titles[n] for n in (s.get('needs') or []) if n in titles and
+                     next((x for x in steps if x['id'] == n), {}).get('state') not in ('done', 'skipped')]
+            when, sub = None, label
+            if s.get('hold') and s['hold'].get('date'):
+                when = {'date': s['hold']['date'], 'time': s['hold'].get('start') or ''}
+                sub = label + ' · on the calendar'
+            elif s.get('due_date'):
+                when = {'date': _date_or_today(s['due_date']), 'time': ''}
+                sub = label + ' · due ' + _due_words(when['date'])
+            if unmet:
+                row = _row('step', sid, s.get('title') or '', subtitle=label, box='not_yet', reason='waiting on ' + unmet[0])
+            else:
+                row = _row('step', sid, s.get('title') or '', subtitle=sub, box='open', when=when)
+                if state == 'doing':
+                    row['_doing'] = True
+        row['moment'] = {'step_id': sid}
+        row['sheet'] = {'kind': 'step', 'id': sid}
+        out.append(row)
+    return out
+
+
+def _gerund(goal):
+    """'find tile' -> 'finding tile'; a goal that already reads as a phrase is kept."""
+    words = goal.split()
+    if not words:
+        return 'working'
+    verb = words[0].lower()
+    if verb.endswith('ing'):
+        return goal
+    if verb.endswith('e') and not verb.endswith('ee'):
+        verb = verb[:-1]
+    return ' '.join([verb + 'ing'] + words[1:])
+
+
+def foundLines_first(value):
+    lines = _found_lines(value)
+    return lines[0] if lines else ''
+
+
+def _found_short(value):
+    lines = _found_lines(value)
+    return (lines[0] + ' so far') if lines else ''
+
+
+def _found_lines(value, label=''):
+    if value is None or value == '' or value == []:
+        return []
+    if isinstance(value, list):
+        return [x for v in value for x in _found_lines(v, label)]
+    if isinstance(value, dict):
+        return [x for k, v in value.items() for x in _found_lines(v, str(k).replace('_', ' '))]
+    return [(label + ': ' if label else '') + str(value)]
+
+
+def _thread_row(card, project, viewer, folded):
+    from services import threads as _th, missions
+    sit = card.get('situation') or {}
+    raw = storage.get_thread(card['id']) or {}
+    keeper = card.get('view') == 'keeper'
+    words = sit if keeper else raw
+    name = (raw.get('counterparty_name') or raw.get('counterparty_email') or '') if not keeper else ''
+    sub = (name + ' · conversation') if name else 'conversation'
+    rev = int(raw.get('next_action_rev') or 0)
+    state = raw.get('state')
+    ask = _ask_actions(sit)
+    folded_ask = [a for m in folded for a in _ask_actions(m.get('situation'))]
+    if state in ('done', 'dropped'):
+        if folded_ask or sit.get('group') == 'now':
+            row = _row('conversation', card['id'], (sit.get('next_step') or {}).get('label') or card.get('title') or '',
+                       subtitle=sub, box='asking', when='now', actions=ask or folded_ask)
+        else:
+            row = _row('conversation', card['id'], card.get('title') or '', subtitle=sub, box='done')
+    elif sit.get('group') == 'now' and not raw.get('next_action') or folded_ask or any(a['verb'] != 'answer' or (a.get('payload') or {}).get('ask') for a in ask):
+        label = (sit.get('next_step') or {}).get('label') or card.get('title') or ''
+        row = _row('conversation', card['id'], label, subtitle=sub, box='asking', when='now', actions=ask or folded_ask)
+    elif state == 'waiting' and not raw.get('next_action'):
+        row = _row('conversation', card['id'], 'Waiting on ' + (name or 'them'), subtitle=sub, box='not_yet', reason='waiting on them')
+    elif raw.get('next_action') and not keeper:
+        when = {'date': _date_or_today(raw.get('next_action_at')) if raw.get('next_action_at') else datetime.date.today().isoformat(), 'time': ''}
+        row = _row('conversation', card['id'], raw['next_action'], subtitle=sub, box='open', when=when)
+    elif keeper and (sit.get('next_step') or {}).get('label'):
+        row = _row('conversation', card['id'], sit['next_step']['label'], subtitle=sub, box='open',
+                   when={'date': datetime.date.today().isoformat(), 'time': ''})
+    else:
+        row = _row('conversation', card['id'], card.get('title') or '', subtitle=sub, box='not_yet', reason='set a next step')
+    row['moment'] = {'thread_id': card['id'], 'rev': rev}
+    row['sheet'] = {'kind': 'thread', 'id': card['id']}
+    return row
+
+
+def _mission_row(card):
+    from services import missions
+    sit = card.get('situation') or {}
+    raw = storage.get_mission(card['id']) or {}
+    status = raw.get('status')
+    ask = _ask_actions(sit)
+    verify = bool(raw.get('id')) and missions.verify_open(raw)
+    goal = card.get('title') or ''
+    if status in missions.ATTENTION or verify or ask:
+        title = (sit.get('next_step') or {}).get('label') or goal
+        row = _row('argyle', card['id'], title, subtitle='Argyle', box='asking', when='now',
+                   actions=ask or [{'id': 'answer', 'label': 'Answer', 'verb': 'answer', 'payload': {}}])
+    elif status in missions.TERMINAL:
+        row = _row('argyle', card['id'], goal, subtitle='Argyle', box='done')
+    elif status in ('running', 'browsing'):
+        row = _row('argyle', card['id'], (sit.get('next_step') or {}).get('label') or goal, subtitle='Argyle', box='argyle', when='running')
+    elif status == 'blocked':
+        row = _row('argyle', card['id'], goal, subtitle='Argyle', box='not_yet', reason=sit.get('status_note') or 'blocked')
+    else:
+        row = _row('argyle', card['id'], goal, subtitle='Argyle', box='not_yet', reason=str(status or 'waiting').replace('_', ' '))
+    row['moment'] = {'mission_id': card['id']}
+    row['sheet'] = {'kind': 'mission', 'id': card['id']}
+    return row
+
+
+def _program_rows(card, project, viewer, windows):
+    from services import programs
+    run = programs.load(storage.get_program(card['id'])) or {}
+    state = run.get('state')
+    title = card.get('title') or run.get('title') or ''
+    sub = title + ' · program'
+    prog = card.get('program') or {}
+    out = []
+    if prog.get('unresolved'):
+        row = _row('program', card['id'], 'Needs a program', subtitle='program', box='not_yet', reason='needs a program',
+                   actions=[{'id': 'rebind', 'label': 'Pick a program', 'verb': 'rebind', 'payload': {}}])
+        row['moment'] = {'run_id': card['id']}; row['sheet'] = {'kind': 'program', 'id': card['id']}
+        return [row]
+    if state == 'active':
+        today = datetime.date.today().isoformat()
+        mine = [w for w in windows if w.get('program_id') == card['id']]
+        ranks = {}
+        for w in mine:
+            rank = ranks.get(w['date'], 0); ranks[w['date']] = rank + 1
+            if w.get('logged'):
+                continue
+            name = (w.get('unit_title') or title) + (', ' + w['variant_label'] if w.get('variant_label') else '')
+            when = {'date': w['date'], 'time': w.get('time_start') or ''}
+            if w['date'] <= today:
+                row = _row('program', card['id'], name, subtitle=sub, box='open', when=when)
+            else:
+                day = datetime.date.fromisoformat(w['date']).strftime('%A')
+                row = _row('program', card['id'], name, subtitle=sub, box='not_yet', reason='box opens ' + day, when=when)
+            row['moment'] = {'run_id': card['id'], 'window_date': w['date'], 'slot_rank': rank,
+                             'lesson_id': w.get('lesson_id') or '', 'variant_label': w.get('variant_label') or ''}
+            row['sheet'] = {'kind': 'program', 'id': card['id']}
+            out.append(row)
+        if out:
+            return out
+        row = _row('program', card['id'], title, subtitle=sub, box='not_yet', reason='no practice window this week')
+    elif state == 'proposed':
+        approver = viewer and viewer.get('role') in ('parent', 'adult')
+        row = _row('program', card['id'], title, subtitle=sub, box='not_yet', reason='needs approval',
+                   when='now' if approver else None,
+                   actions=[{'id': 'approve', 'label': 'Approve', 'verb': 'approve', 'payload': {}}] if approver else [])
+    elif state == 'paused':
+        row = _row('program', card['id'], title, subtitle=sub, box='not_yet', reason='paused')
+    else:
+        row = _row('program', card['id'], title, subtitle=sub, box='done')
+    row['moment'] = {'run_id': card['id']}
+    row['sheet'] = {'kind': 'program', 'id': card['id']}
+    return [row]
+
+
+def _fold_target(cards, card):
+    """Today's folding predicates (projects_page.html foldTarget), server side."""
+    if card['kind'] != 'mission' or not card.get('origin_thread') or not card.get('situation') or not card.get('sheet'):
+        return None
+    if card.get('view') != 'full' or not THREAD_SHEET_HISTORY:
+        return None
+    thread = next((c for c in cards if c['kind'] == 'thread' and c['id'] == card['origin_thread']), None)
+    if not thread or not thread.get('situation') or not thread.get('sheet') or thread.get('view') != 'full':
+        return None
+    return thread['id']
+
+
+def rows(project, viewer):
+    """The detail page's one list (spec §1): every step, piece and practice
+    window as a row with its next moment, grouped Now/Next/Later/Linked/Logbook."""
+    from services import programs, access
+    with access.batch():
+        pv = view(project, viewer)
+        if not pv:
+            return []
+        cards = piece_cards(project, viewer, project_view=pv)
+        folded = {}
+        for c in cards:
+            t = _fold_target(cards, c)
+            if t:
+                folded.setdefault(t, []).append(c)
+        by_mission = {c['id']: c.get('situation') for c in cards if c['kind'] == 'mission'}
+        today = datetime.date.today()
+        windows = []
+        if any(c['kind'] == 'program' for c in cards):
+            windows = programs.practice_windows(today, today + datetime.timedelta(days=13), None, viewer=viewer)
+        out = _step_rows(project, pv, viewer, by_mission)
+        for c in cards:
+            if c['kind'] == 'thread':
+                out.append(_thread_row(c, project, viewer, folded.get(c['id'], [])))
+            elif c['kind'] == 'mission':
+                if _fold_target(cards, c):
+                    continue
+                out.append(_mission_row(c))
+            elif c['kind'] == 'program':
+                out.extend(_program_rows(c, project, viewer, windows))
+            else:
+                out.append(_row('link', c['id'], c.get('title') or '', subtitle=c['kind'], glyph=_GLYPHS.get(c['kind'], c['kind']),
+                                moment={}, sheet=None, actions=[{'id': 'open', 'label': 'Open', 'verb': 'link', 'payload': {'link': c.get('link')}},
+                                                               {'id': 'remove', 'label': 'Remove', 'verb': 'remove', 'payload': {}}]))
+                out[-1]['kind'] = 'link'
+        iso = today.isoformat()
+        for r in out:
+            r['group'] = _group_of(r, iso)
+            r.pop('_doing', None)
+        return _stable_grouped(out)
+
+
+def _stable_grouped(rows_):
+    """Group order first; inside Now/Next by when; Later/Linked keep build order; Logbook newest first (reverse build order)."""
+    def when_key(r):
+        w = r['when'] if isinstance(r['when'], dict) else None
+        return (w['date'], w['time']) if w else ('0000' if r['when'] == 'now' else '9999', '')
+    out = []
+    for g in ROW_GROUPS:
+        part = [r for r in rows_ if r['group'] == g]
+        if g in ('now', 'next'):
+            part = sorted(part, key=when_key)
+        elif g == 'logbook':
+            part = list(reversed(part))
+        out.extend(part)
+    return out

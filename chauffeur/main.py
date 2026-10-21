@@ -6376,7 +6376,8 @@ def project_detail(project_id: str, request: Request = None):
     with access.batch():
         from services import projects
         actor = _piece_viewer(request)
-        return {'project': projects.view(_project_for_actor(project_id, actor), actor)}
+        project_row = _project_for_actor(project_id, actor)
+        return {'project': projects.view(project_row, actor), 'rows': projects.rows(project_row, actor)}
 
 
 @app.patch("/api/projects/{project_id}")
