@@ -942,6 +942,92 @@ def scenario_change_the_days_from_the_sheet():
         check(served.errors() == [], f"no page errors: {served.errors()}")
 
 
+def scenario_start_a_session_from_the_sheet():
+    """⋯ › Start a session (P7) is the real Start: a window from the chooser opens the player on
+    that window's lesson, and finishing it logs the session against that window's date."""
+    served = serve()
+    if served is None:
+        return
+    import datetime
+    from services import programs
+    _reset_kate()
+    tomorrow = datetime.date.today() + datetime.timedelta(days=1)
+    moved = programs.replace_schedule('run-kate', [{'day': tomorrow.weekday(), 'time_start': '18:00'}], storage.get_member('mom'))
+    check(moved['status'] == 'success', f"the fixture has a window tomorrow: {moved}")
+    want = next(w for w in programs.practice_windows(tomorrow, tomorrow, 'kate') if w.get('program_id') == 'run-kate')
+    before = len(storage.get_program('run-kate').get('sessions') or [])
+    with served.browser() as page:
+        admin(page, served, 'mom')
+        page.goto(served.url('projects?id=prj-piano&piece=program:run-kate'), wait_until='load')
+        page.wait_for_selector('[data-run-menu]', timeout=15000)
+        page.locator('[data-run-menu]').click()
+        page.locator('#cc-choice-modal button', has_text='Start a session').click()
+        page.wait_for_function("() => document.querySelector('#cc-choice-title') && document.querySelector('#cc-choice-title').innerText.includes('Which session?')", timeout=10000)
+        page.locator('#cc-choice-modal button', has_text='Tomorrow').first.click()
+        player = page.locator('[x-data="lessonPlayer()"]')
+        player.wait_for(state='visible', timeout=10000)
+        opened = page.evaluate("""() => { const w = Alpine.$data(document.querySelector('[x-data="lessonPlayer()"]')).w || {};
+                                         return {date: w.date, lesson_id: w.lesson_id, variant_label: w.variant_label || '', program_id: w.program_id}; }""")
+        check(opened == {'date': tomorrow.isoformat(), 'lesson_id': want['lesson_id'], 'variant_label': want.get('variant_label') or '',
+                         'program_id': 'run-kate'}, f"the player opens on that window's lesson: {opened} vs {want}")
+        shot(page, 'monitor-start-a-session')
+        # Quiet first (headless has no speech engine to hand a send-off line to), then the player's
+        # own finish(): the footer's last step, which asks "Log this session?".
+        voice_off = player.get_by_role('button', name='Turn the voice off', exact=True)
+        if voice_off.count():
+            voice_off.click()
+        page.evaluate("""() => { Alpine.$data(document.querySelector('[x-data="lessonPlayer()"]')).finish(); }""")
+        _confirm_text(page)
+        page.locator('#cc-confirm-execute-btn').click()
+        run = _wait(lambda: (lambda r: r if len(r.get('sessions') or []) > before else None)(storage.get_program('run-kate')),
+                    "finishing logs the session")
+        last = run['sessions'][-1]
+        check(last.get('slot_date') == tomorrow.isoformat() and last.get('lesson_id') == want['lesson_id'] and last.get('source') == 'asked',
+              f"logged against that window: {last}")
+        check(served.errors() == [], f"no page errors: {served.errors()}")
+
+
+def scenario_a_failed_footprint_says_so_with_retry():
+    """Spec §9: a proposal whose footprint read fails says so and offers Retry, never 'Working it out…' forever."""
+    served = serve()
+    if served is None:
+        return
+    if not storage.get_program('run-footprint'):
+        _run('run-footprint', 'sam', DRUMS, 'prj-piano', {'current': 'ls-beat', 'lessons': {}, 'phases': {'ph-beat': {'weeks': 2, 'milestone_hit_at': None}}},
+             state='proposed')
+    with served.browser() as page:
+        admin(page, served, 'mom')
+        page.route('**/footprint', lambda route: route.fulfill(status=500, body='{}'))
+        page.goto(served.url('projects?id=prj-piano&piece=program:run-footprint'), wait_until='load')
+        page.wait_for_selector('[data-record-sheet] [data-footprint-retry]', timeout=15000)
+        check("Couldn't work out the week" in page.locator('[data-record-sheet] [data-footprint-failed]').inner_text(), "the failure is said")
+        shot(page, 'footprint-retry')
+        page.unroute('**/footprint')
+        page.locator('[data-record-sheet] [data-footprint-retry]').click()
+        page.wait_for_selector('[data-record-sheet] [data-footprint-failed]', state='detached', timeout=10000)
+        check(page.locator('[data-record-sheet]').get_by_role('button', name='Approve', exact=True).is_visible(), "Retry reads the week and Approve is back")
+        check(not [e for e in served.errors() if 'status of 500' not in e], f"no page errors: {served.errors()}")
+
+
+def scenario_escape_closes_only_the_top_sheet():
+    """The setup sheet opened over a record sheet: one Escape closes the setup sheet alone."""
+    served = serve()
+    if served is None:
+        return
+    with served.browser() as page:
+        admin(page, served, 'mom')
+        page.goto(served.url('projects?id=prj-piano&piece=program:run-kate'), wait_until='load')
+        page.wait_for_selector('[data-record-sheet][data-open="true"] [data-run-menu]', timeout=15000)
+        page.evaluate("() => window.chfProgramSetup.open({runId: 'run-kate', projectId: 'prj-piano'})")
+        page.wait_for_selector('[data-setup-sheet] [data-setup-slot]', timeout=10000)
+        page.keyboard.press('Escape')
+        page.wait_for_selector('[data-setup-sheet]', state='detached', timeout=5000)
+        check(page.locator('[data-record-sheet][data-open="true"]').count() == 1, "the record sheet beneath stays open")
+        page.keyboard.press('Escape')
+        page.wait_for_function("() => !document.querySelector('[data-record-sheet]').hasAttribute('data-open')", timeout=5000)
+        check(served.errors() == [], f"no page errors: {served.errors()}")
+
+
 SCENARIOS = [scenario_the_library_page_lists_each_program, scenario_a_new_program_says_what_the_household_will_see,
              scenario_editing_a_program_inline, scenario_archive_leaves_the_picker_not_the_library,
              scenario_delete_waits_until_nobody_runs_it, scenario_the_picker_starts_the_program,
@@ -951,7 +1037,9 @@ SCENARIOS = [scenario_the_library_page_lists_each_program, scenario_a_new_progra
              scenario_removing_the_current_lesson_says_who_is_on_it, scenario_an_unresolved_run_can_be_deleted_or_rebound,
              scenario_the_phone_library_home_light_and_dark,
              scenario_setup_sheet_lands_active, scenario_setup_preview_failure_shows_retry,
-             scenario_monitoring_sheet, scenario_change_the_days_from_the_sheet]
+             scenario_monitoring_sheet, scenario_change_the_days_from_the_sheet,
+             scenario_start_a_session_from_the_sheet, scenario_a_failed_footprint_says_so_with_retry,
+             scenario_escape_closes_only_the_top_sheet]
 
 if __name__ == "__main__":
     import traceback

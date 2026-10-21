@@ -13,7 +13,8 @@
          is set. See lesson_player.html's `hostListens` for the other half. -->
     <script>window.chfHasLessonDoneListener = true;</script>
 {% set _sheet = sheet_mode|default(false) %}
-{% from 'components/program_setup_sheet.html' import slot_rows %}
+{% from 'components/program_setup_sheet.html' import slot_rows, slot_script %}
+{{ slot_script() }}
 <div x-data="programsPage({{ 'true' if _sheet else 'false' }})" x-init="{{ 'readIdentity()' if _sheet else 'load()' }}"
      @lesson-player:done.window="onLessonDone($event.detail)"
      {% if _sheet %}@chf-record-sheet.window="onSheet($event.detail)"{% else %}x-effect="window.chfSetPageTabCount && window.chfSetPageTabCount('programs', programs.filter(p => p.state === 'proposed' && canAct(p)).length)"{% endif %}
@@ -89,7 +90,7 @@
                                                     <span class="block text-[11px] text-gray-500 mt-0.5" x-text="'stays private to ' + memberName(p.member_id) + '\'s program'"></span>
                                                 </label>
                                                 <div class="flex flex-wrap gap-2.5">
-                                                    <label class="text-xs text-gray-400">Minutes each
+                                                    <label class="text-xs text-gray-400" x-show="canApprove()">Minutes each
                                                         <input name="minutes" type="number" min="5" max="240" x-model.number="settingsDraft[p.id].minutes"
                                                             class="w-20 ml-1 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-gray-100 text-sm">
                                                     </label>
@@ -638,8 +639,15 @@
                                     <div class="text-[10px] font-bold uppercase tracking-wide text-blue-300">
                                         What it adds to the week
                                     </div>
-                                    <template x-if="!footprints[p.id]">
+                                    <template x-if="!footprints[p.id] && !footprintFailed[p.id]">
                                         <div class="text-[11px] text-gray-500 italic">Working it out…</div>
+                                    </template>
+                                    <template x-if="!footprints[p.id] && footprintFailed[p.id]">
+                                        <div data-footprint-failed class="flex items-center gap-2 text-xs text-amber-300">
+                                            <span>Couldn't work out the week.</span>
+                                            <button type="button" data-footprint-retry @click="loadFootprint(p.id)"
+                                                class="text-xs font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Retry</button>
+                                        </div>
                                     </template>
                                     <template x-if="footprints[p.id]">
                                         <div class="space-y-1.5">
@@ -659,23 +667,10 @@
 
                                             <template x-if="slotOpen[p.id] && slotDraft[p.id]">
                                                 <div class="space-y-1.5">
-                                                    <template x-for="(s, i) in slotDraft[p.id]" :key="i">
-                                                        <div class="flex items-center gap-1.5">
-                                                            <select x-model.number="s.day"
-                                                                class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-xs">
-                                                                <template x-for="d in 7" :key="d">
-                                                                    <option :value="d - 1" x-text="dayLabel(d - 1)"></option>
-                                                                </template>
-                                                            </select>
-                                                            <input type="time" x-model="s.time_start"
-                                                                class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-xs">
-                                                            <button @click="slotDraft[p.id].splice(i, 1)"
-                                                                class="text-xs font-bold px-2 py-1.5 rounded-lg bg-gray-800 text-gray-400 border border-gray-700 active:bg-gray-700 shrink-0">Remove</button>
-                                                        </div>
-                                                    </template>
+                                                    {{ slot_rows('slotDraft[p.id]', '(p.shape || {}).minutes') }}
                                                     <div class="flex flex-wrap gap-2">
-                                                        <button x-show="slotDraft[p.id].length < 7" @click="addSlot(p)"
-                                                            class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Add a window</button>
+                                                        <button type="button" @click="addSlot(p)" :disabled="!!(slotDraft[p.id].length >= 7)"
+                                                            class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700 disabled:opacity-50">+ Add a time</button>
                                                         <button @click="saveSlots(p)" :disabled="!!(proposing)"
                                                             class="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-blue-600 text-white active:bg-blue-700 disabled:opacity-50">Save these times</button>
                                                         <button @click="slotOpen[p.id] = false"
@@ -876,7 +871,7 @@
                 myId: '', myToken: '',
                 programs: [],
                 members: [],
-                footprints: {},
+                footprints: {}, footprintFailed: {},
                 // Today's practice windows, so an active program's card can
                 // offer the exact tap that starts tonight's session. The
                 // other readers of api/practice-windows are the wall card
@@ -1000,6 +995,8 @@
                         ]);
                         const pd = pRes.ok ? await pRes.json() : { programs: [] };
                         this.programs = pd.programs || [];
+                        // A saved-or-changed line lasts until the next successful read.
+                        if (pRes.ok) this.notice = {};
                         this.members = mRes.ok ? await mRes.json() : [];
                         const sd = sRes.ok ? await sRes.json() : {};
                         Object.keys(this.s).forEach(k => {
@@ -1139,11 +1136,14 @@
                     }
                 },
 
+                // A failed read says so, with Retry (spec §9), never "Working it out…" forever.
                 async loadFootprint(id) {
+                    this.footprintFailed[id] = false;
                     try {
-                        const r = await fetch(this.apiBase + `api/programs/${id}/footprint`);
-                        if (r.ok) this.footprints[id] = await r.json();
-                    } catch (e) { /* the approve button just stays hidden behind "Working it out…" */ }
+                        const r = await fetch(this.apiBase + `api/programs/${id}/footprint`, { headers: this.authHeaders() });
+                        if (r.ok) { this.footprints[id] = await r.json(); return; }
+                    } catch (e) { /* said below */ }
+                    this.footprintFailed[id] = true;
                 },
 
                 get proposedList() { return this.programs.filter(p => p.state === 'proposed'); },
@@ -1231,12 +1231,7 @@
                     this.slotOpen[p.id] = true;
                 },
 
-                addSlot(p) {
-                    const draft = this.slotDraft[p.id] || (this.slotDraft[p.id] = []);
-                    const used = draft.map(s => s.day);
-                    const day = [1, 3, 5, 0, 2, 4, 6].find(d => !used.includes(d));
-                    draft.push({ day: day === undefined ? 1 : day, time_start: '19:00' });
-                },
+                addSlot(p) { window.chfAddSlot(this.slotDraft[p.id] || (this.slotDraft[p.id] = [])); },
 
                 async saveSlots(p) {
                     const draft = (this.slotDraft[p.id] || [])
@@ -1509,13 +1504,7 @@
                     this.daysOpen[p.id] = true;
                 },
 
-                addDay(p) {
-                    const draft = this.daysDraft[p.id] || (this.daysDraft[p.id] = []);
-                    const used = draft.map(s => s.day);
-                    const day = [0, 2, 4, 1, 3, 5, 6].find(d => !used.includes(d));
-                    const last = draft[draft.length - 1];
-                    draft.push({ day: day === undefined ? 0 : day, time_start: (last && last.time_start) || '19:00' });
-                },
+                addDay(p) { window.chfAddSlot(this.daysDraft[p.id] || (this.daysDraft[p.id] = [])); },
 
                 async saveDays(p) {
                     const slots = (this.daysDraft[p.id] || []).filter(s => s.time_start)
@@ -1531,8 +1520,8 @@
                             return;
                         }
                         this.daysOpen[p.id] = false;
-                        this.notice[p.id] = d.message || '';
                         await this.load();
+                        this.notice[p.id] = d.message || '';
                     } catch (e) { showGlobalAlert("Couldn't change the days just now."); }
                     finally { this.proposing = false; }
                 },

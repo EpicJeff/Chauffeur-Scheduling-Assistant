@@ -621,8 +621,11 @@ def scenario_a_program_under_way_takes_its_settings_not_its_days():
     check(approved['status'] == 'success', f"the fixture is on the calendar: {approved}")
     ids = storage.get_program(pid)['emissions']['commitment_ids']
 
-    response = _post_program_as('mom', pid, 'edit', {'minutes': 45, 'starting_point': 'knows three chords',
-                                                     'target_date': '2027-01-10'})
+    with patch.object(programs, 'retime', wraps=programs.retime) as retime:
+        response = _post_program_as('mom', pid, 'edit', {'minutes': 45, 'starting_point': 'knows three chords',
+                                                         'target_date': '2027-01-10'})
+    check(retime.called and 'progress' not in retime.call_args[0][1],
+          f"a run under way never rewrites its progress from a read taken before the write: {retime.call_args}")
     check(response.status_code == 200 and response.json()['status'] == 'success', f"settings save: {response.text}")
     row = storage.get_program(pid)
     check(row['state'] == 'active' and row['shape']['minutes'] == 45 and row['starting_point'] == 'knows three chords'

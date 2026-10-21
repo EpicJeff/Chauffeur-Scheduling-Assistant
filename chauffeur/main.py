@@ -8223,7 +8223,10 @@ def edit_program(program_id: str, body: dict = Body(default={}), request: Reques
         ('minutes', 'sessions_per_week', 'preferred_days', 'slots') if body.get(k) is not None}})
     if shape != old_shape:
         updates['shape'] = shape
-        if row.get('library_id') and not row.get('unresolved'):
+        # A run under way never changes its count here (Change the days does), so
+        # its pacing stands and its progress is never rewritten from this read.
+        if row.get('library_id') and not row.get('unresolved') and not (
+                on_calendar and shape['sessions_per_week'] == old_shape.get('sessions_per_week')):
             progress_ = copy.deepcopy(row['progress'])
             for ph in row.get('phases') or []:
                 # A phase flattened from a phase-only plan retains its original pacing formula.

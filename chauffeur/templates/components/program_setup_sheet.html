@@ -27,6 +27,20 @@
   </div>
 </template>
 {% endmacro %}
+{# The one "+ Add a time" rule, for every slot list (setup sheet, Change the
+   days, Not these times?): the next free day of Mon/Wed/Fri first, at the
+   last row's time. Emitted at top level by each host component, guarded. #}
+{% macro slot_script() %}
+<script>
+window.chfAddSlot = window.chfAddSlot || function (slots) {
+    const used = slots.map(s => Number(s.day));
+    const day = [0, 2, 4, 1, 3, 5, 6].find(d => !used.includes(d));
+    const last = slots[slots.length - 1];
+    slots.push({day: day === undefined ? 0 : day, time_start: (last && last.time_start) || '19:00'});
+    return slots;
+};
+</script>
+{% endmacro %}
 <div x-data="programSetup()" @chf-program-setup-open.window="start($event.detail)"
      @keydown.escape.window="if (open && !promptOpen()) close()">
   <template x-if="open">
@@ -127,6 +141,7 @@
     </div>
   </template>
 </div>
+{{ slot_script() }}
 <script>
 (function () {
     if (window.chfProgramSetup) return;
@@ -253,12 +268,7 @@ function programSetup() {
             this.draft = {...blankDraft(), age_band: this.bands[this.forMemberId] || 'any', minutes: this.minutes || 25};
             this.preview();
         },
-        addTime() {
-            const used = this.slots.map(s => s.day);
-            const day = [0, 2, 4, 1, 3, 5, 6].find(d => !used.includes(d));
-            const last = this.slots[this.slots.length - 1];
-            this.slots.push({day: day === undefined ? 0 : day, time_start: (last && last.time_start) || '19:00'});
-        },
+        addTime() { window.chfAddSlot(this.slots); },
         // The week the app would propose for this person and shape (spec §4.3).
         async preview() {
             const seq = this._seq;
@@ -320,8 +330,17 @@ function programSetup() {
         },
         // The run the DM card or a proposal points at: its times, then approval when
         // it is waiting for one. Never a second POST /api/programs.
+        // The run as the server has it now, read before every attempt, so a run
+        // approved elsewhere (or a failed first try) never sends a stale diff.
+        async refreshRun() {
+            const r = await fetch(this.apiBase + 'api/programs?include_finished=true', {headers: this.headers()});
+            const run = r.ok ? ((await r.json()).programs || []).find(p => p.id === this.runId) : null;
+            if (!run) throw new Error('That program is no longer here.');
+            this.run = run;
+            return run;
+        },
         async setUpRun() {
-            const run = this.run;
+            const run = await this.refreshRun();
             if (!run) throw new Error('That program is no longer here.');
             const id = encodeURIComponent(run.id);
             const shape = run.shape || {};
