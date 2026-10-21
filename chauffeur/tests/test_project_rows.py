@@ -79,6 +79,7 @@ def scenario_argyle_steps_by_state():
     todo = _step(p['id'], 'Find tile', owner='argyle', goal='find ivory matte tile')
     rows = _rows(p['id'])
     r = _by(rows, 'step', todo['id'])
+    check(not [x for x in rows if x['kind'] == 'argyle'], f"a step's mission has no second row: {rows}")
     # missions are on in _fresh(); advance launched it, so it is doing.
     check(r['box'] == 'argyle' and r['when'] == 'running' and r['group'] == 'next'
           and r['title'] == 'Argyle is finding ivory matte tile', f"a running Argyle step: {r}")
@@ -290,7 +291,8 @@ def scenario_keeper_view_words_only():
     with patch.object(access, 'record_view', keeper_for_thread):
         r = _by(_rows(p['id'], AUNT), 'conversation', tid)
     check('Book the hall' not in (r['title'] + r['subtitle']), f"a keeper row carries no hidden words: {r}")
-    check(r['title'] == 'Set the next step' and r['subtitle'] == 'conversation', f"a keeper row speaks the projection's words: {r}")
+    check(r['box'] == 'not_yet' and r['reason'] == 'set a next step' and r['group'] == 'later' and not r['actions']
+          and r['subtitle'] == 'conversation', f"a keeper row is never tickable and never Now: {r}")
 
 
 def scenario_detail_route_carries_rows():
@@ -315,6 +317,152 @@ def scenario_doing_step_is_next():
     _p().set_step_state(p['id'], s['id'], 'doing', dict(MOM))
     r = _by(_rows(p['id']), 'step', s['id'])
     check(r['box'] == 'open' and r['group'] == 'next' and '_doing' not in r, f"an undated doing step is Next: {r}")
+
+
+def _mission(pid, goal='find three tilers', launch=None, **fields):
+    launch = launch or {}
+    with patch.object(missions, '_bump_call', lambda *a, **k: True):   # the daily launch cap is not under test
+        mid = missions.launch(goal, created_by='mom', project_id=pid, **launch)['mission_id']
+    if fields:
+        storage.update_mission(mid, fields)
+    return mid
+
+
+_WORK_PLAN = {'state': 'approved', 'rev': 1, 'stages': [
+    {'id': 's1', 'kind': 'work', 'state': 'running', 'title': 'Call the tilers', 'snapshot': 'snap', 'rows': []}]}
+
+
+def scenario_blocked_mission_is_not_the_logbook():
+    _fresh()
+    p = _bath()
+    mid = _mission(p['id'], status='blocked')
+    r = _by(_rows(p['id']), 'argyle', mid)
+    check(r['box'] == 'not_yet' and r['group'] == 'later' and r['reason'] and '_' not in r['reason'], f"a blocked mission waits for a person, Later: {r}")
+
+
+def scenario_running_planned_mission_is_not_asking():
+    _fresh()
+    p = _bath()
+    mid = _mission(p['id'], status='running', plan=_WORK_PLAN)
+    from services import situations
+    opts = situations.view('mission', mid, dict(MOM))['options']
+    check(any(o['verb'] == 'run_stage' for o in opts), "precondition: a running planned mission carries Skip/Stop")
+    r = _by(_rows(p['id']), 'argyle', mid)
+    check(r['box'] == 'argyle' and r['when'] == 'running' and r['group'] == 'next' and r['title'] == 'Call the tilers' and not r['actions'],
+          f"a running planned mission is Next, titled by its work, with no buttons: {r}")
+    # Its thread (forwarding and folding) is not asking either.
+    tid = threads.create(title='Tiler', owner_member_id='mom', created_by='mom', project_id=p['id'], next_action='Call')
+    mid2 = _mission(p['id'], 'draft to the tiler', launch={'origin_kind': 'thread', 'origin_ref': tid}, status='running', plan=_WORK_PLAN)
+    rows = _rows(p['id'])
+    t = _by(rows, 'conversation', tid)
+    check(t['box'] == 'open' and t['title'] == 'Call' and not t['actions'], f"a thread whose mission is only running is not asking: {t}")
+    check(not any(r['kind'] == 'argyle' and r['id'] == mid2 for r in rows), "and the folded mission has no row")
+
+
+def scenario_quiet_stalled_thread_is_not_an_empty_ask():
+    _fresh()
+    p = _bath()
+    tid = threads.create(title='Tiler', owner_member_id='mom', created_by='mom', project_id=p['id'])
+    with patch.object(threads, 'is_stalled', lambda *a, **k: 'quiet'):
+        r = _by(_rows(p['id']), 'conversation', tid)
+    check(r['box'] == 'not_yet' and r['reason'] == 'set a next step' and not r['actions'], f"a quiet thread with no next step: {r}")
+
+
+def scenario_fold_needs_a_parent_or_adult():
+    projects = _p()
+    thread = {'kind': 'thread', 'id': 't1', 'situation': {'x': 1}, 'sheet': True, 'view': 'full'}
+    mission = {'kind': 'mission', 'id': 'm1', 'origin_thread': 't1', 'situation': {'x': 1}, 'sheet': True, 'view': 'full'}
+    cards = [thread, mission]
+    check(projects._fold_target(cards, mission, dict(MOM)) == 't1', "a parent folds")
+    check(projects._fold_target(cards, mission, dict(DAD)) == 't1', "an adult folds")
+    check(projects._fold_target(cards, mission, dict(KID)) is None, "a child keeps the mission's own row")
+    check(projects._fold_target(cards, mission, None) is None, "no viewer, no fold")
+
+
+def scenario_house_viewer_is_never_an_approver():
+    _fresh()
+    p = _bath()
+    from library_run_fixture import add_run
+    from services import access
+    add_run({'id': 'prop', 'state': 'proposed', 'member_id': 'kid', 'title': 'Piano',
+             'shape': {'sessions_per_week': 2, 'minutes': 20, 'preferred_days': []}, 'phases': [],
+             'source': {'origin': 'none', 'reason': 'test'},
+             'baseline': {'start_date': None, 'target_date': None, 'target_event_id': None, 'rebaselined_at': None, 'rebaselines': 0}})
+    _p().adopt('program', 'prop', None, project_id=p['id'])
+    with patch.object(programs, 'practice_windows', lambda *a, **k: []):
+        rows = _p().rows(storage.get_project(p['id']), dict(access.HOUSE))
+    prop = [r for r in rows if r['kind'] == 'program']
+    check(not prop or not prop[0]['actions'], f"the wall never gets Approve: {prop}")
+
+
+ALLOWED_BOXES = ('open', 'done', 'argyle', 'asking', 'not_yet')
+
+
+def _one_row(rows, kind, rid, what):
+    mine = [r for r in rows if r['kind'] == kind and r['id'] == rid]
+    check(len(mine) == 1, f"{what}: exactly one row, got {len(mine)}")
+    r = mine[0]
+    check(r['box'] in ALLOWED_BOXES and r['group'] in _p().ROW_GROUPS, f"{what}: a known box and group: {r}")
+    for field in ('title', 'subtitle', 'reason'):
+        check('_' not in (r[field] or ''), f"{what}: no state code in {field}: {r}")
+    return r
+
+
+def scenario_every_status_and_state_maps_to_one_row():
+    _fresh()
+    p = _bath()
+    # Every mission status.
+    statuses = sorted(set(missions.LIVE) | set(missions.ATTENTION) | set(missions.TERMINAL))
+    check(len(statuses) >= 8, f"the status table: {statuses}")
+    ids = {}
+    for status in statuses:
+        mid = _mission(p['id'], f'work for {status}'.replace('_', ' '), status=status)
+        if status == 'waiting_user':
+            storage.add_mission_step(mid, {'kind': 'ask', 'name': 'question', 'result_json': {'question': 'Which one?'}})
+        ids[status] = mid
+    # Every step: owner x state, with and without a question.
+    from services import projects
+    proj = storage.get_project(p['id'])
+    step_ids = []
+    for owner in ('mom', 'argyle'):
+        for state in projects.STEP_STATES:
+            for question in (None, 'Which one?'):
+                sid = uuid_hex()
+                proj['steps'].append({'id': sid, 'title': f'{owner} {state}', 'owner': owner, 'state': state, 'needs': [],
+                                      'order': len(proj['steps']) + 1, 'goal': 'find tile', 'mission_id': None,
+                                      'question': question, 'reason': 'out of tile' if state == 'blocked' else None})
+                step_ids.append((owner, state, question, sid))
+    storage.update_project(p['id'], {'steps': proj['steps']})
+    # Every program state.
+    from library_run_fixture import add_run
+    base = {'member_id': 'kid', 'title': 'Piano', 'shape': {'sessions_per_week': 2, 'minutes': 20, 'preferred_days': []}, 'phases': [],
+            'source': {'origin': 'none', 'reason': 'test'},
+            'baseline': {'start_date': None, 'target_date': None, 'target_event_id': None, 'rebaselined_at': None, 'rebaselines': 0}}
+    pstates = ('active', 'proposed', 'paused', 'done', 'dropped')
+    for state in pstates:
+        add_run({'id': 'prog_' + state, 'state': state, **base})
+        _p().adopt('program', 'prog_' + state, None, project_id=p['id'])
+    with patch.object(programs, 'practice_windows', lambda *a, **k: []):
+        rows = _rows(p['id'])
+    for status, mid in ids.items():
+        r = _one_row(rows, 'argyle', mid, f'mission {status}')
+        if status in ('done', 'dropped'):
+            check(r['group'] == 'logbook', f"{status} is the Logbook: {r}")
+        if status == 'waiting_user':
+            check(r['box'] == 'asking' and r['group'] == 'now', f"{status} is asking: {r}")
+        if status in ('waiting_retry', 'waiting_step', 'blocked'):
+            check(r['box'] == 'not_yet' and r['group'] == 'later', f"{status} is not yet, Later: {r}")
+        if status in ('running', 'browsing'):
+            check(r['box'] == 'argyle' and r['group'] == 'next', f"{status} is Next: {r}")
+    for owner, state, question, sid in step_ids:
+        _one_row(rows, 'step', sid, f'step {owner} {state} q={question}')
+    for state in pstates:
+        _one_row(rows, 'program', 'prog_' + state, f'program {state}')
+
+
+def uuid_hex():
+    import uuid
+    return uuid.uuid4().hex
 
 
 def scenario_groups_order():
