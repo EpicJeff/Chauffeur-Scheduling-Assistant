@@ -681,6 +681,7 @@ def migrate_program_session_ids_v2499():
 
 def migrate_library_revision_summary_v2499():
     """Library rows gain a revision counter and lessons a parent-facing summary and origin (programs spec §6)."""
+    from services.library import default_summary
     with storage.db_lock, storage.db.transaction():
         if storage.get_app_state('library_revision_summary_v2499'):
             return
@@ -688,9 +689,7 @@ def migrate_library_revision_summary_v2499():
             origin = (row.get('source') or {}).get('origin') or 'none'
             lessons = []
             for l in row.get('lessons') or []:
-                n = int(l.get('sessions') or 1)
-                first = (l.get('steps') or [''])[0]
-                summary = l.get('summary') or ((first + '. ' if first else '') + f"{n} session{'s' if n != 1 else ''}.")
+                summary = l.get('summary') or default_summary(l.get('steps'), l.get('sessions'))
                 lessons.append({**l, 'summary': summary, 'origin': l.get('origin') or origin})
             storage.update_library_program(row['id'], {'lessons': lessons, 'revision': int(row.get('revision') or 0)})
         storage.set_app_state('library_revision_summary_v2499', time.time())

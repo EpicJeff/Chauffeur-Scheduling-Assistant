@@ -155,7 +155,7 @@ def _finish(library_id, job_id):
             storage.set_app_state(JOBS_KEY, jobs)
 
 
-def write(library_id: str, actor: dict, lesson_id: str = None, variant_label: str = '') -> dict:
+def write(library_id: str, actor: dict, lesson_id: str = None, variant_label: str = '', *, enqueue=False) -> dict:
     from services import library
     settings = storage.get_settings() or {}
     if not settings.get('programs_enabled', True):
@@ -178,10 +178,31 @@ def write(library_id: str, actor: dict, lesson_id: str = None, variant_label: st
         if not pairs:
             return {'status': 'ok', 'job': None}
     with storage.db_lock:
+        if enqueue:
+            # Steer queues missing work. A hand edit arriving after its commit
+            # wins, including over an already queued request for this slot.
+            row = storage.get_library_program(library_id)
+            if not row or row.get('archived') or not library.can_edit(row, actor):
+                return {'status': 'error', 'message': 'This program is no longer editable.'}
+            pairs = [(l, lab) for l, lab in slots_of(row)
+                     if (not lesson_id or (l['id'] == lesson_id and lab == (variant_label or '')))
+                     and needs_script(library_id, {'lesson_id': l['id'], 'variant_label': lab})]
+            if not pairs:
+                return {'status': 'ok', 'job': None}
         jobs = _jobs()
         if _alive(jobs.get(library_id)):
+            if enqueue:
+                entry = jobs[library_id]
+                queued = entry.setdefault('queued', [])
+                for lesson, label in pairs:
+                    item = {'lesson_id': lesson['id'], 'variant_label': label, 'revision': int(row.get('revision') or 0)}
+                    if item not in queued:
+                        queued.append(item)
+                        entry['total'] = int(entry.get('total') or 0) + 1
+                storage.set_app_state(JOBS_KEY, jobs)
+                return {'status': 'ok', 'job': dict(entry)}
             return {'status': 'error', 'message': ALREADY}
-        if lesson_id:
+        if lesson_id and not enqueue:
             storage.delete_library_script(library_id, {'lesson_id': lesson_id, 'variant_label': variant_label or ''})
         job_id = uuid.uuid4().hex
         entry = {'job_id': job_id, 'started_at': time.time(), 'last_progress_at': time.time(),
@@ -200,7 +221,26 @@ def _run(library_id, job_id, pairs, settings):
     done = failed = 0
     pending = deque((lesson, label, revision, False) for lesson, label, revision in pairs)
     try:
-        while pending:
+        while True:
+            # Taking queued work and retiring an empty job share the writer's
+            # lock, so a late enqueue cannot be stranded behind a finished job.
+            with storage.db_lock:
+                jobs = _jobs()
+                entry = jobs.get(library_id)
+                if not isinstance(entry, dict) or entry.get('job_id') != job_id:
+                    return
+                queued_items = entry.pop('queued', [])
+                if queued_items:
+                    fresh_row = storage.get_library_program(library_id) or {}
+                    by_id = {l['id']: l for l in fresh_row.get('lessons') or []}
+                    for item in queued_items:
+                        lesson = by_id.get(item['lesson_id'])
+                        if lesson:
+                            pending.append((lesson, item['variant_label'], item['revision'], False))
+                    storage.set_app_state(JOBS_KEY, jobs)
+                if not pending:
+                    _finish(library_id, job_id)
+                    return
             queued, label, revision, retried = pending.popleft()
             row = storage.get_library_program(library_id)
             if not row or row.get('archived') or not _progress(library_id, job_id, lesson_id=queued['id'], variant_label=label):

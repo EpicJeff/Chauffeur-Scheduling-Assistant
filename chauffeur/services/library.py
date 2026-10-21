@@ -72,8 +72,15 @@ def valid_curriculum(row):
                 if not isinstance(variant, dict) or not isinstance(variant.get('steps', []), list):
                     return False
         return all(any(l['phase_id'] == pid for l in lessons) for pid in phase_ids)
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):
         return False
+
+
+def default_summary(steps, sessions):
+    """The same parent-facing fallback at creation, hand entry and migration."""
+    first = str((steps or [''])[0] or '').strip().rstrip('.')
+    count = max(1, int(sessions or 1))
+    return (first + '. ' if first else '') + f"{count} session{'s' if count != 1 else ''}."
 
 
 def from_curated(title, profile, curated, created_by):
@@ -89,7 +96,7 @@ def from_curated(title, profile, curated, created_by):
         for unit in units:
             sessions = max(1, int(unit.get('sessions') or 1))
             steps = copy.deepcopy(unit.get('steps', raw.get('steps') or []))
-            summary = ((steps[0] + '. ' if steps else '') + f"{sessions} session{'s' if sessions != 1 else ''}.")
+            summary = default_summary(steps, sessions)
             lessons.append({
                 'id': uuid.uuid4().hex, 'phase_id': phase['id'],
                 'title': unit.get('title') or raw.get('name') or title,
@@ -198,15 +205,26 @@ def _script_view(row):
         else:
             state = 'none'
         scripts.setdefault(lesson['id'], {})[label] = {'state': state, 'minutes': int(s.get('minutes') or 0), 'note': s.get('note') or '',
-                                                        'origin': s.get('origin') or '', 'edited': bool(s.get('edited'))}
+                                                        'origin': s.get('origin') or '', 'edited': bool(s.get('edited')), 'stale': bool(s.get('stale'))}
     return scripts, job
+
+
+def source_line(row):
+    source = row.get('source') or {}
+    if source.get('origin') == 'cited':
+        line = f"Based on {source.get('plan_name') or 'a published plan'} · cited"
+        changed = sum(l.get('origin') == 'generated' for l in row.get('lessons') or [])
+        if changed:
+            line += f" · {changed} lesson{'s' if changed != 1 else ''} changed by the app"
+        return line
+    return 'Made by the app' if source.get('origin') == 'generated' else 'Practice time only'
 
 
 def _view(row, viewer):
     """A library row as one viewer reads it: runners filtered, and what they may do."""
     scripts, job = _script_view(row)
     return {**row, 'scripts': scripts, 'writing': job, 'runners': runners(row['id'], viewer), 'can_edit': can_edit(row, viewer),
-            'made_for_line': made_for_line(row.get('made_for')),
+            'made_for_line': made_for_line(row.get('made_for')), 'source_line': source_line(row),
             'in_use': in_use_message(row['id'], viewer)}
 
 
@@ -265,87 +283,112 @@ def _write(library_id, actor, change):
         row = copy.deepcopy(row)
         try:
             change(row)
-        except ValueError as exc:
+        except (ValueError, TypeError, OverflowError) as exc:
             return {'status': 'error', 'message': str(exc)}
         return _commit(library_id, row, actor)
 
 
-def update(library_id, fields, actor):
+def _change_profile(row, fields):
+    """Mutate one candidate; both hand and model callers publish it later."""
     from services import programs_curate
-    def change(row):
-        if 'title' in fields:
-            screen = programs_curate.screen_aim(str(fields['title']).strip())
-            if not screen.get('ok'):
-                raise ValueError(screen['message'])
-            row['title'] = str(fields['title']).strip()
-        if 'made_for' in fields:
-            profile = public_profile(fields['made_for'])
-            screen = programs_curate.screen_starting_point(profile['assumes'])
-            if not screen.get('ok'):
-                raise ValueError(screen['message'])
-            row['made_for'] = profile
-    return _write(library_id, actor, change)
+    if 'title' in fields:
+        title = str(fields['title']).strip()
+        screen = programs_curate.screen_aim(title)
+        if not screen.get('ok'):
+            raise ValueError(screen['message'])
+        row['title'] = title
+    if 'made_for' in fields:
+        profile = public_profile(fields['made_for'])
+        screen = programs_curate.screen_starting_point(profile['assumes'])
+        if not screen.get('ok'):
+            raise ValueError(screen['message'])
+        row['made_for'] = profile
+
+
+def _change_add_lesson(row, fields, after=None):
+    if not any(p['id'] == fields.get('phase_id') for p in row['phases']):
+        raise ValueError('No such phase.')
+    lesson = {'id': uuid.uuid4().hex, 'steps': [], 'variants': [], 'sessions': 1,
+              'summary': '', 'origin': (row.get('source') or {}).get('origin') or 'none',
+              **{k: copy.deepcopy(v) for k, v in fields.items() if k in
+                 ('phase_id', 'title', 'sessions', 'steps', 'variants', 'body', 'url', 'summary', 'origin', 'source_index')}}
+    if not lesson['summary']:
+        lesson['summary'] = default_summary(lesson['steps'], lesson['sessions'])
+    if after is None:
+        row['lessons'].append(lesson)
+    else:
+        index = next((i for i, l in enumerate(row['lessons'])
+                      if l['id'] == after and l['phase_id'] == lesson.get('phase_id')), None)
+        if index is None:
+            raise ValueError('Choose a lesson in the same phase to insert after.')
+        row['lessons'].insert(index + 1, lesson)
+    return lesson
+
+
+def _change_update_lesson(row, lesson_id, fields):
+    lesson = next((l for l in row['lessons'] if l['id'] == lesson_id), None)
+    if lesson is None:
+        raise ValueError('No such lesson.')
+    lesson.update({k: copy.deepcopy(v) for k, v in fields.items() if k in
+                   ('title', 'sessions', 'steps', 'variants', 'body', 'url', 'summary', 'origin', 'source_index')})
+    return lesson
+
+
+def _change_update_phase(row, phase_id, fields):
+    phase = next((p for p in row['phases'] if p['id'] == phase_id), None)
+    if phase is None:
+        raise ValueError('No such phase.')
+    phase.update({k: copy.deepcopy(v) for k, v in fields.items() if k in ('name', 'milestone', 'what', 'progression')})
+
+
+def _change_remove_lesson(row, lesson_id):
+    if not any(l['id'] == lesson_id for l in row['lessons']):
+        raise ValueError('No such lesson.')
+    row['lessons'] = [l for l in row['lessons'] if l['id'] != lesson_id]
+
+
+def _change_order(row, ids):
+    by_id = {l['id']: l for l in row['lessons']}
+    if (not isinstance(ids, list) or not all(isinstance(i, str) for i in ids)
+            or len(ids) != len(by_id) or set(ids) != set(by_id)):
+        raise ValueError('Choose every lesson once.')
+    row['lessons'] = [by_id[lid] for lid in ids]
+
+
+def update(library_id, fields, actor):
+    return _write(library_id, actor, lambda row: _change_profile(row, fields))
 
 
 def archive(library_id, actor):
-    return _write(library_id, actor, lambda row: row.update(archived=True))
+    with storage.db_lock, storage.db.transaction():
+        row = storage.get_library_program(library_id)
+        if row and can_edit(row, actor) and row.get('archived'):
+            return {'status': 'success', 'program': row}
+        return _write(library_id, actor, lambda row: row.update(archived=True))
 
 
 def add_lesson(library_id, fields, actor, after=None):
-    def change(row):
-        lesson = {'id': uuid.uuid4().hex, 'steps': [], 'variants': [], 'sessions': 1,
-                  'summary': '', 'origin': (row.get('source') or {}).get('origin') or 'none',
-                  **{k: copy.deepcopy(v) for k, v in fields.items() if k in
-                     ('phase_id', 'title', 'sessions', 'steps', 'variants', 'body', 'url', 'summary', 'origin')}}
-        if after is None:
-            row['lessons'].append(lesson)
-        else:
-            index = next((i for i, l in enumerate(row['lessons'])
-                          if l['id'] == after and l['phase_id'] == lesson.get('phase_id')), None)
-            if index is None:
-                raise ValueError('Choose a lesson in the same phase to insert after.')
-            row['lessons'].insert(index + 1, lesson)
-    return _write(library_id, actor, change)
+    return _write(library_id, actor, lambda row: _change_add_lesson(row, fields, after))
 
 
 def update_lesson(library_id, lesson_id, fields, actor):
-    def change(row):
-        lesson = next((l for l in row['lessons'] if l['id'] == lesson_id), None)
-        if lesson is None:
-            raise ValueError('No such lesson.')
-        lesson.update({k: v for k, v in fields.items() if k in
-                       ('title', 'sessions', 'steps', 'variants', 'body', 'url', 'summary', 'origin')})
-    return _write(library_id, actor, change)
+    return _write(library_id, actor, lambda row: _change_update_lesson(row, lesson_id, fields))
 
 
 def update_phase(library_id, phase_id, fields, actor):
-    def change(row):
-        phase = next((p for p in row['phases'] if p['id'] == phase_id), None)
-        if phase is None:
-            raise ValueError('No such phase.')
-        phase.update({k: v for k, v in fields.items() if k in ('name', 'milestone', 'what', 'progression')})
-    return _write(library_id, actor, change)
+    return _write(library_id, actor, lambda row: _change_update_phase(row, phase_id, fields))
 
 
 def remove_lesson(library_id, lesson_id, actor):
-    def change(row):
-        if not any(l['id'] == lesson_id for l in row['lessons']):
-            raise ValueError('No such lesson.')
-        row['lessons'] = [l for l in row['lessons'] if l['id'] != lesson_id]
     with storage.db_lock, storage.db.transaction():
-        result = _write(library_id, actor, change)
+        result = _write(library_id, actor, lambda row: _change_remove_lesson(row, lesson_id))
         if result.get('status') == 'success':
             storage.delete_library_lesson_scripts(library_id, lesson_id)
         return result
 
 
 def order_lessons(library_id, ids, actor):
-    def change(row):
-        by_id = {l['id']: l for l in row['lessons']}
-        if len(ids) != len(by_id) or set(ids) != set(by_id):
-            raise ValueError('Choose every lesson once.')
-        row['lessons'] = [by_id[lid] for lid in ids]
-    return _write(library_id, actor, change)
+    return _write(library_id, actor, lambda row: _change_order(row, ids))
 
 
 def delete(library_id, actor):

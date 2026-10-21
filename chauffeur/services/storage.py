@@ -4034,7 +4034,7 @@ def _script_row(library_id, slot, data, claim, edited, row_id=None, created_at=N
     return {'id': row_id or uuid.uuid4().hex, 'library_id': library_id,
             'lesson_id': str(slot.get('lesson_id') or ''), 'variant_label': str(slot.get('variant_label') or ''),
             'origin': data.get('origin') or 'generated', 'source_url': data.get('source_url') or '',
-            'scenes': list(data.get('scenes') or []), 'edited': edited, 'model': data.get('model') or '',
+            'scenes': list(data.get('scenes') or []), 'edited': edited, 'stale': False, 'model': data.get('model') or '',
             'attempts': int(data.get('attempts') or 0), 'note': str(data.get('note') or ''),
             'minutes': int(data.get('minutes') or 0), 'claim': claim,
             'created_at': created_at if created_at is not None else time.time()}
@@ -4115,6 +4115,12 @@ def edit_library_script(library_id: str, slot: dict, data: dict) -> str:
         return new
 
 
+def mark_library_script_stale(library_id: str, slot: dict, stale: bool):
+    """Keep an authored script intact while flagging a curriculum change."""
+    with db_lock:
+        return bool(library_scripts_table.update({'stale': bool(stale)}, _library_script_query(library_id, slot)))
+
+
 def get_library_script(library_id: str, slot: dict):
     with db_lock:
         res = library_scripts_table.search(_library_script_query(library_id, slot))
@@ -4129,6 +4135,16 @@ def get_library_scripts(library_id: str) -> list:
 def delete_library_script(library_id: str, slot: dict) -> bool:
     with db_lock:
         return bool(library_scripts_table.remove(_library_script_query(library_id, slot)))
+
+
+def rekey_library_scripts(library_id: str, lesson_id: str, labels: dict):
+    """Move scripts by position, including label swaps, without rewriting their data."""
+    with db_lock, db.transaction():
+        rows = [s for s in get_library_scripts(library_id) if s['lesson_id'] == lesson_id]
+        for row in rows:
+            old = row['variant_label']
+            if old in labels and old != labels[old]:
+                library_scripts_table.update({'variant_label': labels[old]}, Query().id == row['id'])
 
 
 def delete_library_lesson_scripts(library_id: str, lesson_id: str) -> int:

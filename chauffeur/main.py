@@ -7989,6 +7989,15 @@ def archive_library_api(id: str, request: Request):
     return _library_result(library.archive(id, _library_actor(request)))
 
 
+@app.post('/api/library/{id}/steer')
+def steer_library_api(id: str, request: Request, body: dict = Body(default={})):
+    from services import library_steer
+    actor = _library_actor(request)
+    if 'revision' not in body:
+        raise HTTPException(status_code=400, detail='Send the revision you read.')
+    return _library_result(library_steer.apply(id, body.get('text') or '', actor, body['revision']))
+
+
 @app.post('/api/library/{id}/lessons')
 def add_library_lesson_api(id: str, request: Request, body: dict = Body(default={})):
     from services import library

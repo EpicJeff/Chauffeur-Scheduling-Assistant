@@ -15,7 +15,7 @@ READERS = [
           ('GET', '/api/library/{id}'), ('PATCH', '/api/library/{id}'), ('DELETE', '/api/library/{id}'),
           ('POST', '/api/library/{id}/archive'), ('POST', '/api/library/{id}/lessons'),
           ('PATCH', '/api/library/{id}/lessons/{lesson_id}'), ('DELETE', '/api/library/{id}/lessons/{lesson_id}'),
-          ('POST', '/api/library/{id}/lessons/order'),
+          ('POST', '/api/library/{id}/lessons/order'), ('POST', '/api/library/{id}/steer'),
           ('GET', '/api/library/{id}/lessons/{lesson_id}/script'),
           ('PUT', '/api/library/{id}/lessons/{lesson_id}/script'),
           ('DELETE', '/api/library/{id}/lessons/{lesson_id}/script'),
@@ -37,6 +37,8 @@ READERS = [
     *[((F, name), 'INTERNAL', ('program',), 'curriculum resolution or authorized mutation; callers own access') for name in [
         'services.library.get', 'services.library.list_programs', 'services.library.create', 'services.library._write',
         'services.library._commit', 'services.library.delete', 'services.programs.load', 'services.programs.create_row',
+        'services.programs.retime', 'services.library.archive',
+        'services.library_steer.plan', 'services.library_steer._apply', 'services.library_steer._changes', 'services.library_steer._sync_scripts', 'services.library_steer.apply',
         'services.programs.monitor', 'services.programs.remove_session', 'services.programs._adjust_lesson_credit',
         'services.agent_tools_v2._program_choice_question', 'services.agent_tools_v2._start_program_choice',
         'services.planned.answer_program_choice',

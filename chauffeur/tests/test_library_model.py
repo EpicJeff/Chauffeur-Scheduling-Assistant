@@ -1008,8 +1008,11 @@ def scenario_hand_writes_keep_ids_metadata_and_revision():
     lesson = next(l for l in row['lessons'] if l['id'] == ids['A'])
     check(lesson['summary'] == 'A gentle start.' and lesson['origin'] == 'generated', 'metadata carried, lesson identity preserved')
     check(row['phases'][0]['id'] == ids['P1'], 'phase identity preserved')
-    for write in writes:
-        check(write()['status'] == 'error', 'archived row refuses every hand writer')
+    for write in writes[:-1]:
+        check(write()['status'] == 'error', 'archived row refuses every other hand writer')
+    with patch.object(storage, 'update_library_program', wraps=storage.update_library_program) as persisted:
+        check(library.archive(lid, MOM)['status'] == 'success', 'second archive succeeds')
+    check(not persisted.called and storage.get_library_program(lid) == row, 'second archive performs no write')
     check(storage.get_library_program(lid) == row, 'archived refusals change nothing')
     result = library._commit(lid, {**row, 'archived': False}, MOM, expect_revision=revision)
     check(result['status'] == 'success' and result['program']['revision'] == revision + 1, 'unarchive is allowed')
