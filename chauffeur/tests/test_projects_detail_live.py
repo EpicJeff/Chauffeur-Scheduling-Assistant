@@ -3,7 +3,7 @@ detail is Now / Next / Later / Linked / Logbook rows with a checkbox each, one
 ⋯ and one + Add, a step sheet and a link sheet; the list page groups Needs you
 then everything else, with no state chip and no Programs filter. Run from
 chauffeur/: python tests/test_projects_detail_live.py   (PROJECTS_SHOTS=<dir> for screenshots)"""
-from project_sheets_fixture import IDS, admin, check, pwa, serve, shot, storage
+from project_sheets_fixture import IDS, admin, check, open_projects, pwa, serve, shot, storage
 
 
 def scenario_detail_is_one_list():
@@ -338,8 +338,8 @@ def scenario_add_for_a_child():
         page.set_viewport_size({'width': 390, 'height': 844})
         pwa(page, served, 'kid')
         page.goto(served.url('app'), wait_until='load')
-        page.wait_for_selector('#tab-projects', timeout=15000)
-        page.locator('#tab-projects').click()
+        page.wait_for_selector('#tab-more', state='visible', timeout=15000)
+        open_projects(page)
         page.wait_for_selector('[data-project-id="prj-bike"]', timeout=15000)
         page.locator('[data-project-id="prj-bike"]').click()
         page.wait_for_selector('[data-project-detail]', timeout=10000)

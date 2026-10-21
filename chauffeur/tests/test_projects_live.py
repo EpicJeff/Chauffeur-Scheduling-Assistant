@@ -14,7 +14,7 @@ test relies on (exact):
   * on the list page `[data-new-project]` opens the New project sheet: inputs
     named title, goal, done_when, the shared audience picker
     (`[data-create-audience] [data-audience-value]`), and `[data-create-project]`;
-  * the phone app has a tab `#tab-projects`;
+  * the phone app has no Projects tab: Projects is reached from More (one-list spec §5);
   * an old Programs link opens its piece sheet inside the owning project.
 No browser dialogs anywhere (alert/confirm/prompt).
 
@@ -109,6 +109,13 @@ def _pwa(page, served, who):
                    'chauffeur_theme': 'dark'})
 
 
+def _open_projects(page):
+    """Projects lives in More on the phone (one-list spec §5); as project_sheets_fixture.open_projects."""
+    page.locator('#tab-more').click()
+    page.locator('#pwa-feature-list').get_by_text('Projects', exact=True).first.click()
+    page.wait_for_selector('#projects-container [data-project-card], #projects-container [data-project-detail]', timeout=15000)
+
+
 def _step(pid, sid):
     return next(s for s in storage.get_project(pid)['steps'] if s['id'] == sid)
 
@@ -197,8 +204,9 @@ def scenario_the_phone_tab_for_a_child_and_a_parent():
             page.on('dialog', lambda d: (dialogs.append(d.message), d.dismiss()))
             _pwa(page, served, 'kid')
             page.goto(served.url('app'), wait_until='load')
-            page.wait_for_selector('#tab-projects', timeout=15000)
-            page.locator('#tab-projects').click()
+            page.wait_for_selector('#tab-more', state='visible', timeout=15000)
+            check(page.locator('#tab-projects').count() == 0, "no Projects tab")
+            _open_projects(page)
             page.wait_for_selector(f'[data-project-id="{IDS["bike"]}"]', timeout=15000)
             text = page.locator('body').inner_text()
             check('Learn to ride a bike' in text and 'Bathroom' in text and '185' not in text,
@@ -216,8 +224,9 @@ def scenario_the_phone_tab_for_a_child_and_a_parent():
                 Path(SHOTS, 'projects-pwa-kid.png').write_bytes(page.screenshot(full_page=True))
             _pwa(page, served, 'dad')
             page.goto(served.url('app'), wait_until='load')
-            page.wait_for_selector('#tab-projects', timeout=15000)
-            page.locator('#tab-projects').click()
+            page.wait_for_selector('#tab-more', state='visible', timeout=15000)
+            check(page.locator('#tab-projects').count() == 0, "no Projects tab")
+            _open_projects(page)
             page.wait_for_selector(f'[data-project-id="{IDS["bike"]}"]', timeout=15000)
             text = page.locator('body').inner_text()
             check('Learn to ride a bike' in text and '185' not in text, "Dad sees Kate's project, not Mom's private one")
@@ -237,14 +246,14 @@ def scenario_younger_children_reach_their_projects_without_a_tab():
             _pwa(page, served, 'tot')
             page.goto(served.url('app'), wait_until='load')
             page.wait_for_selector('#pwa-tab-bar', timeout=15000)
-            check(not page.locator('#tab-projects').is_visible(), "a sprout has no Projects tab")
+            check(page.locator('#tab-projects').count() == 0, "a sprout has no Projects tab")
             page.locator('#pwa-tab-bar > button:visible', has_text='My things').first.click()
             page.wait_for_selector(f'[data-project-id="{IDS["tot"]}"]', timeout=15000)
             check('Use the big-kid potty' in page.locator('body').inner_text(), "Sam finds his project in My things")
             _pwa(page, served, 'exp')
             page.goto(served.url('app'), wait_until='load')
             page.wait_for_selector('#tab-more', timeout=15000)
-            check(not page.locator('#tab-projects').is_visible(), "an explorer has no Projects tab")
+            check(page.locator('#tab-projects').count() == 0, "an explorer has no Projects tab")
             page.locator('#tab-more').click()
             page.locator('text=Projects').first.click()
             page.wait_for_selector(f'[data-project-id="{IDS["exp"]}"]', timeout=15000)

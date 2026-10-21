@@ -420,8 +420,12 @@ function projectsPage(host = 'admin') {
             return this.mutate('api/projects/' + encodeURIComponent(p.id) + '/pieces/remove', {kind: card.kind, id: card.id});
         },
         async removeLink(p, card) { if (await this.removePiece(p, card)) this.linkSheet = null; },
-        // A linked piece opens its own page, as its link always did (buttons only, no anchors).
-        openLink(card) { window.location.href = this.apiBase + card.link; },
+        // A linked piece opens its own page, as its link always did (buttons only, no anchors);
+        // on the phone it opens the kind's phone home, never an admin page (spec §5).
+        openLink(card) {
+            if (this.host === 'phone' && window.phoneOpenRecord) { this.linkSheet = null; return window.phoneOpenRecord(card.kind, card.id); }
+            window.location.href = this.apiBase + card.link;
+        },
         openSheet(kind, id, title, projectId) {
             window.dispatchEvent(new CustomEvent('chf-record-sheet-open', {detail: {kind, id, title: title || '', projectId: projectId || null}}));
         },

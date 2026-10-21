@@ -18,11 +18,13 @@ promptConfirm, promptInput); buttons, not anchors, on the phone.
      sees, "In use by another project" otherwise; enabled and working once unused.
   6. Remove the current lesson: "{name} is on this lesson; her run moves to the next one." for a
      visible runner; a hidden runner is counted, never named.
-  7. The picker (project page, Add a piece -> Program): library programs (title, made-for, visible
+  7. The picker (project page, + Add -> Program): library programs (title, made-for, visible
      runners; archived hidden) with "Make a new one" at the bottom; picking starts a proposed run.
-  8. The run card (project page, record sheet, phone): "from the library: {title}" as a button and
-     the current lesson by name under its phase ("Scales · Foundations"), never a count.
-  9. The unresolved run card: "Its library program is missing" with Delete and "Pick a program".
+  8. The run's sheet (record sheet, phone): "from the library: {title}" as a button and the current
+     lesson by name under its phase ("Scales · Foundations"), never a count; the project's own row
+     is title, subtitle and when (one-list spec §1), never a count either.
+  9. The unresolved run: its row reads "Needs a program" with "Pick a program"; its sheet says "Its
+     library program is missing" with Delete.
  10. Next / Back ("Another session on this") on the run; "Reached it" on a non-final phase keeps
      the run going.
  11. Phone: More -> Library opens the library home (buttons only).
@@ -163,6 +165,13 @@ def pwa(page, served, who, theme='dark'):
                    'chauffeur_theme': theme})
 
 
+def _open_projects(page):
+    """Projects lives in More on the phone (one-list spec §5); as project_sheets_fixture.open_projects."""
+    page.locator('#tab-more').click()
+    page.locator('#pwa-feature-list').get_by_text('Projects', exact=True).first.click()
+    page.wait_for_selector('#projects-container [data-project-card], #projects-container [data-project-detail]', timeout=15000)
+
+
 def shot(page, name):
     if SHOTS:
         os.makedirs(SHOTS, exist_ok=True)
@@ -279,8 +288,8 @@ def scenario_a_new_program_says_what_the_household_will_see():
     # The project's Make a new one: the person's band, and the private starting point.
     with served.browser() as page:
         _project(page, served, 'mom')
-        page.locator('[data-add-piece]').click()
-        page.locator('[data-prompt-choice]', has_text='A practice program').first.click()
+        page.locator('[data-project-add]').click()
+        page.locator('[data-prompt-choice]', has_text='Program').first.click()
         form = page.locator('[data-piece-form="program"]')
         form.wait_for(state='visible')
         page.wait_for_selector('[data-library-pick]', timeout=10000)
@@ -306,7 +315,7 @@ def scenario_a_new_program_says_what_the_household_will_see():
         check(run['member_id'] == 'kate' and run['state'] == 'proposed' and run['starting_point'] == 'knows the open strings',
               f"Kate's proposed run carries her starting point: {run}")
         check('open strings' not in repr(lib) and lib['made_for']['age_band'] == 'explorer', f"the library row never does: {lib}")
-        page.wait_for_selector(f'[data-piece="program:{run["id"]}"]', timeout=10000)
+        page.wait_for_selector(f'[data-row="program:{run["id"]}"]', timeout=10000)
         check(served.errors() == [], f"no page errors: {served.errors()}")
 
 
@@ -389,8 +398,8 @@ def scenario_archive_leaves_the_picker_not_the_library():
         check(_card(page, CHESS).locator('[data-library-archive]').count() == 0, "stays on the page, Archive gone")
     with served.browser() as page:
         _project(page, served, 'mom')
-        page.locator('[data-add-piece]').click()
-        page.locator('[data-prompt-choice]', has_text='A practice program').first.click()
+        page.locator('[data-project-add]').click()
+        page.locator('[data-prompt-choice]', has_text='Program').first.click()
         page.wait_for_selector('[data-library-pick]', timeout=10000)
         picks = page.locator('[data-library-pick]')
         ids = [picks.nth(i).get_attribute('data-library-id') for i in range(picks.count())]
@@ -433,8 +442,8 @@ def scenario_the_picker_starts_a_proposed_run():
         return
     with served.browser() as page:
         _project(page, served, 'mom')
-        page.locator('[data-add-piece]').click()
-        page.locator('[data-prompt-choice]', has_text='A practice program').first.click()
+        page.locator('[data-project-add]').click()
+        page.locator('[data-prompt-choice]', has_text='Program').first.click()
         form = page.locator('[data-piece-form="program"]')
         page.wait_for_selector('[data-library-pick]', timeout=10000)
         row = form.locator(f'[data-library-pick][data-library-id="{PIANO}"]')
@@ -452,9 +461,11 @@ def scenario_the_picker_starts_a_proposed_run():
         check(run['library_id'] == PIANO and run['member_id'] == 'mom' and run['state'] == 'proposed'
               and run['shape']['minutes'] == 20, f"a proposed run with the program's defaults: {run}")
         check(run['project_id'] == 'prj-piano', "in this project")
-        piece = page.locator(f'[data-piece="program:{run["id"]}"]')
+        piece = page.locator(f'[data-row="program:{run["id"]}"]')
         piece.wait_for(state='visible', timeout=10000)
-        check('Proposed: see its week and approve it here.' in piece.inner_text(), "and it lands in the approve flow")
+        # One-list rows (spec §1): a proposed run reads "needs approval" with its Approve button.
+        check('needs approval' in piece.inner_text() and piece.locator('[data-row-action="approve"]').count() == 1,
+              f"and it lands in the approve flow: {piece.inner_text()}")
         storage.set_app_state('library_live_picked', run['id'])
         check(served.errors() == [], f"no page errors: {served.errors()}")
     with served.browser() as page:
@@ -463,14 +474,14 @@ def scenario_the_picker_starts_a_proposed_run():
         page.on('response', lambda r: r.status == 403 and refused.append(r.url))
         pwa(page, served, 'kate')
         page.goto(served.url('app'), wait_until='load')
-        page.wait_for_function("() => typeof setView === 'function' && !!document.getElementById('tab-projects')", timeout=20000)
+        page.wait_for_function("() => typeof setView === 'function' && !!document.getElementById('tab-more')", timeout=20000)
         page.wait_for_timeout(1500)
         page.evaluate("() => setView('projects')")   # an explorer reaches Projects from her own shell
         page.wait_for_selector('[data-project-id="prj-kate"]', timeout=15000)
         page.locator('[data-project-id="prj-kate"]').first.click()
-        page.wait_for_selector('[data-add-piece]', timeout=10000)
-        page.locator('[data-add-piece]').click()
-        page.locator('[data-pick]', has_text='A practice program').first.click()
+        page.wait_for_selector('[data-project-add]', timeout=10000)
+        page.locator('[data-project-add]').click()
+        page.locator('[data-pick]', has_text='Program').first.click()
         page.wait_for_selector('[data-library-pick]', timeout=10000)
         check(page.locator('[data-library-make-new], [data-library-new]').count() == 0, "a child picks; she never makes one")
         check(page.locator(f'[data-library-pick][data-library-id="{PIANO}"]').count() == 1, "from the same library")
@@ -489,19 +500,20 @@ def scenario_the_run_card_names_the_lesson():
     _reset_kate()
     with served.browser() as page:
         _project(page, served, 'mom')
-        card = page.locator('[data-piece="program:run-kate"]')
-        card.wait_for(state='visible', timeout=10000)
-        link = card.locator('[data-library-link]')
-        check(link.evaluate('el => el.tagName') == 'BUTTON' and link.inner_text() == 'from the library: Learn piano',
-              f"the library link is a button: {link.inner_text()}")
-        check(card.locator('[data-current-lesson]').inner_text() == 'Scales · Foundations', "the lesson by name under its phase")
-        check(not COUNT.search(card.inner_text()), f"never a count: {card.inner_text()}")
+        # The project's rows for the run (one-list spec §1): title, subtitle, when; the library
+        # link and the lesson line live in its sheet, below.
+        rows = page.locator('[data-row="program:run-kate"]')
+        rows.first.wait_for(state='visible', timeout=10000)
+        text = ' | '.join(rows.all_inner_texts())
+        check(not COUNT.search(text), f"never a count: {text}")
         shot(page, 'run-card-admin-dark')
-        card.locator('[data-piece-open="program:run-kate"]').click()
+        page.locator('[data-piece-open="program:run-kate"]').click()
         sheet = page.locator('[data-record-sheet]')
         page.wait_for_selector('[data-record-sheet] [data-current-lesson]', timeout=15000)
         page.wait_for_function("() => (document.querySelector('[data-record-sheet] [data-current-lesson]') || {}).innerText === 'Scales · Foundations'", timeout=15000)
-        check(sheet.locator('[data-library-link]').inner_text() == 'from the library: Learn piano', "the sheet says it too")
+        link = sheet.locator('[data-library-link]')
+        check(link.evaluate('el => el.tagName') == 'BUTTON' and link.inner_text() == 'from the library: Learn piano',
+              f"the library link is a button: {link.inner_text()}")
         body = sheet.inner_text()
         check(not COUNT.search(body), f"no count in the sheet either: {body[:400]}")
         shot(page, 'run-sheet-admin-dark')
@@ -514,13 +526,12 @@ def scenario_the_run_card_names_the_lesson():
         page.set_viewport_size({'width': 390, 'height': 844})
         pwa(page, served, 'mom')
         page.goto(served.url('app'), wait_until='load')
-        page.wait_for_selector('#tab-projects', timeout=20000)
-        page.locator('#tab-projects').click()
+        page.wait_for_selector('#tab-more', state='visible', timeout=20000)
+        _open_projects(page)
         page.wait_for_selector('[data-project-id="prj-piano"]', timeout=15000)
         page.locator('[data-project-id="prj-piano"]').first.click()
         page.wait_for_selector('[data-piece-open="program:run-kate"]', timeout=10000)
-        piece = page.locator('[data-piece="program:run-kate"]')
-        check(piece.locator('[data-current-lesson]').inner_text() == 'Scales · Foundations', "the phone's project card")
+        check(page.locator('#projects-container a[href]').count() == 0, "the phone's project rows are buttons only")
         page.locator('[data-piece-open="program:run-kate"]').click()
         page.wait_for_selector('[data-piece-sheet] [data-current-lesson]', timeout=10000)
         sheet = page.locator('[data-piece-sheet]')
@@ -626,16 +637,14 @@ def scenario_an_exhausted_phase_waits_for_judgement():
     try:
         with served.browser() as page:
             _project(page, served, 'mom')
-            card = page.locator('[data-piece="program:run-kate"]')
-            card.wait_for(state='visible', timeout=10000)
-            check(card.locator('[data-ready-to-judge]').inner_text() == 'ready to judge: Plays a C scale hands together',
-                  f"the phase waits on the person: {card.inner_text()}")
-            check(card.locator('[data-current-lesson]').inner_text().endswith('· Foundations'), "and has not moved on by itself")
-            card.locator('[data-piece-open="program:run-kate"]').click()
+            # The ready-to-judge line and the lesson line live in the run's sheet (one-list spec §1).
+            page.locator('[data-piece-open="program:run-kate"]').click()
             page.wait_for_selector('[data-record-sheet] [data-ready-to-judge]', timeout=15000)
             page.wait_for_function("() => (document.querySelector('[data-record-sheet] [data-ready-to-judge]') || {}).offsetParent !== null", timeout=15000)
             check(page.locator('[data-record-sheet] [data-ready-to-judge]').inner_text() == 'ready to judge: Plays a C scale hands together',
-                  "the sheet says so too")
+                  "the phase waits on the person")
+            check(page.locator('[data-record-sheet] [data-current-lesson]').inner_text().endswith('· Foundations'),
+                  "and has not moved on by itself")
             shot(page, 'run-ready-to-judge-dark')
             check(storage.get_program('run-kate')['progress']['phases'][FOUND]['milestone_hit_at'] is None, "nothing was judged for her")
             check(served.errors() == [], f"no page errors: {served.errors()}")
@@ -709,18 +718,29 @@ def scenario_an_unresolved_run_can_be_deleted_or_rebound():
         return
     with served.browser() as page:
         _project(page, served, 'mom')
-        card = page.locator('[data-piece="program:run-lost"]')
-        card.wait_for(state='visible', timeout=10000)
-        text = card.inner_text()
-        check('Its library program is missing' in text, f"the unresolved copy: {text}")
-        check(card.locator('[data-piece-delete="program:run-lost"]').count() == 1, "with Delete")
-        check(card.locator('[data-run-rebind]').inner_text() == 'Pick a program', "and Pick a program")
-        check(card.locator('[data-library-link], [data-current-lesson]:visible').count() == 0, "and no lesson to name")
+        # One-list rows (spec §1): the unresolved run's row says so and offers Pick a program;
+        # its sheet carries the missing-program copy and Delete.
+        row = page.locator('[data-row="program:run-lost"]')
+        row.wait_for(state='visible', timeout=10000)
+        text = row.inner_text()
+        check('Needs a program' in text, f"the unresolved row: {text}")
+        check(row.locator('[data-row-action="rebind"]').inner_text().strip() == 'Pick a program', "and Pick a program")
         shot(page, 'run-unresolved-admin-dark')
-        card.locator('[data-run-rebind]').click()
+        row.locator('[data-row-title]').click()
+        sheet = page.locator('[data-record-sheet]')
+        page.wait_for_selector('[data-record-sheet] [data-run-unresolved]', timeout=15000)
+        page.wait_for_function("() => (document.querySelector('[data-record-sheet] [data-run-unresolved]') || {}).offsetParent !== null", timeout=15000)
+        check('Its library program is missing' in sheet.inner_text(), f"the unresolved copy: {sheet.inner_text()[:300]}")
+        check(sheet.locator('[data-run-delete]:visible').count() == 1, "with Delete")
+        check(sheet.locator('[data-library-link]:visible, [data-current-lesson]:visible').count() == 0, "and no lesson to name")
+        page.locator('[data-record-sheet-close]').click()
+        page.wait_for_function("() => !document.querySelector('[data-record-sheet]').hasAttribute('data-open')", timeout=5000)
+        row.locator('[data-row-action="rebind"]').click()
         page.locator('[data-prompt-choice]', has_text='Learn piano').first.click()
         _wait(lambda: storage.get_program('run-lost')['library_id'] == PIANO, "rebound to the program picked")
-        page.wait_for_function("() => { const c = document.querySelector('[data-piece=\"program:run-lost\"] [data-library-link]'); return c && c.innerText.includes('Learn piano'); }", timeout=10000)
+        page.wait_for_function("() => ![...document.querySelectorAll('[data-row=\"program:run-lost\"]')].some(r => r.innerText.includes('Needs a program'))", timeout=10000)
+        page.locator('[data-piece-open="program:run-lost"]').click()
+        page.wait_for_function("() => { const c = document.querySelector('[data-record-sheet] [data-library-link]'); return c && c.offsetParent !== null && c.innerText.includes('Learn piano'); }", timeout=10000)
         check(served.errors() == [], f"no page errors: {served.errors()}")
     storage.update_program('run-lost', {'library_id': 'lib-gone'})
     from services import library
@@ -729,8 +749,8 @@ def scenario_an_unresolved_run_can_be_deleted_or_rebound():
         page.set_viewport_size({'width': 390, 'height': 844})
         pwa(page, served, 'mom')
         page.goto(served.url('app'), wait_until='load')
-        page.wait_for_selector('#tab-projects', timeout=20000)
-        page.locator('#tab-projects').click()
+        page.wait_for_selector('#tab-more', state='visible', timeout=20000)
+        _open_projects(page)
         page.wait_for_selector('[data-project-id="prj-piano"]', timeout=15000)
         page.locator('[data-project-id="prj-piano"]').first.click()
         page.wait_for_selector('[data-piece-open="program:run-lost"]', timeout=10000)

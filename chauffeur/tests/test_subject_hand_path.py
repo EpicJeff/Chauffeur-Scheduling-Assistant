@@ -104,6 +104,15 @@ const base = { kind: 'thread', id: 'th1', title: 'Disney dining', options: [], n
   posts = []; confirms = [false];
   await S.act(base, { id: 'subject:clear', verb: 'subject', label: 'Unlink', payload: { clear: true } }, ctx);
   out.keep = posts;
+  // The phone navigates for itself (one-list spec §5): a button, its tap calls ctx.navigate.
+  const navs = [];
+  const host = document.createElement('div'); document.body.append(host);
+  S.render(host, [Object.assign({}, base, { subject: { kind: 'trip', id: 'ev_disney', title: 'Disney World', link: 'trip?event_id=ev_disney', rev: 1 } })],
+           { canWrite: true, apiBase: '../', navigate: (k, i) => navs.push([k, i]) });
+  out.navChip = host.innerHTML;
+  posts = [];
+  host.querySelector('[data-sit-nav]').click();
+  out.navs = navs; out.navPosts = posts;
   console.log(JSON.stringify(out));
 })().catch(e => { console.log(JSON.stringify({ error: String(e && e.stack || e) })); });
 """
@@ -143,6 +152,17 @@ def scenario_the_card_draws_the_about_chip():
     check('data-sit-subject' not in got['noChip'], "no subject, no chip")
 
 
+def scenario_a_navigating_host_gets_a_button_not_an_anchor():
+    got = _run()
+    if got is None:
+        return
+    chip = got['navChip']
+    check('data-sit-nav="trip:ev_disney"' in chip and 'Disney World' in chip and 'href=' not in chip,
+          f"a host with ctx.navigate draws a button, no anchor: {chip}")
+    check(got['navs'] == [['trip', 'ev_disney']], f"the tap calls navigate(kind, id): {got['navs']}")
+    check(got['navPosts'] == [], f"navigating posts nothing: {got['navPosts']}")
+
+
 def scenario_the_subject_tap_asks_then_picks():
     got = _run()
     if got is None:
@@ -161,6 +181,7 @@ SCENARIOS = [
     scenario_the_backlink_endpoint_is_viewer_filtered,
     scenario_the_trip_and_occasion_pages_fetch_it,
     scenario_the_card_draws_the_about_chip,
+    scenario_a_navigating_host_gets_a_button_not_an_anchor,
     scenario_the_subject_tap_asks_then_picks,
 ]
 

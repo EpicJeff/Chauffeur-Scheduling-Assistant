@@ -105,8 +105,8 @@ def scenario_a_keeper_gets_the_record_alone():
         check('Surprise party' not in page.content(), "never the project's words")
         check(page.locator('[data-project-detail]').count() == 0, "no project opened")
         page.goto(served.url('projects'), wait_until='load')
-        page.wait_for_selector('[data-lane="elsewhere"]', timeout=15000)
-        check('Book the venue' in page.locator('[data-lane="elsewhere"]').inner_text(), "Aunt's work elsewhere lists it")
+        page.wait_for_selector('[data-list-group="elsewhere"]', timeout=15000)
+        check('Book the venue' in page.locator('[data-list-group="elsewhere"]').inner_text(), "Aunt's work elsewhere lists it")
 
 
 def scenario_a_program_in_the_sheet():

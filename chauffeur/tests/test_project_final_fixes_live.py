@@ -65,8 +65,9 @@ def scenario_restored_creation_choices():
     with served.browser() as page:
         admin(page, served, 'mom')
         page.goto(served.url('projects?id=' + IDS['bath']), wait_until='load')
-        page.locator('[data-add-piece]').click(timeout=15000)
-        page.locator('[data-prompt-choice]', has_text='A conversation with someone outside').first.click()
+        # One-list + Add (spec 2026-10-20 decision 5): Conversation and Program are its options.
+        page.locator('[data-project-add]').click(timeout=15000)
+        page.locator('[data-prompt-choice]', has_text='Conversation').first.click()
         form = page.locator('[data-piece-form="thread"]')
         form.locator('input[name="title"]').fill('Unowned final-review loop')
         form.locator('select[name="owner_member_id"]').select_option('')
@@ -74,9 +75,10 @@ def scenario_restored_creation_choices():
             form.locator('[data-piece-create]').click()
         check(not storage.get_thread(made.value.json()['id'])['owner_member_id'], 'blank owner stays unowned')
         form.wait_for(state='detached')
-        page.locator('[data-add-piece]').click()
-        page.locator('[data-prompt-choice]', has_text='A practice program').first.click()
+        page.locator('[data-project-add]').click()
+        page.locator('[data-prompt-choice]', has_text='Program').first.click()
         form = page.locator('[data-piece-form="program"]')
+        form.locator('[data-library-make-new]').click()   # since the program library, a new program is Make a new one
         form.locator('input[name="title"]').fill('Helper piano practice')
         form.locator('select[name="for_member_id"]').select_option('helper-final')
         with patch.object(programs_curate, 'curate', return_value={'phases': [], 'source': {}}):

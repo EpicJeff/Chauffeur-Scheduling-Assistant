@@ -62,19 +62,19 @@ function pwaSyncShell() {
         document.querySelector('.pwa-conversation-search input').value = '';
     }
     const labels = {drives: adult ? 'Today' : 'My Day', myday: adult ? 'Today' : 'My Day',
-        family: adult ? 'Plan' : 'Family', chores: adult ? 'Household' : 'House', messages:'Messages', projects:'Projects', more:'More'};
+        family: adult ? 'Plan' : 'Family', chores: adult ? 'Household' : 'House', messages:'Messages', more:'More'};
     Object.entries(labels).forEach(([id, label]) => {
         document.querySelector(`#tab-${id} > span`).textContent = label;
     });
     // Keep keyboard/reading order aligned with the visual tab order.
-    if (adult) pwaOrderTabs(['myday','drives','family','chores','projects','messages','map','music','more']);
+    if (adult) pwaOrderTabs(['myday','drives','family','chores','messages','map','music','more']);
     const more = document.getElementById('tab-more');
     more.style.display = adult ? 'flex' : 'none';
     document.getElementById('pwa-identity').setAttribute('aria-label', 'Your profile and preferences');
     document.getElementById('pwa-more-container').hidden = !adult || currentView !== 'more';
     document.querySelectorAll('#pwa-tab-bar > button').forEach(button => {
         const name = button.id.slice(4);
-        const active = name === currentView || (adult && name === 'more' && ['map', 'music', 'library'].includes(currentView));
+        const active = name === currentView || (adult && name === 'more' && ['map', 'music', 'library', 'projects'].includes(currentView));
         if (active) button.setAttribute('aria-current', 'page');
         else button.removeAttribute('aria-current');
     });
@@ -90,6 +90,9 @@ function pwaSyncShell() {
 }
 
 function pwaAllowed(view) {
+    // Projects has no tab (one-list spec §5): More is its only door, open to
+    // every signed-in member but a helper or a guest (applyRoleTabs' rule).
+    if (view === 'projects') return !!selectedMemberId && !['helper', 'guest'].includes(currentMemberRole());
     // Inline display is set by applyRoleTabs, including the async list grant.
     const tab = document.getElementById(`tab-${view}`);
     return !!tab && tab.style.display !== 'none';

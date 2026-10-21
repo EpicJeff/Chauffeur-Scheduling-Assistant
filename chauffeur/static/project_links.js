@@ -23,8 +23,14 @@
             for (const p of d.projects || []) {
                 const line = document.createElement('div');
                 line.append(document.createTextNode('Part of: '));
-                const a = document.createElement('a');
-                a.href = base() + 'projects?id=' + encodeURIComponent(p.id);
+                // The phone opens its own Projects view (one-list spec §5): a
+                // button, never an anchor to the admin page.
+                const phone = typeof window.chfPwaOpenProjects === 'function';
+                const a = document.createElement(phone ? 'button' : 'a');
+                if (phone) {
+                    a.type = 'button';
+                    a.onclick = () => { window.chfPwaOpenProjects(); window.dispatchEvent(new CustomEvent('chf-project-open', {detail: {id: p.id}})); };
+                } else a.href = base() + 'projects?id=' + encodeURIComponent(p.id);
                 a.className = 'text-blue-400 underline underline-offset-2';
                 a.textContent = p.title; line.append(a); el.append(line);
             }

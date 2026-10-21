@@ -47,8 +47,8 @@ def check_child(page, key, output, calls):
     page.wait_for_selector('.child-greeting')
     assert page.locator('html').get_attribute('data-child-stage') == key
     tabs = [' '.join(x.split()) for x in page.locator('#pwa-tab-bar > button:visible > span:first-of-type').all_text_contents()]
-    # Projects (2026-10-15): a tab from navigator up; a sprout finds projects in My things, an explorer in More.
-    expected = ['Today','My things','Family'] if key == 'sprout' else ['Today','Tasks','Messages','More'] if key == 'explorer' else ['Today','Plan','Tasks','Projects','Messages','More']
+    # Projects has no tab (one-list spec §5): a sprout finds projects in My things, every older child in More.
+    expected = ['Today','My things','Family'] if key == 'sprout' else ['Today','Tasks','Messages','More'] if key == 'explorer' else ['Today','Plan','Tasks','Messages','More']
     assert tabs == expected, (key,tabs)
     assert page.locator('#btn-pet').is_hidden()
     assert page.locator('.child-pickup').inner_text().find('Alex') >= 0
@@ -167,7 +167,7 @@ def check_child(page, key, output, calls):
         }""")
         assert page.locator('html').get_attribute('data-child-stage') is None
         adult_tabs = page.locator('#pwa-tab-bar > button:visible > span:first-of-type').all_text_contents()
-        assert adult_tabs == ['Today','Plan','Household','Projects','Messages','More'], adult_tabs
+        assert adult_tabs == ['Today','Plan','Household','Messages','More'], adult_tabs
         assert page.evaluate('pwaChildDay') is None
 
 

@@ -9,7 +9,7 @@ person chose and then show what the server saved.
 Run from chauffeur/:  python tests/test_audience_picker_live.py
 (PROJECTS_SHOTS=<dir> saves the screenshots.)  No harness.py: enforcement is on.
 """
-from project_sheets_fixture import TOKENS, admin, check, pwa, seed, shot, storage
+from project_sheets_fixture import TOKENS, admin, check, open_projects, pwa, seed, shot, storage
 
 EXTRA = {}
 
@@ -198,13 +198,11 @@ def scenario_projects_page_create_and_detail():
             check(row['audience'] == 'shared' and row['shared_with'] == ['aunt'], f"saved shared with Aunt: {row}")
 
             page.goto(served.url('projects?id=' + pid), wait_until='load')
-            page.wait_for_selector('[data-audience-row]', timeout=15000)
-            label = page.locator('[data-audience-row] [data-audience-label]').inner_text().strip()
-            check(label == 'Parents and chosen people', f"the detail Audience row after reload: {label!r}")
+            _wait_header(page, 'Parents and chosen people')   # the header names the audience (the Audience row is gone)
             shot(page, 'audience-projects-detail')
 
-            # Change it in the sheet: Private keeps Aunt and the server adds Mom.
-            page.locator('[data-audience-change]').click()
+            # Change it in the sheet (⋯ › Who sees it): Private keeps Aunt and the server adds Mom.
+            _menu(page, 'Who sees it')
             sheet = page.locator('[data-audience-sheet][data-open="true"]')
             sheet.wait_for(state='visible', timeout=5000)
             check(sheet.locator('[data-audience-value="shared"]').is_checked()
@@ -224,7 +222,7 @@ def scenario_projects_page_create_and_detail():
             check(row['audience'] == 'private' and row['shared_with'] == ['mom', 'aunt'], f"saved as shown: {row}")
             check(_get_as(served, 'dad', 'api/projects/' + pid) == 404 and _get_as(served, 'aunt', 'api/projects/' + pid) == 200,
                   "Dad, unticked, cannot see it; Aunt, ticked, can")
-            page.wait_for_function("() => (document.querySelector('[data-audience-label]') || {}).textContent === 'Only Mom, Aunt Jo'", timeout=5000)
+            _wait_header(page, 'Only Mom, Aunt Jo')
 
             page.goto(served.url('work'), wait_until='load')
             page.wait_for_selector('[data-new-project]', timeout=15000)
@@ -232,9 +230,8 @@ def scenario_projects_page_create_and_detail():
 
             # The body goal: "Only you", and no picker.
             page.goto(served.url('projects?id=' + EXTRA['body']), wait_until='load')
-            page.wait_for_selector('[data-audience-row]', timeout=15000)
-            check(page.locator('[data-audience-row] [data-audience-label]').inner_text().strip() == 'Only you', "a body goal reads Only you")
-            check(page.locator('[data-audience-change]').count() == 0, "and offers no picker")
+            _wait_header(page, 'Only you')
+            check('Who sees it' not in _menu(page), "and offers no picker")
             check(not dialogs, f"no browser dialogs: {dialogs}")
             check(served.errors() == [], f"no page errors: {served.errors()}")
 
@@ -242,17 +239,53 @@ def scenario_projects_page_create_and_detail():
             refused = _watch_refusals(page)
             pwa(page, served, 'aunt')
             page.goto(served.url('app'), wait_until='load')
-            page.wait_for_selector('#tab-projects', timeout=15000)
-            page.locator('#tab-projects').click()
+            page.wait_for_selector('#tab-more', state='visible', timeout=15000)
+            open_projects(page)
             page.wait_for_selector(f'[data-project-id="{pid}"]', timeout=15000)
             page.locator(f'[data-project-id="{pid}"]').first.click()
             page.wait_for_selector('[data-project-detail]', timeout=10000)
             check('Garden shed' in page.locator('[data-project-detail]').inner_text(), "Aunt opens the project she is listed on")
-            check(page.locator('[data-audience-row]').count() == 0, "a listed adult sees no Audience row")
+            page.wait_for_selector('[data-project-detail] [data-project-header]', timeout=10000)
+            check('Who sees it' not in _menu(page), "a listed adult is offered no Who sees it")
             shot(page, 'audience-projects-aunt')
             check(_app_errors(served, refused) == [], f"no page errors: {served.errors()} {refused}")
     finally:
         served.stop()
+
+
+def _header(page):
+    """The detail header's parts: owner · audience · done when (one-list spec §3; the Audience row is gone)."""
+    return page.locator('[data-project-detail] [data-project-header]').inner_text().split(' · ')
+
+
+def _wait_header(page, label):
+    page.wait_for_function("(l) => { const h = document.querySelector('[data-project-detail] [data-project-header]');"
+                           " return !!h && h.textContent.split(' · ').includes(l); }", arg=label, timeout=15000)
+
+
+def _menu(page, pick=None):
+    """The project's ⋯ (promptChoice; one-list spec decision 4): its labels, then the
+    option picked, or Cancel. An empty ⋯ is not drawn at all."""
+    btn = page.locator('[data-project-detail] [data-project-menu]')
+    if pick:
+        btn.click(timeout=15000)
+    elif not btn.is_visible():
+        return []
+    else:
+        btn.click()
+    if page.locator('#cc-choice-modal').count():   # the admin hosts' shared modal
+        page.locator('#cc-choice-modal').wait_for(state='visible', timeout=5000)
+        options, cancel = page.locator('#cc-choice-modal [data-prompt-choice]'), page.locator('#cc-choice-cancel-btn')
+    else:                                          # the phone's own prompt family
+        overlay = page.locator('.pwa-prompt-overlay:has([data-pick])').last
+        overlay.wait_for(state='visible', timeout=5000)
+        options, cancel = overlay.locator('[data-pick]'), overlay.locator('[data-no]')
+    labels = [t.strip() for t in options.all_inner_texts()]
+    if pick:
+        options.filter(has_text=pick).first.click()
+    else:
+        cancel.click()
+    return labels
 
 
 def _app_errors(served, refused):
@@ -351,14 +384,13 @@ def scenario_the_chat_card():
             page.keyboard.press('Escape')
             page.locator('[data-audience-sheet]').wait_for(state='hidden', timeout=5000)
 
-            # The phone's Projects tab opens the same sheet (app.html hosts it).
+            # The phone's Projects view (from More) opens the same sheet (app.html hosts it).
             check(page.locator('[data-audience-sheet]').count() == 1, "one audience sheet on the phone")
-            page.locator('#tab-projects').click()
+            open_projects(page)
             page.wait_for_selector(f'[data-project-id="{EXTRA["port"]}"]', timeout=15000)
             page.locator(f'[data-project-id="{EXTRA["port"]}"]').first.click()
-            page.wait_for_selector('[data-audience-row]', timeout=10000)
-            check(page.locator('[data-audience-label]').inner_text().strip() == 'Only Mom, Aunt Jo, Kate', "the phone's row reads the saved list")
-            page.locator('[data-audience-change]').click()
+            _wait_header(page, 'Only Mom, Aunt Jo, Kate')   # the phone's header reads the saved list
+            _menu(page, 'Who sees it')
             sheet = page.locator('[data-audience-sheet][data-open="true"]')
             sheet.wait_for(state='visible', timeout=5000)
             check(sheet.locator('[data-audience-value="private"]').is_checked(), "the phone's sheet opens on the saved choice")
@@ -366,7 +398,7 @@ def scenario_the_chat_card():
                 sheet.locator('[data-audience-value="household"]').check()
                 sheet.locator('[data-audience-save]').click()
             check(patched.value.request.post_data_json.get('audience') == 'household', f"{patched.value.request.post_data_json}")
-            page.wait_for_function("() => (document.querySelector('[data-audience-label]') || {}).textContent === 'Household'", timeout=5000)
+            _wait_header(page, 'Household')
             shot(page, 'audience-projects-phone-dark')
             check(_app_errors(served, refused) == [], f"no page errors: {served.errors()} {refused}")
     finally:
@@ -389,8 +421,7 @@ def scenario_a_childs_private_list_is_what_the_picker_shows():
 
             # Changing Kate's parents project to Private, Dad unticked.
             page.goto(served.url('projects?id=prj-bike'), wait_until='load')
-            page.wait_for_selector('[data-audience-change]', timeout=15000)
-            page.locator('[data-audience-change]').click()
+            _menu(page, 'Who sees it')
             sheet = page.locator('[data-audience-sheet][data-open="true"]')
             sheet.wait_for(state='visible', timeout=5000)
             sheet.locator('[data-audience-value="private"]').check()
@@ -409,8 +440,7 @@ def scenario_a_childs_private_list_is_what_the_picker_shows():
             check(_get_as(served, 'dad', 'api/projects/prj-bike') == 404, "Dad, unticked, cannot see Kate's project")
             check(_get_as(served, 'mom', 'api/projects/prj-bike') == 200 and _get_as(served, 'kid', 'api/projects/prj-bike') == 200,
                   "Mom and Kate still can")
-            page.wait_for_function("() => (document.querySelector('[data-audience-label]') || {}).textContent === 'Only Kate, Mom'",
-                                   timeout=5000)
+            _wait_header(page, 'Only Kate, Mom')
 
             # Creating one for Kate: the same default list, Dad unticked.
             page.goto(served.url('projects'), wait_until='load')

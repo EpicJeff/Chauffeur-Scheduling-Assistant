@@ -66,7 +66,8 @@ PARITY = [
     # Threads
     ('Threads: create (title, goal, kind, owner, contact or name+email, first next action and date)', PF, 'data-piece-form="thread"'),
     ('Threads: create posts the counterparty and next action', PJ, 'counterparty_name: f.counterparty_name'),
-    ('Threads: lanes', PJ, ':data-lane="ln.key"'),
+    # One list (spec 2026-10-20 §4): the lanes are the list groups (Needs you, Everything else, Done & dropped).
+    ('Threads: lanes', PJ, ':data-list-group="g.key"'),
     ('Threads: show closed, remembered', PJ, (bound('rememberClosed'), "localStorage.setItem('chf_projects_show_closed'")),
     ('Threads: card options through ACT', TP, 'x-html="window.Situations.cardHtml(s, cardCtx())"'),
     ('Threads: set or change the next step', TP, bound('submitAdvance')),
@@ -98,11 +99,12 @@ PARITY = [
     ('Missions: verify', MT, bound('verifyMission')),
     ('Missions: transcript helpers', TP, 'await window.MissionTranscript.actProposal('),
     ('Missions: the keeper and anyone with a record but not its project', PJ, "api/projects/for/"),
-    ('Missions: your work elsewhere', PJ, 'data-lane="elsewhere"'),
+    ('Missions: your work elsewhere', PJ, 'data-list-group="elsewhere"'),
     # Programs
     ('Programs: propose (aim, whom, start, sessions, minutes, days, target)', PF, 'data-piece-form="program"'),
     ('Programs: propose posts the shape', PJ, 'preferred_days: f.preferred_days'),
-    ('Programs: the Programs filter', PJ, 'data-lane-filter="programs"'),
+    # The Programs filter left the list page (spec 2026-10-20 R5); every program and who runs it is the Library.
+    ('Programs: the Programs filter', T + 'library_page.html', 'data-library-list'),
     ('Programs: Part of', PP, "x-init=\"window.chfPartOf('program', p.id, $el, false)\""),
     ('Programs: why this one, also considered', PP, ('@click="whyOpen[p.id] = !whyOpen[p.id]"', 'x-text="whyText(p)"', 'x-for="r in (p.source.runners_up || [])"')),
     ('Programs: the lesson ladder and open the lesson', PP, bound('toggleLesson')),
@@ -133,6 +135,9 @@ PARITY = [
     ('Phone: House thread note and photo', APP, (bound('houseAddThreadNote'), bound('houseAddThreadPhoto'), 'extraHtml: (s) => houseThreadExtras(s, canNote)')),
     ('Phone: the program card', APP, '${programs.map(p => renderProgramCard(p, commitmentsById)).join(\'\')}'),
     ('Phone: the session sheet', APP, bound('openSessionSheet')),
+    # Phone navigation callbacks (spec 2026-10-20 §5): About is a button there, never an admin anchor.
+    ('Phone: About opens the record on the phone', SJ, ('data-sit-nav="${esc(s.subject.kind)}:${esc(s.subject.id)}"', 'ctx2.navigate(')),
+    ('Phone: the piece sheet navigates', APP, ('navigate: phoneOpenRecord', 'function phoneOpenRecord(kind, id)')),
     ('Phone: a project piece in the action sheet', APP, "window.addEventListener('chf-record-sheet-open', (e) => openPieceSheet(e.detail))"),
     ('Phone: mission chat cards', APP, ("if (card.kind === 'mission_ask') return renderMissionAskCard(card);", bound('missionAskAct'))),
 ]

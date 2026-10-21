@@ -518,11 +518,6 @@
                 </svg>
                 <span class="text-xs font-bold tracking-wide">Music</span>
             </button>
-            <button id="tab-projects" onclick="setView('projects')" style="display: none"
-                class="flex-1 flex-col items-center gap-0.5 pt-2.5 pb-2 text-gray-500 transition-colors">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"/></svg>
-                <span class="text-xs font-bold tracking-wide">Projects</span>
-            </button>
             <button id="tab-more" onclick="setView('more')" style="display: none"
                 class="flex-1 flex-col items-center gap-0.5 pt-2.5 pb-2 text-gray-500 transition-colors">
                 <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
@@ -973,7 +968,7 @@
         }
 
         function updateTabBar() {
-            ['myday', 'drives', 'family', 'messages', 'chores', 'map', 'music', 'projects'].forEach(v => {
+            ['myday', 'drives', 'family', 'messages', 'chores', 'map', 'music'].forEach(v => {
                 const tab = document.getElementById(`tab-${v}`);
                 if (!tab) return;
                 tab.classList.toggle('text-blue-400', v === currentView);
@@ -1018,7 +1013,6 @@
             // empty page about a schedule that is not theirs, and every
             // other door is closed by their scope map anyway.
             const guest = currentMemberRole() === 'guest';
-            document.getElementById('tab-projects').style.display = selectedMemberId && !helper && !guest ? 'flex' : 'none';
             const keepingUp = isKeepingUpAdult();
             document.getElementById('tab-myday').style.display = ((passenger || currentMemberRole() === 'child') && !helper && !guest && !keepingUp) ? 'flex' : 'none';
             document.getElementById('tab-drives').style.display = (passenger || !kidCan('can_drive')) ? 'none' : 'flex';
@@ -2107,8 +2101,35 @@
         }
         function pieceSheetCtx(s) {
             return { apiBase, canWrite: ['parent', 'adult'].includes(currentMemberRole()), readOnly: false,
-                     memberId: selectedMemberId, lookup: () => s, onChange: () => refreshPieceSheet() };
+                     memberId: selectedMemberId, lookup: () => s, onChange: () => refreshPieceSheet(),
+                     navigate: phoneOpenRecord };
         }
+        // Where a record opens on the phone (one-list spec §5): its piece
+        // sheet, the Projects view, or the kind's own phone home; never an
+        // admin page. A kind with no phone home yet says where to find it.
+        const phoneRecordWords = {trip: 'trip', occasion: 'occasions', event: 'calendar', member: 'people', contact: 'contacts', list: 'shopping'};
+        function phoneOpenRecord(kind, id) {
+            if (['thread', 'mission', 'program'].includes(kind)) return openPieceSheet({kind, id, title: ''});
+            if (pieceSheet) pieceSheet.close();
+            if (kind === 'project') {
+                setView('projects');
+                window.dispatchEvent(new CustomEvent('chf-project-open', {detail: {id}}));
+                return;
+            }
+            if (kind === 'list' && pwaAllowed('chores')) return phoneOpenList(id);
+            showGlobalAlert('Open that from the ' + (phoneRecordWords[kind] || kind) + ' page on a computer.');
+        }
+        // A list's phone home is the House tab's Lists section, on that list
+        // (the way pwaChildOpenRewards lands on Rewards).
+        function phoneOpenList(id) {
+            houseActiveListId = id;
+            const there = currentView === 'chores';
+            setView('chores');
+            if (there) fetchHouseLists();
+            if (pwaChildStage()) pwaChildSelectTasks('lists'); else pwaSelectHouse('lists');
+        }
+        window.phoneOpenRecord = phoneOpenRecord;
+        window.chfPwaOpenProjects = () => setView('projects');
         async function openPieceSheet(detail) {
             if (!detail || !['thread', 'mission', 'program'].includes(detail.kind) || !detail.id) return;
             if (pieceSheet) pieceSheet.close();
@@ -3579,7 +3600,7 @@
             const canWrite = ['parent', 'adult'].includes(currentMemberRole());
             wrap.innerHTML = '<div class="text-xs font-black uppercase tracking-widest text-violet-400 px-1">Needs you</div><div id="mind-lane" class="space-y-2"></div>';
             window.Situations.render(document.getElementById('mind-lane'), mindSituations, {
-                apiBase, canWrite, readOnly: false, memberId: selectedMemberId, onChange: fetchMind });
+                apiBase, canWrite, readOnly: false, memberId: selectedMemberId, onChange: fetchMind, navigate: phoneOpenRecord });
         }
 
         let proposalsData = [];
@@ -6847,7 +6868,7 @@
                 + '<div id="house-threads-lane" class="space-y-2"></div>';
             window.Situations.render(document.getElementById('house-threads-lane'), houseThreads, {
                 apiBase, canWrite: canNote, readOnly: false, memberId: selectedMemberId, onChange: fetchHouseThreads,
-                extraHtml: (s) => houseThreadExtras(s, canNote) });
+                navigate: phoneOpenRecord, extraHtml: (s) => houseThreadExtras(s, canNote) });
         }
 
         // A photo on a thread (browse missions §3): the fetch wrapper adds the

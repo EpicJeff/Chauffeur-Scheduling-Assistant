@@ -6,15 +6,16 @@ directory, signs people in the way the slice 2 live tests do, and drives the
 shared Delete (templates/components/record_delete.html) on every surface.
 
 Scenarios (each record set is seeded fresh, since a delete destroys it):
-  * project Delete names its pieces and deletes: the red Delete beside Drop, for the owner or a parent
-    who sees the project; one promptConfirm listing every thread, mission and program by title, ending
+  * project Delete names its pieces and deletes: Delete in the project's ⋯, after Drop, for the owner
+    or a parent who sees the project (one-list spec 2026-10-20 decision 4); one promptConfirm listing every thread, mission and program by title, ending
     "Linked trips, lists and events stay."; the project vanishes on return; the linked list stays;
-  * a piece's Delete (thread, mission, program: the same preview and confirm for that record) and
-    Remove (every other linked kind: projects.remove_piece, unlink only);
-  * folding when the thread card renders: a mission launched from a thread in the same project sits
-    inside that thread's card, with its open and Delete;
-  * standalone fallback for a keeper-only viewer, for a mission whose thread piece is missing, and on a
-    phone surface that has no mission history for that thread: the mission keeps its own card there;
+  * a piece's Delete (thread, mission, program: the same preview and confirm for that record) in its
+    record sheet, and Remove (every other linked kind: projects.remove_piece, unlink only) in the link
+    sheet (one-list spec §3);
+  * folding: a mission launched from a thread in the same project has no row of its own; the thread's
+    sheet lists it with its open and Delete (the fold is the server's, projects._fold_target);
+  * standalone fallback for a keeper-only viewer and for a mission whose thread piece is missing: the
+    mission keeps its own row there;
   * the phone thread sheet fetches the thread's mission history and lists every mission (no five cap),
     each with open and Delete;
   * the admin thread sheet lists ALL of a thread's missions (the five cap at main.py's
@@ -182,21 +183,73 @@ def _admin_project(page, served, who, pid, pieces=True):
     page.goto(served.url('projects?id=' + pid), wait_until='load')
     page.wait_for_selector('[data-project-detail]', timeout=15000)
     if pieces:
-        page.wait_for_selector('[data-project-detail] [data-piece]', state='attached', timeout=10000)
+        page.wait_for_selector('[data-project-detail] [data-row]', state='attached', timeout=10000)
     else:
         # The detail draws only after the members load, so who may delete is
         # already decided; a beat lets the pieces request settle.
         page.wait_for_timeout(500)
 
 
+def _open_projects(page):
+    """Projects lives in More on the phone (one-list spec §5); as project_sheets_fixture.open_projects."""
+    page.locator('#tab-more').click()
+    page.locator('#pwa-feature-list').get_by_text('Projects', exact=True).first.click()
+    page.wait_for_selector('#projects-container [data-project-card], #projects-container [data-project-detail]', timeout=15000)
+
+
 def _phone_project(page, served, who, pid, theme='dark'):
     pwa(page, served, who, theme)
     page.goto(served.url('app'), wait_until='load')
-    page.wait_for_selector('#tab-projects', timeout=20000)
-    page.locator('#tab-projects').click()
+    page.wait_for_selector('#tab-more', state='visible', timeout=20000)
+    _open_projects(page)
     page.wait_for_selector(f'[data-project-id="{pid}"]', timeout=15000)
     page.locator(f'[data-project-id="{pid}"]').first.click()
     page.wait_for_selector('[data-project-detail]', timeout=10000)
+
+
+def _menu(page, pick=None):
+    """The project's ⋯ (promptChoice; one-list spec decision 4): its labels, then the option
+    picked, or Cancel. An empty ⋯ is not drawn at all."""
+    btn = page.locator('[data-project-detail] [data-project-menu]')
+    if pick:
+        btn.click(timeout=15000)
+    elif not btn.is_visible():
+        return []
+    else:
+        btn.click()
+    if page.locator('#cc-choice-modal').count():   # the admin hosts' shared modal
+        page.locator('#cc-choice-modal').wait_for(state='visible', timeout=5000)
+        options, cancel = page.locator('#cc-choice-modal [data-prompt-choice]'), page.locator('#cc-choice-cancel-btn')
+    else:                                          # the phone's own prompt family
+        overlay = page.locator('.pwa-prompt-overlay:has([data-pick])').last
+        overlay.wait_for(state='visible', timeout=5000)
+        options, cancel = overlay.locator('[data-pick]'), overlay.locator('[data-no]')
+    labels = [t.strip() for t in options.all_inner_texts()]
+    if pick:
+        options.filter(has_text=pick).first.click()
+    else:
+        cancel.click()
+    return labels
+
+
+def _open_sheet(page, key, words):
+    """A row's title opens its record sheet (admin hosts)."""
+    page.locator(f'[data-piece-open="{key}"]').click()
+    page.wait_for_function("(w) => (document.querySelector('[data-record-sheet][data-open=\"true\"]') || {}).innerText?.includes(w)",
+                           arg=words, timeout=15000)
+    return page.locator('[data-record-sheet]')
+
+
+def _open_logbook(page):
+    """A finished mission's row sits in the folded Logbook (one-list spec §1): unfold it."""
+    toggle = page.locator('[data-row-group-section="logbook"] > button[aria-expanded="false"]')
+    if toggle.count():
+        toggle.click()
+
+
+def _close_sheet(page):
+    page.locator('[data-record-sheet-close]').click()
+    page.wait_for_function("() => !document.querySelector('[data-record-sheet]').hasAttribute('data-open')", timeout=5000)
 
 
 def _admin_confirm(page):
@@ -237,12 +290,12 @@ def scenario_project_delete_names_its_pieces_and_deletes():
     with served.browser() as page:
         _no_dialogs(page, dialogs)
         _admin_project(page, served, 'mom', pid)
-        delete = page.locator('[data-project-delete]')
-        check(delete.count() == 1, "the owner sees the project's Delete")
-        row = delete.evaluate("el => Array.from(el.parentElement.querySelectorAll(':scope > button')).map(b => b.textContent.trim())")
+        # Delete is the last item in ⋯, after Drop (one-list spec decision 4). A promptChoice
+        # option has one style, so the old red button colour has no equivalent here.
+        row = _menu(page)
+        check('Delete' in row, f"the owner sees the project's Delete: {row}")
         check(row[-2:] == ['Drop', 'Delete'], f"Delete sits beside Drop: {row}")
-        check('text-red-400' in (delete.get_attribute('class') or ''), "the project's Delete is red")
-        delete.click()
+        _menu(page, 'Delete')
         title, message = _admin_confirm(page)
         check(title == 'Delete “Garage clear-out”?', f"the confirmation names the project: {title}")
         for word in ('Conversations', 'Skip hire', 'Argyle’s work', 'Compare skip prices', 'Programs', 'Sorting practice'):
@@ -269,13 +322,13 @@ def scenario_who_sees_the_project_delete():
     pid = _project('Paint the fence', owner='aunt')
     with served.browser() as page:
         _admin_project(page, served, 'dad', pid, pieces=False)
-        check(page.locator('[data-project-delete]').count() == 1, "a parent who sees the project has Delete")
+        check('Delete' in _menu(page), "a parent who sees the project has Delete")
         _admin_project(page, served, 'aunt', pid, pieces=False)
-        check(page.locator('[data-project-delete]').count() == 1, "the owner has Delete")
+        check('Delete' in _menu(page), "the owner has Delete")
     other = _project('Mom’s errands')
     with served.browser() as page:
         _admin_project(page, served, 'aunt', other, pieces=False)
-        check(page.locator('[data-project-delete]').count() == 0, "another adult who is not the owner has none")
+        check('Delete' not in _menu(page), "another adult who is not the owner has none")
         clean(served)
 
 
@@ -292,54 +345,71 @@ def scenario_a_piece_delete_and_remove():
     with served.browser() as page:
         _no_dialogs(page, dialogs)
         _admin_project(page, served, 'mom', pid)
-        for key in (f'thread:{tid}', f'mission:{mid}', f'program:{gid}'):
-            check(page.locator(f'[data-piece-delete="{key}"]').count() == 1, f"Delete on {key}")
-            check(page.locator(f'[data-piece-remove="{key}"]').count() == 0, f"no Remove on {key}")
-        check(page.locator(f'[data-piece-remove="list:{lid}"]').count() == 1, "Remove on the linked list")
-        check(page.locator(f'[data-piece-delete="list:{lid}"]').count() == 0, "no Delete on the linked list")
-
-        page.locator(f'[data-piece-delete="thread:{tid}"]').click()
+        _open_logbook(page)   # the finished mission's row
+        # One list (spec 2026-10-20 §3): a thread's, mission's or program's Delete lives in its
+        # record sheet; a linked list's Remove lives in its link sheet (Open, Remove).
+        sheet = _open_sheet(page, f'thread:{tid}', 'Find a tiler')
+        page.wait_for_selector('[data-record-sheet] details[open]', timeout=10000)
+        check(sheet.get_by_role('button', name='Remove', exact=True).count() == 0, "no Remove on the thread")
+        sheet.get_by_role('button', name='Delete', exact=True).last.click()
         title, message = _admin_confirm(page)
         check(title == 'Delete “Find a tiler”?' and 'Find a tiler' in message and message.strip().endswith(STAY),
               f"the thread's own preview: {title} / {message}")
         check('Price the tiles' not in message and 'Grout practice' not in message, f"only that record: {message}")
         page.locator('#cc-confirm-execute-btn').click()
-        page.wait_for_selector(f'[data-piece="thread:{tid}"]', state='detached', timeout=10000)
+        page.wait_for_function("() => !document.querySelector('[data-record-sheet]').hasAttribute('data-open')", timeout=10000)
+        page.wait_for_selector(f'[data-row="conversation:{tid}"]', state='detached', timeout=10000)
         check(_gone('thread', tid) and not _gone('project', pid), "the thread goes; the project stays")
 
-        page.locator(f'[data-piece-delete="program:{gid}"]').click()
-        title, message = _admin_confirm(page)
-        check('Grout practice' in message and 'Programs' in message, f"the program's preview: {message}")
-        page.locator('#cc-confirm-execute-btn').click()
-        page.wait_for_selector(f'[data-piece="program:{gid}"]', state='detached', timeout=10000)
-        check(_gone('program', gid), "the program goes")
-
-        page.locator(f'[data-piece-delete="mission:{mid}"]').click()
+        sheet = _open_sheet(page, f'mission:{mid}', 'Price the tiles')
+        delete = sheet.get_by_role('button', name='Delete', exact=True)
+        delete.first.wait_for(state='visible', timeout=10000)
+        check(sheet.get_by_role('button', name='Remove', exact=True).count() == 0, "no Remove on the mission")
+        delete.first.click()
         _admin_confirm(page)
         page.locator('#cc-confirm-cancel-btn').click()
         check(not _gone('mission', mid), "Keep it deletes nothing")
-        page.locator(f'[data-piece-delete="mission:{mid}"]').click()
+        delete.first.click()
         _admin_confirm(page)
         page.locator('#cc-confirm-execute-btn').click()
-        page.wait_for_selector(f'[data-piece="mission:{mid}"]', state='detached', timeout=10000)
+        page.wait_for_selector(f'[data-row="argyle:{mid}"]', state='detached', timeout=10000)
         check(_gone('mission', mid) and not _gone('project', pid), "the last Argyle piece goes; the project stays")
+        if page.locator('[data-record-sheet][data-open="true"]').count():
+            _close_sheet(page)
 
-        link = page.locator(f'[data-piece-link="list:{lid}"]')
+        row = page.locator(f'[data-row="link:{lid}"]')
+        check(row.count() == 1 and row.locator('a').count() == 0, "the linked list's row is buttons only")
+        row.locator('[data-row-title]').click()
+        link_sheet = page.locator('[data-link-sheet]')
+        link = link_sheet.locator(f'[data-piece-link="list:{lid}"]')
         check(link.count() == 1 and link.evaluate('el => el.tagName') == 'BUTTON'
-              and page.locator(f'[data-piece="list:{lid}"] a').count() == 0, "the linked piece opens from a button, not an anchor")
+              and link_sheet.locator('a').count() == 0, "the linked piece opens from a button, not an anchor")
+        check(link_sheet.locator('[data-link-remove]').count() == 1, "Remove on the linked list")
+        check(link_sheet.get_by_role('button', name='Delete', exact=True).count() == 0, "no Delete on the linked list")
         with page.expect_request(lambda r: r.is_navigation_request(), timeout=10000) as went:
             link.click()
         check(went.value.url == served.url('shopping'), f"it opens the same address its link did: {went.value.url}")
         page.goto(served.url('projects?id=' + pid), wait_until='load')
-        page.wait_for_selector(f'[data-piece-remove="list:{lid}"]', timeout=15000)
-        page.locator(f'[data-piece-remove="list:{lid}"]').click()
+        page.wait_for_selector(f'[data-row="link:{lid}"]', timeout=15000)
+        page.locator(f'[data-row="link:{lid}"] [data-row-title]').click()
+        page.locator('[data-link-sheet] [data-link-remove]').click()
         title, _ = _admin_confirm(page)
         check(title == 'Remove “Tile shop list”?', f"Remove names what it unlinks: {title}")
         page.locator('#cc-confirm-execute-btn').click()
-        page.wait_for_selector(f'[data-piece="list:{lid}"]', state='detached', timeout=10000)
+        page.wait_for_selector(f'[data-row="link:{lid}"]', state='detached', timeout=10000)
         check(storage.get_shopping_list(lid) is not None, "Remove leaves the list itself")
         check(not any(p.get('id') == lid for p in storage.get_project(pid).get('pieces') or []), "only the link goes")
-        check(page.locator('[data-project-detail]').count() == 1, "the project stays open with no pieces")
+        check(page.locator('[data-project-detail]').count() == 1, "the project stays open")
+
+        # The program last: its Delete lived on the old piece card (owner or parent).
+        sheet = _open_sheet(page, f'program:{gid}', 'Grout practice')
+        check(sheet.get_by_role('button', name='Remove', exact=True).count() == 0, "no Remove on the program")
+        sheet.get_by_role('button', name='Delete', exact=True).first.click(timeout=10000)
+        title, message = _admin_confirm(page)
+        check('Grout practice' in message and 'Programs' in message, f"the program's preview: {message}")
+        page.locator('#cc-confirm-execute-btn').click()
+        page.wait_for_selector(f'[data-row="program:{gid}"]', state='detached', timeout=10000)
+        check(_gone('program', gid), "the program goes")
         check(dialogs == [], f"no browser dialogs: {dialogs}")
         clean(served)
 
@@ -354,7 +424,7 @@ def scenario_a_changed_project_previews_again():
     with served.browser() as page:
         _no_dialogs(page, dialogs)
         _admin_project(page, served, 'mom', pid)
-        page.locator('[data-project-delete]').click()
+        _menu(page, 'Delete')
         _, message = _admin_confirm(page)
         check('Quote from Insul8' in message and 'Second quote' not in message, f"the first look: {message}")
         late = _thread('Second quote', pid)    # someone adds to the project while the dialog is open
@@ -392,24 +462,29 @@ def scenario_folding_when_the_thread_card_renders():
     pid, mine, mine_m, aunts, aunts_m = _fold_fixture()
     with served.browser() as page:
         _admin_project(page, served, 'mom', pid)
-        folded = page.locator(f'[data-piece="thread:{mine}"] [data-piece="mission:{mine_m}"]')
-        check(folded.count() == 1, "the mission sits inside its thread's card")
-        check(folded.get_attribute('data-folded-in') == mine, "folded in that thread")
-        check(page.locator(f'[data-pieces] > [data-piece="mission:{mine_m}"]').count() == 0, "with no card of its own")
-        check(folded.locator(f'[data-piece-open="mission:{mine_m}"]').count() == 1
-              and folded.locator(f'[data-piece-delete="mission:{mine_m}"]').count() == 1, "with its open and Delete")
-        check('Find a concrete layer' in folded.inner_text(), "its own card, inside")
+        # One list (spec 2026-10-20 §1): the mission folds into its thread's row (no row of its
+        # own); the thread's sheet lists it with its open and Delete.
+        page.wait_for_selector(f'[data-row="conversation:{mine}"]', timeout=10000)
+        check(page.locator(f'[data-row="argyle:{mine_m}"]').count() == 0, "the mission has no row of its own")
         page.evaluate("() => { window.__sheets = []; window.addEventListener('chf-record-sheet-open', e => window.__sheets.push(e.detail)); }")
-        folded.locator(f'[data-piece-open="mission:{mine_m}"]').click()
+        sheet = _open_sheet(page, f'thread:{mine}', 'Shed base')
+        folded = sheet.locator(f'[data-thread-mission="{mine_m}"]')
+        folded.wait_for(state='visible', timeout=10000)
+        check(folded.locator(f'[data-thread-mission-open="{mine_m}"]').count() == 1
+              and folded.locator(f'[data-thread-mission-delete="{mine_m}"]').count() == 1, "with its open and Delete")
+        check('Find a concrete layer' in folded.inner_text(), "its own line, inside its thread's sheet")
+        folded.locator(f'[data-thread-mission-open="{mine_m}"]').click()
+        page.wait_for_function("() => document.querySelector('[data-record-sheet]').dataset.kind === 'mission'", timeout=10000)
         sheets = page.evaluate('() => window.__sheets')
-        check(sheets and sheets[0]['kind'] == 'mission' and sheets[0]['id'] == mine_m, f"open asks for the mission: {sheets}")
+        check(sheets and sheets[-1]['kind'] == 'mission' and sheets[-1]['id'] == mine_m, f"open asks for the mission: {sheets}")
         page.keyboard.press('Escape')
         page.wait_for_function("() => !document.querySelector('[data-record-sheet]').hasAttribute('data-open')", timeout=5000)
-        folded.locator(f'[data-piece-delete="mission:{mine_m}"]').click()
+        sheet = _open_sheet(page, f'thread:{mine}', 'Shed base')
+        sheet.locator(f'[data-thread-mission-delete="{mine_m}"]').click()
         _, message = _admin_confirm(page)
         check('Find a concrete layer' in message and 'Shed base' not in message, f"the folded Delete is the mission's own: {message}")
         page.locator('#cc-confirm-execute-btn').click()
-        page.wait_for_selector(f'[data-piece="mission:{mine_m}"]', state='detached', timeout=10000)
+        page.wait_for_selector(f'[data-record-sheet] [data-thread-mission="{mine_m}"]', state='detached', timeout=10000)
         check(_gone('mission', mine_m) and not _gone('thread', mine), "only the mission goes")
         clean(served)
 
@@ -421,19 +496,21 @@ def scenario_standalone_for_a_keeper_only_viewer():
     pid, mine, mine_m, aunts, aunts_m = _fold_fixture()
     with served.browser() as page:
         _admin_project(page, served, 'aunt', pid)
-        page.wait_for_selector(f'[data-piece="mission:{aunts_m}"]', timeout=10000)
-        mission = page.locator(f'[data-piece="mission:{aunts_m}"]')
-        check(mission.get_attribute('data-folded-in') is None, "a keeper-only viewer keeps the mission's own card")
-        check(page.locator(f'[data-piece="thread:{aunts}"] [data-piece="mission:{aunts_m}"]').count() == 0,
-              "not inside the keeper's thread card")
-        check(mission.locator(f'[data-piece-open="mission:{aunts_m}"]').count() == 1
-              and mission.locator(f'[data-piece-delete="mission:{aunts_m}"]').count() == 1, "with its own open and Delete")
-        check(page.locator(f'[data-piece="thread:{mine}"] [data-piece="mission:{mine_m}"]').count() == 1,
+        _open_logbook(page)   # her finished mission's row
+        page.wait_for_selector(f'[data-row="argyle:{aunts_m}"]', timeout=10000)
+        mission = page.locator(f'[data-row="argyle:{aunts_m}"]')
+        check(mission.count() == 1, "a keeper-only viewer keeps the mission's own row")
+        check(mission.locator(f'[data-piece-open="mission:{aunts_m}"]').count() == 1, "with its own open")
+        sheet = _open_sheet(page, f'mission:{aunts_m}', 'Price roofing felt')
+        sheet.get_by_role('button', name='Delete', exact=True).first.wait_for(state='visible', timeout=10000)   # and its Delete
+        _close_sheet(page)
+        check(page.locator(f'[data-row="argyle:{mine_m}"]').count() == 0,
               "a mission she reads in full still folds under a thread she reads in full")
         clean(served)
     with served.browser() as page:
         _admin_project(page, served, 'mom', pid)
-        check(page.locator(f'[data-piece="thread:{aunts}"] [data-piece="mission:{aunts_m}"]').count() == 1,
+        page.wait_for_selector(f'[data-row="conversation:{aunts}"]', timeout=10000)
+        check(page.locator(f'[data-row="argyle:{aunts_m}"]').count() == 0,
               "the same mission folds for a parent who reads both in full")
 
 
@@ -448,13 +525,13 @@ def scenario_standalone_for_a_missing_thread_piece():
     storage.update_project(pid, {'pieces': [p for p in project['pieces'] if p.get('kind') != 'thread']})
     with served.browser() as page:
         _admin_project(page, served, 'mom', pid)
-        page.wait_for_selector(f'[data-piece="mission:{mid}"]', timeout=10000)
-        check(page.locator(f'[data-piece="thread:{tid}"]').count() == 0, "the thread has no card here")
-        mission = page.locator(f'[data-piece="mission:{mid}"]')
-        check(mission.get_attribute('data-folded-in') is None
-              and mission.locator(f'[data-piece-open="mission:{mid}"]').count() == 1
-              and mission.locator(f'[data-piece-delete="mission:{mid}"]').count() == 1,
-              "the mission keeps its own card with open and Delete")
+        _open_logbook(page)   # the finished mission's row
+        page.wait_for_selector(f'[data-row="argyle:{mid}"]', timeout=10000)
+        check(page.locator(f'[data-row="conversation:{tid}"]').count() == 0, "the thread has no row here")
+        mission = page.locator(f'[data-row="argyle:{mid}"]')
+        check(mission.locator(f'[data-piece-open="mission:{mid}"]').count() == 1, "the mission keeps its own row with open")
+        sheet = _open_sheet(page, f'mission:{mid}', 'Find a plumber')
+        sheet.get_by_role('button', name='Delete', exact=True).first.wait_for(state='visible', timeout=10000)   # and Delete
         clean(served)
 
 
@@ -467,20 +544,16 @@ def scenario_phone_folds_and_falls_back_without_history():
     mid = _mission('Compare shed kits', pid, thread=tid)
     with served.browser() as page:
         _phone_project(page, served, 'mom', pid)
-        page.wait_for_selector(f'[data-piece="thread:{tid}"] [data-piece="mission:{mid}"]', timeout=10000)
-        check(page.locator(f'[data-piece="mission:{mid}"]').count() == 1, "the phone folds it too: its sheet has history")
+        page.wait_for_selector(f'[data-row="conversation:{tid}"]', timeout=10000)
+        check(page.locator(f'[data-row="argyle:{mid}"]').count() == 0, "the phone folds it too: its sheet has history")
+        page.locator(f'[data-piece-open="thread:{tid}"]').click()
+        page.wait_for_selector(f'[data-piece-sheet] [data-thread-mission-open="{mid}"]', timeout=10000)
+        check(page.locator(f'[data-piece-sheet] [data-thread-mission-delete="{mid}"]').count() == 1,
+              "the thread's sheet lists it with its open and Delete")
         clean(served)
-    with served.browser() as page:
-        # A phone surface whose thread sheet has no mission history.
-        page.add_init_script("Object.defineProperty(window, 'chfThreadSheetHistory', {value: false, writable: false})")
-        _phone_project(page, served, 'mom', pid)
-        page.wait_for_selector(f'[data-piece="mission:{mid}"]', timeout=10000)
-        mission = page.locator(f'[data-piece="mission:{mid}"]')
-        check(mission.get_attribute('data-folded-in') is None
-              and page.locator(f'[data-piece="thread:{tid}"] [data-piece="mission:{mid}"]').count() == 0,
-              "without mission history the mission keeps its own card")
-        check(mission.locator(f'[data-piece-open="mission:{mid}"]').count() == 1
-              and mission.locator(f'[data-piece-delete="mission:{mid}"]').count() == 1, "with its open and Delete")
+    # The no-history fallback (a phone surface whose thread sheet lists no missions) is gone:
+    # the fold is the server's since the one list (projects._fold_target, THREAD_SHEET_HISTORY),
+    # and every host's thread sheet lists the thread's missions.
 
 
 def _many_missions():
@@ -567,7 +640,7 @@ def scenario_the_thread_sheet_delete_takes_its_missions():
         check('Gas engineer' in message and 'Book the engineer' in message, f"the thread takes its mission: {message}")
         page.locator('#cc-confirm-execute-btn').click()
         page.wait_for_function("() => !document.querySelector('[data-record-sheet]').hasAttribute('data-open')", timeout=10000)
-        page.wait_for_selector(f'[data-piece="thread:{tid}"]', state='detached', timeout=10000)
+        page.wait_for_selector(f'[data-row="conversation:{tid}"]', state='detached', timeout=10000)
         check(_gone('thread', tid) and _gone('mission', mid), "both gone; the sheet closed")
         clean(served)
 
@@ -588,7 +661,7 @@ def scenario_the_mission_sheet_delete_closes_the_sheet():
         check(title == 'Delete “Book an MOT”?' and message.strip().endswith(STAY), f"the mission's own preview: {title} / {message}")
         page.locator('#cc-confirm-execute-btn').click()
         page.wait_for_function("() => !document.querySelector('[data-record-sheet]').hasAttribute('data-open')", timeout=10000)
-        page.wait_for_selector(f'[data-piece="mission:{mid}"]', state='detached', timeout=10000)
+        page.wait_for_selector(f'[data-row="argyle:{mid}"]', state='detached', timeout=10000)
         check(_gone('mission', mid) and not _gone('project', pid), "the mission goes, the sheet closes, the project stays")
         clean(served)
 
@@ -603,8 +676,8 @@ def scenario_a_child_owner_is_asked_to_ask_a_parent():
     with served.browser() as page:
         _no_dialogs(page, dialogs)
         _phone_project(page, served, 'kid', pid)
-        check(page.locator(f'[data-piece="mission:{hidden}"]').count() == 0, "she cannot see the mission")
-        page.locator('[data-project-delete]').click()
+        check(page.locator(f'[data-row="argyle:{hidden}"]').count() == 0, "she cannot see the mission")
+        _menu(page, 'Delete')
         toast = page.locator('#global-alert')
         toast.wait_for(state='attached', timeout=10000)
         page.wait_for_function("(t) => (document.getElementById('global-alert') || {}).textContent === t", arg=ASK_A_PARENT, timeout=10000)
@@ -629,13 +702,13 @@ def scenario_light_and_dark_at_phone_width():
         _list('Fete shopping', pid)
         with served.browser() as page:
             _phone_project(page, served, 'mom', pid, theme)
-            page.wait_for_selector(f'[data-piece="thread:{tid}"] [data-folded-missions]', timeout=10000)
+            page.wait_for_selector(f'[data-row="conversation:{tid}"]', timeout=10000)
             check(page.evaluate("() => document.documentElement.scrollWidth <= window.innerWidth + 1"), f"no sideways scroll ({theme})")
-            page.locator(f'[data-piece="thread:{tid}"]').scroll_into_view_if_needed()
+            page.locator(f'[data-row="conversation:{tid}"]').scroll_into_view_if_needed()
             shot(page, f'phone-project-pieces-{theme}')
-            page.locator('[data-project-delete]').scroll_into_view_if_needed()
+            page.locator('[data-project-detail] [data-project-menu]').scroll_into_view_if_needed()
             shot(page, f'phone-project-actions-{theme}')
-            page.locator('[data-project-delete]').click()
+            _menu(page, 'Delete')
             overlay = _phone_confirm(page)
             text = overlay.inner_text()
             check('Bouncy castle hire' in text and 'Compare castle prices' in text and 'Juggling practice' in text
@@ -652,10 +725,10 @@ def scenario_light_and_dark_at_phone_width():
     with served.browser() as page:
         admin(page, served, 'mom', width=PHONE)
         page.goto(served.url('projects?id=' + pid), wait_until='load')
-        page.wait_for_selector(f'[data-piece="thread:{tid}"] [data-folded-missions]', timeout=15000)
-        page.locator(f'[data-piece="thread:{tid}"]').scroll_into_view_if_needed()
+        page.wait_for_selector(f'[data-row="conversation:{tid}"]', timeout=15000)
+        page.locator(f'[data-row="conversation:{tid}"]').scroll_into_view_if_needed()
         shot(page, 'admin-phone-width-pieces-dark')
-        page.locator('[data-project-delete]').click()
+        _menu(page, 'Delete')
         _admin_confirm(page)
         shot(page, 'admin-phone-width-confirm-dark')
         page.locator('#cc-confirm-cancel-btn').click()

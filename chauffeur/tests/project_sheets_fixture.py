@@ -91,6 +91,13 @@ def pwa(page, served, who):
                    'chauffeur_theme': 'dark'})
 
 
+def open_projects(page):
+    """Projects lives in More on the phone (one-list spec §5): no tab of its own."""
+    page.locator('#tab-more').click()
+    page.locator('#pwa-feature-list').get_by_text('Projects', exact=True).first.click()
+    page.wait_for_selector('#projects-container [data-project-card], #projects-container [data-project-detail]', timeout=15000)
+
+
 def shot(page, name):
     if SHOTS:
         page.screenshot(path=os.path.join(SHOTS, name + '.png'), full_page=True)

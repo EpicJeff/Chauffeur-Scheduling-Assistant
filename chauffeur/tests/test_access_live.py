@@ -6,7 +6,7 @@ admin widget and a wall panel each ask the server for their own conversation.
 
 Run from chauffeur/: python tests/test_access_live.py
 """
-from project_sheets_fixture import IDS, admin, check, pwa, serve, shot, storage
+from project_sheets_fixture import IDS, admin, check, open_projects, pwa, serve, shot, storage
 
 HIDDEN = 'That isn’t here, or isn’t yours to see.'
 
@@ -52,7 +52,8 @@ def scenario_private_pieces_hidden_from_dad_on_both_hosts_and_addresses():
         pwa(page, served, 'dad')
         page.set_viewport_size({'width': 390, 'height': 844})
         page.goto(served.url('app'), wait_until='load')
-        page.locator('#tab-projects').click(timeout=20000)
+        page.wait_for_selector('#tab-more', state='visible', timeout=20000)
+        open_projects(page)
         page.wait_for_selector('[data-project-id="prj-bath"]', timeout=15000)
         for kind, rid, title in pieces:
             page.evaluate("d => window.dispatchEvent(new CustomEvent('chf-record-sheet-open', {detail:d}))",

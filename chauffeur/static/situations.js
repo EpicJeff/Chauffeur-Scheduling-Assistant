@@ -100,8 +100,14 @@ window.Situations = (function () {
       : askOnly) + handLink;
     const since = when(s.since);
     const meta = [s.state, since ? `since ${since}` : '', s.due ? `due ${dueLabel(s.due)}` : '', (s.people || []).join(', ')].filter(Boolean).join(' · ');
+    // A host that navigates for itself (the phone: one-list spec §5) gets a
+    // button calling ctx.navigate(kind, id), never an anchor to an admin page.
+    const subjTarget = !s.subject ? ''
+      : typeof ctx.navigate === 'function'
+        ? `<button type="button" class="underline underline-offset-2" data-sit-nav="${esc(s.subject.kind)}:${esc(s.subject.id)}">${esc(s.subject.title || s.subject.kind)}</button>`
+        : `<a class="underline underline-offset-2" href="${esc((ctx.apiBase || '') + s.subject.link)}">${esc(s.subject.title)}</a>`;
     const subj = s.subject
-      ? `<div class="sit-subject text-[11px] text-indigo-300 mt-0.5" data-sit-subject="${esc(s.subject.kind)}:${esc(s.subject.id)}">About: <a class="underline underline-offset-2" href="${esc((ctx.apiBase || '') + s.subject.link)}">${esc(s.subject.title)}</a></div>`
+      ? `<div class="sit-subject text-[11px] text-indigo-300 mt-0.5" data-sit-subject="${esc(s.subject.kind)}:${esc(s.subject.id)}">About: ${subjTarget}</div>`
       : '';
     const note = s.note_source === 'argyle'
       ? `<div class="sit-note text-xs text-gray-400 italic mt-0.5" data-source="argyle">${esc(s.status_note)}</div>`
@@ -316,6 +322,11 @@ window.Situations = (function () {
       const b = ev.target.closest('button'); if (!b || !el.contains(b)) return;
       if (b.closest('.sit-ask-flow')) return;      // the flow has its own handler
       const card = b.closest('.situation-card'); if (!card) return;
+      if (b.dataset.sitNav) {
+        const at = b.dataset.sitNav.indexOf(':');
+        if (typeof ctx2.navigate === 'function') ctx2.navigate(b.dataset.sitNav.slice(0, at), b.dataset.sitNav.slice(at + 1));
+        return;
+      }
       const s = (ctx2.lookup && ctx2.lookup(card.dataset.kind, card.dataset.id))
              || (el.__situations || {})[`${card.dataset.kind}:${card.dataset.id}`];
       if (!s) return;

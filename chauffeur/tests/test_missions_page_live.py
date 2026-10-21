@@ -110,8 +110,8 @@ def main():
             cap = int(settings.get('mission_cap_launch', missions.CAPS_DEFAULT['launch']))
             check(settings.get('missions_enabled') and int(counts.get('launch', 0)) < cap,
                   f"the fixture permits a launch: enabled={settings.get('missions_enabled')}, launches={counts.get('launch', 0)}, cap={cap}")
-            page.locator('[data-add-piece]').click()
-            page.locator('[data-prompt-choice]', has_text='Work for Argyle').first.click()
+            page.locator('[data-project-add]').click()   # one-list + Add: Ask Argyle is the mission form
+            page.locator('[data-prompt-choice]', has_text='Ask Argyle').first.click()
             form = page.locator('[data-piece-form="mission"]')
             form.locator('textarea[name="goal"]').fill('Book the dentist')
             form.locator('select[name="tier"]').select_option('flash')
