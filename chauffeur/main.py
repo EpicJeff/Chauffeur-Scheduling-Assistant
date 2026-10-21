@@ -7979,7 +7979,9 @@ def create_library_api(request: Request, body: dict = Body(default={})):
     result = _library_result(library.create({**brief['profile'], 'title': brief['title'], 'notes': brief['notes'],
                                              'based_on': brief['based_on'], 'exclude_books': brief['exclude_books']}, actor))
     if result.get('status') == 'success':
-        result = {**result, 'for_member_id': brief['for_member_id']}
+        # The requester's own words, handed back for the setup sheet; never stored on the row.
+        result = {**result, 'for_member_id': brief['for_member_id'],
+                  'brief': {k: brief[k] for k in ('starting_point', 'preferred_days', 'target_date')}}
     return result
 
 

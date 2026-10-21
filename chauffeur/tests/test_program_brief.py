@@ -72,6 +72,27 @@ def scenario_create_from_brief_route():
     check(r.status_code == 200 and body['status'] == 'success' and body['program']['title'] == 'Learn piano' and body['for_member_id'] == 'kid', f"a brief makes a library row and names the person: {r.text}")
 
 
+def scenario_brief_route_hands_back_the_private_fields():
+    for t in (storage.library_programs_table, storage.members_table):
+        t.truncate()
+    storage.add_member(dict(MOM)); storage.add_member(dict(KID))
+    import json
+    import main
+    from fastapi.testclient import TestClient
+    secret = 'plays Twinkle with her right hand'
+    with _model({'title': 'Learn piano', 'for': 'Kate', 'starting_point': secret, 'preferred_days': [1, 3],
+                 'target_date': '2027-06-01', 'assumes': 'complete beginner'}), \
+         patch.object(programs_curate, 'curate', lambda *a, **k: {'phases': [{'name': 'F', 'weeks': 1, 'steps': ['a'], 'milestone': 'm', 'units': [{'title': 'U', 'sessions': 1}]}], 'source': {'origin': 'generated', 'reason': 'no_plan'}}), \
+         patch('services.library_scripts.write', lambda *a, **k: {'status': 'ok', 'job': None}):
+        r = TestClient(main.app).post('/api/library', json={'brief': 'Piano for Kate'}, headers={'X-Member-Token': storage.create_member_token('mom')})
+    body = r.json()
+    check(body.get('brief') == {'starting_point': secret, 'preferred_days': [1, 3], 'target_date': '2027-06-01'},
+          f"the requester gets her own words back for the setup sheet: {r.text}")
+    rows = storage.get_library_programs()
+    check(len(rows) == 1 and secret not in json.dumps(rows[0]) and 'starting_point' not in rows[0]
+          and secret not in json.dumps(body['program']), f"the library row never carries the starting point: {rows}")
+
+
 def scenario_parse_stays_on_the_free_chain():
     seen = []
     def fake(*a, **k):
