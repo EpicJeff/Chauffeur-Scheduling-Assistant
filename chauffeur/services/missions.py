@@ -1795,14 +1795,19 @@ def _apply_planner_action(mission, res, settings, action, stage_id):
                   and (s.get('result_json') or {}).get('status') == 'ok']
         # Planned thread drafts reach draft_message through the approved tool
         # wrapper. Plain draft_message stage rows only save supplied words and
-        # have no thread revision, so they retain the None/legacy behavior.
+        # have no thread revision, so they fall back to the launch revision.
         drafts.extend((row.get('done_at') or 0, row.get('result') or {})
                       for stage in (mission.get('plan') or {}).get('stages', [])
                       for row in stage.get('rows', [])
                       if row.get('tool') == 'draft_thread_message' and row.get('state') == 'done'
                       and (row.get('result') or {}).get('thread_id') == mission.get('origin_ref'))
         draft = max(drafts, key=lambda item: item[0])[1] if drafts else {}
-        _land_finish(mission, res, next_action_rev=draft.get('next_action_rev'))
+        # No drafted revision (research, browse, a plain draft row): the
+        # thread's revision captured at launch. A legacy row without one is None.
+        rev = draft.get('next_action_rev')
+        if rev is None and mission.get('origin_kind') == 'thread':
+            rev = mission.get('origin_rev')
+        _land_finish(mission, res, next_action_rev=rev)
         return row
 
     if action == 'give_up':
@@ -1875,6 +1880,11 @@ def launch(goal: str, origin_kind: str = 'manual', origin_ref=None,
         fields = {'goal': goal, 'origin_kind': origin_kind,
                   'origin_ref': origin_ref, 'created_by': created_by,
                   'tier': tier, 'project_id': project_id}
+        if thread:
+            # The thread's next-step revision at launch: a finish with no
+            # drafted revision of its own compares against this, so a
+            # successor a person set while the work ran is never overwritten.
+            fields['origin_rev'] = int(thread.get('next_action_rev') or 0)
         if interaction == 'voice':
             fields['interaction'] = interaction
         if subject and subject[0] and subject[1]:

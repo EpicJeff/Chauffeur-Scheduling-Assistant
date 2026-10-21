@@ -84,11 +84,14 @@ def scenario_argyle_steps_by_state():
     check(r['box'] == 'argyle' and r['when'] == 'running' and r['group'] == 'next'
           and r['title'] == 'Argyle is working on find ivory matte tile', f"a running Argyle step: {r}")
     mid = storage.get_project(p['id'])['steps'][0]['mission_id']
+    # As the mission asks (missions._ask): it waits on a person with a question ask, then the step learns the question.
+    storage.update_mission(mid, {'status': 'waiting_user'})
+    storage.add_mission_step(mid, {'kind': 'ask', 'name': 'question', 'result_json': {'question': 'Matte or gloss?'}})
     _p().on_question(mid, 'Matte or gloss?')
     r = _by(_rows(p['id']), 'step', todo['id'])
     check(r['box'] == 'asking' and r['group'] == 'now' and r['title'] == 'Argyle needs you: Matte or gloss?'
-          and r['actions'] and r['actions'][0]['label'] == 'Answer' and r['subtitle'] == 'Argyle asks · find ivory matte tile',
-          f"an asking Argyle step: {r}")
+          and [a['verb'] for a in r['actions']] == ['answer'] and r['subtitle'] == 'Argyle asks · find ivory matte tile',
+          f"an asking Argyle step carries its projected Answer (the page labels it Answer): {r}")
     _p().on_stage_done(mid, None, {'tiles': 'Ivory matte'})
     r = _by(_rows(p['id']), 'step', todo['id'])
     check(r['box'] == 'done' and r['group'] == 'logbook' and r['title'] == 'tiles: Ivory matte', f"a done Argyle step shows its found line: {r}")
@@ -492,7 +495,9 @@ def scenario_planned_ask_on_a_step_backed_mission_is_one_asking_row():
     check(other['box'] != 'asking', f"the other stage's step does not also ask: {other}")
 
 
-def scenario_thread_asking_with_no_buttons_falls_back_to_answer():
+def scenario_thread_ask_with_no_projected_buttons_is_not_asking():
+    # Final review F1: the invented Answer fallback is gone. With no ask on the
+    # viewer's own projection the row is the plain conversation, never a dead button.
     _fresh()
     p = _bath()
     tid = threads.create(title='Tiler', owner_member_id='mom', created_by='mom', project_id=p['id'], next_action='Call')
@@ -501,7 +506,8 @@ def scenario_thread_asking_with_no_buttons_falls_back_to_answer():
     from services import projects
     with patch.object(projects, '_ask_actions', lambda sit, mission=None: []):
         r = _by(_rows(p['id']), 'conversation', tid)
-    check(r['box'] == 'asking' and [a['verb'] for a in r['actions']] == ['answer'], f"an ask with no buttons offers Answer: {r}")
+    check(r['box'] == 'open' and r['title'] == 'Call' and r['actions'] == [] and 'Send it?' not in r['title'] + r['subtitle'],
+          f"no projected ask: no asking row, no Answer: {r}")
 
 
 def scenario_stage_buttons_stay_off_non_stage_asks():
@@ -523,6 +529,115 @@ def scenario_stage_buttons_stay_off_non_stage_asks():
     check(t['box'] == 'asking' and t['actions'] and 'run_stage' not in {a['verb'] for a in t['actions']},
           f"and its thread row: {t['actions']}")
     # A stage ask keeps its own run_stage buttons (covered by the planned-ask scenario).
+
+
+# --- Final review F1: rows speak only the viewer's projection (probes A-D, real records) ---
+
+def _project(title, owner, audience, actor=MOM):
+    return _p().create({'title': title, 'goal': 'g', 'done_when': 'd', 'owner_member_id': owner,
+                        'audience': audience}, dict(actor))['project']
+
+
+def _keeper_mission():
+    """Dad's mission about a thread in Mom's private project, adopted into Dad's household project."""
+    _fresh()
+    from services import access
+    hidden = _project('Surprise party', 'mom', 'private')
+    garden = _project('Garden', 'dad', 'household')
+    t_hidden = threads.create(title='Riverside venue', owner_member_id='mom', created_by='mom', project_id=hidden['id'],
+                              next_action='Pay the deposit')
+    mid = storage.add_mission({'goal': 'Draft to the venue', 'created_by': 'dad', 'status': 'waiting_user',
+                               'subject_kind': 'thread', 'subject_id': t_hidden})
+    storage.add_mission_step(mid, {'kind': 'ask', 'name': 'question',
+                                   'result_json': {'question': 'SECRET-A: mention the surprise party at Riverside on May 3?'}})
+    _p().adopt('mission', mid, None, project_id=garden['id'])
+    check(access.record_view('mission', storage.get_mission(mid), dict(DAD)) == access.KEEPER,
+          "precondition: Dad reads his own mission as its keeper (its subject is hidden from him)")
+    return garden, mid
+
+
+def scenario_keeper_mission_row_carries_no_ask_words():
+    garden, mid = _keeper_mission()   # probe A
+    r = _by(_rows(garden['id'], DAD), 'argyle', mid)
+    check('SECRET' not in r['title'] + r['subtitle'] + r['reason'] and r['actions'] == [] and r['box'] != 'asking'
+          and r['title'] == 'Draft to the venue', f"a keeper's mission row carries only the card title, no ask, no Answer: {r}")
+    # The same mission read in full (Mom may see the subject): the question is hers to answer.
+    mom = _by(_rows(garden['id'], MOM), 'argyle', mid)
+    check(mom['box'] == 'asking' and mom['title'].startswith('SECRET-A') and [a['verb'] for a in mom['actions']] == ['answer'],
+          f"a full reader keeps the ask and its words: {mom}")
+
+
+def scenario_keeper_running_mission_row_carries_no_stage_title():
+    garden, mid = _keeper_mission()   # probe C
+    storage.update_mission(mid, {'status': 'running', 'plan': {'state': 'approved', 'rev': 1, 'stages': [
+        {'id': 's1', 'kind': 'work', 'state': 'running', 'title': 'SECRET-C: call Riverside about the surprise',
+         'snapshot': 'x', 'rows': []}]}})
+    r = _by(_rows(garden['id'], DAD), 'argyle', mid)
+    check('SECRET' not in r['title'] + r['subtitle'] and r['title'] == 'Draft to the venue' and r['box'] == 'argyle'
+          and r['actions'] == [], f"a keeper's running row reads the card title, never the stage: {r}")
+    mom = _by(_rows(garden['id'], MOM), 'argyle', mid)
+    check(mom['title'] == 'SECRET-C: call Riverside about the surprise', f"a full reader sees the stage under way: {mom}")
+
+
+def scenario_child_thread_row_never_quotes_a_hidden_mission():
+    _fresh()   # probe B
+    from services import access
+    piano = _project('Piano', 'kid', 'household')
+    tid = threads.create(title='Piano teacher', owner_member_id='kid', created_by='mom', project_id=piano['id'],
+                         counterparty_name='Ms Lee', next_action='')
+    mid = storage.add_mission({'goal': 'Draft to Ms Lee', 'created_by': 'mom', 'status': 'waiting_user',
+                               'origin_kind': 'thread', 'origin_ref': tid, 'project_id': piano['id']})
+    storage.add_mission_step(mid, {'kind': 'ask', 'name': 'question', 'result_json': {'question': 'SECRET-B: offer $40 an hour?'}})
+    check(access.record_view('thread', storage.get_thread(tid), dict(KID)) == access.FULL
+          and access.record_view('mission', storage.get_mission(mid), dict(KID)) is None,
+          "precondition: Kate reads her thread in full and may not see Mom's mission")
+    rows = _rows(piano['id'], KID)
+    r = _by(rows, 'conversation', tid)
+    check('SECRET' not in r['title'] + r['subtitle'] and r['box'] != 'asking' and r['actions'] == []
+          and r['title'] == 'Piano teacher', f"a child's own thread row never carries a mission she cannot see: {r}")
+    check(not any(x['kind'] == 'argyle' for x in rows), "and she gets no mission row")
+    mom = _by(_rows(piano['id'], MOM), 'conversation', tid)
+    check(mom['box'] == 'asking' and mom['title'] == 'SECRET-B: offer $40 an hour?', f"Mom, who reads the mission, is asked: {mom}")
+
+
+def scenario_child_step_row_never_quotes_its_mission():
+    _fresh()   # probe D
+    from services import access
+    p = _project('Ride a bike', 'kid', 'household')
+    s = _step(p['id'], 'Find a helmet', owner='argyle', goal='find a helmet')
+    mid = storage.get_project(p['id'])['steps'][0]['mission_id']
+    check(access.record_view('mission', storage.get_mission(mid), dict(KID)) is None, "precondition: Kate cannot see the step's mission")
+    storage.update_mission(mid, {'status': 'waiting_user'})
+    storage.add_mission_step(mid, {'kind': 'ask', 'name': 'stage',
+                                   'result_json': {'question': 'SECRET-D: spend $60 on the Giro helmet?', 'stage_id': 'x'}})
+    r = _by(_rows(p['id'], KID), 'step', s['id'])
+    check('SECRET' not in r['title'] + r['subtitle'] and r['actions'] == [] and r['box'] != 'asking'
+          and r['title'] == 'Find a helmet' and (r['sheet'] or {}).get('kind') == 'step',
+          f"a child's step row: the step's title, no Answer, no mission sheet: {r}")
+    # A plain ask writes step.question: still not on the child's row.
+    _p().on_question(mid, 'SECRET-D2: which colour?')
+    r = _by(_rows(p['id'], KID), 'step', s['id'])
+    check('SECRET' not in r['title'] + r['subtitle'] and r['actions'] == [], f"nor the step's copied question: {r}")
+
+
+def scenario_pick_a_program_is_gated_like_the_old_card():
+    _fresh()
+    from services import access
+    p = _bath()
+    storage.add_program({'id': 'lost', 'member_id': 'kid', 'state': 'active', 'library_id': 'nope', 'shape': {}, 'progress': {},
+                         'sessions': [], 'emissions': {}, 'baseline': {}})
+    _p().adopt('program', 'lost', None, project_id=p['id'])
+    with patch.object(programs, 'practice_windows', lambda *a, **k: []):
+        mom = _by(_rows(p['id'], MOM), 'program', 'lost')
+        own = _by(_rows(p['id'], KID), 'program', 'lost')
+        house = _by(_p().rows(storage.get_project(p['id']), access.HOUSE), 'program', 'lost')
+        with patch.object(_p(), 'can_act', lambda project, viewer: False):
+            aunt = _by(_rows(p['id'], AUNT), 'program', 'lost')
+    check(any(a['verb'] == 'rebind' for a in mom['actions']), f"the project's actor picks a program: {mom}")
+    check(not _p().can_act(storage.get_project(p['id']), dict(KID)) and any(a['verb'] == 'rebind' for a in own['actions']),
+          f"the run's own member does, without acting on the project: {own}")
+    check(house['actions'] == [] and aunt['actions'] == [],
+          f"a viewer who may not act and is not the run's member gets no Pick a program: {house} {aunt}")
 
 
 def scenario_groups_order():

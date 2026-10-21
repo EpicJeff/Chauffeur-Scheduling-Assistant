@@ -93,6 +93,44 @@ def scenario_conversation_round_trip():
     check(r3.status_code == 200 and storage.get_thread(tid)['next_action'] == 'Call Ace', f"restore: {r3.text}")
 
 
+def scenario_skipped_step_unticks_to_todo():
+    # Final review F2: a skipped step draws a done box; its untick reopens it, never a dead 409.
+    _fresh(); p = _bath()
+    s = _p().add_step(p['id'], {'title': 'Demo', 'owner': 'mom'}, dict(MOM))['step']
+    _p().set_step_state(p['id'], s['id'], 'skipped', dict(MOM))
+    row = _row(p['id'], 'step', s['id'])
+    check(row['box'] == 'done' and row['reason'] == 'skipped', f"precondition: a skipped step reads done: {row}")
+    r = _tick(p['id'], row, done=False)
+    check(r.status_code == 200 and storage.get_project(p['id'])['steps'][0]['state'] == 'todo', f"untick reopens a skipped step: {r.text}")
+    r = _tick(p['id'], row, done=False)
+    check(r.status_code == 409, f"a second untick of the now-open step is stale: {r.text}")
+
+
+def scenario_post_tick_successor_carries_the_revision():
+    # Final review (Codex 2): the page's "What's next" sends the completion's
+    # revision; a successor someone else set meanwhile is never overwritten.
+    _fresh(); p = _bath()
+    tid = threads.create(title='Tiler', owner_member_id='mom', created_by='mom', project_id=p['id'], next_action='Call Ace')
+    r = _tick(p['id'], _row(p['id'], 'conversation', tid))
+    rev = r.json()['result']['rev']
+    check(r.status_code == 200 and rev == 1, f"the completion returns its revision: {r.text}")
+    a = _client().post(f'/api/threads/{tid}/advance', headers=_hdr('mom'), json={'next_action': 'Email the quote', 'expect_rev': rev})
+    check(a.status_code == 200 and storage.get_thread(tid)['next_action'] == 'Email the quote', f"the successor lands on its revision: {a.text}")
+    # Again, with another person's successor set while the prompt was open.
+    row = _row(p['id'], 'conversation', tid)
+    r = _tick(p['id'], row)
+    rev = r.json()['result']['rev']
+    threads.advance(tid, 'Dad booked the tiler', None, who='dad')
+    before = storage.get_thread(tid)
+    a = _client().post(f'/api/threads/{tid}/advance', headers=_hdr('mom'), json={'next_action': 'Email the quote', 'expect_rev': rev})
+    check(a.status_code == 409 and a.json()['detail'] == 'Someone set the next step meanwhile.', f"a stale successor answers 409: {a.text}")
+    check(storage.get_thread(tid) == before, "and writes nothing: Dad's step stands")
+    bad = _client().post(f'/api/threads/{tid}/advance', headers=_hdr('mom'), json={'next_action': 'x', 'expect_rev': '1'})
+    check(bad.status_code == 400 and storage.get_thread(tid) == before, f"a malformed revision is refused: {bad.text}")
+    plain = _client().post(f'/api/threads/{tid}/advance', headers=_hdr('mom'), json={'next_action': 'Plain advance'})
+    check(plain.status_code == 200 and storage.get_thread(tid)['next_action'] == 'Plain advance', "without expect_rev the route is unchanged")
+
+
 def _run(pid, member='mom', state='active'):
     from library_run_fixture import add_run
     add_run({'id': 'run1', 'member_id': member, 'title': 'Strength', 'state': state,
@@ -131,6 +169,7 @@ def scenario_program_double_tick_logs_one():
         b = _tick(p['id'], row)
     check(a.status_code == 200 and b.status_code == 409 and len(storage.get_program('run1')['sessions']) == 1,
           f"the second tick finds the window logged: {b.text}")
+    check(b.json()['detail'] == 'That session is already logged.', f"and says so in its own words: {b.text}")
 
 
 def scenario_program_same_day_windows_disappear_after_one_session():

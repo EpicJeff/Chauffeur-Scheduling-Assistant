@@ -519,8 +519,17 @@ function projectsPage(host = 'admin') {
                     const who = r.subtitle.includes(' · ') ? r.subtitle.split(' · ')[0] : 'them';
                     const next = await promptInput("What's next with " + who + '?', '', {okText: 'Set it'});
                     if (next && next.trim()) {
-                        await this.request('api/threads/' + encodeURIComponent(r.id) + '/advance', {next_action: next.trim()});
-                        delete this._completed[r.id]; delete this._doneTitles[r.id];   // a successor is set: the row is open again
+                        // Only over the revision this tick left: a successor another person
+                        // or a landing mission set meanwhile is never overwritten (409).
+                        const rev = (d.result || {}).rev;
+                        try {
+                            await this.request('api/threads/' + encodeURIComponent(r.id) + '/advance',
+                                {next_action: next.trim(), ...(Number.isInteger(rev) ? {expect_rev: rev} : {})});
+                            delete this._completed[r.id]; delete this._doneTitles[r.id];   // a successor is set: the row is open again
+                        } catch (e) {
+                            // The reload below shows the newer step (the marker clears once the row moves on).
+                            this.error = /meanwhile/i.test(e.message) ? 'Someone set the next step meanwhile.' : e.message;
+                        }
                     }
                 }
                 await this.loadRows(p);

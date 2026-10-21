@@ -368,12 +368,17 @@ def _bump_rev(thread_id, fields):
 
 
 def advance(thread_id: str, next_action: str, next_action_at: str = None,
-            note: str = None, who: str = None) -> bool:
+            note: str = None, who: str = None, expect_rev: int = None):
     """Set the next thing that has to happen, and when, and log it.
 
     This is the normal heartbeat of a thread: the vendor called back, here's
     what happens next. Logging it (rather than just updating the fields)
     is what keeps the quiet clock honest.
+
+    With `expect_rev` (the row's post-tick successor prompt), the write lands
+    only while `next_action_rev` still equals it; a successor set meanwhile by
+    another person or a landing mission answers a 409 dict and nothing is
+    written. Without it the return is the old bool.
     """
     next_action_at = _clean_next_action_at(next_action_at)
     text = f'Next: {next_action}' if next_action else 'Next action updated'
@@ -382,6 +387,10 @@ def advance(thread_id: str, next_action: str, next_action_at: str = None,
     if note:
         text += f' — {note}'
     with storage.db_lock, storage.db.transaction():
+        if expect_rev is not None:
+            row = storage.get_thread(thread_id)
+            if row and int(row.get('next_action_rev') or 0) != int(expect_rev):
+                return {'status': 'error', 'code': 409, 'message': 'Someone set the next step meanwhile.'}
         ok = storage.update_thread(thread_id, _bump_rev(thread_id, {
             'next_action': next_action,
             'next_action_at': next_action_at,

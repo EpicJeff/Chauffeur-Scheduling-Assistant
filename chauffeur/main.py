@@ -6489,7 +6489,9 @@ def project_tick(project_id: str, body: Any = Body(default={}), request: Request
                 raise HTTPException(status_code=403, detail='Only a parent can complete a step ahead of its needs.')
             if row['box'] == 'not_yet' and not override:
                 return JSONResponse(status_code=409, content={'detail': row['reason'], 'rows': rows})
-            if (step.get('state') == 'done') == done:
+            # A skipped step draws a done box: unticking it reopens it (todo),
+            # as the old Tick moved skipped on; it is never a dead 409.
+            if (step.get('state') in ('done', 'skipped')) == done:
                 return JSONResponse(status_code=409, content={'detail': 'That changed; look again.', 'rows': rows})
             if done and step.get('state') not in ('todo', 'doing') and not (override and step.get('state') == 'blocked'):
                 return stale()
@@ -6507,9 +6509,12 @@ def project_tick(project_id: str, body: Any = Body(default={}), request: Request
                 result = _threads.restore_next_action(rid, moment.get('entry_id') or '', actor.get('id'))
         else:   # program
             run = record
-            if (row['box'] != 'open' or moment.get('window_date', '') > datetime.date.today().isoformat()
-                    or _prog._already_logged(run, day)):
-                return JSONResponse(status_code=409, content={'detail': row['reason'] or 'That window is not today.', 'rows': rows})
+            future = moment.get('window_date', '') > datetime.date.today().isoformat()
+            logged = not future and _prog._already_logged(run, day)
+            if row['box'] != 'open' or future or logged:
+                # A second same-day window after one tick: the day's session is in.
+                detail = 'That session is already logged.' if logged else (row['reason'] or 'That window is not today.')
+                return JSONResponse(status_code=409, content={'detail': detail, 'rows': rows})
             if row['moment'] != moment:
                 return stale()
             loaded = _prog.load(run)
@@ -7633,9 +7638,14 @@ def advance_thread(thread_id: str, body: dict = Body(default={}), request: Reque
     from services import threads as _threads
     actor = _mind_actor(request, body.get('member_id'))
     _live_thread_or_refuse(thread_id)
+    expect = body.get('expect_rev')
+    if expect is not None and (type(expect) is not int or expect < 0):
+        raise HTTPException(status_code=400, detail='Send the revision you saw.')
     ok = _threads.advance(thread_id, body.get('next_action') or '',
                           next_action_at=body.get('next_action_at'),
-                          note=body.get('note'), who=(actor or {}).get('id'))
+                          note=body.get('note'), who=(actor or {}).get('id'), expect_rev=expect)
+    if isinstance(ok, dict):   # the successor prompt saw an older revision (one-list spec §2.2)
+        raise HTTPException(status_code=int(ok.get('code') or 409), detail=ok.get('message') or 'That changed; look again.')
     if not ok:
         raise HTTPException(status_code=404, detail="No such thread")
     return {"status": "success"}

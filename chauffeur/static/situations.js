@@ -170,7 +170,11 @@ window.Situations = (function () {
     if (option.verb === 'close' && window.promptConfirm) {
       if (!await promptConfirm(`${option.label}?`, s.title, option.label, 'Keep it')) return;
     }
-    if (['advance', 'answer', 'draft', 'research'].includes(option.verb)) {
+    if (option.verb === 'answer' && (option.payload || {}).ask === 'program_choice') {
+      // Use / Make new / Not now: the tap is the answer. The option's own
+      // payload (its choice id and option) goes as is; no words are asked for.
+      Object.assign(payload, option.payload);
+    } else if (['advance', 'answer', 'draft', 'research'].includes(option.verb)) {
       const ask = { advance: 'What is the next step?', answer: 'Your answer', draft: 'What should the message say?', research: 'What should I look up?' }[option.verb];
       // A reading-built option (confirm, reply) arrives pre-filled; the
       // person edits or accepts instead of retyping.

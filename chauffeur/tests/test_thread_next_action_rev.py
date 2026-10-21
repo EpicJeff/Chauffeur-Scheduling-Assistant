@@ -284,6 +284,74 @@ def scenario_finisher_uses_the_chronologically_latest_draft():
               f'finish uses the newest draft revision (direct_latest={direct_latest})')
 
 
+def scenario_advance_with_a_stale_expect_rev_writes_nothing():
+    # Final review (Codex 2): the post-tick successor prompt sends the
+    # completion's revision; a successor set meanwhile stands.
+    _fresh()
+    tid = _t()
+    done = threads.complete_next_action(tid, 0, 'mom')
+    threads.advance(tid, 'Email Ace', None, who='dad')        # someone else, while the prompt was open
+    before = storage.get_thread(tid)
+    r = threads.advance(tid, 'Call Ace again', None, who='mom', expect_rev=done['rev'])
+    check(isinstance(r, dict) and r.get('status') == 'error' and r.get('code') == 409, f"a stale expect_rev answers 409: {r}")
+    check(storage.get_thread(tid) == before, "and writes nothing: the newer next step and the history stand")
+    r = threads.advance(tid, 'Call Ace again', None, who='mom', expect_rev=before['next_action_rev'])
+    row = storage.get_thread(tid)
+    check(r is True and row['next_action'] == 'Call Ace again' and row['next_action_rev'] == before['next_action_rev'] + 1,
+          f"a current expect_rev writes as before: {r} {row['next_action']}")
+    check(threads.advance(tid, 'No check', None, who='mom') is True, "without expect_rev advance is unchanged (a bool)")
+
+
+def _launch_on(tid, goal='Research grout colours'):
+    from services import missions
+    with patch.object(missions, '_bump_call', lambda *a, **k: True):
+        res = missions.launch(goal, origin_kind='thread', origin_ref=tid, created_by='mom')
+    check(res.get('status') == 'launched', f"precondition: the mission launched: {res}")
+    return res['mission_id']
+
+
+def _finish(mid, next_action='Pick a grout'):
+    from services import missions
+    with patch.object(missions, '_llm', return_value={'action': 'finish', 'summary': 'Found three colours',
+                                                     'next_action': next_action}),             patch.object(missions, '_dm_person') as dm:
+        missions.step(storage.get_mission(mid))
+    check(storage.get_mission(mid)['status'] == 'done', 'the real mission finish executes')
+    return dm
+
+
+def scenario_research_finish_keeps_a_successor_set_while_it_ran():
+    # Final review (Codex 3): a non-drafting thread-origin mission compares
+    # against the revision captured at launch.
+    for successor in (False, True):
+        _fresh()
+        tid = _t()
+        mid = _launch_on(tid)
+        check(storage.get_mission(mid).get('origin_rev') == 0, "launch captures the thread's revision")
+        if successor:
+            threads.complete_next_action(tid, 0, 'mom')
+            threads.advance(tid, 'Email Ace', None, who='mom')
+        dm = _finish(mid)
+        row = storage.get_thread(tid)
+        check(row['next_action'] == ('Email Ace' if successor else 'Pick a grout'),
+              f"the finish never overwrites a person's successor (successor={successor}): {row['next_action']}")
+        entry = row['history'][-1]
+        check(entry['kind'] == 'mission' and ('earlier next step' in entry['text']) == successor
+              and entry['next_action'] == (None if successor else 'Pick a grout'),
+              f"only the late finish is noted against an earlier next step: {entry}")
+        check(('Next: Pick a grout' in dm.call_args.args[1]) != successor, 'the late DM proposes no superseded step')
+
+
+def scenario_legacy_thread_mission_without_origin_rev_keeps_todays_finish():
+    _fresh()
+    tid = _t()
+    mid = storage.add_mission({'goal': 'Research grout colours', 'created_by': 'mom', 'status': 'running',
+                               'origin_kind': 'thread', 'origin_ref': tid})
+    check('origin_rev' not in storage.get_mission(mid), "precondition: a row from before origin_rev")
+    threads.advance(tid, 'Email Ace', None, who='mom')
+    _finish(mid)
+    check(storage.get_thread(tid)['next_action'] == 'Pick a grout', "a legacy row (no revision) advances as it always did")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith('scenario_')]
 
 if __name__ == "__main__":

@@ -429,6 +429,8 @@ READERS = [
         'services.projects._program_rows', 'services.projects._step_rows', 'services.projects._thread_row',
         # Revision writers are internal to the registered, gated thread and project tick routes.
         'services.threads._bump_rev', 'services.threads.complete_next_action', 'services.threads.restore_next_action',
+        # advance reads the row only to compare an expect_rev (its callers' routes and tools gate the thread).
+        'services.threads.advance',
         'services.projects._work_missions', 'services.projects.advance', 'services.projects.resume_waiting',
         'services.projects._busy_intervals', 'services.projects.find_window', 'services.threads.match_inbound',
         'services.email_ingest._match_thread', 'services.threads.is_stalled', 'services.threads.stalled',

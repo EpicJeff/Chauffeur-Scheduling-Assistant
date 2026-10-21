@@ -78,6 +78,8 @@ def scenario_tick_a_step_and_open_sheets():
         thread = page.locator(f'[data-row="conversation:{IDS["thread"]}"]')
         thread.locator('[data-row-title]').click()
         page.wait_for_selector('[data-record-sheet][data-open="true"][data-kind="thread"]', timeout=5000)
+        # The sheet opens on its title and draws the card a moment later (a pre-existing race: 1 in 6 at 97081e29).
+        page.wait_for_selector('[data-record-sheet][data-open="true"] .situation-card', timeout=5000)
         check('Draft a message' in page.locator('[data-record-sheet]').inner_text(), "the thread sheet keeps its verbs")
         shot(page, 'one-list-sheets')
 
@@ -354,11 +356,60 @@ def scenario_add_for_a_child():
         shot(page, 'one-list-phone-kid')
 
 
+def scenario_program_choice_row_buttons_send_their_option():
+    """Use / Make new / Not now on an asking row post the option's own payload
+    to the real act endpoint (final review, Codex 4): no typed answer is asked
+    for, and the server's payload.option guard passes. Only the planner's
+    answer_program_choice is stubbed, so the fixture stays waiting."""
+    served = serve()
+    if served is None:
+        return
+    from unittest.mock import patch
+    from services import projects, planned
+    storage.add_project({'id': 'prj-piano', 'title': 'Piano', 'goal': 'play a song', 'done_when': 'a song',
+                         'owner_member_id': 'mom', 'created_by': 'mom', 'audience': 'household', 'pieces': [], 'steps': []})
+    mid = storage.add_mission({'goal': 'Find a piano course', 'created_by': 'mom', 'tier': 'mission', 'status': 'waiting_user',
+                               'program_choices': [{'id': 'pc1', 'state': 'waiting_choice', 'result': {
+                                   'choice_id': 'cid1', 'choice': {'created_by': 'mom', 'member_id': 'mom', 'profile': {}}}}]})
+    storage.add_mission_step(mid, {'kind': 'ask', 'name': 'program_choice',
+                                   'result_json': {'choice_id': 'cid1', 'question': 'Use the piano course in the library?'}})
+    projects.adopt('mission', mid, None, project_id='prj-piano')
+    calls = []
+
+    def answered(sid, choice_id, option, actor):
+        calls.append((sid, choice_id, option, (actor or {}).get('id')))
+        return {'status': 'success', 'already': True}
+
+    with patch.object(planned, 'answer_program_choice', answered), served.browser() as page:
+        admin(page, served, 'mom')
+        page.goto(served.url('projects?id=prj-piano'), wait_until='load')
+        row = page.locator(f'[data-row="argyle:{mid}"]')
+        row.wait_for(timeout=15000)
+        check(row.locator('[data-row-box]').get_attribute('data-box-state') == 'asking', "the program choice asks")
+        for label, option in (('Use', 'use'), ('Make new', 'make_new'), ('Not now', 'not_now')):
+            sel = f'[data-row="argyle:{mid}"] [data-row-action="answer:program_choice:cid1:{option}"]'
+            page.wait_for_function("sel => { const b = document.querySelector(sel); return b && !b.disabled; }", arg=sel, timeout=10000)
+            button = page.locator(sel)
+            check(button.inner_text().strip() == label, f"the row offers {label}: {button.inner_text()}")
+            with page.expect_response(lambda r: r.request.method == 'POST' and r.url.endswith(f'api/situations/mission/{mid}/act'),
+                                      timeout=10000) as act:
+                button.click()
+            body = act.value.request.post_data_json
+            check(act.value.status == 200 and body['option_id'] == f'answer:program_choice:cid1:{option}'
+                  and body['payload'].get('option') == option and body['payload'].get('choice_id') == 'cid1'
+                  and 'text' not in body['payload'], f"{label} posts its own option: {act.value.status} {body} {act.value.text()}")
+            check(page.locator('#cc-input-modal:not(.hidden)').count() == 0, f"{label} asks for no typed answer")
+            check(calls and calls[-1] == (mid, 'cid1', option, 'mom'), f"the server answered {option}: {calls}")
+        check(len(calls) == 3, f"three choices, three answers: {calls}")
+        check(served.errors() == [], f"no page errors: {served.errors()}")
+
+
 SCENARIOS = [scenario_detail_is_one_list, scenario_menu_and_add, scenario_tick_a_step_and_open_sheets,
              scenario_conversation_ticks_and_unticks, scenario_asking_row_posts_through_the_situation,
              scenario_add_a_step_to_a_paused_project,
              scenario_list_page_groups, scenario_closed_projects_are_hidden_folded_and_remembered,
-             scenario_add_through_the_one_add, scenario_add_for_a_child]
+             scenario_add_through_the_one_add, scenario_add_for_a_child,
+             scenario_program_choice_row_buttons_send_their_option]
 
 
 if __name__ == "__main__":

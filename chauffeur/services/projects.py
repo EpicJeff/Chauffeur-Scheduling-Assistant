@@ -1278,14 +1278,36 @@ def _ask_question(raw):
     return (_last_ask(raw).get('result_json') or {}).get('question') or ''
 
 
-def _ask_title(raw, actions, fallback):
-    return (_ask_question(raw)
-            or next((a.get('label') for a in actions if a.get('verb') == 'answer' and a.get('label')), '')
+def _ask_title(raw, actions, fallback, full):
+    """An asking row's words. Only a viewer who reads the mission in full sees
+    its question (the sheet shows them the same words); anyone else reads the
+    projected answer option's label, whose words the projection already
+    cleared for them, else the fallback (the record's own title)."""
+    return ((_ask_question(raw) if full else '')
+            or next((a.get('label') for a in actions if a.get('verb') == 'answer' and a.get('label')
+                     and (a.get('payload') or {}).get('ask') not in ('program_choice', 'steer')), '')
             or fallback)
 
 
+def _mission_seen(mission, viewer, cards_by_mission):
+    """(the viewer's projected situation, their record view) for a mission a
+    row speaks for: the project's card when it has one, else the viewer's own
+    projection; ({}, None) when the viewer may not see the mission at all."""
+    from services import access, situations
+    mid = (mission or {}).get('id')
+    if not mid or viewer is None:
+        return {}, None
+    card = cards_by_mission.get(mid)
+    if card is not None:
+        return card.get('situation') or {}, card.get('view')
+    sit = situations.view('mission', mid, viewer)
+    if sit is None:
+        return {}, None
+    return sit, access.record_view('mission', mission, viewer)
+
+
 _MISSION_WAITING = {'queued': 'waiting to start', 'pending': 'waiting to start', 'waiting_retry': 'trying again soon',
-                    'waiting_step': 'waiting on a step', 'paused': 'paused'}
+                    'waiting_step': 'waiting on a step', 'paused': 'paused', 'waiting_user': 'waiting on an answer'}
 
 
 def _group_of(row, today):
@@ -1348,19 +1370,26 @@ def _step_rows(project, project_view, viewer, cards_by_mission):
                 row = _row('step', sid, s.get('title') or goal, subtitle='Argyle', box='done', reason='skipped')
             elif gone:
                 row = _row('step', sid, s.get('title') or goal, subtitle='Argyle', box='not_yet', reason="Argyle's work is gone")
-            elif asker.get(s.get('mission_id')) == sid:
+            elif asker.get(s.get('mission_id')) == sid or (s.get('question') and state in ('doing', 'blocked')):
                 # The backing mission waits on a person (planned asks do not
-                # write step.question): this step is its one asking row.
-                sit = cards_by_mission.get(s['mission_id']) or {}
-                actions = _ask_actions(sit, mission) or [{'id': 'answer', 'label': 'Answer', 'verb': 'answer', 'payload': {}}]
-                words = _ask_question(mission) or (sit.get('next_step') or {}).get('label') or goal
-                row = _row('step', sid, 'Argyle needs you: ' + words, subtitle=_asks_line(goal), box='asking', when='now',
-                           actions=actions, sheet={'kind': 'mission', 'id': s['mission_id']})
-            elif s.get('question') and state in ('doing', 'blocked'):
-                sit = cards_by_mission.get(s.get('mission_id')) or {}
-                row = _row('step', sid, 'Argyle needs you: ' + s['question'], subtitle=_asks_line(goal), box='asking', when='now',
-                           actions=_ask_actions(sit, mission) or [{'id': 'answer', 'label': 'Answer', 'verb': 'answer', 'payload': {}}],
-                           sheet={'kind': 'mission', 'id': s.get('mission_id')} if s.get('mission_id') else None)
+                # write step.question; plain ones do). The row speaks only the
+                # viewer's projection: the question for a viewer who reads the
+                # mission in full, the step's own title otherwise; buttons only
+                # where the projection offers them (a child is offered none).
+                sit, seen = _mission_seen(mission, viewer, cards_by_mission)
+                full = seen == access.FULL and not _child(viewer or {})
+                actions = _ask_actions(sit, mission) if seen else []
+                sheet = {'kind': 'mission', 'id': s['mission_id']} if seen and s.get('mission_id') else None
+                if full:
+                    words = s.get('question') if asker.get(s.get('mission_id')) != sid else ''
+                    words = words or _ask_title(mission, actions, '', True) or goal
+                    row = _row('step', sid, 'Argyle needs you: ' + words, subtitle=_asks_line(goal), box='asking', when='now',
+                               actions=actions, sheet=sheet)
+                elif actions:
+                    row = _row('step', sid, s.get('title') or goal, subtitle=_asks_line(goal), box='asking', when='now',
+                               actions=actions, sheet=sheet)
+                else:
+                    row = _row('step', sid, s.get('title') or goal, subtitle='Argyle', box='not_yet', reason='waiting on an answer')
             elif state == 'doing':
                 row = _row('step', sid, _working_line(goal), subtitle=_found_short(s.get('found')) or 'Argyle', box='argyle', when='running',
                            sheet={'kind': 'mission', 'id': s.get('mission_id')} if s.get('mission_id') else None)
@@ -1448,18 +1477,32 @@ def _thread_row(card, project, viewer, folded):
     sub = (name + ' · conversation') if name else 'conversation'
     rev = int(raw.get('next_action_rev') or 0)
     state = raw.get('state')
-    # The thread asks when a mission it carries (forwarded, or folded in) waits on a person.
-    forwarded = access.thread_mission(raw)
-    askers = [m for m in folded if _mission_asking(storage.get_mission(m['id']))]
-    forwarded_asks = _mission_asking(forwarded)
-    actions = _ask_actions(sit, forwarded) if forwarded_asks else []
+    # The thread asks when a mission it carries (forwarded, or folded in) waits
+    # on a person AND the viewer's own projection carries that ask: forwarded
+    # `:mission:` options survive situations.view only for a viewer who reads
+    # the mission in full (a keeper, a child: none), and a folded mission's
+    # card is a full read by construction (_fold_target). Nothing else asks.
+    forwarded = {}
+    for o in _ask_actions(sit):
+        bits = (o.get('id') or '').split(':')
+        if len(bits) >= 3 and bits[1] == 'mission':
+            forwarded.setdefault(bits[2], []).append(o)
+    actions, mission = [], None
+    for mid, opts in forwarded.items():
+        m = storage.get_mission(mid)
+        acts = _ask_actions({'options': opts}, m) if _mission_asking(m) else []
+        if acts:
+            actions, mission = acts, m
+            break
     if not actions:
-        actions = [a for m in askers for a in _ask_actions(m.get('situation'), storage.get_mission(m['id']))]
-    asking = bool(actions) if keeper else (forwarded_asks or bool(askers))
-    if asking:
-        mission = forwarded if forwarded_asks else storage.get_mission(askers[0]['id'])
-        actions = actions or [{'id': 'answer', 'label': 'Answer', 'verb': 'answer', 'payload': {}}]
-        row = _row('conversation', card['id'], _ask_title(mission, actions, card.get('title') or ''), subtitle=sub,
+        for c in folded:
+            m = storage.get_mission(c['id'])
+            acts = _ask_actions(c.get('situation'), m) if c.get('view') == access.FULL and _mission_asking(m) else []
+            mission = mission or (m if acts else None)
+            actions.extend(acts)
+    if actions:
+        full = access.record_view('mission', mission, viewer) == access.FULL and not _child(viewer or {})
+        row = _row('conversation', card['id'], _ask_title(mission, actions, card.get('title') or '', full), subtitle=sub,
                    box='asking', when='now', actions=actions)
     elif state in ('done', 'dropped'):
         row = _row('conversation', card['id'], card.get('title') or '', subtitle=sub, box='done')
@@ -1475,21 +1518,26 @@ def _thread_row(card, project, viewer, folded):
     return row
 
 
-def _mission_row(card):
-    from services import missions, planned
+def _mission_row(card, viewer=None):
+    """A mission's row speaks the viewer's projection only: its ask and its
+    running stage in words for a full read; a keeper reads the card title
+    (situations.view strips the question and the plan from their copy)."""
+    from services import access, missions, planned
     sit = card.get('situation') or {}
     raw = storage.get_mission(card['id']) or {}
     status = raw.get('status')
     goal = card.get('title') or ''
-    if _mission_asking(raw):
-        actions = _ask_actions(sit, raw) or [{'id': 'answer', 'label': 'Answer', 'verb': 'answer', 'payload': {}}]
-        row = _row('argyle', card['id'], _ask_title(raw, actions, goal), subtitle=_asks_line(goal), box='asking', when='now', actions=actions)
+    full = card.get('view') == access.FULL and not _child(viewer or {})
+    actions = _ask_actions(sit, raw) if _mission_asking(raw) else []
+    if actions:
+        row = _row('argyle', card['id'], _ask_title(raw, actions, goal, full) if full else goal,
+                   subtitle=_asks_line(goal) if full else 'Argyle asks', box='asking', when='now', actions=actions)
     elif status == 'blocked':
         row = _row('argyle', card['id'], goal, subtitle='Argyle', box='not_yet', reason=sit.get('status_note') or 'stopped')
     elif status in missions.TERMINAL:
         row = _row('argyle', card['id'], goal, subtitle='Argyle', box='done')
     elif status in ('running', 'browsing'):
-        work = planned.running_work(raw)
+        work = planned.running_work(raw) if full else None
         row = _row('argyle', card['id'], (work or {}).get('title') or goal, subtitle='Argyle', box='argyle', when='running')
     else:
         row = _row('argyle', card['id'], goal, subtitle='Argyle', box='not_yet', reason=_MISSION_WAITING.get(status, 'waiting'))
@@ -1507,8 +1555,11 @@ def _program_rows(card, project, viewer, windows):
     prog = card.get('program') or {}
     out = []
     if prog.get('unresolved'):
+        # Pick a program as the old card gated it (canRebind): a person who may
+        # act on the project, or the run's own member. Nobody else gets a dead tap.
+        rebind = bool(viewer and viewer.get('id')) and (can_act(project, viewer) or viewer['id'] == prog.get('member_id'))
         row = _row('program', card['id'], 'Needs a program', subtitle='program', box='not_yet', reason='needs a program',
-                   actions=[{'id': 'rebind', 'label': 'Pick a program', 'verb': 'rebind', 'payload': {}}])
+                   actions=[{'id': 'rebind', 'label': 'Pick a program', 'verb': 'rebind', 'payload': {}}] if rebind else [])
         row['moment'] = {'run_id': card['id']}
         row['sheet'] = {'kind': 'program', 'id': card['id']}
         return [row]
@@ -1582,7 +1633,7 @@ def rows(project, viewer):
                 fold_of[c['id']] = t
                 folded.setdefault(t, []).append(c)
         step_missions = {st.get('mission_id') for st in pv.get('steps') or [] if st.get('mission_id')}
-        by_mission = {c['id']: c.get('situation') for c in cards if c['kind'] == 'mission'}
+        by_mission = {c['id']: c for c in cards if c['kind'] == 'mission'}
         today = datetime.date.today()
         windows = []
         if any(c['kind'] == 'program' for c in cards):
@@ -1594,7 +1645,7 @@ def rows(project, viewer):
             elif c['kind'] == 'mission':
                 if c['id'] in fold_of or c['id'] in step_missions:
                     continue   # folded into its thread, or owned by the Argyle step that launched it
-                out.append(_mission_row(c))
+                out.append(_mission_row(c, viewer))
             elif c['kind'] == 'program':
                 out.extend(_program_rows(c, project, viewer, windows))
             else:
