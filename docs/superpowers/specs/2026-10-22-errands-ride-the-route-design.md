@@ -160,7 +160,7 @@ No new tool. `UpdateErrandTool` gains `skip_date` (appended), `pinned_date`, `pi
 
 `tests/test_errand_lists_render.py` (extend): the page row shows the why text and a Steer button when interactive with an editor; a card shows the why text and no Steer; an unplaced errand draws its reason; the sheet's PUT payload is the whole record. `tests/test_pwa_errand_steer.py` (new, node-run): a scheduled row → both projections → card → modal keeps `why`; Steer shows under Complete's predicate and not otherwise; the "Errands not placed" row appears for an unplaced errand and opens the sheet. Reachability: every steer field the tool accepts is reachable from the sheet or the admin editor (hand path for every agent capability).
 
-Gate (never the full suite): the new files plus `test_errand_lists_render.py`, `test_solve_pack.py`, `test_storage.py`, `test_chat_actions.py`, `test_agent_v2_bridge.py`, `test_schedule_timeline.py`, `test_household_features.py` (registry audit), `test_template_js.py` (pre-existing `pieceDraft` red noted 2026-10-22, not this work's).
+Gate (never the full suite): the new files plus `test_errand_lists_render.py`, `test_solve_pack.py`, `test_storage.py`, `test_chat_actions.py`, `test_agent_v2_bridge.py`, `test_schedule_timeline.py`, `test_settings_registry.py` (both registry audits), `test_template_js.py`.
 
 ## 7. Not in this slice
 

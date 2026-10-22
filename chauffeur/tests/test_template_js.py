@@ -127,9 +127,12 @@ def scenario_every_x_model_root_is_defined_somewhere():
         # nowhere in the script, which is correct and must not be flagged.
         scoped = set(_re.findall(r'x-for="\s*\(?\s*([A-Za-z_$][\w$]*)', full))
         for root in sorted(roots - _NOT_STATE - scoped):
-            # Defined as component state (`root: {`), a declaration, or an
-            # assignment — any of which means somebody meant it to exist.
-            if _re.search(r'(?:^|[\s{,])' + _re.escape(root) + r'\s*[:=]', full, _re.M):
+            # Defined as component state (`root: {`), a declaration, an
+            # assignment, or a getter (`get root() {`, how projects_page.html
+            # derives `pieceDraft` from whichever piece form is open) — any of
+            # which means somebody meant it to exist.
+            if _re.search(r'(?:^|[\s{,])' + _re.escape(root) + r'\s*[:=]', full, _re.M) \
+                    or _re.search(r'\bget\s+' + _re.escape(root) + r'\s*\(', full):
                 continue
             broken.append(f"{name}: x-model binds `{root}.…` but nothing defines `{root}`")
     check(not broken,
