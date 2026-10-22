@@ -20,7 +20,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from harness import check  # noqa: E402
 from models.schemas import Driver, Event  # noqa: E402
+from services import maps  # noqa: E402
 from solver import matcher  # noqa: E402
+
+# No network, ever: the pass primes unknown pairs through Mapbox, and a grid
+# place the storage cache has never seen would otherwise reach real geocoding.
+maps.prime_matrix_cache = lambda locations, ignore_age=False: None
 
 GRID = {'Home': (0, 0), 'Soccer': (20, 0), 'Store': (10, 10), 'Work': (0, 30),
         'Pharmacy': (0, 20), 'Piano': (-30, 0), 'Far': (80, 80), 'Shop': (-4, -4)}
@@ -448,6 +453,75 @@ def scenario_a_cached_row_that_contradicts_the_steer_does_not_count():
     check([r for d, r in rows if r['id'] == 'er1'], "a cached row with the wrong driver does not hold")
     with storage.db_lock:
         storage.daily_schedules_table.truncate()
+
+
+def scenario_unknown_ranks_last_grouped_or_not_and_says_so_alone():
+    jeff, lorena = _driver('d1', 'Jeff'), _driver('d2', 'Lorena')
+    far = _ev('far', 1, 16, 'Far')                 # (80,80): a known but long detour
+    lost = _ev('lost', 2, 16, 'Nowhere')           # not on the grid: unknown legs
+    base = _world({1: [far], 2: [lost]}, [jeff, lorena], {'far': 'd1', 'lost': 'd2'})
+    # The grouped unknown candidate would win on numbers alone (cost - 9999).
+    rows, _ = _place(base, [_errand(location='Store', group_id='g1'),
+                            _errand(id='er2', doc_id=2, location='Store', group_id='g1')], [jeff, lorena])
+    check(len(rows) == 2, f"both grouped errands placed: {rows}")
+    for d, r in rows:
+        check(r['why']['kind'] != 'unknown_travel', f"a known candidate exists, so unknown never wins: {d} {r['why']}")
+    base_only_unknown = _world({2: [lost]}, [lorena], {'lost': 'd2'})
+    rows, _ = _place(base_only_unknown, [_errand(location='Elsewhere', window_days=3)], [lorena])
+    d, r = _only(rows)
+    check(r['why']['kind'] == 'unknown_travel' and r['travel_to_mins'] is None and r['travel_from_mins'] is None
+          and r['why']['text'] == 'drive time unknown, check the address', f"{r}")
+
+
+def scenario_no_location_and_unroutable_are_reported_not_placed():
+    from services import storage
+    jeff = _driver('d1', 'Jeff')
+    base = _world({}, [jeff], {})
+    rows, notes = _place(base, [_errand(location='')], [jeff])
+    check(not rows and notes['er1']['reason'] == 'no_location', f"{notes}")
+    storage.set_cached_travel_time('home', 'nowhere st', storage.UNROUTABLE)
+    rows, notes = _place(base, [_errand(location='Nowhere St')], [jeff])
+    check(not rows and notes['er1']['reason'] == 'unroutable_location', f"{notes}")
+    # An UNROUTABLE row older than the 24h TTL is what every other reader treats
+    # as unknown: the errand is not blamed, and the primer gets to retry.
+    storage.set_cached_travel_time('home', 'stale st', storage.UNROUTABLE)
+    with storage.db_lock:
+        storage._init_distance_mem_cache()
+        storage._distance_mem_cache[('home', 'stale st')]['timestamp'] -= (storage.UNROUTABLE_TTL_MINS + 60) * 60
+    rows, notes = _place(base, [_errand(location='Stale St')], [jeff])
+    check('er1' not in notes or notes['er1']['reason'] != 'unroutable_location',
+          f"an expired failure no longer condemns the address: {notes}")
+    # One failed pair against an address that geocodes fine elsewhere is that
+    # OTHER place's failure, not this one's: a routable pair clears the errand.
+    storage.set_cached_travel_time('badhome', 'mixed st', storage.UNROUTABLE)
+    storage.set_cached_travel_time('home', 'mixed st', 12)
+    rows, notes = _place(base, [_errand(location='Mixed St')], [jeff])
+    check('er1' not in notes or notes['er1']['reason'] != 'unroutable_location',
+          f"a location with a routable pair is not unroutable: {notes}")
+
+
+def scenario_priming_is_one_bounded_call_per_errand_and_none_under_cache_only():
+    from services import maps, storage
+    calls = []
+    real_prime, real_only = maps.prime_matrix_cache, maps.travel_cache_only_active
+    maps.prime_matrix_cache = lambda locs, ignore_age=False: calls.append((sorted(locs), ignore_age))
+    try:
+        n = matcher._prime_errand_pairs('Store', {'Home', 'Soccer', 'Nowhere'}, storage, maps)
+        check(n == 1 and len(calls) == 1 and calls[0][1] is True and 'Store' in calls[0][0]
+              and 'Nowhere' in calls[0][0], f"one planning-cache primer call with the errand's place in it: {calls}")
+        calls.clear()
+        n = matcher._prime_errand_pairs('Store', {'Home', 'Soccer'}, storage, maps)
+        check(n == 0 and not calls, "nothing to prime when every pair is already known")
+        maps.travel_cache_only_active = lambda: True
+        n = matcher._prime_errand_pairs('Store', {'Home', 'Nowhere'}, storage, maps)
+        check(n == 0 and not calls, "no fetch under cache-only mode")
+        many = {f'P{i}' for i in range(60)}
+        maps.travel_cache_only_active = lambda: False
+        n = matcher._prime_errand_pairs('Store', many, storage, maps)
+        check(n == 3 and all(len(c[0]) <= 24 for c in calls) and all('Store' in c[0] for c in calls),
+              f"60 places + the errand go in chunks of at most 24, each carrying the errand's place: {[len(c[0]) for c in calls]}")
+    finally:
+        maps.prime_matrix_cache, maps.travel_cache_only_active = real_prime, real_only
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

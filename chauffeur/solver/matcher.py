@@ -2459,6 +2459,55 @@ def errand_leg_minutes(a, b):
     return int(v)
 
 
+def _errand_location_unroutable(loc, storage):
+    """True for a fresh failed pair only when no cached pair is routable."""
+    import time as _time
+    try:
+        with storage.db_lock:
+            storage._init_distance_mem_cache()
+            cache = list(storage._distance_mem_cache.items())
+    except Exception:
+        return False
+    key = str(loc).strip().lower()
+    now = _time.time()
+    failed = False
+    for (o, d), row in cache:
+        if key not in (o, d):
+            continue
+        duration = row.get('duration_mins', row.get('minutes'))
+        if duration is not None and duration >= 0:
+            return False
+        if (duration == storage.UNROUTABLE
+                and now - row.get('timestamp', 0) <= storage.UNROUTABLE_TTL_MINS * 60):
+            failed = True
+    return failed
+
+
+def _prime_errand_pairs(errand_loc, places, storage, maps, chunk=24):
+    """Spec §2.1: one bounded primer per errand into the planning cache, only
+    for places whose pair with the errand is unknown, in chunks of at most
+    `chunk` locations each carrying the errand's place; nothing under
+    cache-only mode. Returns the number of primer calls."""
+    try:
+        import inspect as _inspect
+        me = _inspect.getmodule(_prime_errand_pairs)
+        if maps.travel_cache_only_active():
+            return 0
+        missing = sorted(p for p in places if p and p.strip() and p != errand_loc
+                         and (me.errand_leg_minutes(errand_loc, p) is None or me.errand_leg_minutes(p, errand_loc) is None))
+        if not missing:
+            return 0
+        calls = 0
+        step = max(1, chunk - 1)
+        for i in range(0, len(missing), step):
+            maps.prime_matrix_cache([errand_loc] + missing[i:i + step], ignore_age=True)
+            calls += 1
+        return calls
+    except Exception as ex:   # never let a routing purchase take the refresh down
+        print(f"[errands] primer failed: {ex}")
+        return 0
+
+
 def errand_why_text(why):
     kind = (why or {}).get('kind')
     who = (why or {}).get('driver_name') or 'someone'
@@ -2665,13 +2714,25 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
               for d_str, day in base_schedules.items()}
     active.sort(key=lambda x: (x.get('priority', 2), -x.get('duration_mins', 30)))
 
+    places = set()
+    for d_str, by_driver in routes.items():
+        for d_id, stops in by_driver.items():
+            places.update(s.location for s in stops if s.location)
+            home = getattr(driver_map[d_id], 'home_location', None)
+            if home:
+                places.add(home)
+    from services import maps as _maps
+
     for errand in active:
         eid = errand.get('id') or f"errand_{errand.get('doc_id')}"
         loc = (errand.get('location') or '').strip()
         if not loc:
             notes[eid] = {'reason': 'no_location', 'text': ERRAND_UNPLACED_TEXT['no_location']}
             continue
-        # (Task 4 inserts the unroutable check and the bounded primer here.)
+        if _errand_location_unroutable(loc, storage):
+            notes[eid] = {'reason': 'unroutable_location', 'text': ERRAND_UNPLACED_TEXT['unroutable_location']}
+            continue
+        _prime_errand_pairs(loc, places, storage, _maps)
         duration = max(5, errand.get('duration_mins', 30) - errand.get('tolerance_mins', 0)) + errand.get('buffer_mins', 0)
         w_start, w_end, skip, reason = errand_window(errand, today, range_dates)
         if reason:
