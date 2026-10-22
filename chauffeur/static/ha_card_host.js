@@ -875,8 +875,15 @@
                     Object.keys(builtin.reg.areas).forEach(function (k) {
                         var a = builtin.reg.areas[k];
                         if (a.picture) {
-                            a.picture = a.picture.split('?')[0]
-                                + '?v=' + Math.floor(Date.now() / 3600000);
+                            // Replace only the version: splitting on '?'
+                            // would throw away any other query the stored
+                            // picture carries.
+                            var bare = a.picture.replace(/[?&]v=\d+/, '');
+                            if (bare.indexOf('?') < 0 && bare.indexOf('&') >= 0) {
+                                bare = bare.replace('&', '?');
+                            }
+                            a.picture = bare + (bare.indexOf('?') >= 0 ? '&' : '?')
+                                + 'v=' + Math.floor(Date.now() / 3600000);
                         }
                     });
                 }, 3600000);
@@ -1353,7 +1360,15 @@
                 || Promise.reject(new Error('no websocket in the panel'));
         };
         hass.hassUrl = function (p) {
-            return API.base + String(p || '').replace(/^\//, '');
+            var url = API.base + String(p || '').replace(/^\//, '');
+            // hui-image draws the result as a bare <img>, and the area
+            // photograph behind it is the wall-tier image64 proxy — so the
+            // panel's token rides the query string (nav's chfAuthUrl), the
+            // same way the custom card's script tag carries it above.
+            // Found 2026-10-22, two weeks after the flip: every area card
+            // photograph blank. Same-origin only; a scheme means foreign.
+            if (/^[a-z]+:\/\//i.test(url)) return url;
+            return window.chfAuthUrl ? window.chfAuthUrl(url) : url;
         };
         // hass.callApi, for exactly ONE request shape: the sensor card's
         // history line. A general proxy would be an authenticated hole into

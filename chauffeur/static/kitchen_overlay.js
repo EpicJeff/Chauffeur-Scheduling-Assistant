@@ -47,7 +47,10 @@ window.kitchenTileIsland = function () {
     momentSrc: function (m) {
       var att = (m && m.attachment) || {};
       var u = (m && (m.poster_url || m.media_url)) || att.url || '';
-      return u ? base + String(u).replace(/^\//, '') : (att.data_url || '');
+      if (!u) return att.data_url || '';
+      /* a bare <img> on a wall-tier route: the token rides the query string */
+      var full = base + String(u).replace(/^\//, '');
+      return window.chfAuthUrl ? window.chfAuthUrl(full) : full;
     },
     openBoardMoment: function (ev, m) {
       /* the same full-screen overlay a fresh moment pops on the wall —

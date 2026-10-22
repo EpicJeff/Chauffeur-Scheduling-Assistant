@@ -5115,7 +5115,11 @@
 
         function momentMediaSrc(att) {
             if (!att) return '';
-            return att.url ? `${apiBase}${att.url.replace(/^\//, '')}` : (att.data_url || '');
+            // An <img>/<video> sets no headers and /api/media is wall-tier:
+            // the token rides the query string, same as the poster below.
+            // Found 2026-10-22, two weeks after the flip: no moment showed
+            // in any chat because this one builder skipped chfAuthUrl.
+            return att.url ? window.chfAuthUrl(`${apiBase}${att.url.replace(/^\//, '')}`) : (att.data_url || '');
         }
 
         function momentPosterSrc(att) {

@@ -161,7 +161,9 @@
             }, opts.show || {});
 
             const id = 'mg' + (++seq);
-            const url = u => `${opts.apiBase}${String(u || '').replace(/^\//, '')}`;
+            // Thumbnails and the opened item are bare <img>/<video> on a
+            // wall-tier route: the token rides the query string (chfAuthUrl).
+            const url = u => (window.chfAuthUrl || (x => x))(`${opts.apiBase}${String(u || '').replace(/^\//, '')}`);
             const scroller = () => opts.scroller || el;
 
             const g = {
