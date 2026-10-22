@@ -81,7 +81,7 @@ def scenario_the_setting_exists_with_its_default_and_bounds():
             pass
     from services import settings_registry as reg
     owner = reg.owner('errand_dedicated_trip_mins')
-    check(owner and owner['page'] == 'errands' and owner['anchor'] == 'errand-settings',
+    check(owner and owner['page'] == 'errands?tab=errands' and owner['anchor'] == 'errand-settings',
           f"the registry points the setting at the Errands drawer: {owner}")
 
 
@@ -145,6 +145,147 @@ def scenario_the_schedule_generation_counts_up():
     check(storage.get_schedule_generation() == 0, "starts at zero")
     check(storage.bump_schedule_generation() == 1 and storage.bump_schedule_generation() == 2
           and storage.get_schedule_generation() == 2, "bumps by one and reads back")
+
+
+def _client():
+    from fastapi.testclient import TestClient
+    import main
+    main.trigger_background_refresh = lambda *a, **k: None   # never solve in a unit test
+    return TestClient(main.app), main
+
+
+def _headers():
+    """No token: with no `auth_enforce` setting the guard is in audit mode
+    (`services/auth.enforcing()` reads absent as False), so every route
+    answers. Kept as a hook so a later enforcing fixture has one place to add
+    a parent token."""
+    return {}
+
+
+def scenario_get_errands_carries_placement_or_unplaced_and_the_generation():
+    _fresh()
+    client, main = _client()
+    storage.add_errand(_errand(id='e-sched'))
+    storage.add_errand(_errand(id='e-lost'))
+    storage.save_cached_daily_schedule('2026-10-27', {'scheduled_errands': [_row('e-sched', '2026-10-27')]}, 'h')
+    storage.save_errand_placement_notes({'e-lost': {'reason': 'no_slot', 'text': 'no drive in its window has room for it', 'generation': 4}})
+    storage.set_app_state('schedule_generation', 4)
+    res = client.get('/api/errands', headers=_headers())
+    check(res.status_code == 200, f"GET /api/errands {res.status_code}: {res.text[:200]}")
+    rows = {r['id']: r for r in res.json()}
+    sched = rows['e-sched']
+    check(sched['placement']['why']['text'] == "on Jeff's way to Soccer, +6 min"
+          and sched['placement']['driver'] == {'id': 'd1', 'name': 'Jeff'}
+          and sched['placement']['start_time'] == '2026-10-27T16:10:00'
+          and sched['scheduled_start'] == '2026-10-27T16:10:00' and 'unplaced' not in sched, f"{sched}")
+    lost = rows['e-lost']
+    check(lost['unplaced']['reason'] == 'no_slot' and 'placement' not in lost, f"{lost}")
+    check(all(r['generation'] == 4 for r in rows.values()), "every row carries the generation")
+
+
+def scenario_put_rejects_a_bad_date_and_a_steer_forgets_placements():
+    _fresh()
+    client, main = _client()
+    doc_id = storage.add_errand(_errand(id='e-steer'))
+    storage.save_cached_daily_schedule('2026-10-27', {'scheduled_errands': [_row('e-steer', '2026-10-27')]}, 'h')
+    body = dict(storage.get_errand_by_id(doc_id))
+    body['pinned_date'] = 'next tuesday'
+    res = client.put(f'/api/errands/{doc_id}', json=body, headers=_headers())
+    check(res.status_code == 422, f"a malformed date is refused: {res.status_code}")
+    body['pinned_date'] = '2026-10-31'
+    res = client.put(f'/api/errands/{doc_id}', json=body, headers=_headers())
+    check(res.status_code == 200, f"{res.status_code} {res.text[:200]}")
+    check(storage.get_all_scheduled_errand_rows() == {}, "the stale placement is forgotten")
+    check(storage.get_errand_by_id(doc_id)['pinned_date'] == '2026-10-31', "the pin is stored")
+    storage.save_cached_daily_schedule('2026-10-31', {'scheduled_errands': [_row('e-steer', '2026-10-31')]}, 'h')
+    body = dict(storage.get_errand_by_id(doc_id))
+    body['title'] = 'Costco run (big)'
+    client.put(f'/api/errands/{doc_id}', json=body, headers=_headers())
+    check(set(storage.get_all_scheduled_errand_rows()) == {'e-steer'}, "a title-only edit keeps the placement")
+
+
+def scenario_completing_twice_mints_nothing_through_put():
+    _fresh()
+    client, main = _client()
+    anchor = time.mktime(datetime.datetime(2026, 10, 5, 0, 0).timetuple())
+    doc_id = storage.add_errand(_errand(id='e-wk', recurrence_rule='weekly', starts_on=anchor, once_driver_id='d2'))
+    body = dict(storage.get_errand_by_id(doc_id))
+    body['is_completed'] = True
+    client.put(f'/api/errands/{doc_id}', json=body, headers=_headers())
+    rows = storage.get_all_errands()
+    check(len(rows) == 2, f"one successor: {len(rows)}")
+    done = storage.get_errand_by_id(doc_id)
+    check(done['is_completed'] and done['once_driver_id'] is None, "completed through complete_errand")
+    succ = next(r for r in rows if r['doc_id'] != doc_id)
+    check(abs(succ['starts_on'] - (anchor + WEEK)) < 1 and succ['once_driver_id'] is None, f"{succ}")
+    body = dict(storage.get_errand_by_id(doc_id))
+    client.put(f'/api/errands/{doc_id}', json=body, headers=_headers())
+    check(len(storage.get_all_errands()) == 2, "a second completed PUT mints nothing")
+
+
+def scenario_the_agent_updates_by_uuid_or_doc_id_and_steers():
+    _fresh()
+    from services import agent_tools_v2 as tools
+    doc_id = storage.add_errand(_errand(id='e-agent'))
+    storage.save_cached_daily_schedule('2026-10-27', {'scheduled_errands': [_row('e-agent', '2026-10-27')]}, 'h')
+    out = tools.handle_update_errand({'errand_id': 'e-agent', 'skip_date': '2026-10-27'})
+    check(out.get('status') == 'success', f"by uuid: {out}")
+    check(storage.get_errand_by_id(doc_id)['skip_dates'] == ['2026-10-27'], "skip_date appended")
+    check(storage.get_all_scheduled_errand_rows() == {}, "a steer through the agent forgets the placement")
+    out = tools.handle_update_errand({'errand_id': str(doc_id), 'pinned_date': '2026-10-31',
+                                      'pinned_start': '09:00', 'once_driver_id': 'd2'})
+    e = storage.get_errand_by_id(doc_id)
+    check(out.get('status') == 'success' and e['pinned_date'] == '2026-10-31' and e['pinned_start'] == '09:00'
+          and e['once_driver_id'] == 'd2', f"by doc_id string: {out} {e}")
+    out = tools.handle_update_errand({'errand_id': 'e-agent', 'pinned_date': 'friday'})
+    check(out.get('status') == 'error' and 'date' in out.get('message', '').lower(), f"a bad date is refused in words: {out}")
+    out = tools.handle_update_errand({'errand_id': 'e-agent', 'clear_steer': True})
+    e = storage.get_errand_by_id(doc_id)
+    check(e['skip_dates'] == [] and e['pinned_date'] is None and e['pinned_start'] is None and e['once_driver_id'] is None,
+          f"clear_steer clears all four: {e}")
+    out = tools.handle_update_errand({'errand_id': 'e-agent', 'is_completed': True})
+    check(out.get('status') == 'success' and storage.get_errand_by_id(doc_id)['is_completed'], "completion works")
+    check(tools.handle_update_errand({'errand_id': 'ghost'}).get('status') == 'error', "unknown id is an error result")
+
+
+def scenario_skip_date_is_idempotent():
+    _fresh()
+    from services import agent_tools_v2 as tools
+    storage.add_errand(_errand(id='e-twice'))
+    tools.handle_update_errand({'errand_id': 'e-twice', 'skip_date': '2026-10-27'})
+    tools.handle_update_errand({'errand_id': 'e-twice', 'skip_date': '2026-10-27'})
+    check(storage.get_errand_by_id('e-twice')['skip_dates'] == ['2026-10-27'], "appended once")
+
+
+def scenario_the_agent_reads_the_same_placement_the_page_does():
+    _fresh()
+    from services import agent_tools_v2 as tools
+    storage.add_errand(_errand(id='e-read'))
+    storage.save_cached_daily_schedule('2026-10-27', {'scheduled_errands': [_row('e-read', '2026-10-27')]}, 'h')
+    storage.set_app_state('schedule_generation', 9)
+    out = tools.handle_get_errands({})
+    row = next(r for r in out['errands'] if r['id'] == 'e-read')
+    check(row['placement']['why']['text'] == "on Jeff's way to Soccer, +6 min" and row['generation'] == 9, f"{row}")
+    schema = tools.UpdateErrandTool.model_json_schema()['properties']
+    for f in ('skip_date', 'pinned_date', 'pinned_start', 'pinned_end', 'once_driver_id', 'clear_steer'):
+        check(f in schema, f"the tool declares {f}")
+
+
+def scenario_the_setting_round_trips_through_the_api_and_has_a_control():
+    _fresh()
+    client, main = _client()
+    res = client.post('/api/settings', json={'errand_dedicated_trip_mins': 40}, headers=_headers())
+    check(res.status_code == 200, f"POST /api/settings {res.status_code}: {res.text[:200]}")
+    # harness.py stubs storage.get_settings for the solver tests, so read the table.
+    with storage.db_lock:
+        stored = (storage.settings_table.all() or [{}])[0]
+    check(stored.get('errand_dedicated_trip_mins') == 40, f"stored: {stored.get('errand_dedicated_trip_mins')}")
+    res = client.post('/api/settings', json={'errand_dedicated_trip_mins': 500}, headers=_headers())
+    check(res.status_code == 422, f"out of bounds refused: {res.status_code}")
+    from services import settings_registry as reg
+    ui = reg.audit_ui()
+    missing = [m for m in ui.get('unreachable', []) if m.get('key') == 'errand_dedicated_trip_mins']
+    check(not missing, f"the Errands drawer carries the control: {missing}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

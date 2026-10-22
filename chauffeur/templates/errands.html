@@ -136,6 +136,18 @@
            `errands?tab=rules` forwards and deep links still find it. The macro
            draws nothing for a panel, kiosk or filtered embed. #}
         {% call settings_drawer('errands', 'Errands') %}
+        {% call settings_section('errand-settings', 'Where errands land') %}
+        <div class="bg-gray-900 rounded-xl p-4" x-data="errandRoutingSettings()" x-init="load()">
+            <label class="block text-gray-400 mb-1 text-sm" for="errand-dedicated-trip-mins">Prefer errands on the way</label>
+            <div class="flex items-center gap-3">
+                <input id="errand-dedicated-trip-mins" type="number" min="0" max="120" step="1"
+                    x-model.number="settings.errand_dedicated_trip_mins" @change="save()"
+                    class="w-28 bg-gray-800 border border-gray-600 rounded-lg p-2 text-white">
+                <span class="text-sm text-gray-400">extra minutes a passing drive may add before a separate trip from home is worth it</span>
+            </div>
+            <p class="text-xs text-gray-500 mt-2">Errands land on a drive someone already makes. A trip from home only wins when every passing drive would add more than this.</p>
+        </div>
+        {% endcall %}
         {% include 'components/errand_rules.html' %}
         {% endcall %}
     </div>
@@ -1003,6 +1015,46 @@
         // (Nothing kicks off here any more: errandsPage()'s x-init does it,
         // so the lists load exactly once and the page cannot race Alpine.)
     </script>
+<script>
+    function errandRoutingSettings() {
+        return {
+            settings: { errand_dedicated_trip_mins: 25 },
+            _last: 25,
+            async load() {
+                try {
+                    const r = await fetch('api/settings');
+                    const s = r.ok ? await r.json() : {};
+                    if (typeof s.errand_dedicated_trip_mins === 'number') {
+                        this.settings.errand_dedicated_trip_mins = s.errand_dedicated_trip_mins;
+                        this._last = s.errand_dedicated_trip_mins;
+                    }
+                } catch (e) { }
+            },
+            async save() {
+                const raw = this.settings.errand_dedicated_trip_mins;
+                const parsed = typeof raw === 'number' ? raw :
+                    (typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : NaN);
+                if (!Number.isFinite(parsed)) {
+                    this.settings.errand_dedicated_trip_mins = this._last;
+                    return;
+                }
+                const v = Math.max(0, Math.min(120, Math.trunc(parsed)));
+                this.settings.errand_dedicated_trip_mins = v;
+                if (typeof window.chfSettingsSaving === 'function') window.chfSettingsSaving();
+                try {
+                    const r = await fetch('api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                           body: JSON.stringify({ errand_dedicated_trip_mins: v }) });
+                    if (!r.ok) throw new Error('Could not save that.');
+                    this._last = v;
+                    if (typeof window.chfSettingsSaved === 'function') window.chfSettingsSaved(true);
+                } catch (e) {
+                    const msg = 'Could not save that.';
+                    if (!(typeof window.chfSettingsSaved === 'function' && window.chfSettingsSaved(false, msg))) showGlobalAlert(msg);
+                }
+            },
+        };
+    }
+</script>
     {% include 'components/errand_lists.html' %}
     {% include 'components/control_center.html' %}
     {% include 'components/moments_hearth.html' %}

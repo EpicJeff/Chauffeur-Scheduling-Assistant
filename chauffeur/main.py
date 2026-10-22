@@ -75,7 +75,7 @@ def ensure_vapid_keys():
 
 ensure_vapid_keys()
 
-from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, Car, FamilyMember, TelemetryEvent, Errand, ErrandRule, StatusTier, StatusProtocol, StatusDay, AssistContact, AssistAssignment, HouseholdTask, ProtectedCommitment
+from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, Car, FamilyMember, TelemetryEvent, Errand, ErrandRule, StatusTier, StatusProtocol, StatusDay, AssistContact, AssistAssignment, HouseholdTask, ProtectedCommitment, STEER_FIELDS, ERRAND_ROUTING_FIELDS
 from services import storage, calendar, maps, deletion
 from services import assist as _assist_svc
 from solver import matcher
@@ -18263,7 +18263,6 @@ def download_db():
 def get_errands():
     check_past_due_errands()
     raw = storage.get_all_errands()
-    errand_schedules = storage.get_all_scheduled_errands()
             
     # M1: the standing shopping lists bound to each errand by tag, so the
     # errand card shows what the trip is actually FOR. Computed once here
@@ -18273,11 +18272,26 @@ def get_errands():
     for l in all_lists:
         open_counts[l['id']] = len(storage.get_shopping_items(l['id'], include_checked=False))
 
+    rows_by_id = storage.get_all_scheduled_errand_rows()
+    notes = storage.get_errand_placement_notes()
+    generation = storage.get_schedule_generation()
+    today = datetime.now().date().isoformat()
     res = []
     for e in raw:
-        obj = Errand(**e).model_dump() if hasattr(Errand(**e), 'model_dump') else Errand(**e).dict()
-        if obj['id'] in errand_schedules:
-            obj['scheduled_start'] = errand_schedules[obj['id']]
+        obj = Errand(**e).model_dump()
+        obj['doc_id'] = e.get('doc_id')
+        obj['skip_dates'] = [d for d in (obj.get('skip_dates') or []) if d >= today]
+        obj['generation'] = generation
+        row = rows_by_id.get(obj['id'])
+        if row:
+            obj['scheduled_start'] = row.get('start') or row.get('start_time')
+            drv = row.get('driver') or {}
+            obj['placement'] = {'start_time': row.get('start_time') or row.get('start'),
+                                'end_time': row.get('end_time') or row.get('end'),
+                                'driver': {'id': drv.get('id'), 'name': drv.get('name')},
+                                'why': row.get('why') or {}}
+        elif obj['id'] in notes and not obj.get('is_completed'):
+            obj['unplaced'] = notes[obj['id']]
         obj['shopping_lists'] = [
             {'id': l['id'], 'name': l['name'], 'open_count': open_counts.get(l['id'], 0)}
             for l in storage.find_shopping_lists_for_errand(obj)]
@@ -18365,26 +18379,27 @@ def create_errand(errand: Errand, background_tasks: BackgroundTasks):
     background_tasks.add_task(trigger_background_refresh)
     return {"doc_id": doc_id, "status": "created"}
 
+
 @app.put("/api/errands/{doc_id}")
 def update_errand(doc_id: int, errand: Errand, background_tasks: BackgroundTasks):
-    # Check for recurrence trigger
-    old_e_list = [e for e in storage.get_all_errands() if e['doc_id'] == doc_id]
-    if old_e_list:
-        old_e = old_e_list[0]
-        if not old_e.get('is_completed') and errand.is_completed and errand.recurrence_rule:
-            new_e = errand.model_dump() if hasattr(errand, 'model_dump') else errand.dict()
-            import uuid
-            import time
-            new_e['id'] = uuid.uuid4().hex
-            new_e['is_completed'] = False
-            new_e['status'] = 'pending'
-            new_e['last_scheduled_end'] = None
-            new_e['created_at'] = time.time()
-            if 'doc_id' in new_e:
-                del new_e['doc_id']
-            storage.add_errand(new_e)
-
-    storage.update_errand(doc_id, errand.model_dump() if hasattr(errand, 'model_dump') else errand.dict())
+    old = storage.get_errand_by_id(doc_id)
+    if not old:
+        raise HTTPException(status_code=404, detail="Errand not found")
+    incoming = errand.model_dump()
+    incoming.pop('doc_id', None)
+    if incoming.get('is_completed') and not old.get('is_completed'):
+        # THE completion path: clears the one-shot steer and mints the
+        # recurring successor anchored on the cycle just completed (spec §4.3).
+        storage.complete_errand(doc_id, incoming)
+    else:
+        # An already-done row saved again mints nothing.
+        storage.update_errand(doc_id, incoming)
+    try:
+        before = Errand(**{k: v for k, v in old.items() if k != 'doc_id'}).model_dump()
+    except Exception:
+        before = old
+    if any(before.get(f) != incoming.get(f) for f in ERRAND_ROUTING_FIELDS):
+        storage.forget_errand_placements(old.get('id'))
     background_tasks.add_task(trigger_background_refresh)
     return {"status": "updated"}
 
@@ -21721,8 +21736,14 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         # Update previous_assignments for the next day's solve!
         previous_assignments.update(assignments)
 
-    # Pass 2: Global Errand Placement
-    scheduled_errands_by_date, _errand_notes = matcher.insert_errands_globally(base_schedules, errands, drivers, trip_metadata=trip_metadata) if not draft else ({}, {})
+    # Pass 2: Global Errand Placement (errands ride the route). The drivers'
+    # own events ride along so a work day is a leg, not a blank.
+    if draft:
+        scheduled_errands_by_date, errand_notes = {}, {}
+    else:
+        scheduled_errands_by_date, errand_notes = matcher.insert_errands_globally(
+            base_schedules, errands, drivers, trip_metadata=trip_metadata,
+            driver_events=driver_events_map, settings=storage.get_settings())
 
     # Pass 3: Route Edges and Caching
     from models.schemas import Event
@@ -21825,6 +21846,15 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     except Exception as _ppe:
         logger.warning(f"Solve pack prune failed: {_ppe}")
     final_data = compile_and_save_combined()
+
+    # Errands: what could not be placed, and a generation the steer sheet can
+    # wait for. Only the routine refresh writes them — a custom-range or draft
+    # solve must not clear a note that belongs to the week it did not look at.
+    if not draft and start_date_str is None and end_date_str is None:
+        gen = storage.bump_schedule_generation()
+        for n in errand_notes.values():
+            n['generation'] = gen
+        storage.save_errand_placement_notes(errand_notes)
 
     return final_data
 

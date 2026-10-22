@@ -1752,6 +1752,12 @@ class Errand(BaseModel):
 # The one-shot steer fields, named once so storage, the PUT and the agent agree.
 STEER_FIELDS = ('skip_dates', 'pinned_date', 'pinned_start', 'pinned_end', 'once_driver_id')
 
+ERRAND_ROUTING_FIELDS = ('location', 'duration_mins', 'tolerance_mins', 'buffer_mins',
+                         'time_window_start', 'time_window_end', 'valid_days_of_week',
+                         'window_days', 'starts_on', 'recurrence_rule', 'required_drivers',
+                         'allowed_drivers', 'prohibited_drivers', 'required_passengers',
+                         'prohibited_passengers', 'group_id', 'priority') + STEER_FIELDS
+
 
 class ErrandRule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

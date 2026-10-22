@@ -6524,6 +6524,12 @@ class UpdateErrandTool(BaseModel):
     buffer_mins: Optional[int] = Field(default=None, description="Optional Buffer time in minutes.")
     tolerance_mins: Optional[int] = Field(default=None, description="Optional Tolerance for late arrival.")
     group_id: Optional[str] = Field(default=None, description="Optional Group ID.")
+    skip_date: Optional[str] = Field(default=None, description="A day (YYYY-MM-DD) this errand must NOT land on; added to its skip list. 'Not Thursday.'")
+    pinned_date: Optional[str] = Field(default=None, description="The one day (YYYY-MM-DD) this errand must land on this cycle. 'Put it on Saturday.'")
+    pinned_start: Optional[str] = Field(default=None, description="With pinned_date: earliest HH:MM that day.")
+    pinned_end: Optional[str] = Field(default=None, description="With pinned_date: latest HH:MM it may end that day.")
+    once_driver_id: Optional[str] = Field(default=None, description="The driver who runs it this cycle only. 'Let Lorena do it.'")
+    clear_steer: bool = Field(default=False, description="Back to automatic: clears skip dates, the pinned day and time, and the once-driver.")
 
 class DeleteErrandTool(BaseModel):
     """
@@ -7809,14 +7815,17 @@ def handle_add_errand(args: dict) -> dict:
 
 def handle_update_errand(args: dict) -> dict:
     from services import storage
-    errand_id = args.get('errand_id')
-    errand = storage.get_errand(errand_id)
-    if not errand: return {"status": "error", "message": "Errand not found."}
-    
+    from models.schemas import Errand, ERRAND_ROUTING_FIELDS
+    from pydantic import ValidationError
+    errand = storage.get_errand_by_id(args.get('errand_id'))
+    if not errand:
+        return {"status": "error", "message": "Errand not found."}
+    doc_id = errand['doc_id']
+
     if args.get('is_completed'):
-        storage.complete_errand(errand_id)
+        storage.complete_errand(doc_id)
         return {"status": "success", "message": "Errand marked as completed and rescheduled if recurring."}
-    
+
     update_data = {}
     if args.get('title'): update_data['title'] = args.get('title')
     if args.get('duration_mins'): update_data['duration_mins'] = args.get('duration_mins')
@@ -7824,23 +7833,51 @@ def handle_update_errand(args: dict) -> dict:
         from services import maps
         update_data['location'] = maps.resolve_routable_location(args.get('location'))
     if args.get('starts_on'): update_data['starts_on'] = args.get('starts_on')
-    
-    for field in ['allowed_drivers', 'required_drivers', 'prohibited_drivers', 
+    for field in ['allowed_drivers', 'required_drivers', 'prohibited_drivers',
                   'allowed_passengers', 'required_passengers', 'prohibited_passengers']:
         if args.get(field) is not None:
             update_data[field] = args.get(field)
-            
     for field in ['time_window_start', 'time_window_end', 'group_id']:
         if args.get(field) is not None:
             update_data[field] = args.get(field) or None
-            
     for field in ['buffer_mins', 'tolerance_mins']:
         if args.get(field) is not None:
             update_data[field] = args.get(field)
-    
-    if update_data:
-        storage.update_errand(errand_id, update_data)
-        
+
+    # Steering (spec §4.6): one-shot fields, validated by the Errand model.
+    if args.get('clear_steer'):
+        update_data.update({'skip_dates': [], 'pinned_date': None, 'pinned_start': None,
+                            'pinned_end': None, 'once_driver_id': None})
+    else:
+        if args.get('skip_date'):
+            days = list(errand.get('skip_dates') or [])
+            if args['skip_date'] not in days:
+                days.append(args['skip_date'])
+            update_data['skip_dates'] = days
+        for field in ['pinned_date', 'pinned_start', 'pinned_end', 'once_driver_id']:
+            if args.get(field) is not None:
+                update_data[field] = args.get(field) or None
+    if not update_data:
+        return {"status": "success", "message": "Nothing to change."}
+    merged = dict(errand)
+    merged.pop('doc_id', None)
+    merged.update(update_data)
+    try:
+        clean = Errand(**merged).model_dump()
+    except ValidationError as ex:
+        error = ex.errors()[0]
+        field = '.'.join(str(part) for part in error['loc'])
+        return {"status": "error", "message": f"That is not a valid value: {field}: {error['msg']}"}
+    except Exception:
+        return {"status": "error", "message": "That is not a valid value."}
+    clean.pop('doc_id', None)
+    try:
+        before = Errand(**{k: v for k, v in errand.items() if k != 'doc_id'}).model_dump()
+    except Exception:
+        before = errand
+    storage.update_errand(doc_id, clean)
+    if any(before.get(f) != clean.get(f) for f in ERRAND_ROUTING_FIELDS):
+        storage.forget_errand_placements(errand['id'])
     return {"status": "success", "message": "Errand updated."}
 
 def handle_delete_errand(args: dict) -> dict:
@@ -7849,9 +7886,30 @@ def handle_delete_errand(args: dict) -> dict:
     return {"status": "success", "message": "Errand deleted."}
 
 def handle_get_errands(args: dict) -> dict:
+    """The same rows the Errands page reads, placement and all (the owning
+    module rule: a number Argyle says comes from the row, never a guess)."""
     from services import storage
-    errands = storage.get_all_errands()
-    return {"status": "success", "errands": errands}
+    from datetime import date
+    rows = storage.get_all_scheduled_errand_rows()
+    notes = storage.get_errand_placement_notes()
+    gen = storage.get_schedule_generation()
+    today = date.today().isoformat()
+    out = []
+    for e in storage.get_all_errands():
+        e = dict(e)
+        e['skip_dates'] = [d for d in (e.get('skip_dates') or []) if d >= today]
+        e['generation'] = gen
+        row = rows.get(e.get('id'))
+        if row:
+            drv = row.get('driver') or {}
+            e['placement'] = {'start_time': row.get('start_time') or row.get('start'),
+                              'end_time': row.get('end_time') or row.get('end'),
+                              'driver': {'id': drv.get('id'), 'name': drv.get('name')},
+                              'why': row.get('why') or {}}
+        elif e.get('id') in notes and not e.get('is_completed'):
+            e['unplaced'] = notes[e['id']]
+        out.append(e)
+    return {"status": "success", "errands": out}
 
 def handle_add_errand_rule(args: dict) -> dict:
     from services import storage

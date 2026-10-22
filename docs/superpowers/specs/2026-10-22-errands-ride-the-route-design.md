@@ -138,7 +138,7 @@ No new tool. `UpdateErrandTool` gains `skip_date` (appended), `pinned_date`, `pi
 
 ## 5. Settings
 
-`Settings.errand_dedicated_trip_mins: int = 25` (bounds 0–120 by validator) in `models/schemas.py`; registry entry in `settings_registry.py` (group `daily`, label "Prefer errands on the way", help "How many extra minutes a passing drive may add before a separate trip from home is worth it", page `errands`, anchor `errand-settings`); a number input bound to the key in the Errands settings drawer (`templates/errands.html`) under an element with that anchor id, saved through the drawer's existing partial save. Both registry audits (model coverage and UI binding) must pass, and a round-trip test saves and reads the value through `/api/settings`.
+`Settings.errand_dedicated_trip_mins: int = 25` (bounds 0–120 by validator) in `models/schemas.py`; registry entry in `settings_registry.py` (group `daily`, label "Prefer errands on the way", help "How many extra minutes a passing drive may add before a separate trip from home is worth it", page `errands?tab=errands` (the UI audit requires the tab on a drawer page), anchor `errand-settings`); a number input bound to the key in the Errands settings drawer (`templates/errands.html`) under an element with that anchor id, saved through the drawer's existing partial save. Both registry audits (model coverage and UI binding) must pass, and a round-trip test saves and reads the value through `/api/settings`.
 
 ## 6. Tests, written first
 
