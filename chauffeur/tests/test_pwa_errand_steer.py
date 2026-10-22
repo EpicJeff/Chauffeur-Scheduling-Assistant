@@ -72,6 +72,7 @@ def scenario_unplaced_errands_have_a_row_and_open_the_sheet():
     check('function renderUnplacedErrands' in src and 'pwaSteerErrand(' in src,
           "it renders from /api/errands and opens the same steer flow")
     fn = _function_text(src, 'async function pwaSteerErrand(ref)')
+    shared = open(os.path.join(os.path.dirname(TPL), 'static', 'errand_steer.js'), encoding='utf-8').read()
     got = _run_node(r"""
 var apiBase = ''; var puts = [];
 var memberToken = () => 't'; var showGlobalAlert = () => {}; var selectedDriverId = 'd1';
@@ -85,7 +86,7 @@ globalThis.fetch = async (url, init) => {
 };
 var answers = ['driver', 'd2'];
 globalThis.promptChoice = async () => answers.shift();
-""" + fn + r"""
+""" + shared + fn + r"""
 pwaSteerErrand({id: 'er1'}).then(() => console.log(JSON.stringify({puts})));
 """)
     if got is None:

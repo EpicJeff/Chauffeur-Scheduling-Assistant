@@ -18398,6 +18398,8 @@ def update_errand(doc_id: int, errand: Errand, background_tasks: BackgroundTasks
         before = Errand(**{k: v for k, v in old.items() if k != 'doc_id'}).model_dump()
     except Exception:
         before = old
+    today = datetime.now().date().isoformat()
+    before['skip_dates'] = [d for d in (before.get('skip_dates') or []) if d >= today]
     if any(before.get(f) != incoming.get(f) for f in ERRAND_ROUTING_FIELDS):
         storage.forget_errand_placements(old.get('id'))
     background_tasks.add_task(trigger_background_refresh)
@@ -21743,7 +21745,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     else:
         scheduled_errands_by_date, errand_notes = matcher.insert_errands_globally(
             base_schedules, errands, drivers, trip_metadata=trip_metadata,
-            driver_events=driver_events_map, settings=storage.get_settings())
+            driver_events=driver_events_map, settings=storage.get_settings(), home_location=home_location)
 
     # Pass 3: Route Edges and Caching
     from models.schemas import Event
@@ -21851,10 +21853,11 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     # wait for. Only the routine refresh writes them — a custom-range or draft
     # solve must not clear a note that belongs to the week it did not look at.
     if not draft and start_date_str is None and end_date_str is None:
-        gen = storage.bump_schedule_generation()
+        gen = storage.get_schedule_generation() + 1
         for n in errand_notes.values():
             n['generation'] = gen
         storage.save_errand_placement_notes(errand_notes)
+        storage.bump_schedule_generation()
 
     return final_data
 

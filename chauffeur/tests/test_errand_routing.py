@@ -224,16 +224,85 @@ def scenario_a_long_errand_that_fits_nowhere_is_a_no_slot_note():
     check(not rows and notes['er1']['reason'] == 'no_slot', f"{rows} {notes}")
 
 
-def scenario_a_ride_the_driver_also_attends_is_one_stop():
+def scenario_a_ride_the_driver_also_attends_is_one_busy_stop():
+    # R1: the driver is THERE. A ride that is also on the driver's own
+    # calendar never opens a drop-off-and-run gap, however long it is.
     jeff = _driver('d1', 'Jeff')
-    dentist = _ev('dentist', 1, 10, 'Soccer', 'Dentist', dur=60)
-    base = _world({1: [dentist]}, [jeff], {'dentist': 'd1'})
-    rows, _ = _place(base, [_errand()], [jeff], driver_events={'d1': [dentist]})
-    d, r = _only(rows)
-    check(d == DAYS[1] and r['why']['kind'] in ('on_the_way', 'inside_stop'),
-          f"one stop, placed once around it: {r['why']}")
+    game = _ev('game', 1, 10, 'Soccer', 'Soccer game', dur=90)
+    base = _world({1: [game]}, [jeff], {'game': 'd1'})
+    rows, _ = _place(base, [_errand(time_window_start='10:00', time_window_end='12:00')], [jeff],
+                     driver_events={'d1': [game]})
+    for d, r in rows:
+        st, en = datetime.datetime.fromisoformat(r['start_time']), datetime.datetime.fromisoformat(r['end_time'])
+        check(r['why']['kind'] != 'inside_stop' and (en <= game.start or st >= game.end),
+              f"never during an event the driver attends: {r['why']} {st}-{en}")
     seen = sum(1 for dd, rr in rows if rr['id'] == 'er1')
-    check(seen == 1, "never two stops for one event")
+    check(seen <= 1, "never two stops for one event")
+
+
+def scenario_a_driver_without_a_home_uses_the_household_home_else_unknown():
+    nohome = Driver(id='d3', name='Nana', color_code='#000')          # no home_location
+    soccer = _ev('soccer', 1, 16, 'Soccer')
+    base = _world({1: [soccer]}, [nohome], {'soccer': 'd3'})
+    by_date, notes = matcher.insert_errands_globally(base, [_errand()], [nohome], trip_metadata=[],
+                                                     driver_events={}, now=NOW, settings=SETTINGS,
+                                                     home_location='Home')
+    rows = [(d, r) for d, rs in by_date.items() for r in rs]
+    d, r = _only(rows)
+    check(r['why']['kind'] == 'on_the_way' and r['why']['detour_mins'] == 20,
+          f"the household home grounds the from-home leg: {r['why']}")
+    by_date, notes = matcher.insert_errands_globally(base, [_errand()], [nohome], trip_metadata=[],
+                                                     driver_events={}, now=NOW, settings=SETTINGS)
+    rows = [(d, r) for d, rs in by_date.items() for r in rs]
+    d, r = _only(rows)
+    check(r['why']['kind'] == 'unknown_travel', f"with no home anywhere a home leg is unknown, never 0: {r['why']}")
+
+
+def scenario_a_missed_errand_on_a_past_cached_day_moves_forward():
+    from services import storage
+    with storage.db_lock:
+        storage.daily_schedules_table.truncate()
+    past = str(MON - datetime.timedelta(days=5))            # placed last week, never ticked
+    storage.save_cached_daily_schedule(past, {'scheduled_errands': [{
+        'id': 'er1', 'driver': {'id': 'd1', 'name': 'Jeff'}, 'start': f'{past}T10:00:00',
+        'start_time': f'{past}T10:00:00', 'end': f'{past}T10:30:00', 'end_time': f'{past}T10:30:00'}]}, 'h')
+    jeff = _driver('d1', 'Jeff')
+    base = _world({}, [jeff], {})
+    rows, _ = _place(base, [_errand(created_at=(NOW - datetime.timedelta(days=7)).timestamp(), window_days=None)], [jeff])
+    check([r for d, r in rows if r['id'] == 'er1'], "a past placement does not hold; the errand is placed again")
+    with storage.db_lock:
+        storage.daily_schedules_table.truncate()
+
+
+def scenario_one_bad_errand_never_stops_the_pass():
+    jeff = _driver('d1', 'Jeff')
+    base = _world({}, [jeff], {})
+    bad = _errand(id='bad', doc_id=9, time_window_start='9am')
+    good = _errand(id='good', doc_id=10)
+    rows, notes = _place(base, [bad, good], [jeff])
+    check([r for d, r in rows if r['id'] == 'good'], f"the good errand is still placed: {rows}")
+    check(notes.get('bad', {}).get('reason') == 'bad_errand' and notes['bad']['text'],
+          f"the bad one is reported, not raised: {notes}")
+    rows, notes = _place(base, [_errand(time_window_start='10:00:00', time_window_end='11:00:00')], [jeff])
+    d, r = _only(rows)
+    check(datetime.datetime.fromisoformat(r['start_time']).time() == datetime.time(10, 0),
+          f"HH:MM:SS is read as HH:MM: {r['start_time']}")
+
+
+def scenario_split_ride_halves_read_as_inside_and_virtual_ids_never_leak():
+    jeff = _driver('d1', 'Jeff')
+    drop = _ev('sch_dropoff', 1, 9, 'Soccer', 'Dropoff: School', dur=0, original_event_id='sch')
+    pick = _ev('sch_pickup', 1, 15, 'Soccer', 'Pickup: School', dur=0, original_event_id='sch')
+    base = _world({1: [drop, pick]}, [jeff], {'sch_dropoff': 'd1', 'sch_pickup': 'd1'})
+    e1 = _errand(id='er1', doc_id=1, time_window_start='10:00', time_window_end='14:00')
+    e2 = _errand(id='er2', doc_id=2, time_window_start='10:00', time_window_end='14:00')
+    rows, _ = _place(base, [e1, e2], [jeff])
+    first = next(r for d, r in rows if r['id'] == 'er1')
+    check(first['why']['kind'] == 'inside_stop' and first['why']['text'].startswith('during'),
+          f"the two halves of one ride read as inside it: {first['why']}")
+    for d, r in rows:
+        for k in ('inserted_after_event_id', 'inserted_before_event_id'):
+            check(not str(r.get(k) or '').endswith('__virtual'), f"a virtual id leaked into {k}: {r.get(k)}")
 
 
 def scenario_now_clamps_or_drops_todays_slot():

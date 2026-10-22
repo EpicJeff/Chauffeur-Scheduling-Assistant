@@ -112,6 +112,7 @@
     <link rel="stylesheet" href="{{ 'static/pwa_shell.css'|ver }}">
     <script defer src="{{ 'static/pwa_shell.js'|ver }}"></script>
     <script defer src="{{ 'static/situations.js'|ver }}"></script>
+    <script defer src="{{ 'static/errand_steer.js'|ver }}"></script>
     <link rel="stylesheet" href="{{ 'static/pwa_child_shell.css'|ver }}">
     <script defer src="{{ 'static/pwa_child_shell.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_school.js'|ver }}"></script>
@@ -3602,29 +3603,7 @@
             });
         };
 
-        window.ChfErrandSteer = window.ChfErrandSteer || {
-            STEER_WINDOWS: { morning: ['08:00', '12:00'], midday: ['11:00', '14:00'],
-                             afternoon: ['14:00', '17:00'], evening: ['17:00', '20:00'] },
-        };
-
         async function pwaSteerErrand(ref) {
-            function _dayChoices(days = 14) {
-                const out = [];
-                const d = new Date(); d.setHours(0, 0, 0, 0);
-                for (let i = 0; i < days; i++) {
-                    const x = new Date(d); x.setDate(d.getDate() + i);
-                    const iso = `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
-                    out.push({ value: iso, label: x.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) });
-                }
-                return out;
-            }
-            async function _driverChoices() {
-                try {
-                    const r = await fetch(`${apiBase}api/drivers`);
-                    const ds = r.ok ? await r.json() : [];
-                    return ds.filter(d => !d.is_disabled).map(d => ({ value: d.id, label: d.name }));
-                } catch (e) { return []; }
-            }
             async function _putErrand(id, patch) {
                 // PUT replaces the record: re-read before applying only the steer patch.
                 const r = await fetch(`${apiBase}api/errands`);
@@ -3645,53 +3624,14 @@
                 const rows = await res.json();
                 const e = rows.find(x => x.id === ref.id);
                 if (!e) { showGlobalAlert('That errand is no longer available.'); return false; }
-                const scheduledDay = e.placement ? String(e.placement.start_time).slice(0, 10) : null;
-                const title = e.title;
-                const msg = (e.placement && e.placement.why && e.placement.why.text) || (e.unplaced && e.unplaced.text) || '';
-                const opts = [];
-                if (scheduledDay) opts.push({ value: 'skip_today', label: 'Not this day' });
-                opts.push({ value: 'skip_day', label: 'Skip a day…' });
-                opts.push({ value: 'pin_day', label: 'Pick a day' });
-                opts.push({ value: 'pin_time', label: 'Pick a time' });
-                opts.push({ value: 'driver', label: 'Someone else' });
-                if (((e.skip_dates || []).length || e.pinned_date || e.pinned_start || e.pinned_end || e.once_driver_id)) opts.push({ value: 'auto', label: 'Back to automatic' });
-                const pick = await promptChoice(title, msg, opts);
-                if (!pick) return;
-                const W = window.ChfErrandSteer.STEER_WINDOWS;
-                if (pick === 'skip_today') {
-                    const days = Array.from(new Set([...(e.skip_dates || []), scheduledDay]));
-                    return await _putErrand(e.id, { skip_dates: days });
-                }
-                if (pick === 'skip_day') {
-                    const d = await promptChoice('Skip which day?', '', _dayChoices());
-                    if (!d) return;
-                    return await _putErrand(e.id, { skip_dates: Array.from(new Set([...(e.skip_dates || []), d])) });
-                }
-                if (pick === 'pin_day') {
-                    const d = await promptChoice('Which day?', '', _dayChoices());
-                    if (!d) return;
-                    return await _putErrand(e.id, { pinned_date: d });
-                }
-                if (pick === 'pin_time') {
-                    let day = e.pinned_date || scheduledDay;
-                    if (!day) {
-                        day = await promptChoice('Which day?', 'Pick the day first.', _dayChoices());
-                        if (!day) return;
-                    }
-                    const w = await promptChoice('When that day?', '', Object.keys(W).map(k => ({ value: k, label: `${k[0].toUpperCase()}${k.slice(1)} (${W[k][0]}–${W[k][1]})` })));
-                    if (!w) return;
-                    return await _putErrand(e.id, { pinned_date: day, pinned_start: W[w][0], pinned_end: W[w][1] });
-                }
-                if (pick === 'driver') {
-                    const ds = await _driverChoices();
-                    if (!ds.length) { showGlobalAlert('No drivers to choose from.'); return; }
-                    const d = await promptChoice('Who runs it this time?', '', ds);
-                    if (!d) return;
-                    return await _putErrand(e.id, { once_driver_id: d });
-                }
-                if (pick === 'auto') {
-                    return await _putErrand(e.id, { skip_dates: [], pinned_date: null, pinned_start: null, pinned_end: null, once_driver_id: null });
-                }
+                return await window.ChfErrandSteer.steer(e, {
+                    promptChoice, showGlobalAlert,
+                    fetchDrivers: async () => {
+                        const r = await fetch(`${apiBase}api/drivers`);
+                        return r.ok ? await r.json() : [];
+                    },
+                    putErrand: _putErrand,
+                });
             } catch (e) {
                 showGlobalAlert('Could not steer that errand. Please try again.');
                 return false;

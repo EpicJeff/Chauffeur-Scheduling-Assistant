@@ -8522,7 +8522,9 @@ def complete_errand(doc_id: int, incoming: dict = None, now: float = None):
         succ['status'] = 'pending'
         succ['last_scheduled_end'] = None
         succ['created_at'] = now
-        succ['starts_on'] = float(anchor) + cycle * 86400
+        next_anchor = float(anchor) + cycle * 86400
+        half_window = {'weekly': 2, 'daily': 0, 'monthly': 5}[data['recurrence_rule']]
+        succ['starts_on'] = now if next_anchor + half_window * 86400 < now else next_anchor
         for f in STEER_FIELDS:
             succ[f] = [] if f == 'skip_dates' else None
         return errands_table.insert(succ)

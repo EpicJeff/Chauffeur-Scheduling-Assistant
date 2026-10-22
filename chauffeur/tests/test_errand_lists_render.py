@@ -404,9 +404,9 @@ def scenario_the_page_row_says_why_and_offers_steer_the_card_only_says_why():
     check("on Jeff's way to Soccer, +6 min" in body, "the why line is on the page row")
     check('steered' in body.lower(), "a steered errand (skip_dates set) draws its chip")
     check('could not be routed' in body, "an unplaced errand says why")
-    # One scheduled errand (e4) offers Steer; the unplaced e5 is not steered and
-    # not placed, so it offers Edit (the fix) and no Steer.
-    check(got['steerButtons'] == 1, f"exactly one Steer button on the page: {got['steerButtons']}")
+    # The scheduled e4 and the unplaced e5 both offer Steer (an unplaced errand
+    # can be pinned or handed to someone else); the completed e3 does not.
+    check(got['steerButtons'] == 2, f"two Steer buttons on the page: {got['steerButtons']}")
     check(got['cardWhy'] == "on Jeff's way to Soccer, +6 min", f"a card knows the why line: {got['cardWhy']!r}")
     # A card never DRAWS Steer: board_tile_body renders the macros with edit='null',
     # and the Steer template is gated on the edit expression (a markup fact).
@@ -424,11 +424,12 @@ def scenario_the_steer_sheet_writes_the_whole_record_through_put():
     from test_moment_media_token import _function_text, _run_node
     comp = open(os.path.join(TPL, 'components', 'errand_lists.html'), encoding='utf-8').read()
     logic = _function_text(comp, 'function errandListsLogic(apiBase)')
+    shared = open(os.path.join(os.path.dirname(TPL), 'static', 'errand_steer.js'), encoding='utf-8').read()
     got = _run_node("var window = globalThis; var ERRANDS = " + json.dumps(ERRANDS) + r""";
 window.ChfErrandSteer = { STEER_WINDOWS: { morning: ['08:00','12:00'], midday: ['11:00','14:00'], afternoon: ['14:00','17:00'], evening: ['17:00','20:00'] } };
 var showGlobalAlert = () => {};
 var setTimeout = (fn, ms) => 0;   // the replan poll never fires in the probe
-""" + logic + r"""
+""" + shared + logic + r"""
 (async () => {
   const L = errandListsLogic('');
   L.errands = ERRANDS;

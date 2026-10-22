@@ -2433,6 +2433,7 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
 ERRAND_DAY_START = time(8, 0)
 ERRAND_DAY_END = time(21, 0)
 ERRAND_UNPLACED_TEXT = {
+    'bad_errand': 'this errand could not be planned, check its times and address',
     'no_location': 'needs a location before it can be planned',
     'unroutable_location': 'the address could not be routed, check it',
     'no_slot': 'no drive in its window has room for it',
@@ -2556,13 +2557,17 @@ def _errand_requires_stay(e, all_rules):
 
 
 def _hhmm(s):
-    h, m = map(int, str(s).split(':'))
+    h, m = map(int, str(s).split(':')[:2])
     return time(h, m)
 
 
 def _driver_day_route(date_obj, d_id, day_data, driver_events, all_rules):
     """Build a day route with busy stops and drop/pickup anchors for rides."""
     stops, ride_ids, ride_keys = [], set(), set()
+    own_by_key = {key: e for e in (driver_events or {}).get(d_id, []) or []
+                  if e.start.astimezone().date() == date_obj
+                  for key in (e.id, getattr(e, 'original_event_id', None)) if key}
+    attended = set()
     assignments = day_data.get('assignments', {}) or {}
     for e in day_data.get('events', []) or []:
         if assignments.get(e.id) != d_id or e.id in ride_ids:
@@ -2572,7 +2577,14 @@ def _driver_day_route(date_obj, d_id, day_data, driver_events, all_rules):
         original_id = getattr(e, 'original_event_id', None)
         if original_id:
             ride_keys.add(original_id)
-        if _errand_requires_stay(e, all_rules):
+        own = own_by_key.get(e.id) or own_by_key.get(original_id)
+        if own is not None:
+            if own.id not in attended:
+                busy = _Stop(e, True)
+                busy.start, busy.end = min(e.start, own.start), max(e.end, own.end)
+                stops.append(busy)
+                attended.add(own.id)
+        elif _errand_requires_stay(e, all_rules):
             stops.append(_Stop(e, True))
         else:
             drop, pickup = _Stop(e, True), _Stop(e, True)
@@ -2683,8 +2695,16 @@ def _pax_in_car(stops, gap_idx):
     return in_car
 
 
+def _same_ride(a, b):
+    if not a.is_ride or not b.is_ride:
+        return False
+    a_keys = {a.id, getattr(a.event, 'original_event_id', None)} - {None, ''}
+    b_keys = {b.id, getattr(b.event, 'original_event_id', None)} - {None, ''}
+    return bool(a_keys & b_keys)
+
+
 def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None,
-                            driver_events=None, now=None, settings=None):
+                            driver_events=None, now=None, settings=None, *, home_location=None):
     """Place every active errand on the leg it costs least to add to (spec §1-§3).
 
     Returns (scheduled_by_date, notes). Drive time comes ONLY from
@@ -2712,208 +2732,219 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
     routes = {d_str: {d_id: _driver_day_route(datetime.strptime(d_str, "%Y-%m-%d").date(), d_id, day, driver_events, all_rules)
                       for d_id in driver_map}
               for d_str, day in base_schedules.items()}
-    active.sort(key=lambda x: (x.get('priority', 2), -x.get('duration_mins', 30)))
+    def errand_order(e):
+        try:
+            return (float(e.get('priority', 2)), -float(e.get('duration_mins', 30)))
+        except (TypeError, ValueError):
+            return (2, 0)
+    active.sort(key=errand_order)
 
-    places = set()
+    places = {home_location} if home_location else set()
     for d_str, by_driver in routes.items():
         for d_id, stops in by_driver.items():
             places.update(s.location for s in stops if s.location)
-            home = getattr(driver_map[d_id], 'home_location', None)
+            home = getattr(driver_map[d_id], 'home_location', None) or home_location
             if home:
                 places.add(home)
     from services import maps as _maps
 
     for errand in active:
         eid = errand.get('id') or f"errand_{errand.get('doc_id')}"
-        loc = (errand.get('location') or '').strip()
-        if not loc:
-            notes[eid] = {'reason': 'no_location', 'text': ERRAND_UNPLACED_TEXT['no_location']}
-            continue
-        if _errand_location_unroutable(loc, storage):
-            notes[eid] = {'reason': 'unroutable_location', 'text': ERRAND_UNPLACED_TEXT['unroutable_location']}
-            continue
-        _prime_errand_pairs(loc, places, storage, _maps)
-        duration = max(5, errand.get('duration_mins', 30) - errand.get('tolerance_mins', 0)) + errand.get('buffer_mins', 0)
-        w_start, w_end, skip, reason = errand_window(errand, today, range_dates)
-        if reason:
-            notes[eid] = {'reason': reason, 'text': ERRAND_UNPLACED_TEXT[reason]}
-            continue
+        try:
+            loc = (errand.get('location') or '').strip()
+            if not loc:
+                notes[eid] = {'reason': 'no_location', 'text': ERRAND_UNPLACED_TEXT['no_location']}
+                continue
+            if _errand_location_unroutable(loc, storage):
+                notes[eid] = {'reason': 'unroutable_location', 'text': ERRAND_UNPLACED_TEXT['unroutable_location']}
+                continue
+            _prime_errand_pairs(loc, places, storage, _maps)
+            duration = max(5, errand.get('duration_mins', 30) - errand.get('tolerance_mins', 0)) + errand.get('buffer_mins', 0)
+            w_start, w_end, skip, reason = errand_window(errand, today, range_dates)
+            if reason:
+                notes[eid] = {'reason': reason, 'text': ERRAND_UNPLACED_TEXT[reason]}
+                continue
 
-        # Already placed on a cached day outside this solve? (validated against the steer)
-        if _already_scheduled_elsewhere(errand, eid, w_start, w_end, skip, set(base_schedules.keys()), storage):
-            continue
+            # Already placed on a cached day outside this solve? (validated against the steer)
+            if _already_scheduled_elsewhere(errand, eid, w_start, w_end, skip, set(base_schedules.keys()), storage, today):
+                continue
 
-        req_pax = set(str(p) for p in errand.get('required_passengers', []))
-        proh_pax = set(str(p) for p in errand.get('prohibited_passengers', []))
-        once = errand.get('once_driver_id')
-        required = [once] if once else list(errand.get('required_drivers', []))
-        allowed = [] if once else list(errand.get('allowed_drivers', []))
-        prohibited = list(errand.get('prohibited_drivers', []))
-        group_id = errand.get('group_id')
-        assignment_rules = _errand_rules_for(all_rules)
-        if group_id is None:
-            group_id = _group_from_rules(errand, all_rules)
+            req_pax = set(str(p) for p in errand.get('required_passengers', []))
+            proh_pax = set(str(p) for p in errand.get('prohibited_passengers', []))
+            once = errand.get('once_driver_id')
+            required = [once] if once else list(errand.get('required_drivers', []))
+            allowed = [] if once else list(errand.get('allowed_drivers', []))
+            prohibited = list(errand.get('prohibited_drivers', []))
+            group_id = errand.get('group_id')
+            assignment_rules = _errand_rules_for(all_rules)
+            if group_id is None:
+                group_id = _group_from_rules(errand, all_rules)
 
-        def allowed_for_slot(d_id, start, end):
-            if not assignment_rules:
+            def allowed_for_slot(d_id, start, end):
+                if not assignment_rules:
+                    return True
+                test_ev = Event(id=eid, title=errand.get('title', ''), start=start, end=end, location=loc,
+                                calendar_ids=[], source_event_ids=[], event_type="errand")
+                for r, a_type in assignment_rules:
+                    if r.driver_id != d_id and a_type in ('required', 'preferred') and does_event_match_rule(test_ev, r):
+                        return False
+                    if r.driver_id == d_id and a_type in ('unavailable', 'avoid') and does_event_match_rule(test_ev, r):
+                        return False
                 return True
-            test_ev = Event(id=eid, title=errand.get('title', ''), start=start, end=end, location=loc,
-                            calendar_ids=[], source_event_ids=[], event_type="errand")
-            for r, a_type in assignment_rules:
-                if r.driver_id != d_id and a_type in ('required', 'preferred') and does_event_match_rule(test_ev, r):
-                    return False
-                if r.driver_id == d_id and a_type in ('unavailable', 'avoid') and does_event_match_rule(test_ev, r):
-                    return False
-            return True
 
-        candidates = []
-        saw_day = False
-        saw_driver = False
-        for day_date in range_dates:
-            if day_date < w_start or day_date > w_end or day_date in skip:
+            candidates = []
+            saw_day = False
+            saw_driver = False
+            for day_date in range_dates:
+                if day_date < w_start or day_date > w_end or day_date in skip:
+                    continue
+                # A pin is the person's choice and wins over the standing weekdays (§4.2 step 2).
+                if (not errand.get('pinned_date')) and errand.get('valid_days_of_week') \
+                        and day_date.weekday() not in errand['valid_days_of_week']:
+                    continue
+                saw_day = True
+                d_str = str(day_date)
+                day_start = datetime.combine(day_date, ERRAND_DAY_START).astimezone()
+                day_end = datetime.combine(day_date, ERRAND_DAY_END).astimezone()
+                for d_id, driver in driver_map.items():
+                    if required and d_id not in required:
+                        continue
+                    if d_id in prohibited:
+                        continue
+                    if allowed and not required and d_id not in allowed:
+                        continue
+                    if getattr(driver, 'is_disabled', False):
+                        continue
+                    default_home = getattr(driver, 'home_location', None) or home_location
+                    home = get_active_home(f'driver_{d_id}', day_start.timestamp(), default_home, trip_metadata) if trip_metadata else default_home
+                    group_bonus = 9999 if group_id and any(r.get('group_id') == group_id and (r.get('driver') or {}).get('id') == d_id
+                                                           for r in scheduled[d_str]) else 0
+                    if home != default_home and not group_bonus:
+                        continue
+                    saw_driver = True
+                    stops = routes[d_str][d_id]
+                    dname = getattr(driver, 'name', d_id)
+
+                    def add(shape, start, legs, detour, prev_stop, next_stop, insert_idx, t1, t2):
+                        unknown = any(v is None for v in legs)
+                        cost = (0 if unknown else detour) + (penalty if shape == 'empty' else 0) - group_bonus
+                        end = start + timedelta(minutes=duration)
+                        if not allowed_for_slot(d_id, start, end):
+                            return
+                        if shape == 'from_home_leg' or shape == 'empty':
+                            leg_d = {'from': 'Home', 'to': next_stop.title} if next_stop else None
+                        elif shape == 'to_home_leg':
+                            leg_d = {'from': prev_stop.title, 'to': 'Home'}
+                        else:
+                            leg_d = {'from': prev_stop.title, 'to': next_stop.title}
+                        inside_ride = shape == 'between' and _same_ride(prev_stop, next_stop)
+                        kind = 'unknown_travel' if unknown else ('from_home' if shape == 'empty' else 'inside_stop' if inside_ride else 'on_the_way')
+                        if errand.get('pinned_date') and not unknown:
+                            kind = 'pinned'
+                        why = {'kind': kind, 'detour_mins': None if unknown else int(detour), 'driver_name': dname,
+                               **({'leg': leg_d} if leg_d and shape != 'empty' else {})}
+                        why['text'] = errand_why_text(why)
+                        candidates.append(((1 if unknown else 0, cost, d_str, start.isoformat(), str(d_id)),
+                                           dict(d_str=d_str, d_id=d_id, start=start, end=end, why=why,
+                                                prev=prev_stop, next=next_stop, insert_idx=insert_idx,
+                                                t1=None if unknown else t1, t2=None if unknown else t2,
+                                                unknown=unknown)))
+
+                    if not stops:
+                        if req_pax:
+                            continue
+                        t = leg(home, loc) if home else None
+                        start = _first_fit(day_start, day_end - timedelta(minutes=duration), duration, day_date, errand, now)
+                        if start is not None:
+                            add('empty', start, [t], (t or 0) * 2, None, None, -1, t, t)
+                        continue
+
+                    first, last = stops[0], stops[-1]
+                    if not req_pax:
+                        th = leg(home, loc) if home else None
+                        tf = leg(loc, first.location)
+                        thf = leg(home, first.location) if home else None
+                        legs = [th, tf, thf]
+                        latest = first.start - timedelta(minutes=(tf or 0) + duration)
+                        start = _first_fit(day_start, latest, duration, day_date, errand, now, latest=True)
+                        if start is not None:
+                            add('from_home_leg', start, legs, (th or 0) + (tf or 0) - (thf or 0), None, first, -1, th, tf)
+                    for i in range(len(stops) - 1):
+                        a, b = stops[i], stops[i + 1]
+                        t1 = leg(a.location, loc)
+                        t2 = leg(loc, b.location)
+                        tab = leg(a.location, b.location)
+                        legs = [t1, t2, tab]
+                        earliest = a.end + timedelta(minutes=(t1 or 0))
+                        latest = b.start - timedelta(minutes=(t2 or 0) + duration)
+                        start = _first_fit(earliest, latest, duration, day_date, errand, now)
+                        if start is None:
+                            continue
+                        in_car = set() if _same_ride(a, b) else _pax_in_car(stops, i)
+                        if req_pax and not req_pax.issubset(in_car):
+                            continue
+                        if proh_pax and not proh_pax.isdisjoint(in_car):
+                            continue
+                        add('between', start, legs, (t1 or 0) + (t2 or 0) - (tab or 0), a, b, i, t1, t2)
+                    if not req_pax:
+                        tl = leg(last.location, loc)
+                        th = leg(loc, home) if home else None
+                        tlh = leg(last.location, home) if home else None
+                        legs = [tl, th, tlh]
+                        earliest = last.end + timedelta(minutes=(tl or 0))
+                        start = _first_fit(earliest, day_end - timedelta(minutes=duration), duration, day_date, errand, now)
+                        if start is not None:
+                            add('to_home_leg', start, legs, (tl or 0) + (th or 0) - (tlh or 0), last, None, len(stops) - 1, tl, th)
+
+            if not candidates:
+                if not saw_day:
+                    continue
+                reason = 'no_slot' if saw_driver else 'no_driver'
+                text = ERRAND_UNPLACED_TEXT[reason]
+                if reason == 'no_driver' and once:
+                    text = f"{getattr(driver_map.get(once), 'name', once)} has no drive in its window, or may not run it"
+                notes[eid] = {'reason': reason, 'text': text}
                 continue
-            # A pin is the person's choice and wins over the standing weekdays (§4.2 step 2).
-            if (not errand.get('pinned_date')) and errand.get('valid_days_of_week') \
-                    and day_date.weekday() not in errand['valid_days_of_week']:
-                continue
-            saw_day = True
-            d_str = str(day_date)
-            day_start = datetime.combine(day_date, ERRAND_DAY_START).astimezone()
-            day_end = datetime.combine(day_date, ERRAND_DAY_END).astimezone()
-            for d_id, driver in driver_map.items():
-                if required and d_id not in required:
-                    continue
-                if d_id in prohibited:
-                    continue
-                if allowed and not required and d_id not in allowed:
-                    continue
-                if getattr(driver, 'is_disabled', False):
-                    continue
-                default_home = getattr(driver, 'home_location', None)
-                home = get_active_home(f'driver_{d_id}', day_start.timestamp(), default_home, trip_metadata) if trip_metadata else default_home
-                group_bonus = 9999 if group_id and any(r.get('group_id') == group_id and (r.get('driver') or {}).get('id') == d_id
-                                                       for r in scheduled[d_str]) else 0
-                if home != default_home and not group_bonus:
-                    continue
-                saw_driver = True
-                stops = routes[d_str][d_id]
-                dname = getattr(driver, 'name', d_id)
 
-                def add(shape, start, legs, detour, prev_stop, next_stop, insert_idx, t1, t2):
-                    unknown = any(v is None for v in legs)
-                    cost = (0 if unknown else detour) + (penalty if shape == 'empty' else 0) - group_bonus
-                    end = start + timedelta(minutes=duration)
-                    if not allowed_for_slot(d_id, start, end):
-                        return
-                    if shape == 'from_home_leg' or shape == 'empty':
-                        leg_d = {'from': 'Home', 'to': next_stop.title} if next_stop else None
-                    elif shape == 'to_home_leg':
-                        leg_d = {'from': prev_stop.title, 'to': 'Home'}
-                    else:
-                        leg_d = {'from': prev_stop.title, 'to': next_stop.title}
-                    inside_ride = (shape == 'between' and prev_stop.is_ride and next_stop.is_ride
-                                   and prev_stop.id == next_stop.id)
-                    kind = 'unknown_travel' if unknown else ('from_home' if shape == 'empty' else 'inside_stop' if inside_ride else 'on_the_way')
-                    if errand.get('pinned_date') and not unknown:
-                        kind = 'pinned'
-                    why = {'kind': kind, 'detour_mins': None if unknown else int(detour), 'driver_name': dname,
-                           **({'leg': leg_d} if leg_d and shape != 'empty' else {})}
-                    why['text'] = errand_why_text(why)
-                    candidates.append(((1 if unknown else 0, cost, d_str, start.isoformat(), str(d_id)),
-                                       dict(d_str=d_str, d_id=d_id, start=start, end=end, why=why,
-                                            prev=prev_stop, next=next_stop, insert_idx=insert_idx,
-                                            t1=None if unknown else t1, t2=None if unknown else t2,
-                                            unknown=unknown)))
-
-                if not stops:
-                    if req_pax:
-                        continue
-                    t = leg(home, loc) if home else 0
-                    start = _first_fit(day_start, day_end - timedelta(minutes=duration), duration, day_date, errand, now)
-                    if start is not None:
-                        add('empty', start, [t], (t or 0) * 2, None, None, -1, t, t)
-                    continue
-
-                first, last = stops[0], stops[-1]
-                if not req_pax:
-                    th = leg(home, loc) if home else 0
-                    tf = leg(loc, first.location)
-                    thf = leg(home, first.location) if home else 0
-                    legs = [th, tf, thf]
-                    latest = first.start - timedelta(minutes=(tf or 0) + duration)
-                    start = _first_fit(day_start, latest, duration, day_date, errand, now, latest=True)
-                    if start is not None:
-                        add('from_home_leg', start, legs, (th or 0) + (tf or 0) - (thf or 0), None, first, -1, th, tf)
-                for i in range(len(stops) - 1):
-                    a, b = stops[i], stops[i + 1]
-                    t1 = leg(a.location, loc)
-                    t2 = leg(loc, b.location)
-                    tab = leg(a.location, b.location)
-                    legs = [t1, t2, tab]
-                    earliest = a.end + timedelta(minutes=(t1 or 0))
-                    latest = b.start - timedelta(minutes=(t2 or 0) + duration)
-                    start = _first_fit(earliest, latest, duration, day_date, errand, now)
-                    if start is None:
-                        continue
-                    in_car = set() if a.is_ride and b.is_ride and a.id == b.id else _pax_in_car(stops, i)
-                    if req_pax and not req_pax.issubset(in_car):
-                        continue
-                    if proh_pax and not proh_pax.isdisjoint(in_car):
-                        continue
-                    add('between', start, legs, (t1 or 0) + (t2 or 0) - (tab or 0), a, b, i, t1, t2)
-                if not req_pax:
-                    tl = leg(last.location, loc)
-                    th = leg(loc, home) if home else 0
-                    tlh = leg(last.location, home) if home else 0
-                    legs = [tl, th, tlh]
-                    earliest = last.end + timedelta(minutes=(tl or 0))
-                    start = _first_fit(earliest, day_end - timedelta(minutes=duration), duration, day_date, errand, now)
-                    if start is not None:
-                        add('to_home_leg', start, legs, (tl or 0) + (th or 0) - (tlh or 0), last, None, len(stops) - 1, tl, th)
-
-        if not candidates:
-            if not saw_day:
-                continue
-            reason = 'no_slot' if saw_driver else 'no_driver'
-            text = ERRAND_UNPLACED_TEXT[reason]
-            if reason == 'no_driver' and once:
-                text = f"{getattr(driver_map.get(once), 'name', once)} has no drive in its window, or may not run it"
-            notes[eid] = {'reason': reason, 'text': text}
-            continue
-
-        candidates.sort(key=lambda c: c[0])
-        best = candidates[0][1]
-        d_str, d_id = best['d_str'], best['d_id']
-        start, end = best['start'], best['end']
-        ve = Event(id=f"{eid}__virtual", title=errand.get('title', ''), start=start, end=end, location=loc,
-                   calendar_ids=[], source_event_ids=[], event_type="errand")
-        routes[d_str][d_id].insert(int(best['insert_idx']) + 1, _Stop(ve, False))
-        drv = driver_map[d_id]
-        scheduled[d_str].append({
-            "id": eid,
-            "doc_id": errand.get('doc_id'),
-            "group_id": errand.get('group_id'),
-            "driver": drv.model_dump() if hasattr(drv, 'model_dump') else drv.dict(),
-            "event_type": "errand",
-            "start": start.isoformat(), "end": end.isoformat(),
-            "start_time": start.isoformat(), "end_time": end.isoformat(),
-            "title": errand.get('title'), "location": loc, "priority": errand.get('priority'),
-            "inserted_after_event_id": best['prev'].id if best['prev'] else None,
-            "inserted_before_event_id": best['next'].id if best['next'] else None,
-            "travel_to_mins": best['t1'], "travel_from_mins": best['t2'],
-            "why": best['why'],
-        })
+            candidates.sort(key=lambda c: c[0])
+            best = candidates[0][1]
+            d_str, d_id = best['d_str'], best['d_id']
+            start, end = best['start'], best['end']
+            ve = Event(id=eid, title=errand.get('title', ''), start=start, end=end, location=loc,
+                       calendar_ids=[], source_event_ids=[], event_type="errand")
+            routes[d_str][d_id].insert(int(best['insert_idx']) + 1, _Stop(ve, False))
+            drv = driver_map[d_id]
+            scheduled[d_str].append({
+                "id": eid,
+                "doc_id": errand.get('doc_id'),
+                "group_id": errand.get('group_id'),
+                "driver": drv.model_dump() if hasattr(drv, 'model_dump') else drv.dict(),
+                "event_type": "errand",
+                "start": start.isoformat(), "end": end.isoformat(),
+                "start_time": start.isoformat(), "end_time": end.isoformat(),
+                "title": errand.get('title'), "location": loc, "priority": errand.get('priority'),
+                "inserted_after_event_id": best['prev'].id if best['prev'] else None,
+                "inserted_before_event_id": best['next'].id if best['next'] else None,
+                "travel_to_mins": best['t1'], "travel_from_mins": best['t2'],
+                "why": best['why'],
+            })
+        except Exception as ex:
+            # One bad errand must never stop the refresh — but a real bug must
+            # not hide behind the note either, so it is logged once here.
+            print(f"[errands] {eid} could not be planned: {type(ex).__name__}: {ex}")
+            notes[eid] = {'reason': 'bad_errand', 'text': ERRAND_UNPLACED_TEXT['bad_errand']}
     return scheduled, notes
 
 
-def _already_scheduled_elsewhere(errand, eid, w_start, w_end, skip, solving, storage):
+def _already_scheduled_elsewhere(errand, eid, w_start, w_end, skip, solving, storage, today=None):
     """Today's cached-day scan, validated against the steer (spec §4.4)."""
     once = errand.get('once_driver_id')
     pinned = errand.get('pinned_date')
+    today = today if today is not None else datetime.now().astimezone().date()
     span = min((w_end - w_start).days if w_end != datetime.max.date() else 60, 60)
     for offset in range(span + 1):
         d = w_start + timedelta(days=offset)
-        if d in skip or str(d) in solving:
+        if d < today or d in skip or str(d) in solving:
             continue
         if not pinned and errand.get('valid_days_of_week') and d.weekday() not in errand['valid_days_of_week']:
             continue

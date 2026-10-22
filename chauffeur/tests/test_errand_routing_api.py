@@ -124,6 +124,26 @@ def scenario_complete_errand_clears_steer_and_anchors_the_successor_on_the_cycle
           "a one-off errand has no successor")
 
 
+def scenario_a_late_completion_anchors_the_successor_on_today():
+    # Created Oct 1 with no explicit anchor, done Oct 14: the cycle it
+    # completes (Oct 8, window Oct 13-17) has passed, so the successor must
+    # not come straight back tomorrow — it anchors on the day it was done.
+    _fresh()
+    created = time.mktime(datetime.datetime(2026, 10, 1, 9, 0).timetuple())
+    done_at = time.mktime(datetime.datetime(2026, 10, 14, 18, 0).timetuple())
+    doc_id = storage.add_errand(_errand(id='e-late', recurrence_rule='weekly', created_at=created, starts_on=None))
+    succ = storage.complete_errand(doc_id, now=done_at)
+    new = next(e for e in storage.get_all_errands() if e['doc_id'] == succ)
+    check(abs(new['starts_on'] - done_at) < 1,
+          f"a late-done weekly errand re-anchors on the day it was done, got {new['starts_on']} vs {done_at}")
+    # Done on time (the next window still ahead): the cadence holds.
+    anchor = time.mktime(datetime.datetime(2026, 10, 5, 0, 0).timetuple())
+    doc_id = storage.add_errand(_errand(id='e-ontime', recurrence_rule='weekly', starts_on=anchor))
+    succ = storage.complete_errand(doc_id, now=anchor + 8 * 86400)
+    new = next(e for e in storage.get_all_errands() if e['doc_id'] == succ)
+    check(abs(new['starts_on'] - (anchor + WEEK)) < 1, f"on time keeps the cadence: {new['starts_on']}")
+
+
 def scenario_forget_errand_placements_removes_rows_and_the_note():
     _fresh()
     storage.save_cached_daily_schedule('2026-10-27', {'scheduled_errands': [_row('e1', '2026-10-27'), _row('e2', '2026-10-27')]}, 'h')
@@ -217,7 +237,9 @@ def scenario_completing_twice_mints_nothing_through_put():
     done = storage.get_errand_by_id(doc_id)
     check(done['is_completed'] and done['once_driver_id'] is None, "completed through complete_errand")
     succ = next(r for r in rows if r['doc_id'] != doc_id)
-    check(abs(succ['starts_on'] - (anchor + WEEK)) < 1 and succ['once_driver_id'] is None, f"{succ}")
+    # The PUT completes at the real clock, long after this fixed anchor's cycle
+    # passed, so the successor anchors on today (spec R6, rev 2.2).
+    check(abs(succ['starts_on'] - time.time()) < 120 and succ['once_driver_id'] is None, f"{succ}")
     body = dict(storage.get_errand_by_id(doc_id))
     client.put(f'/api/errands/{doc_id}', json=body, headers=_headers())
     check(len(storage.get_all_errands()) == 2, "a second completed PUT mints nothing")
@@ -286,6 +308,48 @@ def scenario_the_setting_round_trips_through_the_api_and_has_a_control():
     ui = reg.audit_ui()
     missing = [m for m in ui.get('unreachable', []) if m.get('key') == 'errand_dedicated_trip_mins']
     check(not missing, f"the Errands drawer carries the control: {missing}")
+
+
+def scenario_the_routine_refresh_saves_notes_and_bumps_the_generation():
+    """Run the real routine path and errand pass, with only external I/O stubbed."""
+    from unittest import mock
+    from services import maps
+    import main
+
+    _fresh()
+    storage.add_errand(_errand(id='e-refresh-no-location', location=None))
+    before = storage.get_schedule_generation()
+    bump = storage.bump_schedule_generation
+
+    def bump_after_notes():
+        notes = storage.get_errand_placement_notes()
+        check(notes.get('e-refresh-no-location', {}).get('generation') == before + 1,
+              f"notes must be saved before the new generation becomes visible: {notes}")
+        return bump()
+
+    with (
+        mock.patch.object(storage, 'get_settings', return_value={
+            'calendar_ids': ['offline-calendar'], 'days_to_build': 1,
+            'suggested_routes_enabled': False}),
+        mock.patch.object(main.calendar, 'fetch_upcoming_events', return_value=[]) as fetch_events,
+        mock.patch.object(main.calendar, 'get_calendar_metadata', return_value={}),
+        mock.patch.object(maps, 'get_home_location', return_value='Offline home'),
+        mock.patch.object(maps, 'prime_matrix_cache', return_value=None),
+        mock.patch('requests.sessions.Session.request', side_effect=AssertionError('unexpected HTTP request')) as http,
+        mock.patch('socket.socket.connect', side_effect=AssertionError('unexpected network connection')) as connect,
+        mock.patch.object(storage, 'bump_schedule_generation', side_effect=bump_after_notes) as generation,
+    ):
+        result = main._refresh_schedule_logic_impl()
+
+    check(isinstance(result, dict) and 'error' not in result, f"routine refresh completed: {result}")
+    check(fetch_events.call_count == 1 and fetch_events.call_args.kwargs['start_date_str'] is None
+          and fetch_events.call_args.kwargs['end_date_str'] is None, "the routine calendar path ran")
+    check(http.call_count == 0 and connect.call_count == 0, "the refresh stayed offline, including ICS/maps/HA")
+    check(generation.call_count == 1 and storage.get_schedule_generation() == before + 1,
+          "the routine refresh advances the generation exactly once")
+    note = storage.get_errand_placement_notes().get('e-refresh-no-location', {})
+    check(note.get('reason') == 'no_location' and note.get('generation') == before + 1,
+          f"the real errand pass saved its unplaced note with the completed generation: {note}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
