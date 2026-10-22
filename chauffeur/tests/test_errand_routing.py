@@ -356,6 +356,100 @@ def scenario_a_window_beyond_the_range_is_waiting_not_a_note():
     check(not rows and notes == {}, f"a weekday never in the window is waiting too: {rows} {notes}")
 
 
+def _week_with_soccer_tue_and_thu():
+    jeff = _driver('d1', 'Jeff')
+    lorena = _driver('d2', 'Lorena')
+    tue = _ev('soccer_tue', 1, 16, 'Soccer')
+    thu = _ev('soccer_thu', 3, 16, 'Soccer')
+    work = _ev('work_sat', 5, 9, 'Work', dur=4 * 60)
+    base = _world({1: [tue], 3: [thu]}, [jeff, lorena], {'soccer_tue': 'd1', 'soccer_thu': 'd1'})
+    return base, [jeff, lorena], {'d2': [work]}
+
+
+def scenario_steer_not_this_day_moves_to_the_next_passing_leg():
+    base, drivers, own = _week_with_soccer_tue_and_thu()
+    d, r = _only(_place(base, [_errand(skip_dates=[DAYS[1]])], drivers, own)[0])
+    check(d == DAYS[3] and r['inserted_before_event_id'] == 'soccer_thu', f"Thursday's leg: {d} {r}")
+
+
+def scenario_steer_pick_a_day_pins_and_still_prefers_a_passing_leg():
+    base, drivers, own = _week_with_soccer_tue_and_thu()
+    d, r = _only(_place(base, [_errand(location='Pharmacy', pinned_date=DAYS[5])], drivers, own)[0])
+    check(d == DAYS[5] and r['driver']['id'] == 'd2' and r['why']['kind'] == 'pinned'
+          and r['why']['text'].startswith("the day you picked, on Lorena's way to Work"), f"{d} {r['why']}")
+    d, r = _only(_place(base, [_errand(pinned_date=DAYS[6])], drivers, own)[0])
+    check(d == DAYS[6] and r['why']['kind'] == 'pinned' and 'a trip from home' in r['why']['text'],
+          f"a pinned empty day is a from-home trip that says so: {r['why']}")
+
+
+def scenario_steer_pick_a_time_on_the_pinned_day():
+    base, drivers, own = _week_with_soccer_tue_and_thu()
+    d, r = _only(_place(base, [_errand(pinned_date=DAYS[6], pinned_start='09:00', pinned_end='11:00')], drivers, own)[0])
+    st = datetime.datetime.fromisoformat(r['start_time'])
+    check(d == DAYS[6] and st.time() == datetime.time(9, 0), f"09:00 on the pinned day: {st}")
+    rows, notes = _place(base, [_errand(pinned_date=DAYS[6], pinned_start='20:50', pinned_end='21:00')], drivers, own)
+    check(not rows and notes['er1']['reason'] == 'no_slot', f"a 10-minute window for a 30-minute errand: {notes}")
+
+
+def scenario_steer_someone_else_overrides_standing_drivers_but_not_prohibitions():
+    base, drivers, own = _week_with_soccer_tue_and_thu()
+    d, r = _only(_place(base, [_errand(location='Pharmacy', required_drivers=['d1'], once_driver_id='d2')], drivers, own)[0])
+    check(r['driver']['id'] == 'd2' and d == DAYS[5], f"once_driver wins over required_drivers: {d} {r['driver']['id']}")
+    rows, notes = _place(base, [_errand(prohibited_drivers=['d2'], once_driver_id='d2')], drivers, own)
+    check(not rows and notes['er1']['reason'] == 'no_driver' and 'Lorena' in notes['er1']['text'],
+          f"a prohibited once-driver is a no_driver note naming them: {notes}")
+
+
+def scenario_steer_back_to_automatic_is_the_plain_answer():
+    base, drivers, own = _week_with_soccer_tue_and_thu()
+    plain = _only(_place(base, [_errand()], drivers, own)[0])
+    cleared = _only(_place(base, [_errand(skip_dates=[], pinned_date=None, pinned_start=None,
+                                           pinned_end=None, once_driver_id=None)], drivers, own)[0])
+    check(plain[0] == cleared[0] == DAYS[1] and plain[1]['start_time'] == cleared[1]['start_time'],
+          "empty steer fields change nothing")
+
+
+def scenario_precedence_pin_beats_window_weekday_and_overdue():
+    base, drivers, own = _week_with_soccer_tue_and_thu()
+    old = (NOW - datetime.timedelta(days=30)).timestamp()
+    d, r = _only(_place(base, [_errand(starts_on=old, window_days=3, pinned_date=DAYS[4])], drivers, own)[0])
+    check(d == DAYS[4], f"a pin outside an expired window still lands on the pin: {d}")
+    d, r = _only(_place(base, [_errand(valid_days_of_week=[1], pinned_date=DAYS[4])], drivers, own)[0])
+    check(d == DAYS[4], f"a pin on a non-valid weekday wins: {d}")
+    rows, notes = _place(base, [_errand(pinned_date=str(MON - datetime.timedelta(days=3)))], drivers, own)
+    check(not rows and notes['er1']['reason'] == 'pinned_day_passed', f"{notes}")
+    rows, notes = _place(base, [_errand(pinned_date=str(MON + datetime.timedelta(days=30)))], drivers, own)
+    check(not rows and notes['er1']['reason'] == 'pinned_day_not_in_range', f"{notes}")
+    rows, notes = _place(base, [_errand(window_days=2, skip_dates=[DAYS[0], DAYS[1]])], drivers, own)
+    check(not rows and notes['er1']['reason'] == 'every_day_skipped', f"{notes}")
+
+
+def scenario_past_skip_dates_are_ignored_and_a_live_one_is_honoured():
+    base, drivers, own = _week_with_soccer_tue_and_thu()
+    yesterday = str(MON - datetime.timedelta(days=2))
+    d, r = _only(_place(base, [_errand(skip_dates=[yesterday, DAYS[1]])], drivers, own)[0])
+    check(d == DAYS[3], f"a stale skip date is ignored, a live one honoured: {d}")
+
+
+def scenario_a_cached_row_that_contradicts_the_steer_does_not_count():
+    from services import storage
+    with storage.db_lock:
+        storage.daily_schedules_table.truncate()
+    outside = str(MON + datetime.timedelta(days=10))
+    storage.save_cached_daily_schedule(outside, {'scheduled_errands': [{
+        'id': 'er1', 'driver': {'id': 'd1', 'name': 'Jeff'}, 'start': f'{outside}T10:00:00',
+        'start_time': f'{outside}T10:00:00', 'end': f'{outside}T10:30:00', 'end_time': f'{outside}T10:30:00'}]}, 'h')
+    base, drivers, own = _week_with_soccer_tue_and_thu()
+    rows, _ = _place(base, [_errand(window_days=20)], drivers, own)
+    check(not [r for d, r in rows if r['id'] == 'er1'], "a valid cached placement outside the solve holds")
+    rows, _ = _place(base, [_errand(window_days=20, skip_dates=[outside])], drivers, own)
+    check([r for d, r in rows if r['id'] == 'er1'], "a cached row on a skipped day does not hold")
+    rows, _ = _place(base, [_errand(window_days=20, once_driver_id='d2')], drivers, own)
+    check([r for d, r in rows if r['id'] == 'er1'], "a cached row with the wrong driver does not hold")
+    with storage.db_lock:
+        storage.daily_schedules_table.truncate()
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
