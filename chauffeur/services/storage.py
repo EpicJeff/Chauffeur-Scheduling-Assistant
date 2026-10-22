@@ -8461,6 +8461,125 @@ def delete_errand(doc_id: int):
         deletion.check()
         errands_table.remove(doc_ids=[doc_id])
 
+def get_errand_by_id(ident):
+    """One errand by its uuid OR its document id (int or digit string). None
+    when nothing matches. The agent used to look errands up by a helper that
+    did not exist and then write by the uuid, which the table does not key on."""
+    if ident is None:
+        return None
+    with db_lock:
+        s = str(ident)
+        for e in errands_table.all():
+            if e.get('id') == s or str(e.doc_id) == s:
+                doc = dict(e)
+                doc['doc_id'] = e.doc_id
+                return doc
+    return None
+
+
+def _errand_cycle_days(rule):
+    return {'daily': 1, 'weekly': 7, 'monthly': 30}.get(rule or '', None)
+
+
+def complete_errand(doc_id: int, incoming: dict = None, now: float = None):
+    """THE completion path (spec §4.3): the PUT, the PWA tick, the page tick and
+    the agent all come here. Marks the row done, clears its one-shot steer
+    fields, and for a recurring errand mints the successor anchored on the
+    cycle just completed with no steering. Idempotent: a completed row mints
+    nothing and returns None. Returns the successor's doc_id when one is made."""
+    import time as _time
+    import uuid as _uuid
+    from models.schemas import STEER_FIELDS
+    now = now if now is not None else _time.time()
+    with db_lock:
+        rows = [e for e in errands_table.all() if e.doc_id == int(doc_id)]
+        if not rows:
+            return None
+        old = dict(rows[0])
+        already = bool(old.get('is_completed'))
+        data = dict(old)
+        if incoming:
+            data.update({k: v for k, v in incoming.items() if k != 'doc_id'})
+        data['is_completed'] = True
+        data['status'] = 'completed'
+        for f in STEER_FIELDS:
+            data[f] = [] if f == 'skip_dates' else None
+        mark_all_daily_schedules_dirty()
+        deletion.check()
+        cache_table.truncate()
+        deletion.check()
+        custom_schedules_table.truncate()
+        deletion.check()
+        errands_table.update(data, doc_ids=[int(doc_id)])
+        cycle = _errand_cycle_days(data.get('recurrence_rule'))
+        if already or not cycle:
+            return None
+        anchor = data.get('starts_on') or data.get('created_at') or now
+        succ = dict(data)
+        succ.pop('doc_id', None)
+        succ['id'] = _uuid.uuid4().hex
+        succ['is_completed'] = False
+        succ['status'] = 'pending'
+        succ['last_scheduled_end'] = None
+        succ['created_at'] = now
+        succ['starts_on'] = float(anchor) + cycle * 86400
+        for f in STEER_FIELDS:
+            succ[f] = [] if f == 'skip_dates' else None
+        return errands_table.insert(succ)
+
+
+def forget_errand_placements(errand_id: str) -> int:
+    """Drop every cached placement of one errand and its note, so a steer or an
+    edit cannot be held over by the already-scheduled scan (spec §4.4)."""
+    removed = 0
+    with db_lock:
+        for daily in daily_schedules_table.all():
+            sched = daily.get('schedule') or {}
+            rows = sched.get('scheduled_errands') or []
+            keep = [r for r in rows if r.get('id') != errand_id]
+            if len(keep) != len(rows):
+                removed += len(rows) - len(keep)
+                sched = dict(sched)
+                sched['scheduled_errands'] = keep
+                deletion.check()
+                daily_schedules_table.update({'schedule': sched}, doc_ids=[daily.doc_id])
+        notes = dict(get_app_state('errand_placement_notes', {}) or {})
+        if errand_id in notes:
+            notes.pop(errand_id)
+            set_app_state('errand_placement_notes', notes)
+    return removed
+
+
+def save_errand_placement_notes(notes: dict):
+    set_app_state('errand_placement_notes', dict(notes or {}))
+
+
+def get_errand_placement_notes() -> dict:
+    return dict(get_app_state('errand_placement_notes', {}) or {})
+
+
+def get_all_scheduled_errand_rows() -> dict:
+    """Every cached placement, whole row, keyed by errand id. The older
+    get_all_scheduled_errands keeps returning the start alone for its callers."""
+    with db_lock:
+        out = {}
+        for daily in daily_schedules_table.all():
+            for se in (daily.get('schedule') or {}).get('scheduled_errands', []) or []:
+                out[se.get('id')] = dict(se)
+        return out
+
+
+def get_schedule_generation() -> int:
+    return int(get_app_state('schedule_generation', 0) or 0)
+
+
+def bump_schedule_generation() -> int:
+    with db_lock:
+        g = int(get_app_state('schedule_generation', 0) or 0) + 1
+        set_app_state('schedule_generation', g)
+        return g
+
+
 # --- Trip Metadata ---
 def get_all_trip_metadata() -> List[dict]:
     with db_lock:

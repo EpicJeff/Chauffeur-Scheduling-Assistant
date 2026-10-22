@@ -241,6 +241,11 @@ ENTRIES: List[dict] = [
     _e('propose_shopping_errands', 'meals', 'Offer a shopping trip',
        'Suggest an errand for a list that has no trip attached.',
        page='meals?tab=meals', anchor='planning'),
+    _e('errand_dedicated_trip_mins', 'daily', 'Prefer errands on the way',
+       'How many extra minutes a passing drive may add before a separate trip '
+       'from home is worth it. Errands land on a route someone already drives '
+       'unless a trip from home beats it by this much.',
+       page='errands', anchor='errand-settings'),
     _e('propose_invitations', 'meals', 'Notice party invitations',
        "When a child has a party on the calendar, offer to track the present.",
        page='meals?tab=meals', anchor='planning'),

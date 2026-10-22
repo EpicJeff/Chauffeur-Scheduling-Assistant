@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional, List, Any, Dict, Literal
 from datetime import datetime
 import uuid
@@ -1082,6 +1082,10 @@ class Settings(BaseModel):
     grocery_cadence_days: int = 7
     meal_week_enabled: bool = True
     propose_shopping_errands: bool = True   # offer a trip for a list that has none
+    # Errands ride the route §2: how many extra minutes a passing drive may add
+    # before a separate trip from home is worth it. Applied to the empty-day
+    # shape only.
+    errand_dedicated_trip_mins: int = Field(default=25, ge=0, le=120)
     # Supply intake A4: a party-shaped event with a child riding gets a card
     # offering to track the present. Proposes, never creates — a title is a
     # guess, and "Ellie's birthday" (ours) reads exactly like "Jack's
@@ -1697,6 +1701,57 @@ class Errand(BaseModel):
     # an absence by matching against something, and an exact key beats keyword
     # guessing at the one job where a false match is worse than no report.
     occasion_key: Optional[str] = None
+
+    # Steering (errands-ride-the-route §4.1): one-shot, per cycle. A date is
+    # ISO (YYYY-MM-DD), a time HH:MM. Cleared by storage.complete_errand.
+    skip_dates: List[str] = Field(default_factory=list)
+    pinned_date: Optional[str] = None
+    pinned_start: Optional[str] = None
+    pinned_end: Optional[str] = None
+    once_driver_id: Optional[str] = None
+
+    @field_validator('skip_dates', mode='before')
+    @classmethod
+    def _skip_dates_are_iso(cls, v):
+        import datetime as _dt
+        import re as _re
+        dates = []
+        seen = set()
+        for d in v or []:
+            d = str(d)
+            if not _re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', d):
+                raise ValueError('date must be YYYY-MM-DD')
+            d = _dt.date.fromisoformat(d).isoformat()
+            if d not in seen:
+                dates.append(d)
+                seen.add(d)
+        return dates
+
+    @field_validator('pinned_date')
+    @classmethod
+    def _pinned_date_is_iso(cls, v):
+        import datetime as _dt
+        import re as _re
+        if v in (None, ''):
+            return None
+        if not _re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', v):
+            raise ValueError('date must be YYYY-MM-DD')
+        return _dt.date.fromisoformat(v).isoformat()
+
+    @field_validator('pinned_start', 'pinned_end')
+    @classmethod
+    def _pinned_times_are_hhmm(cls, v):
+        import re as _re
+        if v in (None, ''):
+            return None
+        if not _re.fullmatch(r'([01]\d|2[0-3]):[0-5]\d', str(v)):
+            raise ValueError('time must be HH:MM')
+        return str(v)
+
+
+# The one-shot steer fields, named once so storage, the PUT and the agent agree.
+STEER_FIELDS = ('skip_dates', 'pinned_date', 'pinned_start', 'pinned_end', 'once_driver_id')
+
 
 class ErrandRule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
