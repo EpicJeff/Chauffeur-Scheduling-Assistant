@@ -70,6 +70,20 @@ ERRANDS = [
     {'id': 'e3', 'doc_id': 3, 'title': 'Library books', 'location': None,
      'duration_mins': 20, 'priority': 2, 'status': 'completed',
      'is_completed': True, 'starts_on': 1600000000, 'shopping_lists': []},
+    # Errands ride the route: one scheduled with its why, one unplaced with its reason.
+    {'id': 'e4', 'doc_id': 4, 'title': 'Costco run', 'location': 'Costco', 'duration_mins': 30,
+     'priority': 2, 'status': 'pending', 'is_completed': False, 'starts_on': 1600000000,
+     'shopping_lists': [], 'scheduled_start': '2026-10-27T16:10:00', 'generation': 3,
+     'skip_dates': ['2026-10-28'], 'pinned_date': None, 'pinned_start': None, 'pinned_end': None, 'once_driver_id': None,
+     'placement': {'start_time': '2026-10-27T16:10:00', 'end_time': '2026-10-27T16:40:00',
+                   'driver': {'id': 'd1', 'name': 'Jeff'},
+                   'why': {'kind': 'on_the_way', 'detour_mins': 6, 'driver_name': 'Jeff',
+                           'leg': {'from': 'Home', 'to': 'Soccer'}, 'text': "on Jeff's way to Soccer, +6 min"}}},
+    {'id': 'e5', 'doc_id': 5, 'title': 'Return the router', 'location': 'Nowhere St', 'duration_mins': 20,
+     'priority': 2, 'status': 'pending', 'is_completed': False, 'starts_on': 1600000000,
+     'shopping_lists': [], 'generation': 3, 'skip_dates': [], 'pinned_date': None, 'pinned_start': None,
+     'pinned_end': None, 'once_driver_id': None,
+     'unplaced': {'reason': 'unroutable_location', 'text': 'the address could not be routed, check it', 'generation': 3}},
 ]
 
 HARNESS = r"""
@@ -152,6 +166,11 @@ setTimeout(() => {
   console.log(JSON.stringify({
     errors: errors,
     body: body,
+    // Errands ride the route (Task 8): the Steer button and the why line.
+    steerButtons: [...doc.querySelectorAll('button')].map(txt).filter(t => t === 'Steer').length,
+    cardWhy: typeof card('errandListCard', {}).whyLabel === 'function'
+      ? card('errandListCard', {}).whyLabel(data.errands.find(e => e.id === 'e4')) : null,
+    cardHasSteer: typeof card('errandListCard', {}).steerErrand === 'function',
     // Every row the page drew, and the buttons it drew them with.
     checkboxes: doc.querySelectorAll('input[type="checkbox"]').length,
     editButtons: [...doc.querySelectorAll('button')].map(txt)
@@ -375,6 +394,64 @@ def scenario_the_shared_logic_is_emitted_once_per_page():
     # harnesses execute it as plain JavaScript.
     for block in re.findall(r'<script>(.*?)</script>', page, re.S):
         check('{{' not in block, "Jinja leaked into the errands page's script")
+
+
+def scenario_the_page_row_says_why_and_offers_steer_the_card_only_says_why():
+    got = _run()
+    if got is None:
+        return
+    body = got['body']
+    check("on Jeff's way to Soccer, +6 min" in body, "the why line is on the page row")
+    check('steered' in body.lower(), "a steered errand (skip_dates set) draws its chip")
+    check('could not be routed' in body, "an unplaced errand says why")
+    # One scheduled errand (e4) offers Steer; the unplaced e5 is not steered and
+    # not placed, so it offers Edit (the fix) and no Steer.
+    check(got['steerButtons'] == 1, f"exactly one Steer button on the page: {got['steerButtons']}")
+    check(got['cardWhy'] == "on Jeff's way to Soccer, +6 min", f"a card knows the why line: {got['cardWhy']!r}")
+    # A card never DRAWS Steer: board_tile_body renders the macros with edit='null',
+    # and the Steer template is gated on the edit expression (a markup fact).
+    comp = open(os.path.join(TPL, 'components', 'errand_lists.html'), encoding='utf-8').read()
+    at = comp.index('steerErrand(e)')
+    steer_tpl = comp[max(0, at - 400):at]
+    check('!!({{ edit }})' in steer_tpl, "the Steer button is gated on the page's edit expression")
+
+
+def scenario_the_steer_sheet_writes_the_whole_record_through_put():
+    """Run the logic under node: steerErrand(e4) with a stubbed promptChoice
+    answering 'skip_today' sends PUT /api/errands/4 with the whole row and
+    skip_dates grown by the scheduled day."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from test_moment_media_token import _function_text, _run_node
+    comp = open(os.path.join(TPL, 'components', 'errand_lists.html'), encoding='utf-8').read()
+    logic = _function_text(comp, 'function errandListsLogic(apiBase)')
+    got = _run_node("var window = globalThis; var ERRANDS = " + json.dumps(ERRANDS) + r""";
+window.ChfErrandSteer = { STEER_WINDOWS: { morning: ['08:00','12:00'], midday: ['11:00','14:00'], afternoon: ['14:00','17:00'], evening: ['17:00','20:00'] } };
+var showGlobalAlert = () => {};
+var setTimeout = (fn, ms) => 0;   // the replan poll never fires in the probe
+""" + logic + r"""
+(async () => {
+  const L = errandListsLogic('');
+  L.errands = ERRANDS;
+  const puts = [];
+  globalThis.fetch = async (url, init) => {
+    if (init && init.method === 'PUT') { puts.push({url, body: JSON.parse(init.body)}); return {ok: true, json: async () => ({status: 'updated'})}; }
+    return {ok: true, json: async () => ERRANDS};
+  };
+  globalThis.promptChoice = async (title, msg, opts) => (opts.find(o => o.value === 'skip_today') || {}).value || null;
+  await L.steerErrand(ERRANDS.find(e => e.id === 'e4'));
+  console.log(JSON.stringify({puts, replanning: Array.from(L.replanning)}));
+})();
+""")
+    if got is None:
+        return
+    check(len(got['puts']) == 1 and got['puts'][0]['url'].endswith('api/errands/4'), f"{got}")
+    body = got['puts'][0]['body']
+    check(body['title'] == 'Costco run' and body['location'] == 'Costco' and body['duration_mins'] == 30,
+          "the whole record goes back, not a steer-only fragment")
+    check('placement' not in body and 'generation' not in body and 'shopping_lists' not in body,
+          "read-only keys are stripped before the PUT")
+    check(sorted(body['skip_dates']) == ['2026-10-27', '2026-10-28'], f"the scheduled day joins the skip list: {body['skip_dates']}")
+    check('e4' in got['replanning'], "the row is marked replanning until the generation moves")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

@@ -217,7 +217,7 @@
     </div>
 
     <div id="edit-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex items-center justify-center">
-        <div class="bg-gray-800 w-full max-w-md rounded-2xl shadow-2xl border border-gray-700 transform transition-all">
+        <div class="bg-gray-800 w-full max-w-md max-h-[85dvh] overflow-y-auto rounded-2xl shadow-2xl border border-gray-700 transform transition-all">
             <div class="p-6">
                 <div class="flex justify-between items-center mb-5">
                     <h3 class="text-xl font-bold text-white">Edit Errand</h3>
@@ -303,6 +303,28 @@
                                   <div>
                                       <label class="block text-xs font-medium text-gray-400 mb-1">Time Window End (HH:MM)</label>
                                       <input type="time" id="edit-time-window-end" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none">
+                                  </div>
+                                  <div class="col-span-2">
+                                      <label for="edit-pinned-date" class="block text-xs font-medium text-gray-400 mb-1">Pinned Date (this occurrence)</label>
+                                      <input type="date" id="edit-pinned-date" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none">
+                                  </div>
+                                  <div>
+                                      <label for="edit-pinned-start" class="block text-xs font-medium text-gray-400 mb-1">Pinned Start (HH:MM)</label>
+                                      <input type="time" id="edit-pinned-start" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none">
+                                  </div>
+                                  <div>
+                                      <label for="edit-pinned-end" class="block text-xs font-medium text-gray-400 mb-1">Pinned End (HH:MM)</label>
+                                      <input type="time" id="edit-pinned-end" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none">
+                                  </div>
+                                  <div class="col-span-2">
+                                      <label for="edit-once-driver" class="block text-xs font-medium text-gray-400 mb-1">Driver (this occurrence)</label>
+                                      <select id="edit-once-driver" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none">
+                                          <option value="">Automatic</option>
+                                      </select>
+                                  </div>
+                                  <div class="col-span-2">
+                                      <label class="block text-xs font-medium text-gray-400 mb-1">Skipped Dates</label>
+                                      <div id="edit-skip-dates" class="flex flex-wrap gap-2"></div>
                                   </div>
                                   <div>
                                       <label class="block text-xs font-medium text-gray-400 mb-1">Buffer Mins</label>
@@ -551,6 +573,7 @@
                     fetch('api/drivers'), fetch('api/passengers')]);
                 globalDrivers = await driversRes.json();
                 globalPassengers = await passRes.json();
+                if (currentEditErrand) fillOnceDriverSelect();
             } catch (err) {
                 console.error("Failed to fetch drivers/passengers", err);
             }
@@ -750,6 +773,50 @@
             });
         }
 
+        function fillOnceDriverSelect() {
+            const select = document.getElementById('edit-once-driver');
+            const selected = currentEditErrand.once_driver_id || '';
+            select.innerHTML = '';
+            select.add(new Option('Automatic', ''));
+            globalDrivers.filter(d => !d.is_disabled || d.id === selected).forEach(d => {
+                select.add(new Option(d.name, d.id));
+            });
+            // Keep an existing selection if the driver list is unavailable.
+            if (selected && !globalDrivers.some(d => d.id === selected)) {
+                select.add(new Option('Currently selected driver', selected));
+            }
+            select.value = selected;
+        }
+
+        function renderSkippedDates() {
+            const container = document.getElementById('edit-skip-dates');
+            container.innerHTML = '';
+            const days = currentEditErrand.skip_dates || [];
+            if (!days.length) {
+                const empty = document.createElement('span');
+                empty.className = 'text-xs text-gray-500 italic';
+                empty.textContent = 'No skipped dates.';
+                container.appendChild(empty);
+            }
+            days.forEach(day => {
+                const chip = document.createElement('span');
+                chip.className = 'flex items-center gap-2 bg-gray-700 text-gray-300 text-xs px-2 py-1 rounded';
+                const label = document.createElement('span');
+                label.textContent = day;
+                const remove = document.createElement('button');
+                remove.type = 'button';
+                remove.className = 'text-gray-400 hover:text-red-300';
+                remove.textContent = '✕';
+                remove.setAttribute('aria-label', 'Remove skipped date ' + day);
+                remove.onclick = () => {
+                    currentEditErrand.skip_dates = days.filter(d => d !== day);
+                    renderSkippedDates();
+                };
+                chip.append(label, remove);
+                container.appendChild(chip);
+            });
+        }
+
         function openEditModal(errand) {
             currentEditErrand = JSON.parse(JSON.stringify(errand));
             
@@ -769,6 +836,11 @@
             
             document.getElementById('edit-time-window-start').value = currentEditErrand.time_window_start || '';
             document.getElementById('edit-time-window-end').value = currentEditErrand.time_window_end || '';
+            document.getElementById('edit-pinned-date').value = currentEditErrand.pinned_date || '';
+            document.getElementById('edit-pinned-start').value = currentEditErrand.pinned_start || '';
+            document.getElementById('edit-pinned-end').value = currentEditErrand.pinned_end || '';
+            fillOnceDriverSelect();
+            renderSkippedDates();
             document.getElementById('edit-buffer-mins').value = currentEditErrand.buffer_mins || 0;
             document.getElementById('edit-tolerance-mins').value = currentEditErrand.tolerance_mins || 0;
             document.getElementById('edit-group-id').value = currentEditErrand.group_id || '';
@@ -814,17 +886,24 @@
             errand.valid_days_of_week = currentEditErrand.valid_days_of_week || [];
             errand.time_window_start = document.getElementById('edit-time-window-start').value || null;
             errand.time_window_end = document.getElementById('edit-time-window-end').value || null;
+            errand.pinned_date = document.getElementById('edit-pinned-date').value || null;
+            errand.pinned_start = document.getElementById('edit-pinned-start').value || null;
+            errand.pinned_end = document.getElementById('edit-pinned-end').value || null;
+            errand.once_driver_id = document.getElementById('edit-once-driver').value || null;
+            errand.skip_dates = currentEditErrand.skip_dates || [];
             errand.buffer_mins = parseInt(document.getElementById('edit-buffer-mins').value) || 0;
             errand.tolerance_mins = parseInt(document.getElementById('edit-tolerance-mins').value) || 0;
             errand.group_id = document.getElementById('edit-group-id').value || null;
             
             closeEditModal();
 
+            const body = Object.assign({}, errand);
+            delete body.placement; delete body.unplaced; delete body.generation; delete body.shopping_lists;
             try {
                 await fetch(`api/errands/${errand.doc_id}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(errand)
+                    body: JSON.stringify(body)
                 });
             } catch (err) {
                 console.error(err);
