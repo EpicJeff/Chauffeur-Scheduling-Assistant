@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.675 (2026-10-22).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.676 (2026-10-22).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 **The template-JS state check recognises Alpine getters (v2.499.668; `tests/test_template_js.py`).** `projects_page.html` derives `pieceDraft` with `get pieceDraft()`, and the x-model root check only accepted `name:` / `name =`, so the test had been red on app.html, projects.html and work.html since the Projects one-list release with nothing actually broken. A getter now counts as a definition.
 

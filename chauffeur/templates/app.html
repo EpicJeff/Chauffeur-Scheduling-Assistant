@@ -3602,6 +3602,152 @@
             });
         };
 
+        window.ChfErrandSteer = window.ChfErrandSteer || {
+            STEER_WINDOWS: { morning: ['08:00', '12:00'], midday: ['11:00', '14:00'],
+                             afternoon: ['14:00', '17:00'], evening: ['17:00', '20:00'] },
+        };
+
+        async function pwaSteerErrand(ref) {
+            function _dayChoices(days = 14) {
+                const out = [];
+                const d = new Date(); d.setHours(0, 0, 0, 0);
+                for (let i = 0; i < days; i++) {
+                    const x = new Date(d); x.setDate(d.getDate() + i);
+                    const iso = `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+                    out.push({ value: iso, label: x.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) });
+                }
+                return out;
+            }
+            async function _driverChoices() {
+                try {
+                    const r = await fetch(`${apiBase}api/drivers`);
+                    const ds = r.ok ? await r.json() : [];
+                    return ds.filter(d => !d.is_disabled).map(d => ({ value: d.id, label: d.name }));
+                } catch (e) { return []; }
+            }
+            async function _putErrand(id, patch) {
+                // PUT replaces the record: re-read before applying only the steer patch.
+                const r = await fetch(`${apiBase}api/errands`);
+                if (!r.ok) { showGlobalAlert('That could not be saved.'); return false; }
+                const rows = await r.json();
+                const er = rows.find(x => x.id === id);
+                if (!er) { showGlobalAlert('That errand is no longer available.'); return false; }
+                const body = Object.assign({}, er, patch);
+                delete body.placement; delete body.unplaced; delete body.generation; delete body.shopping_lists;
+                const res = await fetch(`${apiBase}api/errands/${er.doc_id}`, {
+                    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+                if (!res.ok) { showGlobalAlert('That could not be saved.'); return false; }
+                return true;
+            }
+            try {
+                const res = await fetch(`${apiBase}api/errands`);
+                if (!res.ok) { showGlobalAlert('Could not load errands.'); return false; }
+                const rows = await res.json();
+                const e = rows.find(x => x.id === ref.id);
+                if (!e) { showGlobalAlert('That errand is no longer available.'); return false; }
+                const scheduledDay = e.placement ? String(e.placement.start_time).slice(0, 10) : null;
+                const title = e.title;
+                const msg = (e.placement && e.placement.why && e.placement.why.text) || (e.unplaced && e.unplaced.text) || '';
+                const opts = [];
+                if (scheduledDay) opts.push({ value: 'skip_today', label: 'Not this day' });
+                opts.push({ value: 'skip_day', label: 'Skip a day…' });
+                opts.push({ value: 'pin_day', label: 'Pick a day' });
+                opts.push({ value: 'pin_time', label: 'Pick a time' });
+                opts.push({ value: 'driver', label: 'Someone else' });
+                if (((e.skip_dates || []).length || e.pinned_date || e.pinned_start || e.pinned_end || e.once_driver_id)) opts.push({ value: 'auto', label: 'Back to automatic' });
+                const pick = await promptChoice(title, msg, opts);
+                if (!pick) return;
+                const W = window.ChfErrandSteer.STEER_WINDOWS;
+                if (pick === 'skip_today') {
+                    const days = Array.from(new Set([...(e.skip_dates || []), scheduledDay]));
+                    return await _putErrand(e.id, { skip_dates: days });
+                }
+                if (pick === 'skip_day') {
+                    const d = await promptChoice('Skip which day?', '', _dayChoices());
+                    if (!d) return;
+                    return await _putErrand(e.id, { skip_dates: Array.from(new Set([...(e.skip_dates || []), d])) });
+                }
+                if (pick === 'pin_day') {
+                    const d = await promptChoice('Which day?', '', _dayChoices());
+                    if (!d) return;
+                    return await _putErrand(e.id, { pinned_date: d });
+                }
+                if (pick === 'pin_time') {
+                    let day = e.pinned_date || scheduledDay;
+                    if (!day) {
+                        day = await promptChoice('Which day?', 'Pick the day first.', _dayChoices());
+                        if (!day) return;
+                    }
+                    const w = await promptChoice('When that day?', '', Object.keys(W).map(k => ({ value: k, label: `${k[0].toUpperCase()}${k.slice(1)} (${W[k][0]}–${W[k][1]})` })));
+                    if (!w) return;
+                    return await _putErrand(e.id, { pinned_date: day, pinned_start: W[w][0], pinned_end: W[w][1] });
+                }
+                if (pick === 'driver') {
+                    const ds = await _driverChoices();
+                    if (!ds.length) { showGlobalAlert('No drivers to choose from.'); return; }
+                    const d = await promptChoice('Who runs it this time?', '', ds);
+                    if (!d) return;
+                    return await _putErrand(e.id, { once_driver_id: d });
+                }
+                if (pick === 'auto') {
+                    return await _putErrand(e.id, { skip_dates: [], pinned_date: null, pinned_start: null, pinned_end: null, once_driver_id: null });
+                }
+            } catch (e) {
+                showGlobalAlert('Could not steer that errand. Please try again.');
+                return false;
+            }
+        }
+
+        async function renderUnplacedErrands() {
+            const driverId = selectedDriverId;
+            if (!driverId) return;
+            const index = currentDates.indexOf(todayStr());
+            const pane = index < 0 ? null : document.getElementById(`pane-${index}`);
+            if (!pane) return;
+            try {
+                const res = await fetch(`${apiBase}api/errands`);
+                if (!res.ok) return;
+                const rows = (await res.json()).filter(e => !e.is_completed && e.unplaced);
+                // A rebuild or identity change while fetching must not paint an old pane.
+                if (selectedDriverId !== driverId || document.getElementById(`pane-${index}`) !== pane) return;
+                const previous = pane.querySelector('#unplaced-errands');
+                if (previous) previous.remove();
+                if (!rows.length) return;
+                const block = document.createElement('section');
+                block.id = 'unplaced-errands';
+                block.className = 'space-y-3 mt-4';
+                block.innerHTML = '<h3 class="text-sm font-bold text-gray-300">Errands not placed</h3>';
+                rows.forEach(e => {
+                    const row = document.createElement('div');
+                    row.className = 'flex items-center gap-3 border-b border-gray-800 py-3';
+                    const copy = document.createElement('div');
+                    copy.className = 'flex-1 min-w-0';
+                    const title = document.createElement('p');
+                    title.className = 'text-gray-100 font-bold';
+                    title.textContent = e.title;
+                    const why = document.createElement('p');
+                    why.className = 'text-sm text-gray-400';
+                    why.textContent = e.unplaced.text || '';
+                    copy.appendChild(title);
+                    copy.appendChild(why);
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'px-4 py-2 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 text-sm font-bold';
+                    button.textContent = 'Steer';
+                    button.onclick = async () => {
+                        button.disabled = true;
+                        try {
+                            if (await pwaSteerErrand({ id: e.id })) await fetchSchedule(true);
+                        } finally { button.disabled = false; }
+                    };
+                    row.appendChild(copy);
+                    row.appendChild(button);
+                    block.appendChild(row);
+                });
+                pane.appendChild(block);
+            } catch (e) { console.warn('Could not load unplaced errands', e); }
+        }
+
         // --- Needs you (situations): the Family tab lane ------------------
         // Server-side situations, identity-filtered by the PWA session, drawn
         // by the one card builder (static/situations.js). A wall or a child
@@ -9281,6 +9427,30 @@
                 }
             }
 
+            const whyLine = document.getElementById('em-why');
+            if (whyLine) {
+                whyLine.textContent = ev.isErrand ? ((ev.why || {}).text || '') : '';
+                whyLine.style.display = whyLine.textContent ? 'block' : 'none';
+            }
+            const steerBtn = document.getElementById('em-steer-btn');
+            if (steerBtn) {
+                if (ev.isErrand && selectedDriverId) {
+                    steerBtn.style.display = 'flex';
+                    steerBtn.onclick = async () => {
+                        steerBtn.disabled = true;
+                        try {
+                            if (await pwaSteerErrand({ id: ev.id })) {
+                                closeEventModal();
+                                await fetchSchedule(true);
+                            }
+                        } finally { steerBtn.disabled = false; }
+                    };
+                } else {
+                    steerBtn.style.display = 'none';
+                    steerBtn.onclick = null;
+                }
+            }
+
             const completeBtn = document.getElementById('em-complete-btn');
             if (completeBtn) {
                 // Same drivers-act rule: completing an errand is claiming
@@ -9562,6 +9732,7 @@
                     start: er.start_time, end: er.end_time, allDay: false,
                     location: er.errand ? er.errand.location : er.location,
                     calendarIds: [], legs: [],
+                    why: er.why || null,
                     driverIds: new Set(er.driver ? [er.driver.id] : []),
                     isUnassigned: false, suppressed: false, isErrand: true
                 });
@@ -9715,6 +9886,7 @@
                     : ((driverChips || '<span class="text-gray-500 italic text-sm">Not assigned</span>')
                        + conflictNote),
                 isErrand: card.isErrand,
+                why: card.why || null,
                 driverIds: Array.from(card.driverIds || []),
                 suppressed: !!card.suppressed,
                 dateStr: (card.start || '').split('T')[0],
@@ -10082,6 +10254,7 @@
                         end: ev.end,
                         location: ev.location,
                         passengerHtml: badges,
+                        why: ev.why || null,
                         isErrand: ev.event_type === 'errand'
                     };
                     const evDataStr = encodeURIComponent(JSON.stringify(eventData));
@@ -10279,6 +10452,7 @@
                 activeDateIndex = idx;
                 updateHeaderDate();
             };
+            if (selectedDriverId) renderUnplacedErrands();
         }
 
         function updateHeaderDate() {
@@ -10582,6 +10756,7 @@
                     </svg></button>
             </div>
             <p id="em-time" class="text-blue-400 font-bold mb-4">Time</p>
+            <p id="em-why" class="text-sm text-indigo-300 mb-3" style="display:none"></p>
             <div class="mb-4">
                 <p class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-1">Passengers</p>
                 <div id="em-passengers" class="flex flex-wrap gap-2"></div>
@@ -10637,6 +10812,7 @@
                 <span id="em-assist-btn-label">Hand to someone outside</span>
             </button>
             <div id="em-claim-container" class="flex-col gap-2 mb-3" style="display: none"></div>
+            <button id="em-steer-btn" class="w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-indigo-500/50 hover:bg-indigo-900/20 text-indigo-300 font-bold shadow-md mb-3" style="display:none">Steer this errand</button>
             <button id="em-complete-btn" class="w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-green-600/50 hover:bg-green-900/20 active:bg-green-600 text-green-400 font-bold shadow-md hidden">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M20 6L9 17l-5-5" /></svg>
                 Mark Errand Completed
