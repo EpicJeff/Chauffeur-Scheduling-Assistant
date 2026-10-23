@@ -435,6 +435,7 @@ def scenario_an_estimate_for_the_same_spot_is_two_minutes():
         storage.geocode_cache_table.insert({'address': 'far shop', 'lat': 40.09, 'lon': -83.0})  # ~10 km north
         storage.geocode_cache_table.insert({'address': 'across the state', 'lat': 43.0, 'lon': -83.0})  # ~333 km
         storage.geocode_cache_table.insert({'address': 'bad place', 'lat': 0.0, 'lon': 0.0, 'precision': 'failed'})
+        storage.geocode_cache_table.insert({'address': 'vague place', 'lat': 40.0, 'lon': -83.0, 'precision': 'city'})
     orig_cache_only = maps.travel_cache_only_active
     maps.travel_cache_only_active = lambda: True      # cached coordinates only, no geocoding
     try:
@@ -446,6 +447,7 @@ def scenario_an_estimate_for_the_same_spot_is_two_minutes():
         check(est('Shop A', 'Across The State') is None,
               f"an estimate past {errand_prefs.ESTIMATE_MAX_MINS} min is nonsense for an errand: None, got {est('Shop A', 'Across The State')}")
         check(est('Shop A', 'Bad Place') is None, "a failed geocode (0,0) is not a coordinate")
+        check(est('Shop A', 'Vague Place') is None, "a city-level geocode is not a coordinate either (two streets in one town would read 2 min apart)")
     finally:
         maps.travel_cache_only_active = orig_cache_only
 
@@ -520,10 +522,71 @@ def scenario_a_steer_without_a_placement_is_scoped_to_everyone():
     check(scopes == [('*', 'driver'), ('d2', 'weekday')], f"the once-driver scopes the day when there is no placement: {scopes}")
 
 
+# ---------------------------------------------------------------- §4.3 scoring in the pass
+
+def scenario_a_learned_avoid_moves_the_next_cycle_softly():
+    # Groceries at the Shop (-4,-4). Thursday Jeff works (Work 0,30): the leg
+    # home costs Work->Shop 38 + Shop->Home 8 - Work->Home 30 = 16. Saturday
+    # Jeff is at Piano (-30,0): Piano->Shop 30 + 8 - 30 = 8. Saturday is 8 better.
+    # Jeff's "groceries not on Saturdays" at weight 2 adds 10: Thursday now wins.
+    _fresh()
+    jeff = _driver('d1', 'Jeff')
+    work = _ev('work', 3, 9, 'Work', 'Work', dur=480)
+    piano = _ev('piano', 5, 10, 'Piano', 'Piano')
+    base = _world({}, [jeff], {})
+    rows, _ = _place(base, [_errand(title='Costco run', location='Shop')], [jeff], driver_events={'d1': [work, piano]})
+    d, r = _only(rows)
+    check(d == DAYS[5] and r['why']['detour_mins'] == 8 and 'learned' not in r['why'],
+          f"nothing learned yet: Saturday is cheaper: {d} {r['why']}")
+    for _ in range(2):
+        storage.upsert_errand_preference({'scope': 'd1', 'kind': 'groceries', 'dimension': 'weekday', 'value': '5',
+                                          'polarity': 'avoid', 'source': 'steer'}, now=NOW.timestamp())
+    rows, _ = _place(base, [_errand(title='Costco run', location='Shop')], [jeff], driver_events={'d1': [work, piano]})
+    d, r = _only(rows)
+    check(d == DAYS[3], f"weight 2 (+10) moves it to Thursday: {d} {r['why']}")
+    check('learned' not in r['why'], "Thursday matched no row, so its why says nothing about learning")
+    # Soft: Saturday at the Lab (-4,-20) is on the way home for free (Lab->Shop 16 + 8 - 24 = 0),
+    # 16 better than Thursday. The +10 avoid cannot flip that.
+    lab = _ev('lab', 5, 10, 'Lab', 'Lab')
+    rows, _ = _place(base, [_errand(title='Costco run', location='Shop')], [jeff], driver_events={'d1': [work, lab]})
+    d, r = _only(rows)
+    check(d == DAYS[5] and r['why']['detour_mins'] == 0, f"an avoid never beats a 16-minute-better leg: {d} {r['why']}")
+
+
+def scenario_a_learned_preference_is_said_out_loud():
+    _fresh()
+    jeff = _driver('d1', 'Jeff')
+    work = _ev('work', 3, 9, 'Work', 'Work', dur=480)
+    piano = _ev('piano', 5, 10, 'Piano', 'Piano')
+    base = _world({}, [jeff], {})
+    p = storage.upsert_errand_preference({'scope': 'd1', 'kind': 'groceries', 'dimension': 'weekday', 'value': '5',
+                                          'polarity': 'prefer', 'source': 'steer'}, now=NOW.timestamp())
+    rows, _ = _place(base, [_errand(title='Costco run', location='Shop')], [jeff], driver_events={'d1': [work, piano]})
+    d, r = _only(rows)
+    check(d == DAYS[5] and r['why'].get('learned') == [p['id']], f"the preferred Saturday wins and names the row: {r['why']}")
+    check(r['why']['text'] == "on Jeff's way home from Piano, +8 min, as you steered it before", f"{r['why']['text']!r}")
+
+
+def scenario_a_decayed_preference_barely_moves_anything():
+    _fresh()
+    jeff = _driver('d1', 'Jeff')
+    work = _ev('work', 3, 9, 'Work', 'Work', dur=480)
+    piano = _ev('piano', 5, 10, 'Piano', 'Piano')
+    base = _world({}, [jeff], {})
+    old = NOW.timestamp() - 270 * 86400          # three half-lives: weight 2 → 0.25 → cost +1
+    storage.set_app_state('errand_preferences', [{'id': 'p', 'scope': 'd1', 'kind': 'groceries', 'dimension': 'weekday',
+                                                  'value': '5', 'polarity': 'avoid', 'weight': 2.0, 'last_seen': old,
+                                                  'source': 'steer'}])
+    rows, _ = _place(base, [_errand(title='Costco run', location='Shop')], [jeff], driver_events={'d1': [work, piano]})
+    d, r = _only(rows)
+    check(d == DAYS[5], f"a stale avoid (+1) does not flip an 8-minute gap: {d}")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
     for fn in SCENARIOS:
+        _fresh()          # learned preferences are app state; no scenario inherits another's
         fn()
         print(f"  ok  {fn.__name__}")
     print(f"\n{len(SCENARIOS)}/{len(SCENARIOS)} common-sense scenarios passed")

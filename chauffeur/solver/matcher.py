@@ -2475,7 +2475,7 @@ def _errand_leg_estimate_impl(a, b):
 
     def coords(p):
         rec = storage.get_cached_geocode(p)
-        if rec and rec.get('precision') != 'failed':
+        if rec and rec.get('precision') not in ('failed', 'city'):
             try:
                 lat, lon = float(rec['lat']), float(rec['lon'])
                 if lat != 0 or lon != 0:
@@ -2814,6 +2814,7 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
     except (TypeError, ValueError):
         penalty = 25
     all_rules = storage.get_all_rules()
+    pref_rows = storage.get_errand_preferences()
     scheduled = {d: [] for d in base_schedules.keys()}
     notes = {}
     active = [e for e in errands if not e.get('is_completed') and e.get('status') != 'past_due']
@@ -2926,10 +2927,14 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                     def add(shape, start, legs, detour, prev_stop, next_stop, insert_idx, t1, t2):
                         unknown = any(v is None for v, _ in legs)
                         estimated = (not unknown) and any(flag for _, flag in legs)
+                        if estimated:
+                            detour = max(0, detour)
                         cost = ((0 if unknown else detour)
                                 + (penalty if shape == 'empty' else 0)
                                 + (_prefs.ESTIMATE_SURCHARGE_MINS if estimated else 0)
                                 - group_bonus)
+                        pref_cost, learned = _prefs.preference_cost(pref_rows, d_id, kind, day_date, start, now.timestamp())
+                        cost += pref_cost
                         end = start + timedelta(minutes=duration)
                         if not allowed_for_slot(d_id, start, end):
                             return
@@ -2947,6 +2952,8 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                                **({'leg': leg_d} if leg_d and shape != 'empty' else {})}
                         if estimated:
                             why['estimated'] = True
+                        if learned and pref_cost != 0:
+                            why['learned'] = list(learned)
                         why['text'] = errand_why_text(why)
                         t1v, t1e = t1 if isinstance(t1, tuple) else (t1, False)
                         t2v, t2e = t2 if isinstance(t2, tuple) else (t2, False)
