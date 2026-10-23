@@ -36,6 +36,7 @@ DEDICATED_START_WEEKDAY = time(9, 0)
 DEDICATED_START_WEEKEND = time(10, 0)
 DEDICATED_END = time(17, 0)
 ESTIMATE_SURCHARGE_MINS = 10
+ESTIMATE_MAX_MINS = 360  # an estimate past six hours is never an errand leg and reads as unknown.
 
 PREF_STEP_MINS = 5
 PREF_CAP_MINS = 30

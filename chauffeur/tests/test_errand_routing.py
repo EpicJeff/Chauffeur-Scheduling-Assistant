@@ -43,6 +43,9 @@ def _leg(a, b):
 
 
 matcher.errand_leg_minutes = _leg
+# This file pins the route arc's semantics: an unknown pair stays unknown. The
+# common-sense file owns estimation, so no estimate here (and no live geocode).
+matcher.errand_leg_estimate = lambda a, b: None
 
 MON = datetime.date(2026, 10, 26)
 DAYS = [str(MON + datetime.timedelta(days=i)) for i in range(7)]   # Mon..Sun

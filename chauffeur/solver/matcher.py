@@ -2460,6 +2460,53 @@ def errand_leg_minutes(a, b):
     return int(v)
 
 
+def _errand_leg_estimate_impl(a, b):
+    """§3: minutes from coordinates when the pair is not cached. Cached
+    geocodes only under cache-only mode, else one geocode. `round(km × 1.5) + 2`;
+    None when either place has no coordinates. Never a fallback constant."""
+    if not a or not b:
+        return None
+    a_s, b_s = str(a).strip(), str(b).strip()
+    if a_s.lower() == b_s.lower():
+        return 2
+    import math
+    from services import storage, maps
+    from services import errand_prefs
+
+    def coords(p):
+        rec = storage.get_cached_geocode(p)
+        if rec and rec.get('precision') != 'failed':
+            try:
+                lat, lon = float(rec['lat']), float(rec['lon'])
+                if lat != 0 or lon != 0:
+                    return lat, lon
+            except (KeyError, TypeError, ValueError):
+                pass
+        if maps.travel_cache_only_active():
+            return None
+        try:
+            return maps.geocode_address(p)
+        except Exception:
+            return None
+
+    ca, cb = coords(a_s), coords(b_s)
+    if not ca or not cb:
+        return None
+    (lat1, lon1), (lat2, lon2) = ca, cb
+    r = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    h = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    km = 2 * r * math.atan2(math.sqrt(h), math.sqrt(1 - h))
+    minutes = int(round(km * 1.5)) + 2
+    if minutes > errand_prefs.ESTIMATE_MAX_MINS:
+        return None
+    return minutes
+
+
+errand_leg_estimate = _errand_leg_estimate_impl
+
+
 def _errand_location_unroutable(loc, storage):
     """True for a fresh failed pair only when no cached pair is routable."""
     import time as _time
@@ -2509,24 +2556,60 @@ def _prime_errand_pairs(errand_loc, places, storage, maps, chunk=24):
         return 0
 
 
+def _prime_route_pairs(routes, driver_map, home_location, storage, maps, chunk=24):
+    """§3: once per refresh, buy the adjacent pairs of every driver's day route
+    (home → first, stop → next, last → home) that the cache does not know.
+    Each day's list goes in chunks of at most `chunk` locations overlapping by
+    one so no adjacent pair straddles a boundary. Nothing under cache-only."""
+    try:
+        import inspect as _inspect
+        me = _inspect.getmodule(_prime_route_pairs)
+        if maps.travel_cache_only_active():
+            return 0
+        calls = 0
+        step = max(1, chunk - 1)
+        for d_str, by_driver in routes.items():
+            for d_id, stops in by_driver.items():
+                home = getattr(driver_map.get(d_id), 'home_location', None) or home_location
+                seq = ([home] if home else []) + [s.location for s in stops if s.location] + ([home] if home else [])
+                seq = [p for i, p in enumerate(seq) if i == 0 or p != seq[i - 1]]
+                if len(seq) < 2:
+                    continue
+                if all(me.errand_leg_minutes(seq[i], seq[i + 1]) is not None for i in range(len(seq) - 1)):
+                    continue
+                distinct = list(dict.fromkeys(seq))
+                for i in range(0, max(1, len(distinct) - 1), step):
+                    maps.prime_matrix_cache(distinct[i:i + chunk], ignore_age=True)
+                    calls += 1
+        return calls
+    except Exception as ex:
+        print(f"[errands] route primer failed: {ex}")
+        return 0
+
+
 def errand_why_text(why):
     kind = (why or {}).get('kind')
     who = (why or {}).get('driver_name') or 'someone'
     det = int((why or {}).get('detour_mins') or 0)
     leg = (why or {}).get('leg') or {}
+    est = bool((why or {}).get('estimated'))
+    plus = f"about +{det} min (estimated)" if est else f"+{det} min"
+    learned = ', as you steered it before' if (why or {}).get('learned') else ''
     if kind == 'unknown_travel':
         return 'drive time unknown, check the address'
     if kind == 'from_home':
-        return f"a trip from home, {det // 2} min each way"
+        each = f"about {det // 2} min each way (estimated)" if est else f"{det // 2} min each way"
+        return f"a trip from home, {each}{learned}"
     if kind == 'inside_stop':
-        return f"during {leg.get('from') or 'the stop'}, +{det} min"
+        return f"during {leg.get('from') or 'the stop'}, {plus}{learned}"
     if kind == 'pinned':
         inner = dict(why)
         inner['kind'] = 'from_home' if not leg else ('inside_stop' if leg.get('from') == leg.get('to') else 'on_the_way')
-        return 'the day you picked, ' + errand_why_text(inner)
+        inner.pop('learned', None)
+        return 'the day you picked, ' + errand_why_text(inner) + learned
     if leg.get('to') == 'Home':
-        return f"on {who}'s way home from {leg.get('from')}, +{det} min"
-    return f"on {who}'s way to {leg.get('to')}, +{det} min"
+        return f"on {who}'s way home from {leg.get('from')}, {plus}{learned}"
+    return f"on {who}'s way to {leg.get('to')}, {plus}{learned}"
 
 
 class _Stop:
@@ -2713,6 +2796,15 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
     import inspect as _inspect
     me = _inspect.getmodule(insert_errands_globally)
     leg = lambda a, b: me.errand_leg_minutes(a, b)   # noqa: E731  (module lookup, stubbable)
+    estimate = lambda a, b: me.errand_leg_estimate(a, b)   # noqa: E731
+
+    def leg2(a, b):
+        """(minutes, estimated) — cached minutes first, else an estimate, else (None, False)."""
+        v = leg(a, b)
+        if v is not None:
+            return v, False
+        e = estimate(a, b)
+        return (e, True) if e is not None else (None, False)
 
     now = now if now is not None else datetime.now().astimezone()
     today = now.date()
@@ -2747,6 +2839,7 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
             if home:
                 places.add(home)
     from services import maps as _maps
+    _prime_route_pairs(routes, driver_map, home_location, storage, _maps)
 
     for errand in active:
         eid = errand.get('id') or f"errand_{errand.get('doc_id')}"
@@ -2831,8 +2924,12 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                     dname = getattr(driver, 'name', d_id)
 
                     def add(shape, start, legs, detour, prev_stop, next_stop, insert_idx, t1, t2):
-                        unknown = any(v is None for v in legs)
-                        cost = (0 if unknown else detour) + (penalty if shape == 'empty' else 0) - group_bonus
+                        unknown = any(v is None for v, _ in legs)
+                        estimated = (not unknown) and any(flag for _, flag in legs)
+                        cost = ((0 if unknown else detour)
+                                + (penalty if shape == 'empty' else 0)
+                                + (_prefs.ESTIMATE_SURCHARGE_MINS if estimated else 0)
+                                - group_bonus)
                         end = start + timedelta(minutes=duration)
                         if not allowed_for_slot(d_id, start, end):
                             return
@@ -2843,22 +2940,27 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                         else:
                             leg_d = {'from': prev_stop.title, 'to': next_stop.title}
                         inside_ride = shape == 'between' and _same_ride(prev_stop, next_stop)
-                        kind = 'unknown_travel' if unknown else ('from_home' if shape == 'empty' else 'inside_stop' if inside_ride else 'on_the_way')
+                        kind_w = 'unknown_travel' if unknown else ('from_home' if shape == 'empty' else 'inside_stop' if inside_ride else 'on_the_way')
                         if errand.get('pinned_date') and not unknown:
-                            kind = 'pinned'
-                        why = {'kind': kind, 'detour_mins': None if unknown else int(detour), 'driver_name': dname,
+                            kind_w = 'pinned'
+                        why = {'kind': kind_w, 'detour_mins': None if unknown else int(detour), 'driver_name': dname,
                                **({'leg': leg_d} if leg_d and shape != 'empty' else {})}
+                        if estimated:
+                            why['estimated'] = True
                         why['text'] = errand_why_text(why)
+                        t1v, t1e = t1 if isinstance(t1, tuple) else (t1, False)
+                        t2v, t2e = t2 if isinstance(t2, tuple) else (t2, False)
                         candidates.append(((1 if unknown else 0, cost, d_str, start.isoformat(), str(d_id)),
                                            dict(d_str=d_str, d_id=d_id, start=start, end=end, why=why,
                                                 prev=prev_stop, next=next_stop, insert_idx=insert_idx,
-                                                t1=None if unknown else t1, t2=None if unknown else t2,
+                                                t1=None if (unknown or t1e) else t1v,
+                                                t2=None if (unknown or t2e) else t2v,
                                                 unknown=unknown)))
 
                     if not stops:
                         if req_pax:
                             continue
-                        t = leg(home, loc) if home else None
+                        t, t_est = leg2(home, loc) if home else (None, False)
                         start = None
                         if not has_window:
                             # §2: a dedicated trip keeps human hours when the person set
@@ -2874,27 +2976,27 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                         if start is None:
                             start = _first_fit(day_start, day_end - timedelta(minutes=duration), duration, day_date, errand, now)
                         if start is not None:
-                            add('empty', start, [t], (t or 0) * 2, None, None, -1, t, t)
+                            add('empty', start, [(t, t_est)], (t or 0) * 2, None, None, -1, (t, t_est), (t, t_est))
                         continue
 
                     first, last = stops[0], stops[-1]
                     if not req_pax and not home_bound:
-                        th = leg(home, loc) if home else None
-                        tf = leg(loc, first.location)
-                        thf = leg(home, first.location) if home else None
-                        legs = [th, tf, thf]
+                        th, th_e = leg2(home, loc) if home else (None, False)
+                        tf, tf_e = leg2(loc, first.location)
+                        thf, thf_e = leg2(home, first.location) if home else (None, False)
+                        legs = [(th, th_e), (tf, tf_e), (thf, thf_e)]
                         latest = first.start - timedelta(minutes=(tf or 0) + duration)
                         start = _first_fit(day_start, latest, duration, day_date, errand, now, latest=True)
                         if start is not None:
-                            add('from_home_leg', start, legs, (th or 0) + (tf or 0) - (thf or 0), None, first, -1, th, tf)
+                            add('from_home_leg', start, legs, (th or 0) + (tf or 0) - (thf or 0), None, first, -1, (th, th_e), (tf, tf_e))
                     for i in range(len(stops) - 1):
                         if home_bound:
                             break
                         a, b = stops[i], stops[i + 1]
-                        t1 = leg(a.location, loc)
-                        t2 = leg(loc, b.location)
-                        tab = leg(a.location, b.location)
-                        legs = [t1, t2, tab]
+                        t1, t1_e = leg2(a.location, loc)
+                        t2, t2_e = leg2(loc, b.location)
+                        tab, tab_e = leg2(a.location, b.location)
+                        legs = [(t1, t1_e), (t2, t2_e), (tab, tab_e)]
                         earliest = a.end + timedelta(minutes=(t1 or 0))
                         latest = b.start - timedelta(minutes=(t2 or 0) + duration)
                         start = _first_fit(earliest, latest, duration, day_date, errand, now)
@@ -2905,16 +3007,16 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                             continue
                         if proh_pax and not proh_pax.isdisjoint(in_car):
                             continue
-                        add('between', start, legs, (t1 or 0) + (t2 or 0) - (tab or 0), a, b, i, t1, t2)
+                        add('between', start, legs, (t1 or 0) + (t2 or 0) - (tab or 0), a, b, i, (t1, t1_e), (t2, t2_e))
                     if not req_pax:
-                        tl = leg(last.location, loc)
-                        th = leg(loc, home) if home else None
-                        tlh = leg(last.location, home) if home else None
-                        legs = [tl, th, tlh]
+                        tl, tl_e = leg2(last.location, loc)
+                        th, th_e = leg2(loc, home) if home else (None, False)
+                        tlh, tlh_e = leg2(last.location, home) if home else (None, False)
+                        legs = [(tl, tl_e), (th, th_e), (tlh, tlh_e)]
                         earliest = last.end + timedelta(minutes=(tl or 0))
                         start = _first_fit(earliest, day_end - timedelta(minutes=duration), duration, day_date, errand, now)
                         if start is not None:
-                            add('to_home_leg', start, legs, (tl or 0) + (th or 0) - (tlh or 0), last, None, len(stops) - 1, tl, th)
+                            add('to_home_leg', start, legs, (tl or 0) + (th or 0) - (tlh or 0), last, None, len(stops) - 1, (tl, tl_e), (th, th_e))
 
             if not candidates:
                 if not saw_day:

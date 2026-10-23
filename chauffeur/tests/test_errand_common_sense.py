@@ -368,6 +368,111 @@ def scenario_a_day_someone_already_leaves_beats_a_blank_day_for_groceries():
     check(d == DAYS[1] and r['why']['leg'] == {'from': 'Work', 'to': 'Home'}, f"Tuesday on the way home: {d} {r['why']}")
 
 
+# ---------------------------------------------------------------- §3 estimates
+
+def scenario_a_passing_leg_with_an_estimated_pair_beats_a_known_round_trip():
+    # Tuesday Jeff drives to the Gym (24,0): an own event whose pairs are NOT
+    # cached (ESTIMATE_ONLY) but estimable. Plaza (12,0) is on that line:
+    # estimated detour (12+2) + (12+2) - (24+2) = 2, surcharge 10 → 12.
+    # Monday blank: Home->Plaza unknown too (estimate 14 each way = 28 + 25 + 10 = 63).
+    jeff = _driver('d1', 'Jeff')
+    gym = _ev('gym', 1, 18, 'Gym', 'Gym')
+    base = _world({}, [jeff], {})
+    rows, notes = _place(base, [_errand(title='Return the lamp', location='Plaza')], [jeff], driver_events={'d1': [gym]})
+    d, r = _only(rows)
+    check(d == DAYS[1] and r['why']['kind'] == 'on_the_way' and r['why']['leg'] == {'from': 'Home', 'to': 'Gym'},
+          f"on the way to the gym, estimated: {d} {r['why']}")
+    check(r['why'].get('estimated') is True and r['why']['detour_mins'] == 2, f"{r['why']}")
+    check(r['why']['text'] == "on Jeff's way to Gym, about +2 min (estimated)", f"{r['why']['text']!r}")
+    check(r['travel_to_mins'] is None and r['travel_from_mins'] is None, "estimates are never stated as travel minutes")
+    check(notes == {}, f"{notes}")
+
+
+def scenario_a_known_leg_keeps_its_minutes_beside_an_estimated_one():
+    # Store (10,10) is cached from Home (20) but not from the Gym: t1 known, t2 estimated.
+    jeff = _driver('d1', 'Jeff')
+    gym = _ev('gym', 1, 18, 'Gym', 'Gym')
+    base = _world({}, [jeff], {})
+    rows, _ = _place(base, [_errand(title='Return the lamp', location='Store')], [jeff], driver_events={'d1': [gym]})
+    d, r = _only(rows)
+    check(r['why'].get('estimated') is True, f"{r['why']}")
+    check(r['travel_to_mins'] == 20 and r['travel_from_mins'] is None, f"known stays, estimated is None: {r}")
+
+
+def scenario_a_leg_with_no_coordinates_still_ranks_last():
+    jeff = _driver('d1', 'Jeff')
+    nowhere = _ev('x', 1, 18, 'Nowhere', 'Nowhere')
+    base = _world({}, [jeff], {})
+    # Monday blank: Home->Shop known (8 each way = 16 + 25 = 41). Tuesday's leg to
+    # Nowhere cannot be estimated: it loses even though its unknown detour costs 0.
+    rows, _ = _place(base, [_errand(title='Return the lamp', location='Shop')], [jeff], driver_events={'d1': [nowhere]})
+    d, r = _only(rows)
+    check(d == DAYS[0] and r['why']['kind'] == 'from_home', f"the known trip wins over the unestimable leg: {d} {r['why']}")
+    rows, _ = _place(base, [_errand(title='Return the lamp', location='Shop', starts_on=_at(1, 0)[0].timestamp(), window_days=1)],
+                     [jeff], driver_events={'d1': [nowhere]})
+    d, r = _only(rows)
+    check(r['why']['kind'] == 'unknown_travel' and r['travel_to_mins'] is None,
+          f"alone on Tuesday (a day with a stop, so no round trip) the unestimable leg is placed as unknown, as today: {r['why']}")
+
+
+def scenario_a_round_trip_from_home_can_be_estimated_too():
+    jeff = _driver('d1', 'Jeff')
+    base = _world({}, [jeff], {})
+    rows, _ = _place(base, [_errand(title='Return the lamp', location='Plaza', starts_on=_at(0, 0)[0].timestamp(), window_days=1)], [jeff])
+    d, r = _only(rows)
+    check(r['why']['kind'] == 'from_home' and r['why'].get('estimated') is True
+          and r['why']['text'] == 'a trip from home, about 14 min each way (estimated)', f"{r['why']}")
+    check(r['travel_to_mins'] is None, "never stated")
+
+
+def scenario_an_estimate_for_the_same_spot_is_two_minutes():
+    # The real estimator on cached coordinates (this file stubs the module's
+    # errand_leg_estimate, so the real one is reached under its own name).
+    with storage.db_lock:
+        storage.geocode_cache_table.truncate()
+        storage.geocode_cache_table.insert({'address': 'shop a', 'lat': 40.0, 'lon': -83.0})
+        storage.geocode_cache_table.insert({'address': 'shop b', 'lat': 40.0, 'lon': -83.0})
+        storage.geocode_cache_table.insert({'address': 'far shop', 'lat': 40.09, 'lon': -83.0})  # ~10 km north
+        storage.geocode_cache_table.insert({'address': 'across the state', 'lat': 43.0, 'lon': -83.0})  # ~333 km
+        storage.geocode_cache_table.insert({'address': 'bad place', 'lat': 0.0, 'lon': 0.0, 'precision': 'failed'})
+    orig_cache_only = maps.travel_cache_only_active
+    maps.travel_cache_only_active = lambda: True      # cached coordinates only, no geocoding
+    try:
+        est = matcher._errand_leg_estimate_impl
+        check(est('Shop A', 'Shop B') == 2, f"same spot: {est('Shop A', 'Shop B')}")
+        v = est('Shop A', 'Far Shop')
+        check(v == 17, f"10 km × 1.5 + 2 = 17, got {v}")
+        check(est('Shop A', 'Unknown Place') is None, "no coordinates: None")
+        check(est('Shop A', 'Across The State') is None,
+              f"an estimate past {errand_prefs.ESTIMATE_MAX_MINS} min is nonsense for an errand: None, got {est('Shop A', 'Across The State')}")
+        check(est('Shop A', 'Bad Place') is None, "a failed geocode (0,0) is not a coordinate")
+    finally:
+        maps.travel_cache_only_active = orig_cache_only
+
+
+def scenario_the_route_primer_buys_adjacent_pairs_once_and_bounded():
+    calls = []
+    orig = maps.prime_matrix_cache
+    orig_cache_only = maps.travel_cache_only_active
+    maps.prime_matrix_cache = lambda locations, ignore_age=False: calls.append(list(locations))
+    try:
+        jeff = _driver('d1', 'Jeff')
+        gym = _ev('gym', 1, 18, 'Gym', 'Gym')
+        base = _world({}, [jeff], {})
+        _place(base, [_errand(title='Return the lamp', location='Plaza'), _errand(id='er2', title='Haircut', location='Plaza')],
+               [jeff], driver_events={'d1': [gym]})
+        route_calls = [c for c in calls if 'Plaza' not in c]
+        check(len(route_calls) == 1 and route_calls[0] == ['Home', 'Gym'],
+              f"one primer for the one day whose adjacent pair is unknown, once for both errands: {route_calls}")
+        calls.clear()
+        maps.travel_cache_only_active = lambda: True
+        _place(base, [_errand(title='Return the lamp', location='Plaza')], [jeff], driver_events={'d1': [gym]})
+        check(calls == [], f"nothing under cache-only: {calls}")
+    finally:
+        maps.prime_matrix_cache = orig
+        maps.travel_cache_only_active = orig_cache_only
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
