@@ -4,6 +4,7 @@ import os
 import json
 import threading
 import time
+import uuid
 from services import deletion
 
 db_lock = threading.RLock()
@@ -8558,6 +8559,64 @@ def save_errand_placement_notes(notes: dict):
 
 def get_errand_placement_notes() -> dict:
     return dict(get_app_state('errand_placement_notes', {}) or {})
+
+
+# --- Learned errand preferences (errands-common-sense §4.1) -------------------
+# A handful of rows: what the household's steers have taught the errand pass.
+# Soft weights, decayed on read by errand_prefs.effective_weight, pruned on write.
+
+def get_errand_preferences() -> List[dict]:
+    return [dict(r) for r in (get_app_state('errand_preferences', []) or [])]
+
+
+def _pref_key(r: dict):
+    return (str(r.get('scope')), str(r.get('kind')), str(r.get('dimension')),
+            str(r.get('value')), str(r.get('polarity')))
+
+
+def upsert_errand_preference(row: dict, now: float = None) -> dict:
+    """Same scope+kind+dimension+value+polarity → weight +1 (capped), fresh
+    last_seen; otherwise a new row at weight 1. Prunes rows whose effective
+    weight has decayed under the floor. Returns the stored row."""
+    import time as _t
+    from services import errand_prefs
+    now = _t.time() if now is None else now
+    with db_lock:
+        rows = [dict(r) for r in (get_app_state('errand_preferences', []) or [])]
+        hit = None
+        for r in rows:
+            if _pref_key(r) == _pref_key(row):
+                hit = r
+                break
+        if hit is None:
+            hit = {'id': uuid.uuid4().hex, 'scope': str(row.get('scope')), 'kind': str(row.get('kind')),
+                   'dimension': str(row.get('dimension')), 'value': str(row.get('value')),
+                   'polarity': str(row.get('polarity')), 'weight': 1.0, 'last_seen': now,
+                   'source': row.get('source') or 'steer'}
+            rows.append(hit)
+        else:
+            hit['weight'] = float(min(errand_prefs.PREF_MAX_WEIGHT, float(hit.get('weight') or 0) + 1))
+            hit['last_seen'] = now
+        rows = [r for r in rows if r is hit or errand_prefs.effective_weight(r, now) >= errand_prefs.PREF_PRUNE_BELOW]
+        set_app_state('errand_preferences', rows)
+        return dict(hit)
+
+
+def delete_errand_preference(pref_id: str) -> bool:
+    with db_lock:
+        rows = [dict(r) for r in (get_app_state('errand_preferences', []) or [])]
+        keep = [r for r in rows if r.get('id') != pref_id]
+        if len(keep) == len(rows):
+            return False
+        set_app_state('errand_preferences', keep)
+        return True
+
+
+def clear_errand_preferences() -> int:
+    with db_lock:
+        n = len(get_app_state('errand_preferences', []) or [])
+        set_app_state('errand_preferences', [])
+        return n
 
 
 def get_all_scheduled_errand_rows() -> dict:

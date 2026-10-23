@@ -1669,6 +1669,9 @@ class TelemetryEvent(BaseModel):
     timestamp: float = Field(default_factory=time.time)
     details: Optional[str] = None
 
+ERRAND_KINDS = ('groceries', 'pharmacy', 'return', 'pickup', 'service', 'other')
+
+
 class Errand(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     doc_id: Optional[int] = None
@@ -1709,6 +1712,21 @@ class Errand(BaseModel):
     pinned_start: Optional[str] = None
     pinned_end: Optional[str] = None
     once_driver_id: Optional[str] = None
+
+    # Common sense (errands-common-sense §1, §5): the kind decides the default
+    # shapes; both are overrides, None means "work it out".
+    kind: Optional[str] = None
+    home_bound: Optional[bool] = None
+
+    @field_validator('kind')
+    @classmethod
+    def _kind_is_known(cls, v):
+        if v in (None, ''):
+            return None
+        v = str(v).strip().lower()
+        if v not in ERRAND_KINDS:
+            raise ValueError(f"kind must be one of {', '.join(ERRAND_KINDS)}")
+        return v
 
     @field_validator('skip_dates', mode='before')
     @classmethod
@@ -1756,7 +1774,8 @@ ERRAND_ROUTING_FIELDS = ('location', 'duration_mins', 'tolerance_mins', 'buffer_
                          'time_window_start', 'time_window_end', 'valid_days_of_week',
                          'window_days', 'starts_on', 'recurrence_rule', 'required_drivers',
                          'allowed_drivers', 'prohibited_drivers', 'required_passengers',
-                         'prohibited_passengers', 'group_id', 'priority') + STEER_FIELDS
+                         'prohibited_passengers', 'group_id', 'priority',
+                         'kind', 'home_bound') + STEER_FIELDS
 
 
 class ErrandRule(BaseModel):
@@ -1782,6 +1801,18 @@ class ErrandRule(BaseModel):
     filter_sets: List[EventFilter] = Field(default_factory=list)
     valid_days_of_week: List[int] = Field(default_factory=list)
     is_enabled: bool = True
+    kind: Optional[str] = None          # copied onto a matching new errand when it has none
+    home_bound: Optional[bool] = None
+
+    @field_validator('kind')
+    @classmethod
+    def _rule_kind_is_known(cls, v):
+        if v in (None, ''):
+            return None
+        v = str(v).strip().lower()
+        if v not in ERRAND_KINDS:
+            raise ValueError(f"kind must be one of {', '.join(ERRAND_KINDS)}")
+        return v
 
 class ShoppingList(BaseModel):
     # Meals & provisioning arc M1. A STANDING list, not an errand field: a
