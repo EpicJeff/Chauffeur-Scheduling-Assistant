@@ -29,8 +29,12 @@ def pool_tier(settings: dict) -> str:
 
 def needs_script(library_id: str, slot: dict) -> bool:
     row = storage.get_library_script(library_id, slot) or {}
-    if row.get('edited') or row.get('scenes'):
+    if row.get('edited'):
         return False
+    if row.get('scenes'):
+        curriculum = storage.get_library_program(library_id) or {}
+        minutes = int((curriculum.get('made_for') or {}).get('minutes') or 25)
+        return bool(row.get('budget')) and int(row['budget']) != minutes
     return int(row.get('attempts') or 0) < pl.max_attempts()
 
 
@@ -98,7 +102,7 @@ def generate_script(row: dict, lesson: dict, variant_label: str, settings: dict,
     est = pl.estimate_seconds(scenes)
     target = minutes * 60
     data = {'origin': origin, 'source_url': source_url, 'scenes': scenes, 'model': res.get('_model') or '',
-            'attempts': 0, 'note': '', 'minutes': int(round(est / 60))}
+            'attempts': 0, 'note': '', 'minutes': int(round(est / 60)), 'budget': minutes}
     if est < target * pl.SHORTFALL:
         data['note'] = f"runs about {int(round(est / 60))} minutes of {minutes}"
     token = storage.commit_library_script(row['id'], slot, token, data)

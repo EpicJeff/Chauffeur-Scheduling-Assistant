@@ -123,9 +123,11 @@ window.chfAddSlot = window.chfAddSlot || function (slots) {
               <button type="button" data-setup-retry @click="preview()"
                       class="text-xs font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Retry</button>
             </div>
-            <label class="block text-xs text-gray-400">Minutes each
-              <input data-setup-minutes type="number" min="5" max="240" x-model.number="minutes" @input="timesEdited()"
+            <label class="block text-xs text-gray-400">Set aside each session
+              <input data-setup-minutes type="number" :min="lessonMinutes() || 5" max="240" x-model.number="minutes" @input="timesEdited()"
                      class="w-20 ml-1 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-gray-100 text-sm">
+              <span data-lesson-length class="block text-[11px] text-gray-500 mt-0.5" x-show="lessonMinutes() && !making"
+                    x-text="'Lesson runs about ' + lessonMinutes() + ' min'"></span>
             </label>
             {{ slot_rows('slots', 'minutes') }}
             <div class="flex flex-wrap gap-2 items-center">
@@ -160,7 +162,7 @@ function programSetup() {
         apiBase: window.chfBase !== undefined ? window.chfBase : '',
         open: false, busy: false, error: '', myId: '',
         projectId: null, projectTitle: '', forMemberId: '', libraryId: '', runId: null, run: null,
-        making: false, draft: blankDraft(), startingPoint: '', slots: [], minutes: 25, targetDate: '', preferredDays: [],
+        making: false, draft: blankDraft(), startingPoint: '', slots: [], minutes: 25, pickedLessonMinutes: 0, targetDate: '', preferredDays: [],
         members: [], bands: {}, ageBands: [], library: [], libraryLoaded: false,
         previewFailed: false, previewing: false, _seq: 0, _previewSeq: 0,
         init() {
@@ -197,6 +199,12 @@ function programSetup() {
             return L.madeFor(lp) + (runners ? ' · ' + runners : '');
         },
         heading() { return this.runId ? 'Set up ' + ((this.run || {}).title || 'the program') : 'New program'; },
+        lessonMinutes() {
+            if (this.making) return Number(this.draft.minutes) || 0;
+            if (this.libraryId) return this.pickedLessonMinutes;
+            if (this.runId) return Number((this.run || {}).lesson_minutes) || 0;
+            return 0;
+        },
         startLabel() {
             if (this.busy) return this.making ? 'Looking for a real plan…' : 'Starting…';
             if (this.isChild()) return this.runId ? 'Save these times' : 'Ask to start the program';
@@ -209,7 +217,7 @@ function programSetup() {
         reset() {
             this.busy = false; this.error = ''; this.run = null; this.making = false; this.draft = blankDraft();
             this.startingPoint = ''; this.slots = []; this.minutes = 25; this.targetDate = ''; this.preferredDays = [];
-            this.libraryId = ''; this.previewFailed = false; this.previewing = false;
+            this.libraryId = ''; this.pickedLessonMinutes = 0; this.previewFailed = false; this.previewing = false;
         },
         // A brief's days, as weekday numbers (0 is Monday): numbers or names.
         dayNumbers(days) {
@@ -278,7 +286,8 @@ function programSetup() {
         },
         pick(lp) {
             this.making = false; this.libraryId = lp.id;
-            this.minutes = ((lp.made_for || {}).minutes) || 25;
+            this.pickedLessonMinutes = Number((lp.made_for || {}).minutes) || 25;
+            this.minutes = this.pickedLessonMinutes;
             this.preview();
         },
         makeNew() {
@@ -296,7 +305,10 @@ function programSetup() {
             const body = {member_id: this.forMemberId || this.myId || null, minutes: this.minutes || undefined};
             if (this.making) body.sessions_per_week = this.draft.sessions_per_week || 3;
             else if (this.libraryId) body.library_id = this.libraryId;
-            else if (this.run) body.sessions_per_week = (this.run.shape || {}).sessions_per_week || 3;
+            else if (this.run) {
+                body.sessions_per_week = (this.run.shape || {}).sessions_per_week || 3;
+                if (this.run.library_id) body.library_id = this.run.library_id;
+            }
             if (this.preferredDays.length) body.preferred_days = this.preferredDays;
             try {
                 const r = await fetch(this.apiBase + 'api/programs/preview-slots', {method: 'POST', headers: this.headers(), body: JSON.stringify(body)});
@@ -339,7 +351,7 @@ function programSetup() {
         },
         async create() {
             const body = {for_member_id: this.forMemberId || this.myId || null, starting_point: (this.startingPoint || '').trim(),
-                          slots: this.chosen(), minutes: this.minutes || 25, target_date: this.targetDate || null, activate: true};
+                          slots: this.chosen(), minutes: Math.max(this.minutes || 25, this.lessonMinutes()), target_date: this.targetDate || null, activate: true};
             if (this.projectId) body.project_id = this.projectId;
             if (this.making) Object.assign(body, {title: this.draft.title.trim(), age_band: this.draft.age_band || 'any',
                                                   sessions_per_week: this.draft.sessions_per_week || 3,
@@ -367,7 +379,8 @@ function programSetup() {
             const id = encodeURIComponent(run.id);
             const shape = run.shape || {};
             const settings = {};
-            if ((this.minutes || 25) !== (shape.minutes || 25)) settings.minutes = this.minutes;
+            const minutes = Math.max(this.minutes || 25, this.lessonMinutes());
+            if (minutes !== (shape.minutes || 25)) settings.minutes = minutes;
             if ((this.targetDate || '') !== ((run.baseline || {}).target_date || '')) settings.target_date = this.targetDate || null;
             if (run.state === 'proposed') {
                 if (this.isChild()) {

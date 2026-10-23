@@ -8166,8 +8166,8 @@ def create_program(body: dict = Body(default={}), request: Request = None,
                 curriculum = storage.get_library_program(lid)
                 library._invalidate()
                 made = {'message': prepared['message']}
-            shape = _prog.clamp_shape({**{k: curriculum['made_for'][k] for k in ('minutes', 'sessions_per_week')},
-                                       **{k: body[k] for k in ('minutes', 'sessions_per_week', 'preferred_days', 'slots') if k in body}})
+            shape = _prog.set_aside_shape({**{k: curriculum['made_for'][k] for k in ('minutes', 'sessions_per_week')},
+                                       **{k: body[k] for k in ('minutes', 'sessions_per_week', 'preferred_days', 'slots') if k in body}}, curriculum['made_for'])
             pid = _prog.create_row({'member_id': member_id, 'library_id': curriculum['id'], 'shape': shape,
                 'starting_point': starting_point, 'created_by': actor.get('id'),
                 'baseline': {'start_date': None, 'target_date': body.get('target_date'), 'target_event_id': None,
@@ -8226,12 +8226,14 @@ def edit_program(program_id: str, body: dict = Body(default={}), request: Reques
     # Plan without the book re-plan it (the times stay). Its days are Change
     # the days (PATCH /schedule), never this route.
     on_calendar = row.get('state') in ('active', 'paused')
+    curriculum = storage.get_library_program(row['library_id']) if row.get('library_id') else None
+    made_for = curriculum.get('made_for') if curriculum else None
     if on_calendar and body.get('recurate'):
         body = {k: body[k] for k in ('recurate', 'exclude_books', 'member_id') if k in body}
     elif on_calendar:
         if any(body.get(k) is not None for k in ('slots', 'preferred_days', 'sessions_per_week')):
             return {'status': 'error', 'message': "Change the days from the program's ⋯ to change when it happens."}
-        if body.get('minutes') is not None and int(_prog.clamp_shape({'minutes': body['minutes']})['minutes']) != int((row.get('shape') or {}).get('minutes') or 25):
+        if body.get('minutes') is not None and _prog.set_aside_shape({'minutes': body['minutes']}, made_for)['minutes'] != int((row.get('shape') or {}).get('minutes') or 25):
             claimer = _approver_of_record(storage.get_member(_acting_id(request, body.get('member_id'))))
             if not _prog._claimer(claimer):
                 return {'status': 'error', 'message': 'A parent or adult changes how long practice runs on the calendar.'}
@@ -8252,8 +8254,8 @@ def edit_program(program_id: str, body: dict = Body(default={}), request: Reques
         updates['starting_point'] = start
         started = start != row.get('starting_point')
     old_shape = row.get('shape') or {}
-    shape = _prog.clamp_shape({**old_shape, **{k: body[k] for k in
-        ('minutes', 'sessions_per_week', 'preferred_days', 'slots') if body.get(k) is not None}})
+    shape = _prog.set_aside_shape({**old_shape, **{k: body[k] for k in
+        ('minutes', 'sessions_per_week', 'preferred_days', 'slots') if body.get(k) is not None}}, made_for)
     if shape != old_shape:
         updates['shape'] = shape
         # A run under way never changes its count here (Change the days does), so
@@ -8948,8 +8950,8 @@ def program_preview_slots(body: dict = Body(default={}), request: Request = None
     if body.get('library_id'):
         row = storage.get_library_program(body['library_id']) or {}
         profile = dict(row.get('made_for') or {})
-    shape = _prog.clamp_shape({**{k: profile[k] for k in ('minutes', 'sessions_per_week') if k in profile},
-                               **{k: body[k] for k in ('minutes', 'sessions_per_week', 'preferred_days') if k in body}})
+    shape = _prog.set_aside_shape({**{k: profile[k] for k in ('minutes', 'sessions_per_week') if k in profile},
+                               **{k: body[k] for k in ('minutes', 'sessions_per_week', 'preferred_days') if k in body}}, profile)
     return {'slots': _prog.propose_slots(member_id, {**shape, 'slots': []}), 'minutes': shape['minutes']}
 
 

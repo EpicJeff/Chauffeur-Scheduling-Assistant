@@ -986,9 +986,11 @@ def scenario_a_child_keeper_can_edit_shape_but_cannot_recurate():
     pid = add_run({'member_id': 'kid', 'title': 'Guitar',
                    'phases': [{'name': 'Chords', 'weeks': 4}]})
     library_before = storage.get_library_programs()
-    response = _post_program_as('kid', pid, 'edit', {'minutes': 15})
+    # 35, not 15: a run's minutes are the time set aside and floor at the library's lesson
+    # length (25 here, the fixture default); tests/test_set_aside.py pins the floor itself.
+    response = _post_program_as('kid', pid, 'edit', {'minutes': 35})
     check(response.status_code == 200 and response.json()['status'] == 'success'
-          and storage.get_program(pid)['shape']['minutes'] == 15, 'the child keeper can still change shape')
+          and storage.get_program(pid)['shape']['minutes'] == 35, 'the child keeper can still change shape')
     before = storage.get_program(pid)
     with patch.object(programs_curate, 'curate', side_effect=AssertionError('children never publish a library row')) as curate:
         response = _post_program_as('kid', pid, 'edit', {'recurate': True, 'minutes': 30})

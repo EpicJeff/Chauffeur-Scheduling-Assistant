@@ -690,11 +690,16 @@ def scenario_the_effective_shape_lives_on_the_run():
     check(raw['shape']['minutes'] == 30 and raw['shape']['sessions_per_week'] == 2,
           f"defaults copied from made_for: {raw['shape']}")
     check((raw.get('progress') or {}).get('current') == ids['A'], 'the bookmark starts on the first lesson')
+    # The run's minutes are the time set aside for a session (2026-10-23): its own, but never
+    # less than the library's lesson length (30 here), which every script is written against.
     r = _http('mom', 'POST', f'/api/programs/{rid}/edit', json={'minutes': 15})
-    check(r.status_code == 200 and storage.get_program(rid)['shape']['minutes'] == 15, f'the run owns its minutes: {r.text[:200]}')
+    check(r.status_code == 200 and storage.get_program(rid)['shape']['minutes'] == 30,
+          f'below the lesson length lands on the lesson length: {r.text[:200]}')
+    r = _http('mom', 'POST', f'/api/programs/{rid}/edit', json={'minutes': 45})
+    check(r.status_code == 200 and storage.get_program(rid)['shape']['minutes'] == 45, f'the run owns its set-aside time: {r.text[:200]}')
     _approve(rid)
     shape = storage.get_program(rid)['shape']
-    check(shape['sessions_per_week'] == 3 and shape['minutes'] == 15 and len(shape.get('slots') or []) == 3,
+    check(shape['sessions_per_week'] == 3 and shape['minutes'] == 45 and len(shape.get('slots') or []) == 3,
           f'approval persists the agreed shape on the run: {shape}')
     made_for = storage.get_library_program(ids['L'])['made_for']
     check(made_for['minutes'] == 30 and made_for['sessions_per_week'] == 2, f'the library defaults are untouched: {made_for}')

@@ -211,9 +211,11 @@ def scenario_preview_slots():
 
 def scenario_preview_permissions_and_overrides():
     pid, lib = _reset()
+    # 25, not 15: the preview floors at the library's lesson length (20) like the run it
+    # previews; tests/test_set_aside.py pins the floor itself.
     r = _c().post('/api/programs/preview-slots', headers=_h('aunt'),
-                  json={'member_id': 'kid', 'library_id': lib, 'minutes': 15, 'sessions_per_week': 1, 'preferred_days': [4]})
-    check(r.status_code == 200 and r.json()['minutes'] == 15 and len(r.json()['slots']) == 1
+                  json={'member_id': 'kid', 'library_id': lib, 'minutes': 25, 'sessions_per_week': 1, 'preferred_days': [4]})
+    check(r.status_code == 200 and r.json()['minutes'] == 25 and len(r.json()['slots']) == 1
           and r.json()['slots'][0]['day'] == 4, f'adult and explicit shape overrides: {r.text}')
     r = _c().post('/api/programs/preview-slots', headers=_h('kid'), json={})
     check(r.status_code == 200, f'default member is self: {r.text}')

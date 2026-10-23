@@ -2771,7 +2771,8 @@ def _start_program_choice(choice, actor, make_new=False, prepared=None):
             if not library.valid_curriculum(curriculum) or curriculum.get('archived'):
                 return {'status': 'error', 'message': 'That library program is no longer available.', 'created': []}
         pid = programs.create_row({
-            'member_id': choice['member_id'], 'library_id': curriculum['id'], 'shape': choice['shape'],
+            'member_id': choice['member_id'], 'library_id': curriculum['id'],
+            'shape': programs.set_aside_shape(choice['shape'], curriculum['made_for']),
             'starting_point': choice['starting_point'],
             'baseline': {'start_date': None, 'target_date': None, 'target_event_id': None,
                          'rebaselined_at': None, 'rebaselines': 0},

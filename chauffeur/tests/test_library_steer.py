@@ -333,7 +333,8 @@ def scenario_phase_title_profile_and_lesson_metadata_leave_scripts_untouched():
     for edit_for in (
             lambda ids: {'op': 'update_phase', 'phase_id': ids['P1'], 'fields': {'milestone': 'Play a duet'}},
             lambda ids: {'op': 'update_phase', 'phase_id': ids['P1'], 'fields': {'name': 'Keys', 'progression': 'Play smoothly'}},
-            lambda ids: {'op': 'update_profile', 'fields': {'title': 'Keyboard', 'minutes': 20, 'sessions_per_week': 3}},
+            # minutes stay 30: a lesson-length change DOES touch scripts now (next scenario).
+            lambda ids: {'op': 'update_profile', 'fields': {'title': 'Keyboard', 'minutes': 30, 'sessions_per_week': 3}},
             lambda ids: {'op': 'update_lesson', 'lesson_id': ids['A'], 'fields': {'title': 'Posture', 'sessions': 3, 'summary': 'Sit. 3 sessions.'}}):
         _fresh(); ids = _library(); lid = ids['L']
         _script(lid, {'lesson_id': ids['A'], 'variant_label': ''})
@@ -343,6 +344,30 @@ def scenario_phase_title_profile_and_lesson_metadata_leave_scripts_untouched():
             result = library_steer.apply(lid, 'change', MOM, 0)
         check(result['status'] == 'success' and storage.get_library_scripts(lid) == before and not write.called,
               f'no scripts touched for metadata/phase/profile: {result}')
+
+
+def scenario_a_steer_that_changes_the_lesson_length_outdates_scripts_and_writes_nothing():
+    """The one profile field scripts are written against (2026-10-23, tests/test_set_aside.py): a
+    generated script records the 30 it was written for and Write lessons picks it up; a hand edit
+    is flagged stale and never rewritten; nothing is scheduled by the steer itself."""
+    _fresh(); ids = _library(); lid = ids['L']
+    gen_slot = {'lesson_id': ids['A'], 'variant_label': ''}
+    hand_slot = {'lesson_id': ids['D'], 'variant_label': ''}
+    _script(lid, gen_slot)
+    _script(lid, hand_slot, edited=True)
+    with patch.object(library_steer, 'plan', _plan([{'op': 'update_profile', 'fields': {'minutes': 20}}])), \
+            patch.object(library_scripts, 'write') as write:
+        result = library_steer.apply(lid, 'shorter sessions', MOM, 0)
+    check(result['status'] == 'success' and storage.get_library_program(lid)['made_for']['minutes'] == 20, f'the steer landed: {result}')
+    gen = storage.get_library_script(lid, gen_slot)
+    hand = storage.get_library_script(lid, hand_slot)
+    check(gen['scenes'] and not gen.get('stale') and int(gen.get('budget') or 0) == 30,
+          f'the generated script stays playable and records the 30 it was written for: {gen}')
+    check(hand['scenes'] and hand.get('edited') and hand.get('stale') is True and not hand.get('budget'),
+          f'the hand edit stays, flagged stale: {hand}')
+    check(library_scripts.needs_script(lid, gen_slot) and not library_scripts.needs_script(lid, hand_slot),
+          'Write lessons rewrites the generated one and leaves the hand edit alone')
+    check(not write.called, 'the steer schedules nothing; a person taps Write lessons')
 
 
 def scenario_content_provenance_and_existing_fact_citations():

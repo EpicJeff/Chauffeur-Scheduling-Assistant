@@ -225,7 +225,9 @@ def _script_view(row):
         short = bool(s.get('scenes')) and str(s.get('note') or '').startswith('runs about ')
         scripts.setdefault(lesson['id'], {})[label] = {'state': state, 'minutes': int(s.get('minutes') or 0), 'note': s.get('note') or '',
                                                         'origin': s.get('origin') or '', 'edited': bool(s.get('edited')), 'stale': bool(s.get('stale')),
-                                                        'short': short}
+                                                        'short': short, 'budget': int(s.get('budget') or 0),
+                                                        'outdated': bool(s.get('scenes')) and not s.get('edited') and bool(s.get('budget'))
+                                                        and int(s['budget']) != int((row.get('made_for') or {}).get('minutes') or 25)}
     return scripts, job
 
 
@@ -280,6 +282,20 @@ def _commit(library_id, candidate_row, actor, *, expect_revision=None):
         row = copy.deepcopy(candidate_row)
         if not valid_curriculum(row):
             return {'status': 'error', 'message': 'Every phase needs a lesson, with a valid phase and session count.'}
+        # The lesson length is the one profile field scripts are written against
+        # (library_scripts budgets on it). When it moves, every generated script
+        # records the length it was written for, so Write lessons picks it up
+        # and the course says so; a hand edit is flagged, never rewritten.
+        # Nothing is deleted or scheduled here: the old script keeps playing
+        # until a person taps Write lessons.
+        old_minutes = int((before.get('made_for') or {}).get('minutes') or 25)
+        if old_minutes != int((row.get('made_for') or {}).get('minutes') or 25):
+            for script in storage.get_library_scripts(library_id):
+                slot = {'lesson_id': script['lesson_id'], 'variant_label': script['variant_label']}
+                if script.get('edited'):
+                    storage.mark_library_script_stale(library_id, slot, True)
+                elif script.get('scenes') and not script.get('budget'):
+                    storage.set_library_script_fields(library_id, slot, {'budget': old_minutes})
         row['revision'] = int(before.get('revision') or 0) + 1
         storage.update_library_program(library_id, row)
         for run in storage.get_programs(include_finished=True):

@@ -156,6 +156,9 @@ def load(run):
     out.update(title=curriculum['title'], source=copy.deepcopy(curriculum.get('source') or {}),
                lessons=copy.deepcopy(curriculum['lessons']), unresolved=False)
     out['progress'] = reconcile_progress(run, curriculum)
+    # The library's lesson length: what every script is written for. The run's
+    # own shape.minutes is the time set aside on the calendar, never less.
+    out['lesson_minutes'] = int((curriculum.get('made_for') or {}).get('minutes') or 25)
     phases = []
     for raw in curriculum['phases']:
         ph = copy.deepcopy(raw)
@@ -349,6 +352,14 @@ def sanitize_slots(slots, minutes: int) -> list:
                     'time_end': _fmt_hhmm(end_total // 60, end_total % 60)})
     out.sort(key=lambda s: (s['day'], s['time_start']))
     return out[:MAX_SESSIONS_PER_WEEK]
+
+
+def set_aside_shape(shape: dict, made_for=None) -> dict:
+    """A run sets aside at least the lesson length, without changing the library."""
+    shape = clamp_shape(shape)
+    if isinstance(made_for, dict):
+        shape['minutes'] = max(shape['minutes'], int(made_for.get('minutes') or 0))
+    return shape
 
 
 def clamp_shape(shape: dict) -> dict:
@@ -568,7 +579,10 @@ def log_session(program_id: str, minutes: int = None, source: str = 'added',
         lesson = next((l for l in row.get('lessons') or [] if l['id'] == selected), None)
         if lesson_id and lesson is None:
             return {'status': 'error', 'code': 409, 'message': 'That lesson moved; open it again.'}
-        entry = {'minutes': int(minutes if minutes is not None else (row.get('shape') or {}).get('minutes') or 0),
+        usual_minutes = row.get('lesson_minutes')
+        if usual_minutes is None:
+            usual_minutes = (row.get('shape') or {}).get('minutes')
+        entry = {'minutes': int(minutes if minutes is not None else usual_minutes or 0),
                  'source': source, 'note': (note or '').strip()}
         if lesson:
             entry['lesson_id'] = selected

@@ -79,6 +79,13 @@
                                             </template>
                                         </div>
 
+                                        <div data-set-aside-short x-show="p.lesson_minutes && (p.shape || {}).minutes < p.lesson_minutes"
+                                             class="flex items-center gap-2 text-xs text-amber-300">
+                                            <span x-text="'Lesson now runs ' + p.lesson_minutes + ' min, ' + (p.shape || {}).minutes + ' set aside'"></span>
+                                            <button type="button" @click="settings(p)" x-show="canApprove()"
+                                                    class="text-xs font-bold px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 active:bg-gray-700">Program settings</button>
+                                        </div>
+
                                         <!-- Program settings (P4): this program's private starting point,
                                              its minutes and its target date. The days are Change the days. -->
                                         <template x-if="settingsOpen[p.id] && settingsDraft[p.id]">
@@ -90,9 +97,11 @@
                                                     <span class="block text-[11px] text-gray-500 mt-0.5" x-text="'stays private to ' + memberName(p.member_id) + '\'s program'"></span>
                                                 </label>
                                                 <div class="flex flex-wrap gap-2.5">
-                                                    <label class="text-xs text-gray-400" x-show="canApprove()">Minutes each
-                                                        <input name="minutes" type="number" min="5" max="240" x-model.number="settingsDraft[p.id].minutes"
+                                                    <label class="text-xs text-gray-400" x-show="canApprove()">Set aside each session
+                                                        <input name="minutes" type="number" :min="p.lesson_minutes || 5" max="240" x-model.number="settingsDraft[p.id].minutes"
                                                             class="w-20 ml-1 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-gray-100 text-sm">
+                                                        <span data-lesson-length class="block text-[11px] text-gray-500 mt-0.5" x-show="p.lesson_minutes"
+                                                              x-text="'Lesson runs about ' + p.lesson_minutes + ' min'"></span>
                                                     </label>
                                                     <label class="text-xs text-gray-400">Aim for a date (optional)
                                                         <input name="target_date" type="date" x-model="settingsDraft[p.id].target_date"

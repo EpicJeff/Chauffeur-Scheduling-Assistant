@@ -181,6 +181,15 @@
                                                             <span data-script-stale :data-variant="lab" class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300"
                                                                   x-text="(lab ? lab + ' · ' : '') + 'edited by hand · may be out of date'"></span>
                                                         </template>
+                                                        <template x-if="scriptOf(lp, l, lab).outdated && !canFix(lp, l, lab)">
+                                                            <span data-script-outdated :data-variant="lab" class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300"
+                                                                  x-text="(lab ? lab + ' · ' : '') + 'written for ' + scriptOf(lp, l, lab).budget + ' min'"></span>
+                                                        </template>
+                                                        <template x-if="scriptOf(lp, l, lab).outdated && canFix(lp, l, lab)">
+                                                            <button type="button" data-script-outdated :data-variant="lab" @click="regenerateScript(lp, l, lab)" :disabled="!!busy"
+                                                                    class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 disabled:opacity-50"
+                                                                    x-text="(lab ? lab + ' · ' : '') + 'written for ' + scriptOf(lp, l, lab).budget + ' min · Rewrite'"></button>
+                                                        </template>
                                                         <template x-if="scriptOf(lp, l, lab).stale && canFix(lp, l, lab)">
                                                             <button type="button" data-script-stale :data-variant="lab" @click="regenerateScript(lp, l, lab)" :disabled="!!busy"
                                                                     class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 disabled:opacity-50"
@@ -732,7 +741,7 @@ function libraryPage(host = 'admin') {
         // failed, ran short or is a hand edit a change may have outdated.
         restNotes(lp, l, lab) {
             const sc = this.scriptOf(lp, l, lab);
-            return ['writing', 'failed'].includes(sc.state) || !!sc.short || !!sc.stale;
+            return ['writing', 'failed'].includes(sc.state) || !!sc.short || !!sc.stale || !!sc.outdated;
         },
         // Short at rest: the writer's raw failure note stays in the chip's
         // title and in Edit by hand's chip, not on the course.
@@ -804,7 +813,7 @@ function libraryPage(host = 'admin') {
             return labs.length ? labs : [''];
         },
         scriptKey(l, lab) { return l.id + '|' + (lab || ''); },
-        scriptOf(lp, l, lab) { return ((lp.scripts || {})[l.id] || {})[lab || ''] || {state: 'none'}; },
+        scriptOf(lp, l, lab) { return ((lp.scripts || {})[l.id] || {})[lab || ''] || {state: 'none', outdated: false, budget: 0}; },
         scriptChip(lp, l, lab) {
             const sc = this.scriptOf(lp, l, lab);
             if (sc.state === 'writing') return 'writing…';
@@ -929,7 +938,9 @@ function libraryPage(host = 'admin') {
                 ? await promptConfirm('Rewrite this hand-edited script?',
                 this.scriptOf(lp, l, lab).stale ? 'A change to the program may have outdated it. Your edit goes away and the app writes a fresh script.'
                                                 : 'Your edit goes away and the app writes a fresh script.', 'Rewrite', 'Keep it')
-                : await promptConfirm('Rewrite this lesson?', 'The app writes a fresh script. Anyone practising keeps the plain steps until it lands.', 'Rewrite', 'Cancel');
+                : await promptConfirm('Rewrite this lesson?', (this.scriptOf(lp, l, lab).outdated
+                    ? 'This script was written for ' + this.scriptOf(lp, l, lab).budget + ' min. ' : '')
+                    + 'The app writes a fresh script. Anyone practising keeps the plain steps until it lands.', 'Rewrite', 'Cancel');
             if (!ok) return;
             if (await this.mutate(this.lib(lp, '/scripts/write'), {lesson_id: l.id, variant_label: lab || ''}))
                 delete this.scriptEdits[this.scriptKey(l, lab)];

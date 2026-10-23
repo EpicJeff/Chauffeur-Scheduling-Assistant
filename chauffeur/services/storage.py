@@ -4037,7 +4037,7 @@ def _script_row(library_id, slot, data, claim, edited, row_id=None, created_at=N
             'origin': data.get('origin') or 'generated', 'source_url': data.get('source_url') or '',
             'scenes': list(data.get('scenes') or []), 'edited': edited, 'stale': False, 'model': data.get('model') or '',
             'attempts': int(data.get('attempts') or 0), 'note': str(data.get('note') or ''),
-            'minutes': int(data.get('minutes') or 0), 'claim': claim,
+            'minutes': int(data.get('minutes') or 0), 'budget': int(data.get('budget') or 0), 'claim': claim,
             'created_at': created_at if created_at is not None else time.time()}
 
 
@@ -4052,8 +4052,12 @@ def claim_library_script(library_id: str, slot: dict, revision=None):
             return None
         cond = _library_script_query(library_id, slot)
         existing = library_scripts_table.search(cond)
-        if existing and (existing[0].get('scenes') or existing[0].get('edited')):
-            return None
+        if existing:
+            old = existing[0]
+            outdated = (old.get('budget') and int(old['budget']) !=
+                        int(get_library_program(library_id)['made_for'].get('minutes') or 25))
+            if old.get('edited') or (old.get('scenes') and not outdated):
+                return None
         token = uuid.uuid4().hex
         if existing:
             library_scripts_table.update({'claim': token, 'revision': current_revision}, cond)
@@ -4136,6 +4140,13 @@ def edit_library_script(library_id: str, slot: dict, data: dict) -> str:
         else:
             library_scripts_table.insert(row)
         return new
+
+
+def set_library_script_fields(library_id: str, slot: dict, fields: dict):
+    """Update script metadata without changing authored work or its claim."""
+    with db_lock:
+        fields = {k: v for k, v in fields.items() if k not in ('scenes', 'edited', 'claim')}
+        return bool(library_scripts_table.update(fields, _library_script_query(library_id, slot)))
 
 
 def mark_library_script_stale(library_id: str, slot: dict, stale: bool):
