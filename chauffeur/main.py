@@ -20573,6 +20573,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         
     # Removed global hash check. We now do day-by-day hashing and caching below.
     events = []
+    driver_only_events = []
     all_events_for_ui = {} # To avoid duplicates in payload
     # Events owned by a person with no driving/passenger profile: display-only,
     # kept out of the solver, the inbox and duplicate detection.
@@ -20858,6 +20859,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         # (needs_triage events still go to the dashboard but are stripped out of solver below)
         if is_passenger and not is_member_only:
             events.append(e)
+        elif is_driver_only and not is_member_only and not e.all_day:
+            # Own appointments are route stops and solver walls, never rides.
+            # Keep unlocated ones here too: moving a wall must invalidate the day.
+            driver_only_events.append(e)
 
     # Optional events, phase 2: stamp each optional event with the family's
     # per-occurrence decision (attend/skip/undecided) before unrolling, so
@@ -21191,6 +21196,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
 
     # Pre-populate empty lists for the entire requested date range so empty days still get cached
     events_to_solve_by_date = defaultdict(list)
+    driver_only_events_by_date = defaultdict(list)
     fetched_by_date = defaultdict(list)
     
     now_tz = datetime.datetime.now().astimezone()
@@ -21204,17 +21210,25 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         fetched_by_date[d_str] = []
         curr_date += datetime.timedelta(days=1)
 
-    # Group events to solve by local date
-    for e in events_to_solve:
-        curr = e.start.astimezone()
-        end = e.end.astimezone()
-        while curr.date() <= end.date():
-            if curr.date() == end.date() and end.hour == 0 and end.minute == 0 and curr.date() != e.start.astimezone().date():
-                break
-            date_str = curr.strftime("%Y-%m-%d")
-            if e not in events_to_solve_by_date[date_str]:
-                events_to_solve_by_date[date_str].append(e)
-            curr += datetime.timedelta(days=1)
+    # Group rides and own appointments separately by local date. Only rides
+    # enter the assignable list; both affect the day's route and cache validity.
+    for source, by_date in ((events_to_solve, events_to_solve_by_date),
+                            (driver_only_events, driver_only_events_by_date)):
+        for e in source:
+            curr = e.start.astimezone()
+            end = e.end.astimezone()
+            while curr.date() <= end.date():
+                if curr.date() == end.date() and end.hour == 0 and end.minute == 0 and curr.date() != e.start.astimezone().date():
+                    break
+                date_str = curr.strftime("%Y-%m-%d")
+                if e not in by_date[date_str]:
+                    by_date[date_str].append(e)
+                curr += datetime.timedelta(days=1)
+
+    daily_hash_events = {
+        date_str: events_to_solve_by_date[date_str] + driver_only_events_by_date[date_str]
+        for date_str in fetched_by_date
+    }
 
     # Group all fetched events by local date (for hashing)
     original_trips_to_remove = set()
@@ -21566,7 +21580,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     # Identify which dates actually need solving
     dates_needing_solve = []
     for date_str, daily_fetched in fetched_by_date.items():
-        daily_hash = hash_events(events_to_solve_by_date[date_str])
+        daily_hash = hash_events(daily_hash_events[date_str])
         daily_cache = storage.get_cached_daily_schedule(date_str)
         if not (daily_cache and daily_cache.get('events_hash') == daily_hash and not force_refresh):
             dates_needing_solve.append(date_str)
@@ -21586,7 +21600,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         # Check abort at the start of each daily iteration
         check_abort_refresh()
 
-        daily_hash = hash_events(events_to_solve_by_date[date_str], assist_map=assist_map)
+        daily_hash = hash_events(daily_hash_events[date_str], assist_map=assist_map)
         daily_events_to_solve = events_to_solve_by_date[date_str]
 
         # Check cache
@@ -21787,7 +21801,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     # Pass 3: Route Edges and Caching
     from models.schemas import Event
     for date_str, daily_fetched in fetched_by_date.items():
-        daily_hash = hash_events(events_to_solve_by_date[date_str])
+        daily_hash = hash_events(daily_hash_events[date_str])
         daily_events_to_solve = events_to_solve_by_date[date_str]
         base = base_schedules[date_str]
 
@@ -21812,7 +21826,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         all_assignments = {**base['assignments'], **base['ghost_assignments']}
         for e_dict in scheduled_errands:
             all_assignments[e_dict['id']] = e_dict['driver']['id']
-        all_events = daily_events_to_solve + errand_events
+        all_events = daily_events_to_solve + errand_events + [
+            e for e in driver_only_events_by_date[date_str] if (e.location or '').strip()
+        ]
         
         if draft:
             route_edges, initial_edges, final_edges = {}, {}, {}
