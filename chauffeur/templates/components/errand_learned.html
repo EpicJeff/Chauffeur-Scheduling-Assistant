@@ -1,0 +1,88 @@
+{# Learned errand preferences (errands-common-sense §5): what the household's
+   steers have taught the errand pass, in plain words, each deletable. Lives in
+   the Errands drawer under the rules, parent-only like them; loads when the
+   drawer opens. The drawer macro draws nothing on a panel or kiosk, so a wall
+   never shows it. #}
+<div x-data="errandLearnedPanel()" x-init="init()" id="errand-learned" class="scroll-mt-28">
+    <div class="p-4 md:p-6">
+        <h2 class="text-2xl font-bold text-indigo-300 mb-2">Learned</h2>
+        <p class="text-sm text-gray-500 mb-4">Every time someone steers an errand, the planner remembers a little. These
+            nudge where errands land; none of them is a rule. Delete one to forget it.</p>
+        <p x-show="forbidden" class="text-sm text-gray-500 italic">Learned preferences are a parent's list.</p>
+        <template x-if="!forbidden">
+            <div>
+                <p x-show="loaded && rows.length === 0" class="text-sm text-gray-500 italic">Nothing learned yet. Steering an errand teaches this list.</p>
+                <ul class="space-y-2">
+                    <template x-for="row in rows" :key="row.id">
+                        <li class="flex items-center justify-between gap-3 bg-gray-700/30 border border-gray-600 rounded-lg px-4 py-2">
+                            <span class="text-sm text-gray-200" x-text="row.text"></span>
+                            <button type="button" @click="remove(row.id)" :disabled="!!busy[row.id]"
+                                class="text-xs font-semibold text-red-300 hover:text-red-200 disabled:opacity-50">Delete</button>
+                        </li>
+                    </template>
+                </ul>
+                <div class="mt-4" x-show="rows.length > 0">
+                    <button type="button" @click="clearAll()"
+                        class="text-xs font-semibold text-gray-400 hover:text-white border border-gray-600 rounded-lg px-3 py-1.5">Clear all</button>
+                </div>
+            </div>
+        </template>
+    </div>
+</div>
+<script>
+    function errandLearnedPanel() {
+        return {
+            // Included, so it reads the shared base rather than working out its own depth (test_template_js).
+            apiBase: (window.chfBase !== undefined ? window.chfBase : ''),
+            rows: [],
+            busy: {},
+            loaded: false,
+            forbidden: false,
+            init() {
+                window.addEventListener('chf-settings-opened', e => {
+                    const t = e.detail && e.detail.tab;
+                    if (t === 'errands' && !this.loaded) this.load();
+                });
+            },
+            async load() {
+                try {
+                    const res = await fetch(`${this.apiBase}api/errands/preferences`);
+                    if (res.status === 401 || res.status === 403) { this.forbidden = true; return; }
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    const data = await res.json();
+                    this.rows = Array.isArray(data.rows) ? data.rows : [];
+                    this.loaded = true;
+                } catch (e) {
+                    console.error('Failed to load learned preferences', e);
+                }
+            },
+            async _send(url) {
+                window.chfSettingsSaving();
+                try {
+                    const r = await fetch(url, { method: 'DELETE' });
+                    if (!r.ok) {
+                        if (!window.chfSettingsSaved(false, 'Could not forget that just now.')) showGlobalAlert('Could not forget that just now.');
+                        return false;
+                    }
+                    window.chfSettingsSaved(true);
+                    return true;
+                } catch (e) {
+                    if (!window.chfSettingsSaved(false, 'Could not forget that just now.')) showGlobalAlert('Could not forget that just now.');
+                    return false;
+                }
+            },
+            async remove(id) {
+                this.busy = Object.assign({}, this.busy, { [id]: true });
+                try {
+                    if (await this._send(`${this.apiBase}api/errands/preferences/${encodeURIComponent(id)}`)) await this.load();
+                } finally {
+                    const b = Object.assign({}, this.busy); delete b[id]; this.busy = b;
+                }
+            },
+            async clearAll() {
+                if (!(await promptConfirm('Forget everything learned about errands?', 'The planner starts fresh. Steering teaches it again.'))) return;
+                if (await this._send(`${this.apiBase}api/errands/preferences`)) await this.load();
+            },
+        };
+    }
+</script>

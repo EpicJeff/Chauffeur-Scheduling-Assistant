@@ -455,6 +455,50 @@ var setTimeout = (fn, ms) => 0;   // the replan poll never fires in the probe
     check('e4' in got['replanning'], "the row is marked replanning until the generation moves")
 
 
+def scenario_the_learned_block_is_on_the_page_and_not_on_a_card():
+    page = _render_errands()
+    check('errandLearnedPanel()' in page and 'id="errand-learned"' in page, "the Learned block is in the Errands drawer")
+    check('Nothing learned yet' in page, "the empty state is there")
+    import main
+    req = types.SimpleNamespace(url=types.SimpleNamespace(path='/errands'), query_params={'panel': 'true'})
+    panel = main.templates.env.get_template('errands.html').render(request=req)
+    check('errandLearnedPanel()' not in panel, "a panel never draws it (the drawer draws nothing on a panel)")
+
+
+def scenario_the_learned_block_lists_and_deletes_through_the_routes():
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from test_moment_media_token import _function_text, _run_node
+    comp = open(os.path.join(TPL, 'components', 'errand_learned.html'), encoding='utf-8').read()
+    logic = _function_text(comp, 'function errandLearnedPanel()')
+    got = _run_node(r"""var window = globalThis; window.chfBase = '';
+var showGlobalAlert = () => {}; var promptConfirm = async () => true;
+window.chfSettingsSaving = () => {}; window.chfSettingsSaved = () => true;
+window.addEventListener = () => {};
+""" + logic + r"""
+(async () => {
+  const P = errandLearnedPanel();
+  const calls = [];
+  const ROWS = [{id: 'a', text: 'Jeff: groceries not on Saturdays (learned from 2 steers)'}, {id: 'b', text: 'Lorena runs returns (learned from 1 steer)'}];
+  globalThis.fetch = async (url, init) => {
+    calls.push({url, method: (init && init.method) || 'GET'});
+    if (init && init.method === 'DELETE') { if (url.endsWith('/a')) ROWS.splice(0, 1); else if (url.endsWith('preferences')) ROWS.splice(0); return {ok: true, status: 200, json: async () => ({status: 'ok'})}; }
+    return {ok: true, status: 200, json: async () => ({rows: ROWS.slice()})};
+  };
+  await P.load();
+  const n0 = P.rows.length;
+  await P.remove('a');
+  const n1 = P.rows.length;
+  await P.clearAll();
+  console.log(JSON.stringify({n0, n1, n2: P.rows.length, calls}));
+})();
+""")
+    if got is None:
+        return
+    check(got['n0'] == 2 and got['n1'] == 1 and got['n2'] == 0, f"{got}")
+    urls = [c['url'] for c in got['calls'] if c['method'] == 'DELETE']
+    check(urls == ['api/errands/preferences/a', 'api/errands/preferences'], f"{urls}")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

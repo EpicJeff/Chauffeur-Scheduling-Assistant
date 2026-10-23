@@ -379,6 +379,9 @@ RULES = [
     # The cancellation record: what was called off, when, why — the
     # reschedule memory. Calendar-shaped, so it wears the calendar facet.
     (ANY, '/api/cancellations', SIGNED_IN, 'calendar.events'),
+    # Learned errand preferences: what the household's steers taught the
+    # pass. A parent's list, like the errand rules beside it.
+    (ANY, '/api/errands/preferences/*', PARENTS, None),
     (ANY, '/api/errands/*', SIGNED_IN, 'lists.errands'),
     (ANY, '/api/overrides/*', SIGNED_IN, 'schedule.assignment'),
     (ANY, '/api/occasions/*', SIGNED_IN, 'occasions'),

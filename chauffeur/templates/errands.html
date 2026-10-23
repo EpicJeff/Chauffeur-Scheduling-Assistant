@@ -149,6 +149,7 @@
         </div>
         {% endcall %}
         {% include 'components/errand_rules.html' %}
+        {% include 'components/errand_learned.html' %}
         {% endcall %}
     </div>
 
@@ -320,6 +321,27 @@
                                       <label for="edit-once-driver" class="block text-xs font-medium text-gray-400 mb-1">Driver (this occurrence)</label>
                                       <select id="edit-once-driver" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none">
                                           <option value="">Automatic</option>
+                                      </select>
+                                  </div>
+                                  <div>
+                                      <label for="edit-kind" class="block text-xs font-medium text-gray-400 mb-1">Kind</label>
+                                      <select id="edit-kind" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none">
+                                          <option value="">Automatic</option>
+                                          <option value="groceries">Groceries</option>
+                                          <option value="pharmacy">Pharmacy</option>
+                                          <option value="return">Return / drop-off</option>
+                                          <option value="pickup">Pickup</option>
+                                          <option value="service">Appointment / service</option>
+                                          <option value="other">Other</option>
+                                      </select>
+                                      <p id="edit-kind-guess" class="text-xs text-gray-500 mt-1"></p>
+                                  </div>
+                                  <div>
+                                      <label for="edit-home-bound" class="block text-xs font-medium text-gray-400 mb-1">On the way home</label>
+                                      <select id="edit-home-bound" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none">
+                                          <option value="">Automatic (groceries and pharmacy)</option>
+                                          <option value="true">Yes, last stop before home</option>
+                                          <option value="false">No, any leg</option>
                                       </select>
                                   </div>
                                   <div class="col-span-2">
@@ -839,6 +861,11 @@
             document.getElementById('edit-pinned-date').value = currentEditErrand.pinned_date || '';
             document.getElementById('edit-pinned-start').value = currentEditErrand.pinned_start || '';
             document.getElementById('edit-pinned-end').value = currentEditErrand.pinned_end || '';
+            document.getElementById('edit-kind').value = currentEditErrand.kind || '';
+            document.getElementById('edit-kind-guess').textContent = currentEditErrand.kind
+                ? '' : 'Guessed: ' + (currentEditErrand.kind_inferred || 'other');
+            const hb = currentEditErrand.home_bound;
+            document.getElementById('edit-home-bound').value = hb === true ? 'true' : hb === false ? 'false' : '';
             fillOnceDriverSelect();
             renderSkippedDates();
             document.getElementById('edit-buffer-mins').value = currentEditErrand.buffer_mins || 0;
@@ -889,6 +916,9 @@
             errand.pinned_date = document.getElementById('edit-pinned-date').value || null;
             errand.pinned_start = document.getElementById('edit-pinned-start').value || null;
             errand.pinned_end = document.getElementById('edit-pinned-end').value || null;
+            errand.kind = document.getElementById('edit-kind').value || null;
+            const hbv = document.getElementById('edit-home-bound').value;
+            errand.home_bound = hbv === '' ? null : hbv === 'true';
             errand.once_driver_id = document.getElementById('edit-once-driver').value || null;
             errand.skip_dates = currentEditErrand.skip_dates || [];
             errand.buffer_mins = parseInt(document.getElementById('edit-buffer-mins').value) || 0;

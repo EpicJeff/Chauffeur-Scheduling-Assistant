@@ -95,6 +95,64 @@ def scenario_the_agent_teaches_the_same_row():
     check(len(storage.get_errand_preferences()) == 2, "completion teaches nothing")
 
 
+def scenario_the_preference_routes_list_delete_and_clear_as_a_parent():
+    _fresh()
+    client, main = _client()
+    a = storage.upsert_errand_preference({'scope': 'd1', 'kind': 'groceries', 'dimension': 'weekday', 'value': '5',
+                                          'polarity': 'avoid', 'source': 'steer'}, now=time.time())
+    b = storage.upsert_errand_preference({'scope': '*', 'kind': 'return', 'dimension': 'driver', 'value': 'd2',
+                                          'polarity': 'prefer', 'source': 'steer'}, now=time.time())
+    r = client.get('/api/errands/preferences')
+    check(r.status_code == 200, f"{r.status_code} {r.text}")
+    rows = r.json()['rows']
+    texts = sorted(x['text'] for x in rows)
+    check(texts == ['Jeff: groceries not on Saturdays (learned from 1 steer)', 'Lorena runs returns (learned from 1 steer)'], f"{texts}")
+    r = client.delete(f'/api/errands/preferences/{a["id"]}')
+    check(r.status_code == 200 and len(storage.get_errand_preferences()) == 1, f"{r.status_code} {r.text}")
+    r = client.delete('/api/errands/preferences/nope')
+    check(r.status_code == 404, f"{r.status_code}")
+    r = client.delete('/api/errands/preferences')
+    check(r.status_code == 200 and r.json()['removed'] == 1 and storage.get_errand_preferences() == [], f"{r.text}")
+    from services import auth
+    check(auth.resolve('GET', '/api/errands/preferences') == auth.PARENTS, "listing is parents only")
+    check(auth.resolve('DELETE', '/api/errands/preferences/{pref_id}') == auth.PARENTS, "deleting is parents only")
+    check(auth.resolve('GET', '/api/errands') != auth.PARENTS, "the errands list itself stays as it was")
+
+
+def scenario_kind_and_home_bound_round_trip_and_forget_placements():
+    _fresh()
+    client, main = _client()
+    doc_id = storage.add_errand(_errand(id='e-kind', title='Costco run'))
+    _cache_row('2026-10-29', _row('e-kind', '2026-10-29'))
+    r = client.get('/api/errands')
+    me = next(x for x in r.json() if x['id'] == 'e-kind')
+    check(me['kind'] is None and me['kind_inferred'] == 'groceries' and me['home_bound'] is None, f"{me}")
+    body = {k: v for k, v in me.items() if k not in ('placement', 'unplaced', 'generation', 'shopping_lists', 'kind_inferred', 'scheduled_start')}
+    body['home_bound'] = False
+    r = client.put(f'/api/errands/{doc_id}', json=body)
+    check(r.status_code == 200, f"{r.status_code} {r.text}")
+    check(storage.get_errand_by_id(doc_id)['home_bound'] is False, "saved")
+    check(storage.get_all_scheduled_errand_rows().get('e-kind') is None, "a routing field changed: placement forgotten")
+    check(storage.get_errand_preferences() == [], "a flag edit teaches nothing")
+    body['kind'] = 'snacks'
+    r = client.put(f'/api/errands/{doc_id}', json=body)
+    check(r.status_code == 422, f"an unknown kind is refused: {r.status_code}")
+
+
+def scenario_a_rule_copies_kind_and_home_bound_onto_a_new_errand():
+    _fresh()
+    client, main = _client()
+    storage.add_errand_rule({'title': 'Grocery runs', 'constraint_type': 'driver_assignment', 'keywords': ['costco'],
+                             'kind': 'groceries', 'home_bound': False, 'is_enabled': True})
+    r = client.post('/api/errands', json=_errand(id='e-rule', title='Costco run'))
+    check(r.status_code == 200, f"{r.status_code} {r.text}")
+    saved = storage.get_errand_by_id('e-rule')
+    check(saved['kind'] == 'groceries' and saved['home_bound'] is False, f"{saved}")
+    r = client.post('/api/errands', json=_errand(id='e-rule2', title='Costco run', home_bound=True))
+    saved = storage.get_errand_by_id('e-rule2')
+    check(saved['home_bound'] is True, "the errand's own value beats the rule")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

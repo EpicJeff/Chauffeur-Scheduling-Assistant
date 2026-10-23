@@ -77,6 +77,7 @@ ensure_vapid_keys()
 
 from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, Car, FamilyMember, TelemetryEvent, Errand, ErrandRule, StatusTier, StatusProtocol, StatusDay, AssistContact, AssistAssignment, HouseholdTask, ProtectedCommitment, STEER_FIELDS, ERRAND_ROUTING_FIELDS
 from services import storage, calendar, maps, deletion
+from services import errand_prefs
 from services import assist as _assist_svc
 from solver import matcher
 from fastapi.templating import Jinja2Templates
@@ -18282,6 +18283,7 @@ def get_errands():
         obj['doc_id'] = e.get('doc_id')
         obj['skip_dates'] = [d for d in (obj.get('skip_dates') or []) if d >= today]
         obj['generation'] = generation
+        obj['kind_inferred'] = errand_prefs.errand_kind(obj)
         row = rows_by_id.get(obj['id'])
         if row:
             obj['scheduled_start'] = row.get('start') or row.get('start_time')
@@ -18297,6 +18299,29 @@ def get_errands():
             for l in storage.find_shopping_lists_for_errand(obj)]
         res.append(obj)
     return res
+
+# Learned errand preferences (errands-common-sense §5). Declared above the
+# {doc_id} routes so "preferences" is never parsed as a doc id.
+@app.get("/api/errands/preferences")
+def get_errand_preferences():
+    people = {d.get('id'): d.get('name') for d in storage.get_all_drivers()}
+    return {"rows": [dict(r, text=errand_prefs.describe(r, people)) for r in storage.get_errand_preferences()]}
+
+
+@app.delete("/api/errands/preferences")
+def clear_errand_preferences(background_tasks: BackgroundTasks):
+    n = storage.clear_errand_preferences()
+    background_tasks.add_task(trigger_background_refresh)
+    return {"status": "cleared", "removed": n}
+
+
+@app.delete("/api/errands/preferences/{pref_id}")
+def delete_errand_preference(pref_id: str, background_tasks: BackgroundTasks):
+    if not storage.delete_errand_preference(pref_id):
+        raise HTTPException(status_code=404, detail="Preference not found")
+    background_tasks.add_task(trigger_background_refresh)
+    return {"status": "deleted"}
+
 
 @app.post("/api/errands")
 def create_errand(errand: Errand, background_tasks: BackgroundTasks):
@@ -18356,6 +18381,8 @@ def create_errand(errand: Errand, background_tasks: BackgroundTasks):
             if not (kws or rule_loc): match = False
                 
         if match:
+            if r.get('kind') and not errand_dict.get('kind'): errand_dict['kind'] = r['kind']
+            if r.get('home_bound') is not None and errand_dict.get('home_bound') is None: errand_dict['home_bound'] = r['home_bound']
             if ctype == 'driver_assignment':
                 if r.get('allowed_drivers') and not errand_dict.get('allowed_drivers'): errand_dict['allowed_drivers'] = r['allowed_drivers']
                 if r.get('required_drivers') and not errand_dict.get('required_drivers'): errand_dict['required_drivers'] = r['required_drivers']

@@ -3612,7 +3612,7 @@
                 const er = rows.find(x => x.id === id);
                 if (!er) { showGlobalAlert('That errand is no longer available.'); return false; }
                 const body = Object.assign({}, er, patch);
-                delete body.placement; delete body.unplaced; delete body.generation; delete body.shopping_lists;
+                delete body.placement; delete body.unplaced; delete body.generation; delete body.shopping_lists; delete body.kind_inferred; delete body.scheduled_start;
                 const res = await fetch(`${apiBase}api/errands/${er.doc_id}`, {
                     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
                 if (!res.ok) { showGlobalAlert('That could not be saved.'); return false; }
