@@ -864,16 +864,20 @@ def solve_schedule(
                 if e.id == de.id or e_orig == de_orig or e.id == de_orig or e_orig == de.id:
                     continue # Driver is an attendee of this event, do not block
                 
-                if e.location and de.location:
-                    travel = get_travel_time_minutes(e.location, de.location)
-                else:
-                    travel = 20
                 # HARD feasibility is the DRIVE, and only the drive. A buffer
                 # is a wish to be early; a family whose warm-up collides with
                 # a work meeting goes to the game anyway, and a model that
                 # drops the ride instead is not modelling this household.
-                hard_e_to_de = (travel) * 60
-                hard_de_to_e = (travel) * 60
+                # The drive is the one WITH the kid in it (own-event drives,
+                # slice 2): after the ride the kid goes home before the
+                # driver's own event, and before the ride the kid is fetched
+                # from wherever they are. The direct hop used to stand in
+                # for both, so a haircut fifteen minutes before a lesson ten
+                # minutes away read as reachable while the real drive, by
+                # the house, was twenty.
+                d_home = d.home_location or restriction_home_location or home_location
+                hard_e_to_de = own_event_switch_mins(e, de, True, events, passengers, d_home) * 60
+                hard_de_to_e = own_event_switch_mins(e, de, False, events, passengers, d_home) * 60
                 # What we would LIKE: the drive plus the early arrival.
                 want_e_to_de = hard_e_to_de + e_buffer_after.get(e.id, 0) * 60
                 want_de_to_e = hard_de_to_e + e_buffer_before.get(e.id, 0) * 60
@@ -1713,6 +1717,41 @@ def get_switch_travel_time(e1: Event, e2: Event, all_events: List[Event], home_l
         return 0
     return get_travel_time_minutes(e1.location, e2.location)
 
+def own_event_switch_mins(ride: Event, own: Event, ride_first: bool, all_events: List[Event],
+                          passengers: List[Passenger] = None, home: Optional[str] = None) -> int:
+    """Minutes a driver needs between a ride they would make and an event of
+    their OWN (a haircut on their calendar). The direct drive between the two
+    places is not the drive: a kid is in the picture.
+
+    ride first: the kid rides home after the ride (a `dropoff` split leaves
+    the kid at the activity, so that one is direct), then the driver goes on
+    to their own event. own first: the driver leaves their own event,
+    fetches the kid where the kid IS (the kid's previous event when it is
+    close, exactly as `get_switch_travel_time` reads it; home otherwise) and
+    drives to the ride. No home to route through means the direct drive, the
+    same guess the solver made before this existed."""
+    if not ride.location or not own.location:
+        return 20
+    direct = get_travel_time_minutes(ride.location, own.location)
+    # An activity the driver ATTENDS with the kid is on the driver's own
+    # calendar too, so it reaches here as `own`. The kid is going to it in
+    # this car: no detour, the kid-to-kid rule owns that pair.
+    if passengers and get_event_passenger_ids(ride, passengers).intersection(
+            get_event_passenger_ids(own, passengers)):
+        return direct
+    if ride_first:
+        if getattr(ride, 'event_type', '') == 'dropoff' or not home:
+            return direct
+        return (get_travel_time_minutes(ride.location, home)
+                + get_travel_time_minutes(home, own.location))
+    pickup = get_passenger_pickup_event(ride, all_events)
+    via = pickup.location if (pickup and pickup.location) else home
+    if not via:
+        return direct
+    return (get_travel_time_minutes(own.location, via)
+            + get_travel_time_minutes(via, ride.location))
+
+
 def compute_route_edges(assignments: Dict[str, str], events: List[Event], drivers: List[Driver], home_location: Optional[str] = None, trip_metadata: List[dict] = None, driver_attendances: Dict[str, List[str]] = None, rules: List[Rule] = None, passengers: List[Passenger] = None) -> Tuple[Dict[str, dict], Dict[str, dict], Dict[str, dict]]:
     from collections import defaultdict
     
@@ -2175,18 +2214,23 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
 
             # 2. Driver Personal Calendar
             if not reason:
+                d_home = d.home_location or home_location
                 for de in driver_events.get(d.id, []):
                     if e.id == de.id: continue
-                    travel = get_travel_time_minutes(e.location, de.location) if e.location and de.location else 20
-                    needed_secs = (travel) * 60
-                    e_before_de = (de.start - e.end).total_seconds() >= needed_secs
-                    de_before_e = (e.start - de.end).total_seconds() >= needed_secs
+                    # The same drive the solver refused on: with the kid
+                    # taken home after the ride, or fetched before it.
+                    needed_e_de = own_event_switch_mins(e, de, True, events, passengers, d_home) * 60
+                    needed_de_e = own_event_switch_mins(e, de, False, events, passengers, d_home) * 60
+                    e_before_de = (de.start - e.end).total_seconds() >= needed_e_de
+                    de_before_e = (e.start - de.end).total_seconds() >= needed_de_e
                     if not e_before_de and not de_before_e:
                         if (e.id, d.id) not in overridden_pairs:
                             if e.start <= de.start:
                                 gap = (de.start - e.end).total_seconds()
+                                needed_secs = needed_e_de
                             else:
                                 gap = (e.start - de.end).total_seconds()
+                                needed_secs = needed_de_e
                             e_duration = (e.end - e.start).total_seconds() / 60
                             lateness_mins = math.ceil((needed_secs - gap) / 60.0)
                             if lateness_mins > min(60, e_duration * 0.75):

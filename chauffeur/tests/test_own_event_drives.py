@@ -27,7 +27,11 @@ Pinned here by RUNNING the refresh over one household:
   * an all-day own event stays out of `driver_events` (locked: a
     midnight-to-midnight span would ban the driver from every drive);
   * a calendar-only adult (no driver record) gets no edge: nobody drives
-    them and they drive nobody.
+    them and they drive nobody;
+  * slice 2: when the solver weighs a ride against the driver's own event
+    the drive it measures has the kid in it (home after the ride, fetched
+    before it), so a near miss is refused and the diagnostics name the
+    own event, and a gap with room for the detour keeps the ride.
 
 Run from chauffeur/:  python tests/test_own_event_drives.py
 """
@@ -67,8 +71,12 @@ def _household():
         tbl = getattr(storage, t, None)
         if tbl is not None:
             tbl.truncate()
+    # Suggested outside routes off: a ride nobody in the house can make
+    # stays unassigned, so the diagnostics say why instead of a ghost
+    # driver quietly covering it.
     storage.settings_table.insert({'calendar_ids': ['cal_house'],
-                                   'days_to_build': 1, 'home_location': HOME})
+                                   'days_to_build': 1, 'home_location': HOME,
+                                   'suggested_routes_enabled': False})
     storage.add_driver({'id': 'd1', 'name': 'Jeff', 'color_code': '#3b82f6',
                         'group': 'primary', 'priority_index': 1,
                         'calendar_ids': ['cal_jeff'], 'home_location': HOME})
@@ -85,6 +93,8 @@ def _household():
                         'calendar_ids': ['cal_gran']})
     storage.event_configs_table.insert({'google_id': 'gev1',
                                         'passenger_ids': ['p1']})
+    storage.event_configs_table.insert({'google_id': 'match',
+                                        'passenger_ids': ['p1']})
 
 
 def _solve(protos):
@@ -98,8 +108,13 @@ def _solve(protos):
     real_fetch = cal_svc.fetch_upcoming_events
     real_raw = matcher._raw_get_travel_time_minutes
     real_maps = maps.get_travel_time_minutes
+    # The harness mocks storage.get_settings to a bare calendar list; the
+    # refresh reads suggested_routes_enabled from that dict, so hand it the
+    # row the table holds.
+    real_settings = storage.get_settings
     try:
         cal_svc.fetch_upcoming_events = lambda *a, **k: [Event(**p) for p in protos]
+        storage.get_settings = lambda: dict(storage.settings_table.all()[0])
         matcher._raw_get_travel_time_minutes = _ten_minutes_apart
         maps.get_travel_time_minutes = _ten_minutes_apart
         res = main.refresh_schedule_logic(TODAY.isoformat(), TODAY.isoformat(),
@@ -108,6 +123,7 @@ def _solve(protos):
         cal_svc.fetch_upcoming_events = real_fetch
         matcher._raw_get_travel_time_minutes = real_raw
         maps.get_travel_time_minutes = real_maps
+        storage.get_settings = real_settings
     check(not res.get('error'), "the day did not solve: %s" % res.get('error'))
     return res
 
@@ -245,6 +261,79 @@ def scenario_a_calendar_only_adult_gets_no_drive():
                 "a drive was minted for Gran's lunch in %s/%s" % (kind, d_id))
     check('lunch' in {e.get('id') for e in res.get('events') or []},
           "Gran's lunch vanished from the family day")
+
+
+def _reason(res, ev_id, driver='d1'):
+    return ((res.get('diagnostics') or {}).get(ev_id) or {}).get(driver) or {}
+
+
+def scenario_the_kid_run_before_the_haircut_needs_the_drop_home():
+    """Slice 2 (user, 2026-10-23: "assuming a kid's activity drive works seems
+    bad"). Piano 1:00-1:30 at the studio, haircut 1:45 at the salon, every
+    pair ten minutes apart. Salon is ten minutes from the studio and the gap
+    is fifteen, so a direct drive fits; the real drive takes Lily home first
+    (studio, home, salon: twenty minutes) and does not. The ride must not be
+    handed to Jeff on the strength of a drive he cannot make."""
+    piano = _ev('gev1', 'cal_lily', _at(13), 30, '9 Studio Ln', title='Piano lesson')
+    haircut = _ev('haircut', 'cal_jeff', _at(13, 45), 45, '5 Salon Ave', title='Haircut')
+    res = _solve([piano, haircut])
+    check(res.get('assignments', {}).get('gev1') != 'd1',
+          "Jeff was given a ride he cannot make: %s" % res.get('assignments'))
+    why = _reason(res, 'gev1')
+    check(why.get('type') == 'personal_conflict' and 'Haircut' in (why.get('text') or ''),
+          "the diagnostics do not name the haircut: %s" % why)
+
+
+def scenario_the_kid_run_after_the_haircut_needs_the_pickup_from_home():
+    """Haircut 3:00-3:45, piano 4:00. Fifteen minutes between them; the drive
+    is salon, home (fetch Lily), studio: twenty. Not Jeff's to make."""
+    haircut = _ev('haircut', 'cal_jeff', _at(15), 45, '5 Salon Ave', title='Haircut')
+    res = _solve([PIANO, haircut])
+    check(res.get('assignments', {}).get('gev1') != 'd1',
+          "Jeff was given a ride he cannot make: %s" % res.get('assignments'))
+    why = _reason(res, 'gev1')
+    check(why.get('type') == 'personal_conflict' and 'Haircut' in (why.get('text') or ''),
+          "the diagnostics do not name the haircut: %s" % why)
+
+
+def scenario_room_to_fetch_the_kid_keeps_the_ride():
+    """Haircut 3:00-3:30, piano 4:00: thirty minutes covers salon, home,
+    studio. The ride stays Jeff's and the route edge says the pickup."""
+    haircut = _ev('haircut', 'cal_jeff', _at(15), 30, '5 Salon Ave', title='Haircut')
+    res = _solve([PIANO, haircut])
+    check(res.get('assignments', {}).get('gev1') == 'd1',
+          "a ride with room to fetch Lily was dropped: %s / %s"
+          % (res.get('assignments'), _reason(res, 'gev1')))
+    hop = _edge(res, 'route_edges', 'haircut')
+    check(hop.get('to_event') == 'gev1' and hop.get('pickup_waypoint'),
+          "the hop from the salon does not go by home for Lily: %s" % hop)
+
+
+def scenario_room_to_drop_the_kid_keeps_the_ride():
+    """Piano 1:00-1:30, haircut 1:50: twenty minutes covers studio, home
+    (Lily out), salon. The boundary the detour rule sits on."""
+    piano = _ev('gev1', 'cal_lily', _at(13), 30, '9 Studio Ln', title='Piano lesson')
+    haircut = _ev('haircut', 'cal_jeff', _at(13, 50), 40, '5 Salon Ave', title='Haircut')
+    res = _solve([piano, haircut])
+    check(res.get('assignments', {}).get('gev1') == 'd1',
+          "a ride with room to take Lily home was dropped: %s / %s"
+          % (res.get('assignments'), _reason(res, 'gev1')))
+
+
+def scenario_the_kid_rides_along_to_the_event_the_driver_attends():
+    """Codex review finding: an activity the driver ATTENDS with the kid is
+    on the driver's calendar too, so it sits in driver_events beside the
+    haircut. Piano 1:00-1:30 at the studio, then Lily's match at 1:45 at
+    the field with Jeff watching. Lily goes studio to field in Jeff's car;
+    nobody goes home in between. Both rides stay Jeff's."""
+    piano = _ev('gev1', 'cal_lily', _at(13), 30, '9 Studio Ln', title='Piano lesson')
+    match = _ev('match', 'cal_lily', _at(13, 45), 60, '3 Field Rd', title='Match')
+    match['calendar_ids'] = ['cal_lily', 'cal_jeff']
+    res = _solve([piano, match])
+    check(res.get('assignments', {}).get('gev1') == 'd1'
+          and res.get('assignments', {}).get('match') == 'd1',
+          "a kid-to-kid hop the driver attends was sent home in between: %s / %s"
+          % (res.get('assignments'), _reason(res, 'gev1')))
 
 
 if __name__ == '__main__':
