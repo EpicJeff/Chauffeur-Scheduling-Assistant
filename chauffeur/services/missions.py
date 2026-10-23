@@ -71,7 +71,7 @@ _plan_subject = {}
 READ_TOOLS = frozenset({
     'list_projects', 'get_project',
     'list_situations', 'explain_situation',
-    'get_current_state', 'get_errands', 'get_pet_status', 'get_point_balances',
+    'get_current_state', 'get_errands', 'get_errand_preferences', 'get_pet_status', 'get_point_balances',
     'get_family_goals', 'get_family_messages', 'list_chores',
     'list_open_findings', 'list_insights', 'list_programs',
     'get_routine_status', 'get_kid_tasks', 'get_shopping_list_items',

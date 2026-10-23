@@ -6097,6 +6097,7 @@ ADMIN_TOOLS = [
     "add_priority_rule", "delete_priority_rule",
     "run_solver",
     "add_errand", "update_errand", "delete_errand", "get_errands",
+    "get_errand_preferences", "forget_errand_preference",
     "add_errand_rule", "delete_errand_rule",
     "update_memory", "search_places",
     "generate_trip_plan",
@@ -6116,6 +6117,7 @@ SCHEDULE_MUTATING_ADMIN_TOOLS = {
     "add_priority_rule", "delete_priority_rule",
     "run_solver",
     "add_errand", "update_errand", "delete_errand",
+    "forget_errand_preference",
     "add_errand_rule", "delete_errand_rule",
     "manage_car",
 }
@@ -6502,6 +6504,8 @@ class AddErrandTool(BaseModel):
     buffer_mins: int = Field(default=0, description="Buffer time in minutes before/after.")
     tolerance_mins: int = Field(default=0, description="Tolerance for late arrival in minutes.")
     group_id: str = Field(default="", description="Group ID to schedule multiple errands together.")
+    kind: str = Field(default="", description="What sort of errand: groceries, pharmacy, return, pickup, service or other. Leave empty and Chauffeur works it out from the title.")
+    home_bound: Optional[bool] = Field(default=None, description="True when it must be the last stop before home (cold groceries). Leave unset to let the kind decide.")
 
 class UpdateErrandTool(BaseModel):
     """
@@ -6530,6 +6534,8 @@ class UpdateErrandTool(BaseModel):
     pinned_end: Optional[str] = Field(default=None, description="With pinned_date: latest HH:MM it may end that day.")
     once_driver_id: Optional[str] = Field(default=None, description="The driver who runs it this cycle only. 'Let Lorena do it.'")
     clear_steer: bool = Field(default=False, description="Back to automatic: clears skip dates, the pinned day and time, and the once-driver.")
+    kind: Optional[str] = Field(default=None, description="Optional kind: groceries, pharmacy, return, pickup, service or other.")
+    home_bound: Optional[bool] = Field(default=None, description="Optional: True = last stop before home, False = any leg.")
 
 class DeleteErrandTool(BaseModel):
     """
@@ -6542,6 +6548,18 @@ class GetErrandsTool(BaseModel):
     Gets a list of all active errands.
     """
     pass
+
+class GetErrandPreferencesTool(BaseModel):
+    """
+    Lists what the household's steers have taught the errand planner (soft preferences, in plain words).
+    """
+    pass
+
+class ForgetErrandPreferenceTool(BaseModel):
+    """
+    Forgets one learned errand preference, or all of them.
+    """
+    preference_id: str = Field(..., description="The preference id from get_errand_preferences, or 'all'.")
 
 class AddErrandRuleTool(BaseModel):
     """
@@ -7474,6 +7492,8 @@ TOOL_SCHEMAS = {
     "update_errand": UpdateErrandTool.model_json_schema(),
     "delete_errand": DeleteErrandTool.model_json_schema(),
     "get_errands": GetErrandsTool.model_json_schema(),
+    "get_errand_preferences": GetErrandPreferencesTool.model_json_schema(),
+    "forget_errand_preference": ForgetErrandPreferenceTool.model_json_schema(),
     "add_errand_rule": AddErrandRuleTool.model_json_schema(),
     "delete_errand_rule": DeleteErrandRuleTool.model_json_schema(),
     "search_places": SearchPlacesTool.model_json_schema(),
@@ -7773,7 +7793,11 @@ def handle_update_memory(args: dict) -> dict:
 
 def handle_add_errand(args: dict) -> dict:
     from services import maps, storage
+    from models.schemas import ERRAND_KINDS
     import time
+    kind = (args.get('kind') or '').strip().lower() or None
+    if kind is not None and kind not in ERRAND_KINDS:
+        return {"status": "error", "message": f"That is not a valid value: kind: must be one of {', '.join(ERRAND_KINDS)}"}
     if args.get('idem'):
         existing = next((e for e in storage.get_all_errands() if e.get('idem') == args['idem']), None)
         if existing:
@@ -7782,6 +7806,7 @@ def handle_add_errand(args: dict) -> dict:
     starts_on = args.get('starts_on', 0.0)
     if not starts_on: starts_on = time.time()
     errand = {
+        'id': uuid.uuid4().hex,
         'title': args.get('title'),
         'duration_mins': args.get('duration_mins', 30),
         'location': maps.resolve_routable_location(args.get('location')),
@@ -7803,6 +7828,8 @@ def handle_add_errand(args: dict) -> dict:
         'buffer_mins': args.get('buffer_mins', 0),
         'tolerance_mins': args.get('tolerance_mins', 0),
         'group_id': args.get('group_id') or None,
+        'kind': kind,
+        'home_bound': args.get('home_bound'),
         'window_days': args.get('window_days')
     }
     errand['idem'] = args.get('idem')
@@ -7857,6 +7884,10 @@ def handle_update_errand(args: dict) -> dict:
         for field in ['pinned_date', 'pinned_start', 'pinned_end', 'once_driver_id']:
             if args.get(field) is not None:
                 update_data[field] = args.get(field) or None
+    if args.get('kind') is not None:
+        update_data['kind'] = (args.get('kind') or '').strip().lower() or None
+    if args.get('home_bound') is not None:
+        update_data['home_bound'] = bool(args.get('home_bound'))
     if not update_data:
         return {"status": "success", "message": "Nothing to change."}
     merged = dict(errand)
@@ -7916,6 +7947,23 @@ def handle_get_errands(args: dict) -> dict:
             e['unplaced'] = notes[e['id']]
         out.append(e)
     return {"status": "success", "errands": out}
+
+def handle_get_errand_preferences(args: dict) -> dict:
+    from services import storage, errand_prefs
+    people = {d.get('id'): d.get('name') for d in storage.get_all_drivers()}
+    rows = [dict(r, text=errand_prefs.describe(r, people)) for r in storage.get_errand_preferences()]
+    return {"status": "success", "rows": rows}
+
+
+def handle_forget_errand_preference(args: dict) -> dict:
+    from services import storage
+    pid = str(args.get('preference_id') or '').strip()
+    if pid == 'all':
+        n = storage.clear_errand_preferences()
+        return {"status": "success", "message": f"Forgot {n} learned preference{'s' if n != 1 else ''}."}
+    if not pid or not storage.delete_errand_preference(pid):
+        return {"status": "error", "message": "No learned preference with that id."}
+    return {"status": "success", "message": "Forgot it."}
 
 def handle_add_errand_rule(args: dict) -> dict:
     from services import storage
@@ -9404,6 +9452,8 @@ TOOL_HANDLERS = {
     "update_errand": handle_update_errand,
     "delete_errand": handle_delete_errand,
     "get_errands": handle_get_errands,
+    "get_errand_preferences": handle_get_errand_preferences,
+    "forget_errand_preference": handle_forget_errand_preference,
     "add_errand_rule": handle_add_errand_rule,
     "delete_errand_rule": handle_delete_errand_rule,
     "search_places": handle_search_places,

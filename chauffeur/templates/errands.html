@@ -929,6 +929,7 @@
 
             const body = Object.assign({}, errand);
             delete body.placement; delete body.unplaced; delete body.generation; delete body.shopping_lists;
+            delete body.kind_inferred; delete body.scheduled_start;
             try {
                 await fetch(`api/errands/${errand.doc_id}`, {
                     method: 'PUT',

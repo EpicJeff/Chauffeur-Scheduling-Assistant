@@ -22,7 +22,7 @@
                     </template>
                 </ul>
                 <div class="mt-4" x-show="rows.length > 0">
-                    <button type="button" @click="clearAll()"
+                    <button type="button" @click="clearAll()" :disabled="!!clearing"
                         class="text-xs font-semibold text-gray-400 hover:text-white border border-gray-600 rounded-lg px-3 py-1.5">Clear all</button>
                 </div>
             </div>
@@ -36,12 +36,13 @@
             apiBase: (window.chfBase !== undefined ? window.chfBase : ''),
             rows: [],
             busy: {},
+            clearing: false,
             loaded: false,
             forbidden: false,
             init() {
                 window.addEventListener('chf-settings-opened', e => {
                     const t = e.detail && e.detail.tab;
-                    if (t === 'errands' && !this.loaded) this.load();
+                    if (t === 'errands') this.load();
                 });
             },
             async load() {
@@ -80,8 +81,14 @@
                 }
             },
             async clearAll() {
-                if (!(await promptConfirm('Forget everything learned about errands?', 'The planner starts fresh. Steering teaches it again.'))) return;
-                if (await this._send(`${this.apiBase}api/errands/preferences`)) await this.load();
+                if (this.clearing) return;
+                this.clearing = true;
+                try {
+                    if (!(await promptConfirm('Forget everything learned about errands?', 'The planner starts fresh. Steering teaches it again.'))) return;
+                    if (await this._send(`${this.apiBase}api/errands/preferences`)) await this.load();
+                } finally {
+                    this.clearing = false;
+                }
             },
         };
     }

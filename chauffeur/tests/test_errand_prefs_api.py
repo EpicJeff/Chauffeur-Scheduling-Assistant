@@ -153,6 +153,45 @@ def scenario_a_rule_copies_kind_and_home_bound_onto_a_new_errand():
     check(saved['home_bound'] is True, "the errand's own value beats the rule")
 
 
+def scenario_the_agent_sets_kind_and_home_bound_and_reads_and_forgets_preferences():
+    _fresh()
+    from services import agent_tools_v2 as tools, missions, maps
+    maps.resolve_routable_location = lambda loc: loc      # never geocode in a unit test
+    out = tools.handle_add_errand({'title': 'Costco run', 'duration_mins': 30, 'location': 'Costco', 'home_bound': False})
+    doc_id = int(out['created'][0]['id'])
+    saved = storage.get_errand_by_id(doc_id)
+    check(saved['home_bound'] is False and saved.get('kind') is None, f"{saved}")
+    out = tools.handle_update_errand({'errand_id': str(doc_id), 'kind': 'service', 'home_bound': True})
+    check(out['status'] == 'success', f"{out}")
+    saved = storage.get_errand_by_id(doc_id)
+    check(saved['kind'] == 'service' and saved['home_bound'] is True, f"{saved}")
+    out = tools.handle_update_errand({'errand_id': str(doc_id), 'kind': 'snacks'})
+    check(out['status'] == 'error' and 'kind' in out['message'], f"{out}")
+    n_before = len(storage.get_all_errands())
+    out = tools.handle_add_errand({'title': 'Snack run', 'duration_mins': 10, 'location': 'Shop', 'kind': 'snacks'})
+    check(out['status'] == 'error' and 'kind' in out['message'] and len(storage.get_all_errands()) == n_before,
+          f"add_errand refuses an unknown kind the same way update does, and saves nothing: {out}")
+    a = storage.upsert_errand_preference({'scope': 'd1', 'kind': 'groceries', 'dimension': 'weekday', 'value': '5',
+                                          'polarity': 'avoid', 'source': 'steer'}, now=time.time())
+    storage.upsert_errand_preference({'scope': '*', 'kind': 'return', 'dimension': 'driver', 'value': 'd2',
+                                      'polarity': 'prefer', 'source': 'steer'}, now=time.time())
+    out = tools.handle_get_errand_preferences({})
+    check(out['status'] == 'success' and sorted(r['text'] for r in out['rows'])
+          == ['Jeff: groceries not on Saturdays (learned from 1 steer)', 'Lorena runs returns (learned from 1 steer)'], f"{out}")
+    out = tools.handle_forget_errand_preference({'preference_id': a['id']})
+    check(out['status'] == 'success' and len(storage.get_errand_preferences()) == 1, f"{out}")
+    out = tools.handle_forget_errand_preference({'preference_id': 'nope'})
+    check(out['status'] == 'error', f"{out}")
+    out = tools.handle_forget_errand_preference({'preference_id': 'all'})
+    check(out['status'] == 'success' and storage.get_errand_preferences() == [], f"{out}")
+    for name in ('get_errand_preferences', 'forget_errand_preference'):
+        check(name in tools.TOOL_HANDLERS and name in tools.TOOL_SCHEMAS and name in tools.ADMIN_TOOLS, f"{name} registered")
+    check('get_errand_preferences' in missions.READ_TOOLS, "a read is a read")
+    check('forget_errand_preference' in tools.SCHEDULE_MUTATING_ADMIN_TOOLS, "forgetting re-plans")
+    schema = tools.TOOL_SCHEMAS['update_errand']['properties']
+    check('kind' in schema and 'home_bound' in schema, "the hand path's fields are the agent's too")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
