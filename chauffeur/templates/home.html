@@ -3192,7 +3192,13 @@
                 momentSrc(m) {
                     const att = m.attachment || {};
                     const u = m.poster_url || m.media_url || att.url || '';
-                    return u ? this.apiBase + String(u).replace(/^\//, '') : (att.data_url || '');
+                    if (!u) return att.data_url || '';
+                    // A bare <img> on a wall-tier route: the panel's token
+                    // rides the query string (nav's chfAuthUrl). The fifth
+                    // copy of this builder, found 2026-10-22 after the other
+                    // four were fixed: the board's moments card stayed blank.
+                    const full = this.apiBase + String(u).replace(/^\//, '');
+                    return window.chfAuthUrl ? window.chfAuthUrl(full) : full;
                 },
 
                 // --- setup (browser only) ---

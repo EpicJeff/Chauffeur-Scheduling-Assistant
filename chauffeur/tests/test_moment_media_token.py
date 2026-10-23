@@ -181,6 +181,49 @@ console.log(JSON.stringify({
     _assert_tokened(got, 'kitchen_overlay.js momentSrc')
 
 
+def scenario_the_board_moments_card_builder_carries_the_token():
+    """`momentSrc` in home.html: the board's moments card. The fifth copy of
+    the builder, reported 2026-10-22 after the other four were fixed."""
+    src = _read(TPL, 'home.html')
+    start = src.index('momentSrc(m) {')
+    body = _block_from(src, start)
+    got = _run_node(STUB + "var self = { apiBase: 'base/' };\nvar momentSrc = function (m) " + body + r""";
+momentSrc = momentSrc.bind(self);
+console.log(JSON.stringify({
+  photo: momentSrc({ media_url: '/api/media/p1.jpg' }),
+  clip: momentSrc({ attachment: { url: '/api/media/c1.mp4' } }),
+  data: momentSrc({ attachment: { data_url: 'data:image/png;base64,AAAA' } }),
+  empty: momentSrc({}),
+}));
+""")
+    if got is None:
+        print("  skip  node is not installed")
+        return
+    _assert_tokened(got, 'home.html momentSrc')
+
+
+def scenario_the_iframed_moment_page_carries_its_own_token():
+    """moment.html is iframed as a dependency-free HA card with no nav.html,
+    so it reads the token from its own URL and puts it on the fetch and on
+    the bare <img>/<video> sources."""
+    src = _read(TPL, 'moment.html')
+    fn = _function_text(src, 'function momentAuthUrl(url)')
+    got = _run_node("var window = { location: { search: '?device_token=dev-9&x=1' } };\n" + fn + r"""
+console.log(JSON.stringify({
+  plain: momentAuthUrl('base/api/media/p1.jpg'),
+  withQuery: momentAuthUrl('base/api/presence/moments?hours=168'),
+}));
+""")
+    if got is None:
+        print("  skip  node is not installed")
+        return
+    check(got['plain'] == 'base/api/media/p1.jpg?device_token=dev-9', f"{got['plain']!r}")
+    check(got['withQuery'] == 'base/api/presence/moments?hours=168&device_token=dev-9', f"{got['withQuery']!r}")
+    check("fetch(momentAuthUrl(" in src, "the moments fetch carries the token")
+    check("const src = momentAuthUrl(" in src and "const poster = momentAuthUrl(" in src,
+          "the media and poster sources carry the token")
+
+
 PIC64 = 'api/ha/image64/L2FwaS9pbWFnZS9zZXJ2ZS9hYmMvNTEyeDUxMg'
 
 

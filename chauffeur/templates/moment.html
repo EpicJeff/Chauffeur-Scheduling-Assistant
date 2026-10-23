@@ -60,6 +60,20 @@
     <script>
         (function () {
             const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+            // This page is iframed as a dependency-free HA card, so it has no
+            // nav.html and no chfAuthUrl. The card's URL carries the token
+            // (?device_token= or ?member_token=) and every wall-tier request
+            // this page makes — the moments fetch and the bare <img>/<video>
+            // sources — carries it on the query string the same way.
+            function momentAuthUrl(url) {
+                try {
+                    const qs = new URLSearchParams(window.location.search);
+                    const pair = qs.get('member_token') ? 'member_token=' + encodeURIComponent(qs.get('member_token'))
+                        : (qs.get('device_token') ? 'device_token=' + encodeURIComponent(qs.get('device_token')) : '');
+                    if (!pair) return url;
+                    return url + (url.indexOf('?') >= 0 ? '&' : '?') + pair;
+                } catch (e) { return url; }
+            }
             const wantedId = new URLSearchParams(window.location.search).get('message_id');
 
             function esc(s) {
@@ -71,7 +85,7 @@
             async function load() {
                 const root = document.getElementById('root');
                 try {
-                    const res = await fetch(`${apiBase}api/presence/moments?hours=168&limit=30`);
+                    const res = await fetch(momentAuthUrl(`${apiBase}api/presence/moments?hours=168&limit=30`));
                     const moments = res.ok ? await res.json() : [];
                     const m = wantedId
                         ? moments.find(x => x.id === wantedId)
@@ -80,8 +94,8 @@
                         root.innerHTML = '<div class="empty">No moment to show 💤</div>';
                         return;
                     }
-                    const src = `${apiBase}${String(m.media_url || '').replace(/^\//, '')}`;
-                    const poster = `${apiBase}${String(m.poster_url || m.media_url || '').replace(/^\//, '')}`;
+                    const src = momentAuthUrl(`${apiBase}${String(m.media_url || '').replace(/^\//, '')}`);
+                    const poster = momentAuthUrl(`${apiBase}${String(m.poster_url || m.media_url || '').replace(/^\//, '')}`);
                     const media = m.kind === 'video'
                         ? `<video src="${src}" poster="${poster}" autoplay muted loop playsinline controls></video>`
                         : `<img src="${src}">`;
