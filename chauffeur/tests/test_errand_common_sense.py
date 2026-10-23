@@ -282,6 +282,92 @@ def scenario_describe_speaks_plainly():
           "an unknown driver reads as Someone; weight rounds")
 
 
+# ---------------------------------------------------------------- §2 defaults
+
+def scenario_groceries_ride_home_not_to_the_appointment():
+    # Jeff: Dentist (30,0) 10:00-11:00, Work (0,30) 14:00-17:00, both own events.
+    # Store (10,10): on the way TO the dentist detour 20 (Home->Store 20,
+    # Store->Dentist 30, Home->Dentist 30); BETWEEN dentist and work detour 0
+    # (Dentist->Store 30, Store->Work 30, Dentist->Work 60); on the way HOME
+    # from work detour 20 (Work->Store 30, Store->Home 20, Work->Home 30).
+    # Pure cost takes the free gap at 11:00, two hours before anyone is home.
+    # Groceries must take the leg home.
+    jeff = _driver('d1', 'Jeff')
+    dentist = _ev('dentist', 1, 10, 'Dentist', 'Dentist')
+    work = _ev('work', 1, 14, 'Work', 'Work', dur=180)
+    base = _world({}, [jeff], {})
+    rows, notes = _place(base, [_errand(title='Costco run')], [jeff], driver_events={'d1': [dentist, work]})
+    d, r = _only(rows)
+    check(d == DAYS[1] and r['why']['leg'] == {'from': 'Work', 'to': 'Home'},
+          f"groceries ride the leg home: {d} {r['why']}")
+    check(r['why']['text'] == "on Jeff's way home from Work, +20 min", f"{r['why']['text']!r}")
+    check(r['kind'] == 'groceries', f"the row says its kind: {r.get('kind')}")
+    # The same geometry with home_bound=False takes the morning leg.
+    rows, _ = _place(base, [_errand(title='Costco run', home_bound=False)], [jeff], driver_events={'d1': [dentist, work]})
+    d, r = _only(rows)
+    check(r['why']['leg'] == {'from': 'Dentist', 'to': 'Work'} and r['why']['detour_mins'] == 0,
+          f"home_bound=False rides any leg, here the free gap: {r['why']}")
+    # A return with the same geometry takes the free gap too.
+    rows, _ = _place(base, [_errand(title='Return the lamp')], [jeff], driver_events={'d1': [dentist, work]})
+    d, r = _only(rows)
+    check(r['why']['leg'] == {'from': 'Dentist', 'to': 'Work'} and r['kind'] == 'return',
+          f"a return rides any leg: {r['why']} {r.get('kind')}")
+
+
+def scenario_groceries_never_sit_inside_a_drop_off_and_run_ride():
+    # Saturday: Jeff drops Kate at Soccer 10:00-12:00 (drop-off-and-run). The
+    # Store is 40 off the drop->pickup gap (Soccer->Store 20, Store->Soccer 20,
+    # gap 0), 20 off the way to soccer and 20 off the way home after pickup.
+    # Groceries: after the pickup, never before it.
+    jeff = _driver('d1', 'Jeff')
+    soccer = _ev('soccer', 5, 10, 'Soccer', 'Soccer practice', dur=120)
+    base = _world({5: [soccer]}, [jeff], {'soccer': 'd1'})
+    rows, _ = _place(base, [_errand(title='Costco run')], [jeff])
+    d, r = _only(rows)
+    check(d == DAYS[5] and r['why']['leg'] == {'from': 'Soccer practice', 'to': 'Home'}, f"after pickup: {r['why']}")
+    check(datetime.datetime.fromisoformat(r['start_time']) >= soccer.end, "never before the pickup")
+    rows, _ = _place(base, [_errand(title='Return the lamp')], [jeff])
+    d, r = _only(rows)
+    check(r['why']['leg'] == {'from': 'Home', 'to': 'Soccer practice'}, f"a return rides the first leg: {r['why']}")
+
+
+def scenario_a_dedicated_trip_keeps_human_hours():
+    jeff = _driver('d1', 'Jeff')
+    base = _world({}, [jeff], {})
+    # Window = Saturday only (one-off starting Saturday, one day).
+    sat_ts = datetime.datetime.combine(MON + datetime.timedelta(days=5), datetime.time(0, 0)).astimezone().timestamp()
+    rows, _ = _place(base, [_errand(title='Costco run', starts_on=sat_ts, window_days=1)], [jeff])
+    d, r = _only(rows)
+    check(d == DAYS[5] and _start(r) == datetime.time(10, 0), f"Saturday from home starts at 10:00, got {_start(r)}")
+    tue_ts = datetime.datetime.combine(MON + datetime.timedelta(days=1), datetime.time(0, 0)).astimezone().timestamp()
+    rows, _ = _place(base, [_errand(title='Costco run', starts_on=tue_ts, window_days=1)], [jeff])
+    d, r = _only(rows)
+    check(d == DAYS[1] and _start(r) == datetime.time(9, 0), f"a weekday from home starts at 09:00, got {_start(r)}")
+    rows, _ = _place(base, [_errand(title='Costco run', starts_on=sat_ts, window_days=1,
+                                    time_window_start='08:00', time_window_end='09:00')], [jeff])
+    d, r = _only(rows)
+    check(_start(r) == datetime.time(8, 0), f"the person's own window wins over the band: {_start(r)}")
+    rows, _ = _place(base, [_errand(title='Costco run', pinned_date=DAYS[5], pinned_start='17:00', pinned_end='20:00')], [jeff])
+    d, r = _only(rows)
+    check(d == DAYS[5] and _start(r) == datetime.time(17, 0), f"an Evening pin places at 17:00: {d} {_start(r)}")
+    # A 9-hour trip has no 09:00-17:00 fit: the ladder keeps the 09:00 start and
+    # lets it run to the day's end rather than reporting no_slot or going to 08:00.
+    rows, notes = _place(base, [_errand(title='Costco run', starts_on=tue_ts, window_days=1, duration_mins=540)], [jeff])
+    d, r = _only(rows)
+    check(_start(r) == datetime.time(9, 0) and notes == {}, f"a trip longer than the band still lands: {_start(r)} {notes}")
+
+
+def scenario_a_day_someone_already_leaves_beats_a_blank_day_for_groceries():
+    # Monday blank (round trip from home: Store 20 each way = 40 + 25 penalty = 65).
+    # Tuesday Jeff works (Work 0,30; Work->Store 30, Store->Home 20, Work->Home 30: detour 20).
+    jeff = _driver('d1', 'Jeff')
+    work = _ev('work', 1, 9, 'Work', 'Work', dur=480)
+    base = _world({}, [jeff], {})
+    rows, _ = _place(base, [_errand(title='Costco run')], [jeff], driver_events={'d1': [work]})
+    d, r = _only(rows)
+    check(d == DAYS[1] and r['why']['leg'] == {'from': 'Work', 'to': 'Home'}, f"Tuesday on the way home: {d} {r['why']}")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

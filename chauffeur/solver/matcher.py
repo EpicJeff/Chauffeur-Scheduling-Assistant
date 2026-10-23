@@ -2760,6 +2760,11 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                 continue
             _prime_errand_pairs(loc, places, storage, _maps)
             duration = max(5, errand.get('duration_mins', 30) - errand.get('tolerance_mins', 0)) + errand.get('buffer_mins', 0)
+            from services import errand_prefs as _prefs
+            kind = _prefs.errand_kind(errand)
+            home_bound = _prefs.is_home_bound(errand, kind)
+            has_window = bool(errand.get('time_window_start') or errand.get('time_window_end')
+                              or errand.get('pinned_start') or errand.get('pinned_end'))
             w_start, w_end, skip, reason = errand_window(errand, today, range_dates)
             if reason:
                 notes[eid] = {'reason': reason, 'text': ERRAND_UNPLACED_TEXT[reason]}
@@ -2854,13 +2859,26 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                         if req_pax:
                             continue
                         t = leg(home, loc) if home else None
-                        start = _first_fit(day_start, day_end - timedelta(minutes=duration), duration, day_date, errand, now)
+                        start = None
+                        if not has_window:
+                            # §2: a dedicated trip keeps human hours when the person set
+                            # nothing: the band first, then from the band's start to the
+                            # day's end for a trip too long for the band.
+                            ded_start = datetime.combine(
+                                day_date, _prefs.DEDICATED_START_WEEKEND if day_date.weekday() >= 5
+                                else _prefs.DEDICATED_START_WEEKDAY).astimezone()
+                            ded_end = datetime.combine(day_date, _prefs.DEDICATED_END).astimezone()
+                            start = _first_fit(ded_start, ded_end - timedelta(minutes=duration), duration, day_date, errand, now)
+                            if start is None:
+                                start = _first_fit(ded_start, day_end - timedelta(minutes=duration), duration, day_date, errand, now)
+                        if start is None:
+                            start = _first_fit(day_start, day_end - timedelta(minutes=duration), duration, day_date, errand, now)
                         if start is not None:
                             add('empty', start, [t], (t or 0) * 2, None, None, -1, t, t)
                         continue
 
                     first, last = stops[0], stops[-1]
-                    if not req_pax:
+                    if not req_pax and not home_bound:
                         th = leg(home, loc) if home else None
                         tf = leg(loc, first.location)
                         thf = leg(home, first.location) if home else None
@@ -2870,6 +2888,8 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                         if start is not None:
                             add('from_home_leg', start, legs, (th or 0) + (tf or 0) - (thf or 0), None, first, -1, th, tf)
                     for i in range(len(stops) - 1):
+                        if home_bound:
+                            break
                         a, b = stops[i], stops[i + 1]
                         t1 = leg(a.location, loc)
                         t2 = leg(loc, b.location)
@@ -2923,6 +2943,7 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                 "start": start.isoformat(), "end": end.isoformat(),
                 "start_time": start.isoformat(), "end_time": end.isoformat(),
                 "title": errand.get('title'), "location": loc, "priority": errand.get('priority'),
+                "kind": kind,
                 "inserted_after_event_id": best['prev'].id if best['prev'] else None,
                 "inserted_before_event_id": best['next'].id if best['next'] else None,
                 "travel_to_mins": best['t1'], "travel_from_mins": best['t2'],

@@ -70,7 +70,7 @@ def _errand(**over):
             'location': 'Store', 'priority': 2, 'is_completed': False, 'status': 'pending',
             'created_at': NOW.timestamp(), 'starts_on': None, 'recurrence_rule': None,
             'window_days': 7, 'skip_dates': [], 'pinned_date': None, 'pinned_start': None,
-            'pinned_end': None, 'once_driver_id': None}
+            'pinned_end': None, 'once_driver_id': None, 'home_bound': False, 'kind': None}
     base.update(over)
     return base
 
@@ -148,8 +148,8 @@ def scenario_from_home_when_nothing_passes_near():
     d, r = _only(rows)
     check(d == DAYS[0] and r['why']['kind'] == 'from_home', f"earliest day, from home: {d} {r['why']}")
     check(r['why']['text'] == 'a trip from home, 20 min each way', f"text: {r['why']['text']!r}")
-    check(datetime.datetime.fromisoformat(r['start_time']).time() == datetime.time(8, 0),
-          "an empty day starts at the day's start")
+    check(datetime.datetime.fromisoformat(r['start_time']).time() == datetime.time(9, 0),
+          "an empty weekday starts at 09:00")
 
 
 def scenario_weekday_filter_applies_to_candidate_days():
