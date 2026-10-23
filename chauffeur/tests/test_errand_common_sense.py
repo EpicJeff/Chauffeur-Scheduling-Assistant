@@ -473,6 +473,53 @@ def scenario_the_route_primer_buys_adjacent_pairs_once_and_bounded():
         maps.travel_cache_only_active = orig_cache_only
 
 
+# ---------------------------------------------------------------- §4.2 teaching
+
+def _placement(day_str, driver_id='d1', name='Jeff'):
+    return {'id': 'er1', 'driver': {'id': driver_id, 'name': name}, 'start': f'{day_str}T16:10:00',
+            'start_time': f'{day_str}T16:10:00', 'why': {'kind': 'on_the_way'}}
+
+
+def scenario_each_steer_verb_teaches_its_row():
+    _fresh()
+    before = _errand(title='Costco run')
+    sat = DAYS[5]
+    learn = errand_prefs.learn_from_steer
+    rows = learn(before, _errand(title='Costco run', skip_dates=[sat]), _placement(sat), now=NOW.timestamp())
+    check(len(rows) == 1 and (rows[0]['scope'], rows[0]['kind'], rows[0]['dimension'], rows[0]['value'], rows[0]['polarity'])
+          == ('d1', 'groceries', 'weekday', '5', 'avoid'), f"Not this day: {rows}")
+    rows = learn(before, _errand(title='Costco run', pinned_date=DAYS[3]), _placement(sat), now=NOW.timestamp())
+    check(len(rows) == 1 and (rows[0]['dimension'], rows[0]['value'], rows[0]['polarity']) == ('weekday', '3', 'prefer'), f"Pick a day: {rows}")
+    rows = learn(before, _errand(title='Costco run', pinned_date=sat, pinned_start='17:00', pinned_end='20:00'),
+                 _placement(sat), now=NOW.timestamp())
+    dims = sorted((r['dimension'], r['value'], r['polarity']) for r in rows)
+    check(dims == [('time_band', 'evening', 'prefer'), ('weekday', '5', 'prefer')], f"Pick a time pins the day too: {dims}")
+    rows = learn(before, _errand(title='Costco run', once_driver_id='d2'), _placement(sat), now=NOW.timestamp())
+    check(len(rows) == 1 and (rows[0]['scope'], rows[0]['dimension'], rows[0]['value'], rows[0]['polarity'])
+          == ('*', 'driver', 'd2', 'prefer'), f"Someone else: {rows}")
+    steered = _errand(title='Costco run', skip_dates=[sat], pinned_date=DAYS[3], once_driver_id='d2')
+    rows = learn(steered, _errand(title='Costco run'), _placement(sat), now=NOW.timestamp())
+    check(rows == [], f"Back to automatic teaches nothing: {rows}")
+    rows = learn(before, _errand(title='Costco run', location='Shop'), _placement(sat), now=NOW.timestamp())
+    check(rows == [], f"an edit teaches nothing: {rows}")
+    # A repeat of the same steer grows the same row.
+    learn(before, _errand(title='Costco run', skip_dates=[sat]), _placement(sat), now=NOW.timestamp())
+    stored = [r for r in storage.get_errand_preferences() if r['dimension'] == 'weekday' and r['polarity'] == 'avoid']
+    check(len(stored) == 1 and stored[0]['weight'] == 2.0, f"same row, weight 2: {stored}")
+
+
+def scenario_a_steer_without_a_placement_is_scoped_to_everyone():
+    _fresh()
+    rows = errand_prefs.learn_from_steer(_errand(title='Costco run'), _errand(title='Costco run', skip_dates=[DAYS[2]]),
+                                         None, now=NOW.timestamp())
+    check(len(rows) == 1 and rows[0]['scope'] == '*' and rows[0]['value'] == '2', f"{rows}")
+    rows = errand_prefs.learn_from_steer(_errand(title='Costco run'),
+                                         _errand(title='Costco run', skip_dates=[DAYS[2]], once_driver_id='d2'),
+                                         None, now=NOW.timestamp())
+    scopes = sorted((r['scope'], r['dimension']) for r in rows)
+    check(scopes == [('*', 'driver'), ('d2', 'weekday')], f"the once-driver scopes the day when there is no placement: {scopes}")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

@@ -18400,6 +18400,14 @@ def update_errand(doc_id: int, errand: Errand, background_tasks: BackgroundTasks
         before = old
     today = datetime.now().date().isoformat()
     before['skip_dates'] = [d for d in (before.get('skip_dates') or []) if d >= today]
+    if not incoming.get('is_completed') and any(before.get(f) != incoming.get(f) for f in STEER_FIELDS):
+        # A steer teaches (errands-common-sense §4.2), read off the placement
+        # that is about to be forgotten.
+        try:
+            from services import errand_prefs
+            errand_prefs.learn_from_steer(before, incoming, storage.get_all_scheduled_errand_rows().get(old.get('id')))
+        except Exception as ex:
+            print(f"[errands] learn_from_steer failed: {ex}")
     if any(before.get(f) != incoming.get(f) for f in ERRAND_ROUTING_FIELDS):
         storage.forget_errand_placements(old.get('id'))
     background_tasks.add_task(trigger_background_refresh)

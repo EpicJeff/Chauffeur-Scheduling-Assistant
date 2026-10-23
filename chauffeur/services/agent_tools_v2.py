@@ -7815,7 +7815,7 @@ def handle_add_errand(args: dict) -> dict:
 
 def handle_update_errand(args: dict) -> dict:
     from services import storage
-    from models.schemas import Errand, ERRAND_ROUTING_FIELDS
+    from models.schemas import Errand, ERRAND_ROUTING_FIELDS, STEER_FIELDS
     from pydantic import ValidationError
     errand = storage.get_errand_by_id(args.get('errand_id'))
     if not errand:
@@ -7875,6 +7875,12 @@ def handle_update_errand(args: dict) -> dict:
         before = Errand(**{k: v for k, v in errand.items() if k != 'doc_id'}).model_dump()
     except Exception:
         before = errand
+    if any(before.get(f) != clean.get(f) for f in STEER_FIELDS):
+        try:
+            from services import errand_prefs
+            errand_prefs.learn_from_steer(before, clean, storage.get_all_scheduled_errand_rows().get(errand['id']))
+        except Exception as ex:
+            print(f"[errands] learn_from_steer failed: {ex}")
     storage.update_errand(doc_id, clean)
     if any(before.get(f) != clean.get(f) for f in ERRAND_ROUTING_FIELDS):
         storage.forget_errand_placements(errand['id'])
