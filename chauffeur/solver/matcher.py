@@ -2485,7 +2485,11 @@ def _errand_leg_estimate_impl(a, b):
         if maps.travel_cache_only_active():
             return None
         try:
-            return maps.geocode_address(p)
+            result = maps.geocode_address(p)
+            rec = storage.get_cached_geocode(p)
+            if rec and rec.get('precision') in ('city', 'failed'):
+                return None
+            return result
         except Exception:
             return None
 
@@ -2952,7 +2956,7 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                                **({'leg': leg_d} if leg_d and shape != 'empty' else {})}
                         if estimated:
                             why['estimated'] = True
-                        if learned and pref_cost != 0:
+                        if learned and pref_cost < 0:
                             why['learned'] = list(learned)
                         why['text'] = errand_why_text(why)
                         t1v, t1e = t1 if isinstance(t1, tuple) else (t1, False)

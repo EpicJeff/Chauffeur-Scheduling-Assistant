@@ -448,6 +448,17 @@ def scenario_an_estimate_for_the_same_spot_is_two_minutes():
               f"an estimate past {errand_prefs.ESTIMATE_MAX_MINS} min is nonsense for an errand: None, got {est('Shop A', 'Across The State')}")
         check(est('Shop A', 'Bad Place') is None, "a failed geocode (0,0) is not a coordinate")
         check(est('Shop A', 'Vague Place') is None, "a city-level geocode is not a coordinate either (two streets in one town would read 2 min apart)")
+        # Normal mode: the live geocoder hands back the same city centroid for a
+        # street it cannot find, and the cache row stays city-level. Still None.
+        maps.travel_cache_only_active = lambda: False
+        orig_geocode = maps.geocode_address
+        maps.geocode_address = lambda p: (40.0, -83.0)
+        try:
+            check(est('Shop A', 'Shop B') == 2, "normal mode, two good rows: 2")
+            check(est('Shop A', 'Vague Place') is None, "normal mode: a city-level row is still not a coordinate after the geocoder answers")
+            check(est('Shop A', 'Bad Place') is None, "normal mode: a failed row is still not a coordinate")
+        finally:
+            maps.geocode_address = orig_geocode
     finally:
         maps.travel_cache_only_active = orig_cache_only
 
@@ -551,6 +562,8 @@ def scenario_a_learned_avoid_moves_the_next_cycle_softly():
     rows, _ = _place(base, [_errand(title='Costco run', location='Shop')], [jeff], driver_events={'d1': [work, lab]})
     d, r = _only(rows)
     check(d == DAYS[5] and r['why']['detour_mins'] == 0, f"an avoid never beats a 16-minute-better leg: {d} {r['why']}")
+    check('learned' not in r['why'] and 'steered' not in r['why']['text'],
+          f"a winner the person steered AWAY from never claims 'as you steered it before': {r['why']}")
 
 
 def scenario_a_learned_preference_is_said_out_loud():
