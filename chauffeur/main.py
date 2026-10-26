@@ -4366,6 +4366,7 @@ def nearby_gas_stations(limit: int = 6):
 
 class IcsFeedCreate(BaseModel):
     url: str
+    teams: List[str] = []
     calendar_id: str = ""            # required for calendar mode
     name: Optional[str] = None
     # K4b task mode: 'tasks' + member_id lands assignments on the kid's
@@ -4377,11 +4378,19 @@ class IcsFeedUpdate(BaseModel):
     name: Optional[str] = None
     calendar_id: Optional[str] = None
     enabled: Optional[bool] = None
+    teams: Optional[List[str]] = None
+
+class IcsFeedPreview(BaseModel):
+    url: str
+
+def _normalise_ics_teams(teams: List[str]) -> List[str]:
+    return list(dict.fromkeys(team.strip() for team in teams if team.strip()))
 
 def _public_ics_feed(f: dict) -> dict:
     """The event_map is internal bookkeeping (can be hundreds of entries).
     A Canvas token is write-only: the page learns only that one is set."""
     out = {k: v for k, v in f.items() if k not in ('event_map', 'canvas_token')}
+    out['teams'] = f.get('teams') or []
     out['canvas_token_set'] = bool(f.get('canvas_token'))
     from services import ics_sync
     out['syncing'] = ics_sync.is_syncing(f['id'])
@@ -4430,6 +4439,7 @@ def create_ics_feed(req: IcsFeedCreate, background_tasks: BackgroundTasks):
         'calendar_id': req.calendar_id,
         'target_kind': target_kind,
         'member_id': req.member_id,
+        'teams': _normalise_ics_teams(req.teams),
         'created_at': datetime.now().astimezone().isoformat(),
     })
 
@@ -4444,12 +4454,29 @@ def create_ics_feed(req: IcsFeedCreate, background_tasks: BackgroundTasks):
     return {"id": feed_id, "name": name, "event_count": len(parsed['items']),
             "status": "created — first sync running in background"}
 
+@app.post("/api/ics_feeds/preview")
+def preview_ics_feed(req: IcsFeedPreview):
+    from services import ics_sync
+    url = req.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="Feed URL is required")
+    try:
+        parsed = ics_sync.fetch_and_parse(url)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read that ICS feed: {e}")
+    return {'name': parsed.get('name') or None, 'event_count': len(parsed['items']),
+            'teams': ics_sync.detect_teams(parsed['items'])}
+
 @app.put("/api/ics_feeds/{feed_id}")
-def update_ics_feed(feed_id: str, req: IcsFeedUpdate):
+def update_ics_feed(feed_id: str, req: IcsFeedUpdate, background_tasks: BackgroundTasks):
     feed = storage.get_ics_feed(feed_id)
     if not feed:
         raise HTTPException(status_code=404, detail="Feed not found")
     updates = {}
+    teams_changed = False
+    if req.teams is not None:
+        updates['teams'] = _normalise_ics_teams(req.teams)
+        teams_changed = updates['teams'] != (feed.get('teams') or [])
     if req.name is not None:
         updates['name'] = req.name.strip()
     if req.enabled is not None:
@@ -4461,6 +4488,16 @@ def update_ics_feed(feed_id: str, req: IcsFeedUpdate):
                             detail="Target calendar can't be changed; delete the feed and re-add it.")
     if updates:
         storage.update_ics_feed(feed_id, updates)
+    if teams_changed:
+        def _resync():
+            from services import ics_sync
+            current = storage.get_ics_feed(feed_id)
+            if current:
+                res = ics_sync.sync_feed(current)
+                if res.get('added') or res.get('updated') or res.get('removed'):
+                    trigger_background_refresh()
+
+        background_tasks.add_task(_resync)
     return {"status": "updated"}
 
 class CanvasTokenRequest(BaseModel):

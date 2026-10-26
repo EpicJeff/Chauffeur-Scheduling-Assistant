@@ -28,6 +28,7 @@ import json
 import re
 import threading
 from html.parser import HTMLParser
+from typing import Optional
 
 import requests
 
@@ -52,6 +53,51 @@ def _fingerprint(item: dict) -> str:
     basis = [item['title'], item['start'], item['end'], item['all_day'],
              item.get('location') or '', item.get('description') or '']
     return hashlib.sha1(json.dumps(basis).encode('utf-8')).hexdigest()
+
+
+def team_token(title: str) -> Optional[str]:
+    """Read the final top-level group without changing the event's title."""
+    title = title.rstrip()
+    if not title.endswith(')'):
+        return None
+    depth = 0
+    start = None
+    for i in range(len(title) - 1, -1, -1):
+        if title[i] == ')':
+            depth += 1
+        elif title[i] == '(':
+            depth -= 1
+            if depth < 0:
+                return None
+            if depth == 0 and start is None:
+                start = i
+    if depth or start is None:
+        return None
+    return title[start + 1:-1].strip()
+
+
+def detect_teams(items: dict) -> list[dict]:
+    """Count teams in the parsed snapshot, most frequent first."""
+    counts = {}
+    for item in items.values():
+        token = team_token(item['title'])
+        if token is not None:
+            counts[token] = counts.get(token, 0) + 1
+    return [{'team': team, 'count': count}
+            for team, count in sorted(counts.items(), key=lambda row: (-row[1], row[0]))]
+
+
+def filter_items(items: dict, teams: list[str]) -> dict:
+    """Keep selected teams and league-wide rows; no selection keeps all rows."""
+    selected = {team.strip() for team in teams if team.strip()}
+    if not selected:
+        return items
+    out = {}
+    for key, item in items.items():
+        token = team_token(item['title'])
+        if token is None or token in selected:
+            out[key] = item
+    return out
 
 
 def fetch_ics(url: str) -> bytes:
@@ -534,6 +580,7 @@ def _sync_feed_locked(feed: dict) -> dict:
 
     try:
         parsed = fetch_and_parse(feed['url'])
+        parsed['items'] = filter_items(parsed['items'], feed.get('teams') or [])
     except Exception as e:
         summary['error'] = str(e)
         storage.update_ics_feed(feed_id, {

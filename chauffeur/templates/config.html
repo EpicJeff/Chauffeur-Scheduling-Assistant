@@ -1737,7 +1737,34 @@
                                                             :class="(feed.last_status || '').startsWith('error') ? 'text-red-400' : 'text-gray-500'"
                                                             x-text="(feed.last_status || 'never synced') + (feed.last_synced ? ' · ' + new Date(feed.last_synced).toLocaleString() : '')">
                                                         </p>
+                                                        <!-- A league feed names the teams this calendar keeps; the
+                                                             rest of the feed is some other kid's (v2.499.692). -->
+                                                        <p class="text-xs text-teal-300 truncate" x-show="(feed.teams || []).length"
+                                                            x-text="'Only: ' + (feed.teams || []).join(', ')"></p>
+                                                        <div x-show="icsTeamEdit && icsTeamEdit.feedId === feed.id" x-cloak
+                                                            class="mt-2 bg-gray-950 border border-gray-700 rounded-lg p-3">
+                                                            <p class="text-xs text-gray-400 mb-2">Keep events for these teams. None checked keeps the whole feed.</p>
+                                                            <template x-for="t in (icsTeamEdit ? icsTeamEdit.options : [])" :key="t.team">
+                                                                <label class="flex items-center gap-2 text-sm text-gray-200 py-1 cursor-pointer">
+                                                                    <input type="checkbox" class="accent-teal-500" :value="t.team"
+                                                                        :checked="!!(icsTeamEdit && icsTeamEdit.selected.includes(t.team))"
+                                                                        @change="toggleIcsTeam(icsTeamEdit.selected, t.team)">
+                                                                    <span x-text="t.team"></span>
+                                                                    <span class="text-xs text-gray-500" x-text="t.count + ' events'"></span>
+                                                                </label>
+                                                            </template>
+                                                            <div class="flex gap-2 mt-2">
+                                                                <button @click="saveIcsTeams(feed)" :disabled="!!(icsTeamEdit && icsTeamEdit.busy)"
+                                                                    class="bg-teal-600 hover:bg-teal-500 disabled:opacity-60 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
+                                                                    x-text="icsTeamEdit && icsTeamEdit.busy ? 'Saving…' : 'Save teams'"></button>
+                                                                <button @click="icsTeamEdit = null"
+                                                                    class="bg-gray-600 hover:bg-gray-500 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors">Cancel</button>
+                                                            </div>
+                                                        </div>
                                                     </div>
+                                                    <button @click="editIcsTeams(feed)" :disabled="!!(icsTeamEdit && icsTeamEdit.busy)"
+                                                        class="bg-gray-600 hover:bg-gray-500 disabled:opacity-50 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
+                                                        x-text="icsTeamEdit && icsTeamEdit.feedId === feed.id && icsTeamEdit.busy && !icsTeamEdit.options.length ? 'Reading…' : 'Teams'"></button>
                                                     <button @click="syncIcsFeed(feed)" :disabled="icsSyncingId === feed.id || !!feed.syncing"
                                                         class="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
                                                         x-text="icsSyncingId === feed.id || !!feed.syncing ? 'Syncing…' : 'Sync'"></button>
@@ -1764,6 +1791,24 @@
                                                 <button @click="addInlineIcsFeed(memberEdit.calendar_ids, member)" :disabled="icsFeedBusy"
                                                     class="bg-teal-600 hover:bg-teal-500 disabled:opacity-60 text-white font-bold px-4 rounded transition-colors flex items-center shadow-md"
                                                     x-text="icsFeedBusy ? 'Checking...' : 'Subscribe'"></button>
+                                            </div>
+                                            <!-- The feed named more than one team (a league account with
+                                                 several kids): pick this person's before subscribing. -->
+                                            <div x-show="newIcsFeed.preview && newIcsFeed.preview.teams.length > 1" x-cloak
+                                                class="mt-2 bg-gray-950 border border-gray-700 rounded-lg p-3">
+                                                <p class="text-xs text-gray-400 mb-2">
+                                                    <span x-text="(newIcsFeed.preview ? newIcsFeed.preview.name : '') || 'This feed'"></span>
+                                                    names <span x-text="newIcsFeed.preview ? newIcsFeed.preview.teams.length : 0"></span> teams.
+                                                    Keep events for these, then tap Subscribe. None checked keeps the whole feed.</p>
+                                                <template x-for="t in (newIcsFeed.preview ? newIcsFeed.preview.teams : [])" :key="t.team">
+                                                    <label class="flex items-center gap-2 text-sm text-gray-200 py-1 cursor-pointer">
+                                                        <input type="checkbox" class="accent-teal-500" :value="t.team"
+                                                            :checked="!!newIcsFeed.teams.includes(t.team)"
+                                                            @change="toggleIcsTeam(newIcsFeed.teams, t.team)">
+                                                        <span x-text="t.team"></span>
+                                                        <span class="text-xs text-gray-500" x-text="t.count + ' events'"></span>
+                                                    </label>
+                                                </template>
                                             </div>
                                         </div>
                                         <!-- A child's assignment feeds (their school task list) are
@@ -2312,7 +2357,8 @@
                 showAddPerson: false,
                 newPerson: { name: '', role: 'adult', color_code: '#3B82F6', avatar: '' },
                 icsFeeds: [],
-                newIcsFeed: { url: '', calendar_id: '' },
+                newIcsFeed: { url: '', calendar_id: '', teams: [], preview: null },
+                icsTeamEdit: null,   // { feedId, options, selected, busy } while a feed's teams are edited
                 passengerFormMember: null,   // the member whose passenger profile is open (K4b task feeds)
                 icsFeedBusy: false,
                 icsSyncingId: null,
@@ -3502,8 +3548,23 @@
                     const target = (ids.length === 1 && !this.newIcsFeed.calendar_id)
                         ? ids[0] : this.newIcsFeed.calendar_id;
                     if (!target) return showGlobalAlert('Pick which calendar the events go on.');
+                    // First tap reads the feed. A league feed that names more than
+                    // one team stops here so this person's teams can be picked;
+                    // any other feed subscribes on the same tap.
+                    if (!this.newIcsFeed.preview || this.newIcsFeed.preview.url !== url) {
+                        this.icsFeedBusy = true;
+                        try {
+                            const pre = await this.previewIcsFeed(url);
+                            if (!pre) return;
+                            this.newIcsFeed.preview = pre;
+                            this.newIcsFeed.teams = [];
+                            if ((pre.teams || []).length > 1) return;
+                        } finally {
+                            this.icsFeedBusy = false;
+                        }
+                    }
                     // A child's school task list is subscribed on the School page.
-                    const body = { url: url, calendar_id: target };
+                    const body = { url: url, calendar_id: target, teams: this.newIcsFeed.teams || [] };
                     this.icsFeedBusy = true;
                     try {
                         const res = await fetch(`${this.apiBase}api/ics_feeds`, {
@@ -3516,7 +3577,7 @@
                             showGlobalAlert(data.detail || 'Could not add that feed.');
                         } else {
                             showGlobalAlert(`Subscribed to "${data.name}" — found ${data.event_count} events. They're being created in the background.`);
-                            this.newIcsFeed = { url: '', calendar_id: '' };
+                            this.newIcsFeed = { url: '', calendar_id: '', teams: [], preview: null };
                             await this.loadIcsFeeds();
                             // pick up the initial sync result; a big feed takes a while
                             const poll = async (n) => {
@@ -3530,6 +3591,61 @@
                         showGlobalAlert('Could not add feed: ' + e.message);
                     } finally {
                         this.icsFeedBusy = false;
+                    }
+                },
+                async previewIcsFeed(url) {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ics_feeds/preview`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ url })
+                        });
+                        const data = await res.json();
+                        if (!res.ok) { showGlobalAlert(data.detail || 'Could not read that feed.'); return null; }
+                        return { url, name: data.name || '', event_count: data.event_count || 0, teams: data.teams || [] };
+                    } catch (e) {
+                        showGlobalAlert('Could not read that feed: ' + e.message);
+                        return null;
+                    }
+                },
+                toggleIcsTeam(list, team) {
+                    const i = list.indexOf(team);
+                    if (i >= 0) list.splice(i, 1); else list.push(team);
+                },
+                async editIcsTeams(feed) {
+                    if (this.icsTeamEdit && this.icsTeamEdit.feedId === feed.id) { this.icsTeamEdit = null; return; }
+                    this.icsTeamEdit = { feedId: feed.id, options: [], selected: [...(feed.teams || [])], busy: true };
+                    const pre = await this.previewIcsFeed(feed.url);
+                    if (!pre) { this.icsTeamEdit = null; return; }
+                    // A team the feed no longer lists stays checkable so it can be unchecked.
+                    const options = [...pre.teams];
+                    for (const t of (feed.teams || []))
+                        if (!options.some(o => o.team === t)) options.push({ team: t, count: 0 });
+                    if (!options.length) {
+                        this.icsTeamEdit = null;
+                        return showGlobalAlert('This feed does not name teams in its event titles.');
+                    }
+                    this.icsTeamEdit.options = options;
+                    this.icsTeamEdit.busy = false;
+                },
+                async saveIcsTeams(feed) {
+                    if (!this.icsTeamEdit) return;
+                    this.icsTeamEdit.busy = true;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ics_feeds/${feed.id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ teams: this.icsTeamEdit.selected })
+                        });
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok) return showGlobalAlert(data.detail || 'Could not save the teams.');
+                        this.icsTeamEdit = null;
+                        showGlobalAlert('Teams saved. The feed is re-syncing; events for other teams come off this calendar.');
+                        await this.loadIcsFeeds();
+                    } catch (e) {
+                        showGlobalAlert('Could not save the teams: ' + e.message);
+                    } finally {
+                        if (this.icsTeamEdit) this.icsTeamEdit.busy = false;
                     }
                 },
                 async syncIcsFeed(feed) {
@@ -3707,7 +3823,7 @@
                     this.memberMergeTarget = '';
                     this.testNotifyResult = '';
                     this.newMemberCalendarInput = '';
-                    this.newIcsFeed = { url: '', calendar_id: '' };
+                    this.newIcsFeed = { url: '', calendar_id: '', teams: [], preview: null };
                     const cals = Array.isArray(member.calendar_ids) ? [...member.calendar_ids] : [];
                     if (cals.length) this.fetchCalendarMetadata(cals);
                     this.memberEdit = {
