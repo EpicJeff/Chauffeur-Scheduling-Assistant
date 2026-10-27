@@ -131,16 +131,64 @@ def _read(entity):
         'exposed': bool(ha_api.get_exposed().get(entity['entity_id']))}}
 
 
-def locate(query='', entity_id='', catalogue=None):
+def locate(query='', entity_id='', catalogue=None, acting_member=None, voice_context=None, source=None):
+    from services import stages, voice_identity
+
     catalogue = _catalogue() if catalogue is None else catalogue
     trackers = [e for e in catalogue if e['domain'] in ('device_tracker', 'person')]
+    members = storage.get_all_members()
+    member = None
+    query_name = ' '.join(str(query or '').split()).casefold()
+
+    def tokens(value):
+        return set(_words(re.sub(r"['’]s\b", '', str(value or ''), flags=re.IGNORECASE)).split())
+
+    query_tokens = tokens(query)
+
+    def token_match(name):
+        return bool(query_tokens) and query_tokens <= tokens(name)
+
     if entity_id:
         entity = next((e for e in trackers if e['entity_id'] == entity_id), None)
     else:
-        ranked = sorted(((_score(_words(query), e['_names']), e) for e in trackers),
-                        key=lambda pair: (-pair[0], pair[1]['domain'] != 'device_tracker',
-                                          pair[1]['entity_id'])) if _words(query) else []
-        entity = ranked[0][1] if ranked and ranked[0][0] >= 0.6 else None
+        member = next((m for m in members if query_name and query_name in voice_identity.voice_names(m)), None)
+        if member:
+            person_id = member.get('ha_person_entity')
+            if not person_id:
+                return {'status': 'error', 'message': (
+                    f"{member['name']} has no person entity linked in Chauffeur or Home Assistant, "
+                    'so there is no location to read.')}
+            entity = next((e for e in trackers if e['domain'] == 'person'
+                           and e['entity_id'] == person_id), None)
+        else:
+            people = [e for e in trackers if e['domain'] == 'person'
+                      and (query_name == str(e['name']).casefold() or token_match(e['name']))]
+            ranked = sorted(((_score(_words(query), e['_names']), e) for e in people),
+                            key=lambda pair: (-pair[0], pair[1]['entity_id']))
+            if not ranked and _words(query):
+                ranked = sorted(((max(_score(_words(query), e['_names']),
+                                      1.0 if any(token_match(n) for n in e['_names']) else 0.0), e)
+                                 for e in trackers if e['domain'] == 'device_tracker'),
+                                key=lambda pair: (-pair[0], pair[1]['entity_id']))
+                ranked = [pair for pair in ranked if pair[0] >= 0.6]
+            entity = ranked[0][1] if ranked else None
+
+    if entity and entity['domain'] == 'person':
+        member = member or next((m for m in members
+                                 if m.get('ha_person_entity') == entity['entity_id']), None)
+    elif entity and entity['domain'] == 'device_tracker':
+        # A phone is its owner's whereabouts: asking for "Lily's phone" must
+        # meet the same privacy rule as asking for Lily. HA's person entity
+        # lists the trackers it is built from; that link is the ownership.
+        owners = {e['entity_id']: e for e in trackers if e['domain'] == 'person'}
+        for m in members:
+            person = owners.get(m.get('ha_person_entity') or '')
+            if person and entity['entity_id'] in ((person['_state'].get('attributes') or {}).get('device_trackers') or []):
+                member = member or m
+                break
+    if (member and member.get('role') == 'child' and stages.can(member, 'private_location')
+            and not _trusted(acting_member, voice_context, source)):
+        return {'status': 'refused', 'message': f"{member['name']} keeps their location private."}
     if entity is None:
         return {'status': 'error', 'message': (
             'No location tracker matches that; the HA room an entity sits in is not where it is.')}
@@ -148,6 +196,10 @@ def locate(query='', entity_id='', catalogue=None):
     state = entity['_state']
     attrs = state.get('attributes') or {}
     latitude, longitude = attrs.get('latitude'), attrs.get('longitude')
+    if (entity['domain'] == 'person' and (latitude is None or longitude is None)
+            and not attrs.get('device_trackers')):
+        return {'status': 'error', 'message': (
+            f"{entity['name']} has no device tracker assigned to {entity['entity_id']} in Home Assistant.")}
     address = None
     device_id = entity.get('_device_id')
     if device_id:
@@ -167,7 +219,8 @@ def locate(query='', entity_id='', catalogue=None):
             if value and value.casefold() not in ('unknown', 'unavailable'):
                 address = value
                 break
-    if address is None and latitude is not None and longitude is not None:
+    if (address is None and state.get('state') != 'home'
+            and latitude is not None and longitude is not None):
         from services import maps
         address = maps.reverse_geocode(latitude, longitude)
 
@@ -183,6 +236,8 @@ def locate(query='', entity_id='', catalogue=None):
             'zone': zone, 'latitude': latitude, 'longitude': longitude,
             'gps_accuracy': attrs.get('gps_accuracy'), 'in_zones': attrs.get('in_zones', []),
             'last_updated': state.get('last_updated') or state.get('last_changed'),
+            **({'source': next((e['name'] for e in catalogue if e['entity_id'] == attrs.get('source')),
+                               attrs.get('source'))} if entity['domain'] == 'person' else {}),
             'address': address, 'message': message}
 
 
@@ -215,7 +270,7 @@ def house(action='', query='', entity_id='', domain='', service='', data=None,
                 return {'status': 'error', 'message': 'Which device or room should I find?'}
             return find(query, domain, catalogue)
         if action == 'locate':
-            return locate(query, entity_id, catalogue)
+            return locate(query, entity_id, catalogue, acting_member, voice_context, source)
         entity = resolve(query, entity_id, domain, catalogue)
         if 'status' in entity:
             return entity

@@ -52,6 +52,26 @@ def _states():
         {'entity_id': 'device_tracker.van', 'state': 'not_home', 'last_changed': '2026-10-27T15:00:00+00:00',
          'last_updated': '2026-10-27T15:00:00+00:00',
          'attributes': {'friendly_name': 'Van', 'latitude': 35.79, 'longitude': -78.78, 'gps_accuracy': 12}},
+        {'entity_id': 'person.lorena_wilson', 'state': 'home', 'last_changed': '2026-10-27T13:00:00+00:00',
+         'last_updated': '2026-10-27T13:00:00+00:00',
+         'attributes': {'friendly_name': 'Lorena Wilson', 'source': 'device_tracker.lorena_phone',
+                        'device_trackers': ['device_tracker.lorena_phone'], 'latitude': 35.70, 'longitude': -78.70,
+                        'gps_accuracy': 20, 'user_id': 'u1'}},
+        {'entity_id': 'device_tracker.lorena_phone', 'state': 'home', 'last_changed': '2026-10-27T13:00:00+00:00',
+         'attributes': {'friendly_name': "Lorena's Phone", 'source_type': 'gps', 'latitude': 35.70, 'longitude': -78.70}},
+        {'entity_id': 'person.jeff_wilson_2', 'state': 'not_home', 'last_changed': '2026-10-27T12:00:00+00:00',
+         'last_updated': '2026-10-27T12:30:00+00:00',
+         'attributes': {'friendly_name': 'Jeff Wilson', 'source': 'device_tracker.jeff_phone',
+                        'device_trackers': ['device_tracker.jeffs_iphone_2', 'device_tracker.jeff_phone'],
+                        'latitude': 35.81, 'longitude': -78.81, 'gps_accuracy': 5}},
+        {'entity_id': 'device_tracker.jeff_phone', 'state': 'not_home', 'last_changed': '2026-10-27T12:00:00+00:00',
+         'attributes': {'friendly_name': "Jeff's Phone", 'source_type': 'gps', 'latitude': 35.81, 'longitude': -78.81}},
+        {'entity_id': 'device_tracker.jeffs_iphone_2', 'state': 'not_home', 'last_changed': '2026-10-27T11:00:00+00:00',
+         'attributes': {'friendly_name': 'Jeff\u2019s iPhone (2)', 'source_type': 'gps', 'latitude': 35.80, 'longitude': -78.80}},
+        {'entity_id': 'person.lily', 'state': 'unknown', 'last_changed': '2026-10-01T00:00:00+00:00',
+         'attributes': {'friendly_name': 'Lily', 'device_trackers': []}},
+        {'entity_id': 'device_tracker.lillian_bus', 'state': 'GREEN LEVEL HS', 'last_changed': '2026-10-27T07:30:00+00:00',
+         'attributes': {'friendly_name': 'LILLIAN Bus', 'source_type': 'gps', 'latitude': 35.75, 'longitude': -78.95}},
     ]
 
 
@@ -82,6 +102,15 @@ REGISTRY = [
      'aliases': [], 'area_id': None, 'device_id': 'dev_ev9', 'hidden_by': None, 'disabled_by': None, 'platform': 'kia_uvo'},
     {'entity_id': 'device_tracker.van', 'name': None, 'original_name': 'Van', 'aliases': [],
      'area_id': None, 'device_id': 'dev_van', 'hidden_by': None, 'disabled_by': None, 'platform': 'mobile_app'},
+    *[{'entity_id': eid, 'name': None, 'original_name': name, 'aliases': [], 'area_id': None, 'device_id': None,
+       'hidden_by': None, 'disabled_by': None, 'platform': platform}
+      for eid, name, platform in (('person.lorena_wilson', 'Lorena Wilson', 'person'),
+                                  ('device_tracker.lorena_phone', "Lorena's Phone", 'mobile_app'),
+                                  ('person.jeff_wilson_2', 'Jeff Wilson', 'person'),
+                                  ('device_tracker.jeff_phone', "Jeff's Phone", 'mobile_app'),
+                                  ('device_tracker.jeffs_iphone_2', 'Jeff\u2019s iPhone (2)', 'icloud'),
+                                  ('person.lily', 'Lily', 'person'),
+                                  ('device_tracker.lillian_bus', 'LILLIAN Bus', 'hctb'))],
 ]
 
 DEVICES = [{'id': 'dev_ev9', 'name': 'Kia EV9', 'area_id': 'garage'}, {'id': 'dev_van', 'name': 'Van', 'area_id': None}]
@@ -144,6 +173,16 @@ class HouseToolTests(unittest.TestCase):
         stub(ha_api, 'mode', lambda: 'supervisor')
         stub(storage, 'get_settings', lambda: dict(tests.settings))
         stub(house, '_settle', lambda: None)  # no 0.6 s sleep in tests
+        with storage.db_lock:
+            storage.members_table.truncate()
+        storage.add_member({'id': 'm_lorena', 'name': 'Lorena', 'role': 'parent', 'voice_aliases': ['Mom'],
+                            'ha_person_entity': 'person.lorena_wilson'})
+        storage.add_member({'id': 'm_lily', 'name': 'Lily', 'role': 'child', 'ha_person_entity': 'person.lily'})
+        storage.add_member({'id': 'm_james', 'name': 'James', 'role': 'child'})
+        from services import stages
+        self.private_location = set()
+        stub(stages, 'can', lambda member, capability: (capability != 'private_location'
+                                                        or (member or {}).get('id') in tests.private_location))
         self.history_rows = []
 
     def history(self, entity_id, hours):
@@ -152,6 +191,8 @@ class HouseToolTests(unittest.TestCase):
     def tearDown(self):
         for (mod, name), value in self.orig.items():
             setattr(mod, name, value)
+        with storage.db_lock:
+            storage.members_table.truncate()
 
     def run_tool(self, **kw):
         return agent_tools_v2.house(**kw)
@@ -355,6 +396,84 @@ class HouseToolTests(unittest.TestCase):
         self.assertIn('locate', tool['parameters']['properties']['action']['enum'])
         self.assertIn('ha_area', tool['description'])
         self.assertIn('locate', tool['description'])
+
+    # --- locate people ------------------------------------------------------
+    def test_a_first_name_finds_the_ha_person_and_answers_from_their_phone(self):
+        """Device run 2026-10-27: "where is Lorena" said there was no location
+        tracker, while person.lorena_wilson sat there with her phone attached."""
+        res = self.run_tool(action='locate', query='Lorena', acting_member={'id': 'p9', 'role': 'parent'})
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(res['entity_id'], 'person.lorena_wilson')
+        self.assertEqual(res['zone'], 'home')
+        self.assertEqual(res['source'], "Lorena's Phone")
+        self.assertIn('home', res['message'].lower())
+        self.assertEqual(self.geocoded, [], 'nobody needs a street address for home')
+
+    def test_a_spoken_alias_resolves_through_the_family_member(self):
+        res = self.run_tool(action='locate', query='mom', acting_member={'id': 'k1', 'role': 'child'})
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(res['entity_id'], 'person.lorena_wilson')
+
+    def test_a_person_beats_their_own_phones_and_away_gets_an_address(self):
+        res = self.run_tool(action='locate', query='Jeff', acting_member={'id': 'p9', 'role': 'parent'})
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(res['entity_id'], 'person.jeff_wilson_2', 'the person entity, not one of the two phones')
+        self.assertEqual(res['zone'], 'not_home')
+        self.assertEqual(res['address'], 'Target, 12 Elm St, Cary')
+        self.assertEqual(self.geocoded, [(35.81, -78.81)])
+        self.assertIn('Jeff Wilson', res['message'])
+
+    def test_naming_the_phone_itself_still_finds_the_phone(self):
+        res = self.run_tool(action='locate', query="Jeff's phone", acting_member={'id': 'p9', 'role': 'parent'})
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(res['entity_id'], 'device_tracker.jeff_phone')
+
+    def test_a_person_with_no_tracker_says_exactly_that_and_never_answers_with_the_bus(self):
+        res = self.run_tool(action='locate', query='Lily', acting_member={'id': 'p9', 'role': 'parent'})
+        self.assertEqual(res['status'], 'error')
+        self.assertIn('person.lily', res['message'])
+        self.assertIn('no device tracker', res['message'].lower())
+        self.assertNotIn('bus', res['message'].lower())
+        self.assertEqual(self.geocoded, [])
+
+    def test_a_family_member_unknown_to_ha_is_told_apart_from_an_unknown_name(self):
+        res = self.run_tool(action='locate', query='James', acting_member={'id': 'p9', 'role': 'parent'})
+        self.assertEqual(res['status'], 'error')
+        self.assertIn('James', res['message'])
+        self.assertIn('person', res['message'].lower(), 'the fix is to link a person entity to James in Chauffeur or HA')
+        self.assertNotIn('bus', res['message'].lower())
+
+    def test_a_child_who_keeps_location_private_is_hidden_from_everyone_but_a_parent(self):
+        self.states.append({'entity_id': 'device_tracker.lily_phone', 'state': 'not_home',
+                            'last_changed': '2026-10-27T15:00:00+00:00',
+                            'attributes': {'friendly_name': "Lily's Phone", 'source_type': 'gps',
+                                           'latitude': 35.76, 'longitude': -78.96}})
+        for st in self.states:
+            if st['entity_id'] == 'person.lily':
+                st['state'] = 'not_home'
+                st['attributes'].update(device_trackers=['device_tracker.lily_phone'], source='device_tracker.lily_phone',
+                                        latitude=35.76, longitude=-78.96)
+        self.private_location.add('m_lily')
+        from services import access
+        for who, src in (({'id': 'k2', 'role': 'child'}, 'pwa'), (access.HOUSE, 'panel'), (None, 'voice')):
+            res = self.run_tool(action='locate', query='Lily', acting_member=who, source=src,
+                                voice_context=voice('unknown') if src == 'voice' else None)
+            self.assertEqual(res['status'], 'refused', (who, src, res))
+            self.assertIn('private', res['message'].lower())
+            self.assertNotIn('35.76', repr(res))
+        res = self.run_tool(action='locate', query='Lily', acting_member={'id': 'p9', 'role': 'parent'}, source='pwa')
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(res['zone'], 'not_home')
+        self.assertEqual(self.geocoded, [(35.76, -78.96)])
+        # Her phone is her whereabouts too: asking for the device is asking for her.
+        self.geocoded.clear()
+        res = self.run_tool(action='locate', query="Lily's phone", acting_member={'id': 'k2', 'role': 'child'}, source='pwa')
+        self.assertEqual(res['status'], 'refused', res)
+        self.assertNotIn('35.76', repr(res))
+        res = self.run_tool(action='locate', entity_id='device_tracker.lily_phone', acting_member=None, source='panel')
+        self.assertEqual(res['status'], 'refused', res)
+        res = self.run_tool(action='locate', query="Lily's phone", acting_member={'id': 'p9', 'role': 'parent'}, source='pwa')
+        self.assertEqual(res['status'], 'success', res)
 
     # --- degradation --------------------------------------------------------
     def test_no_home_assistant_means_a_plain_error_for_every_action(self):
