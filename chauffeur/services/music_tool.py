@@ -40,6 +40,16 @@ def _target(action, room, player, voice_context, source, states):
         players = [eid for eid in players if score(eid) >= 0.6]
         if not players:
             return None, None, f"I don't know a player called {player}."
+        if action == 'play':
+            # A TV is several entities with one name: the remote, the cast
+            # target and Music Assistant's own player, whose friendly name
+            # carries a suffix ("Office TV Media Player"). For PLAY the MA
+            # twin is the one that can play, so among the strong matches it
+            # wins over an exact-name twin that cannot.
+            strong = [e for e in players if score(e) >= 0.9 and announce._usable(states, e)]
+            ma_twins = [e for e in strong if _is_ma(states, e)]
+            if ma_twins:
+                players = ma_twins
         eid = min(players, key=lambda e: (
             -score(e), not announce._usable(states, e),
             not _is_ma(states, e) if action == 'play' else False,

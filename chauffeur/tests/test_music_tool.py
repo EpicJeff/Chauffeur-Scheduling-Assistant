@@ -137,6 +137,31 @@ class MusicToolTests(unittest.TestCase):
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(self.calls[-1][2]['entity_id'], 'media_player.kitchen_speaker')
 
+    def test_naming_a_tv_with_twins_picks_its_music_assistant_twin(self):
+        """Device run 2026-10-27: "play ... on the office TV" was told the Office TV
+        is not in Music Assistant. Four entities are called Office TV; the MA one is
+        "Office TV Media Player", and the exact-name Android TV remote outscored it."""
+        self.states = [
+            {'entity_id': 'media_player.office_tv', 'state': 'unavailable', 'attributes': {'friendly_name': 'Office TV'}},
+            {'entity_id': 'media_player.office_tv_2', 'state': 'off',
+             'attributes': {'friendly_name': 'Office TV', 'device_class': 'tv'}},
+            {'entity_id': 'media_player.googletv1645_2', 'state': 'idle', 'attributes': {'friendly_name': 'Office TV'}},
+            {'entity_id': 'media_player.office_tv_4', 'state': 'idle',
+             'attributes': {'friendly_name': 'Office TV Media Player', 'mass_player_type': 'player'}},
+            {'entity_id': 'media_player.kitchen_speaker', 'state': 'playing',
+             'attributes': {'friendly_name': 'Kitchen Speaker', 'mass_player_type': 'player'}},
+        ]
+        res = self.run_tool(action='play', query='Hotel California', player='office tv')
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(self.calls[-1][2]['entity_id'], 'media_player.office_tv_4')
+        self.assertIn('Office', res['message'])
+        # Controls still go to the twin that is actually making sound.
+        self.states[2]['state'] = 'playing'
+        self.calls.clear()
+        res = self.run_tool(action='pause', player='office tv')
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(self.calls[-1][2]['entity_id'], 'media_player.googletv1645_2')
+
     def test_a_room_with_no_music_assistant_player_says_which_player_and_why(self):
         res = self.run_tool(action='play', query='Hotel California', room='garage')
         self.assertEqual(res['status'], 'error')
