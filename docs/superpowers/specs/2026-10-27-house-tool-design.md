@@ -19,7 +19,7 @@ surface (PWA, wall bar, control center) that never reaches Assist at all.
 
 ## Decisions
 
-1. **One tool, `house`.** `action` is one of `find`, `read`, `history`, `act`.
+1. **One tool, `house`.** `action` is one of `find`, `read`, `history`, `act`, `locate` (v2.499.695: a room is never a location; `locate` answers from a device_tracker and its geocoded sibling sensor; the room field is `ha_area`).
    One tool keeps Flash-Lite's tool pick honest; three tools would not.
 2. **Reads are open.** Any entity, exposed to Assist or not. Secrets never leave:
    `access_token`, `token`, `entity_picture`, `id`, and any attribute whose key

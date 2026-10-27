@@ -41,13 +41,15 @@ def _catalogue():
                     'area': entity_areas.get(eid) or area_names.get(area_id, ''),
                     'domain': eid.split('.', 1)[0], 'state': state.get('state'),
                     'aliases': list(row.get('aliases') or []), '_state': state,
+                    '_device_id': row.get('device_id'),
                     '_names': [name, row.get('name'), row.get('original_name'),
                                *list(row.get('aliases') or []), eid, eid.split('.', 1)[1]]})
     return out
 
 
 def _candidate(entity):
-    return {k: entity[k] for k in ('entity_id', 'name', 'area', 'domain', 'state', 'aliases')}
+    return {**{k: entity[k] for k in ('entity_id', 'name', 'domain', 'state', 'aliases')},
+            'ha_area': entity['area']}
 
 
 def _score(query, names):
@@ -71,7 +73,13 @@ def _rank(catalogue, query, domain=''):
     pool = [e for e in catalogue if not domain or e['domain'] == domain]
     area_matches = [e for e in pool if _words(e['area']) == query]
     if area_matches:
-        pool = area_matches
+        domain_order = {domain: i for i, domain in enumerate((
+            'cover', 'lock', 'light', 'switch', 'fan', 'media_player', 'climate',
+            'alarm_control_panel', 'device_tracker'))}
+        return sorted(((_score(query, e['_names']), e) for e in area_matches),
+                      key=lambda pair: (domain_order.get(pair[1]['domain'],
+                                        10 if pair[1]['domain'] in ('sensor', 'binary_sensor') else 9),
+                                        -pair[0], pair[1]['entity_id']))[:8]
     ranked = [(max(_score(query, e['_names']), _score(query, [e['area']])), e) for e in pool]
     return sorted(((score, e) for score, e in ranked if score >= 0.45),
                   key=lambda pair: (-pair[0], pair[1]['entity_id']))[:8]
@@ -117,10 +125,65 @@ def _read(entity):
         if len(attributes) == 30:
             break
     return {'status': 'success', 'entity': {
-        'entity_id': entity['entity_id'], 'name': entity['name'], 'area': entity['area'],
+        'entity_id': entity['entity_id'], 'name': entity['name'], 'ha_area': entity['area'],
         'state': state.get('state'), 'attributes': attributes,
         'last_changed': state.get('last_changed'), **_brightness(state),
         'exposed': bool(ha_api.get_exposed().get(entity['entity_id']))}}
+
+
+def locate(query='', entity_id='', catalogue=None):
+    catalogue = _catalogue() if catalogue is None else catalogue
+    trackers = [e for e in catalogue if e['domain'] in ('device_tracker', 'person')]
+    if entity_id:
+        entity = next((e for e in trackers if e['entity_id'] == entity_id), None)
+    else:
+        ranked = sorted(((_score(_words(query), e['_names']), e) for e in trackers),
+                        key=lambda pair: (-pair[0], pair[1]['domain'] != 'device_tracker',
+                                          pair[1]['entity_id'])) if _words(query) else []
+        entity = ranked[0][1] if ranked and ranked[0][0] >= 0.6 else None
+    if entity is None:
+        return {'status': 'error', 'message': (
+            'No location tracker matches that; the HA room an entity sits in is not where it is.')}
+
+    state = entity['_state']
+    attrs = state.get('attributes') or {}
+    latitude, longitude = attrs.get('latitude'), attrs.get('longitude')
+    address = None
+    device_id = entity.get('_device_id')
+    if device_id:
+        # Registry identity, never a shared room or similar name, links siblings.
+        siblings = {r['entity_id']: r for r in ha_api.get_entity_registry()
+                    if r.get('device_id') == device_id
+                    and r.get('entity_id', '').startswith('sensor.')}
+        for sibling in ha_api.get_states():
+            if sibling.get('entity_id') not in siblings:
+                continue
+            row = siblings[sibling['entity_id']]
+            names = [(sibling.get('attributes') or {}).get('friendly_name'),
+                     *(row.get(k) for k in ('entity_id', 'name', 'original_name'))]
+            if 'geocoded' not in ' '.join(str(n or '') for n in names).casefold():
+                continue
+            value = str(sibling.get('state') or '').strip()
+            if value and value.casefold() not in ('unknown', 'unavailable'):
+                address = value
+                break
+    if address is None and latitude is not None and longitude is not None:
+        from services import maps
+        address = maps.reverse_geocode(latitude, longitude)
+
+    name = re.sub(r' Location$', '', entity['name'], flags=re.IGNORECASE)
+    zone = state.get('state')
+    if zone == 'home':
+        message = f'{name} is home' + (f' ({address})' if address else '') + '.'
+    elif zone == 'not_home':
+        message = f'{name} is away' + (f', near {address}' if address else '') + '.'
+    else:
+        message = f'{name} is at {zone}' + (f' ({address})' if address else '') + '.'
+    return {'status': 'success', 'entity_id': entity['entity_id'], 'name': name,
+            'zone': zone, 'latitude': latitude, 'longitude': longitude,
+            'gps_accuracy': attrs.get('gps_accuracy'), 'in_zones': attrs.get('in_zones', []),
+            'last_updated': state.get('last_updated') or state.get('last_changed'),
+            'address': address, 'message': message}
 
 
 def _trusted(acting_member, voice_context, source):
@@ -144,13 +207,15 @@ def house(action='', query='', entity_id='', domain='', service='', data=None,
     try:
         if ha_api.mode() == 'unconfigured':
             return {'status': 'error', 'message': 'Home Assistant is not connected.'}
-        if action not in ('find', 'read', 'history', 'act'):
-            return {'status': 'error', 'message': 'Unknown house action. Use find, read, history or act.'}
+        if action not in ('find', 'read', 'history', 'act', 'locate'):
+            return {'status': 'error', 'message': 'Unknown house action. Use find, read, history, act or locate.'}
         catalogue = _catalogue()
         if action == 'find':
             if not str(query or '').strip():
                 return {'status': 'error', 'message': 'Which device or room should I find?'}
             return find(query, domain, catalogue)
+        if action == 'locate':
+            return locate(query, entity_id, catalogue)
         entity = resolve(query, entity_id, domain, catalogue)
         if 'status' in entity:
             return entity

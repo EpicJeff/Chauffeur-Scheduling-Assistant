@@ -5244,11 +5244,11 @@ def get_available_tools() -> List[Dict]:
         },
         {
             "name": "house",
-            "description": "Reads any Home Assistant device and controls devices exposed to Assist (or unexposed devices when the household allows it); locks, alarms and garage doors need a parent or adult. Actions: find, read, history, act. You MUST call find first when you do not already hold an entity id, before read or act. Services include turn_on, turn_off, toggle, open_cover, set_temperature or light.turn_on; service domains must match the device.",
+            "description": "Reads any Home Assistant device and controls devices exposed to Assist (or unexposed devices when the household allows it); locks, alarms and garage doors need a parent or adult. Actions: find, read, history, act, locate. ha_area is the room in HA's registry an entity is assigned to, never where a mobile thing (car, phone, person) is. For 'where is X' use action=locate. You MUST call find first when you do not already hold an entity id, before read or act. Services include turn_on, turn_off, toggle, open_cover, set_temperature or light.turn_on; service domains must match the device.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["find", "read", "history", "act"]},
+                    "action": {"type": "string", "enum": ["find", "read", "history", "act", "locate"]},
                     "query": {"type": "string", "description": "Device name, alias or room; required for find."},
                     "entity_id": {"type": "string", "description": "An entity id returned by find."},
                     "domain": {"type": "string", "description": "Optional domain filter, e.g. light."},

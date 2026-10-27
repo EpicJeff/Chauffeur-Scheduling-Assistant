@@ -13,9 +13,12 @@ import unittest
 
 from harness import check  # noqa: F401  (harness isolates CHAUFFEUR_DATA_DIR)
 
-from services import agent_tools_v2, ha_api, house, storage
+from services import agent_tools_v2, ha_api, house, maps, storage
 
 LAMP_TOKEN = 'eyJ-secret-should-never-leave'
+EV9_PARTS = ('engine', 'defrost', 'trunk', 'hood', 'front_left_door', 'front_right_door', 'back_left_door',
+             'back_right_door', 'sunroof', 'locked')
+EV9_ADDRESS = '12 Maple Lane, Example Township, Cary, Wake County, North Carolina, 27500, United States'
 
 
 def _states():
@@ -37,6 +40,18 @@ def _states():
          'attributes': {'friendly_name': 'Office Blind', 'device_class': 'blind'}},
         {'entity_id': 'light.hidden_strip', 'state': 'on', 'last_changed': '2026-10-27T06:00:00+00:00',
          'attributes': {'friendly_name': 'Office Strip'}},
+        *[{'entity_id': f'binary_sensor.ev9_{k}', 'state': 'off', 'last_changed': '2026-10-27T06:00:00+00:00',
+           'attributes': {'friendly_name': f'Kia EV9 {k.replace("_", " ").title()}'}}
+          for k in EV9_PARTS],
+        {'entity_id': 'device_tracker.ev9_location', 'state': 'home', 'last_changed': '2026-10-27T14:13:16+00:00',
+         'last_updated': '2026-10-27T14:13:16+00:00',
+         'attributes': {'friendly_name': 'Kia EV9 Location', 'source_type': 'gps', 'latitude': 35.780736,
+                        'longitude': -78.915669, 'gps_accuracy': 0, 'in_zones': ['zone.home', 'zone.bus_stop']}},
+        {'entity_id': 'sensor.garage_kia_ev9_geocoded_location', 'last_changed': '2026-10-27T14:13:16+00:00',
+         'state': EV9_ADDRESS, 'attributes': {'friendly_name': 'Kia EV9 Geocoded Location'}},
+        {'entity_id': 'device_tracker.van', 'state': 'not_home', 'last_changed': '2026-10-27T15:00:00+00:00',
+         'last_updated': '2026-10-27T15:00:00+00:00',
+         'attributes': {'friendly_name': 'Van', 'latitude': 35.79, 'longitude': -78.78, 'gps_accuracy': 12}},
     ]
 
 
@@ -58,14 +73,27 @@ REGISTRY = [
      'area_id': 'office', 'device_id': None, 'hidden_by': None, 'disabled_by': None, 'platform': 'somfy'},
     {'entity_id': 'light.hidden_strip', 'name': None, 'original_name': 'Office Strip', 'aliases': [],
      'area_id': 'office', 'device_id': None, 'hidden_by': 'user', 'disabled_by': None, 'platform': 'wled'},
+    *[{'entity_id': f'binary_sensor.ev9_{k}', 'name': None, 'original_name': k.replace('_', ' ').title(), 'aliases': [],
+       'area_id': None, 'device_id': 'dev_ev9', 'hidden_by': None, 'disabled_by': None, 'platform': 'kia_uvo'}
+      for k in EV9_PARTS],
+    {'entity_id': 'device_tracker.ev9_location', 'name': None, 'original_name': 'Location', 'aliases': [],
+     'area_id': None, 'device_id': 'dev_ev9', 'hidden_by': None, 'disabled_by': None, 'platform': 'kia_uvo'},
+    {'entity_id': 'sensor.garage_kia_ev9_geocoded_location', 'name': None, 'original_name': 'Geocoded Location',
+     'aliases': [], 'area_id': None, 'device_id': 'dev_ev9', 'hidden_by': None, 'disabled_by': None, 'platform': 'kia_uvo'},
+    {'entity_id': 'device_tracker.van', 'name': None, 'original_name': 'Van', 'aliases': [],
+     'area_id': None, 'device_id': 'dev_van', 'hidden_by': None, 'disabled_by': None, 'platform': 'mobile_app'},
 ]
+
+DEVICES = [{'id': 'dev_ev9', 'name': 'Kia EV9', 'area_id': 'garage'}, {'id': 'dev_van', 'name': 'Van', 'area_id': None}]
 
 AREAS = [
     {'id': 'office', 'name': 'Office', 'entities': ['light.office_lamp', 'media_player.office_tv_2',
                                                     'cover.office_blind', 'light.hidden_strip']},
     {'id': 'front_yard', 'name': 'Front Yard', 'entities': ['light.front_porch_column_1']},
     {'id': 'hall', 'name': 'Hall', 'entities': ['light.hall', 'lock.front_door']},
-    {'id': 'garage', 'name': 'Garage', 'entities': ['cover.main_garage']},
+    {'id': 'garage', 'name': 'Garage', 'entities': ['cover.main_garage', 'device_tracker.ev9_location',
+                                                    'sensor.garage_kia_ev9_geocoded_location',
+                                                    *[f'binary_sensor.ev9_{k}' for k in EV9_PARTS]]},
 ]
 
 EXPOSED = {'light.office_lamp': True, 'media_player.office_tv_2': True, 'light.front_porch_column_1': True,
@@ -106,6 +134,9 @@ class HouseToolTests(unittest.TestCase):
         stub(ha_api, 'get_states', lambda ttl=5: tests.states)
         stub(ha_api, 'get_entity_registry', lambda ttl=300: REGISTRY)
         stub(ha_api, 'get_area_map', lambda ttl=60: AREAS)
+        stub(ha_api, 'get_device_registry', lambda ttl=300: DEVICES)
+        self.geocoded = []
+        stub(maps, 'reverse_geocode', lambda lat, lon: (tests.geocoded.append((lat, lon)) or 'Target, 12 Elm St, Cary'))
         stub(ha_api, 'get_exposed', lambda ttl=60: dict(EXPOSED))
         stub(ha_api, 'call_service', call_service)
         stub(ha_api, 'has_service', lambda d, s: s in SERVICES.get(d, set()))
@@ -130,7 +161,8 @@ class HouseToolTests(unittest.TestCase):
         res = self.run_tool(action='find', query='office lamp')
         self.assertEqual(res['status'], 'success')
         self.assertEqual(res['candidates'][0]['entity_id'], 'light.office_lamp')
-        self.assertEqual(res['candidates'][0]['area'], 'Office')
+        self.assertEqual(res['candidates'][0]['ha_area'], 'Office')
+        self.assertNotIn('area', res['candidates'][0], 'the HA room must not be called a location-sounding "area"')
         ids = [c['entity_id'] for c in self.run_tool(action='find', query='front porch column one')['candidates']]
         self.assertEqual(ids[0], 'light.front_porch_column_1', 'the registry alias did not match')
 
@@ -150,6 +182,8 @@ class HouseToolTests(unittest.TestCase):
         self.assertEqual(res['status'], 'success')
         ent = res['entity']
         self.assertEqual(ent['state'], 'on')
+        self.assertEqual(ent['ha_area'], 'Office')
+        self.assertNotIn('area', ent)
         self.assertEqual(ent['brightness_pct'], 50)
         self.assertNotIn('access_token', ent['attributes'])
         self.assertNotIn(LAMP_TOKEN, repr(res))
@@ -280,10 +314,52 @@ class HouseToolTests(unittest.TestCase):
         self.assertEqual(res['status'], 'error', 'a service from another domain was accepted')
         self.assertEqual(self.calls, [])
 
+    # --- locate -------------------------------------------------------------
+    def test_locate_a_car_answers_its_zone_and_address_never_its_ha_room(self):
+        """Device run 2026-10-27: "where is the Kia EV9" came back "in the Garage",
+        the HA area of forty EV9 entities, while the tracker said home and the
+        geocoded sensor named the street."""
+        res = self.run_tool(action='locate', query='Kia EV9')
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(res['entity_id'], 'device_tracker.ev9_location')
+        self.assertEqual(res['zone'], 'home')
+        self.assertEqual(res['address'], EV9_ADDRESS)
+        self.assertEqual((res['latitude'], res['longitude']), (35.780736, -78.915669))
+        self.assertEqual(res['last_updated'], '2026-10-27T14:13:16+00:00')
+        self.assertNotIn('Garage', res['message'])
+        self.assertIn('home', res['message'].lower())
+        self.assertIn('Maple Lane', res['message'])
+        self.assertEqual(self.geocoded, [], 'a geocoded sensor on the same device beats a lookup')
+
+    def test_locate_away_without_a_geocoded_sensor_reverse_geocodes(self):
+        res = self.run_tool(action='locate', query='van')
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(res['zone'], 'not_home')
+        self.assertEqual(res['address'], 'Target, 12 Elm St, Cary')
+        self.assertEqual(self.geocoded, [(35.79, -78.78)])
+        self.assertIn('Target', res['message'])
+
+    def test_locate_never_answers_from_a_non_tracker(self):
+        res = self.run_tool(action='locate', query='office lamp')
+        self.assertEqual(res['status'], 'error')
+        self.assertIn('location', res['message'].lower())
+        self.assertEqual(self.geocoded, [])
+
+    def test_locate_by_entity_id_works_too(self):
+        res = self.run_tool(action='locate', entity_id='device_tracker.van')
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(res['zone'], 'not_home')
+
+    def test_the_tool_tells_the_model_the_room_is_not_a_location(self):
+        tool = next(t for t in agent_tools_v2.get_available_tools() if t['name'] == 'house')
+        self.assertIn('locate', tool['parameters']['properties']['action']['enum'])
+        self.assertIn('ha_area', tool['description'])
+        self.assertIn('locate', tool['description'])
+
     # --- degradation --------------------------------------------------------
     def test_no_home_assistant_means_a_plain_error_for_every_action(self):
         setattr(ha_api, 'mode', lambda: 'unconfigured')
-        for action in ('find', 'read', 'history', 'act'):
+        for action in ('find', 'read', 'history', 'act', 'locate'):
             res = self.run_tool(action=action, query='office lamp', entity_id='light.office_lamp', service='turn_off',
                                 acting_member={'id': 'p1', 'role': 'parent'})
             self.assertEqual(res['status'], 'error', action)
