@@ -393,6 +393,10 @@ ENTRIES: List[dict] = [
        'token is treated as Argyle. Turn it off once the Home Assistant '
        'integration has its token — leaving it on means a permanently trusted '
        'network.', page='config', anchor='people'),
+    _e('house_control_unexposed', 'integrations', 'Argyle controls unexposed devices',
+       'Off, Argyle only switches devices exposed to Home Assistant Assist (it can always read any device). '
+       'On, Argyle may control any device. Locks, alarms and garage doors always need a parent or adult.',
+       page='config', anchor='people'),
     # Outbound mail (auth arc S3). Lives on the People surface, beside the
     # invite button that uses it — a family configures a sender because they
     # are trying to invite somebody, not because they set out to configure

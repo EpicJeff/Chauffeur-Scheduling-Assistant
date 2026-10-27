@@ -1174,6 +1174,13 @@
                                         guest phones and smart plugs included.</span>
                                 </span>
                             </label>
+                            <label class="flex items-start gap-2 pt-2 border-t border-gray-800">
+                                <input type="checkbox" x-model="authSettings.house_control_unexposed" @change="saveAuthSettings()" class="mt-1">
+                                <span>
+                                    <b>Let Argyle control devices not exposed to Assist</b>
+                                    <span class="block text-gray-400 text-xs">Off, only exposed devices can be controlled; reads are always allowed. Locks, alarms and garage doors always need a parent or adult.</span>
+                                </span>
+                            </label>
                         </div>
                     </details>
 
@@ -2385,7 +2392,7 @@
                 authSettings: {
                     smtp_use_intake: false, smtp_host: '', smtp_port: 587,
                     smtp_user: '', smtp_password: '', smtp_from: '',
-                    service_local_grace: true, service_token: '',
+                    service_local_grace: true, service_token: '', house_control_unexposed: false,
                     auth_enforce: false
                 },
                 authAudit: null, enforceError: '',            // auth arc S8
@@ -3986,6 +3993,7 @@
                         // "Argyle is cut off".
                         service_local_grace: data.service_local_grace !== false,
                         service_token: data.service_token || '',
+                        house_control_unexposed: !!data.house_control_unexposed,
                         // Absent means OFF, matching the server: audit mode is
                         // the default and the only safe reading of a missing key.
                         auth_enforce: data.auth_enforce === true
@@ -4050,7 +4058,8 @@
                                 smtp_user: this.authSettings.smtp_user,
                                 smtp_password: this.authSettings.smtp_password,
                                 smtp_from: this.authSettings.smtp_from,
-                                service_local_grace: this.authSettings.service_local_grace
+                                service_local_grace: this.authSettings.service_local_grace,
+                                house_control_unexposed: this.authSettings.house_control_unexposed
                             })
                         });
                     } catch (e) { showGlobalAlert('Could not save that setting.'); }

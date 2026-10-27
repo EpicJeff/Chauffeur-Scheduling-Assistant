@@ -5,7 +5,7 @@ from services.voice_identity import VoiceContext, _revision, voice_names
 TOOLS = frozenset({'get_calendar_events', 'get_travel_time', 'assign_driver_to_event_fuzzy',
                    'remove_override_for_event_fuzzy', 'get_shopping_list_items',
                    'add_shopping_items', 'check_off_shopping_item', 'send_family_message', 'send_direct_message',
-                   'find_in_chauffeur', 'start_project', 'prepare_voice_approval'})
+                   'find_in_chauffeur', 'start_project', 'prepare_voice_approval', 'house'})
 MUTATIONS = frozenset({'assign_driver_to_event_fuzzy', 'remove_override_for_event_fuzzy',
                        'add_shopping_items', 'check_off_shopping_item'})
 
@@ -26,7 +26,8 @@ def record_action(ctx, name, principal=None, details=None, provenance=None):
                      'action_label': {'assign_driver_to_event_fuzzy': 'Assigned a driver',
                                       'remove_override_for_event_fuzzy': 'Cleared a driver assignment',
                                       'add_shopping_items': 'Added shopping items',
-                                      'check_off_shopping_item': 'Checked off a shopping item'}.get(name, 'Household action'),
+                                      'check_off_shopping_item': 'Checked off a shopping item',
+                                      'house': 'Controlled a device'}.get(name, 'Household action'),
                      **provenance, 'details': details or {}})
         storage.set_app_state('voice_action_history', rows[-100:])
 
@@ -63,6 +64,13 @@ def dispatch(name, args, ctx: VoiceContext, focus_key=None):
     elif name == 'get_travel_time':
         result = tools.get_travel_time(origin=args.get('origin') or '',
                                        destination=args.get('destination') or '')
+    elif name == 'house':
+        result = tools.house(**{k: v for k, v in args.items() if k in (
+            'action', 'query', 'entity_id', 'domain', 'service', 'data', 'hours')},
+            voice_context=ctx, source='voice')
+        if args.get('action') == 'act' and result.get('status') == 'success':
+            record_action(ctx, 'house', ctx.verified_member(),
+                          {'entity_id': result.get('entity_id'), 'service': result.get('service')}, provenance)
     elif name == 'get_shopping_list_items':
         result = tools.get_shopping_list_items(args.get('list_name') or '', acting_member=None)
     elif name in ('send_family_message', 'send_direct_message'):

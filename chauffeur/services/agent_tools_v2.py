@@ -1358,6 +1358,15 @@ def get_assist_coverage(target_date: str = None) -> Dict[str, Any]:
             "message": "Covered by outside hands:\n" + "\n".join(lines)}
 
 
+def house(action='', query='', entity_id='', domain='', service='', data=None,
+          hours=24, acting_member=None, voice_context=None, source=None,
+          focus_key=None, spoken=False):
+    from services import house as house_service
+    return house_service.house(action=action, query=query, entity_id=entity_id,
+                               domain=domain, service=service, data=data, hours=hours,
+                               acting_member=acting_member, voice_context=voice_context, source=source)
+
+
 def announce_to_room(room: str, message: str, recipient_name: str = None,
                      sender_driver_id: str = None, from_member: str = None) -> Dict[str, Any]:
     """Speak in a room over HA (services/announce.py owns the how). Unlike the
@@ -5234,6 +5243,23 @@ def get_available_tools() -> List[Dict]:
             }
         },
         {
+            "name": "house",
+            "description": "Reads any Home Assistant device and controls devices exposed to Assist (or unexposed devices when the household allows it); locks, alarms and garage doors need a parent or adult. Actions: find, read, history, act. You MUST call find first when you do not already hold an entity id, before read or act. Services include turn_on, turn_off, toggle, open_cover, set_temperature or light.turn_on; service domains must match the device.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["find", "read", "history", "act"]},
+                    "query": {"type": "string", "description": "Device name, alias or room; required for find."},
+                    "entity_id": {"type": "string", "description": "An entity id returned by find."},
+                    "domain": {"type": "string", "description": "Optional domain filter, e.g. light."},
+                    "service": {"type": "string", "description": "For act: HA service, e.g. turn_off or light.turn_on."},
+                    "data": {"type": "object", "description": "HA service data, e.g. brightness_pct or temperature."},
+                    "hours": {"type": "integer", "description": "History window, 1 to 168 hours; default 24."}
+                },
+                "required": ["action"]
+            }
+        },
+        {
             "name": "announce_to_room",
             "description": "Speaks a message OUT LOUD on the speaker in a named room of the house ('Lily is in the pool house, tell her it's time for dinner' -> room 'pool house'). Uses the room's voice satellite or media player via Home Assistant. Name the person it's for in recipient_name so they also get a written copy by DM.",
             "parameters": {
@@ -6464,7 +6490,7 @@ class ManageCarTool(BaseModel):
     restrictions. A driver listed on no car keeps an unrestricted personal car. Use action
     'set_unavailable' for things like 'the minivan is loaned to Aunt Sarah through Friday'.
     """
-    action: str = Field(..., description="'create', 'update', 'delete', 'set_unavailable' (add an unavailability date range), or 'clear_unavailable' (remove all unavailability ranges).")
+    action: str = Field(..., description="'create', 'update', 'delete', 'set_unavailable' (add an unavailability date range), 'clear_unavailable' (remove all unavailability ranges), or 'locate' (where is the car now).")
     car_id: str = Field("", description="Car id or exact car name. Required for every action except 'create'.")
     name: str = Field("", description="Car name, e.g. 'Minivan'. Required for 'create'.")
     seat_capacity: int = Field(0, description="Passenger seats excluding the driver. Defaults to 4 on create; 0 means 'leave unchanged' on update.")
@@ -7683,6 +7709,23 @@ def handle_manage_car(args: dict) -> dict:
     if not car:
         known = ", ".join(f"{c.get('name')} ({c.get('id')})" for c in cars) or "none"
         return {"status": "error", "message": f"No car matching '{args.get('car_id')}'. Known cars: {known}"}
+    if action == 'locate':
+        from services import cars as car_service, maps
+        name = car.get('name') or 'Car'
+        if not car.get('ha_device_tracker'):
+            return {'status': 'error', 'message': f'{name} has no location tracker in Home Assistant.'}
+        location = car_service.car_location(car)
+        if location is None:
+            possessive = name + ("'" if name.endswith('s') else "'s")
+            return {'status': 'error', 'message': f'{possessive} tracker is not answering right now.'}
+        zone = location['state']
+        lat, lon = location.get('latitude'), location.get('longitude')
+        place = maps.reverse_geocode(lat, lon) if zone != 'home' and lat is not None and lon is not None else None
+        where = 'home' if zone == 'home' else (place or ('away' if zone == 'not_home' else zone))
+        return {'status': 'success', 'car': name, 'zone': zone,
+                'latitude': lat, 'longitude': lon, 'gps_accuracy': location.get('gps_accuracy'),
+                'last_updated': location.get('last_updated'), 'place': place,
+                'message': f"{name} is at {where}{' (not home)' if zone != 'home' else ''}."}
     doc_id = car["doc_id"]
     updated = {k: v for k, v in car.items() if k != "doc_id"}
 
@@ -7714,7 +7757,7 @@ def handle_manage_car(args: dict) -> dict:
             updated["allowed_passenger_ids"] = args["allowed_passenger_ids"]
         storage.update_car(doc_id, updated)
         return {"status": "success", "car": updated}
-    return {"status": "error", "message": f"Unknown action '{action}'. Use create/update/delete/set_unavailable/clear_unavailable."}
+    return {"status": "error", "message": f"Unknown action '{action}'. Use create/update/delete/set_unavailable/clear_unavailable/locate."}
 
 def handle_add_routing_rule(args: dict) -> dict:
     from services import storage
@@ -9245,6 +9288,7 @@ def handle_get_travel_time(args: dict) -> dict:
 
 # These chat-only doors intentionally have no mission registry handler.
 REGISTRY_EXCEPTIONS = {
+    'house': 'Device control never runs from a mission.',
     'send_direct_message': 'DMs are private space and never run from a mission.',
     'announce_to_room': 'Room speech never runs from a mission.',
     'prepare_voice_approval': 'Only the voice controller prepares voice approvals.',
@@ -9254,6 +9298,10 @@ REGISTRY_EXCEPTIONS = {
     'remove_override_for_event_fuzzy': 'Missions use the clear_assignment admin action.',
     'auto_schedule_trip_itinerary': 'Chat keeps the trip-page UI action; schedule_trip_itinerary is the server-side registry door.',
 }
+
+
+def handle_house(args: dict, actor=None) -> dict:
+    return house(**args, acting_member=actor)
 
 
 def handle_get_calendar_events(args: dict, actor=None) -> dict:
@@ -9404,6 +9452,7 @@ def handle_propose_program(args: dict, actor=None, focus_key=None) -> dict:
 
 
 TOOL_HANDLERS = {
+    'house': handle_house,
     "answer_occasion_question": handle_answer_occasion_question,
     "stamp_occasion_template": handle_stamp_occasion_template,
     "add_occasion_dishes": handle_add_occasion_dishes,

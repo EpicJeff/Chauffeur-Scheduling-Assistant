@@ -1375,6 +1375,7 @@ class Settings(BaseModel):
     # deploying, because the alternative is a silent Argyle.
     service_token: str = ""
     service_local_grace: bool = True
+    house_control_unexposed: bool = False
     # --- The flip itself (auth arc S8) ---
     # Off means AUDIT MODE: the guard records what it would refuse and refuses
     # nothing. On means every route's tier is enforced. Decision 9 guards the

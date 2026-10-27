@@ -353,6 +353,52 @@ def get_area_map(ttl: float = 60) -> list:
 
 
 _area_meta_cache = {'ts': 0.0, 'data': None}
+_entity_registry_cache = {'ts': 0.0, 'data': None}
+_device_registry_cache = {'ts': 0.0, 'data': None}
+_exposed_cache = {'ts': 0.0, 'data': None}
+
+
+def _registry_list(command, keys, cache, ttl):
+    now = time.time()
+    with _cache_lock:
+        if cache['data'] is not None and now - cache['ts'] < ttl:
+            return cache['data']
+    rows = ws_command(command)
+    with _cache_lock:
+        if not isinstance(rows, list):
+            return cache['data'] or []
+        out = [{key: row.get(key) for key in keys} for row in rows if isinstance(row, dict)]
+        cache.update(ts=now, data=out)
+        return out
+
+
+def get_entity_registry(ttl: float = 300) -> list:
+    """Names, aliases and visibility, with a stale copy when HA cannot answer."""
+    return _registry_list('config/entity_registry/list',
+                          ('entity_id', 'name', 'original_name', 'aliases', 'area_id',
+                           'device_id', 'hidden_by', 'disabled_by', 'platform'),
+                          _entity_registry_cache, ttl)
+
+
+def get_device_registry(ttl: float = 300) -> list:
+    """Device areas for entities inheriting their room from the device."""
+    return _registry_list('config/device_registry/list', ('id', 'name', 'area_id'),
+                          _device_registry_cache, ttl)
+
+
+def get_exposed(ttl: float = 60) -> dict:
+    """Assist conversation exposure; a failed refresh never grants control."""
+    now = time.time()
+    with _cache_lock:
+        if _exposed_cache['data'] is not None and now - _exposed_cache['ts'] < ttl:
+            return _exposed_cache['data']
+    result = ws_command('homeassistant/expose_entity/list')
+    exposed = result.get('exposed_entities') if isinstance(result, dict) else None
+    out = {eid: bool(flags.get('conversation')) for eid, flags in exposed.items()
+           if isinstance(flags, dict)} if isinstance(exposed, dict) else {}
+    with _cache_lock:
+        _exposed_cache.update(ts=now, data=out)
+    return out
 
 
 def get_area_registry(ttl: float = 300) -> list:

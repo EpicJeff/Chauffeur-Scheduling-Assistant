@@ -569,16 +569,17 @@ Chauffeur. This removes the whole pipeline from the question in one step.
 
 **FIRST, CHECK WHICH CHAT YOU ARE IN.** Chauffeur's own chat surfaces -- the
 control-center bar, the wall panel's Argyle bar, the PWA -- post straight to
-`/api/chat`. They never touch Home Assistant. There is no pipeline, no
-`prefer_local_intents`, no built-in intents: Argyle is the entire stack, so
-"turn off the porch light" can only ever be refused there, and no exposure or
-alias work will change it. Only **Assist** (the dialog, or a voice satellite
-running an Assist pipeline) has the local-intent path in front of Argyle.
+`/api/chat`. Argyle can read and control Home Assistant devices there through
+the `house` tool: it finds a device by name, alias or room, reads any device,
+and controls devices exposed to Assist. Config › People › Argyle can allow
+unexposed control too. Locks, alarms and garage doors always need a signed-in
+parent/adult, admin chat, or a verified parent/adult voice. Each action reads
+the device back before reporting its state.
 
-The two look nearly identical once you are staring at a refusal, and the
-refusal reads the same either way. Before debugging routing, reproduce it in
-**Assist with the Chauffeur pipeline selected** -- if it works there and fails
-in Chauffeur's own chat, nothing is broken.
+Only **Assist** (the dialog, or a voice satellite running an Assist pipeline)
+has the local-intent path in front of Argyle. If a command fails, compare
+**Assist with the Chauffeur pipeline selected** and Chauffeur's own chat to
+distinguish local intent matching from the house tool's discovery and permissions.
 
 **IF IT WORKS TYPED AND FAILS SPOKEN, IT IS THE TRANSCRIPT, NOT THE ROUTING.**
 Type the sentence into Assist with the Chauffeur pipeline selected. If it is
@@ -731,8 +732,9 @@ if ... & conversation.ConversationEntityFeature.CONTROL:
 `intent_filter` stays `None` and EVERY matched built-in intent is handled
 locally — which is what makes the garage work. Adding `CONTROL` to look tidy
 would silently restrict local handling to those two intents and route "open the
-main garage" to Argyle, which cannot open it. The flag means "this agent
-controls Home Assistant entities"; ours controls a schedule.
+main garage" to Argyle's house tool and its trusted-parent check. The house
+tool does not change this flag: built-in Assist handling stays first for every
+matched house intent.
 
 ## Troubleshooting
 

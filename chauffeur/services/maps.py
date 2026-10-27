@@ -1025,6 +1025,51 @@ def _geocode_address_api_lookup(address: str) -> Optional[tuple[float, float, st
             
     return None
 
+def reverse_geocode(lat, lon) -> Optional[str]:
+    """Name coordinates using the forward geocoder's providers and rate budget."""
+    try:
+        import time
+        lat, lon = float(lat), float(lon)
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            return None
+        mapbox_key = get_mapbox_api_key()
+        if mapbox_key and not get_map_option('disable_mapbox', False) \
+                and check_usage_limits_and_spikes('geocode', 1):
+            try:
+                with mapbox_geocode_lock:
+                    elapsed = time.time() - getattr(_geocode_address_api_lookup, 'last_time', 0)
+                    if elapsed < 0.11:
+                        time.sleep(0.11 - elapsed)
+                    try:
+                        resp = requests.get(
+                            f'https://api.mapbox.com/geocoding/v5/mapbox.places/{lon},{lat}.json',
+                            params={'access_token': mapbox_key, 'limit': 1}, timeout=5)
+                    finally:
+                        _geocode_address_api_lookup.last_time = time.time()
+                if resp.status_code == 200:
+                    features = resp.json().get('features') or []
+                    if features:
+                        return features[0].get('place_name') or None
+            except Exception:
+                pass
+        with api_rate_lock:
+            elapsed = time.time() - getattr(geocode_address, 'last_nominatim_time', 0)
+            if elapsed < 1.1:
+                time.sleep(1.1 - elapsed)
+            try:
+                resp = requests.get('https://nominatim.openstreetmap.org/reverse',
+                                    params={'format': 'json', 'lat': lat, 'lon': lon},
+                                    headers={'User-Agent': 'ChauffeurScheduleAssistant/1.0',
+                                             'Accept-Language': 'en-US,en;q=0.9'}, timeout=10)
+            finally:
+                geocode_address.last_nominatim_time = time.time()
+            if resp.status_code == 200:
+                return resp.json().get('display_name') or None
+    except Exception:
+        pass
+    return None
+
+
 def resolve_routable_location(location: str) -> str:
     """Venue-only event location ("Mills Park Middle School") -> a routable
     "Name, street address" the solver can actually geocode and route to.
