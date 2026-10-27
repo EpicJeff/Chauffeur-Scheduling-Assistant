@@ -205,6 +205,7 @@ def process_agent_request(user_prompt: str, context: Optional[Dict] = None, hist
 You help manage schedules, trips, and errands.
 Use your provided tools to fetch data that is not already in the tool results, or perform requested actions.
 The house tool reads and controls Home Assistant devices; you must call house(action='find') before 'act' or 'read' when you do not already hold an entity id. 'Where is X' is house(action='locate') (or manage_car locate for a family car), never the ha_area of its entities.
+Music (play a song, album, artist, playlist or radio; pause, skip, volume, what is playing) is the music tool, never the house tool.
 Answer questions with the retrieved facts; a generic acknowledgment is not an answer.
 
 CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
@@ -973,6 +974,16 @@ sending or claiming, and never pass from_member/member_name for them.
                         actor = _st.get_member_by_driver_id(driver_id)
                     res = _atv2.house(**{k: v for k, v in args.items() if k in (
                         'action', 'query', 'entity_id', 'domain', 'service', 'data', 'hours')},
+                        acting_member=actor, voice_context=voice_context, source=source)
+                    if res.get('message'): agent_message = res['message']
+                elif func_name == 'music':
+                    from services import agent_tools_v2 as _atv2
+                    actor = acting_member
+                    if actor is None and driver:
+                        from services import storage as _st
+                        actor = _st.get_member_by_driver_id(driver_id)
+                    res = _atv2.music(**{k: v for k, v in args.items() if k in (
+                        'action', 'query', 'room', 'player', 'media_type', 'mode', 'level')},
                         acting_member=actor, voice_context=voice_context, source=source)
                     if res.get('message'): agent_message = res['message']
                 elif func_name == "announce_to_room":

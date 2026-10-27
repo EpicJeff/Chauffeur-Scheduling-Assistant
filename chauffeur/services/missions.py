@@ -85,7 +85,7 @@ READ_TOOLS = frozenset({
 
 # Never offered, not even propose-wrapped. DMs are private space (mind law);
 # device control stays on the person's chat/voice rail until mission review.
-EXCLUDED_TOOLS = frozenset({'send_direct_message', 'house'})
+EXCLUDED_TOOLS = frozenset({'send_direct_message', 'house', 'music'})
 
 
 def proposable_tools() -> frozenset:

@@ -1367,6 +1367,14 @@ def house(action='', query='', entity_id='', domain='', service='', data=None,
                                acting_member=acting_member, voice_context=voice_context, source=source)
 
 
+def music(action='', query='', room='', player='', media_type='', mode='', level=None,
+          acting_member=None, voice_context=None, source=None, focus_key=None, spoken=False):
+    from services import music_tool
+    return music_tool.music(action=action, query=query, room=room, player=player,
+                            media_type=media_type, mode=mode, level=level,
+                            acting_member=acting_member, voice_context=voice_context, source=source)
+
+
 def announce_to_room(room: str, message: str, recipient_name: str = None,
                      sender_driver_id: str = None, from_member: str = None) -> Dict[str, Any]:
     """Speak in a room over HA (services/announce.py owns the how). Unlike the
@@ -5255,6 +5263,23 @@ def get_available_tools() -> List[Dict]:
                     "service": {"type": "string", "description": "For act: HA service, e.g. turn_off or light.turn_on."},
                     "data": {"type": "object", "description": "HA service data, e.g. brightness_pct or temperature."},
                     "hours": {"type": "integer", "description": "History window, 1 to 168 hours; default 24."}
+                },
+                "required": ["action"]
+            }
+        },
+        {
+            "name": "music",
+            "description": "Plays songs, albums, playlists, artists or radio on the house's Music Assistant players and controls playback. Actions: play, pause, resume, next, previous, stop, volume, now (what is playing). Name a room as spoken or a player by name. By voice with no room, music plays in the room the voice came from.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["play", "pause", "resume", "next", "previous", "stop", "volume", "now"]},
+                    "query": {"type": "string", "description": "Song, album, playlist, artist or radio to search for and play."},
+                    "room": {"type": "string", "description": "Room as spoken, e.g. 'the office'."},
+                    "player": {"type": "string", "description": "Player by name, e.g. 'kitchen speaker'; overrides room."},
+                    "media_type": {"type": "string", "enum": ["track", "album", "playlist", "artist", "radio"]},
+                    "mode": {"type": "string", "enum": ["play", "next", "add", "radio"], "description": "Play normally, enqueue next, add to queue, or start radio."},
+                    "level": {"type": "number", "description": "Volume percent from 0 to 100 for action=volume."}
                 },
                 "required": ["action"]
             }
@@ -9289,6 +9314,7 @@ def handle_get_travel_time(args: dict) -> dict:
 # These chat-only doors intentionally have no mission registry handler.
 REGISTRY_EXCEPTIONS = {
     'house': 'Device control never runs from a mission.',
+    'music': 'Music never runs from a mission.',
     'send_direct_message': 'DMs are private space and never run from a mission.',
     'announce_to_room': 'Room speech never runs from a mission.',
     'prepare_voice_approval': 'Only the voice controller prepares voice approvals.',
@@ -9302,6 +9328,10 @@ REGISTRY_EXCEPTIONS = {
 
 def handle_house(args: dict, actor=None) -> dict:
     return house(**args, acting_member=actor)
+
+
+def handle_music(args: dict, actor=None) -> dict:
+    return music(**args, acting_member=actor)
 
 
 def handle_get_calendar_events(args: dict, actor=None) -> dict:
@@ -9453,6 +9483,7 @@ def handle_propose_program(args: dict, actor=None, focus_key=None) -> dict:
 
 TOOL_HANDLERS = {
     'house': handle_house,
+    'music': handle_music,
     "answer_occasion_question": handle_answer_occasion_question,
     "stamp_occasion_template": handle_stamp_occasion_template,
     "add_occasion_dishes": handle_add_occasion_dishes,
