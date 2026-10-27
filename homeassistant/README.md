@@ -689,8 +689,30 @@ point of failure — and then flattens it into the shared code before
 
 That makes the upstream fix a narrow one: surface `DUPLICATE_NAME` rather than
 collapsing it, so ambiguity is reported while genuine no-match keeps falling
-through. Nothing in this integration can recover it — by the time our entity is
-called the local response is gone and we are not told it existed.
+through. By the time our entity is called the local response is gone and we are
+not told it existed, so **component 1.5.0 asks the house again** rather than
+guessing. In `ChauffeurConversationEntity.async_process`, before anything goes
+to Chauffeur, the entity asks HA's default agent to recognise the sentence
+(strict matching, the same mode the pipeline used). If an intent matches and
+every name in it resolved to a real exposed entity, the sentence IS a house
+command that the house could not target, and the entity hands it to the default
+agent's own `async_process` and returns that answer unchanged. You hear "Sorry,
+there are multiple devices called Office TV", which names the problem, instead
+of Argyle explaining that it does not do appliances. Re-running the default
+agent is safe: with prefer-local on it already failed on the same state a moment
+earlier, so the rerun reproduces the same error and no action fires. With
+prefer-local OFF, or a `conversation.process` call aimed straight at Argyle, the
+house command now runs locally through the entity instead of being refused.
+
+A sentence whose name HA has never heard of (`unmatched_entities` non-empty) is
+NOT relayed: "open the schedule" matches the cover template with an unknown
+name, and relaying it would turn an Argyle sentence into "I am not aware of any
+device called schedule". Overlapping vocabulary stays with Argyle. A missing,
+older or failing default agent falls through to Chauffeur exactly as before,
+with a warning in the HA log (`Default agent relay failed`), because a silent
+relay failure looks identical to the bug it exists to fix.
+`chauffeur/tests/test_voice_local_relay.py` runs the real entity against a
+stubbed default agent for each branch.
 
 **A landmine to leave alone.** How much gets handled locally depends on a flag
 our entity does not set. `assist_pipeline` narrows the local path to a
@@ -803,4 +825,6 @@ to Home Assistant instead of to Argyle.
   center chat. Don't put this pipeline on a device you wouldn't hand admin chat.
 - If a family member's name ever collides with an exposed entity/area name,
   "prefer local" could steal a scheduling sentence — rename or unexpose the
-  entity if that happens.
+  entity if that happens. Component 1.5.0's local relay (above) has the same
+  edge: a sentence whose every name resolves to a real exposed entity is the
+  house's, with or without prefer-local.
