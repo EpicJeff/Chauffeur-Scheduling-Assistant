@@ -181,9 +181,24 @@ def music(action='', query='', room='', player='', media_type='', mode='', level
             attrs = states[eid].get('attributes') or {}
             title, artist = attrs.get('media_title'), attrs.get('media_artist')
             by = f' by {artist}' if artist else ''
-            return {**result, 'state': state, 'title': title, 'artist': artist,
-                    'album': attrs.get('media_album_name'),
-                    'volume': round(attrs['volume_level'] * 100) if attrs.get('volume_level') is not None else None,
+            volume = round(attrs['volume_level'] * 100) if attrs.get('volume_level') is not None else None
+            if not (_is_ma(states, eid) and title and state in ('playing', 'paused')):
+                # Device 2026-10-28: YouTube playing Peppa Pig on the Office TV answered "idle"
+                # because only Music Assistant's face was asked. A TV is several entities;
+                # the remote knows the app and the Cast face knows the title.
+                from services import house
+                room_prefix = ((area or {}).get('name') or '').casefold() + ' '
+                faces = list((area or {}).get('entities') or []) + [
+                    e for e in states if e.startswith(('remote.', 'media_player.'))
+                    and (_name(states, e).casefold() == name.casefold()
+                         or (area and _name(states, e).casefold().startswith(room_prefix)))]
+                tv = house.tv_now(states, faces, next((_name(states, e) for e in faces
+                                                       if e.startswith('remote.') and e in states), name))
+                if tv:
+                    return {**result, 'state': tv['state'], 'app': tv['app'], 'title': tv['title'],
+                            'artist': tv['artist'], 'album': None, 'volume': volume, 'message': tv['message']}
+            return {**result, 'state': state, 'app': None, 'title': title, 'artist': artist,
+                    'album': attrs.get('media_album_name'), 'volume': volume,
                     'message': f'{title}{by} is {state} on {name}.' if title else f'Nothing is playing on {name}.'}
 
         payload = {'entity_id': eid}

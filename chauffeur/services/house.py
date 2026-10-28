@@ -119,7 +119,7 @@ def _brightness(state):
     return {'brightness_pct': round(attrs['brightness'] * 100 / 255)} if 'brightness' in attrs else {}
 
 
-def _read(entity):
+def _read(entity, catalogue=None):
     state = entity['_state']
     attributes = {}
     for key, value in (state.get('attributes') or {}).items():
@@ -128,11 +128,16 @@ def _read(entity):
         attributes[key] = value
         if len(attributes) == 30:
             break
-    return {'status': 'success', 'entity': {
-        'entity_id': entity['entity_id'], 'name': entity['name'], 'ha_area': entity['area'],
-        'state': state.get('state'), 'attributes': attributes,
-        'last_changed': state.get('last_changed'), **_brightness(state),
-        'exposed': bool(ha_api.get_exposed().get(entity['entity_id']))}}
+    out = {'entity_id': entity['entity_id'], 'name': entity['name'], 'ha_area': entity['area'],
+           'state': state.get('state'), 'attributes': attributes,
+           'last_changed': state.get('last_changed'), **_brightness(state),
+           'exposed': bool(ha_api.get_exposed().get(entity['entity_id']))}
+    faces = _tv_faces(entity, catalogue or [])
+    if faces:
+        tv = tv_now({e['entity_id']: e['_state'] for e in catalogue}, faces, entity['name'])
+        if tv:
+            out['tv'] = tv    # what the TV is showing, from every face of it
+    return {'status': 'success', 'entity': out}
 
 
 def locate(query='', entity_id='', catalogue=None, acting_member=None, voice_context=None, source=None):
@@ -289,6 +294,87 @@ KNOWN_APPS = (
     ('Xfinity Stream', 'com.xfinity.cloudtvr.tenfoot', ('xfinity',), 'https://www.xfinity.com/stream'),
 )
 NOT_AN_APP = ('browser', 'com.android.vending', 'launcherx')   # where a launch lands when the app is missing
+def _app_display(value):
+    """A reported app as a person would say it: HA's configured name stays, a package id becomes
+    the catalogue name when known, the Google TV launcher is the home screen."""
+    value = str(value or '')
+    if not value:
+        return ''
+    if 'launcherx' in value:
+        return 'the home screen'
+    if _PACKAGE_RE.match(value) and ' ' not in value:
+        return next((n for n, p, _a, _l in KNOWN_APPS if p == value), value)
+    return value
+
+
+def _minutes(seconds):
+    try:
+        return f'{int(round(float(seconds) / 60))} min'
+    except (TypeError, ValueError):
+        return ''
+
+
+def tv_now(states, candidates, tv_name=''):
+    """What a TV is showing, stitched from its faces: the Android TV remote and its twin know the
+    APP, a Cast player in the same room knows the TITLE and position, Music Assistant's face knows
+    only music and is left to the music tool. None when no face says anything."""
+    rows = [states[e] for e in dict.fromkeys(candidates) if e in states]
+    app = ''
+    for r in rows:
+        a = r.get('attributes') or {}
+        if r['entity_id'].startswith('remote.') and r.get('state') == 'on' and a.get('current_activity'):
+            app = _app_display(a['current_activity'])
+            tv_name = tv_name or a.get('friendly_name') or ''
+            break
+    if not app:
+        for r in rows:
+            a = r.get('attributes') or {}
+            if (r['entity_id'].startswith('media_player.') and 'mass_player_type' not in a
+                    and r.get('state') in ('on', 'playing', 'paused') and a.get('app_name')):
+                app = _app_display(a['app_name'])
+                break
+    video = next((r for r in rows if r['entity_id'].startswith('media_player.')
+                  and 'mass_player_type' not in (r.get('attributes') or {})
+                  and r.get('state') in ('playing', 'paused')
+                  and (r.get('attributes') or {}).get('media_title')), None)
+    if not app and video is None:
+        return None
+    tv_name = tv_name or (rows[0].get('attributes') or {}).get('friendly_name') or 'The TV'
+    out = {'app': app or None, 'title': None, 'artist': None, 'state': None,
+           'position_min': None, 'duration_min': None}
+    if video is not None:
+        a = video.get('attributes') or {}
+        out.update(title=a.get('media_title'), artist=a.get('media_artist') or a.get('media_series_title'),
+                   state=video.get('state'), position_min=_minutes(a.get('media_position')) or None,
+                   duration_min=_minutes(a.get('media_duration')) or None)
+        if not app:
+            out['app'] = _app_display(a.get('app_name')) or None
+        by = f" ({out['artist']})" if out['artist'] else ''
+        where = f", {out['position_min']} in of {out['duration_min']}" if out['position_min'] and out['duration_min'] else ''
+        on = f" on {out['app']}" if out['app'] else ''
+        out['message'] = f"{tv_name} is{on}, {out['state']} {out['title']}{by}{where}."
+    else:
+        out['state'] = 'on'
+        out['message'] = f"{tv_name} is on {app}."
+    return out
+
+
+def _tv_faces(entity, catalogue):
+    """Entity ids of the same TV: everything on its HA device plus every media face in its room."""
+    if not (entity['domain'] in ('remote', 'media_player')):
+        return []
+    device = entity.get('_device_id')
+    on_device = [e for e in catalogue if device and e.get('_device_id') == device]
+    android = any(e in _android_remotes(catalogue) for e in on_device) or entity in _android_remotes(catalogue)
+    if not android:
+        return []
+    room = entity['area']
+    # Device 2026-10-28: the Cast face ("Office Google TV Media Player") sits in no HA area at
+    # all, so a face whose name starts with the room's name counts as in the room.
+    prefix = _words(room) + ' ' if room else None
+    in_room = [e for e in catalogue if room and e['domain'] in ('remote', 'media_player')
+               and (e['area'] == room or _words(e['name']).startswith(prefix))]
+    return [e['entity_id'] for e in (on_device + in_room)]
 _PACKAGE_RE = re.compile(r'^[a-zA-Z][\w]*(\.[\w]+)+$')
 
 
@@ -487,7 +573,7 @@ def house(action='', query='', entity_id='', domain='', service='', data=None,
             return entity
         eid = entity['entity_id']
         if action == 'read':
-            return _read(entity)
+            return _read(entity, catalogue)
         if action == 'history':
             rows = ha_api.get_history(eid, hours=max(1, min(168, int(hours))))
             changes = sum(rows[i][1] != rows[i - 1][1] for i in range(1, len(rows)))

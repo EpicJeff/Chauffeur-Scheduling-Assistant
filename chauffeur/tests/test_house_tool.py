@@ -41,6 +41,10 @@ def _states():
          'attributes': {'friendly_name': 'Living Room Apple TV'}},
         {'entity_id': 'remote.sunroom_tv', 'state': 'unavailable', 'last_changed': '2026-10-27T09:00:00+00:00',
          'attributes': {'friendly_name': 'Sunroom TV'}},
+        {'entity_id': 'media_player.office_cast', 'state': 'playing', 'last_changed': '2026-10-27T09:00:00+00:00',
+         'attributes': {'friendly_name': 'Office Google TV Media Player', 'app_name': 'YouTube',
+                        'media_title': 'Peppa Pig Tales', 'media_artist': 'Peppa Pig Stories',
+                        'media_position': 209.7, 'media_duration': 1994.6, 'media_content_type': 'video'}},
         {'entity_id': 'light.front_porch_column_1', 'state': 'off', 'last_changed': '2026-10-27T08:00:00+00:00',
          'attributes': {'friendly_name': 'Front Porch Column 1'}},
         {'entity_id': 'light.hall', 'state': 'off', 'last_changed': '2026-10-27T08:00:00+00:00',
@@ -103,6 +107,9 @@ REGISTRY = [
      'area_id': 'living_room', 'device_id': 'dev_apple_tv', 'hidden_by': None, 'disabled_by': None, 'platform': 'apple_tv'},
     {'entity_id': 'remote.sunroom_tv', 'name': None, 'original_name': 'Sunroom TV', 'aliases': [],
      'area_id': 'sunroom', 'device_id': 'dev_sunroom_tv', 'hidden_by': None, 'disabled_by': None, 'platform': 'androidtv_remote'},
+    # Device 2026-10-28: the Cast face of the Office TV sits in NO HA area; only its name says Office.
+    {'entity_id': 'media_player.office_cast', 'name': None, 'original_name': 'Office Google TV Media Player', 'aliases': [],
+     'area_id': None, 'device_id': 'dev_office_cast', 'hidden_by': None, 'disabled_by': None, 'platform': 'cast'},
     {'entity_id': 'light.front_porch_column_1', 'name': None, 'original_name': 'Front Porch Column 1',
      'aliases': ['front porch column one'], 'area_id': 'front_yard', 'device_id': None,
      'hidden_by': None, 'disabled_by': None, 'platform': 'hue'},
@@ -137,6 +144,7 @@ REGISTRY = [
 ]
 
 DEVICES = [{'id': 'dev_ev9', 'name': 'Kia EV9', 'area_id': 'garage'}, {'id': 'dev_van', 'name': 'Van', 'area_id': None},
+           {'id': 'dev_office_cast', 'name': 'GoogleTV1645', 'area_id': None},
            {'id': 'dev_office_tv', 'name': 'Office TV', 'area_id': 'office'},
            {'id': 'dev_living_tv', 'name': 'Living Room TV', 'area_id': 'living_room'},
            {'id': 'dev_apple_tv', 'name': 'Living Room Apple TV', 'area_id': 'living_room'}]
@@ -665,6 +673,26 @@ class HouseToolTests(unittest.TestCase):
         self.assertFalse(res['landed'])
         self.assertTrue(res['already'])
         self.assertIn('already', res['message'])
+
+    def test_reading_a_tv_stitches_its_faces_into_what_is_on(self):
+        """Device 2026-10-28: the remote knows the app, the Cast entity in the same room knows the
+        title; a read of either TV face answers with both."""
+        for s in self.states:
+            if s['entity_id'] == 'remote.office_tv':
+                s['attributes']['current_activity'] = 'YouTube'
+            if s['entity_id'] == 'media_player.office_tv_2':
+                s['attributes'].update(app_id='com.google.android.youtube.tv', app_name='YouTube')
+        for eid in ('remote.office_tv', 'media_player.office_tv_2'):
+            res = self.run_tool(action='read', entity_id=eid)
+            self.assertEqual(res['status'], 'success', res)
+            tv = res['entity']['tv']
+            self.assertEqual(tv['app'], 'YouTube')
+            self.assertEqual(tv['title'], 'Peppa Pig Tales')
+            self.assertEqual(tv['state'], 'playing')
+            self.assertIn('YouTube', tv['message'])
+            self.assertIn('Peppa Pig', tv['message'])
+        lamp = self.run_tool(action='read', entity_id='light.office_lamp')['entity']
+        self.assertNotIn('tv', lamp)
 
     def test_the_answer_is_honest_when_the_tv_does_not_report_the_app(self):
         self.tv_ignores_launches = True

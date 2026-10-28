@@ -24,8 +24,7 @@ ARTIST = {'uri': 'spotify://artist/3', 'name': 'Eagles', 'media_type': 'artist',
           'album': None, 'image': None, 'favorite': False, 'in_library': False, 'providers': ['spotify']}
 
 AREAS = [
-    {'id': 'office', 'name': 'Office', 'entities': ['media_player.office_tv_2', 'media_player.office_tv_4',
-                                                    'media_player.googletv1645_2']},
+    {'id': 'office', 'name': 'Office', 'entities': ['media_player.office_tv_2', 'media_player.office_tv_4']},
     {'id': 'kitchen', 'name': 'Kitchen', 'entities': ['assist_satellite.kitchen', 'media_player.kitchen_speaker']},
     {'id': 'garage', 'name': 'Garage', 'entities': ['media_player.garage_cast']},
     {'id': 'hall', 'name': 'Hall', 'entities': []},
@@ -37,7 +36,8 @@ def _states():
         {'entity_id': 'media_player.office_tv_2', 'state': 'on', 'attributes': {'friendly_name': 'Office TV'}},
         {'entity_id': 'media_player.office_tv_4', 'state': 'idle',
          'attributes': {'friendly_name': 'Office TV', 'mass_player_type': 'player'}},
-        {'entity_id': 'media_player.googletv1645_2', 'state': 'idle', 'attributes': {'friendly_name': 'Office TV'}},
+        {'entity_id': 'media_player.googletv1645_2', 'state': 'idle',
+         'attributes': {'friendly_name': 'Office Google TV Media Player'}},
         {'entity_id': 'media_player.kitchen_speaker', 'state': 'playing',
          'attributes': {'friendly_name': 'Kitchen Speaker', 'mass_player_type': 'player',
                         'media_title': 'Take It Easy', 'media_artist': 'Eagles', 'volume_level': 0.3}},
@@ -314,6 +314,63 @@ class MusicToolTests(unittest.TestCase):
         self.assertEqual(res['state'], 'playing')
         self.assertIn('Take It Easy', res['message'])
 
+    def _youtube_on_the_office_tv(self, cast_playing=True):
+        """Device 2026-10-28: Peppa Pig on YouTube on the Office TV. The remote says YouTube, the
+        Android TV twin says YouTube, the Cast face carries the title, Music Assistant says idle."""
+        self.states.append({'entity_id': 'remote.office_tv', 'state': 'on',
+                            'attributes': {'friendly_name': 'Office TV', 'current_activity': 'YouTube'}})
+        for s in self.states:
+            if s['entity_id'] == 'media_player.office_tv_2':
+                s['attributes'].update(app_id='com.google.android.youtube.tv', app_name='YouTube')
+            if s['entity_id'] == 'media_player.googletv1645_2' and cast_playing:
+                s['state'] = 'playing'
+                s['attributes'].update(app_name='YouTube', media_content_type='video',
+                                       media_title='Supermarket Food Dispensers | Peppa Pig Tales Full Episodes',
+                                       media_artist='Peppa Pig Stories & Cartoons', media_position=209.7,
+                                       media_duration=1994.6)
+
+    def test_now_on_a_tv_reports_the_app_and_the_video_when_music_assistant_is_idle(self):
+        """Device 2026-10-28: "what's playing on the office TV" answered idle while YouTube played
+        Peppa Pig; the tool had asked only the Music Assistant face of the TV."""
+        self._youtube_on_the_office_tv()
+        for kw in ({'room': 'office'}, {'player': 'the office TV'}):
+            res = self.run_tool(action='now', **kw)
+            self.assertEqual(res['status'], 'success', res)
+            self.assertEqual(res['state'], 'playing', res)
+            self.assertEqual(res['app'], 'YouTube')
+            self.assertIn('Peppa Pig', res['title'])
+            self.assertIn('Office TV', res['message'])
+            self.assertIn('YouTube', res['message'])
+            self.assertIn('Peppa Pig', res['message'])
+            self.assertIn('3 min', res['message'])
+            self.assertIn('33 min', res['message'])
+            self.assertNotIn('idle', res['message'].lower())
+            self.assertNotIn('nothing', res['message'].lower())
+
+    def test_now_on_a_tv_with_an_app_but_no_title_names_the_app(self):
+        self._youtube_on_the_office_tv(cast_playing=False)
+        res = self.run_tool(action='now', room='office')
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(res['app'], 'YouTube')
+        self.assertIsNone(res['title'])
+        self.assertIn('Office TV is on YouTube', res['message'])
+        self.assertNotIn('nothing', res['message'].lower())
+
+    def test_now_still_prefers_music_assistant_when_it_is_the_one_playing(self):
+        self._youtube_on_the_office_tv(cast_playing=False)
+        for s in self.states:
+            if s['entity_id'] == 'media_player.office_tv_4':
+                s['state'] = 'playing'
+                s['attributes'].update(media_title='Hotel California', media_artist='Eagles')
+        res = self.run_tool(action='now', room='office')
+        self.assertEqual(res['title'], 'Hotel California')
+        self.assertIn('Hotel California', res['message'])
+
+    def test_now_in_a_room_with_nothing_on_still_says_nothing(self):
+        res = self.run_tool(action='now', room='office')
+        self.assertEqual(res['status'], 'success', res)
+        self.assertIn('Nothing is playing', res['message'])
+
     # --- degradation + wiring -----------------------------------------------
     def test_the_prompt_forbids_answering_from_an_earlier_refusal(self):
         """Device run 2026-10-27, v2.499.702 confirmed installed: the reply "the
@@ -333,6 +390,11 @@ class MusicToolTests(unittest.TestCase):
         self.assertEqual(res['status'], 'error')
         self.assertIn('not connected', res['message'])
         self.assertEqual(self.calls, [])
+
+    def test_the_tool_tells_the_model_now_covers_what_a_tv_is_showing(self):
+        tool = next(t for t in agent_tools_v2.get_available_tools() if t['name'] == 'music')
+        self.assertIn('TV', tool['description'])
+        self.assertIn('app', tool['description'])
 
     def test_the_tool_is_declared_once_runs_through_execute_tool_and_voice(self):
         names = [t['name'] for t in agent_tools_v2.get_available_tools()]

@@ -5270,7 +5270,7 @@ def get_available_tools() -> List[Dict]:
         },
         {
             "name": "music",
-            "description": "Plays songs, albums, playlists, artists or radio on the house's Music Assistant players and controls playback. Actions: play, pause, resume, next, previous, stop, volume, now (what is playing). Name a room as spoken or a player by name. By voice with no room, music plays in the room the voice came from.",
+            "description": "Plays songs, albums, playlists, artists or radio on the house's Music Assistant players and controls playback. Actions: play, pause, resume, next, previous, stop, volume, now (what is playing; on a TV this also says which app is open and what video it is showing). Name a room as spoken or a player by name. By voice with no room, music plays in the room the voice came from.",
             "parameters": {
                 "type": "object",
                 "properties": {
