@@ -738,6 +738,38 @@ matched house intent.
 
 ## Troubleshooting
 
+### A "play X on Y" sentence dies with `Unexpected error during intent recognition` and Argyle never runs
+
+Found 2026-10-27 with "Play mayonnaise by Smashing Pumpkins on the office TV":
+the pipeline debug shows `intent-failed`, the core log shows
+
+```
+File ".../helpers/intent.py", line 116, in async_handle
+    raise UnknownIntent(f"Unknown intent {intent_type}")
+```
+
+and the Chauffeur add-on log has nothing, because Chauffeur was never
+called. Same shape as the `RuleReference` failure below: the BUILT-IN agent
+runs first under prefer-local, a sentence file matches, and the match raises
+instead of returning "not handled", so the pipeline aborts before the
+fall-through. Here the file is Music Assistant's
+`/config/custom_sentences/en/music_assistant_PlayMediaOnMediaPlayer.yaml`,
+whose `MassPlayMediaOnMediaPlayer` intent has no registered handler in this
+Home Assistant (the current Music Assistant integration no longer registers
+it). Every `<play> {query} on {name}` sentence in the house lands there, and
+it would also have aimed at `media_player.office_tv_2`, the Android TV remote,
+not the Music Assistant player.
+
+Confirm before touching anything: Developer tools has no UI for it, but the
+WebSocket command `conversation/agent/homeassistant/debug` with the sentence
+returns `"source": "custom", "file": "en/music_assistant_...yaml"` and the
+intent name. Then rename or delete the `music_assistant_*.yaml` files under
+`/config/custom_sentences/en/`, run **Developer tools → Actions →
+`conversation.reload`**, and the debug call should report no match. The
+sentence now falls through to Argyle, whose `music` tool plays on the room's
+Music Assistant player. Music Assistant updates may put the files back; the
+debug call is the one-minute check.
+
 ### Every voice command fails with `ValueError: RuleReference(rule_name='...')`
 
 ```
