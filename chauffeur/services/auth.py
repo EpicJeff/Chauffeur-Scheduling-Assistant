@@ -678,6 +678,23 @@ def ingress_is_admin(headers) -> bool:
     return flag in ('', '1', 'true', 'yes')
 
 
+def _member_from(headers, query) -> Optional[dict]:
+    """The identity a VALID member token proves, or None. Shared by the two
+    places `identify` reads it: on its own, and alongside a device token."""
+    from services import storage
+    token = headers.get('x-member-token') or query.get('member_token')
+    if not token:
+        return None
+    try:
+        member = storage.get_member_by_token(token)
+    except Exception:
+        member = None
+    if not member:
+        return None
+    tier = PARENT if member.get('role') == 'parent' else MEMBER
+    return {'tier': tier, 'member': member}
+
+
 def identify(headers, query) -> dict:
     """Best available identity for a request. S1 only OBSERVES this — nothing
     is enforced and nothing derives from it yet (S2 does that).
@@ -699,6 +716,21 @@ def identify(headers, query) -> dict:
         except Exception:
             row = None
         if row:
+            # A PERSON at the place outranks the place (found 2026-10-28, on
+            # the wall after the flip). nav's wrapper stamps every panel
+            # request with the device token; a child who has just typed
+            # their PIN into the pets or avatar overlay sends the member
+            # token too, and taking the device token first threw that proof
+            # away -- every SIGNED_IN write refused the panel as furniture
+            # ("Requires member or parent") with a valid PIN in hand. A
+            # validated member token proves who, the device token only
+            # where; when both arrive the who wins and the where is kept.
+            # A stale member token (expired, signed out) changes nothing,
+            # so a panel can never lose its own tier to one.
+            person = _member_from(headers, query)
+            if person:
+                person['device'] = row
+                return person
             return {'tier': DEVICE, 'device': row, 'member': None}
 
     service = headers.get('x-service-token') or query.get('service_token')
@@ -710,15 +742,9 @@ def identify(headers, query) -> dict:
         if expected and hmac.compare_digest(str(service), str(expected)):
             return {'tier': SERVICE, 'member': None}
 
-    token = headers.get('x-member-token') or query.get('member_token')
-    if token:
-        try:
-            member = storage.get_member_by_token(token)
-        except Exception:
-            member = None
-        if member:
-            tier = PARENT if member.get('role') == 'parent' else MEMBER
-            return {'tier': tier, 'member': member}
+    person = _member_from(headers, query)
+    if person:
+        return person
 
     # The local-origin grace for Argyle (Decision 6). Dated, not permanent:
     # S7 gave the component a real service token, and `service_local_grace`

@@ -228,6 +228,19 @@ class _FakeStorage:
     def get_member_by_token(cls, token):
         return cls.MEMBERS.get(cls.TOKENS.get(token or ''))
 
+    DEVICES = {'dev-wall': {'device_id': 'kitchen', 'device_token': 'dev-wall',
+                            'name': 'Kitchen wall'}}
+
+    @classmethod
+    def get_device_by_token(cls, token):
+        return cls.DEVICES.get(token or '')
+
+    SETTINGS = {}
+
+    @classmethod
+    def get_settings(cls):
+        return dict(cls.SETTINGS)
+
 
 def _with_fake_storage(fn):
     import sys
@@ -256,6 +269,50 @@ def scenario_g_the_token_beats_the_body():
         agree = auth.acting_member({'x-member-token': 'tok-kid'}, {}, 'kid')
         check(agree['id'] == 'kid' and not agree['mismatch'],
               f"a member acting as themselves was flagged: {agree}")
+    _with_fake_storage(body)
+
+
+def scenario_g2_a_pin_on_the_wall_is_a_person_not_furniture():
+    """Reported 2026-10-28, after the flip: on a wall panel a child enters
+    their PIN to battle their critter (or dress their avatar) and is answered
+    "Requires member or parent". nav's fetch wrapper stamps every panel
+    request with the device token, the pet and avatar components add the PIN's
+    member token, and `identify` took the device token first -- so the PIN
+    proved nothing and the SIGNED_IN write refused the panel as furniture.
+    The wrapper already strips the device token for an admin session; a PIN
+    token on a panel got no such treatment, and the right place to settle it
+    is the server: a validated member token is proof of a PERSON, a device
+    token only of a place, and the person wins when both arrive."""
+    def body():
+        both = {'x-device-token': 'dev-wall', 'x-member-token': 'tok-kid'}
+        who = auth.identify(both, {})
+        check(who.get('tier') == auth.MEMBER and (who.get('member') or {}).get('id') == 'kid',
+              f"a PIN-proven child on the wall was answered as the wall: {who}")
+        check((who.get('device') or {}).get('device_id') == 'kitchen',
+              f"the place the person is standing at was forgotten: {who}")
+        parent = auth.identify({'x-device-token': 'dev-wall', 'x-member-token': 'tok-mum'}, {})
+        check(parent.get('tier') == auth.PARENT,
+              f"a parent's token on the wall did not make them a parent: {parent}")
+        # The panel on its own is still the panel, and a STALE member token
+        # (signed out, expired) must never lock the screen out of its board.
+        alone = auth.identify({'x-device-token': 'dev-wall'}, {})
+        check(alone.get('tier') == auth.DEVICE, f"a bare panel lost its tier: {alone}")
+        stale = auth.identify({'x-device-token': 'dev-wall', 'x-member-token': 'tok-gone'}, {})
+        check(stale.get('tier') == auth.DEVICE,
+              f"a stale member token cost the panel its own tier: {stale}")
+        # And the whole guard, enforcing, on the route that was refused.
+        _FakeStorage.SETTINGS = {'auth_enforce': True}
+        try:
+            for m, p in (('POST', '/api/pets/battle'), ('POST', '/api/pets/{pet_id}'),
+                         ('POST', '/api/avatar/{member_id}')):
+                verdict = auth.check_request(m, p, both, {})
+                check(verdict is None,
+                      f"{m} {p} refused a PIN-proven child on the wall: {verdict}")
+            refused = auth.check_request('POST', '/api/pets/battle', {'x-device-token': 'dev-wall'}, {})
+            check(refused and refused.get('status') == 403 and refused.get('saw') == auth.DEVICE,
+                  f"a bare panel was let into a pets write: {refused}")
+        finally:
+            _FakeStorage.SETTINGS = {}
     _with_fake_storage(body)
 
 

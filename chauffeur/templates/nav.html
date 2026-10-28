@@ -580,11 +580,14 @@
                 if (!foreign) {
                     const parentVisit = window.chfHouseParent && window.chfHouseParent();
                     // An admin page signed in as a parent acts as that parent,
-                    // never as the furniture: `identify` prefers a device token
-                    // over a member token when both arrive, so a browser that
-                    // was ever paired as a trusted screen used to turn every
+                    // never as the furniture: `identify` used to prefer a device
+                    // token over a member token when both arrived, so a browser
+                    // that was ever paired as a trusted screen turned every
                     // admin fetch into the DEVICE tier (refused "member or
                     // parent" once enforcing, with a valid session in hand).
+                    // The server now lets a valid member token win (a PIN on
+                    // the wall is a person, not furniture); stripping it here
+                    // still keeps an admin session from ever reading as a place.
                     const admin = !parentVisit && window.chfAdminSession ? window.chfAdminSession() : null;
                     const person = parentVisit || admin;
                     const dt = person ? '' : localStorage.getItem('chauffeur_device_token');
