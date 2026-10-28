@@ -1,6 +1,6 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.705 (2026-10-27).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.706 (2026-10-27).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
 
 **DEVICE-VERIFIED 2026-10-27 by voice (what is playing on the office TV answered with the track): now-playing and controls follow the twin that is making sound (v2.499.705; `tests/test_music_tool.py` +1 (23); Claude tests first, Claude-built).** Device run 2026-10-27 by voice: "What's playing on the office TV?" answered "Nothing is currently playing" while the Music Assistant twin (`media_player.office_tv_4`) was playing Mayonaise; the exact-name Android TV remote (state on, no title) outscored the twin for a control, since the twin preference only applied to PLAY. Ruling: for every non-play action (now, pause, resume, next, previous, stop, volume), when the chosen player is not `playing` and a Music Assistant twin by name (or by area) IS playing, the twin is used; the words pick the TV, the sound picks the entity.
 
