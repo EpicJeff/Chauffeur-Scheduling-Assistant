@@ -284,6 +284,18 @@ class MusicToolTests(unittest.TestCase):
         self.assertIn('Take It Easy', res['message'])
 
     # --- degradation + wiring -----------------------------------------------
+    def test_the_prompt_forbids_answering_from_an_earlier_refusal(self):
+        """Device run 2026-10-27, v2.499.702 confirmed installed: the reply "the
+        Office TV still isn't set up as a Music Assistant player" carried none of
+        the tool's wording (no entity id, no player list). The model answered from
+        its own earlier refusals in the conversation history without calling the
+        tool. The prompt must say the tools are the only source of truth."""
+        import inspect
+        from services import agent_router
+        prompt_src = inspect.getsource(agent_router.process_agent_request)
+        self.assertIn('ONLY source of truth for what a device or player can do', prompt_src)
+        self.assertIn('even when an earlier assistant message in this conversation said', prompt_src)
+
     def test_no_home_assistant_is_a_plain_error(self):
         setattr(ha_api, 'mode', lambda: 'unconfigured')
         res = self.run_tool(action='play', query='Hotel California', room='office')
