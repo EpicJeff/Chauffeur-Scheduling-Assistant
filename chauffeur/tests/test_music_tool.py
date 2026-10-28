@@ -227,6 +227,37 @@ class MusicToolTests(unittest.TestCase):
         self.assertIn('Office TV Media Player', res['message'])
         self.assertEqual(self.calls, [])
 
+    def test_what_is_playing_and_controls_follow_the_twin_that_is_actually_playing(self):
+        """Device run 2026-10-27 by voice: "What's playing on the office TV?" answered
+        "Nothing is currently playing" while the Music Assistant twin was playing
+        Mayonaise. The exact-name remote (on, no title) outscored the twin."""
+        self.states = [
+            {'entity_id': 'media_player.office_tv', 'state': 'unavailable', 'attributes': {'friendly_name': 'Office TV'}},
+            {'entity_id': 'media_player.office_tv_2', 'state': 'on',
+             'attributes': {'friendly_name': 'Office TV', 'device_class': 'tv', 'app_id': 'com.tcl.tv'}},
+            {'entity_id': 'media_player.googletv1645_2', 'state': 'idle',
+             'attributes': {'friendly_name': 'Office TV', 'app_name': 'Spotify'}},
+            {'entity_id': 'media_player.office_tv_4', 'state': 'playing',
+             'attributes': {'friendly_name': 'Office TV Media Player', 'mass_player_type': 'player',
+                            'media_title': 'Mayonaise (2011 Remaster)', 'media_artist': 'The Smashing Pumpkins',
+                            'volume_level': 0.5}},
+        ]
+        setattr(ha_api, 'get_area_map', lambda ttl=60: [
+            {'id': 'office', 'name': 'Office', 'entities': ['media_player.office_tv_2', 'media_player.googletv1645_2']}])
+        for how in ({'player': 'the office TV'}, {'room': 'the office'}):
+            res = self.run_tool(action='now', **how)
+            self.assertEqual(res['status'], 'success', (how, res))
+            self.assertEqual(res['entity_id'], 'media_player.office_tv_4', how)
+            self.assertEqual(res['title'], 'Mayonaise (2011 Remaster)', how)
+            self.assertIn('Mayonaise', res['message'], how)
+            self.calls.clear()
+            res = self.run_tool(action='pause', **how)
+            self.assertEqual(res['status'], 'success', (how, res))
+            self.assertEqual(self.calls, [('media_player', 'media_pause', {'entity_id': 'media_player.office_tv_4'})], how)
+            self.calls.clear()
+            res = self.run_tool(action='volume', level=30, **how)
+            self.assertEqual(self.calls[-1][2]['entity_id'], 'media_player.office_tv_4', how)
+
     def test_a_room_with_no_music_assistant_player_says_which_player_and_why(self):
         res = self.run_tool(action='play', query='Hotel California', room='garage')
         self.assertEqual(res['status'], 'error')

@@ -90,6 +90,14 @@ def _target(action, room, player, voice_context, source, states):
     if not eid or not announce._usable(states, eid):
         where = f" in {area['name']}" if area else ''
         return None, area, f'No usable music player is available{where}.'
+    if action != 'play' and (states.get(eid) or {}).get('state') != 'playing':
+        # "What's playing on the office TV": the remote is on with no title,
+        # the Music Assistant twin is the one actually playing. Controls and
+        # now-playing follow the sound, whichever twin the words picked.
+        playing = [e for e in _ma_twins(states, [_name(states, eid)], (area or {}).get('name'))
+                   if (states.get(e) or {}).get('state') == 'playing']
+        if playing:
+            eid = min(playing, key=lambda e: announce._music_rank(states, e))
     if action == 'play' and not _is_ma(states, eid):
         # Whatever path chose a player that cannot play, its Music Assistant
         # twin by name can. Only when there is none do we refuse, and then
