@@ -80,27 +80,47 @@ def _target(action, room, player, voice_context, source, states):
             ma_players = [e for e in players if _is_ma(states, e)]
             if not ma_players and players:
                 # MA's twin may have no HA area; match it by the room's names.
-                names = [_name(states, e).casefold() for e in players]
-                area_name = (area.get('name') or '').casefold()
-                ma_players = [e for e in states
-                              if e.startswith('media_player.') and _is_ma(states, e)
-                              and announce._usable(states, e)
-                              and (any(name in _name(states, e).casefold() for name in names)
-                                   or (area_name and _name(states, e).casefold().startswith(area_name + ' ')))]
+                ma_players = _ma_twins(states, [_name(states, e) for e in players], area.get('name'))
             if ma_players:
                 eid = min(ma_players, key=lambda e: announce._music_rank(states, e))
             elif players:
-                names = ', '.join(dict.fromkeys(_name(states, e) for e in players))
+                names = ', '.join(dict.fromkeys(f'{_name(states, e)} ({e})' for e in players))
                 return None, area, (f"{names} in {area.get('name') or room} is not a Music "
-                                    'Assistant player; add it in Music Assistant to play there.')
+                                    f'Assistant player. {_ma_list(states)}')
     if not eid or not announce._usable(states, eid):
         where = f" in {area['name']}" if area else ''
         return None, area, f'No usable music player is available{where}.'
     if action == 'play' and not _is_ma(states, eid):
+        # Whatever path chose a player that cannot play, its Music Assistant
+        # twin by name can. Only when there is none do we refuse, and then
+        # the refusal names the entity we chose and every player that could
+        # have played, so the next report says which branch answered.
+        twins = _ma_twins(states, [_name(states, eid)], (area or {}).get('name'))
+        if twins:
+            return min(twins, key=lambda e: announce._music_rank(states, e)), area, None
         where = f" in {area['name']}" if area else ''
-        return None, area, (f'{_name(states, eid)}{where} is not a Music Assistant player; '
-                            'add it in Music Assistant to play there.')
+        return None, area, (f'{_name(states, eid)} ({eid}){where} is not a Music Assistant player, '
+                            f'and no Music Assistant player shares its name. {_ma_list(states)}')
     return eid, area, None
+
+
+def _ma_twins(states, names, area_name=None):
+    """Usable Music Assistant players whose friendly name carries one of the given
+    names ("Office TV" within "Office TV Media Player") or starts with the area."""
+    names = [str(n or '').casefold() for n in names if n]
+    area_name = (area_name or '').casefold()
+    return [e for e in states
+            if e.startswith('media_player.') and _is_ma(states, e) and announce._usable(states, e)
+            and (any(n and n in _name(states, e).casefold() for n in names)
+                 or (area_name and _name(states, e).casefold().startswith(area_name + ' ')))]
+
+
+def _ma_list(states):
+    names = sorted({_name(states, e) for e in states
+                    if e.startswith('media_player.') and _is_ma(states, e) and announce._usable(states, e)})
+    if not names:
+        return 'No Music Assistant player is available right now.'
+    return 'Music Assistant players I can play on: ' + ', '.join(names) + '.'
 
 
 def music(action='', query='', room='', player='', media_type='', mode='', level=None,

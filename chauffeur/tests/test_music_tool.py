@@ -197,6 +197,36 @@ class MusicToolTests(unittest.TestCase):
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(self.calls[-1][2]['entity_id'], 'media_player.office')
 
+    def test_any_branch_that_lands_on_a_non_ma_player_redirects_to_its_twin(self):
+        """Device run 2026-10-27, fourth report: whichever path the model takes,
+        a non-MA pick with an MA twin by name must play on the twin."""
+        self.states = [
+            {'entity_id': 'media_player.office_tv_2', 'state': 'playing',
+             'attributes': {'friendly_name': 'Office TV', 'device_class': 'tv'}},
+            {'entity_id': 'media_player.office_tv_4', 'state': 'off',
+             'attributes': {'friendly_name': 'Office TV Media Player', 'mass_player_type': 'player'}},
+        ]
+        setattr(ha_api, 'get_area_map', lambda ttl=60: [])
+        # No room, no player: the playing TV would be picked, and it cannot play.
+        res = self.run_tool(action='play', query='Hotel California')
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(self.calls[-1][2]['entity_id'], 'media_player.office_tv_4')
+
+    def test_a_refusal_names_the_entity_it_chose_and_the_players_that_could(self):
+        self.states = [
+            {'entity_id': 'media_player.garage_cast', 'state': 'idle', 'attributes': {'friendly_name': 'Garage Cast'}},
+            {'entity_id': 'media_player.kitchen_speaker', 'state': 'idle',
+             'attributes': {'friendly_name': 'Kitchen Speaker', 'mass_player_type': 'player'}},
+            {'entity_id': 'media_player.office_tv_4', 'state': 'idle',
+             'attributes': {'friendly_name': 'Office TV Media Player', 'mass_player_type': 'player'}},
+        ]
+        res = self.run_tool(action='play', query='Hotel California', player='garage cast')
+        self.assertEqual(res['status'], 'error')
+        self.assertIn('media_player.garage_cast', res['message'])
+        self.assertIn('Kitchen Speaker', res['message'])
+        self.assertIn('Office TV Media Player', res['message'])
+        self.assertEqual(self.calls, [])
+
     def test_a_room_with_no_music_assistant_player_says_which_player_and_why(self):
         res = self.run_tool(action='play', query='Hotel California', room='garage')
         self.assertEqual(res['status'], 'error')
