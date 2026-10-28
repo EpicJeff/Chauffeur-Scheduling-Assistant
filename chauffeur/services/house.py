@@ -246,41 +246,49 @@ def locate(query='', entity_id='', catalogue=None, acting_member=None, voice_con
 
 
 # --- apps on a TV -----------------------------------------------------------
-# The Android TV Remote integration launches an app by PACKAGE ID (or a deep
-# link); a person says "Netflix". HA's remote entity lists the names configured
-# on the integration (activity_list) but never their ids, so the id comes from
-# this catalogue, and a name HA lists that we do not know is sent as HA spelled
-# it. A bare package id is passed through untouched.
+# The Android TV Remote integration launches an app from a string the TV
+# resolves itself: a web link the app claims, or a package id. DEVICE-FOUND
+# 2026-10-28 on a TCL Google TV: package ids launch NOTHING; links do. So each
+# app carries the link that is sent and the package id the TV reports back.
+# A link the TV cannot hand to an app opens its browser or the Play Store,
+# which is how "not installed" shows up. HA's remote lists configured app
+# NAMES (activity_list) and reports the name back as current_activity when it
+# knows the id; the media_player twin reports the package id.
+# (name, package id, spoken aliases, link). Links marked verified opened the
+# app on that TV; the rest are the app's own domain, unverified.
 KNOWN_APPS = (
-    ('Netflix', 'com.netflix.ninja', ()),
-    ('YouTube', 'com.google.android.youtube.tv', ('you tube',)),
-    ('YouTube TV', 'com.google.android.youtube.tvunplugged', ('you tube tv',)),
-    ('YouTube Kids', 'com.google.android.youtube.tvkids', ('you tube kids',)),
-    ('Disney+', 'com.disney.disneyplus', ('disney plus', 'disney')),
-    ('Prime Video', 'com.amazon.amazonvideo.livingroom', ('prime', 'amazon prime', 'amazon prime video', 'amazon video')),
-    ('Hulu', 'com.hulu.livingroomplus', ()),
-    ('Max', 'com.wbd.stream', ('hbo max', 'hbo')),
-    ('Plex', 'com.plexapp.android', ()),
-    ('Spotify', 'com.spotify.tv.android', ()),
-    ('Paramount+', 'com.cbs.ott', ('paramount plus', 'paramount')),
-    ('Peacock', 'com.peacocktv.peacockandroid', ()),
-    ('Apple TV', 'com.apple.atve.androidtv.appletv', ('apple tv plus', 'apple tv+')),
-    ('DIRECTV STREAM', 'com.att.tv', ('directv', 'direct tv', 'directv stream')),
-    ('Twitch', 'tv.twitch.android.app', ()),
-    ('Pluto TV', 'tv.pluto.android', ('pluto',)),
-    ('Tubi', 'com.tubitv', ()),
-    ('Crunchyroll', 'com.crunchyroll.crunchyroid', ()),
-    ('ESPN', 'com.espn.score_center', ()),
-    ('Apple Music', 'com.apple.android.music', ()),
-    ('Pandora', 'com.pandora.android.atv', ()),
-    ('Play Store', 'com.android.vending', ('google play', 'google play store', 'app store')),
-    ('Kodi', 'org.xbmc.kodi', ()),
-    ('Jellyfin', 'org.jellyfin.androidtv', ()),
-    ('Emby', 'tv.emby.embyatv', ()),
-    ('Steam Link', 'com.valvesoftware.steamlink', ()),
-    ('Philo', 'com.philo.philo.google', ()),
-    ('Xfinity Stream', 'com.xfinity.cloudtvr.tenfoot', ('xfinity',)),
+    ('Netflix', 'com.netflix.ninja', (), 'https://www.netflix.com/browse'),                      # verified
+    ('YouTube', 'com.google.android.youtube.tv', ('you tube',), 'https://www.youtube.com'),         # verified
+    ('YouTube TV', 'com.google.android.youtube.tvunplugged', ('you tube tv',), 'https://tv.youtube.com'),
+    ('YouTube Kids', 'com.google.android.youtube.tvkids', ('you tube kids',), 'https://www.youtubekids.com'),
+    ('Disney+', 'com.disney.disneyplus', ('disney plus', 'disney'), 'https://www.disneyplus.com'),   # verified
+    ('Prime Video', 'com.amazon.amazonvideo.livingroom',
+     ('prime', 'amazon prime', 'amazon prime video', 'amazon video'), 'https://app.primevideo.com'),  # verified
+    ('Hulu', 'com.hulu.livingroomplus', (), 'https://www.hulu.com'),
+    ('Max', 'com.wbd.stream', ('hbo max', 'hbo'), 'https://play.max.com'),                          # verified
+    ('Plex', 'com.plexapp.android', (), 'https://app.plex.tv'),
+    ('Spotify', 'com.spotify.tv.android', (), 'https://open.spotify.com'),
+    ('Paramount+', 'com.cbs.ott', ('paramount plus', 'paramount'), 'https://www.paramountplus.com'),
+    ('Peacock', 'com.peacocktv.peacockandroid', (), 'https://www.peacocktv.com'),
+    ('Apple TV', 'com.apple.atve.androidtv.appletv', ('apple tv plus', 'apple tv+'), 'https://tv.apple.com'),  # verified
+    ('DIRECTV STREAM', 'com.att.tv', ('directv', 'direct tv', 'directv stream'), 'https://stream.directv.com'),
+    ('Twitch', 'tv.twitch.android.app', (), 'https://www.twitch.tv'),
+    ('Pluto TV', 'tv.pluto.android', ('pluto',), 'https://pluto.tv'),
+    ('Tubi', 'com.tubitv', (), 'https://tubitv.com'),                                               # verified
+    ('Crunchyroll', 'com.crunchyroll.crunchyroid', (), 'https://www.crunchyroll.com'),
+    ('ESPN', 'com.espn.score_center', (), 'https://www.espn.com/watch'),
+    ('Apple Music', 'com.apple.android.music', (), 'https://music.apple.com'),
+    ('Pandora', 'com.pandora.android.atv', (), 'https://www.pandora.com'),
+    ('Play Store', 'com.android.vending', ('google play', 'google play store', 'app store'),
+     'https://play.google.com/store'),                                                             # verified
+    ('Kodi', 'org.xbmc.kodi', (), None),
+    ('Jellyfin', 'org.jellyfin.androidtv', (), None),
+    ('Emby', 'tv.emby.embyatv', (), None),
+    ('Steam Link', 'com.valvesoftware.steamlink', (), None),
+    ('Philo', 'com.philo.philo.google', (), 'https://www.philo.com'),
+    ('Xfinity Stream', 'com.xfinity.cloudtvr.tenfoot', ('xfinity',), 'https://www.xfinity.com/stream'),
 )
+NOT_AN_APP = ('browser', 'com.android.vending', 'launcherx')   # where a launch lands when the app is missing
 _PACKAGE_RE = re.compile(r'^[a-zA-Z][\w]*(\.[\w]+)+$')
 
 
@@ -296,17 +304,17 @@ def _app_forms(value):
 
 
 def _resolve_app(app, listed):
-    """-> (display name, what to send as `activity`) or None."""
+    """-> (display name, package id, what to send as `activity`) or None."""
     app = str(app or '').strip()
     if not app:
         return None
-    if _PACKAGE_RE.match(app) and ' ' not in app:
-        return app, app
+    if app.startswith(('http://', 'https://')) or (_PACKAGE_RE.match(app) and ' ' not in app):
+        return app, app, app
     known = {}
-    for name, package, aliases in KNOWN_APPS:
+    for name, package, aliases, link in KNOWN_APPS:
         for form in (name, *aliases):
             for f in _app_forms(form):
-                known.setdefault(f, (name, package))
+                known.setdefault(f, (name, package, link or package))
 
     def known_for(ha_name):
         return next((known[f] for f in _app_forms(ha_name) if f in known), None)
@@ -316,18 +324,18 @@ def _resolve_app(app, listed):
         for name in listed:
             forms = _app_forms(name)
             if w == forms[min(depth, len(forms) - 1)]:
-                return known_for(name) or (name, name)
+                return known_for(name) or (name, name, name)
         if w in known:
             return known[w]
     best, best_score = None, 0.0
     for name in listed:
         score = max(_score(w, [name]) for w in wanted)
         if score > best_score:
-            best, best_score = (known_for(name) or (name, name)), score
-    for name, package, aliases in KNOWN_APPS:
+            best, best_score = (known_for(name) or (name, name, name)), score
+    for name, package, aliases, link in KNOWN_APPS:
         score = max(_score(w, [name, *aliases]) for w in wanted)
         if score > best_score:
-            best, best_score = (name, package), score
+            best, best_score = (name, package, link or package), score
     return best if best_score >= 0.6 else None
 
 
@@ -394,7 +402,7 @@ def open_app(query='', entity_id='', app='', catalogue=None):
     if resolved is None:
         return {'status': 'error', 'message': (
             f"I don't know an app called {app}. {remote['name']} lists: {', '.join(listed) or 'no apps yet'}.")}
-    name, activity = resolved
+    name, package, activity = resolved
     eid = remote['entity_id']
     exposed = ha_api.get_exposed()
     twins = [e['entity_id'] for e in catalogue if remote['_device_id'] and e['_device_id'] == remote['_device_id']]
@@ -404,24 +412,42 @@ def open_app(query='', entity_id='', app='', catalogue=None):
             'or allow unexposed control under Config › People › Argyle.')}
     if not ha_api.has_service('remote', 'turn_on'):
         return {'status': 'error', 'message': 'Home Assistant cannot launch apps on that TV.'}
-    before = (remote['_state'].get('attributes') or {}).get('current_activity')
+    # Fresh, not the catalogue's cached copy: the TV may have moved since the catalogue was built.
+    live = next((s for s in ha_api.get_states(ttl=0) if s.get('entity_id') == eid), remote['_state'])
+    before = (live.get('attributes') or {}).get('current_activity')
     result = ha_api.call_service('remote', 'turn_on', {'entity_id': eid, 'activity': activity})
     if result is None:
         return {'status': 'error', 'message': f"Home Assistant could not reach {remote['name']}."}
-    _settle()
-    after = {s.get('entity_id'): s for s in ha_api.get_states(ttl=0)}
-    seen = {(after.get(t) or {}).get('attributes', {}).get('app_id') for t in twins}
-    seen.add((after.get(eid) or {}).get('attributes', {}).get('current_activity'))
+    # HA reports the configured NAME on the remote and the package on the twin; the link is never echoed.
+    expected = {name, package, activity}
+    # An app takes a few seconds to come up and the TV passes through its home screen on the
+    # way; read until it reports the app, a browser or the Play Store, six reads at most.
+    for _ in range(6):
+        _settle()
+        after = {s.get('entity_id'): s for s in ha_api.get_states(ttl=0)}
+        seen = {(after.get(t) or {}).get('attributes', {}).get('app_id') for t in twins}
+        seen.add((after.get(eid) or {}).get('attributes', {}).get('current_activity'))
+        seen.discard(None)
+        if seen & expected or before in expected or any(
+                mark in s for s in seen if s != before for mark in ('browser', 'vending')):
+            break
+    already = before in expected
     # A TV already on that app proves nothing about the launch; say so rather than claim it.
-    landed = activity in seen and before != activity
-    if before == activity:
+    landed = bool(seen & expected) and not already
+    elsewhere = next((s for s in seen if s != before and any(mark in s for mark in NOT_AN_APP)), None)
+    if already:
         message = f"{remote['name']} was already on {name}."
     elif landed:
         message = f"{remote['name']} is on {name}."
+    elif elsewhere:
+        where = ('the Play Store' if 'vending' in elsewhere else
+                 'the home screen' if 'launcherx' in elsewhere else 'its browser')
+        message = f"{remote['name']} opened {where} instead of {name}; the app may not be installed on that TV."
     else:
         message = f"Asked {remote['name']} to open {name}; the TV has not reported the switch yet."
-    return {'status': 'success', 'entity_id': eid, 'app': name, 'app_id': activity, 'landed': landed,
-            'already': before == activity, 'state_after': (after.get(eid) or {}).get('state'), 'message': message}
+    return {'status': 'success', 'entity_id': eid, 'app': name, 'app_id': package, 'sent': activity,
+            'landed': landed, 'already': already, 'state_after': (after.get(eid) or {}).get('state'),
+            'message': message}
 
 
 def _trusted(acting_member, voice_context, source):

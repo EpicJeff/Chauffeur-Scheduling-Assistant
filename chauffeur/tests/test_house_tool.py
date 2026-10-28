@@ -170,6 +170,7 @@ class HouseToolTests(unittest.TestCase):
     def setUp(self):
         self.calls = []
         self.tv_ignores_launches = False
+        self.tv_opens_browser = False
         self.states = _states()
         self.settings = {}
         self.orig = {}
@@ -185,17 +186,23 @@ class HouseToolTests(unittest.TestCase):
             after = {('light', 'turn_on'): 'on', ('light', 'turn_off'): 'off', ('lock', 'unlock'): 'unlocked',
                      ('lock', 'lock'): 'locked', ('cover', 'open_cover'): 'open', ('media_player', 'turn_off'): 'off'}
             if (domain, service) == ('remote', 'turn_on') and not tests.tv_ignores_launches:
+                # The TV never echoes a link: the twin reports the package id, the remote
+                # reports the configured NAME when HA knows the id, else the package.
                 twin = {'remote.office_tv': 'media_player.office_tv_2',
                         'remote.living_room_tv': 'media_player.living_room_tv_2'}.get(eid)
+                sent = (data or {}).get('activity')
+                hit = next(((n, p) for n, p, a, l in house.KNOWN_APPS if sent in (l, p)), None)
+                package = 'com.tcl.browser' if tests.tv_opens_browser else (hit[1] if hit else sent)
+                shown = hit[0] if hit and hit[0] in TV_APPS and not tests.tv_opens_browser else package
                 for s in tests.states:
                     if s['entity_id'] == eid:
                         s['state'] = 'on'
-                        if (data or {}).get('activity'):
-                            s['attributes']['current_activity'] = data['activity']
+                        if sent:
+                            s['attributes']['current_activity'] = shown
                     if s['entity_id'] == twin:
                         s['state'] = 'on'
-                        if (data or {}).get('activity'):
-                            s['attributes']['app_id'] = data['activity']
+                        if sent:
+                            s['attributes']['app_id'] = package
             for s in tests.states:
                 if s['entity_id'] == eid and (domain, service) in after:
                     s['state'] = after[(domain, service)]
@@ -528,30 +535,54 @@ class HouseToolTests(unittest.TestCase):
     def test_a_spoken_app_name_becomes_the_package_id_on_the_remote(self):
         res = self.run_tool(action='app', query='office tv', app='netflix', acting_member={'id': 'k1', 'role': 'kid'})
         self.assertEqual(res['status'], 'success', res)
-        self.assertEqual(self.calls, [('remote', 'turn_on', {'entity_id': 'remote.office_tv', 'activity': 'com.netflix.ninja'})])
+        # DEVICE-FOUND 2026-10-28: a package id launches nothing on a Google TV; the link does.
+        self.assertEqual(self.calls, [('remote', 'turn_on', {'entity_id': 'remote.office_tv',
+                                                             'activity': 'https://www.netflix.com/browse'})])
         self.assertEqual(res['entity_id'], 'remote.office_tv')
         self.assertEqual(res['app'], 'Netflix')
         self.assertEqual(res['app_id'], 'com.netflix.ninja')
+        self.assertEqual(res['sent'], 'https://www.netflix.com/browse')
         self.assertTrue(res['landed'])
         self.assertIn('Netflix', res['message'])
         self.assertIn('Office TV', res['message'])
 
     def test_the_ways_people_say_an_app_all_land_on_the_right_package(self):
-        for spoken, package in (('Disney Plus', 'com.disney.disneyplus'), ('prime', 'com.amazon.amazonvideo.livingroom'),
-                                ('HBO Max', 'com.wbd.stream'), ('you tube', 'com.google.android.youtube.tv'),
-                                ('paramount', 'com.cbs.ott'), ('YouTube TV', 'com.google.android.youtube.tvunplugged'),
-                                ('the Hulu app', 'com.hulu.livingroomplus'), ('plex', 'com.plexapp.android')):
+        for spoken, package, link in (
+                ('Disney Plus', 'com.disney.disneyplus', 'https://www.disneyplus.com'),
+                ('prime', 'com.amazon.amazonvideo.livingroom', 'https://app.primevideo.com'),
+                ('HBO Max', 'com.wbd.stream', 'https://play.max.com'),
+                ('you tube', 'com.google.android.youtube.tv', 'https://www.youtube.com'),
+                ('paramount', 'com.cbs.ott', 'https://www.paramountplus.com'),
+                ('YouTube TV', 'com.google.android.youtube.tvunplugged', 'https://tv.youtube.com'),
+                ('the Hulu app', 'com.hulu.livingroomplus', 'https://www.hulu.com'),
+                ('plex', 'com.plexapp.android', 'https://app.plex.tv'),
+                ('kodi', 'org.xbmc.kodi', 'org.xbmc.kodi')):          # no link known: the package goes
             self.calls.clear()
             res = self.run_tool(action='app', entity_id='remote.office_tv', app=spoken,
                                 acting_member={'id': 'k1', 'role': 'kid'})
             self.assertEqual(res['status'], 'success', (spoken, res))
-            self.assertEqual(self.calls[0][2]['activity'], package, spoken)
+            self.assertEqual(self.calls[0][2]['activity'], link, spoken)
+            self.assertEqual(res['app_id'], package, spoken)
 
-    def test_a_package_id_is_sent_as_given(self):
+    def test_a_package_id_or_a_link_is_sent_as_given(self):
         res = self.run_tool(action='app', entity_id='remote.office_tv', app='tv.twitch.android.app',
                             acting_member={'id': 'k1', 'role': 'kid'})
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(self.calls[0][2]['activity'], 'tv.twitch.android.app')
+        res = self.run_tool(action='app', entity_id='remote.office_tv', app='https://www.netflix.com/title/80057281',
+                            acting_member={'id': 'k1', 'role': 'kid'})
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(self.calls[1][2]['activity'], 'https://www.netflix.com/title/80057281')
+
+    def test_a_launch_that_lands_in_the_browser_says_the_app_may_be_missing(self):
+        """Live 2026-10-28: Hulu's link opened the TV's browser; HA said success all the same."""
+        self.tv_opens_browser = True
+        res = self.run_tool(action='app', entity_id='remote.office_tv', app='hulu',
+                            acting_member={'id': 'k1', 'role': 'kid'})
+        self.assertEqual(res['status'], 'success', res)
+        self.assertFalse(res['landed'])
+        self.assertIn('browser', res['message'])
+        self.assertIn('not be installed', res['message'])
 
     def test_an_app_only_ha_knows_is_sent_under_the_name_ha_lists(self):
         res = self.run_tool(action='app', entity_id='remote.office_tv', app='sling',
@@ -630,7 +661,7 @@ class HouseToolTests(unittest.TestCase):
         res = self.run_tool(action='app', entity_id='remote.office_tv', app='directv',
                             acting_member={'id': 'k1', 'role': 'kid'})
         self.assertEqual(res['status'], 'success', res)
-        self.assertEqual(self.calls[0][2]['activity'], 'com.att.tv')
+        self.assertEqual(res['app_id'], 'com.att.tv')
         self.assertFalse(res['landed'])
         self.assertTrue(res['already'])
         self.assertIn('already', res['message'])
@@ -662,7 +693,8 @@ class HouseToolTests(unittest.TestCase):
         res = voice_tools.dispatch('house', {'action': 'app', 'query': 'office tv', 'app': 'disney plus'}, ctx)
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(recorded, ['house'])
-        self.assertEqual(self.calls[-1][2]['activity'], 'com.disney.disneyplus')
+        self.assertEqual(self.calls[-1][2]['activity'], 'https://www.disneyplus.com')
+        self.assertEqual(res['app_id'], 'com.disney.disneyplus')
         import inspect
         from services import agent_router
         src = inspect.getsource(agent_router)
