@@ -18,6 +18,8 @@ from services import agent_tools_v2, ha_api, house, maps, storage
 LAMP_TOKEN = 'eyJ-secret-should-never-leave'
 EV9_PARTS = ('engine', 'defrost', 'trunk', 'hood', 'front_left_door', 'front_right_door', 'back_left_door',
              'back_right_door', 'sunroof', 'locked')
+TV_APPS = ('Netflix', 'YouTube', 'Disney+', 'Prime Video', 'Hulu', 'Max', 'Plex', 'Spotify', 'Paramount+',
+           'Peacock', 'Apple TV', 'YouTube TV', 'Sling TV')
 EV9_ADDRESS = '12 Maple Lane, Example Township, Cary, Wake County, North Carolina, 27500, United States'
 
 
@@ -27,7 +29,18 @@ def _states():
          'attributes': {'friendly_name': 'Office Lamp', 'brightness': 128, 'color_mode': 'brightness',
                         'access_token': LAMP_TOKEN, 'supported_color_modes': ['brightness']}},
         {'entity_id': 'media_player.office_tv_2', 'state': 'on', 'last_changed': '2026-10-27T09:00:00+00:00',
-         'attributes': {'friendly_name': 'Office TV', 'access_token': 'tv-token', 'entity_picture': '/api/x'}},
+         'attributes': {'friendly_name': 'Office TV', 'access_token': 'tv-token', 'entity_picture': '/api/x',
+                        'app_id': 'com.att.tv', 'app_name': 'com.att.tv', 'device_class': 'tv'}},
+        {'entity_id': 'remote.office_tv', 'state': 'on', 'last_changed': '2026-10-27T09:00:00+00:00',
+         'attributes': {'friendly_name': 'Office TV', 'current_activity': 'com.att.tv', 'activity_list': list(TV_APPS)}},
+        {'entity_id': 'media_player.living_room_tv_2', 'state': 'off', 'last_changed': '2026-10-27T09:00:00+00:00',
+         'attributes': {'friendly_name': 'Living Room TV', 'device_class': 'tv'}},
+        {'entity_id': 'remote.living_room_tv', 'state': 'off', 'last_changed': '2026-10-27T09:00:00+00:00',
+         'attributes': {'friendly_name': 'Living Room TV', 'current_activity': None, 'activity_list': ['Netflix', 'YouTube']}},
+        {'entity_id': 'remote.living_room', 'state': 'on', 'last_changed': '2026-10-27T09:00:00+00:00',
+         'attributes': {'friendly_name': 'Living Room Apple TV'}},
+        {'entity_id': 'remote.sunroom_tv', 'state': 'unavailable', 'last_changed': '2026-10-27T09:00:00+00:00',
+         'attributes': {'friendly_name': 'Sunroom TV'}},
         {'entity_id': 'light.front_porch_column_1', 'state': 'off', 'last_changed': '2026-10-27T08:00:00+00:00',
          'attributes': {'friendly_name': 'Front Porch Column 1'}},
         {'entity_id': 'light.hall', 'state': 'off', 'last_changed': '2026-10-27T08:00:00+00:00',
@@ -79,7 +92,17 @@ REGISTRY = [
     {'entity_id': 'light.office_lamp', 'name': None, 'original_name': 'Office Lamp', 'aliases': [],
      'area_id': 'office', 'device_id': None, 'hidden_by': None, 'disabled_by': None, 'platform': 'hue'},
     {'entity_id': 'media_player.office_tv_2', 'name': 'Office TV', 'original_name': None, 'aliases': [],
-     'area_id': 'office', 'device_id': None, 'hidden_by': None, 'disabled_by': None, 'platform': 'androidtv_remote'},
+     'area_id': 'office', 'device_id': 'dev_office_tv', 'hidden_by': None, 'disabled_by': None, 'platform': 'androidtv_remote'},
+    {'entity_id': 'remote.office_tv', 'name': None, 'original_name': 'Office TV', 'aliases': [],
+     'area_id': None, 'device_id': 'dev_office_tv', 'hidden_by': None, 'disabled_by': None, 'platform': 'androidtv_remote'},
+    {'entity_id': 'media_player.living_room_tv_2', 'name': None, 'original_name': 'Living Room TV', 'aliases': [],
+     'area_id': None, 'device_id': 'dev_living_tv', 'hidden_by': None, 'disabled_by': None, 'platform': 'androidtv_remote'},
+    {'entity_id': 'remote.living_room_tv', 'name': None, 'original_name': 'Living Room TV', 'aliases': [],
+     'area_id': None, 'device_id': 'dev_living_tv', 'hidden_by': None, 'disabled_by': None, 'platform': 'androidtv_remote'},
+    {'entity_id': 'remote.living_room', 'name': None, 'original_name': 'Living Room Apple TV', 'aliases': [],
+     'area_id': 'living_room', 'device_id': 'dev_apple_tv', 'hidden_by': None, 'disabled_by': None, 'platform': 'apple_tv'},
+    {'entity_id': 'remote.sunroom_tv', 'name': None, 'original_name': 'Sunroom TV', 'aliases': [],
+     'area_id': 'sunroom', 'device_id': 'dev_sunroom_tv', 'hidden_by': None, 'disabled_by': None, 'platform': 'androidtv_remote'},
     {'entity_id': 'light.front_porch_column_1', 'name': None, 'original_name': 'Front Porch Column 1',
      'aliases': ['front porch column one'], 'area_id': 'front_yard', 'device_id': None,
      'hidden_by': None, 'disabled_by': None, 'platform': 'hue'},
@@ -113,11 +136,16 @@ REGISTRY = [
                                   ('device_tracker.lillian_bus', 'LILLIAN Bus', 'hctb'))],
 ]
 
-DEVICES = [{'id': 'dev_ev9', 'name': 'Kia EV9', 'area_id': 'garage'}, {'id': 'dev_van', 'name': 'Van', 'area_id': None}]
+DEVICES = [{'id': 'dev_ev9', 'name': 'Kia EV9', 'area_id': 'garage'}, {'id': 'dev_van', 'name': 'Van', 'area_id': None},
+           {'id': 'dev_office_tv', 'name': 'Office TV', 'area_id': 'office'},
+           {'id': 'dev_living_tv', 'name': 'Living Room TV', 'area_id': 'living_room'},
+           {'id': 'dev_apple_tv', 'name': 'Living Room Apple TV', 'area_id': 'living_room'}]
 
 AREAS = [
     {'id': 'office', 'name': 'Office', 'entities': ['light.office_lamp', 'media_player.office_tv_2',
-                                                    'cover.office_blind', 'light.hidden_strip']},
+                                                    'remote.office_tv', 'cover.office_blind', 'light.hidden_strip']},
+    {'id': 'living_room', 'name': 'Living Room', 'entities': ['media_player.living_room_tv_2', 'remote.living_room_tv',
+                                                              'remote.living_room']},
     {'id': 'front_yard', 'name': 'Front Yard', 'entities': ['light.front_porch_column_1']},
     {'id': 'hall', 'name': 'Hall', 'entities': ['light.hall', 'lock.front_door']},
     {'id': 'garage', 'name': 'Garage', 'entities': ['cover.main_garage', 'device_tracker.ev9_location',
@@ -129,7 +157,8 @@ EXPOSED = {'light.office_lamp': True, 'media_player.office_tv_2': True, 'light.f
            'lock.front_door': True, 'cover.main_garage': True, 'cover.office_blind': True, 'light.hall': False}
 
 SERVICES = {'light': {'turn_on', 'turn_off', 'toggle'}, 'lock': {'lock', 'unlock'},
-            'cover': {'open_cover', 'close_cover'}, 'media_player': {'turn_off', 'turn_on'}}
+            'cover': {'open_cover', 'close_cover'}, 'media_player': {'turn_off', 'turn_on'},
+            'remote': {'turn_on', 'turn_off', 'send_command'}}
 
 
 def voice(level, member=None):
@@ -140,6 +169,7 @@ def voice(level, member=None):
 class HouseToolTests(unittest.TestCase):
     def setUp(self):
         self.calls = []
+        self.tv_ignores_launches = False
         self.states = _states()
         self.settings = {}
         self.orig = {}
@@ -154,6 +184,18 @@ class HouseToolTests(unittest.TestCase):
             eid = (data or {}).get('entity_id')
             after = {('light', 'turn_on'): 'on', ('light', 'turn_off'): 'off', ('lock', 'unlock'): 'unlocked',
                      ('lock', 'lock'): 'locked', ('cover', 'open_cover'): 'open', ('media_player', 'turn_off'): 'off'}
+            if (domain, service) == ('remote', 'turn_on') and not tests.tv_ignores_launches:
+                twin = {'remote.office_tv': 'media_player.office_tv_2',
+                        'remote.living_room_tv': 'media_player.living_room_tv_2'}.get(eid)
+                for s in tests.states:
+                    if s['entity_id'] == eid:
+                        s['state'] = 'on'
+                        if (data or {}).get('activity'):
+                            s['attributes']['current_activity'] = data['activity']
+                    if s['entity_id'] == twin:
+                        s['state'] = 'on'
+                        if (data or {}).get('activity'):
+                            s['attributes']['app_id'] = data['activity']
             for s in tests.states:
                 if s['entity_id'] == eid and (domain, service) in after:
                     s['state'] = after[(domain, service)]
@@ -229,7 +271,7 @@ class HouseToolTests(unittest.TestCase):
         self.assertNotIn('access_token', ent['attributes'])
         self.assertNotIn(LAMP_TOKEN, repr(res))
         self.assertTrue(ent['exposed'])
-        tv = self.run_tool(action='read', query='office tv')['entity']
+        tv = self.run_tool(action='read', entity_id='media_player.office_tv_2')['entity']
         self.assertNotIn('entity_picture', tv['attributes'])
         self.assertNotIn('tv-token', repr(tv))
 
@@ -475,12 +517,165 @@ class HouseToolTests(unittest.TestCase):
         res = self.run_tool(action='locate', query="Lily's phone", acting_member={'id': 'p9', 'role': 'parent'}, source='pwa')
         self.assertEqual(res['status'], 'success', res)
 
+    # --- app ----------------------------------------------------------------
+    def test_find_lists_the_apps_a_tv_can_open(self):
+        rows = {c['entity_id']: c for c in self.run_tool(action='find', query='office tv')['candidates']}
+        self.assertEqual(rows['remote.office_tv']['apps'], list(TV_APPS))
+        self.assertNotIn('apps', rows['media_player.office_tv_2'])
+        lamp = self.run_tool(action='find', query='office lamp')['candidates'][0]
+        self.assertNotIn('apps', lamp)
+
+    def test_a_spoken_app_name_becomes_the_package_id_on_the_remote(self):
+        res = self.run_tool(action='app', query='office tv', app='netflix', acting_member={'id': 'k1', 'role': 'kid'})
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(self.calls, [('remote', 'turn_on', {'entity_id': 'remote.office_tv', 'activity': 'com.netflix.ninja'})])
+        self.assertEqual(res['entity_id'], 'remote.office_tv')
+        self.assertEqual(res['app'], 'Netflix')
+        self.assertEqual(res['app_id'], 'com.netflix.ninja')
+        self.assertTrue(res['landed'])
+        self.assertIn('Netflix', res['message'])
+        self.assertIn('Office TV', res['message'])
+
+    def test_the_ways_people_say_an_app_all_land_on_the_right_package(self):
+        for spoken, package in (('Disney Plus', 'com.disney.disneyplus'), ('prime', 'com.amazon.amazonvideo.livingroom'),
+                                ('HBO Max', 'com.wbd.stream'), ('you tube', 'com.google.android.youtube.tv'),
+                                ('paramount', 'com.cbs.ott'), ('YouTube TV', 'com.google.android.youtube.tvunplugged'),
+                                ('the Hulu app', 'com.hulu.livingroomplus'), ('plex', 'com.plexapp.android')):
+            self.calls.clear()
+            res = self.run_tool(action='app', entity_id='remote.office_tv', app=spoken,
+                                acting_member={'id': 'k1', 'role': 'kid'})
+            self.assertEqual(res['status'], 'success', (spoken, res))
+            self.assertEqual(self.calls[0][2]['activity'], package, spoken)
+
+    def test_a_package_id_is_sent_as_given(self):
+        res = self.run_tool(action='app', entity_id='remote.office_tv', app='tv.twitch.android.app',
+                            acting_member={'id': 'k1', 'role': 'kid'})
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(self.calls[0][2]['activity'], 'tv.twitch.android.app')
+
+    def test_an_app_only_ha_knows_is_sent_under_the_name_ha_lists(self):
+        res = self.run_tool(action='app', entity_id='remote.office_tv', app='sling',
+                            acting_member={'id': 'k1', 'role': 'kid'})
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(self.calls[0][2]['activity'], 'Sling TV')
+        self.assertEqual(res['app'], 'Sling TV')
+
+    def test_an_unknown_app_is_an_error_that_names_what_the_tv_has_and_touches_nothing(self):
+        res = self.run_tool(action='app', entity_id='remote.office_tv', app='nintendo',
+                            acting_member={'id': 'k1', 'role': 'kid'})
+        self.assertEqual(res['status'], 'error')
+        self.assertIn('nintendo', res['message'])
+        self.assertIn('Netflix', res['message'])
+        self.assertEqual(self.calls, [])
+        res = self.run_tool(action='app', entity_id='remote.office_tv', app='', acting_member={'id': 'k1', 'role': 'kid'})
+        self.assertEqual(res['status'], 'error')
+        self.assertEqual(self.calls, [])
+
+    def test_the_media_player_twin_or_the_room_finds_the_remote(self):
+        res = self.run_tool(action='app', entity_id='media_player.office_tv_2', app='netflix',
+                            acting_member={'id': 'k1', 'role': 'kid'})
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(res['entity_id'], 'remote.office_tv')
+        self.calls.clear()
+        res = self.run_tool(action='app', query='office', app='youtube', acting_member={'id': 'k1', 'role': 'kid'})
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(self.calls[0][2]['entity_id'], 'remote.office_tv')
+
+    def test_part_of_a_tvs_name_is_enough_when_it_fits_one_tv(self):
+        """Live 2026-10-28: 'pool house' found no TV while the Pool House Lounge TV sat there."""
+        res = self.run_tool(action='app', query='living', app='netflix', acting_member={'id': 'p1', 'role': 'parent'})
+        self.assertEqual(res['status'], 'refused', res)   # unexposed, but it was FOUND
+        self.assertIn('Living Room TV', res['message'])
+        self.assertEqual(self.calls, [])
+
+    def test_a_tv_without_an_app_list_is_never_an_app_target(self):
+        res = self.run_tool(action='app', query='living room apple tv', app='netflix',
+                            acting_member={'id': 'k1', 'role': 'kid'})
+        self.assertEqual(res['status'], 'error', res)
+        self.assertIn('Android TV', res['message'])
+        self.assertEqual(self.calls, [])
+        res = self.run_tool(action='app', query='office lamp', app='netflix', acting_member={'id': 'k1', 'role': 'kid'})
+        self.assertEqual(res['status'], 'error', res)
+        self.assertEqual(self.calls, [])
+
+    def test_a_tv_counts_as_exposed_when_either_twin_is(self):
+        # remote.office_tv is not exposed; its media_player twin is. The TV is one thing.
+        res = self.run_tool(action='app', entity_id='remote.office_tv', app='netflix',
+                            acting_member={'id': 'k1', 'role': 'kid'})
+        self.assertEqual(res['status'], 'success', res)
+        self.calls.clear()
+        res = self.run_tool(action='app', query='living room tv', app='netflix',
+                            acting_member={'id': 'p1', 'role': 'parent'})
+        self.assertEqual(res['status'], 'refused', res)
+        self.assertIn('not exposed', res['message'])
+        self.assertEqual(self.calls, [])
+        self.settings['house_control_unexposed'] = True
+        res = self.run_tool(action='app', query='living room tv', app='netflix',
+                            acting_member={'id': 'p1', 'role': 'parent'})
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(self.calls[0][2]['entity_id'], 'remote.living_room_tv')
+
+    def test_an_offline_android_tv_is_offline_not_a_non_tv(self):
+        """Live 2026-10-28: the Sunroom TV was unavailable, carried no app list, and was called
+        'not an Android TV' while it sat in the Android TV Remote integration."""
+        res = self.run_tool(action='app', query='sunroom tv', app='netflix', acting_member={'id': 'k1', 'role': 'kid'})
+        self.assertEqual(res['status'], 'error', res)
+        self.assertIn('offline', res['message'])
+        self.assertNotIn('not an Android TV', res['message'])
+        self.assertEqual(self.calls, [])
+
+    def test_a_tv_already_on_the_app_never_counts_as_a_landing(self):
+        """Live 2026-10-28: 'open DIRECTV' on a TV already on DIRECTV read as landed although
+        the launch itself had changed nothing."""
+        res = self.run_tool(action='app', entity_id='remote.office_tv', app='directv',
+                            acting_member={'id': 'k1', 'role': 'kid'})
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(self.calls[0][2]['activity'], 'com.att.tv')
+        self.assertFalse(res['landed'])
+        self.assertTrue(res['already'])
+        self.assertIn('already', res['message'])
+
+    def test_the_answer_is_honest_when_the_tv_does_not_report_the_app(self):
+        self.tv_ignores_launches = True
+        res = self.run_tool(action='app', entity_id='remote.office_tv', app='netflix',
+                            acting_member={'id': 'k1', 'role': 'kid'})
+        self.assertEqual(res['status'], 'success', res)
+        self.assertFalse(res['landed'])
+        self.assertNotIn('is on Netflix', res['message'])
+        self.assertIn('asked', res['message'].lower())
+
+    def test_app_is_declared_and_reaches_the_tool_from_every_surface(self):
+        tool = next(t for t in agent_tools_v2.get_available_tools() if t['name'] == 'house')
+        self.assertIn('app', tool['parameters']['properties']['action']['enum'])
+        self.assertIn('app', tool['parameters']['properties'])
+        self.assertIn('Netflix', tool['description'])
+        res = agent_tools_v2.execute_tool('house', {'action': 'app', 'query': 'office tv', 'app': 'netflix',
+                                                    'acting_member': {'id': 'x', 'role': 'kid'}})
+        self.assertEqual(res['status'], 'success', res)
+        from services import voice_tools
+        recorded = []
+        self.orig[(voice_tools, 'record_action')] = voice_tools.record_action
+        voice_tools.record_action = lambda ctx, name, principal=None, details=None, provenance=None: recorded.append(name)
+        ctx = voice('unknown')
+        ctx.ha_instance_id, ctx.service_revision = '', ''
+        ctx.provenance = lambda: {}
+        res = voice_tools.dispatch('house', {'action': 'app', 'query': 'office tv', 'app': 'disney plus'}, ctx)
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(recorded, ['house'])
+        self.assertEqual(self.calls[-1][2]['activity'], 'com.disney.disneyplus')
+        import inspect
+        from services import agent_router
+        src = inspect.getsource(agent_router)
+        branch = src[src.index("elif func_name == 'house':"):]
+        self.assertIn("'app'", branch[:600], 'the chat router drops the app argument before it reaches the tool')
+        self.assertIn("action='app'", src, 'the system prompt never tells the model how to open an app')
+
     # --- degradation --------------------------------------------------------
     def test_no_home_assistant_means_a_plain_error_for_every_action(self):
         setattr(ha_api, 'mode', lambda: 'unconfigured')
-        for action in ('find', 'read', 'history', 'act', 'locate'):
+        for action in ('find', 'read', 'history', 'act', 'locate', 'app'):
             res = self.run_tool(action=action, query='office lamp', entity_id='light.office_lamp', service='turn_off',
-                                acting_member={'id': 'p1', 'role': 'parent'})
+                                app='netflix', acting_member={'id': 'p1', 'role': 'parent'})
             self.assertEqual(res['status'], 'error', action)
             self.assertIn('not connected', res['message'])
         self.assertEqual(self.calls, [])

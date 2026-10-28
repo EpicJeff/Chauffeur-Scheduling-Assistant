@@ -1359,11 +1359,11 @@ def get_assist_coverage(target_date: str = None) -> Dict[str, Any]:
 
 
 def house(action='', query='', entity_id='', domain='', service='', data=None,
-          hours=24, acting_member=None, voice_context=None, source=None,
+          hours=24, app='', acting_member=None, voice_context=None, source=None,
           focus_key=None, spoken=False):
     from services import house as house_service
     return house_service.house(action=action, query=query, entity_id=entity_id,
-                               domain=domain, service=service, data=data, hours=hours,
+                               domain=domain, service=service, data=data, hours=hours, app=app,
                                acting_member=acting_member, voice_context=voice_context, source=source)
 
 
@@ -5252,12 +5252,13 @@ def get_available_tools() -> List[Dict]:
         },
         {
             "name": "house",
-            "description": "Reads any Home Assistant device and controls devices exposed to Assist (or unexposed devices when the household allows it); locks, alarms and garage doors need a parent or adult. Actions: find, read, history, act, locate. ha_area is the room in HA's registry an entity is assigned to, never where a mobile thing (car, phone, person) is. For 'where is X' use action=locate; it also finds people by name or alias (Chauffeur family members and HA person entities). A child who keeps location private is only visible to a parent. You MUST call find first when you do not already hold an entity id, before read or act. Services include turn_on, turn_off, toggle, open_cover, set_temperature or light.turn_on; service domains must match the device.",
+            "description": "Reads any Home Assistant device and controls devices exposed to Assist (or unexposed devices when the household allows it); locks, alarms and garage doors need a parent or adult. Actions: find, read, history, act, app, locate. To open an app on an Android TV ('put Netflix on in the office', 'open YouTube on the living room TV') use action=app with query naming the TV or its room and app as the person said it (Netflix, Disney plus, prime); the TV's own app list rides find results as 'apps'. ha_area is the room in HA's registry an entity is assigned to, never where a mobile thing (car, phone, person) is. For 'where is X' use action=locate; it also finds people by name or alias (Chauffeur family members and HA person entities). A child who keeps location private is only visible to a parent. You MUST call find first when you do not already hold an entity id, before read or act. Services include turn_on, turn_off, toggle, open_cover, set_temperature or light.turn_on; service domains must match the device.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["find", "read", "history", "act", "locate"]},
-                    "query": {"type": "string", "description": "Device name, alias or room; required for find."},
+                    "action": {"type": "string", "enum": ["find", "read", "history", "act", "app", "locate"]},
+                    "query": {"type": "string", "description": "Device name, alias or room; required for find. For app: the TV or its room."},
+                    "app": {"type": "string", "description": "For app: the app as the person said it (Netflix, YouTube, Disney plus) or an Android package id."},
                     "entity_id": {"type": "string", "description": "An entity id returned by find."},
                     "domain": {"type": "string", "description": "Optional domain filter, e.g. light."},
                     "service": {"type": "string", "description": "For act: HA service, e.g. turn_off or light.turn_on."},

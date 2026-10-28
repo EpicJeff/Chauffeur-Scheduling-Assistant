@@ -67,11 +67,12 @@ def dispatch(name, args, ctx: VoiceContext, focus_key=None):
                                        destination=args.get('destination') or '')
     elif name == 'house':
         result = tools.house(**{k: v for k, v in args.items() if k in (
-            'action', 'query', 'entity_id', 'domain', 'service', 'data', 'hours')},
+            'action', 'query', 'entity_id', 'domain', 'service', 'data', 'hours', 'app')},
             voice_context=ctx, source='voice')
-        if args.get('action') == 'act' and result.get('status') == 'success':
+        if args.get('action') in ('act', 'app') and result.get('status') == 'success':
             record_action(ctx, 'house', ctx.verified_member(),
-                          {'entity_id': result.get('entity_id'), 'service': result.get('service')}, provenance)
+                          {'entity_id': result.get('entity_id'), 'service': result.get('service'),
+                           'app': result.get('app')}, provenance)
     elif name == 'music':
         result = tools.music(**{k: v for k, v in args.items() if k in (
             'action', 'query', 'room', 'player', 'media_type', 'mode', 'level')},

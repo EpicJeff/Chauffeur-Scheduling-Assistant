@@ -41,15 +41,19 @@ def _catalogue():
                     'area': entity_areas.get(eid) or area_names.get(area_id, ''),
                     'domain': eid.split('.', 1)[0], 'state': state.get('state'),
                     'aliases': list(row.get('aliases') or []), '_state': state,
-                    '_device_id': row.get('device_id'),
+                    '_device_id': row.get('device_id'), '_platform': row.get('platform'),
                     '_names': [name, row.get('name'), row.get('original_name'),
                                *list(row.get('aliases') or []), eid, eid.split('.', 1)[1]]})
     return out
 
 
 def _candidate(entity):
-    return {**{k: entity[k] for k in ('entity_id', 'name', 'domain', 'state', 'aliases')},
-            'ha_area': entity['area']}
+    row = {**{k: entity[k] for k in ('entity_id', 'name', 'domain', 'state', 'aliases')},
+           'ha_area': entity['area']}
+    attrs = entity['_state'].get('attributes') or {}
+    if entity['domain'] == 'remote' and 'activity_list' in attrs:
+        row['apps'] = list(attrs.get('activity_list') or [])   # an Android TV: what it can open
+    return row
 
 
 def _score(query, names):
@@ -241,6 +245,185 @@ def locate(query='', entity_id='', catalogue=None, acting_member=None, voice_con
             'address': address, 'message': message}
 
 
+# --- apps on a TV -----------------------------------------------------------
+# The Android TV Remote integration launches an app by PACKAGE ID (or a deep
+# link); a person says "Netflix". HA's remote entity lists the names configured
+# on the integration (activity_list) but never their ids, so the id comes from
+# this catalogue, and a name HA lists that we do not know is sent as HA spelled
+# it. A bare package id is passed through untouched.
+KNOWN_APPS = (
+    ('Netflix', 'com.netflix.ninja', ()),
+    ('YouTube', 'com.google.android.youtube.tv', ('you tube',)),
+    ('YouTube TV', 'com.google.android.youtube.tvunplugged', ('you tube tv',)),
+    ('YouTube Kids', 'com.google.android.youtube.tvkids', ('you tube kids',)),
+    ('Disney+', 'com.disney.disneyplus', ('disney plus', 'disney')),
+    ('Prime Video', 'com.amazon.amazonvideo.livingroom', ('prime', 'amazon prime', 'amazon prime video', 'amazon video')),
+    ('Hulu', 'com.hulu.livingroomplus', ()),
+    ('Max', 'com.wbd.stream', ('hbo max', 'hbo')),
+    ('Plex', 'com.plexapp.android', ()),
+    ('Spotify', 'com.spotify.tv.android', ()),
+    ('Paramount+', 'com.cbs.ott', ('paramount plus', 'paramount')),
+    ('Peacock', 'com.peacocktv.peacockandroid', ()),
+    ('Apple TV', 'com.apple.atve.androidtv.appletv', ('apple tv plus', 'apple tv+')),
+    ('DIRECTV STREAM', 'com.att.tv', ('directv', 'direct tv', 'directv stream')),
+    ('Twitch', 'tv.twitch.android.app', ()),
+    ('Pluto TV', 'tv.pluto.android', ('pluto',)),
+    ('Tubi', 'com.tubitv', ()),
+    ('Crunchyroll', 'com.crunchyroll.crunchyroid', ()),
+    ('ESPN', 'com.espn.score_center', ()),
+    ('Apple Music', 'com.apple.android.music', ()),
+    ('Pandora', 'com.pandora.android.atv', ()),
+    ('Play Store', 'com.android.vending', ('google play', 'google play store', 'app store')),
+    ('Kodi', 'org.xbmc.kodi', ()),
+    ('Jellyfin', 'org.jellyfin.androidtv', ()),
+    ('Emby', 'tv.emby.embyatv', ()),
+    ('Steam Link', 'com.valvesoftware.steamlink', ()),
+    ('Philo', 'com.philo.philo.google', ()),
+    ('Xfinity Stream', 'com.xfinity.cloudtvr.tenfoot', ('xfinity',)),
+)
+_PACKAGE_RE = re.compile(r'^[a-zA-Z][\w]*(\.[\w]+)+$')
+
+
+def _app_forms(value):
+    """The ways one app name gets said: 'the Hulu app', 'Disney plus', 'Sling'.
+    The exact words come first; the core (no trailing 'tv'/'plus') is a fallback,
+    so 'YouTube TV' never collapses into YouTube."""
+    words = _words(value)
+    words = re.sub(r'^the ', '', words)
+    words = re.sub(r' app$', '', words)
+    core = re.sub(r' (tv|plus)$', '', words)
+    return [f for f in (words, core) if f]
+
+
+def _resolve_app(app, listed):
+    """-> (display name, what to send as `activity`) or None."""
+    app = str(app or '').strip()
+    if not app:
+        return None
+    if _PACKAGE_RE.match(app) and ' ' not in app:
+        return app, app
+    known = {}
+    for name, package, aliases in KNOWN_APPS:
+        for form in (name, *aliases):
+            for f in _app_forms(form):
+                known.setdefault(f, (name, package))
+
+    def known_for(ha_name):
+        return next((known[f] for f in _app_forms(ha_name) if f in known), None)
+    wanted = _app_forms(app)
+    for depth in (0, 1):      # exact words everywhere before any core form
+        w = wanted[min(depth, len(wanted) - 1)]
+        for name in listed:
+            forms = _app_forms(name)
+            if w == forms[min(depth, len(forms) - 1)]:
+                return known_for(name) or (name, name)
+        if w in known:
+            return known[w]
+    best, best_score = None, 0.0
+    for name in listed:
+        score = max(_score(w, [name]) for w in wanted)
+        if score > best_score:
+            best, best_score = (known_for(name) or (name, name)), score
+    for name, package, aliases in KNOWN_APPS:
+        score = max(_score(w, [name, *aliases]) for w in wanted)
+        if score > best_score:
+            best, best_score = (name, package), score
+    return best if best_score >= 0.6 else None
+
+
+def _android_remotes(catalogue):
+    """Android TV remotes, by HA's integration or by the app list only it publishes;
+    an offline one is still a TV (it answers 'offline', never 'not a TV')."""
+    return [e for e in catalogue if e['domain'] == 'remote'
+            and (e.get('_platform') == 'androidtv_remote'
+                 or 'activity_list' in (e['_state'].get('attributes') or {}))]
+
+
+def _tv_list(remotes):
+    return ', '.join(e['name'] for e in remotes) or 'none'
+
+
+def _remote_for(query, entity_id, catalogue):
+    """The Android TV remote a person means, by its id, its media_player twin's id, its name or its room."""
+    remotes = _android_remotes(catalogue)
+    if not remotes:
+        return {'status': 'error', 'message': 'No Android TV is connected to Home Assistant, so no TV can open an app.'}
+    if entity_id:
+        exact = next((e for e in catalogue if e['entity_id'] == entity_id), None)
+        if exact is None:
+            return {'status': 'error', 'message': 'That Home Assistant entity is not available.'}
+        hit = next((e for e in remotes if e is exact or (
+            e['_device_id'] and e['_device_id'] == exact['_device_id'])), None)
+        if hit is None:
+            return {'status': 'error', 'message': (
+                f"{exact['name']} is not an Android TV remote. TVs that can open apps: {_tv_list(remotes)}.")}
+        return hit
+    q = _words(query)
+    if not q:
+        return {'status': 'error', 'message': f'Which TV? TVs that can open apps: {_tv_list(remotes)}.'}
+    strong = [e for e in remotes if _score(q, e['_names']) >= 0.8]
+    if not strong:
+        strong = [e for e in remotes if _words(e['area']) == q]
+    if not strong:
+        # 'pool house' for the Pool House Lounge TV: every word said is in the TV's name.
+        said = set(q.split())
+        strong = [e for e in remotes if any(said <= set(_words(n).split()) for n in e['_names'])]
+    if len(strong) == 1:
+        return strong[0]
+    if strong:
+        return {'status': 'ambiguous', 'candidates': [_candidate(e) for e in strong], 'message': 'Which TV do you mean?'}
+    other = _rank(catalogue, query)
+    if other and other[0][0] >= 0.8:
+        return {'status': 'error', 'message': (
+            f"{other[0][1]['name']} is not an Android TV. TVs that can open apps: {_tv_list(remotes)}.")}
+    return {'status': 'error', 'message': f'No Android TV called {query}. TVs that can open apps: {_tv_list(remotes)}.'}
+
+
+def open_app(query='', entity_id='', app='', catalogue=None):
+    """Launch an app on an Android TV through its HA remote; the TV is read back, never trusted."""
+    catalogue = _catalogue() if catalogue is None else catalogue
+    remote = _remote_for(query, entity_id, catalogue)
+    if 'status' in remote:
+        return remote
+    if remote['state'] in ('unavailable', 'unknown', None):
+        return {'status': 'error', 'message': f"{remote['name']} is offline right now, so it cannot open an app."}
+    listed = list((remote['_state'].get('attributes') or {}).get('activity_list') or [])
+    if not str(app or '').strip():
+        return {'status': 'error', 'message': f"Which app? {remote['name']} lists: {', '.join(listed) or 'no apps yet'}."}
+    resolved = _resolve_app(app, listed)
+    if resolved is None:
+        return {'status': 'error', 'message': (
+            f"I don't know an app called {app}. {remote['name']} lists: {', '.join(listed) or 'no apps yet'}.")}
+    name, activity = resolved
+    eid = remote['entity_id']
+    exposed = ha_api.get_exposed()
+    twins = [e['entity_id'] for e in catalogue if remote['_device_id'] and e['_device_id'] == remote['_device_id']]
+    if not any(exposed.get(t) for t in (eid, *twins)) and not storage.get_settings().get('house_control_unexposed'):
+        return {'status': 'refused', 'message': (
+            f"{remote['name']} is not exposed to Assist; expose it in Home Assistant, "
+            'or allow unexposed control under Config › People › Argyle.')}
+    if not ha_api.has_service('remote', 'turn_on'):
+        return {'status': 'error', 'message': 'Home Assistant cannot launch apps on that TV.'}
+    before = (remote['_state'].get('attributes') or {}).get('current_activity')
+    result = ha_api.call_service('remote', 'turn_on', {'entity_id': eid, 'activity': activity})
+    if result is None:
+        return {'status': 'error', 'message': f"Home Assistant could not reach {remote['name']}."}
+    _settle()
+    after = {s.get('entity_id'): s for s in ha_api.get_states(ttl=0)}
+    seen = {(after.get(t) or {}).get('attributes', {}).get('app_id') for t in twins}
+    seen.add((after.get(eid) or {}).get('attributes', {}).get('current_activity'))
+    # A TV already on that app proves nothing about the launch; say so rather than claim it.
+    landed = activity in seen and before != activity
+    if before == activity:
+        message = f"{remote['name']} was already on {name}."
+    elif landed:
+        message = f"{remote['name']} is on {name}."
+    else:
+        message = f"Asked {remote['name']} to open {name}; the TV has not reported the switch yet."
+    return {'status': 'success', 'entity_id': eid, 'app': name, 'app_id': activity, 'landed': landed,
+            'already': before == activity, 'state_after': (after.get(eid) or {}).get('state'), 'message': message}
+
+
 def _trusted(acting_member, voice_context, source):
     """A hand that may unlock the house. The wall panel chats as access.HOUSE
     (role adult, no id): a room anyone can walk into is never a trusted hand,
@@ -257,14 +440,16 @@ def _trusted(acting_member, voice_context, source):
 
 
 def house(action='', query='', entity_id='', domain='', service='', data=None,
-          hours=24, acting_member=None, voice_context=None, source=None):
+          hours=24, app='', acting_member=None, voice_context=None, source=None):
     """One boundary for every action: failures are plain results, never exceptions."""
     try:
         if ha_api.mode() == 'unconfigured':
             return {'status': 'error', 'message': 'Home Assistant is not connected.'}
-        if action not in ('find', 'read', 'history', 'act', 'locate'):
-            return {'status': 'error', 'message': 'Unknown house action. Use find, read, history, act or locate.'}
+        if action not in ('find', 'read', 'history', 'act', 'locate', 'app'):
+            return {'status': 'error', 'message': 'Unknown house action. Use find, read, history, act, app or locate.'}
         catalogue = _catalogue()
+        if action == 'app':
+            return open_app(query, entity_id, app, catalogue)
         if action == 'find':
             if not str(query or '').strip():
                 return {'status': 'error', 'message': 'Which device or room should I find?'}
