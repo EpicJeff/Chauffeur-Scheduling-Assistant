@@ -148,6 +148,28 @@ class LocalRelayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.posted, [], 'a house sentence still reached Chauffeur')
         self.assertEqual(result.conversation_id, 'c1')
 
+    async def test_a_media_sentence_the_house_cannot_play_goes_to_argyle_not_the_houses_error(self):
+        """Device run 2026-10-27: "play mayonnaise ... on the office TV" matched the
+        built-in HassMediaSearchAndPlay, failed on the Android TV remote, and the
+        relay repeated "Sorry, no device supports the required features". Music
+        is Argyle's (the music tool); media intents are never relayed."""
+        for name in ('HassMediaSearchAndPlay', 'HassMediaPause', 'HassMediaUnpause', 'HassMediaNext',
+                     'HassMediaPrevious', 'HassSetVolume'):
+            self.posted.clear()
+            house = self.house(types.SimpleNamespace(unmatched_entities={}, intent=types.SimpleNamespace(name=name)),
+                               speech='Sorry, no device supports the required features')
+            result = await self.say('play mayonnaise by smashing pumpkins on the office tv')
+            self.assertEqual([p['text'] for p in self.posted], ['play mayonnaise by smashing pumpkins on the office tv'], name)
+            self.assertEqual(result.response.speech, ARGYLE, name)
+            self.assertEqual(house.processed, [], name)
+
+    async def test_a_light_sentence_with_an_intent_name_is_still_relayed(self):
+        house = self.house(types.SimpleNamespace(unmatched_entities={}, intent=types.SimpleNamespace(name='HassTurnOff')))
+        result = await self.say('turn off the office tv')
+        self.assertEqual(result.response.speech, HOUSE)
+        self.assertEqual(house.processed, ['turn off the office tv'])
+        self.assertEqual(self.posted, [])
+
     async def test_a_device_the_house_never_heard_of_still_goes_to_argyle(self):
         house = self.house(types.SimpleNamespace(unmatched_entities={'name': 'schedule'}))
         result = await self.say('open the schedule')

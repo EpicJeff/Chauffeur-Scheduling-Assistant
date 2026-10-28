@@ -69,6 +69,15 @@ def _target(action, room, player, voice_context, source, states):
             players = [e for e in (area.get('entities') or [])
                        if e.startswith('media_player.') and announce._usable(states, e)]
             ma_players = [e for e in players if _is_ma(states, e)]
+            if not ma_players and players:
+                # MA's twin may have no HA area; match it by the room's names.
+                names = [_name(states, e).casefold() for e in players]
+                area_name = (area.get('name') or '').casefold()
+                ma_players = [e for e in states
+                              if e.startswith('media_player.') and _is_ma(states, e)
+                              and announce._usable(states, e)
+                              and (any(name in _name(states, e).casefold() for name in names)
+                                   or (area_name and _name(states, e).casefold().startswith(area_name + ' ')))]
             if ma_players:
                 eid = min(ma_players, key=lambda e: announce._music_rank(states, e))
             elif players:

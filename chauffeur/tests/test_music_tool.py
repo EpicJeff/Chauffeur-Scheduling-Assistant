@@ -162,6 +162,35 @@ class MusicToolTests(unittest.TestCase):
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(self.calls[-1][2]['entity_id'], 'media_player.googletv1645_2')
 
+    def test_a_room_whose_music_assistant_twin_has_no_area_still_plays_on_it(self):
+        """Device run 2026-10-27, typed: "in the office" found only the remote, the
+        Echo and a cast target, because Music Assistant's "Office TV Media Player"
+        is assigned to no HA area. The twin is found by name instead."""
+        self.states = [
+            {'entity_id': 'media_player.office_tv_2', 'state': 'off',
+             'attributes': {'friendly_name': 'Office TV', 'device_class': 'tv'}},
+            {'entity_id': 'media_player.jeff_s_echo_dot', 'state': 'idle', 'attributes': {'friendly_name': "Jeff's Echo Dot"}},
+            {'entity_id': 'media_player.office', 'state': 'idle', 'attributes': {'friendly_name': 'Office'}},
+            {'entity_id': 'media_player.office_tv_4', 'state': 'idle',
+             'attributes': {'friendly_name': 'Office TV Media Player', 'mass_player_type': 'player'}},
+            {'entity_id': 'media_player.kitchen_speaker', 'state': 'playing',
+             'attributes': {'friendly_name': 'Kitchen Speaker', 'mass_player_type': 'player'}},
+        ]
+        setattr(ha_api, 'get_area_map', lambda ttl=60: [
+            {'id': 'office', 'name': 'Office', 'entities': ['media_player.office_tv_2', 'media_player.jeff_s_echo_dot',
+                                                            'media_player.office']},
+            {'id': 'kitchen', 'name': 'Kitchen', 'entities': ['media_player.kitchen_speaker']}])
+        res = self.run_tool(action='play', query='Hotel California', room='the office')
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(self.calls[-1][2]['entity_id'], 'media_player.office_tv_4')
+        self.assertIn('Office', res['message'])
+        # Controls in that room still go to a player that is making sound there.
+        self.states[2]['state'] = 'playing'
+        self.calls.clear()
+        res = self.run_tool(action='pause', room='office')
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(self.calls[-1][2]['entity_id'], 'media_player.office')
+
     def test_a_room_with_no_music_assistant_player_says_which_player_and_why(self):
         res = self.run_tool(action='play', query='Hotel California', room='garage')
         self.assertEqual(res['status'], 'error')

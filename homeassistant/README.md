@@ -712,6 +712,10 @@ device called schedule". Overlapping vocabulary stays with Argyle. A missing,
 older or failing default agent falls through to Chauffeur exactly as before,
 with a warning in the HA log (`Default agent relay failed`), because a silent
 relay failure looks identical to the bug it exists to fix.
+Component 1.5.1: media intents (`HassMediaSearchAndPlay`, pause, unpause,
+next, previous, set volume) are never relayed, because the house cannot play
+a song on a TV remote and Argyle's `music` tool can; "Sorry, no device
+supports the required features" was the relay repeating that failure.
 `chauffeur/tests/test_voice_local_relay.py` runs the real entity against a
 stubbed default agent for each branch.
 

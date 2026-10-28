@@ -20,6 +20,10 @@ _LOGGER = logging.getLogger(__name__)
 
 # The Chauffeur agent may call an LLM plus scheduling tools; give it room.
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=120)
+MEDIA_INTENTS = frozenset({
+    'HassMediaSearchAndPlay', 'HassMediaPause', 'HassMediaUnpause',
+    'HassMediaNext', 'HassMediaPrevious', 'HassSetVolume',
+})
 
 
 async def async_setup_entry(
@@ -64,6 +68,7 @@ class ChauffeurConversationEntity(conversation.ConversationEntity):
     ) -> conversation.ConversationResult | None:
         """Ask the house again when no_valid_targets falls through the pipeline.
 
+        Music intents stay with Argyle's music tool.
         Names HA never heard of stay with Argyle, so overlapping vocabulary
         like "open the schedule" is not stolen.
         """
@@ -80,6 +85,10 @@ class ChauffeurConversationEntity(conversation.ConversationEntity):
             recognized = await agent.async_recognize_intent(
                 user_input, strict_intents_only=True
             )
+            name = getattr(getattr(recognized, 'intent', None), 'name', '')
+            if name in MEDIA_INTENTS:
+                _LOGGER.debug("Media intent %s belongs to Chauffeur; skipping relay", name)
+                return None
             if recognized and not recognized.unmatched_entities:
                 return await agent.async_process(user_input)
             _LOGGER.debug("No known house target matched; continuing to Chauffeur")
