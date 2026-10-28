@@ -155,6 +155,12 @@ class MusicToolTests(unittest.TestCase):
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(self.calls[-1][2]['entity_id'], 'media_player.office_tv_4')
         self.assertIn('Office', res['message'])
+        # The model copies the words as spoken: an article and a full stop ride along.
+        for spoken in ('the office TV', 'office TV.', 'the Office TV.', 'my office tv'):
+            self.calls.clear()
+            res = self.run_tool(action='play', query='Hotel California', player=spoken)
+            self.assertEqual(res['status'], 'success', (spoken, res))
+            self.assertEqual(self.calls[-1][2]['entity_id'], 'media_player.office_tv_4', spoken)
         # Controls still go to the twin that is actually making sound.
         self.states[2]['state'] = 'playing'
         self.calls.clear()

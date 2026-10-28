@@ -1,5 +1,6 @@
 """Music search and playback for Argyle's chat and voice surfaces."""
 import difflib
+import re
 
 from services import announce, ha_api, music_search
 
@@ -26,7 +27,13 @@ def _target(action, room, player, voice_context, source, states):
     """Resolve explicit names before rooms, then the satellite or house default."""
     area = None
     if player:
-        wanted = str(player).strip().casefold()
+        # The model copies the words as spoken: "the office TV." carries an
+        # article and a full stop that no entity name has. Strip them, and
+        # treat every spoken word appearing in a name as a strong match, so
+        # "the office TV" still reaches "Office TV Media Player".
+        wanted = re.sub(r"^(the|my|our|a|an)\s+", '', str(player).strip().casefold())
+        wanted = wanted.strip(' .,!?')
+        wanted_tokens = set(wanted.split())
         players = [eid for eid in states if eid.startswith('media_player.')]
 
         def score(eid):
@@ -34,6 +41,8 @@ def _target(action, room, player, voice_context, source, states):
             if wanted in (name, eid.casefold()):
                 return 1.0
             if wanted and (wanted in name or name in wanted):
+                return 0.9
+            if wanted_tokens and wanted_tokens <= set(name.split()):
                 return 0.9
             return difflib.SequenceMatcher(None, wanted, name).ratio()
 
