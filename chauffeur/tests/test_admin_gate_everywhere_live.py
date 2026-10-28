@@ -153,7 +153,14 @@ def scenario_d_a_stale_pwa_token_never_locks_an_admin_page():
     wrappers yield to a member token already on the request, so a stale PWA
     token in the same browser beat a fresh admin session (403, member or
     parent) and the gate asked again forever. An admin page acts as its own
-    session (admin_gate's rule); the PWA's keys are the PWA's."""
+    session (admin_gate's rule); the PWA's keys are the PWA's.
+
+    Second report (2026-10-28): "the meals admin page constantly asks for
+    sign in". shopping.html (/meals and /lists) carried its own fetch
+    wrapper, older than the helper, that read the PWA key straight from
+    localStorage -- the same defect on a page the first fix never touched.
+    Every page that builds an X-Member-Token asks chfPersonToken, so the
+    two meals pages join the walk."""
     served = _serve()
     if served is None:
         return
@@ -165,7 +172,7 @@ def scenario_d_a_stale_pwa_token_never_locks_an_admin_page():
             page.on('response', lambda r: refused.append((r.status, r.url.split('/', 3)[-1][:80],
                                                           r.headers.get('x-auth-refusal')))
                     if r.status in (401, 403) else None)
-            for path in ('rhythms?tab=routines', 'rhythms?tab=programs', 'programs'):
+            for path in ('rhythms?tab=routines', 'rhythms?tab=programs', 'meals', 'lists', 'projects'):
                 refused.clear()
                 page.goto(served.url(path), wait_until='load')
                 page.wait_for_timeout(2500)
@@ -175,6 +182,9 @@ def scenario_d_a_stale_pwa_token_never_locks_an_admin_page():
             me = page.evaluate("""() => { for (const el of document.querySelectorAll('[x-data]')) {
                     const d = window.Alpine && Alpine.$data(el);
                     if (d && typeof d.readIdentity === 'function') return d.myId; } return null; }""")
+            # /programs retired to the Library (one-list spec R5); the programs
+            # component now mounts inside the Projects record sheet, so the
+            # identity it reads is checked there.
             check(me == 'mj', f"the programs component is the signed-in parent, not the PWA's member: {me!r}")
             tok = page.evaluate("() => window.chfPersonToken ? window.chfPersonToken() : null")
             check(tok == TOKENS['parent'], f"one helper names the page's person for every component: {tok!r}")

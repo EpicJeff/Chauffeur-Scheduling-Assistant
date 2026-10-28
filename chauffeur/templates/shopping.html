@@ -59,8 +59,14 @@
     <script>
     // Private lists need the server to know WHO is asking on this standalone
     // page too (the PWA shell has its own wrapper; nav's only carries the
-    // device). Member token when one is stored — a panel stores none, so on
-    // the wall this is a no-op and private lists stay unserved.
+    // device). The page's ONE person, through nav's chfPersonToken: the
+    // admin session on a gated page, the PWA member otherwise. Reading the
+    // PWA key straight from localStorage (as this did until 2026-10-28) let
+    // a stale PWA token in the same browser beat a fresh admin session --
+    // both wrappers yield to a member token already on the request -- so
+    // /meals was refused "parent" on every fetch and asked for sign-in
+    // forever. A panel stores no person, so on the wall this is a no-op
+    // and private lists stay unserved.
     (function attachMemberToken() {
         if (typeof window === 'undefined' || typeof window.fetch !== 'function'
             || typeof localStorage === 'undefined') return;
@@ -69,7 +75,9 @@
             try {
                 const url = typeof input === 'string' ? input : (input && input.url) || '';
                 const foreign = /^[a-z]+:\/\//i.test(url) && !url.startsWith(window.location.origin);
-                const token = localStorage.getItem('chauffeur_member_token') || '';
+                const token = (typeof window.chfPersonToken === 'function')
+                    ? (window.chfPersonToken() || '')
+                    : (localStorage.getItem('chauffeur_member_token') || '');
                 if (!foreign && token) {
                     init = init || {};
                     const h = new Headers(init.headers
