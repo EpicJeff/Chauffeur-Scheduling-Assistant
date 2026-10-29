@@ -65,6 +65,8 @@ def _catalogue():
             e['_own'].append(phrase)
             e['_names'].append(phrase)
             e['aliases'].append(phrase)
+    for e in out:
+        e['_names'].extend(_domain_words(e))
     _infer_areas(out, list(area_names.values()))
     _mark_kinds(out)
     return out
@@ -97,6 +99,29 @@ def _infer_areas(catalogue, room_names):
 
 
 KIND_WORDS = {'car': ('car', 'cars', 'vehicle', 'vehicles', 'auto'), 'tv': ('tv', 'tvs', 'television', 'televisions')}
+
+# What a thing IS, from its HA domain (and a cover's or sensor's device_class), as people say it.
+# Device 2026-10-29: "pool heater" found nothing because water_heater.pool was named "Pool";
+# the domain already said heater. These words join the entity's names, never replace them.
+DOMAIN_WORDS = {
+    'water_heater': ('heater', 'water heater'), 'climate': ('thermostat', 'climate', 'heating', 'ac'),
+    'light': ('light',), 'lock': ('lock',), 'fan': ('fan',), 'switch': ('switch',), 'camera': ('camera',),
+    'vacuum': ('vacuum',), 'media_player': ('player', 'speaker'), 'siren': ('siren',), 'humidifier': ('humidifier',),
+    'valve': ('valve',), 'remote': ('remote',), 'device_tracker': ('tracker',), 'alarm_control_panel': ('alarm',),
+    'cover': ('cover',),
+}
+COVER_WORDS = {'garage': ('garage door',), 'door': ('door',), 'gate': ('gate',), 'blind': ('blind',), 'shade': ('shade',),
+               'curtain': ('curtain',), 'shutter': ('shutter',), 'window': ('window',), 'awning': ('awning',)}
+
+
+def _domain_words(entity):
+    attrs = entity['_state'].get('attributes') or {}
+    dc = attrs.get('device_class')
+    if entity['domain'] == 'cover':
+        return COVER_WORDS.get(dc, ('cover',))
+    if entity['domain'] in ('sensor', 'binary_sensor'):
+        return (str(dc).replace('_', ' '),) if dc else ()
+    return DOMAIN_WORDS.get(entity['domain'], ())
 
 
 def _kind_of(members):

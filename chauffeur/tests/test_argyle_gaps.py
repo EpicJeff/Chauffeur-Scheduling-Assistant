@@ -142,6 +142,7 @@ class ArgyleGapsTests(unittest.TestCase):
 
     def test_the_ways_argyle_says_it_cannot_all_count_and_plain_answers_never_do(self):
         for said in ("I don't have a tool for that.", "There is no way to water the garden from here.",
+                     "I couldn't find a pool heater to control.", "No pool heater was found in Home Assistant.",
                      "That isn't possible yet.", "I've made a note of it.", "I noted that for the developer.",
                      "Sorry, I'm unable to start the car."):
             with storage.db_lock:

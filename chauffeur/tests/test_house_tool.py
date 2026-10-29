@@ -86,6 +86,13 @@ def _states():
          'attributes': {'friendly_name': 'Pool House'}},
         {'entity_id': 'cover.main_garage', 'state': 'closed', 'last_changed': '2026-10-27T06:00:00+00:00',
          'attributes': {'friendly_name': 'Main Garage', 'device_class': 'garage'}},
+        # Device 2026-10-29: "heat the pool to 83" found no pool heater; the entity was water_heater.pool,
+        # named just "Pool". What a thing IS (its HA domain) is one of its names.
+        {'entity_id': 'water_heater.pool', 'state': 'eco', 'last_changed': '2026-10-27T06:00:00+00:00',
+         'attributes': {'friendly_name': 'Pool', 'temperature': 80, 'current_temperature': 78, 'min_temp': 60,
+                        'max_temp': 104, 'operation_mode': 'eco', 'operation_list': ['eco', 'heat_pump', 'off']}},
+        {'entity_id': 'sensor.garage_temp', 'state': '61', 'last_changed': '2026-10-27T06:00:00+00:00',
+         'attributes': {'friendly_name': 'Garage Climate', 'device_class': 'temperature', 'unit_of_measurement': '°F'}},
         {'entity_id': 'cover.office_blind', 'state': 'open', 'last_changed': '2026-10-27T06:00:00+00:00',
          'attributes': {'friendly_name': 'Office Blind', 'device_class': 'blind'}},
         {'entity_id': 'light.hidden_strip', 'state': 'on', 'last_changed': '2026-10-27T06:00:00+00:00',
@@ -177,6 +184,10 @@ REGISTRY = [
      'area_id': None, 'device_id': None, 'hidden_by': None, 'disabled_by': None, 'platform': 'august'},
     {'entity_id': 'cover.main_garage', 'name': None, 'original_name': 'Main Garage', 'aliases': [],
      'area_id': 'garage', 'device_id': None, 'hidden_by': None, 'disabled_by': None, 'platform': 'myq'},
+    {'entity_id': 'water_heater.pool', 'name': None, 'original_name': 'Pool', 'aliases': [],
+     'area_id': 'pool', 'device_id': None, 'hidden_by': None, 'disabled_by': None, 'platform': 'pentair'},
+    {'entity_id': 'sensor.garage_temp', 'name': None, 'original_name': 'Garage Climate', 'aliases': [],
+     'area_id': 'garage', 'device_id': None, 'hidden_by': None, 'disabled_by': None, 'platform': 'x'},
     {'entity_id': 'cover.office_blind', 'name': None, 'original_name': 'Office Blind', 'aliases': [],
      'area_id': 'office', 'device_id': None, 'hidden_by': None, 'disabled_by': None, 'platform': 'somfy'},
     {'entity_id': 'light.hidden_strip', 'name': None, 'original_name': 'Office Strip', 'aliases': [],
@@ -248,12 +259,14 @@ AREAS = [
                                                     *[row[0] for row in POWERWALL]]},
 ]
 
-EXPOSED = {'light.office_lamp': True, 'media_player.office_tv_2': True, 'light.front_porch_column_1': True,
+EXPOSED = {'water_heater.pool': True,
+           'light.office_lamp': True, 'media_player.office_tv_2': True, 'light.front_porch_column_1': True,
            'lock.front_door': True, 'cover.main_garage': True, 'cover.office_blind': True, 'light.hall': False}
 
 SERVICES = {'light': {'turn_on', 'turn_off', 'toggle'}, 'lock': {'lock', 'unlock'},
             'cover': {'open_cover', 'close_cover'}, 'media_player': {'turn_off', 'turn_on'},
-            'remote': {'turn_on', 'turn_off', 'send_command'}}
+            'remote': {'turn_on', 'turn_off', 'send_command'},
+            'water_heater': {'set_temperature', 'set_operation_mode', 'turn_on', 'turn_off'}}
 
 
 def voice(level, member=None):
@@ -648,6 +661,26 @@ class HouseToolTests(unittest.TestCase):
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(self.calls, [('light', 'turn_off', {'entity_id': 'light.office_lamp'})])
         self.assertEqual(res['state_after'], 'off')
+
+    def test_what_a_thing_is_counts_as_one_of_its_names(self):
+        """Device 2026-10-29: "heat the pool to 83 degrees" answered that no pool heater could be found;
+        the entity was water_heater.pool, named "Pool". Renaming it to "Pool Heater" by hand made it
+        work. The HA domain says what a thing is: a water_heater is a heater, a climate a thermostat,
+        a light a light, a temperature sensor a temperature. Those words are the thing's names too."""
+        res = self.run_tool(action='find', query='pool heater')
+        self.assertEqual(res['candidates'][0]['entity_id'], 'water_heater.pool', res['candidates'][:3])
+        res = self.run_tool(action='read', query='the pool heater')
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(res['entity']['entity_id'], 'water_heater.pool')
+        res = self.run_tool(action='act', query='pool heater', service='set_temperature', data={'temperature': 83},
+                            acting_member={'id': 'p1', 'role': 'parent'})
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(self.calls[-1], ('water_heater', 'set_temperature', {'temperature': 83, 'entity_id': 'water_heater.pool'}))
+        self.assertEqual(self.run_tool(action='find', query='office light')['candidates'][0]['entity_id'], 'light.office_lamp')
+        self.assertEqual(self.run_tool(action='find', query='garage temperature')['candidates'][0]['entity_id'], 'sensor.garage_temp')
+        self.assertEqual(self.run_tool(action='find', query='office blind')['candidates'][0]['entity_id'], 'cover.office_blind')
+        self.assertEqual(self.run_tool(action='read', query='pool')['entity']['entity_id'], 'water_heater.pool',
+                         'the pool heater is still found by its own name; the domain word is extra, never instead')
 
     def test_brightness_rides_the_call_as_given(self):
         res = self.run_tool(action='act', query='office lamp', service='light.turn_on', data={'brightness_pct': 20},

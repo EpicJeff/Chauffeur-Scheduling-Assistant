@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # was made, so a parroted promise still leaves a row.
 CANNOT_RE = re.compile(
     r"\b(can'?t|cannot|unable|not able|no way to|there(?:'s| is) no way|don'?t have (?:a|the) (?:way|tool|ability)|"
-    r"no tool|isn'?t (?:something i can|possible)|not something i can|beyond what i can|"
+    r"no tool|isn'?t (?:something i can|possible)|not something i can|beyond what i can|couldn'?t find|can'?t find|could not find|don'?t see (?:a|an|any)|no (?:\w+ ){0,3}(?:was |were )?found|"
     r"note (?:it|that|this) for the developer|noted (?:it|that|this|for)|i(?:'ll| will|'ve| have) (?:made |make )?(?:a )?note[ds]?|"
     r"made a note)\b", re.IGNORECASE)
 # Device 2026-10-29: Argyle said it had remembered something and the memory tool never ran.
