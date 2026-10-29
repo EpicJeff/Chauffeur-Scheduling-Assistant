@@ -36,6 +36,10 @@ POWERWALL = (
     ('switch.powerwall_storm_watch', 'Powerwall Storm watch', 'off', None, 'switch'),
     ('select.powerwall_operation_mode', 'Powerwall Operation mode', 'autonomous', None, None),
 )
+# Live 2026-10-29: HA's binary sensors speak in on/off; the device_class says what on MEANS.
+# The EV9's 'Locked' sensor (device_class lock) reads on while the car is UNLOCKED.
+EV9_CLASS = {'engine': 'running', 'trunk': 'door', 'hood': 'door', 'front_left_door': 'door',
+             'front_right_door': 'door', 'back_left_door': 'door', 'back_right_door': 'door', 'locked': 'lock'}
 EV9_ADDRESS = '12 Maple Lane, Example Township, Cary, Wake County, North Carolina, 27500, United States'
 
 
@@ -73,8 +77,10 @@ def _states():
          'attributes': {'friendly_name': 'Office Blind', 'device_class': 'blind'}},
         {'entity_id': 'light.hidden_strip', 'state': 'on', 'last_changed': '2026-10-27T06:00:00+00:00',
          'attributes': {'friendly_name': 'Office Strip'}},
-        *[{'entity_id': f'binary_sensor.ev9_{k}', 'state': 'off', 'last_changed': '2026-10-27T06:00:00+00:00',
-           'attributes': {'friendly_name': f'Kia EV9 {k.replace("_", " ").title()}'}}
+        *[{'entity_id': f'binary_sensor.ev9_{k}', 'state': 'on' if k == 'locked' else 'off',
+           'last_changed': '2026-10-27T06:00:00+00:00',
+           'attributes': {'friendly_name': f'Kia EV9 {k.replace("_", " ").title()}',
+                          **({'device_class': EV9_CLASS[k]} if k in EV9_CLASS else {})}}
           for k in EV9_PARTS],
         {'entity_id': 'device_tracker.ev9_location', 'state': 'home', 'last_changed': '2026-10-27T14:13:16+00:00',
          'last_updated': '2026-10-27T14:13:16+00:00',
@@ -386,6 +392,30 @@ class HouseToolTests(unittest.TestCase):
         finally:
             del REGISTRY[-70:]
             DEVICES.pop()
+
+    def test_a_binary_sensor_reads_in_home_assistants_words_not_on_off(self):
+        """Live 2026-10-29: "are the Kia doors locked" was answered yes while HA's card said Unlocked:
+        the Locked sensor (device_class lock) was handed over as 'on', which MEANS unlocked."""
+        rows = {r['entity_id']: r for r in self.run_tool(action='find', query='kia ev9')['devices'][0]['entities']}
+        self.assertEqual((rows['binary_sensor.ev9_locked']['state'], rows['binary_sensor.ev9_locked']['raw_state']),
+                         ('unlocked', 'on'))
+        self.assertEqual(rows['binary_sensor.ev9_front_left_door']['state'], 'closed')
+        self.assertEqual(rows['binary_sensor.ev9_engine']['state'], 'not running')
+        self.assertEqual(rows['binary_sensor.ev9_defrost']['state'], 'off', 'no device_class, no translation')
+        self.assertNotIn('raw_state', rows['binary_sensor.ev9_defrost'])
+        self.assertEqual(rows['device_tracker.ev9_location']['state'], 'home')
+        read = self.run_tool(action='read', entity_id='binary_sensor.ev9_locked')['entity']
+        self.assertEqual((read['state'], read['raw_state']), ('unlocked', 'on'))
+        self.assertEqual(self.run_tool(action='read', entity_id='lock.front_door')['entity']['state'], 'locked')
+        self.assertEqual(self.run_tool(action='read', entity_id='light.office_lamp')['entity']['state'], 'on')
+        cand = self.run_tool(action='find', query='ev9 locked')['candidates'][0]
+        self.assertEqual((cand['entity_id'], cand['state']), ('binary_sensor.ev9_locked', 'unlocked'))
+
+    def test_a_plural_word_finds_the_singular_name(self):
+        ids = [c['entity_id'] for c in self.run_tool(action='find', query='kia doors')['candidates']]
+        self.assertIn('binary_sensor.ev9_front_left_door', ids)
+        self.assertEqual(self.run_tool(action='find', query='office lamps')['candidates'][0]['entity_id'],
+                         'light.office_lamp')
 
     def test_the_tool_and_the_prompt_say_a_device_is_many_sensors(self):
         tool = next(t for t in agent_tools_v2.get_available_tools() if t['name'] == 'house')

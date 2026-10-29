@@ -49,6 +49,36 @@ def _catalogue():
     return out
 
 
+# What a binary sensor's on/off MEANS, by HA device_class (HA's own frontend words).
+# Live 2026-10-29: the Kia's 'Locked' sensor read on while the car was unlocked.
+BINARY_WORDS = {
+    'battery': ('low', 'normal'), 'battery_charging': ('charging', 'not charging'),
+    'carbon_monoxide': ('detected', 'clear'), 'cold': ('cold', 'normal'),
+    'connectivity': ('connected', 'disconnected'), 'door': ('open', 'closed'),
+    'garage_door': ('open', 'closed'), 'gas': ('detected', 'clear'), 'heat': ('hot', 'normal'),
+    'light': ('light detected', 'no light'), 'lock': ('unlocked', 'locked'), 'moisture': ('wet', 'dry'),
+    'motion': ('detected', 'clear'), 'moving': ('moving', 'not moving'), 'occupancy': ('occupied', 'clear'),
+    'opening': ('open', 'closed'), 'plug': ('plugged in', 'unplugged'), 'power': ('on', 'off'),
+    'presence': ('home', 'away'), 'problem': ('problem', 'ok'), 'running': ('running', 'not running'),
+    'safety': ('unsafe', 'safe'), 'smoke': ('detected', 'clear'), 'sound': ('detected', 'clear'),
+    'tamper': ('tampered', 'clear'), 'update': ('update available', 'up to date'),
+    'vibration': ('detected', 'clear'), 'window': ('open', 'closed'),
+}
+
+
+def _shown(entity):
+    """The state as HA shows it: a binary sensor's on/off becomes the word its device_class
+    means ('on' + lock = unlocked); `raw_state` keeps HA's value when they differ."""
+    state = entity['_state'].get('state')
+    if entity['domain'] == 'binary_sensor' and state in ('on', 'off'):
+        words = BINARY_WORDS.get((entity['_state'].get('attributes') or {}).get('device_class'))
+        if words:
+            shown = words[0] if state == 'on' else words[1]
+            if shown != state:
+                return {'state': shown, 'raw_state': state}
+    return {'state': state}
+
+
 def _measure(entity):
     """What makes a sensor's number readable: its unit and HA device class, when it has them."""
     attrs = entity['_state'].get('attributes') or {}
@@ -61,7 +91,7 @@ def _measure(entity):
 
 
 def _candidate(entity):
-    row = {**{k: entity[k] for k in ('entity_id', 'name', 'domain', 'state', 'aliases')},
+    row = {**{k: entity[k] for k in ('entity_id', 'name', 'domain', 'aliases')}, **_shown(entity),
            'ha_area': entity['area'], **_measure(entity)}
     attrs = entity['_state'].get('attributes') or {}
     if entity['domain'] == 'remote' and 'activity_list' in attrs:
@@ -97,7 +127,7 @@ def _device_groups(ranked, catalogue):
     for device_id, (best, count) in ordered:
         members = sorted((e for e in catalogue if e.get('_device_id') == device_id),
                          key=lambda e: (_DOMAIN_ORDER.get(e['domain'], 20), e['name'], e['entity_id']))
-        rows = [{'entity_id': e['entity_id'], 'name': e['name'], 'domain': e['domain'], 'state': e['state'],
+        rows = [{'entity_id': e['entity_id'], 'name': e['name'], 'domain': e['domain'], **_shown(e),
                  **_measure(e)} for e in members[:per]]
         first = members[0]
         group = {'device': first.get('_device_name') or first['name'],
@@ -108,8 +138,12 @@ def _device_groups(ranked, catalogue):
     return out
 
 
+def _singular(word):
+    return word[:-1] if len(word) > 3 and word.endswith('s') and not word.endswith('ss') else word
+
+
 def _score(query, names):
-    tokens = set(query.split())
+    tokens = {_singular(w) for w in query.split()}   # 'doors' finds 'Front Left Door'
     best = 0.0
     for name in names:
         name = _words(name)
@@ -117,7 +151,7 @@ def _score(query, names):
             continue
         if query == name:
             return 1.0
-        name_tokens = set(name.split())
+        name_tokens = {_singular(w) for w in name.split()}
         if tokens and tokens <= name_tokens:
             # Every word said is in the name: 'powerwall' fits 'Powerwall Percentage charged'
             # as well as 'Powerwall Version'; a long name must not lose to a short one, and
@@ -195,7 +229,7 @@ def _read(entity, catalogue=None):
         if len(attributes) == 30:
             break
     out = {'entity_id': entity['entity_id'], 'name': entity['name'], 'ha_area': entity['area'],
-           'state': state.get('state'), 'attributes': attributes,
+           **_shown(entity), 'attributes': attributes,
            'last_changed': state.get('last_changed'), **_brightness(state),
            'exposed': bool(ha_api.get_exposed().get(entity['entity_id']))}
     faces = _tv_faces(entity, catalogue or [])
