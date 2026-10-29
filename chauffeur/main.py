@@ -19135,6 +19135,21 @@ def argyle_gaps_list(status: str = 'open'):
     return {'status': 'success', 'gaps': argyle_gaps.list_gaps(status)}
 
 
+@app.post("/api/argyle/gaps")
+def argyle_gaps_add(body: dict = Body(default={}), request: Request = None):
+    """A person's own note: what Argyle got wrong or could not do, typed on the People page."""
+    from services import argyle_gaps
+    text = ' '.join(str(body.get('text') or '').split())
+    if not text:
+        raise HTTPException(status_code=400, detail='Say what Argyle got wrong.')
+    row = argyle_gaps.record(body.get('kind') if body.get('kind') in ('wrong', 'cannot', 'unhelpful') else 'wrong',
+                             asked=text, source='page', acting_member=_memory_actor(request, body.get('member_id')),
+                             message=text, detail='noted by a person on the People page')
+    if not row:
+        raise HTTPException(status_code=500, detail='Could not note that.')
+    return {'status': 'success', 'gap': row}
+
+
 @app.post("/api/argyle/gaps/{gap_id}/status")
 def argyle_gaps_status(gap_id: str, body: dict = Body(default={})):
     from services import argyle_gaps

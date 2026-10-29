@@ -140,6 +140,54 @@ class ArgyleGapsTests(unittest.TestCase):
         self.assertEqual(len(rows), 1, rows)
         self.assertEqual(rows[0]['message'], 'no irrigation tool')
 
+    def test_the_ways_argyle_says_it_cannot_all_count_and_plain_answers_never_do(self):
+        for said in ("I don't have a tool for that.", "There is no way to water the garden from here.",
+                     "That isn't possible yet.", "I've made a note of it.", "I noted that for the developer.",
+                     "Sorry, I'm unable to start the car."):
+            with storage.db_lock:
+                storage.argyle_gaps_table.truncate()
+            _route('do the thing', [{'tool_calls': [], 'message': said}], acting_member=PARENT)
+            self.assertEqual([r['kind'] for r in argyle_gaps.list_gaps()], ['cannot'], said)
+        for said in ('The hall light is on.', 'Lily has soccer at four.', 'Done, the garage is closed.'):
+            with storage.db_lock:
+                storage.argyle_gaps_table.truncate()
+            _route('do the thing', [{'tool_calls': [], 'message': said}], acting_member=PARENT)
+            self.assertEqual(argyle_gaps.list_gaps(), [], said)
+
+    def test_claiming_to_remember_without_the_memory_tool_is_a_gap(self):
+        """Device 2026-10-29: Argyle said it had remembered and no memory row appeared; the tool
+        never ran. The claim leaves a gap row so the lie is visible."""
+        _route('remember that I like short answers', [
+            {'tool_calls': [], 'message': "Got it, I'll remember that you like short answers."}], acting_member=PARENT)
+        rows = argyle_gaps.list_gaps()
+        self.assertEqual([(r['kind'], r['tool']) for r in rows], [('unhelpful', 'memory')], rows)
+        self.assertEqual(rows[0]['detail'], 'claimed to remember without the memory tool')
+        with storage.db_lock:
+            storage.argyle_gaps_table.truncate()
+        _route('remember that I like short answers', [
+            {'tool_calls': [{'name': 'memory', 'arguments': {'action': 'remember', 'text': 'likes short answers'}}], 'message': ''},
+            {'tool_calls': [], 'message': 'Remembered: likes short answers.'}], acting_member=PARENT)
+        self.assertEqual(argyle_gaps.list_gaps(), [], 'the tool ran; no gap')
+        self.assertEqual([m['text'] for m in argyle_memory.list_memories()], ['likes short answers'])
+
+    def test_a_person_notes_a_gap_by_hand_on_the_people_page(self):
+        from fastapi.testclient import TestClient
+        import main
+        parent = {'X-Member-Token': storage.create_member_token('m_mom')}
+        kid = {'X-Member-Token': storage.create_member_token('m_lily')}
+        with patch.object(storage, 'get_settings', return_value={**storage.get_settings(), 'auth_enforce': True}):
+            client = TestClient(main.app)
+            self.assertIn(client.post('/api/argyle/gaps', json={'text': 'x'}, headers=kid).status_code, (401, 403))
+            r = client.post('/api/argyle/gaps', json={'text': 'It said the doors were locked; the Kia was open.'}, headers=parent)
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertEqual(client.post('/api/argyle/gaps', json={'text': '  '}, headers=parent).status_code, 400)
+        rows = argyle_gaps.list_gaps()
+        self.assertEqual((rows[0]['kind'], rows[0]['source'], rows[0]['who_name']), ('wrong', 'page', 'Lorena'))
+        self.assertIn('Kia was open', rows[0]['asked'])
+        src = open('templates/config.html', encoding='utf-8').read()
+        self.assertIn("fetch('/api/argyle/gaps', {method: 'POST'", src, 'no hand path to note a gap')
+        self.assertIn('Could not load the gaps', src, 'a refused list must say so, never read as empty')
+
     def test_a_turn_with_only_good_results_records_nothing(self):
         _route('find the hall light', [
             {'tool_calls': [{'name': 'house', 'arguments': {'action': 'find', 'query': 'hall light'}}], 'message': ''},

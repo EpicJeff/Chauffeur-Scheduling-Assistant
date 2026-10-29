@@ -1324,10 +1324,18 @@
                     <!-- Where Argyle fell short (services/argyle_gaps.py). The hand path: a parent sees
                          every gap Argyle hit, marks one fixed by version, dismisses one, copies the note. -->
                     <details id="argyle-gaps" class="mb-6 bg-gray-900/50 rounded-xl border border-gray-700"
-                        x-data="{ rows: [], which: 'open', copied: false,
+                        x-data="{ rows: [], which: 'open', copied: false, problem: '', text: '',
                                   async load() {
-                                      try { const r = await fetch('/api/argyle/gaps?status=' + this.which); const j = await r.json(); this.rows = j.gaps || []; }
-                                      catch (e) { this.rows = []; }
+                                      this.problem = '';
+                                      try { const r = await fetch('/api/argyle/gaps?status=' + this.which);
+                                            if (!r.ok) { this.problem = 'Could not load the gaps (HTTP ' + r.status + ').'; this.rows = []; return; }
+                                            const j = await r.json(); this.rows = j.gaps || []; }
+                                      catch (e) { this.problem = 'Could not load the gaps (' + (e && e.message || 'network') + ').'; this.rows = []; }
+                                  },
+                                  async add() {
+                                      const t = this.text.trim(); if (!t) return;
+                                      const r = await fetch('/api/argyle/gaps', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text: t})});
+                                      if (r.ok) { this.text = ''; this.which = 'open'; await this.load(); } else { showGlobalAlert('Could not note that (HTTP ' + r.status + ').'); }
                                   },
                                   async setStatus(row, status) {
                                       let version = '';
@@ -1362,9 +1370,15 @@
                                 </button>
                                 <span class="text-gray-500 text-xs" x-text="rows.length + ' gap' + (rows.length === 1 ? '' : 's')"></span>
                             </div>
-                            <template x-if="!rows.length">
+                            <p class="text-red-300 text-xs" x-show="problem" x-text="problem"></p>
+                            <template x-if="!rows.length && !problem">
                                 <p class="text-gray-500 text-xs">Nothing here.</p>
                             </template>
+                            <div class="flex gap-2">
+                                <input type="text" x-model="text" @keydown.enter.prevent="add()" placeholder="Note something Argyle got wrong or could not do"
+                                    class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white">
+                                <button type="button" class="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-sm" @click="add()">Note it</button>
+                            </div>
                             <ul class="space-y-2">
                                 <template x-for="row in rows" :key="row.id">
                                     <li class="bg-gray-900 rounded-xl p-3 space-y-1">
@@ -1392,9 +1406,13 @@
                     </details>
                     <details id="argyle-memory" class="mb-6 bg-gray-900/50 rounded-xl border border-gray-700"
                         x-data="{ rows: [], text: '',
+                                  problem: '',
                                   async load() {
-                                      try { const r = await fetch('/api/argyle/memories'); const j = await r.json(); this.rows = j.memories || []; }
-                                      catch (e) { this.rows = []; }
+                                      this.problem = '';
+                                      try { const r = await fetch('/api/argyle/memories');
+                                            if (!r.ok) { this.problem = 'Could not load the memories (HTTP ' + r.status + ').'; this.rows = []; return; }
+                                            const j = await r.json(); this.rows = j.memories || []; }
+                                      catch (e) { this.problem = 'Could not load the memories (' + (e && e.message || 'network') + ').'; this.rows = []; }
                                   },
                                   async add() {
                                       const t = this.text.trim(); if (!t) return;
@@ -1415,7 +1433,8 @@
                             <p class="text-gray-400">When a parent or adult corrects Argyle ("no, the doors means the
                                 entry doors") or says "remember", it keeps a row here and follows it on every surface:
                                 typed, on a phone, or spoken. A child's correction is answered, never kept.</p>
-                            <template x-if="!rows.length">
+                            <p class="text-red-300 text-xs" x-show="problem" x-text="problem"></p>
+                            <template x-if="!rows.length && !problem">
                                 <p class="text-gray-500 text-xs">Nothing taught yet.</p>
                             </template>
                             <ul class="space-y-2">

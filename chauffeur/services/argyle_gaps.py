@@ -33,9 +33,14 @@ logger = logging.getLogger(__name__)
 # Device 2026-10-29: Argyle SAID it would note a gap for the developer and never called
 # report_gap. Saying you cannot is itself the signal; the router records it when no call
 # was made, so a parroted promise still leaves a row.
-CANNOT_RE = re.compile(r"\b(can'?t|cannot|unable|not able|no way to|don'?t have a way|isn'?t something i can|"
-                       r"not something i can|note (?:it|that|this) for the developer|noted for the developer|"
-                       r"i(?:'ll| will) (?:make a )?note)\b", re.IGNORECASE)
+CANNOT_RE = re.compile(
+    r"\b(can'?t|cannot|unable|not able|no way to|there(?:'s| is) no way|don'?t have (?:a|the) (?:way|tool|ability)|"
+    r"no tool|isn'?t (?:something i can|possible)|not something i can|beyond what i can|"
+    r"note (?:it|that|this) for the developer|noted (?:it|that|this|for)|i(?:'ll| will|'ve| have) (?:made |make )?(?:a )?note[ds]?|"
+    r"made a note)\b", re.IGNORECASE)
+# Device 2026-10-29: Argyle said it had remembered something and the memory tool never ran.
+MEMORY_CLAIM_RE = re.compile(r"\b(i(?:'ll| will|'ve| have)? ?remember(?:ed)?|remembered|i(?:'ll| will) keep that in mind|"
+                             r"noted your preference|i(?:'ve| have) noted that)\b", re.IGNORECASE)
 
 KINDS = ('tool_error', 'no_tool', 'no_answer', 'cannot', 'wrong', 'unhelpful', 'taught')
 STATUSES = ('open', 'fixed', 'dismissed')
@@ -105,6 +110,10 @@ def record_turn(asked='', source='', acting_member=None, executed_results=None, 
         if not reported and not no_answer and agent_message and CANNOT_RE.search(str(agent_message)):
             record('cannot', asked=asked, source=source, acting_member=acting_member,
                    message=str(agent_message)[:300], detail='said without report_gap')
+        remembered = any(str(sig).startswith('memory:') for sig in (executed_results or {}))
+        if not remembered and agent_message and MEMORY_CLAIM_RE.search(str(agent_message)):
+            record('unhelpful', asked=asked, source=source, acting_member=acting_member, tool='memory',
+                   message=str(agent_message)[:300], detail='claimed to remember without the memory tool')
         for sig, res in (executed_results or {}).items():
             tool = str(sig).split(':', 1)[0]
             if tool == 'report_gap' or not isinstance(res, dict):
