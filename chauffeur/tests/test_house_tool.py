@@ -76,6 +76,12 @@ def _states():
         {'entity_id': 'lock.front_door', 'state': 'locked', 'last_changed': '2026-10-27T07:00:00+00:00',
          'attributes': {'friendly_name': 'Front Door'}},
         # Live 2026-10-29: a house lock that is offline; "are all the doors locked" must say so.
+        # Live 2026-10-29: locks named Pool House Kitchen / Pool House Changing Room with NO HA area were
+        # 'not associated with the pool house'. A name that starts with a room's name is in that room.
+        {'entity_id': 'lock.pool_house_kitchen', 'state': 'unlocked', 'last_changed': '2026-10-27T07:00:00+00:00',
+         'attributes': {'friendly_name': 'Pool House Kitchen'}},
+        {'entity_id': 'light.pool_house_deck', 'state': 'off', 'last_changed': '2026-10-27T07:00:00+00:00',
+         'attributes': {'friendly_name': 'Deck'}},
         {'entity_id': 'lock.pool_house', 'state': 'unavailable', 'last_changed': '2026-10-27T07:00:00+00:00',
          'attributes': {'friendly_name': 'Pool House'}},
         {'entity_id': 'cover.main_garage', 'state': 'closed', 'last_changed': '2026-10-27T06:00:00+00:00',
@@ -163,6 +169,10 @@ REGISTRY = [
      'area_id': 'hall', 'device_id': None, 'hidden_by': None, 'disabled_by': None, 'platform': 'hue'},
     {'entity_id': 'lock.front_door', 'name': None, 'original_name': 'Front Door', 'aliases': [],
      'area_id': 'hall', 'device_id': None, 'hidden_by': None, 'disabled_by': None, 'platform': 'august'},
+    {'entity_id': 'lock.pool_house_kitchen', 'name': None, 'original_name': 'Pool House Kitchen', 'aliases': [],
+     'area_id': None, 'device_id': None, 'hidden_by': None, 'disabled_by': None, 'platform': 'august'},
+    {'entity_id': 'light.pool_house_deck', 'name': None, 'original_name': 'Deck', 'aliases': [],
+     'area_id': 'pool_house', 'device_id': None, 'hidden_by': None, 'disabled_by': None, 'platform': 'hue'},
     {'entity_id': 'lock.pool_house', 'name': None, 'original_name': 'Pool House', 'aliases': [],
      'area_id': None, 'device_id': None, 'hidden_by': None, 'disabled_by': None, 'platform': 'august'},
     {'entity_id': 'cover.main_garage', 'name': None, 'original_name': 'Main Garage', 'aliases': [],
@@ -230,6 +240,8 @@ AREAS = [
                                                               'remote.living_room']},
     {'id': 'front_yard', 'name': 'Front Yard', 'entities': ['light.front_porch_column_1']},
     {'id': 'hall', 'name': 'Hall', 'entities': ['light.hall', 'lock.front_door']},
+    {'id': 'pool_house', 'name': 'Pool House', 'entities': ['light.pool_house_deck']},
+    {'id': 'pool', 'name': 'Pool', 'entities': []},
     {'id': 'garage', 'name': 'Garage', 'entities': ['cover.main_garage', 'device_tracker.ev9_location',
                                                     'sensor.garage_kia_ev9_geocoded_location',
                                                     *[f'binary_sensor.ev9_{k}' for k in EV9_PARTS],
@@ -499,6 +511,26 @@ class HouseToolTests(unittest.TestCase):
         self.assertIn(f'No doors reported by: {GLS_VIN}', doors['message'])
         self.assertEqual(self.calls, [])
 
+    def test_a_name_that_starts_with_a_rooms_name_is_in_that_room(self):
+        """Live 2026-10-29: "is the pool house locked" answered 'no locks in the pool house' for locks named
+        Pool House Kitchen and Pool House Changing Room that sat in no HA area. The name is enough: an
+        entity or device without an area whose name starts with a room's name is in that room, longest
+        room name first (Pool House before Pool), and HA's own assignment always wins."""
+        res = self.run_tool(action='find', query='pool house')
+        ids = [c['entity_id'] for c in res['candidates']]
+        self.assertIn('lock.pool_house_kitchen', ids, ids)
+        self.assertIn('light.pool_house_deck', ids, 'the room\'s assigned entity is still there')
+        row = next(c for c in res['candidates'] if c['entity_id'] == 'lock.pool_house_kitchen')
+        self.assertEqual(row['ha_area'], 'Pool House')
+        self.assertTrue(row['ha_area_inferred'], 'say when the room was read off the name, never off HA')
+        deck = next(c for c in res['candidates'] if c['entity_id'] == 'light.pool_house_deck')
+        self.assertNotIn('ha_area_inferred', deck)
+        cat = self.run_tool(action='read', query='is the pool house locked')['categories'][0]
+        self.assertEqual({r['entity_id'] for r in cat['entities']}, {'lock.pool_house_kitchen', 'lock.pool_house'})
+        self.assertIn('unlocked: Pool House Kitchen', cat['message'])
+        hall = self.run_tool(action='read', entity_id='light.hall')['entity']
+        self.assertEqual(hall['ha_area'], 'Hall')
+
     # --- a category is every such thing in the house (2026-10-29) --------------
     def test_are_all_the_doors_locked_tallies_every_lock_and_door(self):
         """Live 2026-10-29: "are all the doors locked" found ONE entity (the Kia's Door Lock, by name
@@ -509,12 +541,12 @@ class HouseToolTests(unittest.TestCase):
         cats = {c['category']: c for c in res['categories']}
         self.assertEqual(set(cats), {'door', 'lock'})
         lock_ids = {r['entity_id'] for r in cats['lock']['entities']}
-        self.assertEqual(lock_ids, {'lock.front_door', 'lock.pool_house', 'binary_sensor.ev9_locked',
-                                   f'binary_sensor.{GLS_VIN.lower()}_locked'})
+        self.assertEqual(lock_ids, {'lock.front_door', 'lock.pool_house', 'lock.pool_house_kitchen',
+                                   'binary_sensor.ev9_locked', f'binary_sensor.{GLS_VIN.lower()}_locked'})
         tally = cats['lock']['tally']
-        self.assertEqual(tally, {'locked': 2, 'unlocked': 1, 'unavailable': 1})
+        self.assertEqual(tally, {'locked': 2, 'unlocked': 2, 'unavailable': 1})
         msg = cats['lock']['message']
-        self.assertIn('unlocked: Kia EV9 Locked (car)', msg)
+        self.assertIn('unlocked: Pool House Kitchen, Kia EV9 Locked (car)', msg)
         self.assertIn('unavailable: Pool House', msg)
         self.assertIn('locked: Front Door', msg)
         door_ids = {r['entity_id'] for r in cats['door']['entities']}
@@ -529,9 +561,9 @@ class HouseToolTests(unittest.TestCase):
         self.assertEqual([r['entity_id'] for r in res['categories'][0]['entities']], ['light.office_lamp'])
         res = self.run_tool(action='find', query='the lights')
         ids = {r['entity_id'] for r in res['categories'][0]['entities']}
-        self.assertEqual(ids, {'light.office_lamp', 'light.front_porch_column_1', 'light.hall'})
-        self.assertEqual(res['categories'][0]['tally'], {'on': 1, 'off': 2})
-        self.assertIn('off: Front Porch Column 1, Hall Light', res['categories'][0]['message'])
+        self.assertEqual(ids, {'light.office_lamp', 'light.front_porch_column_1', 'light.hall', 'light.pool_house_deck'})
+        self.assertEqual(res['categories'][0]['tally'], {'on': 1, 'off': 3})
+        self.assertIn('off: Front Porch Column 1, Hall Light, Deck', res['categories'][0]['message'])
         res = self.run_tool(action='find', query='kitchen lights')
         self.assertEqual(res['categories'][0]['entities'], [], 'no light in a room that has none; never the whole house instead')
         self.assertIn('no lights', res['categories'][0]['message'])

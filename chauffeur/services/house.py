@@ -65,8 +65,35 @@ def _catalogue():
             e['_own'].append(phrase)
             e['_names'].append(phrase)
             e['aliases'].append(phrase)
+    _infer_areas(out, list(area_names.values()))
     _mark_kinds(out)
     return out
+
+
+def _infer_areas(catalogue, room_names):
+    """Live 2026-10-29: locks named Pool House Kitchen and Pool House Changing Room sat in no
+    HA area and were 'not associated with the pool house'. An entity (or its device) without an
+    area whose name starts with a room's name is in that room; the longest room name wins (Pool
+    House before Pool); HA's own assignment always wins over the name."""
+    rooms = sorted(((_words(n), n) for n in room_names if _words(n)), key=lambda p: -len(p[0]))
+    if not rooms:
+        return
+
+    def room_for(*names):
+        for name in names:
+            words = _words(name)
+            for key, room in rooms:
+                if words == key or words.startswith(key + ' '):
+                    return room
+        return ''
+    for e in catalogue:
+        if not e['area']:
+            room = room_for(e['name'], e.get('_device_name') or '')
+            if room:
+                e['area'] = room
+                e['_area_inferred'] = True
+        if not e.get('_device_area') and e.get('_device_name'):
+            e['_device_area'] = room_for(e['_device_name']) or e['area']
 
 
 KIND_WORDS = {'car': ('car', 'cars', 'vehicle', 'vehicles', 'auto'), 'tv': ('tv', 'tvs', 'television', 'televisions')}
@@ -249,6 +276,8 @@ def _measure(entity):
 def _candidate(entity):
     row = {**{k: entity[k] for k in ('entity_id', 'name', 'domain', 'aliases')}, **_shown(entity),
            'ha_area': entity['area'], **_measure(entity)}
+    if entity.get('_area_inferred'):
+        row['ha_area_inferred'] = True   # read off the name, not HA's registry
     attrs = entity['_state'].get('attributes') or {}
     if entity['domain'] == 'remote' and 'activity_list' in attrs:
         row['apps'] = list(attrs.get('activity_list') or [])   # an Android TV: what it can open
