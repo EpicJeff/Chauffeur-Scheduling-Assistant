@@ -188,6 +188,7 @@ def process_agent_request(user_prompt: str, context: Optional[Dict] = None, hist
     them at dispatch and never shown to the model as a parameter.
     """
     from services import access
+    asked = user_prompt   # the person's words, before history is folded in; the gap log's view
     if source == 'voice':
         from services.voice_identity import VoiceContext
         if not isinstance(voice_context, VoiceContext):
@@ -220,6 +221,11 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
     # surface's prompt, and the model is told to remember a parent's correction unasked.
     from services import argyle_memory
     system_prompt += argyle_memory.prompt_block()
+    system_prompt += ("WHEN YOU CANNOT: before you tell anyone you cannot do something, that nothing covers it, or "
+                      "that you do not know how, call report_gap(kind='cannot') with their words and what was "
+                      "missing, then say plainly that you cannot do it yet and that it is noted. When a person says "
+                      "your last answer was wrong, call report_gap(kind='wrong') and answer again from the tools. "
+                      "Never say you cannot without that call.\n")
     system_prompt += ("When a parent or adult corrects you (what a word means, which thing they meant, how to "
                       "answer) or says 'remember', call memory(action='remember') in the same turn, unasked, and "
                       "say what you remembered; a child's correction is answered, never stored.\n")
@@ -749,6 +755,12 @@ sending or claiming, and never pass from_member/member_name for them.
                 round_all_terminal = False
                 continue
 
+            if func_name == 'report_gap':
+                # What was asked, where, and what Argyle had just said are the router's to
+                # give; a model-authored 'asked' is dropped (services/argyle_gaps.py).
+                from services import argyle_gaps as _gaps
+                args = {**{k: v for k, v in (args or {}).items() if k not in ('asked', 'prior', 'source')},
+                        'asked': asked, 'prior': _gaps.prior_tail(history), 'source': source}
             res = {"error": f"Unknown tool: {func_name}"}
             tool_start = _time.time()
             from services.agent_tools_v2 import _calendar_viewer, calendar_viewer
@@ -1051,7 +1063,8 @@ sending or claiming, and never pass from_member/member_name for them.
                                    "start_ask", "mark_ask_sent", "answer_ask", "search_mail", "read_mail",
                                    "start_mission_for", "start_project", "find_in_chauffeur",
                                    "list_projects", "get_project", "add_project_step",
-                                   "add_to_project", "set_project_state", "set_step_state", "memory"):
+                                   "add_to_project", "set_project_state", "set_step_state", "memory",
+                                   "report_gap"):
                     from services import agent_tools_v2 as _atv2, situations as _sit, access
                     # Resolve identity here, never from model arguments. Reads
                     # without a person use HOUSE, piece writes HOUSE_PARENT.
@@ -1534,6 +1547,15 @@ sending or claiming, and never pass from_member/member_name for them.
         agent_message = ("I couldn't line this step up without doing it myself, "
                          "so I did nothing. It needs a person, or a differently "
                          "worded step.")
+    # WHERE ARGYLE FELL SHORT. 2026-10-29: a tool error vanished into the reply, an unknown
+    # tool was a dict nobody stored, a turn with no answer left no trace. The router's own
+    # view of the turn is recorded (services/argyle_gaps.py); it never changes the reply.
+    try:
+        from services import argyle_gaps as _gaps
+        _gaps.record_turn(asked=asked, source=source, acting_member=acting_member,
+                          executed_results=executed_results, no_answer=agent_message == DEFAULT_AGENT_MESSAGE)
+    except Exception:
+        logger.exception('[gaps] could not record the turn')
     return {
         "status": "error" if agent_message == DEFAULT_AGENT_MESSAGE else "success",
         "message": ("I couldn't finish an answer to that request. Please try again."

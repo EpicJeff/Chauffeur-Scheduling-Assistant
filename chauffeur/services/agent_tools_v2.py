@@ -1383,6 +1383,15 @@ def memory(action='remember', text='', kind='preference', phrase='', entity_ids=
                                 memory_id=memory_id, acting_member=acting_member, source=source or 'chat')
 
 
+def report_gap(what_was_asked='', what_was_missing='', kind='cannot', asked='', prior='',
+               acting_member=None, voice_context=None, source=None, focus_key=None, spoken=False):
+    """The model's note of a gap (services/argyle_gaps.py). `asked` and `prior` are the
+    router's: the person's words and Argyle's last answer, never the model's claim."""
+    from services import argyle_gaps
+    return argyle_gaps.report(what_was_asked=what_was_asked, what_was_missing=what_was_missing, kind=kind,
+                              asked=asked, prior=prior, acting_member=acting_member, source=source or 'chat')
+
+
 def announce_to_room(room: str, message: str, recipient_name: str = None,
                      sender_driver_id: str = None, from_member: str = None) -> Dict[str, Any]:
     """Speak in a room over HA (services/announce.py owns the how). Unlike the
@@ -5274,6 +5283,19 @@ def get_available_tools() -> List[Dict]:
                     "hours": {"type": "integer", "description": "History window, 1 to 168 hours; default 24."}
                 },
                 "required": ["action"]
+            }
+        },
+        {
+            "name": "report_gap",
+            "description": "Notes a gap for the family's developer. Call it BEFORE you tell a person you cannot do something, that no tool covers it, or that you do not know how (kind=cannot); when a person says your last answer was wrong (kind=wrong); or when you could only answer part of what was asked (kind=unhelpful). what_was_asked in their words, what_was_missing: the tool, data or ability you lacked. Then tell the person plainly that you cannot do it yet and that it is noted. Never say you cannot without calling this first.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string", "enum": ["cannot", "wrong", "unhelpful"]},
+                    "what_was_asked": {"type": "string", "description": "What the person wanted, in their words."},
+                    "what_was_missing": {"type": "string", "description": "The tool, data or ability you lacked, or what was wrong."}
+                },
+                "required": ["kind", "what_was_missing"]
             }
         },
         {
@@ -9363,6 +9385,10 @@ def handle_memory(args: dict, actor=None) -> dict:
     return memory(**args, acting_member=actor)
 
 
+def handle_report_gap(args: dict, actor=None) -> dict:
+    return report_gap(**args, acting_member=actor)
+
+
 def handle_get_calendar_events(args: dict, actor=None) -> dict:
     return get_calendar_events(args.get('start_date'), args.get('end_date'))
 
@@ -9513,6 +9539,7 @@ def handle_propose_program(args: dict, actor=None, focus_key=None) -> dict:
 TOOL_HANDLERS = {
     'house': handle_house,
     'memory': handle_memory,
+    'report_gap': handle_report_gap,
     'music': handle_music,
     "answer_occasion_question": handle_answer_occasion_question,
     "stamp_occasion_template": handle_stamp_occasion_template,

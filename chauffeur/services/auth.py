@@ -385,6 +385,10 @@ RULES = [
     # What the family taught Argyle (services/argyle_memory.py): a parent's list.
     (ANY, '/api/argyle/memories', PARENTS, None),
     (ANY, '/api/argyle/memories/*', PARENTS, None),
+    # Where Argyle fell short (services/argyle_gaps.py): a parent's list and note.
+    (ANY, '/api/argyle/gaps', PARENTS, None),
+    (ANY, '/api/argyle/gaps.md', PARENTS, None),
+    (ANY, '/api/argyle/gaps/*', PARENTS, None),
     (ANY, '/api/errands/*', SIGNED_IN, 'lists.errands'),
     (ANY, '/api/overrides/*', SIGNED_IN, 'schedule.assignment'),
     (ANY, '/api/occasions/*', SIGNED_IN, 'occasions'),

@@ -19121,6 +19121,29 @@ def argyle_memories_forget(memory_id: str, request: Request = None):
     return res
 
 
+@app.get("/api/argyle/gaps.md")
+def argyle_gaps_markdown(status: str = 'open'):
+    """The gap list as a note to paste to whoever fixes the tools."""
+    from fastapi.responses import PlainTextResponse
+    from services import argyle_gaps
+    return PlainTextResponse(argyle_gaps.report_markdown(status), media_type='text/markdown; charset=utf-8')
+
+
+@app.get("/api/argyle/gaps")
+def argyle_gaps_list(status: str = 'open'):
+    from services import argyle_gaps
+    return {'status': 'success', 'gaps': argyle_gaps.list_gaps(status)}
+
+
+@app.post("/api/argyle/gaps/{gap_id}/status")
+def argyle_gaps_status(gap_id: str, body: dict = Body(default={})):
+    from services import argyle_gaps
+    res = argyle_gaps.set_status(gap_id, body.get('status') or '', version=body.get('version') or '')
+    if res.get('status') != 'success':
+        raise HTTPException(status_code=400, detail=res.get('message'))
+    return res
+
+
 @app.get("/api/cancellations")
 def list_cancellations(days: int = 60, include_restored: bool = True):
     """The record the old delete-it workflow never kept: what was called

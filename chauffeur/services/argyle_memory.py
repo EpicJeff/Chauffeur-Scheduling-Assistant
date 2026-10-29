@@ -104,6 +104,15 @@ def remember(text='', kind='preference', phrase='', entity_ids=None, acting_memb
            'by': acting_member.get('id'), 'by_name': acting_member.get('name') or acting_member.get('id'),
            'source': source or 'chat', 'ts': time.time()}
     storage.add_argyle_memory(row)
+    if kind == 'vocabulary':
+        # A phrase the house did not understand is a gap the family closed by hand;
+        # kept so the fix can be generalised (services/argyle_gaps.py).
+        try:
+            from services import argyle_gaps
+            argyle_gaps.record('taught', asked=f"'{phrase}'", source=source or 'chat', acting_member=acting_member,
+                               tool='house', message=text, detail=', '.join(entity_ids))
+        except Exception:
+            pass
     what = f"'{phrase}' means {text}" if kind == 'vocabulary' else text
     return {'status': 'success', 'memory': row, 'message': f'Remembered: {what}.'}
 

@@ -470,6 +470,8 @@ with db_lock:
     event_cancellations_table = db.table('event_cancellations')
     # What the family taught Argyle (services/argyle_memory.py): rows, not a blob.
     argyle_memories_table = db.table('argyle_memories')
+    # Where Argyle fell short (services/argyle_gaps.py): recorded, not noticed.
+    argyle_gaps_table = db.table('argyle_gaps')
     # Ride groups: occurrences the family grouped by hand to ride together
     # (services/ride_groups.py). Own table for the optional-decisions reason:
     # an instance config would shadow the series config wholesale.
@@ -2779,6 +2781,21 @@ def delete_argyle_memory(memory_id: str) -> None:
     with db_lock:
         deletion.check()
         argyle_memories_table.remove(Query().id == memory_id)
+
+def get_argyle_gaps() -> List[dict]:
+    with db_lock:
+        return [dict(r) for r in argyle_gaps_table.all()]
+
+def add_argyle_gap(rec: dict) -> dict:
+    with db_lock:
+        deletion.check()
+        argyle_gaps_table.insert(dict(rec))
+    return rec
+
+def update_argyle_gap(gap_id: str, patch: dict) -> None:
+    with db_lock:
+        deletion.check()
+        argyle_gaps_table.update(dict(patch), Query().id == gap_id)
 
 def restore_event_cancellation(google_ids, date: str) -> Optional[dict]:
     """Mark the active row restored (never delete — the record is the point).

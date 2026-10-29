@@ -5,7 +5,8 @@ from services.voice_identity import VoiceContext, _revision, voice_names
 TOOLS = frozenset({'get_calendar_events', 'get_travel_time', 'assign_driver_to_event_fuzzy',
                    'remove_override_for_event_fuzzy', 'get_shopping_list_items',
                    'add_shopping_items', 'check_off_shopping_item', 'send_family_message', 'send_direct_message',
-                   'find_in_chauffeur', 'start_project', 'prepare_voice_approval', 'house', 'music', 'memory'})
+                   'find_in_chauffeur', 'start_project', 'prepare_voice_approval', 'house', 'music', 'memory',
+                   'report_gap'})
 MUTATIONS = frozenset({'assign_driver_to_event_fuzzy', 'remove_override_for_event_fuzzy',
                        'add_shopping_items', 'check_off_shopping_item'})
 
@@ -80,6 +81,11 @@ def dispatch(name, args, ctx: VoiceContext, focus_key=None):
         if args.get('action') == 'play' and result.get('status') == 'success':
             record_action(ctx, 'music', ctx.verified_member(),
                           {'entity_id': result.get('entity_id'), 'item': result['item'].get('name')}, provenance)
+    elif name == 'report_gap':
+        # A gap is a gap whoever hit it; the voice need not be known.
+        result = tools.report_gap(**{k: v for k, v in args.items() if k in (
+            'kind', 'what_was_asked', 'what_was_missing', 'asked', 'prior')},
+            acting_member=ctx.verified_member() or ctx.member(), source='voice')
     elif name == 'memory':
         # Teaching is a parent's act; a verified voice is the only spoken proof of one.
         result = tools.memory(**{k: v for k, v in args.items() if k in (
