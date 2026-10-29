@@ -231,9 +231,11 @@ class ArgyleMemoryTests(unittest.TestCase):
             self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual([m['text'] for m in argyle_memory.list_memories()], ['Typed on the page'])
         src = open('templates/config.html', encoding='utf-8').read()
-        self.assertIn('/api/argyle/memories', src, 'no hand path on the People page')
-        self.assertNotIn('confirm(', src[src.index('/api/argyle/memories') - 2000:src.index('/api/argyle/memories') + 3000]
-                         .replace('promptConfirm(', ''), 'browser dialogs are banned')
+        self.assertIn("'api/argyle/memories'", src, 'no hand path on the People page')
+        block = src[src.index('<details id="argyle-memory"'):src.index('<details id="people"')]
+        self.assertNotIn("fetch('/api/", block, 'a root-relative URL leaves the add-on under HA ingress (device 2026-10-29)')
+        self.assertIn("this.base() + 'api/argyle/memories'", block)
+        self.assertNotIn('confirm(', block.replace('promptConfirm(', ''), 'browser dialogs are banned')
 
 
 if __name__ == '__main__':

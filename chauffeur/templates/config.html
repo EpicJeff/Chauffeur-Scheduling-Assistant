@@ -1325,27 +1325,28 @@
                          every gap Argyle hit, marks one fixed by version, dismisses one, copies the note. -->
                     <details id="argyle-gaps" class="mb-6 bg-gray-900/50 rounded-xl border border-gray-700"
                         x-data="{ rows: [], which: 'open', copied: false, problem: '', text: '',
+                                  base() { return window.location.pathname.endsWith('/') ? '../' : ''; },
                                   async load() {
                                       this.problem = '';
-                                      try { const r = await fetch('/api/argyle/gaps?status=' + this.which);
+                                      try { const r = await fetch(this.base() + 'api/argyle/gaps?status=' + this.which);
                                             if (!r.ok) { this.problem = 'Could not load the gaps (HTTP ' + r.status + ').'; this.rows = []; return; }
                                             const j = await r.json(); this.rows = j.gaps || []; }
                                       catch (e) { this.problem = 'Could not load the gaps (' + (e && e.message || 'network') + ').'; this.rows = []; }
                                   },
                                   async add() {
                                       const t = this.text.trim(); if (!t) return;
-                                      const r = await fetch('/api/argyle/gaps', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text: t})});
+                                      const r = await fetch(this.base() + 'api/argyle/gaps', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text: t})});
                                       if (r.ok) { this.text = ''; this.which = 'open'; await this.load(); } else { showGlobalAlert('Could not note that (HTTP ' + r.status + ').'); }
                                   },
                                   async setStatus(row, status) {
                                       let version = '';
                                       if (status === 'fixed') { version = await promptInput('Fixed in which version?', 'The version that closes this gap.', {placeholder: 'e.g. 2.499.721'}); if (version === null) return; }
                                       else if (!(await promptConfirm('Dismiss this gap?', row.asked || row.message, 'Dismiss', 'Keep'))) return;
-                                      const r = await fetch('/api/argyle/gaps/' + row.id + '/status', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({status: status, version: version || ''})});
+                                      const r = await fetch(this.base() + 'api/argyle/gaps/' + row.id + '/status', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({status: status, version: version || ''})});
                                       if (r.ok) await this.load(); else showGlobalAlert('Could not update that gap.');
                                   },
                                   async copyNote() {
-                                      try { const r = await fetch('/api/argyle/gaps.md?status=' + this.which); await navigator.clipboard.writeText(await r.text()); this.copied = true; setTimeout(() => this.copied = false, 2000); }
+                                      try { const r = await fetch(this.base() + 'api/argyle/gaps.md?status=' + this.which); await navigator.clipboard.writeText(await r.text()); this.copied = true; setTimeout(() => this.copied = false, 2000); }
                                       catch (e) { showGlobalAlert('Could not copy the note.'); }
                                   },
                                   when(row) { try { return new Date((row.last_at || 0) * 1000).toLocaleDateString(); } catch (e) { return ''; } } }"
@@ -1407,21 +1408,22 @@
                     <details id="argyle-memory" class="mb-6 bg-gray-900/50 rounded-xl border border-gray-700"
                         x-data="{ rows: [], text: '',
                                   problem: '',
+                                  base() { return window.location.pathname.endsWith('/') ? '../' : ''; },
                                   async load() {
                                       this.problem = '';
-                                      try { const r = await fetch('/api/argyle/memories');
+                                      try { const r = await fetch(this.base() + 'api/argyle/memories');
                                             if (!r.ok) { this.problem = 'Could not load the memories (HTTP ' + r.status + ').'; this.rows = []; return; }
                                             const j = await r.json(); this.rows = j.memories || []; }
                                       catch (e) { this.problem = 'Could not load the memories (' + (e && e.message || 'network') + ').'; this.rows = []; }
                                   },
                                   async add() {
                                       const t = this.text.trim(); if (!t) return;
-                                      const r = await fetch('/api/argyle/memories', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text: t})});
+                                      const r = await fetch(this.base() + 'api/argyle/memories', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text: t})});
                                       if (r.ok) { this.text = ''; await this.load(); } else { showGlobalAlert('Could not save that.'); }
                                   },
                                   async forget(row) {
                                       if (!(await promptConfirm('Forget this?', row.text, 'Forget', 'Keep'))) return;
-                                      const r = await fetch('/api/argyle/memories/' + row.id, {method: 'DELETE'});
+                                      const r = await fetch(this.base() + 'api/argyle/memories/' + row.id, {method: 'DELETE'});
                                       if (r.ok) await this.load(); else showGlobalAlert('Could not forget that.');
                                   },
                                   when(row) { try { return new Date((row.ts || 0) * 1000).toLocaleDateString(); } catch (e) { return ''; } } }"

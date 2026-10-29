@@ -185,7 +185,9 @@ class ArgyleGapsTests(unittest.TestCase):
         self.assertEqual((rows[0]['kind'], rows[0]['source'], rows[0]['who_name']), ('wrong', 'page', 'Lorena'))
         self.assertIn('Kia was open', rows[0]['asked'])
         src = open('templates/config.html', encoding='utf-8').read()
-        self.assertIn("fetch('/api/argyle/gaps', {method: 'POST'", src, 'no hand path to note a gap')
+        block = src[src.index('<details id="argyle-gaps"'):src.index('<details id="argyle-memory"')]
+        self.assertIn("'api/argyle/gaps', {method: 'POST'", block, 'no hand path to note a gap')
+        self.assertNotIn("fetch('/api/", block, 'a root-relative URL leaves the add-on under HA ingress (device 2026-10-29)')
         self.assertIn('Could not load the gaps', src, 'a refused list must say so, never read as empty')
 
     def test_a_turn_with_only_good_results_records_nothing(self):
@@ -280,8 +282,8 @@ class ArgyleGapsTests(unittest.TestCase):
             self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(argyle_gaps.list_gaps('fixed')[0]['fixed_version'], '2.499.721')
         src = open('templates/config.html', encoding='utf-8').read()
-        self.assertIn('/api/argyle/gaps', src, 'no hand path on the People page')
-        block = src[src.index('/api/argyle/gaps') - 3000:src.index('/api/argyle/gaps') + 4000]
+        self.assertIn("'api/argyle/gaps", src, 'no hand path on the People page')
+        block = src[src.index('<details id="argyle-gaps"'):src.index('<details id="argyle-memory"')]
         self.assertNotIn('confirm(', block.replace('promptConfirm(', ''), 'browser dialogs are banned')
         self.assertNotIn('prompt(', block.replace('promptInput(', '').replace('promptConfirm(', ''))
 
