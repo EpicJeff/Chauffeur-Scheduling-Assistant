@@ -40,6 +40,10 @@ POWERWALL = (
 # The EV9's 'Locked' sensor (device_class lock) reads on while the car is UNLOCKED.
 EV9_CLASS = {'engine': 'running', 'trunk': 'door', 'hood': 'door', 'front_left_door': 'door',
              'front_right_door': 'door', 'back_left_door': 'door', 'back_right_door': 'door', 'locked': 'lock'}
+# Live 2026-10-29: the Mercedes integration (mbapi2020) names the device by its VIN; only the device
+# registry's manufacturer and model say Mercedes and GLS.
+GLS_VIN = '4JGFF5KE8NA725308'
+GLS_PARTS = {'front_left_door': 'door', 'front_right_door': 'door', 'trunk': 'door', 'locked': 'lock'}
 EV9_ADDRESS = '12 Maple Lane, Example Township, Cary, Wake County, North Carolina, 27500, United States'
 
 
@@ -88,6 +92,17 @@ def _states():
                         'longitude': -78.915669, 'gps_accuracy': 0, 'in_zones': ['zone.home', 'zone.bus_stop']}},
         {'entity_id': 'sensor.garage_kia_ev9_geocoded_location', 'last_changed': '2026-10-27T14:13:16+00:00',
          'state': EV9_ADDRESS, 'attributes': {'friendly_name': 'Kia EV9 Geocoded Location'}},
+        *[{'entity_id': f'binary_sensor.{GLS_VIN.lower()}_{k}', 'state': 'off', 'last_changed': '2026-10-29T06:00:00+00:00',
+           'attributes': {'friendly_name': f'{GLS_VIN} {k.replace("_", " ").title()}', 'device_class': dc}}
+          for k, dc in GLS_PARTS.items()],
+        {'entity_id': f'device_tracker.{GLS_VIN.lower()}', 'state': 'home', 'last_changed': '2026-10-29T06:00:00+00:00',
+         'attributes': {'friendly_name': f'{GLS_VIN} Device Tracker', 'source_type': 'gps', 'latitude': 35.78, 'longitude': -78.91}},
+        {'entity_id': f'sensor.{GLS_VIN.lower()}_odometer', 'state': '45193.8', 'last_changed': '2026-10-29T06:00:00+00:00',
+         'attributes': {'friendly_name': f'{GLS_VIN} Odometer', 'unit_of_measurement': 'km', 'device_class': 'distance'}},
+        # Live 2026-10-29: a doorbell camera's 'Front Door Motion' outranked both cars for 'car doors'.
+        *[{'entity_id': f'binary_sensor.front_door_{k}', 'state': 'off', 'last_changed': '2026-10-29T06:00:00+00:00',
+           'attributes': {'friendly_name': f'Front Door {k.title()}', 'device_class': 'motion'}}
+          for k in ('motion', 'person', 'vehicle', 'package')],
         {'entity_id': 'device_tracker.van', 'state': 'not_home', 'last_changed': '2026-10-27T15:00:00+00:00',
          'last_updated': '2026-10-27T15:00:00+00:00',
          'attributes': {'friendly_name': 'Van', 'latitude': 35.79, 'longitude': -78.78, 'gps_accuracy': 12}},
@@ -160,7 +175,18 @@ REGISTRY = [
      'aliases': [], 'area_id': None, 'device_id': 'dev_ev9', 'hidden_by': None, 'disabled_by': None, 'platform': 'kia_uvo'},
     {'entity_id': 'device_tracker.van', 'name': None, 'original_name': 'Van', 'aliases': [],
      'area_id': None, 'device_id': 'dev_van', 'hidden_by': None, 'disabled_by': None, 'platform': 'mobile_app'},
-    *[{'entity_id': eid, 'name': None, 'original_name': name, 'aliases': [], 'area_id': None, 'device_id': None,
+    *[{'entity_id': f'binary_sensor.front_door_{k}', 'name': None, 'original_name': k.title(), 'aliases': [],
+       'area_id': 'front_yard', 'device_id': 'dev_doorbell', 'hidden_by': None, 'disabled_by': None, 'platform': 'reolink'}
+      for k in ('motion', 'person', 'vehicle', 'package')],
+    *[{'entity_id': eid, 'name': None, 'original_name': name, 'aliases': [], 'area_id': None, 'device_id': 'dev_gls',
+       'hidden_by': None, 'disabled_by': None, 'platform': 'mbapi2020'}
+      for eid, name in ((f'binary_sensor.{GLS_VIN.lower()}_{k}', k.replace('_', ' ').title()) for k in GLS_PARTS)],
+    {'entity_id': f'device_tracker.{GLS_VIN.lower()}', 'name': None, 'original_name': 'Device Tracker', 'aliases': [],
+     'area_id': None, 'device_id': 'dev_gls', 'hidden_by': None, 'disabled_by': None, 'platform': 'mbapi2020'},
+    {'entity_id': f'sensor.{GLS_VIN.lower()}_odometer', 'name': None, 'original_name': 'Odometer', 'aliases': [],
+     'area_id': None, 'device_id': 'dev_gls', 'hidden_by': None, 'disabled_by': None, 'platform': 'mbapi2020'},
+    *[{'entity_id': eid, 'name': None, 'original_name': name, 'aliases': [], 'area_id': None,
+       'device_id': 'dev_jeff_phone' if eid == 'device_tracker.jeff_phone' else None,
        'hidden_by': None, 'disabled_by': None, 'platform': platform}
       for eid, name, platform in (('person.lorena_wilson', 'Lorena Wilson', 'person'),
                                   ('device_tracker.lorena_phone', "Lorena's Phone", 'mobile_app'),
@@ -176,8 +202,17 @@ REGISTRY = [
      'aliases': [], 'area_id': None, 'device_id': None, 'hidden_by': None, 'disabled_by': None, 'platform': 'automation'},
 ]
 
-DEVICES = [{'id': 'dev_ev9', 'name': 'Kia EV9', 'area_id': 'garage'}, {'id': 'dev_van', 'name': 'Van', 'area_id': None},
-           {'id': 'dev_powerwall', 'name': 'My Home', 'area_id': 'garage'},
+# Live shapes 2026-10-29: HA names the device, the person may rename it (name_by_user), and the
+# integration says who made it and what it is. The Mercedes is named by its VIN.
+DEVICES = [{'id': 'dev_ev9', 'name': 'EV9', 'name_by_user': 'Kia EV9', 'manufacturer': 'Kia USA', 'model': 'EV9',
+            'area_id': 'garage'},
+           {'id': 'dev_van', 'name': 'Van', 'area_id': None},
+           {'id': 'dev_powerwall', 'name': 'My Home', 'name_by_user': 'Powerwall', 'manufacturer': 'Tesla',
+            'model': 'Powerwall 3', 'area_id': 'garage'},
+           {'id': 'dev_gls', 'name': GLS_VIN, 'name_by_user': None, 'manufacturer': 'Mercedes Benz',
+            'model': 'Mercedes-Benz GLS 450 4MATIC SUV', 'area_id': 'garage'},
+           {'id': 'dev_jeff_phone', 'name': 'Jeff iPhone', 'manufacturer': 'Apple', 'model': 'iPhone 15', 'area_id': None},
+           {'id': 'dev_doorbell', 'name': 'Front Door', 'manufacturer': 'Reolink', 'model': 'Doorbell', 'area_id': 'front_yard'},
            {'id': 'dev_office_cast', 'name': 'GoogleTV1645', 'area_id': None},
            {'id': 'dev_office_tv', 'name': 'Office TV', 'area_id': 'office'},
            {'id': 'dev_living_tv', 'name': 'Living Room TV', 'area_id': 'living_room'},
@@ -318,9 +353,10 @@ class HouseToolTests(unittest.TestCase):
         self.assertEqual(res['status'], 'success', res)
         ids = [c['entity_id'] for c in res['candidates']]
         self.assertGreater(len(ids), 1, 'Powerwall Version alone was the live failure')
-        self.assertTrue(all(c['device'] == 'My Home' for c in res['candidates'] if c['domain'] != 'automation'))
+        self.assertTrue(all(c['device'] == 'Powerwall' for c in res['candidates'] if c['domain'] != 'automation'))
         dev = res['devices'][0]
-        self.assertEqual(dev['device'], 'My Home')
+        self.assertEqual(dev['device'], 'Powerwall', 'the name the person gave the device in HA wins')
+        self.assertEqual((dev['make'], dev['model']), ('Tesla', 'Powerwall 3'))
         self.assertEqual(dev['ha_area'], 'Garage')
         rows = {r['entity_id']: r for r in dev['entities']}
         self.assertEqual(len(rows), len(POWERWALL), 'every entity on the device, not only the matching ones')
@@ -333,7 +369,7 @@ class HouseToolTests(unittest.TestCase):
 
     def test_a_devices_own_name_finds_its_sensors_too(self):
         for query, device, member in (('kia ev9', 'Kia EV9', 'binary_sensor.ev9_engine'),
-                                      ('my home', 'My Home', 'sensor.powerwall_percentage_charged')):
+                                      ('my home', 'Powerwall', 'sensor.powerwall_percentage_charged')):
             res = self.run_tool(action='find', query=query)
             self.assertEqual(res['devices'][0]['device'], device, res.get('devices'))
             self.assertIn(member, [r['entity_id'] for r in res['devices'][0]['entities']])
@@ -341,7 +377,7 @@ class HouseToolTests(unittest.TestCase):
     def test_reading_a_device_by_name_answers_the_whole_device(self):
         res = self.run_tool(action='read', query='powerwall', acting_member={'id': 'k1', 'role': 'kid'})
         self.assertEqual(res['status'], 'success', res)
-        self.assertEqual(res['device']['device'], 'My Home')
+        self.assertEqual(res['device']['device'], 'Powerwall')
         rows = {r['entity_id']: r for r in res['device']['entities']}
         self.assertEqual(rows['sensor.powerwall_percentage_charged']['unit'], '%')
         self.assertIn('automation.charge_powerwall_nightly', [c['entity_id'] for c in res['other']],
@@ -351,7 +387,7 @@ class HouseToolTests(unittest.TestCase):
     def test_a_query_across_two_devices_stays_ambiguous_but_groups_them(self):
         res = self.run_tool(action='read', query='garage')
         self.assertEqual(res['status'], 'ambiguous', res)
-        self.assertEqual({d['device'] for d in res['devices']}, {'Kia EV9', 'My Home'})
+        self.assertEqual({d['device'] for d in res['devices']}, {'Kia EV9', 'Powerwall', GLS_VIN})
         self.assertEqual(self.calls, [])
 
     def test_a_loose_word_never_drags_in_every_device_with_such_a_sensor(self):
@@ -364,7 +400,7 @@ class HouseToolTests(unittest.TestCase):
                          'area_id': None, 'device_id': 'dev_ev9', 'hidden_by': None, 'disabled_by': None, 'platform': 'kia_uvo'})
         try:
             res = self.run_tool(action='find', query='powerwall battery')
-            self.assertEqual([d['device'] for d in res['devices']], ['My Home'])
+            self.assertEqual([d['device'] for d in res['devices']], ['Powerwall'])
             res = self.run_tool(action='find', query='ev9 battery')
             self.assertEqual([d['device'] for d in res['devices']], ['Kia EV9'])
         finally:
@@ -416,6 +452,40 @@ class HouseToolTests(unittest.TestCase):
         self.assertIn('binary_sensor.ev9_front_left_door', ids)
         self.assertEqual(self.run_tool(action='find', query='office lamps')['candidates'][0]['entity_id'],
                          'light.office_lamp')
+
+    def test_a_car_named_by_its_vin_is_found_by_its_make_and_model(self):
+        """Live 2026-10-29: "are the Mercedes doors closed" found no device; the Mercedes integration
+        names the device by its VIN and only the registry's manufacturer and model say Mercedes GLS."""
+        for query in ('mercedes', 'gls', 'the mercedes doors', 'benz'):
+            res = self.run_tool(action='find', query=query)
+            self.assertEqual([d['device'] for d in res['devices']], [GLS_VIN], (query, res.get('devices')))
+            dev = res['devices'][0]
+            self.assertEqual((dev['make'], dev['model']), ('Mercedes Benz', 'Mercedes-Benz GLS 450 4MATIC SUV'))
+            rows = {r['entity_id']: r['state'] for r in dev['entities']}
+            self.assertEqual(rows[f'binary_sensor.{GLS_VIN.lower()}_front_left_door'], 'closed')
+        res = self.run_tool(action='read', query='mercedes')
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(res['device']['make'], 'Mercedes Benz')
+        self.assertEqual(self.run_tool(action='find', query='tesla')['devices'][0]['device'], 'Powerwall')
+
+    def test_car_names_every_car_and_never_a_phone(self):
+        """Live 2026-10-29: "are the car doors closed" answered for the Kia alone. A car is a device
+        with a tracker and doors, locks or an odometer; a phone has a tracker and nothing of a car."""
+        for query in ('car doors', 'the cars', 'car locks'):
+            res = self.run_tool(action='find', query=query)
+            self.assertEqual({d['device'] for d in res['devices']}, {'Kia EV9', GLS_VIN}, (query, res.get('devices')))
+            self.assertTrue(all(d['kind'] == 'car' for d in res['devices']))
+        # 'vehicle' is also the doorbell's vehicle-detection sensor; the cars still come, marked as cars.
+        res = self.run_tool(action='find', query='vehicle')
+        self.assertLessEqual({'Kia EV9', GLS_VIN}, {d['device'] for d in res['devices'] if d.get('kind') == 'car'})
+        ids = [c['entity_id'] for c in self.run_tool(action='find', query='car doors')['candidates']]
+        self.assertIn('binary_sensor.ev9_front_left_door', ids)
+        self.assertNotIn('binary_sensor.front_door_motion', ids, 'a doorbell is not a car door')
+        res = self.run_tool(action='read', query='car doors')
+        self.assertEqual(res['status'], 'ambiguous', 'two cars: list both or ask, never answer for one')
+        self.assertEqual({d['device'] for d in res['devices']}, {'Kia EV9', GLS_VIN})
+        self.assertNotIn('Jeff iPhone', {d['device'] for d in res['devices']})
+        self.assertEqual(self.calls, [])
 
     def test_the_tool_and_the_prompt_say_a_device_is_many_sensors(self):
         tool = next(t for t in agent_tools_v2.get_available_tools() if t['name'] == 'house')

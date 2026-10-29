@@ -381,8 +381,11 @@ def get_entity_registry(ttl: float = 300) -> list:
 
 
 def get_device_registry(ttl: float = 300) -> list:
-    """Device areas for entities inheriting their room from the device."""
-    return _registry_list('config/device_registry/list', ('id', 'name', 'area_id'),
+    """Devices: the integration's name, the name the person gave it, who made it and what it
+    is (the Mercedes is named by its VIN; only manufacturer and model say Mercedes GLS), and the
+    area entities inherit their room from."""
+    return _registry_list('config/device_registry/list',
+                          ('id', 'name', 'name_by_user', 'manufacturer', 'model', 'area_id'),
                           _device_registry_cache, ttl)
 
 

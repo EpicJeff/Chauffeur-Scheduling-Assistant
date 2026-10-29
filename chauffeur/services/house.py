@@ -10,8 +10,12 @@ def _settle():
     time.sleep(0.6)
 
 
+_STOP = {'the', 'a', 'an', 'of'}
+
+
 def _words(value):
-    return ' '.join(re.findall(r'\w+', str(value or '').casefold().replace('_', ' ')))
+    # 'the mercedes doors' is 'mercedes doors'; small words never decide a match.
+    return ' '.join(w for w in re.findall(r'\w+', str(value or '').casefold().replace('_', ' ')) if w not in _STOP)
 
 
 def _catalogue():
@@ -42,11 +46,48 @@ def _catalogue():
                     'domain': eid.split('.', 1)[0], 'state': state.get('state'),
                     'aliases': list(row.get('aliases') or []), '_state': state,
                     '_device_id': row.get('device_id'), '_device_name': device_name,
+                    '_make': device.get('manufacturer') or '', '_model': device.get('model') or '',
                     '_device_area': area_names.get(device.get('area_id'), ''),
                     '_platform': row.get('platform'),
+                    # Every name the thing goes by: the person's, HA's, the integration's, the
+                    # maker's and the model's. 'mercedes' and 'gls' both find the VIN-named car.
                     '_names': [name, row.get('name'), row.get('original_name'),
-                               *list(row.get('aliases') or []), eid, eid.split('.', 1)[1], device_name]})
+                               *list(row.get('aliases') or []), eid, eid.split('.', 1)[1], device_name,
+                               device.get('name') or '', device.get('manufacturer') or '', device.get('model') or '']})
+    _mark_kinds(out)
     return out
+
+
+KIND_WORDS = {'car': ('car', 'cars', 'vehicle', 'vehicles', 'auto'), 'tv': ('tv', 'tvs', 'television', 'televisions')}
+
+
+def _kind_of(members):
+    """What sort of thing a device is, from what it carries, so 'the car doors' names every car
+    and never a phone. A car has a tracker and doors or locks; a phone, a mower and a school
+    bus have a tracker and nothing that locks. A TV is a media player HA classes as one, or an Android TV remote."""
+    domains = {e['domain'] for e in members}
+    classes = {(e['_state'].get('attributes') or {}).get('device_class') for e in members}
+    # Live 2026-10-29: a tracker plus distance or speed also fit the robot mower and the school
+    # buses; a car is a tracker plus something that locks or a door.
+    if 'device_tracker' in domains and ('lock' in domains or classes & {'door', 'lock'}):
+        return 'car'
+    if classes & {'tv'} or any(e['domain'] == 'remote' and 'activity_list' in (e['_state'].get('attributes') or {})
+                               for e in members):
+        return 'tv'
+    return ''
+
+
+def _mark_kinds(catalogue):
+    by_device = {}
+    for e in catalogue:
+        if e.get('_device_id'):
+            by_device.setdefault(e['_device_id'], []).append(e)
+    for members in by_device.values():
+        kind = _kind_of(members)
+        for e in members:
+            e['_kind'] = kind
+            if kind:
+                e['_names'] = [*e['_names'], *KIND_WORDS[kind]]
 
 
 # What a binary sensor's on/off MEANS, by HA device_class (HA's own frontend words).
@@ -131,6 +172,9 @@ def _device_groups(ranked, catalogue):
                  **_measure(e)} for e in members[:per]]
         first = members[0]
         group = {'device': first.get('_device_name') or first['name'],
+                 **({'make': first['_make']} if first.get('_make') else {}),
+                 **({'model': first['_model']} if first.get('_model') else {}),
+                 **({'kind': first['_kind']} if first.get('_kind') else {}),
                  'ha_area': first.get('_device_area') or first['area'], 'entities': rows}
         if len(members) > per:
             group['more'] = len(members) - per
@@ -145,6 +189,11 @@ def _singular(word):
 def _score(query, names):
     tokens = {_singular(w) for w in query.split()}   # 'doors' finds 'Front Left Door'
     best = 0.0
+    # Every word said somewhere among the names the thing goes by ('car' from its kind,
+    # 'door' from its own name, 'kia' from its device) is a strong match too.
+    across = {_singular(w) for name in names for w in _words(name).split()}
+    if tokens and tokens <= across:
+        best = 0.8 + 0.2 * len(tokens) / len(across)
     for name in names:
         name = _words(name)
         if not name:
@@ -179,7 +228,12 @@ def _rank(catalogue, query, domain='', limit=8):
                                             key=lambda pair: (domain_order.get(pair[1]['domain'],
                                                               10 if pair[1]['domain'] in ('sensor', 'binary_sensor') else 9),
                                                               -pair[0], pair[1]['entity_id']))[:limit]]
-    ranked = [(max(_score(query, e['_names']), _score(query, [e['area']])), e) for e in pool]
+    # A kind word ('car doors', 'the TVs') puts every device of that kind on the table, whether
+    # or not the other words hit it: the Mercedes reports no door at all, and the answer for
+    # 'the car doors' is still both cars, never the Kia alone.
+    kinds = {k for k, words in KIND_WORDS.items() if set(query.split()) & set(words)}
+    ranked = [(max(_score(query, e['_names']), _score(query, [e['area']]),
+                   0.8 if e.get('_kind') in kinds else 0.0), e) for e in pool]
     return sorted(((score, e) for score, e in ranked if score >= 0.45),
                   key=lambda pair: (-pair[0], pair[1]['entity_id']))[:limit]
 
@@ -675,7 +729,8 @@ def house(action='', query='', entity_id='', domain='', service='', data=None,
                 device = entity['devices'][0]
                 on_it = {r['entity_id'] for r in device['entities']}
                 return {'status': 'success', 'device': device,
-                        'other': [c for c in entity['candidates'] if c['entity_id'] not in on_it]}
+                        'other': [_candidate(e) for _, e in _rank(catalogue, query, domain, limit=None)
+                                  if e['entity_id'] not in on_it][:8]}
             return entity
         eid = entity['entity_id']
         if action == 'read':
