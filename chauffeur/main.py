@@ -19087,6 +19087,40 @@ def restore_event_api(event_id: str, body: dict = Body(default={}),
     trigger_background_refresh()
     return res
 
+def _memory_actor(request, claimed):
+    """A parent on the People page teaches or forgets; the tokenless admin dashboard
+    counts as the admin page, the same discipline as cancellations."""
+    actor_id = _acting_id(request, claimed)
+    actor = storage.get_member(actor_id) if actor_id else None
+    return actor or {'id': 'admin', 'name': 'Admin page', 'role': 'parent'}
+
+
+@app.get("/api/argyle/memories")
+def argyle_memories_list():
+    from services import argyle_memory
+    return {'status': 'success', 'memories': argyle_memory.list_memories()}
+
+
+@app.post("/api/argyle/memories")
+def argyle_memories_add(body: dict = Body(default={}), request: Request = None):
+    from services import argyle_memory
+    res = argyle_memory.remember(text=body.get('text') or '', kind=body.get('kind') or 'preference',
+                                 phrase=body.get('phrase') or '', entity_ids=body.get('entity_ids') or [],
+                                 acting_member=_memory_actor(request, body.get('member_id')), source='page')
+    if res.get('status') != 'success':
+        raise HTTPException(status_code=403 if res.get('status') == 'refused' else 400, detail=res.get('message'))
+    return res
+
+
+@app.delete("/api/argyle/memories/{memory_id}")
+def argyle_memories_forget(memory_id: str, request: Request = None):
+    from services import argyle_memory
+    res = argyle_memory.forget(memory_id=memory_id, acting_member=_memory_actor(request, None))
+    if res.get('status') != 'success':
+        raise HTTPException(status_code=403 if res.get('status') == 'refused' else 404, detail=res.get('message'))
+    return res
+
+
 @app.get("/api/cancellations")
 def list_cancellations(days: int = 60, include_restored: bool = True):
     """The record the old delete-it workflow never kept: what was called

@@ -382,6 +382,9 @@ RULES = [
     # Learned errand preferences: what the household's steers taught the
     # pass. A parent's list, like the errand rules beside it.
     (ANY, '/api/errands/preferences/*', PARENTS, None),
+    # What the family taught Argyle (services/argyle_memory.py): a parent's list.
+    (ANY, '/api/argyle/memories', PARENTS, None),
+    (ANY, '/api/argyle/memories/*', PARENTS, None),
     (ANY, '/api/errands/*', SIGNED_IN, 'lists.errands'),
     (ANY, '/api/overrides/*', SIGNED_IN, 'schedule.assignment'),
     (ANY, '/api/occasions/*', SIGNED_IN, 'occasions'),

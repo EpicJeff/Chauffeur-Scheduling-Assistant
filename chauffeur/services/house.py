@@ -56,6 +56,15 @@ def _catalogue():
                     '_names': [name, row.get('name'), row.get('original_name'),
                                *list(row.get('aliases') or []), eid, eid.split('.', 1)[1], device_name,
                                device.get('name') or '', device.get('manufacturer') or '', device.get('model') or '']})
+    # What the family taught: 'the entry doors' names these two sensors (argyle_memory
+    # vocabulary rows). A taught phrase is the thing's own name on every surface.
+    from services import argyle_memory
+    vocab = argyle_memory.vocabulary()
+    for e in out:
+        for phrase in vocab.get(e['entity_id'], ()):
+            e['_own'].append(phrase)
+            e['_names'].append(phrase)
+            e['aliases'].append(phrase)
     _mark_kinds(out)
     return out
 

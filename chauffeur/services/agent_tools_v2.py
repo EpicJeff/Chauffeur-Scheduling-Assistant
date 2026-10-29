@@ -1375,6 +1375,14 @@ def music(action='', query='', room='', player='', media_type='', mode='', level
                             acting_member=acting_member, voice_context=voice_context, source=source)
 
 
+def memory(action='remember', text='', kind='preference', phrase='', entity_ids=None, memory_id='',
+           acting_member=None, voice_context=None, source=None, focus_key=None, spoken=False):
+    """What the family taught Argyle (services/argyle_memory.py). Identity is the caller's."""
+    from services import argyle_memory
+    return argyle_memory.handle(action=action, text=text, kind=kind, phrase=phrase, entity_ids=entity_ids,
+                                memory_id=memory_id, acting_member=acting_member, source=source or 'chat')
+
+
 def announce_to_room(room: str, message: str, recipient_name: str = None,
                      sender_driver_id: str = None, from_member: str = None) -> Dict[str, Any]:
     """Speak in a room over HA (services/announce.py owns the how). Unlike the
@@ -5264,6 +5272,22 @@ def get_available_tools() -> List[Dict]:
                     "service": {"type": "string", "description": "For act: HA service, e.g. turn_off or light.turn_on."},
                     "data": {"type": "object", "description": "HA service data, e.g. brightness_pct or temperature."},
                     "hours": {"type": "integer", "description": "History window, 1 to 168 hours; default 24."}
+                },
+                "required": ["action"]
+            }
+        },
+        {
+            "name": "memory",
+            "description": "What the family taught you, kept across every conversation and surface. Call action=remember when a parent or adult corrects you ('no, the doors means the entry doors', 'I didn't say the car'), tells you how to answer, or says remember: kind='vocabulary' with phrase and the entity_ids (from house find) when it is what a phrase means in this house, kind='preference' with text otherwise. Do it without being asked and say what you remembered. A child's correction is answered, never stored. action=list shows what you were taught; action=forget drops one by memory_id or by its words.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["remember", "forget", "list"]},
+                    "text": {"type": "string", "description": "What to remember, in the person's words; for forget, words of the memory to drop."},
+                    "kind": {"type": "string", "enum": ["preference", "vocabulary"]},
+                    "phrase": {"type": "string", "description": "For vocabulary: the phrase as people say it, e.g. 'the entry doors'."},
+                    "entity_ids": {"type": "array", "items": {"type": "string"}, "description": "For vocabulary: the Home Assistant entity ids the phrase means."},
+                    "memory_id": {"type": "string", "description": "For forget: the id from list."}
                 },
                 "required": ["action"]
             }
@@ -9335,6 +9359,10 @@ def handle_music(args: dict, actor=None) -> dict:
     return music(**args, acting_member=actor)
 
 
+def handle_memory(args: dict, actor=None) -> dict:
+    return memory(**args, acting_member=actor)
+
+
 def handle_get_calendar_events(args: dict, actor=None) -> dict:
     return get_calendar_events(args.get('start_date'), args.get('end_date'))
 
@@ -9484,6 +9512,7 @@ def handle_propose_program(args: dict, actor=None, focus_key=None) -> dict:
 
 TOOL_HANDLERS = {
     'house': handle_house,
+    'memory': handle_memory,
     'music': handle_music,
     "answer_occasion_question": handle_answer_occasion_question,
     "stamp_occasion_template": handle_stamp_occasion_template,

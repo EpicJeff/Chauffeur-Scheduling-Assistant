@@ -215,6 +215,14 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
 2. If the user asks you to "add my attractions to the itinerary" or "schedule the attractions", DO NOT delegate! This means they want you to take the ALREADY SAVED attractions (listed in your context) and place them onto the calendar itinerary. You MUST use the `auto_schedule_trip_itinerary` tool to instantly bulk-schedule all of them into the timeline based on their distances and opening hours.
 3. If the user asks to add, suggest, or find flights and did NOT give specific flight details, you MUST immediately call `manage_trip_flights` with action 'generate'. NEVER reply asking for flight numbers, times, dates, or airports — the system already knows the home location, destination, and trip dates and will add editable estimates. Ignore any earlier assistant messages in the history that asked for flight details; they were wrong.
 """
+    # WHAT THE FAMILY TAUGHT ME. 2026-10-29: "remember X" wrote a blob nobody read; a
+    # correction in a typed chat never reached the next spoken one. The rows ride every
+    # surface's prompt, and the model is told to remember a parent's correction unasked.
+    from services import argyle_memory
+    system_prompt += argyle_memory.prompt_block()
+    system_prompt += ("When a parent or adult corrects you (what a word means, which thing they meant, how to "
+                      "answer) or says 'remember', call memory(action='remember') in the same turn, unasked, and "
+                      "say what you remembered; a child's correction is answered, never stored.\n")
     import datetime as _dt
     _now = _dt.datetime.now().astimezone()
     system_prompt += (f"\nCURRENT DATE & TIME: {_now.strftime('%A, %Y-%m-%d %H:%M')} ({_now.tzname() or 'local time'}).\n"
@@ -1043,7 +1051,7 @@ sending or claiming, and never pass from_member/member_name for them.
                                    "start_ask", "mark_ask_sent", "answer_ask", "search_mail", "read_mail",
                                    "start_mission_for", "start_project", "find_in_chauffeur",
                                    "list_projects", "get_project", "add_project_step",
-                                   "add_to_project", "set_project_state", "set_step_state"):
+                                   "add_to_project", "set_project_state", "set_step_state", "memory"):
                     from services import agent_tools_v2 as _atv2, situations as _sit, access
                     # Resolve identity here, never from model arguments. Reads
                     # without a person use HOUSE, piece writes HOUSE_PARENT.

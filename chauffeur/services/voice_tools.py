@@ -5,7 +5,7 @@ from services.voice_identity import VoiceContext, _revision, voice_names
 TOOLS = frozenset({'get_calendar_events', 'get_travel_time', 'assign_driver_to_event_fuzzy',
                    'remove_override_for_event_fuzzy', 'get_shopping_list_items',
                    'add_shopping_items', 'check_off_shopping_item', 'send_family_message', 'send_direct_message',
-                   'find_in_chauffeur', 'start_project', 'prepare_voice_approval', 'house', 'music'})
+                   'find_in_chauffeur', 'start_project', 'prepare_voice_approval', 'house', 'music', 'memory'})
 MUTATIONS = frozenset({'assign_driver_to_event_fuzzy', 'remove_override_for_event_fuzzy',
                        'add_shopping_items', 'check_off_shopping_item'})
 
@@ -80,6 +80,14 @@ def dispatch(name, args, ctx: VoiceContext, focus_key=None):
         if args.get('action') == 'play' and result.get('status') == 'success':
             record_action(ctx, 'music', ctx.verified_member(),
                           {'entity_id': result.get('entity_id'), 'item': result['item'].get('name')}, provenance)
+    elif name == 'memory':
+        # Teaching is a parent's act; a verified voice is the only spoken proof of one.
+        result = tools.memory(**{k: v for k, v in args.items() if k in (
+            'action', 'text', 'kind', 'phrase', 'entity_ids', 'memory_id')},
+            acting_member=ctx.verified_member(), source='voice')
+        if args.get('action') in ('remember', 'forget') and result.get('status') == 'success':
+            record_action(ctx, 'memory', ctx.verified_member(),
+                          {'action': args.get('action'), 'text': (result.get('memory') or {}).get('text')}, provenance)
     elif name == 'get_shopping_list_items':
         result = tools.get_shopping_list_items(args.get('list_name') or '', acting_member=None)
     elif name in ('send_family_message', 'send_direct_message'):
