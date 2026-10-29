@@ -51,6 +51,8 @@ def _catalogue():
                     '_platform': row.get('platform'),
                     # Every name the thing goes by: the person's, HA's, the integration's, the
                     # maker's and the model's. 'mercedes' and 'gls' both find the VIN-named car.
+                    '_own': [name, row.get('name'), row.get('original_name'), *list(row.get('aliases') or []),
+                             eid, eid.split('.', 1)[1]],
                     '_names': [name, row.get('name'), row.get('original_name'),
                                *list(row.get('aliases') or []), eid, eid.split('.', 1)[1], device_name,
                                device.get('name') or '', device.get('manufacturer') or '', device.get('model') or '']})
@@ -75,6 +77,110 @@ def _kind_of(members):
                                for e in members):
         return 'tv'
     return ''
+
+
+# A category is every such thing in the house, by HA domain and device_class, never by name:
+# 'doors' is every door sensor and garage cover, 'locks' every lock and lock sensor.
+CATEGORIES = {
+    'lock': {'words': ('lock', 'locks', 'locked', 'unlocked'), 'domains': {'lock'}, 'classes': {'lock'}},
+    'door': {'words': ('door', 'doors'), 'classes': {'door', 'garage_door', 'opening'},
+             'cover_classes': {'garage', 'door', 'gate'}},
+    'window': {'words': ('window', 'windows'), 'classes': {'window'}, 'cover_classes': {'window'}},
+    'light': {'words': ('light', 'lights', 'lamp', 'lamps'), 'domains': {'light'}},
+    'camera': {'words': ('camera', 'cameras'), 'domains': {'camera'}},
+    'motion': {'words': ('motion', 'occupancy'), 'classes': {'motion', 'occupancy'}},
+    'thermostat': {'words': ('thermostat', 'thermostats', 'temperature'), 'domains': {'climate'}},
+    'fan': {'words': ('fan', 'fans'), 'domains': {'fan'}},
+    'smoke': {'words': ('smoke', 'alarm', 'alarms'), 'classes': {'smoke', 'carbon_monoxide', 'gas'}},
+    'leak': {'words': ('leak', 'leaks', 'water'), 'classes': {'moisture'}},
+    'battery': {'words': ('battery', 'batteries'), 'classes': {'battery'}},
+}
+# Words that ask or name a state never narrow a category: 'are the car doors closed' narrows by
+# 'car', not by 'closed'.
+_CATEGORY_NOISE = {'all', 'every', 'any', 'is', 'are', 'was', 'were', 'in', 'on', 'at', 'house', 'home', 'my',
+                   'our', 'and', 'or', 'still', 'now', 'which', 'what', 'how', 'many', 'off', 'open', 'opened',
+                   'closed', 'shut', 'locked', 'unlocked', 'low', 'dead', 'detected', 'clear', 'away', 'running',
+                   'charging', 'playing', 'idle', 'unavailable', 'available', 'working', 'broken', 'online',
+                   'offline', 'secure', 'safe'}
+CATEGORY_ROWS = 80
+
+
+def _in_category(entity, spec):
+    attrs = entity['_state'].get('attributes') or {}
+    dc = attrs.get('device_class')
+    if entity['domain'] in spec.get('domains', ()):
+        return True
+    if entity['domain'] == 'binary_sensor' and dc in spec.get('classes', ()):
+        return True
+    if entity['domain'] == 'cover' and dc in spec.get('cover_classes', ()):
+        return True
+    return entity['domain'] == 'sensor' and dc in spec.get('classes', ()) and spec is CATEGORIES['battery']
+
+
+def _category_blocks(query, catalogue):
+    """Live 2026-10-29: "are all the doors locked" found the Kia's Door Lock alone, by name, and voice
+    said Yes while a house lock was offline and both cars were unlocked. A category word puts EVERY
+    such entity on the table with a tally the tool computed; the other words (a room, a device)
+    narrow it; an empty narrowing stays empty and says so, never the whole house instead."""
+    said = [w for w in _words(query).split()]
+    cats = [k for k, spec in CATEGORIES.items() if set(said) & set(spec['words'])]
+    if not cats:
+        return []
+    q = ' '.join(said)
+    if any(_words(n) == q for e in catalogue for n in (e.get('_own') or e['_names'])):
+        return []   # the words said ARE a thing's name ('front door' is the lock, not every door)
+    cat_words = {w for k in cats for w in CATEGORIES[k]['words']}
+    narrow = {_singular(w) for w in said if w not in cat_words and w not in _CATEGORY_NOISE}
+    out = []
+    for key in cats:
+        spec = CATEGORIES[key]
+        members = [e for e in catalogue if _in_category(e, spec)]
+        if narrow:
+            members = [e for e in members if narrow <= {_singular(w) for n in [*e['_names'], e['area']]
+                                                        for w in _words(n).split()}]
+        members.sort(key=lambda e: (e.get('_kind') or '', e['area'], e['name']))
+        rows, tally, by_state = [], {}, {}
+        for e in members:
+            shown = _shown(e)
+            row = {'entity_id': e['entity_id'], 'name': e['name'], **shown, 'ha_area': e['area']}
+            if e.get('_device_name'):
+                row['device'] = e['_device_name']
+            if e.get('_kind'):
+                row['kind'] = e['_kind']
+            rows.append(row)
+            state = str(shown['state'])
+            if e['domain'] == 'sensor':
+                # A battery LEVEL tallies as low or ok, never as forty-seven different numbers.
+                try:
+                    state = 'low' if float(state) < 20 else 'ok'
+                except ValueError:
+                    pass
+            tally[state] = tally.get(state, 0) + 1
+            by_state.setdefault(state, []).append(e['name'] + (f" ({e['_kind']})" if e.get('_kind') else ''))
+        plural = spec['words'][1] if len(spec['words']) > 1 else spec['words'][0]
+        where = f" in {' '.join(sorted(narrow))}" if narrow else ''
+        if not rows:
+            message = f'no {plural}{where}.'
+        else:
+            parts = []
+            for state, names in sorted(by_state.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+                shown_names = ', '.join(names[:12]) + (f' and {len(names) - 12} more' if len(names) > 12 else '')
+                parts.append(f'{state}: {shown_names}')
+            message = f"{len(rows)} {plural}{where}; " + '; '.join(parts) + '.'
+        # 'the car doors' with a car that reports no door at all (the Mercedes, live): say so,
+        # or the answer reads as if that car were fine.
+        kinds = {k for k, words in KIND_WORDS.items() if narrow & {_singular(w) for w in words}}
+        if kinds:
+            with_rows = {r.get('device') for r in rows}
+            silent = sorted({e['_device_name'] for e in catalogue if e.get('_kind') in kinds
+                             and e.get('_device_name') and e['_device_name'] not in with_rows})
+            if silent:
+                message += f" No {plural} reported by: {', '.join(silent)}."
+        block = {'category': key, 'tally': tally, 'message': message, 'entities': rows[:CATEGORY_ROWS]}
+        if len(rows) > CATEGORY_ROWS:
+            block['more'] = len(rows) - CATEGORY_ROWS
+        out.append(block)
+    return out
 
 
 def _mark_kinds(catalogue):
@@ -232,8 +338,10 @@ def _rank(catalogue, query, domain='', limit=8):
     # or not the other words hit it: the Mercedes reports no door at all, and the answer for
     # 'the car doors' is still both cars, never the Kia alone.
     kinds = {k for k, words in KIND_WORDS.items() if set(query.split()) & set(words)}
-    ranked = [(max(_score(query, e['_names']), _score(query, [e['area']]),
-                   0.8 if e.get('_kind') in kinds else 0.0), e) for e in pool]
+    # The thing's OWN name outranks its device's, maker's or kind's: 'front door' is the lock
+    # named Front Door before the doorbell's motion sensor on a device called Front Door.
+    ranked = [(max(_score(query, e.get('_own') or e['_names']), min(0.97, _score(query, e['_names'])),
+                   _score(query, [e['area']]), 0.8 if e.get('_kind') in kinds else 0.0), e) for e in pool]
     return sorted(((score, e) for score, e in ranked if score >= 0.45),
                   key=lambda pair: (-pair[0], pair[1]['entity_id']))[:limit]
 
@@ -241,8 +349,12 @@ def _rank(catalogue, query, domain='', limit=8):
 def find(query, domain='', catalogue=None):
     catalogue = _catalogue() if catalogue is None else catalogue
     ranked = _rank(catalogue, query, domain, limit=None)
-    return {'status': 'success', 'candidates': [_candidate(e) for _, e in ranked[:8]],
-            'devices': _device_groups(ranked, catalogue)}
+    out = {'status': 'success', 'candidates': [_candidate(e) for _, e in ranked[:8]],
+           'devices': _device_groups(ranked, catalogue)}
+    categories = _category_blocks(query, catalogue)
+    if categories:
+        out['categories'] = categories
+    return out
 
 
 def resolve(query='', entity_id='', domain='', catalogue=None):
@@ -722,6 +834,11 @@ def house(action='', query='', entity_id='', domain='', service='', data=None,
             return find(query, domain, catalogue)
         if action == 'locate':
             return locate(query, entity_id, catalogue, acting_member, voice_context, source)
+        if action == 'read' and not entity_id:
+            categories = _category_blocks(query, catalogue)
+            if categories:
+                # 'Are all the doors locked' is a question about every lock, never about one.
+                return {'status': 'success', 'categories': categories}
         entity = resolve(query, entity_id, domain, catalogue)
         if 'status' in entity:
             if action == 'read' and entity['status'] == 'ambiguous' and len(entity.get('devices') or []) == 1:

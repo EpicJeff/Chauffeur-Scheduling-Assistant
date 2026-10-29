@@ -75,6 +75,9 @@ def _states():
          'attributes': {'friendly_name': 'Hall Light'}},
         {'entity_id': 'lock.front_door', 'state': 'locked', 'last_changed': '2026-10-27T07:00:00+00:00',
          'attributes': {'friendly_name': 'Front Door'}},
+        # Live 2026-10-29: a house lock that is offline; "are all the doors locked" must say so.
+        {'entity_id': 'lock.pool_house', 'state': 'unavailable', 'last_changed': '2026-10-27T07:00:00+00:00',
+         'attributes': {'friendly_name': 'Pool House'}},
         {'entity_id': 'cover.main_garage', 'state': 'closed', 'last_changed': '2026-10-27T06:00:00+00:00',
          'attributes': {'friendly_name': 'Main Garage', 'device_class': 'garage'}},
         {'entity_id': 'cover.office_blind', 'state': 'open', 'last_changed': '2026-10-27T06:00:00+00:00',
@@ -160,6 +163,8 @@ REGISTRY = [
      'area_id': 'hall', 'device_id': None, 'hidden_by': None, 'disabled_by': None, 'platform': 'hue'},
     {'entity_id': 'lock.front_door', 'name': None, 'original_name': 'Front Door', 'aliases': [],
      'area_id': 'hall', 'device_id': None, 'hidden_by': None, 'disabled_by': None, 'platform': 'august'},
+    {'entity_id': 'lock.pool_house', 'name': None, 'original_name': 'Pool House', 'aliases': [],
+     'area_id': None, 'device_id': None, 'hidden_by': None, 'disabled_by': None, 'platform': 'august'},
     {'entity_id': 'cover.main_garage', 'name': None, 'original_name': 'Main Garage', 'aliases': [],
      'area_id': 'garage', 'device_id': None, 'hidden_by': None, 'disabled_by': None, 'platform': 'myq'},
     {'entity_id': 'cover.office_blind', 'name': None, 'original_name': 'Office Blind', 'aliases': [],
@@ -482,10 +487,80 @@ class HouseToolTests(unittest.TestCase):
         self.assertIn('binary_sensor.ev9_front_left_door', ids)
         self.assertNotIn('binary_sensor.front_door_motion', ids, 'a doorbell is not a car door')
         res = self.run_tool(action='read', query='car doors')
-        self.assertEqual(res['status'], 'ambiguous', 'two cars: list both or ask, never answer for one')
-        self.assertEqual({d['device'] for d in res['devices']}, {'Kia EV9', GLS_VIN})
-        self.assertNotIn('Jeff iPhone', {d['device'] for d in res['devices']})
+        self.assertEqual(res['status'], 'success', res)
+        doors = res['categories'][0]
+        self.assertEqual({r['device'] for r in doors['entities']}, {'Kia EV9', GLS_VIN}, 'both cars, never one')
+        self.assertNotIn('Jeff iPhone', repr(res))
+        # Live 2026-10-29: the Mercedes integration exposes no door entity at all; silence is not 'closed'.
+        self.states[:] = [s for s in self.states if not (s['entity_id'].startswith(f'binary_sensor.{GLS_VIN.lower()}_')
+                                                         and s['attributes'].get('device_class') == 'door')]
+        doors = self.run_tool(action='read', query='are the car doors closed')['categories'][0]
+        self.assertEqual({r['device'] for r in doors['entities']}, {'Kia EV9'})
+        self.assertIn(f'No doors reported by: {GLS_VIN}', doors['message'])
         self.assertEqual(self.calls, [])
+
+    # --- a category is every such thing in the house (2026-10-29) --------------
+    def test_are_all_the_doors_locked_tallies_every_lock_and_door(self):
+        """Live 2026-10-29: "are all the doors locked" found ONE entity (the Kia's Door Lock, by name
+        coincidence) and voice said Yes while a house lock was offline and both cars were unlocked.
+        A category word returns every such entity in the house and a tally the tool computed."""
+        res = self.run_tool(action='find', query='are all the doors locked')
+        self.assertEqual(res['status'], 'success', res)
+        cats = {c['category']: c for c in res['categories']}
+        self.assertEqual(set(cats), {'door', 'lock'})
+        lock_ids = {r['entity_id'] for r in cats['lock']['entities']}
+        self.assertEqual(lock_ids, {'lock.front_door', 'lock.pool_house', 'binary_sensor.ev9_locked',
+                                   f'binary_sensor.{GLS_VIN.lower()}_locked'})
+        tally = cats['lock']['tally']
+        self.assertEqual(tally, {'locked': 2, 'unlocked': 1, 'unavailable': 1})
+        msg = cats['lock']['message']
+        self.assertIn('unlocked: Kia EV9 Locked (car)', msg)
+        self.assertIn('unavailable: Pool House', msg)
+        self.assertIn('locked: Front Door', msg)
+        door_ids = {r['entity_id'] for r in cats['door']['entities']}
+        self.assertIn('cover.main_garage', door_ids, 'a garage cover is a door')
+        self.assertIn('binary_sensor.ev9_front_left_door', door_ids)
+        self.assertNotIn('binary_sensor.front_door_motion', door_ids, 'a motion sensor named Front Door is not a door')
+        self.assertEqual(cats['door']['tally'].get('closed'), len(door_ids))
+        self.assertEqual(self.calls, [])
+
+    def test_a_room_word_narrows_a_category_and_a_category_alone_is_the_whole_house(self):
+        res = self.run_tool(action='find', query='office lights')
+        self.assertEqual([r['entity_id'] for r in res['categories'][0]['entities']], ['light.office_lamp'])
+        res = self.run_tool(action='find', query='the lights')
+        ids = {r['entity_id'] for r in res['categories'][0]['entities']}
+        self.assertEqual(ids, {'light.office_lamp', 'light.front_porch_column_1', 'light.hall'})
+        self.assertEqual(res['categories'][0]['tally'], {'on': 1, 'off': 2})
+        self.assertIn('off: Front Porch Column 1, Hall Light', res['categories'][0]['message'])
+        res = self.run_tool(action='find', query='kitchen lights')
+        self.assertEqual(res['categories'][0]['entities'], [], 'no light in a room that has none; never the whole house instead')
+        self.assertIn('no lights', res['categories'][0]['message'])
+
+    def test_battery_levels_tally_as_low_or_ok_never_as_numbers(self):
+        for i, level in enumerate(('12', '85', 'unavailable')):
+            self.states.append({'entity_id': f'sensor.b{i}_battery', 'state': level, 'last_changed': '2026-10-29T06:00:00+00:00',
+                                'attributes': {'friendly_name': f'Thing {i} Battery', 'unit_of_measurement': '%',
+                                               'device_class': 'battery'}})
+        cat = self.run_tool(action='find', query='which batteries are low')['categories'][0]
+        self.assertEqual(cat['tally'], {'low': 1, 'ok': 2, 'unavailable': 1}, 'the Powerwall at 40 % is a battery too')
+        self.assertIn('low: Thing 0 Battery', cat['message'])
+        self.assertEqual(next(r['state'] for r in cat['entities'] if r['entity_id'] == 'sensor.b0_battery'), '12')
+
+    def test_read_of_a_category_question_answers_with_the_tally_and_never_one_entity(self):
+        res = self.run_tool(action='read', query='all the doors locked', acting_member={'id': 'k1', 'role': 'kid'})
+        self.assertEqual(res['status'], 'success', res)
+        self.assertNotIn('entity', res)
+        self.assertEqual({c['category'] for c in res['categories']}, {'door', 'lock'})
+        res = self.run_tool(action='find', query='front door')
+        self.assertNotIn('categories', res, 'naming one thing is not a category question')
+        self.assertEqual(res['candidates'][0]['entity_id'], 'lock.front_door')
+
+    def test_the_tool_and_the_prompt_say_a_category_comes_with_a_tally(self):
+        tool = next(t for t in agent_tools_v2.get_available_tools() if t['name'] == 'house')
+        self.assertIn('tally', tool['description'])
+        import inspect
+        from services import agent_router
+        self.assertIn('tally', inspect.getsource(agent_router))
 
     def test_the_tool_and_the_prompt_say_a_device_is_many_sensors(self):
         tool = next(t for t in agent_tools_v2.get_available_tools() if t['name'] == 'house')
