@@ -20,6 +20,22 @@ EV9_PARTS = ('engine', 'defrost', 'trunk', 'hood', 'front_left_door', 'front_rig
              'back_right_door', 'sunroof', 'locked')
 TV_APPS = ('Netflix', 'YouTube', 'Disney+', 'Prime Video', 'Hulu', 'Max', 'Plex', 'Spotify', 'Paramount+',
            'Peacock', 'Apple TV', 'YouTube TV', 'Sling TV')
+# Live shape 2026-10-29: the Tesla Powerwall is ONE HA device ("My Home", Garage) with ~50 entities;
+# only the entity names say Powerwall. (entity id, name, state, unit, device_class)
+POWERWALL = (
+    ('sensor.powerwall_version', 'Powerwall Version', 'unavailable', None, None),
+    ('sensor.powerwall_percentage_charged', 'Powerwall Percentage charged', '40.129133242027', '%', 'battery'),
+    ('sensor.powerwall_battery_power', 'Powerwall Battery power', '0.0', 'kW', 'power'),
+    ('sensor.powerwall_solar_power', 'Powerwall Solar power', '10.119', 'kW', 'power'),
+    ('sensor.powerwall_grid_power', 'Powerwall Grid power', '-8.495', 'kW', 'power'),
+    ('sensor.powerwall_battery_charged', 'Powerwall Battery charged', '9.535', 'kWh', 'energy'),
+    ('sensor.my_home_battery_exported', 'Powerwall Battery exported', '7.721', 'kWh', 'energy'),
+    ('sensor.powerwall_island_status', 'Powerwall Island status', 'on_grid', None, 'enum'),
+    ('number.powerwall_backup_reserve', 'Powerwall Backup reserve', '20', '%', 'battery'),
+    ('binary_sensor.powerwall_grid_status', 'Powerwall Grid status', 'on', None, 'power'),
+    ('switch.powerwall_storm_watch', 'Powerwall Storm watch', 'off', None, 'switch'),
+    ('select.powerwall_operation_mode', 'Powerwall Operation mode', 'autonomous', None, None),
+)
 EV9_ADDRESS = '12 Maple Lane, Example Township, Cary, Wake County, North Carolina, 27500, United States'
 
 
@@ -89,6 +105,12 @@ def _states():
          'attributes': {'friendly_name': 'Lily', 'device_trackers': []}},
         {'entity_id': 'device_tracker.lillian_bus', 'state': 'GREEN LEVEL HS', 'last_changed': '2026-10-27T07:30:00+00:00',
          'attributes': {'friendly_name': 'LILLIAN Bus', 'source_type': 'gps', 'latitude': 35.75, 'longitude': -78.95}},
+        *[{'entity_id': eid, 'state': state, 'last_changed': '2026-10-29T06:00:00+00:00',
+           'attributes': {'friendly_name': name, **({'unit_of_measurement': unit} if unit else {}),
+                          **({'device_class': dc} if dc else {})}}
+          for eid, name, state, unit, dc in POWERWALL],
+        {'entity_id': 'automation.charge_powerwall_nightly', 'state': 'off', 'last_changed': '2026-10-29T06:00:00+00:00',
+         'attributes': {'friendly_name': 'Powerwall - Charge Nightly'}},
     ]
 
 
@@ -141,9 +163,15 @@ REGISTRY = [
                                   ('device_tracker.jeffs_iphone_2', 'Jeff\u2019s iPhone (2)', 'icloud'),
                                   ('person.lily', 'Lily', 'person'),
                                   ('device_tracker.lillian_bus', 'LILLIAN Bus', 'hctb'))],
+    *[{'entity_id': eid, 'name': None, 'original_name': name.replace('Powerwall ', ''), 'aliases': [], 'area_id': None,
+       'device_id': 'dev_powerwall', 'hidden_by': None, 'disabled_by': None, 'platform': 'powerwall'}
+      for eid, name, _s, _u, _d in POWERWALL],
+    {'entity_id': 'automation.charge_powerwall_nightly', 'name': None, 'original_name': 'Powerwall - Charge Nightly',
+     'aliases': [], 'area_id': None, 'device_id': None, 'hidden_by': None, 'disabled_by': None, 'platform': 'automation'},
 ]
 
 DEVICES = [{'id': 'dev_ev9', 'name': 'Kia EV9', 'area_id': 'garage'}, {'id': 'dev_van', 'name': 'Van', 'area_id': None},
+           {'id': 'dev_powerwall', 'name': 'My Home', 'area_id': 'garage'},
            {'id': 'dev_office_cast', 'name': 'GoogleTV1645', 'area_id': None},
            {'id': 'dev_office_tv', 'name': 'Office TV', 'area_id': 'office'},
            {'id': 'dev_living_tv', 'name': 'Living Room TV', 'area_id': 'living_room'},
@@ -158,7 +186,8 @@ AREAS = [
     {'id': 'hall', 'name': 'Hall', 'entities': ['light.hall', 'lock.front_door']},
     {'id': 'garage', 'name': 'Garage', 'entities': ['cover.main_garage', 'device_tracker.ev9_location',
                                                     'sensor.garage_kia_ev9_geocoded_location',
-                                                    *[f'binary_sensor.ev9_{k}' for k in EV9_PARTS]]},
+                                                    *[f'binary_sensor.ev9_{k}' for k in EV9_PARTS],
+                                                    *[row[0] for row in POWERWALL]]},
 ]
 
 EXPOSED = {'light.office_lamp': True, 'media_player.office_tv_2': True, 'light.front_porch_column_1': True,
@@ -273,6 +302,99 @@ class HouseToolTests(unittest.TestCase):
     def test_find_by_area_lists_the_rooms_devices(self):
         ids = {c['entity_id'] for c in self.run_tool(action='find', query='garage')['candidates']}
         self.assertIn('cover.main_garage', ids)
+
+    # --- a device is many sensors (2026-10-29) --------------------------------
+    def test_one_word_finds_every_sensor_on_the_device_with_units(self):
+        """Live 2026-10-29: "what level is the Powerwall battery" found ONE entity, Powerwall Version
+        (unavailable), and Argyle said unknown; the percentage sat on the same device unseen. A query
+        that names a device answers with the whole device: every entity, unit and device_class."""
+        res = self.run_tool(action='find', query='powerwall')
+        self.assertEqual(res['status'], 'success', res)
+        ids = [c['entity_id'] for c in res['candidates']]
+        self.assertGreater(len(ids), 1, 'Powerwall Version alone was the live failure')
+        self.assertTrue(all(c['device'] == 'My Home' for c in res['candidates'] if c['domain'] != 'automation'))
+        dev = res['devices'][0]
+        self.assertEqual(dev['device'], 'My Home')
+        self.assertEqual(dev['ha_area'], 'Garage')
+        rows = {r['entity_id']: r for r in dev['entities']}
+        self.assertEqual(len(rows), len(POWERWALL), 'every entity on the device, not only the matching ones')
+        pct = rows['sensor.powerwall_percentage_charged']
+        self.assertEqual((pct['state'], pct['unit'], pct['device_class']), ('40.129133242027', '%', 'battery'))
+        self.assertEqual(rows['sensor.powerwall_version']['state'], 'unavailable')
+        self.assertNotIn('unit', rows['sensor.powerwall_version'])
+        self.assertNotIn('automation.charge_powerwall_nightly', rows, 'off-device entities are not the device')
+        self.assertEqual(self.calls, [])
+
+    def test_a_devices_own_name_finds_its_sensors_too(self):
+        for query, device, member in (('kia ev9', 'Kia EV9', 'binary_sensor.ev9_engine'),
+                                      ('my home', 'My Home', 'sensor.powerwall_percentage_charged')):
+            res = self.run_tool(action='find', query=query)
+            self.assertEqual(res['devices'][0]['device'], device, res.get('devices'))
+            self.assertIn(member, [r['entity_id'] for r in res['devices'][0]['entities']])
+
+    def test_reading_a_device_by_name_answers_the_whole_device(self):
+        res = self.run_tool(action='read', query='powerwall', acting_member={'id': 'k1', 'role': 'kid'})
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(res['device']['device'], 'My Home')
+        rows = {r['entity_id']: r for r in res['device']['entities']}
+        self.assertEqual(rows['sensor.powerwall_percentage_charged']['unit'], '%')
+        self.assertIn('automation.charge_powerwall_nightly', [c['entity_id'] for c in res['other']],
+                      'matches off the device are still shown, apart')
+        self.assertEqual(self.calls, [])
+
+    def test_a_query_across_two_devices_stays_ambiguous_but_groups_them(self):
+        res = self.run_tool(action='read', query='garage')
+        self.assertEqual(res['status'], 'ambiguous', res)
+        self.assertEqual({d['device'] for d in res['devices']}, {'Kia EV9', 'My Home'})
+        self.assertEqual(self.calls, [])
+
+    def test_a_loose_word_never_drags_in_every_device_with_such_a_sensor(self):
+        """Live 2026-10-29: 'powerwall battery' grouped 27 devices (phones, a mower, a siren)
+        because any name with 'battery' scored above the fuzzy floor."""
+        self.states.append({'entity_id': 'sensor.ev9_battery', 'state': '81', 'last_changed': '2026-10-29T06:00:00+00:00',
+                            'attributes': {'friendly_name': 'Kia EV9 Battery', 'unit_of_measurement': '%',
+                                           'device_class': 'battery'}})
+        REGISTRY.append({'entity_id': 'sensor.ev9_battery', 'name': None, 'original_name': 'Battery', 'aliases': [],
+                         'area_id': None, 'device_id': 'dev_ev9', 'hidden_by': None, 'disabled_by': None, 'platform': 'kia_uvo'})
+        try:
+            res = self.run_tool(action='find', query='powerwall battery')
+            self.assertEqual([d['device'] for d in res['devices']], ['My Home'])
+            res = self.run_tool(action='find', query='ev9 battery')
+            self.assertEqual([d['device'] for d in res['devices']], ['Kia EV9'])
+        finally:
+            REGISTRY.pop()
+
+    def test_candidate_rows_carry_unit_and_device_class_only_when_the_entity_has_them(self):
+        row = self.run_tool(action='find', query='backup reserve')['candidates'][0]
+        self.assertEqual((row['entity_id'], row['unit'], row['device_class']),
+                         ('number.powerwall_backup_reserve', '%', 'battery'))
+        lamp = self.run_tool(action='find', query='office lamp')['candidates'][0]
+        self.assertNotIn('unit', lamp)
+        self.assertNotIn('device_class', lamp)
+
+    def test_a_device_with_too_many_entities_is_capped_with_a_count(self):
+        for i in range(70):
+            self.states.append({'entity_id': f'sensor.rack_{i}', 'state': str(i), 'last_changed': '2026-10-29T06:00:00+00:00',
+                                'attributes': {'friendly_name': f'Rack Sensor {i}', 'unit_of_measurement': 'W'}})
+            REGISTRY.append({'entity_id': f'sensor.rack_{i}', 'name': None, 'original_name': f'Sensor {i}', 'aliases': [],
+                             'area_id': None, 'device_id': 'dev_rack', 'hidden_by': None, 'disabled_by': None, 'platform': 'x'})
+        DEVICES.append({'id': 'dev_rack', 'name': 'Rack', 'area_id': None})
+        try:
+            dev = self.run_tool(action='find', query='rack sensor')['devices'][0]
+            self.assertEqual(len(dev['entities']), 60)
+            self.assertEqual(dev['more'], 10)
+        finally:
+            del REGISTRY[-70:]
+            DEVICES.pop()
+
+    def test_the_tool_and_the_prompt_say_a_device_is_many_sensors(self):
+        tool = next(t for t in agent_tools_v2.get_available_tools() if t['name'] == 'house')
+        self.assertIn('devices', tool['description'])
+        self.assertIn('device_class', tool['description'])
+        import inspect
+        from services import agent_router
+        self.assertIn('device_class', inspect.getsource(agent_router),
+                      'the system prompt never tells the model to pick the sensor that fits the question')
 
     # --- read ---------------------------------------------------------------
     def test_read_gives_brightness_as_percent_and_never_a_token(self):

@@ -20,12 +20,10 @@ def _catalogue():
     area_names = {a['id']: a['name'] for a in areas}
     entity_areas = {eid: a['name'] for a in areas for eid in a.get('entities', [])}
     states = ha_api.get_states()
-    # area_entities() normally includes device inheritance. Only fetch the
-    # device registry when the template map leaves an entity without an area.
-    devices = {}
-    if any(s.get('entity_id') not in entity_areas
-           and registry.get(s.get('entity_id'), {}).get('device_id') for s in states):
-        devices = {d['id']: d for d in ha_api.get_device_registry()}
+    # The device registry names the device an entity belongs to (the Powerwall is
+    # "My Home"; its fifty entities say Powerwall) and gives an area to entities
+    # the template map left without one.
+    devices = {d['id']: d for d in ha_api.get_device_registry()}
     out = []
     for state in states:
         eid = state.get('entity_id', '')
@@ -36,24 +34,78 @@ def _catalogue():
             continue
         attrs = state.get('attributes') or {}
         name = attrs.get('friendly_name') or row.get('name') or row.get('original_name') or eid
-        area_id = row.get('area_id') or devices.get(row.get('device_id'), {}).get('area_id')
+        device = devices.get(row.get('device_id'), {})
+        area_id = row.get('area_id') or device.get('area_id')
+        device_name = device.get('name_by_user') or device.get('name') or ''
         out.append({'entity_id': eid, 'name': name,
                     'area': entity_areas.get(eid) or area_names.get(area_id, ''),
                     'domain': eid.split('.', 1)[0], 'state': state.get('state'),
                     'aliases': list(row.get('aliases') or []), '_state': state,
-                    '_device_id': row.get('device_id'), '_platform': row.get('platform'),
+                    '_device_id': row.get('device_id'), '_device_name': device_name,
+                    '_device_area': area_names.get(device.get('area_id'), ''),
+                    '_platform': row.get('platform'),
                     '_names': [name, row.get('name'), row.get('original_name'),
-                               *list(row.get('aliases') or []), eid, eid.split('.', 1)[1]]})
+                               *list(row.get('aliases') or []), eid, eid.split('.', 1)[1], device_name]})
+    return out
+
+
+def _measure(entity):
+    """What makes a sensor's number readable: its unit and HA device class, when it has them."""
+    attrs = entity['_state'].get('attributes') or {}
+    out = {}
+    if attrs.get('unit_of_measurement'):
+        out['unit'] = attrs['unit_of_measurement']
+    if attrs.get('device_class'):
+        out['device_class'] = attrs['device_class']
     return out
 
 
 def _candidate(entity):
     row = {**{k: entity[k] for k in ('entity_id', 'name', 'domain', 'state', 'aliases')},
-           'ha_area': entity['area']}
+           'ha_area': entity['area'], **_measure(entity)}
     attrs = entity['_state'].get('attributes') or {}
     if entity['domain'] == 'remote' and 'activity_list' in attrs:
         row['apps'] = list(attrs.get('activity_list') or [])   # an Android TV: what it can open
+    if entity.get('_device_name'):
+        row['device'] = entity['_device_name']
     return row
+
+
+DEVICE_ROWS = 60      # entities listed per device; the rest is a count
+DEVICE_GROUPS = 5     # devices listed per answer
+_DOMAIN_ORDER = {d: i for i, d in enumerate((
+    'cover', 'lock', 'light', 'switch', 'fan', 'media_player', 'climate', 'alarm_control_panel',
+    'device_tracker', 'number', 'select', 'sensor', 'binary_sensor'))}
+
+
+def _device_groups(ranked, catalogue):
+    """The HA devices the matches belong to, each with EVERY entity on it (state, unit,
+    device_class). Live 2026-10-29: 'powerwall' matched one entity, Powerwall Version
+    (unavailable), and the percentage charged sat unseen on the same device. The model
+    picks the row that fits the question; the tool never guesses which sensor that is."""
+    # Only real matches make a device (every word said in the name, or the room named);
+    # 'powerwall battery' must not drag in every phone and mower with a battery sensor.
+    ranked = [pair for pair in ranked if pair[0] >= 0.8] or ranked[:8]
+    hits = {}
+    for score, e in ranked:
+        if e.get('_device_id'):
+            best, count = hits.get(e['_device_id'], (0.0, 0))
+            hits[e['_device_id']] = (max(best, score), count + 1)
+    ordered = sorted(hits.items(), key=lambda kv: (-kv[1][1], -kv[1][0], kv[0]))[:DEVICE_GROUPS]
+    per = DEVICE_ROWS if len(ordered) <= 2 else 20
+    out = []
+    for device_id, (best, count) in ordered:
+        members = sorted((e for e in catalogue if e.get('_device_id') == device_id),
+                         key=lambda e: (_DOMAIN_ORDER.get(e['domain'], 20), e['name'], e['entity_id']))
+        rows = [{'entity_id': e['entity_id'], 'name': e['name'], 'domain': e['domain'], 'state': e['state'],
+                 **_measure(e)} for e in members[:per]]
+        first = members[0]
+        group = {'device': first.get('_device_name') or first['name'],
+                 'ha_area': first.get('_device_area') or first['area'], 'entities': rows}
+        if len(members) > per:
+            group['more'] = len(members) - per
+        out.append(group)
+    return out
 
 
 def _score(query, names):
@@ -65,12 +117,20 @@ def _score(query, names):
             continue
         if query == name:
             return 1.0
-        overlap = len(tokens & set(name.split())) / max(len(tokens), len(set(name.split())))
+        name_tokens = set(name.split())
+        if tokens and tokens <= name_tokens:
+            # Every word said is in the name: 'powerwall' fits 'Powerwall Percentage charged'
+            # as well as 'Powerwall Version'; a long name must not lose to a short one, and
+            # every such match is strong (0.8+; 0.7 + 0.3/3 fell BELOW 0.8 in floating point
+            # and resolve picked Powerwall Version alone, the live failure in another coat).
+            best = max(best, 0.8 + 0.2 * len(tokens) / len(name_tokens))
+        overlap = len(tokens & name_tokens) / max(len(tokens), len(name_tokens))
         best = max(best, 0.65 * overlap + 0.35 * SequenceMatcher(None, query, name).ratio())
     return best
 
 
-def _rank(catalogue, query, domain=''):
+def _rank(catalogue, query, domain='', limit=8):
+    """Every matching entity, best first; `limit` None keeps them all (device grouping)."""
     query = _words(query)
     if not query:
         return []
@@ -80,18 +140,21 @@ def _rank(catalogue, query, domain=''):
         domain_order = {domain: i for i, domain in enumerate((
             'cover', 'lock', 'light', 'switch', 'fan', 'media_player', 'climate',
             'alarm_control_panel', 'device_tracker'))}
-        return sorted(((_score(query, e['_names']), e) for e in area_matches),
-                      key=lambda pair: (domain_order.get(pair[1]['domain'],
-                                        10 if pair[1]['domain'] in ('sensor', 'binary_sensor') else 9),
-                                        -pair[0], pair[1]['entity_id']))[:8]
+        # Naming the room is a full match for everything in it; the name score only orders.
+        return [(1.0, e) for _, e in sorted(((_score(query, e['_names']), e) for e in area_matches),
+                                            key=lambda pair: (domain_order.get(pair[1]['domain'],
+                                                              10 if pair[1]['domain'] in ('sensor', 'binary_sensor') else 9),
+                                                              -pair[0], pair[1]['entity_id']))[:limit]]
     ranked = [(max(_score(query, e['_names']), _score(query, [e['area']])), e) for e in pool]
     return sorted(((score, e) for score, e in ranked if score >= 0.45),
-                  key=lambda pair: (-pair[0], pair[1]['entity_id']))[:8]
+                  key=lambda pair: (-pair[0], pair[1]['entity_id']))[:limit]
 
 
 def find(query, domain='', catalogue=None):
-    ranked = _rank(_catalogue() if catalogue is None else catalogue, query, domain)
-    return {'status': 'success', 'candidates': [_candidate(e) for _, e in ranked]}
+    catalogue = _catalogue() if catalogue is None else catalogue
+    ranked = _rank(catalogue, query, domain, limit=None)
+    return {'status': 'success', 'candidates': [_candidate(e) for _, e in ranked[:8]],
+            'devices': _device_groups(ranked, catalogue)}
 
 
 def resolve(query='', entity_id='', domain='', catalogue=None):
@@ -103,14 +166,17 @@ def resolve(query='', entity_id='', domain='', catalogue=None):
         return exact
     if entity_id:
         return {'status': 'error', 'message': 'That Home Assistant entity is not available.'}
-    ranked = _rank(catalogue, query, domain)
-    # An area alone is discovery, even when its name resembles a device.
-    strong = [e for _, e in ranked if _score(_words(query), e['_names']) >= 0.8]
+    ranked = _rank(catalogue, query, domain, limit=None)
+    # An area alone is discovery, even when its name resembles a device: 'hall' lists
+    # the hall, it never picks the Hall Light.
+    q = _words(query)
+    names_an_area = any(_words(e['area']) == q for e in catalogue)
+    strong = [e for _, e in ranked if _score(q, e['_names']) >= (1.0 if names_an_area else 0.8)]
     if len(strong) == 1:
         return strong[0]
     if ranked:
-        return {'status': 'ambiguous', 'candidates': [_candidate(e) for _, e in ranked],
-                'message': 'Which device do you mean?'}
+        return {'status': 'ambiguous', 'candidates': [_candidate(e) for _, e in ranked[:8]],
+                'devices': _device_groups(ranked, catalogue), 'message': 'Which device do you mean?'}
     return {'status': 'error', 'message': 'No matching Home Assistant device was found.'}
 
 
@@ -570,6 +636,12 @@ def house(action='', query='', entity_id='', domain='', service='', data=None,
             return locate(query, entity_id, catalogue, acting_member, voice_context, source)
         entity = resolve(query, entity_id, domain, catalogue)
         if 'status' in entity:
+            if action == 'read' and entity['status'] == 'ambiguous' and len(entity.get('devices') or []) == 1:
+                # One device, many sensors ('read the powerwall'): the whole device is the answer.
+                device = entity['devices'][0]
+                on_it = {r['entity_id'] for r in device['entities']}
+                return {'status': 'success', 'device': device,
+                        'other': [c for c in entity['candidates'] if c['entity_id'] not in on_it]}
             return entity
         eid = entity['entity_id']
         if action == 'read':
