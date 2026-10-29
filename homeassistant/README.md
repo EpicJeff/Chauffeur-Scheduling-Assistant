@@ -740,6 +740,90 @@ main garage" to Argyle's house tool and its trusted-parent check. The house
 tool does not change this flag: built-in Assist handling stays first for every
 matched house intent.
 
+## 5. Duck the room while someone talks to a satellite
+
+Installed in Home Assistant on 2026-10-29 as the automation **Voice: duck the
+room while listening** (id `voice_duck_room_while_listening`, created through
+the config API, so it lives in `automations.yaml` and shows in Settings >
+Automations). A RECORD, NOT A SOURCE FILE: edit it in HA, then update this copy.
+
+What it does: when any listed `assist_satellite` leaves `idle` (to `listening`,
+`processing` or `responding`), every media player in the satellite's AREA that
+is `playing` or `on` with a `volume_level` is set to 30% of its volume (floor
+0.02). When the satellite is `idle` again (or after 120 s), each one goes back to
+exactly the volume it had. Players on the satellite's own device are skipped:
+the Voice PE firmware already ducks itself 20 dB (`nabu.set_ducking` in
+upstream's `on_start` / `on_end`), and lowering its player would lower the reply.
+
+Why no scene snapshot: `scene.create` + `scene.turn_on` was the first build and
+it MUTED the kitchen Family Hub TV on restore, because reproducing a media
+player's state sends `volume_mute`, and the Samsung TV integration's mute is a
+KEY_MUTE toggle. The volumes now live in the automation run itself
+(`variables.snapshot`, mode `single`), so nothing but `volume_set` is ever sent.
+
+Known edges: a second utterance while the first run is still waiting is ignored
+by mode `single` (the first run holds the true volumes and restores them when
+the satellite idles). Nothing is persisted, so an HA restart mid-conversation
+leaves the room ducked once; the next conversation restores nothing because it
+snapshots the already-ducked level. A new satellite must be added to the
+trigger's `entity_id` list by hand. `on` is accepted alongside `playing`
+because Samsung TVs never report `playing`.
+
+Verified 2026-10-29 with `assist_satellite.announce` on the kitchen satellite:
+trace shows `volume_set` 0.5 -> 0.15 at `responding`, the wait completing on
+`idle` 4.4 s later, and `volume_set` back to 0.5; mute untouched.
+
+```yaml
+id: voice_duck_room_while_listening
+alias: 'Voice: duck the room while listening'
+description: 'When a voice satellite leaves idle (listening / processing / responding), lower every playing
+  speaker in its room to 30% of its volume; when the satellite is idle again, put each one back to exactly
+  what it was. Volumes live in this run, not in a scene: scene restore sends mute commands, and a Samsung
+  TV''s mute is a toggle. Add new satellites to the trigger.'
+triggers:
+- trigger: state
+  entity_id:
+  - assist_satellite.home_assistant_voice_0a6b85_assist_satellite
+  from: idle
+  to:
+  - listening
+  - processing
+  - responding
+actions:
+- condition: template
+  value_template: '{{ snapshot | count > 0 }}'
+- repeat:
+    for_each: '{{ snapshot | list }}'
+    sequence:
+    - action: media_player.volume_set
+      target:
+        entity_id: '{{ repeat.item }}'
+      data:
+        volume_level: '{{ [ (snapshot[repeat.item] | float) * ratio, 0.02 ] | max | round(2) }}'
+- wait_for_trigger:
+  - trigger: template
+    value_template: '{{ is_state(satellite, ''idle'') }}'
+  timeout:
+    seconds: 120
+  continue_on_timeout: true
+- repeat:
+    for_each: '{{ snapshot | list }}'
+    sequence:
+    - action: media_player.volume_set
+      target:
+        entity_id: '{{ repeat.item }}'
+      data:
+        volume_level: '{{ snapshot[repeat.item] }}'
+mode: single
+variables:
+  satellite: '{{ trigger.entity_id }}'
+  ratio: 0.3
+  snapshot: '{% set sat_dev = device_id(satellite) %}{% set ns = namespace(out={}) %}{% for e in area_entities(area_id(satellite))
+    | select(''match'',''media_player\.'') | list %}{% if states(e) in [''playing'',''on''] and state_attr(e,''volume_level'')
+    is number and device_id(e) != sat_dev %}{% set ns.out = dict(ns.out, **{e: state_attr(e,''volume_level'')})
+    %}{% endif %}{% endfor %}{{ ns.out }}'
+```
+
 ## Troubleshooting
 
 ### A "play X on Y" sentence dies with `Unexpected error during intent recognition` and Argyle never runs
