@@ -22,11 +22,20 @@ The same gap twice is one row with count 2. Service trouble (HA offline, the AI
 overloaded, a permission refusal, an honest 'which one') is not a gap and is never
 recorded. Nothing here may ever break a reply: every entry point swallows.
 """
+import logging
 import re
 import time
 import uuid
 
 from services import storage
+
+logger = logging.getLogger(__name__)
+# Device 2026-10-29: Argyle SAID it would note a gap for the developer and never called
+# report_gap. Saying you cannot is itself the signal; the router records it when no call
+# was made, so a parroted promise still leaves a row.
+CANNOT_RE = re.compile(r"\b(can'?t|cannot|unable|not able|no way to|don'?t have a way|isn'?t something i can|"
+                       r"not something i can|note (?:it|that|this) for the developer|noted for the developer|"
+                       r"i(?:'ll| will) (?:make a )?note)\b", re.IGNORECASE)
 
 KINDS = ('tool_error', 'no_tool', 'no_answer', 'cannot', 'wrong', 'unhelpful', 'taught')
 STATUSES = ('open', 'fixed', 'dismissed')
@@ -73,6 +82,7 @@ def record(kind, asked='', source='', acting_member=None, tool='', message='', d
                     patch['status'] = 'open'       # it came back after a fix: open again
                     patch['reopened'] = True
                 storage.update_argyle_gap(row['id'], patch)
+                logger.info(f"[gaps] {kind} again (x{patch['count']}): {row.get('message') or row.get('asked')}")
                 return {**row, **patch}
         row = {'id': uuid.uuid4().hex, 'kind': kind, 'status': 'open', 'fingerprint': key,
                'asked': str(asked or '')[:500], 'source': source or '', 'who': (acting_member or {}).get('id') or '',
@@ -80,15 +90,21 @@ def record(kind, asked='', source='', acting_member=None, tool='', message='', d
                'message': str(message or '')[:500], 'detail': str(detail or '')[:1000], 'prior': str(prior or '')[:500],
                'first_at': now, 'last_at': now, 'count': 1, 'fixed_version': ''}
         storage.add_argyle_gap(row)
+        logger.info(f"[gaps] {kind} recorded ({source or '?'}): {row['message'] or row['asked']}")
         return row
     except Exception:
+        logger.exception('[gaps] could not record a gap')
         return None
 
 
-def record_turn(asked='', source='', acting_member=None, executed_results=None, no_answer=False):
+def record_turn(asked='', source='', acting_member=None, executed_results=None, no_answer=False, agent_message=''):
     """The deterministic signals of one agent turn. Called by the router after the tool
     loop; never raises, never changes the reply."""
     try:
+        reported = any(str(sig).startswith('report_gap:') for sig in (executed_results or {}))
+        if not reported and not no_answer and agent_message and CANNOT_RE.search(str(agent_message)):
+            record('cannot', asked=asked, source=source, acting_member=acting_member,
+                   message=str(agent_message)[:300], detail='said without report_gap')
         for sig, res in (executed_results or {}).items():
             tool = str(sig).split(':', 1)[0]
             if tool == 'report_gap' or not isinstance(res, dict):

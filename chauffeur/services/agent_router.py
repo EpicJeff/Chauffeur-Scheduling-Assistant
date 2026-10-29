@@ -1553,7 +1553,8 @@ sending or claiming, and never pass from_member/member_name for them.
     try:
         from services import argyle_gaps as _gaps
         _gaps.record_turn(asked=asked, source=source, acting_member=acting_member,
-                          executed_results=executed_results, no_answer=agent_message == DEFAULT_AGENT_MESSAGE)
+                          executed_results=executed_results, no_answer=agent_message == DEFAULT_AGENT_MESSAGE,
+                          agent_message=agent_message)
     except Exception:
         logger.exception('[gaps] could not record the turn')
     return {

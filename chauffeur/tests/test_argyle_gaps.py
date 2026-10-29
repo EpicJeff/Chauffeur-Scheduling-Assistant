@@ -118,6 +118,28 @@ class ArgyleGapsTests(unittest.TestCase):
         self.assertEqual([r['kind'] for r in rows], ['no_answer'])
         self.assertEqual(rows[0]['asked'], 'what is the meaning of the garage')
 
+    def test_saying_you_cannot_without_the_call_is_still_recorded(self):
+        """Device 2026-10-29: Argyle said it could not do it yet and would note it for the
+        developer, and no row appeared; it never called report_gap. The words are the signal."""
+        res, _ = _route('water the garden', [
+            {'tool_calls': [], 'message': "I can't do that yet, but I'll make a note for the developer."}],
+            acting_member=PARENT, source='pwa')
+        self.assertEqual(res['status'], 'success')
+        rows = argyle_gaps.list_gaps()
+        self.assertEqual([r['kind'] for r in rows], ['cannot'], rows)
+        self.assertEqual(rows[0]['asked'], 'water the garden')
+        self.assertIn("can't do that yet", rows[0]['message'])
+        self.assertEqual(rows[0]['detail'], 'said without report_gap')
+        # When the call WAS made there is one row, from the call, never a second from the words.
+        with storage.db_lock:
+            storage.argyle_gaps_table.truncate()
+        _route('water the garden', [
+            {'tool_calls': [{'name': 'report_gap', 'arguments': {'kind': 'cannot', 'what_was_missing': 'no irrigation tool'}}], 'message': ''},
+            {'tool_calls': [], 'message': "I can't do that yet; it is noted."}], acting_member=PARENT)
+        rows = argyle_gaps.list_gaps()
+        self.assertEqual(len(rows), 1, rows)
+        self.assertEqual(rows[0]['message'], 'no irrigation tool')
+
     def test_a_turn_with_only_good_results_records_nothing(self):
         _route('find the hall light', [
             {'tool_calls': [{'name': 'house', 'arguments': {'action': 'find', 'query': 'hall light'}}], 'message': ''},
