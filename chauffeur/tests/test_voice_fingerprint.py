@@ -181,7 +181,8 @@ class FingerprintTests(unittest.TestCase):
         metadata = self.put_observation(ctx, future=pending)
         started = time.monotonic()
         self.assertIsNone(fp.consume(ctx, metadata))
-        self.assertLess(time.monotonic() - started, .8)
+        # The wait is bounded by IDENTIFY_WAIT (was .4 s until 2026-10-29; an 817 ms sample was thrown away).
+        self.assertLess(time.monotonic() - started, fp.IDENTIFY_WAIT + .5)
         pending.set_result((vector(), 6))
         self.assertIsNone(fp.consume(ctx, metadata))
         self.assertIsNone(fp.consume(self.ctx(), metadata))
@@ -233,6 +234,77 @@ class FingerprintTests(unittest.TestCase):
                 asyncio.run(fp.observe(b'private audio', metadata, ctx))
         finally:
             fp._slot.release()
+
+    def test_an_ordinary_turn_waits_long_enough_for_the_fingerprint(self):
+        """Device 2026-10-29 (Office Voice PE): Config showed 'Last fingerprint: 817 ms' and
+        'who am I?' got 'I don't know who you are' twice. An ordinary turn waited only .4 s
+        for the vector, so a sample that took .8 s was computed and then thrown away, every
+        time, on a speaker where nothing else was wrong. The wait is now IDENTIFY_WAIT (2 s),
+        still best effort: a slower sample never clears the current identity."""
+        self.enable()
+        ctx = self.ctx()
+        metadata = {'run_id': 'run', 'utterance_id': ctx.request_id, 'device_id': 'device'}
+
+        def slow_extract(audio, md, enrollment=False):
+            time.sleep(.8)
+            return vector(), 2.0
+        with patch.object(fp, 'extract', slow_extract):
+            result = asyncio.run(fp.observe(b'audio', metadata, ctx))
+            evidence = fp.consume(ctx, {**metadata, **result}, 'who am I')
+        self.assertIsNotNone(evidence, 'an .8 s fingerprint must still reach the turn')
+        self.assertEqual(evidence['vector'], vector())
+        self.assertGreaterEqual(fp.IDENTIFY_WAIT, 2.0)
+        named = fp.apply(ctx, evidence)
+        self.assertEqual(named.member_id, 'jeff')
+        self.assertEqual(named.level, 'named')
+
+    def test_the_config_row_says_what_became_of_the_last_sample(self):
+        """'Last fingerprint: 817 ms' alone cannot tell a parent whether the voice was too
+        short, too late, unmatched or named. The satellite's last state now carries an
+        outcome in words, and status() surfaces it for the Config row."""
+        self.enable()
+        key = ('ha', 'assist_satellite.kitchen')
+        ctx = self.ctx()
+        metadata = {'run_id': 'run', 'utterance_id': ctx.request_id, 'device_id': 'device'}
+        # Named.
+        with patch.object(fp, 'extract', return_value=(vector(), 2.0)):
+            result = asyncio.run(fp.observe(b'audio', metadata, ctx))
+            fp.apply(ctx, fp.consume(ctx, {**metadata, **result}))
+        state = fp._last[key]
+        self.assertTrue(state['available'])
+        self.assertIn('latency_ms', state)
+        self.assertIn('Jeff', state['outcome'])
+        self.assertIn('1.00', state['outcome'])
+        # Too short to identify.
+        ctx = self.ctx(); metadata['utterance_id'] = ctx.request_id
+        with patch.object(fp, 'extract', return_value=(vector(), .9)):
+            result = asyncio.run(fp.observe(b'audio', metadata, ctx))
+            fp.apply(ctx, fp.consume(ctx, {**metadata, **result}))
+        self.assertIn('too short', fp._last[key]['outcome'])
+        self.assertIn('0.9', fp._last[key]['outcome'])
+        self.assertIn(str(fp.IDENTIFY_SECONDS), fp._last[key]['outcome'])
+        # No match.
+        ctx = self.ctx(); metadata['utterance_id'] = ctx.request_id
+        with patch.object(fp, 'extract', return_value=(vector(7), 2.0)):
+            result = asyncio.run(fp.observe(b'audio', metadata, ctx))
+            fp.apply(ctx, fp.consume(ctx, {**metadata, **result}))
+        self.assertIn('no match', fp._last[key]['outcome'])
+        self.assertIn('0.00', fp._last[key]['outcome'])
+        # Arrived too late for its turn: the outcome says so once the worker finishes.
+        ctx = self.ctx(); metadata['utterance_id'] = ctx.request_id
+
+        def very_slow(audio, md, enrollment=False):
+            time.sleep(fp.IDENTIFY_WAIT + .4)
+            return vector(), 2.0
+        with patch.object(fp, 'extract', very_slow):
+            result = asyncio.run(fp.observe(b'audio', metadata, ctx))
+            self.assertIsNone(fp.consume(ctx, {**metadata, **result}))
+            fp.apply(ctx, None)
+            time.sleep(.8)
+        self.assertIn('late', fp._last[key]['outcome'])
+        rows = fp.status()['satellites']
+        self.assertEqual(rows[0]['key'], list(key))
+        self.assertIn('outcome', rows[0])
 
     def test_worker_failure_releases_slot(self):
         self.enable()

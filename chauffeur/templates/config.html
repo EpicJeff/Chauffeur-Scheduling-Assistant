@@ -1269,7 +1269,7 @@
                                         </div>
                                     </template>
                                     <template x-for="diagnostic in voiceRecognition.satellites.filter(e => e.key[0] === s.ha_instance_id && e.key[1] === s.satellite_id)" :key="diagnostic.key.join(':')">
-                                        <p class="text-xs text-gray-400" x-text="diagnostic.available ? 'Last fingerprint: ' + diagnostic.latency_ms + ' ms' : diagnostic.message"></p>
+                                        <p class="text-xs text-gray-400" x-text="(diagnostic.available ? 'Last fingerprint: ' + (diagnostic.latency_ms != null ? diagnostic.latency_ms + ' ms' : 'ready') : diagnostic.message) + (diagnostic.outcome ? ', ' + diagnostic.outcome : '')"></p>
                                     </template>
                                     <p x-show="s.fingerprint_bridge && !s.fingerprint_bridge.available"
                                        class="text-xs text-amber-300"

@@ -26,6 +26,11 @@ REVISION = 'wespeaker-resnet34:' + MODEL_SHA + ':sherpa-1.13.8'
 THRESHOLD, MARGIN, CONTINUITY = .70, .12, .65
 DIFFERENT = .40  # uncertain similarities are neutral, not speaker changes
 IDENTIFY_SECONDS = 1.2
+# How long an ordinary turn waits for its fingerprint. Device 2026-10-29 (Office
+# Voice PE): the sample took 817 ms, the turn waited .4 s, and 'who am I?' was
+# answered 'I don't know who you are' twice with the vector computed and thrown
+# away. Still best effort: a slower sample never clears the current identity.
+IDENTIFY_WAIT = 2.0
 MAX_AUDIO = 1_000_000
 # Answers, not phrases: the speaker model is text-independent, and every
 # sample is bound to its run and admitted by a one-use token (spec, core).
@@ -72,6 +77,7 @@ _pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='voice-fingerprint'
 _slot = threading.BoundedSemaphore(1)
 _extractor = None
 _observations = {}
+_late = set()   # observation ids whose turn gave up waiting; the worker reports them when it finishes
 _enrollments = {}
 _last = {}
 
@@ -286,6 +292,7 @@ async def observe(audio, metadata, ctx):
                               'revision': revision, 'future': future, 'expires': time.time() + 60,
                               'enrollment_id': enrollment_id}
         _last[key] = {'available': False, 'message': 'Processing voice sample.'}
+        _late.discard(oid)
         if len(_last) > 256:
             _last.pop(next(iter(_last)))
 
@@ -293,9 +300,12 @@ async def observe(audio, metadata, ctx):
         try:
             completed.result()
             state = {'available': True, 'latency_ms': round((time.monotonic() - started) * 1000)}
+            if oid in _late:
+                state['outcome'] = f"arrived too late for its turn ({state['latency_ms']} ms, waited {IDENTIFY_WAIT:.0f} s)"
         except Exception as error:
             state = {'available': False, 'message': str(error) if isinstance(error, ValueError) else 'Voice model unavailable.'}
         with _lock:
+            _late.discard(oid)
             if revision == identity._revision():
                 _last[key] = state
 
@@ -329,8 +339,11 @@ def consume(ctx, metadata, text=''):
         try:
             # Evidence is best effort; a timeout never clears the current identity.
             # Answers to setup questions may wait 3s for the longer enrollment checks.
-            vector, seconds = row['future'].result(timeout=3 if setup_phrase else .4)
+            vector, seconds = row['future'].result(timeout=3 if setup_phrase else IDENTIFY_WAIT)
         except Exception:
+            if not row['future'].done():
+                with _lock:
+                    _late.add(oid)   # the worker will say so in the Config row when it finishes
             return None
         row = {**row, 'vector': vector, 'seconds': seconds}
         row.pop('future', None)
@@ -676,6 +689,21 @@ def apply(ctx, evidence):
     candidates = sorted(((score(vector, r['vector']), r['member_id']) for r in rows), reverse=True) if usable else []
     matched = candidates[0][1] if candidates and candidates[0][0] >= THRESHOLD \
         and (len(candidates) == 1 or candidates[0][0] - candidates[1][0] >= MARGIN) else None
+    # What became of this sample, in words, for the Config row ('Last fingerprint: 817 ms'
+    # alone could not say whether the voice was short, late, unmatched or named).
+    if vector:
+        if not usable:
+            outcome = (f"too short to identify: {float(evidence.get('seconds', 0)):.1f} s of speech, "
+                       f"needs {IDENTIFY_SECONDS} s; say a longer sentence")
+        elif matched:
+            outcome = f"named {(storage.get_member(matched) or {}).get('name', matched)} ({candidates[0][0]:.2f})"
+        elif candidates:
+            outcome = f"no match (best {candidates[0][0]:.2f}, needs {THRESHOLD:.2f})"
+        else:
+            outcome = 'no voice set up for this speaker'
+        with _lock:
+            _last[(ctx.ha_instance_id, ctx.satellite_id)] = {**_last.get((ctx.ha_instance_id, ctx.satellite_id), {}),
+                                                           'available': True, 'outcome': outcome}
     with identity._lock:
         key = (ctx.ha_instance_id, ctx.satellite_id)
         row = identity._sessions.get(key)
