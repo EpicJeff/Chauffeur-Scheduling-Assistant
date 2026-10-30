@@ -295,10 +295,28 @@ def speaking_seconds(text: str) -> float:
     return float(min(30.0, max(1.0, words / 2.6 + 0.8)))
 
 
+# HA's MediaPlayerEntityFeature.MEDIA_ANNOUNCE. Sonos, Music Assistant, Alexa
+# and the Voice PE's own player carry it; a TV's Android TV Remote face, the
+# Samsung and Sony faces, Apple TV and the bare Cast face do not: they take
+# play_media by swapping the source, which is how 'answer over the Office TV'
+# stopped the show, said nothing and fell back to the satellite (2026-10-30).
+MEDIA_ANNOUNCE = 1048576
+
+
+def can_announce(states: dict, entity_id: str) -> bool:
+    try:
+        return bool(int(((states.get(entity_id) or {}).get('attributes') or {}).get('supported_features') or 0)
+                    & MEDIA_ANNOUNCE)
+    except (TypeError, ValueError):
+        return False
+
+
 def answer_speaker_choices() -> list:
     """Every usable media player, with its room, for the Config row's "Argyle
     answers through" select: [{'entity_id', 'name', 'area'}], rooms first in
-    name order. Empty with no Home Assistant; the page still renders."""
+    name order. Only players that can ANNOUNCE (duck, speak, resume) are
+    offered: a choice that would interrupt a TV to say nothing is not a choice.
+    Empty with no Home Assistant; the page still renders."""
     try:
         states = _states_by_id()
         rooms = {}
@@ -307,7 +325,7 @@ def answer_speaker_choices() -> list:
                 rooms.setdefault(e, area.get('name'))
         out = [{'entity_id': e, 'area': rooms.get(e),
                 'name': ((states[e].get('attributes') or {}).get('friendly_name') or e)}
-               for e in states if e.startswith('media_player.') and _usable(states, e)]
+               for e in states if e.startswith('media_player.') and _usable(states, e) and can_announce(states, e)]
         return sorted(out, key=lambda c: (c['area'] is None, c['area'] or '', c['name']))
     except Exception as e:
         print(f'[announce] speaker choices failed: {e}')
@@ -333,7 +351,9 @@ def answer_through_speaker(satellite_id: str, speech: str, installation: str = N
         if not entity_id.startswith('media_player.'):
             return None
         states = _states_by_id()
-        if not _usable(states, entity_id):
+        if not _usable(states, entity_id) or not can_announce(states, entity_id):
+            # Never touch a player that cannot announce: it would swap its source
+            # and say nothing. The satellite answers instead.
             return None
         if speak_on(entity_id, speech).get('status') != 'success':
             return None

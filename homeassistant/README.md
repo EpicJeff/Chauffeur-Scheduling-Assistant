@@ -733,7 +733,9 @@ on the TV's device). Copy the component and restart HA to take 1.5.2.
 Component 1.6.0 (2026-10-30): Argyle can answer through a room speaker
 instead of the satellite, per satellite. In Chauffeur's Config › Voice
 identity, each satellite's row has "Argyle answers through": pick a media
-player (default "This satellite"); from then on every spoken answer to that
+player (default "This satellite"; only players carrying HA's announce
+feature are listed, the satellite's own room first, so a TV face that would
+merely stop the show is not offered); from then on every spoken answer to that
 satellite (the model's, voice identity's, a setup dialog's) is said on that
 speaker through the same `tts.speak` announcements use (HA's announce flag: Sonos, Google Cast, Alexa Media Player and Music
 Assistant players duck, speak and resume; Apple TV and the Samsung TV face do

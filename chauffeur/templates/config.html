@@ -1246,13 +1246,21 @@
                                                 aria-label="Speaker Argyle answers through on this satellite"
                                                 class="voice-answer-speaker bg-gray-800 border border-gray-600 rounded p-2 text-xs flex-1 min-w-0">
                                             <option value="">This satellite</option>
-                                            <template x-for="sp in (voiceState.speakers || [])" :key="sp.entity_id">
-                                                <option :value="sp.entity_id" x-text="sp.area ? sp.name + ' (' + sp.area + ')' : sp.name"></option>
-                                            </template>
+                                            <optgroup label="In this room" x-show="s.area && (voiceState.speakers || []).some(sp => sp.area === s.area)">
+                                                <template x-for="sp in (voiceState.speakers || []).filter(sp => s.area && sp.area === s.area)" :key="'here:' + sp.entity_id">
+                                                    <option :value="sp.entity_id" x-text="sp.name"></option>
+                                                </template>
+                                            </optgroup>
+                                            <optgroup label="Elsewhere">
+                                                <template x-for="sp in (voiceState.speakers || []).filter(sp => !(s.area && sp.area === s.area))" :key="'away:' + sp.entity_id">
+                                                    <option :value="sp.entity_id" x-text="sp.area ? sp.name + ' (' + sp.area + ')' : sp.name"></option>
+                                                </template>
+                                            </optgroup>
                                         </select>
                                     </label>
-                                    <p class="text-xs text-gray-500" x-show="s.answer_speaker">A Sonos, Cast, Alexa or Music Assistant
-                                        player ducks what it is playing, speaks the answer and resumes; this satellite stays quiet.
+                                    <p class="text-xs text-gray-500" x-show="s.answer_speaker">The speaker ducks what it is playing,
+                                        says the answer and resumes; this satellite stays quiet. Only players that can take an
+                                        announcement are listed, so a TV face that would just stop the show is not offered.
                                         Needs HA component 1.6.0 for follow-up questions.</p>
                                     <div class="flex gap-2 flex-wrap">
                                         <select x-model="voiceEnrollMember" @change="voiceConsent = false" aria-label="Family member to enroll"

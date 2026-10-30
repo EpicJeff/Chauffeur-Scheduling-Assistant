@@ -42,6 +42,10 @@ def _states(**over):
     rows = []
     for eid, state in base.items():
         attrs = {'friendly_name': eid.split('.', 1)[1].replace('_', ' ').title()}
+        if eid.startswith('media_player.'):
+            # HA's MediaPlayerEntityFeature: PLAY_MEDIA = 512, MEDIA_ANNOUNCE = 1048576. A TV's
+            # remote face can PLAY (it swaps the source) but cannot ANNOUNCE.
+            attrs['supported_features'] = 512 if eid == 'media_player.pool_lounge_tv' else 512 | 1048576
         if eid == 'media_player.pool_lounge':
             attrs['mass_player_type'] = 'player'
         rows.append({'entity_id': eid, 'state': state, 'attributes': attrs})
@@ -169,6 +173,23 @@ class VoiceAnswerSpeakerTests(unittest.TestCase):
         self.assertTrue(self.tts_calls()[0][2]['message'])
         self.assertIn(result['continue_conversation'], (True, False))
 
+    def test_a_player_that_cannot_announce_is_never_offered_and_never_tried(self):
+        """Device 2026-10-30: the Office Voice PE set to answer over the Office TV's
+        Google TV face stopped what the TV was showing, said nothing, and the answer
+        came from the satellite after all. That face takes play_media (it swaps the
+        source) but has no MEDIA_ANNOUNCE. Such a player is not in the list, and if
+        one is chosen anyway (a stale row, a player that lost the flag) it is not
+        touched: the satellite answers and the TV keeps playing."""
+        choices = {s['entity_id'] for s in voice.admin_state()['speakers']}
+        self.assertNotIn('media_player.pool_lounge_tv', choices)
+        self.assertIn('media_player.pool_lounge', choices)
+        self.configure(pool_speaker='media_player.pool_lounge_tv')
+        self.states = _states(**{'media_player.pool_lounge_tv': 'playing'})
+        result = self.say('when is practice')
+        self.assertEqual(self.spoken(result), ANSWER)
+        self.assertNotIn('spoken_on', result)
+        self.assertEqual(self.calls, [], 'the TV was never asked to do anything')
+
     def test_speaking_time_grows_with_the_sentence(self):
         short = announce.speaking_seconds('Yes.')
         long = announce.speaking_seconds(' '.join(['word'] * 40))
@@ -204,6 +225,10 @@ class VoiceAnswerSpeakerTests(unittest.TestCase):
         self.assertNotIn('assist_satellite.pool', choices)
         row = next(s for s in state['satellites'] if s['satellite_id'] == 'assist_satellite.pool')
         self.assertEqual(row['answer_speaker'], 'media_player.pool_lounge')
+        # The row knows its room, so the select lists that room's players first.
+        self.assertEqual(row['area'], 'Pool Lounge')
+        self.assertEqual(next(s for s in state['satellites'] if s['satellite_id'] == 'assist_satellite.kitchen')['area'],
+                         'Kitchen')
         # No Home Assistant: the list is empty, the page still renders.
         setattr(ha_api, 'get_states', lambda ttl=5: [])
         self.assertEqual(voice.admin_state()['speakers'], [])
@@ -214,6 +239,10 @@ class VoiceAnswerSpeakerTests(unittest.TestCase):
         self.assertIn('voice-answer-speaker', config)
         self.assertIn('x-model="s.answer_speaker"', config)
         self.assertIn('voiceState.speakers', config)
+        # The satellite's own room first, then a divider, then the rest of the house.
+        self.assertIn('<optgroup label="In this room">', config)
+        self.assertIn('<optgroup label="Elsewhere">', config)
+        self.assertIn('sp.area === s.area', config)
         page = open(os.path.join(base, 'map.html'), encoding='utf-8').read()
         self.assertNotIn('announce-answer-toggle', page)
         self.assertNotIn('voice_answer_speakers', page)

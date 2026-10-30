@@ -518,10 +518,18 @@ def admin_state():
     with _lock:
         config = configuration()
         configured = {(r['ha_instance_id'], r['satellite_id']): r for r in config.get('satellites', [])}
+        from services import announce, ha_api
+        try:
+            areas = ha_api.get_area_map() or []
+        except Exception:
+            areas = []
         rows = []
         for key in set(configured) | set(_observed):
             row = {'answer_speaker': '', **_observed.get(key, {}), **configured.get(key, {})}
             row.pop('service_revision', None)
+            # The satellite's HA room, so the "answers through" list puts that room's
+            # players first. None when HA has it in no area.
+            row['area'] = next((a.get('name') for a in areas if key[1] in (a.get('entities') or [])), None)
             session = _sessions.get(key) or {}
             member = storage.get_member(session.get('member_id')) if session.get('member_id') else None
             valid = session.get('expires_at', 0) > time.time() and _active(member) and _paired(*key, row.get('device_id')) \
@@ -535,7 +543,6 @@ def admin_state():
             rows.append(row)
         locked_members = [{'id': m['id'], 'name': m.get('name') or 'Family member'} for m in storage.get_all_members()
                           if (storage.get_app_state(f"voice:member:{m['id']}") or {}).get('locked')]
-        from services import announce
         return {'enabled': config.get('enabled', False), 'approvals_enabled': config.get('approvals_enabled', False),
                 'satellites': rows, 'locked_members': locked_members,
                 'speakers': announce.answer_speaker_choices(),
