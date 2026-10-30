@@ -19,7 +19,7 @@ LAMP_TOKEN = 'eyJ-secret-should-never-leave'
 EV9_PARTS = ('engine', 'defrost', 'trunk', 'hood', 'front_left_door', 'front_right_door', 'back_left_door',
              'back_right_door', 'sunroof', 'locked')
 TV_APPS = ('Netflix', 'YouTube', 'Disney+', 'Prime Video', 'Hulu', 'Max', 'Plex', 'Spotify', 'Paramount+',
-           'Peacock', 'Apple TV', 'YouTube TV', 'Sling TV')
+           'Peacock', 'Apple TV', 'YouTube TV', 'Sling TV', 'Frndly TV')
 # Live shape 2026-10-29: the Tesla Powerwall is ONE HA device ("My Home", Garage) with ~50 entities;
 # only the entity names say Powerwall. (entity id, name, state, unit, device_class)
 POWERWALL = (
@@ -279,6 +279,7 @@ class HouseToolTests(unittest.TestCase):
         self.calls = []
         self.tv_ignores_launches = False
         self.tv_opens_browser = False
+        self.tv_claims = None
         self.states = _states()
         self.settings = {}
         self.orig = {}
@@ -299,17 +300,25 @@ class HouseToolTests(unittest.TestCase):
                 twin = {'remote.office_tv': 'media_player.office_tv_2',
                         'remote.living_room_tv': 'media_player.living_room_tv_2'}.get(eid)
                 sent = (data or {}).get('activity')
-                hit = next(((n, p) for n, p, a, l in house.KNOWN_APPS if sent in (l, p)), None)
-                package = 'com.tcl.browser' if tests.tv_opens_browser else (hit[1] if hit else sent)
-                shown = hit[0] if hit and hit[0] in TV_APPS and not tests.tv_opens_browser else package
+                hit = next(((n, p) for n, p, a, links in house.KNOWN_APPS if sent in (*links, p)), None)
+                # Device 2026-10-29 (TCL Google TV): a link lands only when an installed app claims it;
+                # an unclaimed https link opens the TV's browser; an unclaimed scheme does nothing at all.
+                claimed = (tests.tv_claims is None or sent in tests.tv_claims) and not tests.tv_opens_browser
+                if claimed:
+                    package = hit[1] if hit else sent
+                    shown = hit[0] if hit and hit[0] in TV_APPS else package
+                elif str(sent).startswith(('http://', 'https://')):
+                    package = shown = 'com.tcl.browser'
+                else:
+                    package = shown = None
                 for s in tests.states:
                     if s['entity_id'] == eid:
                         s['state'] = 'on'
-                        if sent:
+                        if sent and shown:
                             s['attributes']['current_activity'] = shown
                     if s['entity_id'] == twin:
                         s['state'] = 'on'
-                        if sent:
+                        if sent and package:
                             s['attributes']['app_id'] = package
             for s in tests.states:
                 if s['entity_id'] == eid and (domain, service) in after:
@@ -922,10 +931,10 @@ class HouseToolTests(unittest.TestCase):
                 ('prime', 'com.amazon.amazonvideo.livingroom', 'https://app.primevideo.com'),
                 ('HBO Max', 'com.wbd.stream', 'https://play.max.com'),
                 ('you tube', 'com.google.android.youtube.tv', 'https://www.youtube.com'),
-                ('paramount', 'com.cbs.ott', 'https://www.paramountplus.com'),
+                ('paramount', 'com.cbs.ott', 'pplus://www.paramountplus.com/'),
                 ('YouTube TV', 'com.google.android.youtube.tvunplugged', 'https://tv.youtube.com'),
-                ('the Hulu app', 'com.hulu.livingroomplus', 'https://www.hulu.com'),
-                ('plex', 'com.plexapp.android', 'https://app.plex.tv'),
+                ('the Hulu app', 'com.hulu.livingroomplus', 'hulu://video/'),
+                ('plex', 'com.plexapp.android', 'plex://'),
                 ('kodi', 'org.xbmc.kodi', 'org.xbmc.kodi')):          # no link known: the package goes
             self.calls.clear()
             res = self.run_tool(action='app', entity_id='remote.office_tv', app=spoken,
@@ -945,21 +954,82 @@ class HouseToolTests(unittest.TestCase):
         self.assertEqual(self.calls[1][2]['activity'], 'https://www.netflix.com/title/80057281')
 
     def test_a_launch_that_lands_in_the_browser_says_the_app_may_be_missing(self):
-        """Live 2026-10-28: Hulu's link opened the TV's browser; HA said success all the same."""
+        """Live 2026-10-28: Hulu's link opened the TV's browser; HA said success all the same.
+        2026-10-29: every link is tried before the browser is the answer, and the answer no
+        longer claims the app is missing as the only reading (Paramount+ WAS installed)."""
         self.tv_opens_browser = True
         res = self.run_tool(action='app', entity_id='remote.office_tv', app='hulu',
                             acting_member={'id': 'k1', 'role': 'kid'})
         self.assertEqual(res['status'], 'success', res)
         self.assertFalse(res['landed'])
+        self.assertEqual([c[2]['activity'] for c in self.calls], ['hulu://video/', 'https://www.hulu.com/'])
+        self.assertEqual(res['tried'], ['hulu://video/', 'https://www.hulu.com/'])
         self.assertIn('browser', res['message'])
         self.assertIn('not be installed', res['message'])
+        self.assertIn('link', res['message'])
 
-    def test_an_app_only_ha_knows_is_sent_under_the_name_ha_lists(self):
-        res = self.run_tool(action='app', entity_id='remote.office_tv', app='sling',
+    def test_an_app_goes_by_the_scheme_only_it_can_claim_before_its_web_link(self):
+        """Device 2026-10-29 (Office TV, TCL Google TV): Paramount+ was installed and
+        https://www.paramountplus.com opened the browser every time, because the TV app never
+        verified that domain; pplus://www.paramountplus.com/ (its own scheme, from the manifest
+        over ADB) launched it through HA's remote. The same held for Hulu (hulu://video/),
+        Spotify (spotify://), Pluto (plutotv://pluto.tv), ESPN (sportscenter://x-callback-url),
+        Sling (slingtv://sling.com) and DIRECTV (dtvnow://deeplink.directvnow.com). A scheme
+        goes first because only the app can answer it; the browser can never take it."""
+        self.tv_claims = {'pplus://www.paramountplus.com/'}   # the https link would open the browser
+        res = self.run_tool(action='app', entity_id='remote.office_tv', app='paramount plus',
                             acting_member={'id': 'k1', 'role': 'kid'})
         self.assertEqual(res['status'], 'success', res)
-        self.assertEqual(self.calls[0][2]['activity'], 'Sling TV')
-        self.assertEqual(res['app'], 'Sling TV')
+        self.assertTrue(res['landed'], res)
+        self.assertEqual(res['sent'], 'pplus://www.paramountplus.com/')
+        self.assertEqual(res['tried'], ['pplus://www.paramountplus.com/'])
+        self.assertEqual(len(self.calls), 1, 'a launch that landed is never followed by another link')
+        self.assertIn('is on Paramount+', res['message'])
+        for spoken, scheme in (('spotify', 'spotify://'), ('pluto', 'plutotv://pluto.tv'),
+                               ('espn', 'sportscenter://x-callback-url'), ('sling', 'slingtv://sling.com'),
+                               ('directv', 'dtvnow://deeplink.directvnow.com'), ('peacock', 'https://www.peacocktv.com/deeplink')):
+            self.calls.clear()
+            self.tv_claims = None
+            res = self.run_tool(action='app', entity_id='remote.office_tv', app=spoken,
+                                acting_member={'id': 'k1', 'role': 'kid'})
+            self.assertEqual(self.calls[0][2]['activity'], scheme, spoken)
+
+    def test_a_scheme_nobody_claims_falls_through_to_the_web_link(self):
+        """A TV whose Hulu build claims only the web link: the scheme changes nothing, the
+        https link (WITH the trailing slash Hulu's filter demands) lands, and the answer is the
+        landing, not the silence."""
+        self.tv_claims = {'https://www.hulu.com/'}
+        res = self.run_tool(action='app', entity_id='remote.office_tv', app='hulu',
+                            acting_member={'id': 'k1', 'role': 'kid'})
+        self.assertEqual(res['status'], 'success', res)
+        self.assertTrue(res['landed'], res)
+        self.assertEqual([c[2]['activity'] for c in self.calls], ['hulu://video/', 'https://www.hulu.com/'])
+        self.assertEqual(res['sent'], 'https://www.hulu.com/')
+        self.assertIn('is on Hulu', res['message'])
+
+    def test_web_links_carry_the_path_the_app_filter_demands(self):
+        """From the manifests over ADB 2026-10-29: Hulu and Spotify verify their domains but
+        claim only path '/', so a bare 'https://www.hulu.com' misses and the browser opens;
+        Peacock claims only /deeplink; Pluto claims /browse and friends but not '/'."""
+        links = {name: links for name, package, aliases, links in house.KNOWN_APPS}
+        self.assertIn('https://www.hulu.com/', links['Hulu'])
+        self.assertIn('https://open.spotify.com/', links['Spotify'])
+        self.assertEqual(links['Peacock'], ('https://www.peacocktv.com/deeplink',))
+        self.assertIn('https://pluto.tv/browse', links['Pluto TV'])
+        self.assertIn('https://www.paramountplus.com/', links['Paramount+'])
+        for name, package, aliases, app_links in house.KNOWN_APPS:
+            self.assertIsInstance(app_links, tuple, name)
+        # verified-domain apps keep the exact web link the user watched work, first
+        self.assertEqual(links['Netflix'][0], 'https://www.netflix.com/browse')
+        self.assertEqual(links['Disney+'][0], 'https://www.disneyplus.com')
+        self.assertEqual(links['YouTube'][0], 'https://www.youtube.com')
+
+    def test_an_app_only_ha_knows_is_sent_under_the_name_ha_lists(self):
+        res = self.run_tool(action='app', entity_id='remote.office_tv', app='frndly',
+                            acting_member={'id': 'k1', 'role': 'kid'})
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(self.calls[0][2]['activity'], 'Frndly TV')
+        self.assertEqual(res['app'], 'Frndly TV')
 
     def test_an_unknown_app_is_an_error_that_names_what_the_tv_has_and_touches_nothing(self):
         res = self.run_tool(action='app', entity_id='remote.office_tv', app='nintendo',
