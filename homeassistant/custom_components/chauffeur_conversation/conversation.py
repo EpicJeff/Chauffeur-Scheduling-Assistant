@@ -90,7 +90,16 @@ class ChauffeurConversationEntity(conversation.ConversationEntity):
                 _LOGGER.debug("Media intent %s belongs to Chauffeur; skipping relay", name)
                 return None
             if recognized and not recognized.unmatched_entities:
-                return await agent.async_process(user_input)
+                answer = await agent.async_process(user_input)
+                kind = getattr(getattr(answer, 'response', None), 'response_type', None)
+                if str(getattr(kind, 'value', kind) or '').lower() == 'error':
+                    # 1.5.2: the house's own error ("multiple devices called Office
+                    # TV", "no device supports...") is no longer the last word.
+                    # Argyle's house tool resolves a name to one device and acts.
+                    _LOGGER.debug("House answered with error %s; continuing to Chauffeur",
+                                  getattr(answer.response, 'error_code', None))
+                    return None
+                return answer
             _LOGGER.debug("No known house target matched; continuing to Chauffeur")
         except Exception:
             # Loud on purpose: a silent failure here looks exactly like the

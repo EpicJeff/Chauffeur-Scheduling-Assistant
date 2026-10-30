@@ -720,6 +720,16 @@ Component 1.5.1: media intents (`HassMediaSearchAndPlay`, pause, unpause,
 next, previous, set volume) are never relayed, because the house cannot play
 a song on a TV remote and Argyle's `music` tool can; "Sorry, no device
 supports the required features" was the relay repeating that failure.
+Component 1.5.2 (2026-10-30): the house's answer is kept only when it is not
+an error. "Sorry, there are multiple devices called Office TV" came back
+through the relay because four Assist-exposed entities carried that name (the
+Remote face, the Music Assistant face, a stale unavailable player and the real
+media player); on the day of 1.5.0 Argyle could not touch devices, so the
+house's error was the better answer, but since the house tool Argyle resolves a
+name to one device and acts, so an error response now falls through to it.
+The three extras were also unexposed from Assist by hand that day (keep
+`media_player.office_tv_2` exposed; the app launcher accepts any exposed face
+on the TV's device). Copy the component and restart HA to take 1.5.2.
 `chauffeur/tests/test_voice_local_relay.py` runs the real entity against a
 stubbed default agent for each branch.
 

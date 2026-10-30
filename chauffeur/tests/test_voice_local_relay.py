@@ -17,7 +17,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 ARGYLE = "I can't control smart home devices."
-HOUSE = 'Sorry, there are multiple devices called Office TV'
+HOUSE = 'Turned off the TV'
+DUPLICATE = 'Sorry, there are multiple devices called Office TV'
 
 
 class LocalRelayTests(unittest.IsolatedAsyncioTestCase):
@@ -47,9 +48,14 @@ class LocalRelayTests(unittest.IsolatedAsyncioTestCase):
         class IntentResponse:
             def __init__(self, language=None):
                 self.language, self.speech = language, None
+                self.response_type, self.error_code = 'action_done', None
 
             def async_set_speech(self, speech):
                 self.speech = speech
+
+            def async_set_error(self, code, message):
+                # HA's real IntentResponse: response_type becomes ERROR and the code is kept.
+                self.response_type, self.error_code, self.speech = 'error', code, message
 
         from dataclasses import dataclass
 
@@ -112,9 +118,10 @@ class LocalRelayTests(unittest.IsolatedAsyncioTestCase):
         self.entity = module.ChauffeurConversationEntity(entry)
         self.entity.hass = types.SimpleNamespace(async_create_task=asyncio.create_task)
 
-    def house(self, recognized, speech=HOUSE):
+    def house(self, recognized, speech=HOUSE, error=None):
         """A default agent whose strict recognition returns `recognized` and whose own
-        processing answers `speech` (the real one re-fails the way it did in the pipeline)."""
+        processing answers `speech`, or an error response carrying `error` as its code
+        (the real one re-fails the way it did in the pipeline)."""
         tests = self
 
         class DefaultAgent:
@@ -130,7 +137,10 @@ class LocalRelayTests(unittest.IsolatedAsyncioTestCase):
             async def async_process(self, user_input):
                 self.processed.append(user_input.text)
                 response = tests.IntentResponse(user_input.language)
-                response.async_set_speech(speech)
+                if error:
+                    response.async_set_error(error, speech)
+                else:
+                    response.async_set_speech(speech)
                 return tests.ConversationResult(response=response, conversation_id=user_input.conversation_id)
         self.default_agent = DefaultAgent()
         return self.default_agent
@@ -147,6 +157,25 @@ class LocalRelayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(house.processed, ['turn off the office tv'])
         self.assertEqual(self.posted, [], 'a house sentence still reached Chauffeur')
         self.assertEqual(result.conversation_id, 'c1')
+
+    async def test_the_houses_error_answer_goes_to_argyle_who_can_pick_the_device(self):
+        """Device 2026-10-30: 'turn off the office tv' came back 'Sorry, there are multiple
+        devices called Office TV' from the relay, because four Assist-exposed entities carried
+        that name. Component 1.5.0 returned the house's answer unchanged on the day Argyle
+        could not touch devices at all; since the house tool (v2.499.694) Argyle resolves a
+        name to ONE device and acts, so the house's own error is the wrong last word. A
+        relayed answer is kept only when it is not an error; an error falls through."""
+        house = self.house(types.SimpleNamespace(unmatched_entities={}), DUPLICATE, error='no_valid_targets')
+        result = await self.say('turn off the office tv')
+        self.assertEqual(result.response.speech, ARGYLE)
+        self.assertEqual(house.processed, ['turn off the office tv'], 'the house was asked first')
+        self.assertEqual([p['text'] for p in self.posted], ['turn off the office tv'])
+        # The house's success answer is still the answer.
+        self.posted.clear()
+        self.house(types.SimpleNamespace(unmatched_entities={}))
+        result = await self.say('turn off the office tv')
+        self.assertEqual(result.response.speech, HOUSE)
+        self.assertEqual(self.posted, [])
 
     async def test_a_media_sentence_the_house_cannot_play_goes_to_argyle_not_the_houses_error(self):
         """Device run 2026-10-27: "play mayonnaise ... on the office TV" matched the
