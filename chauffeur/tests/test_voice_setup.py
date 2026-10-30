@@ -68,6 +68,21 @@ class SatelliteDialogTests(unittest.TestCase):
         self.assertEqual([r['member_id'] for r in fp.profiles()], ['jeff'])
         self.assertFalse(voice_setup._dialogs)
 
+    def test_set_up_my_voice_works_on_a_satellite_nobody_ticked_in_config(self):
+        """Device 2026-10-29: the new Office Voice PE answered 'set up my voice' with 'I don't have
+        the ability to do that'. The dialog never ran because the satellite had no Config row."""
+        office = {'ha_instance_id': 'ha', 'satellite_id': 'assist_satellite.office', 'device_id': 'office-device'}
+        self.voices.append(vector(3))
+        req = main.ConverseRequest(text='set up my voice', language='en', conversation_id='conv-office',
+                                   voice={**office, 'request_id': uuid.uuid4().hex, 'observed_at': time.time()})
+        request = Request({'type': 'http', 'method': 'POST', 'path': '/', 'query_string': b'',
+                           'headers': [(b'x-service-token', b'service')]})
+        out = main.converse_ha_assist(req, request)
+        speech = out['response']['speech']['plain']['speech']
+        self.assertIn('Who is this for', speech, speech)
+        self.assertTrue(out['continue_conversation'])
+        self.assertIn(('ha', 'assist_satellite.office'), voice_setup._dialogs)
+
     def test_a_child_is_enrolled_with_a_parents_pin_twice(self):
         self.say('set up my voice')
         speech, _ = self.say('for Lily')

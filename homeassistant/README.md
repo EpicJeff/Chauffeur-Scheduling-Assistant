@@ -56,9 +56,13 @@ On your personal device, sign into Config as a parent. Open **People → Voice
 identity**. Configure the service token once under **HA → Settings → Devices &
 services → Chauffeur Conversation → Configure**, using the token from
 **Chauffeur → Config → People → Argyle**. Keep the existing token if it is already
-configured; the token is not configured on individual speakers. Speak an
-ordinary request on each satellite, then refresh voice status. Name/select that satellite and enable
-identity. A recent HA supplies its satellite entity and device IDs directly.
+configured; the token is not configured on individual speakers. Tick **Enable
+voice identity** once. Since v2.499.729 every satellite that speaks to Argyle
+joins by itself on its first turn (enabled, recognition set the way the
+household switch is); untick a satellite's row to leave that one out. Before
+that, each new satellite had to be ticked by hand, and until it was, "set up my
+voice" on it fell through to the model, which said it could not (Office Voice PE,
+2026-10-29). A recent HA supplies its satellite entity and device IDs directly.
 Run **Sync Now** after updating Chauffeur so the schedule cache contains source
 calendar privacy flags before you enable the voice feature.
 On an older HA, use **Chauffeur integration → Configure → Device to satellite

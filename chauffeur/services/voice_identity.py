@@ -118,6 +118,29 @@ class VoiceContext:
                 'request_id': self.request_id}
 
 
+def _adopt(installation, satellite, device, label):
+    """A satellite this installation speaks through for the FIRST time, while
+    identity is on, joins enabled, with recognition set the way the household
+    has it. Device 2026-10-29: a second Voice PE answered 'set up my voice' with
+    'I can't do that' because every identity door hangs on a Config row ticked
+    by hand for that one satellite, and the user's standing call (2026-10-13)
+    is one setup, every speaker. A row a parent unticked is never touched: the
+    Config checkbox stays the per-speaker off switch. Only trusted metadata
+    reaches here (context() checked the service token and the clock), so a row
+    is written only for a satellite the household's own HA just spoke through."""
+    config = configuration()
+    if not config.get('enabled') or not _revision():
+        return
+    rows = list(config.get('satellites', []))
+    if any(r.get('ha_instance_id') == installation and r.get('satellite_id') == satellite for r in rows):
+        return
+    everywhere = recognition_on_everywhere()
+    rows.append({'ha_instance_id': installation, 'satellite_id': satellite, 'device_id': device,
+                 'label': label, 'enabled': True, 'service_revision': _revision(),
+                 'recognition_enabled': everywhere})
+    storage.set_app_state('voice_identity_config', {**config, 'satellites': rows})
+
+
 def _paired(installation, satellite, device):
     config = configuration()
     return bool(config.get('enabled') and any(
@@ -169,6 +192,7 @@ def context(metadata, authenticated: bool) -> VoiceContext:
                 'version': str(bridge.get('version', ''))[:30]}
         if len(_observed) > 256:
             _observed.pop(next(iter(_observed)))
+        _adopt(installation, satellite, device, _observed[key]['label'])
         paired = _paired(installation, satellite, device)
         row = _sessions.get(key)
         if not row or row['expires_at'] <= time.time() or row.get('device_id') != device \

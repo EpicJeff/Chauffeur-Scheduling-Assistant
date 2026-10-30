@@ -166,6 +166,60 @@ class VoiceIdentityTests(unittest.TestCase):
         self.assertIsNone(ctx.verified_member())
         self.assertFalse(self.context().paired)
 
+    def test_a_new_satellite_joins_voice_identity_by_itself_while_identity_is_on(self):
+        """Device 2026-10-29: a second Voice PE (Office) answered 'set up my voice' with 'I can't
+        do that'. Every identity door (setup dialog, It's Jeff, PIN, recognition) hangs on
+        ctx.paired, and paired needed a row ticked by hand in Config for THAT satellite. The
+        user's call on 2026-10-13 was one setup, every speaker: a satellite this HA installation
+        speaks through for the first time, while identity is on, joins enabled with recognition
+        set the way the household has it. The Config checkbox stays the per-speaker off switch."""
+        ctx = self.context(satellite_id='assist_satellite.office', device_id='office-device', label='Office Voice')
+        self.assertTrue(ctx.paired, 'the first turn from a new satellite is already paired')
+        rows = {r['satellite_id']: r for r in voice.configuration()['satellites']}
+        self.assertIn('assist_satellite.office', rows)
+        office = rows['assist_satellite.office']
+        self.assertTrue(office['enabled'])
+        self.assertEqual(office['device_id'], 'office-device')
+        self.assertEqual(office['label'], 'Office Voice')
+        self.assertFalse(office['recognition_enabled'], 'no voice is set up yet, so recognition stays off')
+        self.assertTrue(rows['assist_satellite.kitchen']['enabled'], 'the existing row is untouched')
+        # The same device, a second turn: one row, not two.
+        self.context(satellite_id='assist_satellite.office', device_id='office-device')
+        self.assertEqual(len([r for r in voice.configuration()['satellites'] if r['satellite_id'] == 'assist_satellite.office']), 1)
+        # The new speaker is a full identity door: a PIN verifies there.
+        voice.intercept("It's Jeff", self.context(satellite_id='assist_satellite.office', device_id='office-device'))
+        result = voice.intercept('My PIN is 1234', self.context(satellite_id='assist_satellite.office', device_id='office-device'))
+        self.assertEqual(result['status'], 'authentication')
+        self.assertEqual(self.context(satellite_id='assist_satellite.office', device_id='office-device').level, 'verified')
+
+    def test_a_new_satellite_inherits_the_household_recognition_switch(self):
+        from services import voice_fingerprint
+        with patch.object(voice_fingerprint, 'profiles', return_value=[{'member_id': 'jeff', 'checks': {}}]), \
+                patch.object(voice_fingerprint, 'usable_on', return_value=True):
+            voice.set_recognition_everywhere(True)
+            self.context(satellite_id='assist_satellite.office', device_id='office-device')
+        office = next(r for r in voice.configuration()['satellites'] if r['satellite_id'] == 'assist_satellite.office')
+        self.assertTrue(office['recognition_enabled'], 'everywhere means the speakers that come later too')
+
+    def test_a_satellite_a_parent_switched_off_stays_off_and_identity_off_adds_nothing(self):
+        voice.configure(True, [{'ha_instance_id': 'ha', 'satellite_id': 'assist_satellite.kitchen',
+                                'device_id': 'device', 'enabled': True},
+                               {'ha_instance_id': 'ha', 'satellite_id': 'assist_satellite.office',
+                                'device_id': 'office-device', 'enabled': False}])
+        self.assertFalse(self.context(satellite_id='assist_satellite.office', device_id='office-device').paired)
+        office = next(r for r in voice.configuration()['satellites'] if r['satellite_id'] == 'assist_satellite.office')
+        self.assertFalse(office['enabled'], 'a row a parent unticked is the off switch, never re-enabled by a turn')
+        voice.configure(False, [{'ha_instance_id': 'ha', 'satellite_id': 'assist_satellite.kitchen',
+                                 'device_id': 'device', 'enabled': True}])
+        self.assertFalse(self.context(satellite_id='assist_satellite.garage', device_id='g').paired)
+        self.assertNotIn('assist_satellite.garage', [r['satellite_id'] for r in voice.configuration()['satellites']],
+                         'identity off household-wide: nothing joins')
+        # Untrusted metadata never writes configuration.
+        voice.configure(True, [{'ha_instance_id': 'ha', 'satellite_id': 'assist_satellite.kitchen',
+                                'device_id': 'device', 'enabled': True}])
+        voice.context(self.metadata(satellite_id='assist_satellite.spoof'), False)
+        self.assertNotIn('assist_satellite.spoof', [r['satellite_id'] for r in voice.configuration()['satellites']])
+
     def test_device_change_does_not_borrow_unbound_satellite_session(self):
         voice.configure(True, [{'ha_instance_id': 'ha', 'satellite_id': 'assist_satellite.kitchen', 'enabled': True}])
         previous = self.verify()
