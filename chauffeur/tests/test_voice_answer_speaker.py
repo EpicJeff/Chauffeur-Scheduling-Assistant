@@ -194,6 +194,10 @@ class VoiceAnswerSpeakerTests(unittest.TestCase):
                                  'templates', 'map.html'), encoding='utf-8').read()
         self.assertIn('announce-answer-toggle', page)
         self.assertIn('voice_answer_speakers', page)
+        # Device 2026-10-30: the strip's status line is shared by every room, so a bare
+        # 'Argyle answers through the speaker there.' read as a house-wide statement.
+        self.assertIn("'Argyle answers through the speaker in ' + r.name", page)
+        self.assertIn("'Argyle answers on the voice satellite in ' + r.name", page)
 
     def test_the_rooms_api_says_which_rooms_answer_through_their_speaker(self):
         import main

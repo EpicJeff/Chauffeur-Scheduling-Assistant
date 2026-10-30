@@ -208,7 +208,7 @@
                         return;
                     }
                     window.chfSettingsSaved(true);
-                    this.status(r.pinned ? 'Pinned.' : 'Back to automatic.');
+                    this.status(r.pinned ? 'Pinned the ' + r.name + ' speaker.' : r.name + ' is back to automatic.');
                 } catch (e) { window.chfSettingsSaved(false, 'Could not save that just now.'); }
             },
             async saveAnswers(r, on) {
@@ -232,7 +232,9 @@
                         return;
                     }
                     window.chfSettingsSaved(true);
-                    this.status(r.answers ? 'Argyle answers through the speaker there.' : 'Argyle answers on the satellite there.');
+                    // The status line is the strip's, shared by every room: say which room.
+                    this.status(r.answers ? 'Argyle answers through the speaker in ' + r.name + '.'
+                                          : 'Argyle answers on the voice satellite in ' + r.name + '.');
                 } catch (e) { window.chfSettingsSaved(false, 'Could not save that just now.'); }
             },
             async send() {
