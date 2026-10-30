@@ -781,7 +781,11 @@ Cast face (`media_player.googletv1645_2`, "Office Google TV Media Player") takes
 `volume_set` and moves the TV's own volume (the remote face reads the change
 back). It sat in no HA area, so it was moved into Office through the device
 registry; a TV whose Cast face is in the room is ducked, one with only the
-remote face is skipped. Verified with `assist_satellite.announce` on the Office
+remote face is skipped. 2026-10-30: the Living Room TV, Pool House Lounge TV
+and Sunroom TV Cast faces were moved into Living Room, Pool Lounge and Rear
+Porch the same way, so every Google TV ducks once its room has a satellite.
+The kitchen Family Hub TV's Cast face stays out on purpose: its Samsung face
+already takes `volume_set`, and two faces on one TV would fight over the restore. Verified with `assist_satellite.announce` on the Office
 satellite: 0.10 to 0.03 at `listening`, back to 0.10 on `idle`. Both satellites
 (Kitchen and Office) are in the trigger.
 
