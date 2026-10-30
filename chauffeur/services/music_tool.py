@@ -13,6 +13,10 @@ _CONTROLS = {
     'stop': ('media_stop', 'Stopped'),
 }
 _ACTIONS = ('play', *_CONTROLS, 'volume', 'now')
+# HA holds music_assistant.play_media open until the player has started. A TV
+# that must first wake its Cast runs past ha_api's 8 s default; device 2026-10-30
+# that timeout was reported as "Music Assistant refused" while the song played.
+PLAY_TIMEOUT = 25
 
 
 def _name(states, eid):
@@ -82,7 +86,7 @@ def _target(action, room, player, voice_context, source, states):
                 # MA's twin may have no HA area; match it by the room's names.
                 ma_players = _ma_twins(states, [_name(states, e) for e in players], area.get('name'))
             if ma_players:
-                eid = min(ma_players, key=lambda e: announce._music_rank(states, e))
+                eid = min(ma_players, key=lambda e: _twin_rank(states, e, area.get('name')))
             elif players:
                 names = ', '.join(dict.fromkeys(f'{_name(states, e)} ({e})' for e in players))
                 return None, area, (f"{names} in {area.get('name') or room} is not a Music "
@@ -105,7 +109,7 @@ def _target(action, room, player, voice_context, source, states):
         # have played, so the next report says which branch answered.
         twins = _ma_twins(states, [_name(states, eid)], (area or {}).get('name'))
         if twins:
-            return min(twins, key=lambda e: announce._music_rank(states, e)), area, None
+            return min(twins, key=lambda e: _twin_rank(states, e, (area or {}).get('name'))), area, None
         where = f" in {area['name']}" if area else ''
         return None, area, (f'{_name(states, eid)} ({eid}){where} is not a Music Assistant player, '
                             f'and no Music Assistant player shares its name. {_ma_list(states)}')
@@ -114,13 +118,40 @@ def _target(action, room, player, voice_context, source, states):
 
 def _ma_twins(states, names, area_name=None):
     """Usable Music Assistant players whose friendly name carries one of the given
-    names ("Office TV" within "Office TV Media Player") or starts with the area."""
+    names ("Office TV" within "Office TV Media Player"), IS the area's name (the
+    Sonos called "Living Room" in the Living Room; device 2026-10-30, when HA's own
+    Sonos faces were unavailable and only this match could find the room's speaker)
+    or starts with the area's name."""
     names = [str(n or '').casefold() for n in names if n]
     area_name = (area_name or '').casefold()
     return [e for e in states
             if e.startswith('media_player.') and _is_ma(states, e) and announce._usable(states, e)
             and (any(n and n in _name(states, e).casefold() for n in names)
+                 or (area_name and _name(states, e).casefold() == area_name)
                  or (area_name and _name(states, e).casefold().startswith(area_name + ' ')))]
+
+
+def _twin_rank(states, eid, area_name=None):
+    """Among a room's Music Assistant players: the one named for the room first, then
+    any speaker before a TV (a TV takes music only when no speaker in the room can),
+    then announce's playing-beats-idle order."""
+    name = _name(states, eid).casefold()
+    area_name = (area_name or '').casefold()
+    is_tv = name.endswith(' tv') or ' tv ' in name or 'television' in name
+    return (not (area_name and name == area_name), is_tv, announce._music_rank(states, eid))
+
+
+def _started(eid, item, title_before):
+    """After a play call that came back empty: is the player now playing the item, or
+    at least something new? Read fresh; the cached states predate the call."""
+    try:
+        now = next((s for s in (ha_api.get_states(ttl=0) or []) if s.get('entity_id') == eid), None) or {}
+    except Exception:
+        return False
+    title = ((now.get('attributes') or {}).get('media_title') or '')
+    wanted = str(item.get('name') or '').casefold()
+    return now.get('state') == 'playing' and bool(title) and (
+        title != title_before or (wanted and (wanted in title.casefold() or title.casefold() in wanted)))
 
 
 def _ma_list(states):
@@ -169,8 +200,10 @@ def music(action='', query='', room='', player='', media_type='', mode='', level
                 payload['enqueue'] = mode
             elif mode == 'radio':
                 payload['radio_mode'] = True
-            if ha_api.call_service('music_assistant', 'play_media', payload) is None:
-                return {'status': 'error', 'message': 'Music Assistant refused to play that.'}
+            before = (states[eid].get('attributes') or {}).get('media_title')
+            if ha_api.call_service('music_assistant', 'play_media', payload, timeout=PLAY_TIMEOUT) is None                     and not _started(eid, item, before):
+                return {'status': 'error',
+                        'message': f'Music Assistant did not confirm playing that on {name}.'}
             artists = ', '.join(a['name'] for a in (item.get('artists') or []) if a.get('name'))
             by = f' by {artists}' if artists else ''
             where = f'in {room_name}' if room_name else f'on {name}'

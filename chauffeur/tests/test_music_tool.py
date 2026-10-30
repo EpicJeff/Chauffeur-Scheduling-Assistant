@@ -197,6 +197,81 @@ class MusicToolTests(unittest.TestCase):
         self.assertEqual(res['status'], 'success', res)
         self.assertEqual(self.calls[-1][2]['entity_id'], 'media_player.office')
 
+    def test_a_room_speaker_named_for_its_room_beats_the_rooms_tv_when_ha_shows_the_speaker_unavailable(self):
+        """Device 2026-10-30: "play X in the living room" played on the Living Room TV.
+        HA's Sonos integration showed every Living Room Sonos face `unavailable`, so the
+        room's usable players were the Cast face, the Apple TV and a stray Sonos Move; none
+        is a Music Assistant player, so the twin search ran by name and by area prefix, and
+        'Living Room ' + ' ' matched "Living Room TV" but never Music Assistant's own
+        "Living Room" (the Sonos), whose name IS the room. A player named for the room is
+        the room's player; a TV is where music goes only when no speaker can take it."""
+        self.states = [
+            {'entity_id': 'media_player.living_room', 'state': 'unavailable',
+             'attributes': {'friendly_name': 'Living Room Sonos'}},
+            {'entity_id': 'media_player.living_room_2', 'state': 'unavailable',
+             'attributes': {'friendly_name': 'Living Room'}},
+            {'entity_id': 'media_player.living_room_tv_2', 'state': 'off',
+             'attributes': {'friendly_name': 'Living Room TV', 'device_class': 'tv'}},
+            {'entity_id': 'media_player.living_room_apple_tv', 'state': 'paused',
+             'attributes': {'friendly_name': 'Living Room Apple TV'}},
+            {'entity_id': 'media_player.jeff_s_sonos_move', 'state': 'idle',
+             'attributes': {'friendly_name': "jeff's Sonos Move"}},
+            {'entity_id': 'media_player.living_room_3', 'state': 'idle',
+             'attributes': {'friendly_name': 'Living Room', 'mass_player_type': 'player'}},
+            {'entity_id': 'media_player.living_room_tv_3', 'state': 'idle',
+             'attributes': {'friendly_name': 'Living Room TV', 'mass_player_type': 'player',
+                            'media_title': 'Like a Butterfly'}},
+        ]
+        setattr(ha_api, 'get_area_map', lambda ttl=60: [
+            {'id': 'living_room', 'name': 'Living Room', 'entities': [
+                'media_player.living_room', 'media_player.living_room_2', 'media_player.living_room_tv_2',
+                'media_player.living_room_apple_tv', 'media_player.jeff_s_sonos_move']}])
+        setattr(ha_api, 'resolve_area_id', lambda name: None)
+        res = self.run_tool(action='play', query='Hotel California', room='the living room')
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(self.calls[-1][2]['entity_id'], 'media_player.living_room_3')
+        self.assertEqual(res['player'], 'Living Room')
+        self.assertIn('Living Room', res['message'])
+        # With no exact-name player, a speaker carrying the room's name still beats its TV.
+        self.states[5]['attributes']['friendly_name'] = 'Living Room Speaker'
+        self.calls.clear()
+        res = self.run_tool(action='play', query='Hotel California', room='the living room')
+        self.assertEqual(self.calls[-1][2]['entity_id'], 'media_player.living_room_3', res)
+        # Only when the room has no speaker at all does the TV take the music.
+        self.states[5]['state'] = 'unavailable'
+        self.calls.clear()
+        res = self.run_tool(action='play', query='Hotel California', room='the living room')
+        self.assertEqual(self.calls[-1][2]['entity_id'], 'media_player.living_room_tv_3', res)
+
+    def test_a_play_music_assistant_did_not_answer_in_time_is_checked_before_it_is_called_a_refusal(self):
+        """Device 2026-10-30: the answer was 'Music Assistant refused to play that', and
+        the song played. HA holds music_assistant.play_media open until the player has
+        started, which on a TV that must first wake its Cast runs past the module's 8 s
+        default, so the request timed out client-side and was reported as a refusal.
+        The play call waits longer, and a call that comes back empty is checked against
+        the player's state before anything is claimed either way."""
+        timeouts = []
+
+        def slow(domain, service, data=None, return_response=False, timeout=None):
+            timeouts.append(timeout)
+            self.states[1]['state'] = 'playing'
+            self.states[1]['attributes']['media_title'] = 'Hotel California'
+            return None
+        setattr(ha_api, 'call_service', slow)
+        res = self.run_tool(action='play', query='Hotel California', room='office')
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(res['entity_id'], 'media_player.office_tv_4')
+        self.assertGreaterEqual(timeouts[0], 20)
+        # Nothing started: the error names the player and does not claim a refusal.
+        self.states[1]['state'] = 'idle'
+        self.states[1]['attributes'].pop('media_title', None)
+        setattr(ha_api, 'call_service', lambda *a, **k: None)
+        res = self.run_tool(action='play', query='Hotel California', room='office')
+        self.assertEqual(res['status'], 'error')
+        self.assertIn('Office TV', res['message'])
+        self.assertIn('Music Assistant', res['message'])
+        self.assertNotIn('refused', res['message'])
+
     def test_any_branch_that_lands_on_a_non_ma_player_redirects_to_its_twin(self):
         """Device run 2026-10-27, fourth report: whichever path the model takes,
         a non-MA pick with an MA twin by name must play on the twin."""
