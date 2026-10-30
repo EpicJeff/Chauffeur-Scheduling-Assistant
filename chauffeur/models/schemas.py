@@ -1268,13 +1268,6 @@ class Settings(BaseModel):
     # overriding the satellite-first/playing-first pick. Only rooms the family
     # has pinned appear; everything else resolves automatically.
     announce_targets: Dict[str, str] = Field(default_factory=dict)
-    # Per room (HA area id -> True): Argyle's spoken ANSWERS to a voice
-    # satellite in that room come out of the room's speaker (the announce pin,
-    # else the best player that is not off) through the announce path, and the
-    # satellite is handed blank speech, which HA's pipeline skips TTS on.
-    # Rooms absent here answer on the satellite as always (2026-10-30: a
-    # Voice PE by the pool is quiet; the Pool Lounge Sonos is not).
-    voice_answer_speakers: Dict[str, bool] = Field(default_factory=dict)
     # Stages (load arc A4): the three ages where the kid bands change, stored
     # as CUTOFFS rather than four ranges — contiguous bands defined by cutoffs
     # cannot develop gaps or overlaps the way independently edited ranges can.

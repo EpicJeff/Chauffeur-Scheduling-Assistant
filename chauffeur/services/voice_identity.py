@@ -57,11 +57,15 @@ def configure(enabled: bool, satellites: list, approvals_enabled: bool = False) 
             if not any(voice_fingerprint.usable_on(p, (installation, satellite))
                        for p in voice_fingerprint.profiles()):
                 raise ValueError('Set up a voice before enabling recognition.')
+        # The speaker Argyle answers through on this satellite (2026-10-30), a
+        # media player or nothing; a satellite or any other entity is not one.
+        speaker = str(item.get('answer_speaker') or '').strip()
         rows.append({'ha_instance_id': installation, 'satellite_id': satellite,
                      'device_id': item.get('device_id') or None,
                      'label': str(item.get('label') or satellite.split('.')[-1].replace('_', ' ').title())[:100],
                      'enabled': bool(item.get('enabled')), 'service_revision': _revision(),
-                     'recognition_enabled': recognition})
+                     'recognition_enabled': recognition,
+                     'answer_speaker': speaker if speaker.startswith('media_player.') and len(speaker) <= 128 else ''})
     if enabled and not _revision():
         raise ValueError('Set an Argyle service token before enabling voice identity.')
     with _lock:
@@ -137,7 +141,7 @@ def _adopt(installation, satellite, device, label):
     everywhere = recognition_on_everywhere()
     rows.append({'ha_instance_id': installation, 'satellite_id': satellite, 'device_id': device,
                  'label': label, 'enabled': True, 'service_revision': _revision(),
-                 'recognition_enabled': everywhere})
+                 'recognition_enabled': everywhere, 'answer_speaker': ''})
     storage.set_app_state('voice_identity_config', {**config, 'satellites': rows})
 
 
@@ -516,7 +520,7 @@ def admin_state():
         configured = {(r['ha_instance_id'], r['satellite_id']): r for r in config.get('satellites', [])}
         rows = []
         for key in set(configured) | set(_observed):
-            row = {**_observed.get(key, {}), **configured.get(key, {})}
+            row = {'answer_speaker': '', **_observed.get(key, {}), **configured.get(key, {})}
             row.pop('service_revision', None)
             session = _sessions.get(key) or {}
             member = storage.get_member(session.get('member_id')) if session.get('member_id') else None
@@ -531,8 +535,10 @@ def admin_state():
             rows.append(row)
         locked_members = [{'id': m['id'], 'name': m.get('name') or 'Family member'} for m in storage.get_all_members()
                           if (storage.get_app_state(f"voice:member:{m['id']}") or {}).get('locked')]
+        from services import announce
         return {'enabled': config.get('enabled', False), 'approvals_enabled': config.get('approvals_enabled', False),
                 'satellites': rows, 'locked_members': locked_members,
+                'speakers': announce.answer_speaker_choices(),
                 'auth_history': storage.get_app_state('voice_auth_history') or [],
                 'history': storage.get_app_state('voice_action_history') or []}
 

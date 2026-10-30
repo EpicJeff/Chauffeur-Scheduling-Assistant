@@ -81,16 +81,10 @@
             <p id="announce-pins-empty" class="hidden text-xs text-gray-500 italic">No rooms with a speaker yet.</p>
         </div>
         <template id="announce-pin-row">
-            <div class="space-y-1">
-                <label class="flex items-center justify-between gap-3">
-                    <span class="announce-pin-room text-sm text-gray-300"></span>
-                    <select class="announce-pin-select min-w-0 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm"></select>
-                </label>
-                <label class="announce-answer-row flex items-center gap-2 text-xs text-gray-400">
-                    <input type="checkbox" class="announce-answer-toggle h-4 w-4 rounded border-gray-600 bg-gray-800">
-                    <span>Argyle answers here through the speaker, not the voice satellite</span>
-                </label>
-            </div>
+            <label class="flex items-center justify-between gap-3">
+                <span class="announce-pin-room text-sm text-gray-300"></span>
+                <select class="announce-pin-select min-w-0 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm"></select>
+            </label>
         </template>
     </div>
     {% endcall %}
@@ -146,16 +140,6 @@
                         `<option value="${c.entity_id}">${c.name}</option>`).join('');
                     sel.value = r.pinned || '';
                     sel.onchange = () => this.savePin(r, sel.value);
-                    // Per-room: Argyle's spoken answers come out of this speaker and the
-                    // satellite stays quiet (settings_registry: voice_answer_speakers).
-                    // Only rooms with a media player can; a satellite-only room hides it.
-                    const toggle = row.querySelector('.announce-answer-toggle');
-                    toggle.dataset.room = r.id;
-                    toggle.checked = !!r.answers;
-                    toggle.setAttribute('aria-label', 'Argyle answers through the speaker in ' + r.name);
-                    toggle.onchange = () => this.saveAnswers(r, toggle.checked);
-                    const hasPlayer = (r.candidates || []).some(c => (c.entity_id || '').startsWith('media_player.'));
-                    row.querySelector('.announce-answer-row').classList.toggle('hidden', !hasPlayer);
                     host.appendChild(row);
                 });
                 this.el('announce-pins-empty').classList.toggle('hidden', this.rooms.length > 0);
@@ -209,32 +193,6 @@
                     }
                     window.chfSettingsSaved(true);
                     this.status(r.pinned ? 'Pinned the ' + r.name + ' speaker.' : r.name + ' is back to automatic.');
-                } catch (e) { window.chfSettingsSaved(false, 'Could not save that just now.'); }
-            },
-            async saveAnswers(r, on) {
-                const prev = !!r.answers;
-                r.answers = !!on;
-                // Same merge rule as the pins: the whole map goes up each time.
-                const voiceAnswerSpeakers = {};
-                this.rooms.forEach(x => { if (x.answers) voiceAnswerSpeakers[x.id] = true; });
-                window.chfSettingsSaving();
-                try {
-                    const res = await fetch(apiBase + 'api/settings', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ voice_answer_speakers: voiceAnswerSpeakers }),
-                    });
-                    if (!res.ok) {
-                        const err = await res.json().catch(() => ({}));
-                        r.answers = prev;
-                        const box = document.querySelector('.announce-answer-toggle[data-room="' + CSS.escape(r.id) + '"]');
-                        if (box) box.checked = prev;
-                        window.chfSettingsSaved(false, err.detail || 'Could not save that just now.');
-                        return;
-                    }
-                    window.chfSettingsSaved(true);
-                    // The status line is the strip's, shared by every room: say which room.
-                    this.status(r.answers ? 'Argyle answers through the speaker in ' + r.name + '.'
-                                          : 'Argyle answers on the voice satellite in ' + r.name + '.');
                 } catch (e) { window.chfSettingsSaved(false, 'Could not save that just now.'); }
             },
             async send() {

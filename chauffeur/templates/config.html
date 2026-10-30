@@ -1240,6 +1240,20 @@
                                                :disabled="!voiceState.enabled || !s.enabled">
                                         <span>Recognize enrolled voices here and check for speaker changes</span>
                                     </label>
+                                    <label class="flex items-center gap-2 text-xs">
+                                        <span class="whitespace-nowrap">Argyle answers through</span>
+                                        <select x-model="s.answer_speaker" @change="saveVoiceIdentity()"
+                                                aria-label="Speaker Argyle answers through on this satellite"
+                                                class="voice-answer-speaker bg-gray-800 border border-gray-600 rounded p-2 text-xs flex-1 min-w-0">
+                                            <option value="">This satellite</option>
+                                            <template x-for="sp in (voiceState.speakers || [])" :key="sp.entity_id">
+                                                <option :value="sp.entity_id" x-text="sp.area ? sp.name + ' (' + sp.area + ')' : sp.name"></option>
+                                            </template>
+                                        </select>
+                                    </label>
+                                    <p class="text-xs text-gray-500" x-show="s.answer_speaker">A Sonos, Cast, Alexa or Music Assistant
+                                        player ducks what it is playing, speaks the answer and resumes; this satellite stays quiet.
+                                        Needs HA component 1.6.0 for follow-up questions.</p>
                                     <div class="flex gap-2 flex-wrap">
                                         <select x-model="voiceEnrollMember" @change="voiceConsent = false" aria-label="Family member to enroll"
                                                 class="bg-gray-800 border border-gray-600 rounded p-2 text-xs">

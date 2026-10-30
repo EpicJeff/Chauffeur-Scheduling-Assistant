@@ -3941,10 +3941,10 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
 
 
 def _answer_in_room(result, req):
-    """Per-area answer-through-speaker (2026-10-30). When the satellite's room is
-    switched on in settings.voice_answer_speakers, the spoken answer, whoever
-    wrote it (the model, voice identity, a setup dialog, an approval), is said
-    on the room's speaker through announce.speak_on and HA gets blank speech
+    """Per-satellite answer-through-speaker (2026-10-30). When a parent chose a
+    speaker for this satellite on its Config › Voice identity row, the spoken
+    answer, whoever wrote it (the model, voice identity, a setup dialog, an
+    approval), is said on that speaker through announce.speak_on and HA gets blank speech
     (one space: a component older than 1.6.0 passes it through where it would
     replace an empty string with its own error line), which the pipeline's
     tts_input.strip() check skips TTS on; `spoken_on` tells the component what was
@@ -3958,7 +3958,7 @@ def _answer_in_room(result, req):
     if not satellite or not speech:
         return result
     from services import announce as announce_svc
-    spoken = announce_svc.answer_through_speaker(satellite, speech)
+    spoken = announce_svc.answer_through_speaker(satellite, speech, voice_meta.get('ha_instance_id'))
     if not spoken:
         return result
     out = dict(result)
@@ -11218,9 +11218,7 @@ def announce_rooms():
     player (or carrying a pin), each with its resolved target and the full
     candidate list so a parent can pin a specific speaker."""
     from services import announce as announce_svc, ha_api
-    settings = storage.get_settings() or {}
-    pins = settings.get('announce_targets') or {}
-    answers = settings.get('voice_answer_speakers') or {}
+    pins = (storage.get_settings() or {}).get('announce_targets') or {}
     names = {s.get('entity_id'): (s.get('attributes') or {}).get('friendly_name') or s.get('entity_id')
              for s in ha_api.get_states(ttl=10)}
     out = []
@@ -11233,7 +11231,6 @@ def announce_rooms():
         out.append({'id': area.get('id'), 'name': area.get('name'),
                     'candidates': [{'entity_id': e, 'name': names.get(e, e)} for e in candidates],
                     'pinned': pins.get(area.get('id')),
-                    'answers': bool(answers.get(area.get('id'))),
                     'target': target[1] if target else None,
                     'kind': target[0] if target else None})
     return out

@@ -1,12 +1,17 @@
-"""Per-area "Argyle answers through the room speaker" (2026-10-30).
+"""Per-satellite "Argyle answers through" a room speaker (2026-10-30).
 
-A Voice PE is small and not outdoor-rated; the pool's Sonos is loud. A parent
-turns a room on in the Map drawer beside its announce pin, and from then on
-every spoken answer in that room goes to the room's speaker through the same
-tts.speak path announcements use (HA's announce flag ducks and resumes), while
-the satellite is handed blank speech, which HA's pipeline treats as "skip TTS".
-Default is off everywhere. Anything missing — toggle off, no usable speaker,
-the call refused, a typed request — falls back to the satellite's own voice.
+A Voice PE is small and not outdoor-rated; the pool's Sonos is loud. On each
+satellite's row in Config › Voice identity a parent picks the speaker Argyle
+answers through (default: the satellite itself). From then on every spoken
+answer to that satellite goes to that speaker through the same tts.speak path
+announcements use (HA's announce flag ducks and resumes), while the satellite
+is handed blank speech, which HA's pipeline treats as "skip TTS". Anything
+missing — no speaker chosen, speaker unavailable, the call refused, a typed
+request — falls back to the satellite's own voice.
+
+First cut (v2.499.736) put this on the Map page as a per-room toggle beside the
+announce pins; the user's verdict the same day: it is an Argyle voice setting
+and has nothing to do with announcements, so it lives with the voice settings.
 
 Real main.converse_ha_assist, real voice_identity, real announce; stubbed HA
 and model. Run from chauffeur/:  python tests/test_voice_answer_speaker.py
@@ -19,8 +24,7 @@ from unittest.mock import patch
 
 from harness import check  # noqa: F401  (harness isolates CHAUFFEUR_DATA_DIR)
 
-from services import (agent_router, announce, ha_api, settings_registry, situations, storage,
-                      voice_identity as voice)
+from services import agent_router, announce, ha_api, situations, storage, voice_identity as voice
 
 AREAS = [
     {'id': 'pool_lounge', 'name': 'Pool Lounge',
@@ -32,7 +36,8 @@ ANSWER = 'Practice is at four, and the drive is twenty minutes.'
 
 def _states(**over):
     base = {'assist_satellite.pool': 'idle', 'media_player.pool_lounge_tv': 'off', 'media_player.pool_lounge': 'idle',
-            'assist_satellite.kitchen': 'idle', 'media_player.family_hub_tv': 'idle'}
+            'assist_satellite.kitchen': 'idle', 'media_player.family_hub_tv': 'idle',
+            'media_player.office_tv': 'unavailable'}
     base.update(over)
     rows = []
     for eid, state in base.items():
@@ -52,8 +57,7 @@ class VoiceAnswerSpeakerTests(unittest.TestCase):
             voice._sessions.clear()
             voice._requests.clear()
             voice._observed.clear()
-        self.settings = {'service_token': 'service', 'contact_first_name': 'Jeff',
-                         'voice_answer_speakers': {'pool_lounge': True}, 'announce_targets': {}}
+        self.settings = {'service_token': 'service', 'contact_first_name': 'Jeff'}
         self.states = _states()
         self.calls = []
         self.orig = {}
@@ -75,10 +79,7 @@ class VoiceAnswerSpeakerTests(unittest.TestCase):
         stub(announce, '_tts_config', lambda: ('tts.piper', 'en', 'amy'))
         storage.add_member({'id': 'jeff', 'name': 'Jeff', 'role': 'parent'})
         storage.set_member_pin('jeff', '1234')
-        voice.configure(True, [
-            {'ha_instance_id': 'ha', 'satellite_id': 'assist_satellite.pool', 'device_id': 'pool-dev', 'enabled': True},
-            {'ha_instance_id': 'ha', 'satellite_id': 'assist_satellite.kitchen', 'device_id': 'kitchen-dev', 'enabled': True},
-        ], approvals_enabled=True)
+        self.configure()
         situations.REFRESH_DELAY_S = 0
         for p in (patch.object(situations, '_pool_call', return_value={}),
                   patch.object(agent_router, 'process_agent_request', return_value={'message': ANSWER})):
@@ -88,6 +89,13 @@ class VoiceAnswerSpeakerTests(unittest.TestCase):
     def tearDown(self):
         for (mod, name), value in self.orig.items():
             setattr(mod, name, value)
+
+    def configure(self, pool_speaker='media_player.pool_lounge'):
+        voice.configure(True, [
+            {'ha_instance_id': 'ha', 'satellite_id': 'assist_satellite.pool', 'device_id': 'pool-dev', 'enabled': True,
+             'answer_speaker': pool_speaker},
+            {'ha_instance_id': 'ha', 'satellite_id': 'assist_satellite.kitchen', 'device_id': 'kitchen-dev', 'enabled': True},
+        ], approvals_enabled=True)
 
     def metadata(self, satellite='assist_satellite.pool'):
         return {'ha_instance_id': 'ha', 'satellite_id': satellite, 'device_id': f'{satellite.split(".")[1]}-dev',
@@ -111,11 +119,12 @@ class VoiceAnswerSpeakerTests(unittest.TestCase):
         return [c for c in self.calls if c[:2] == ('tts', 'speak')]
 
     # --- the answer path --------------------------------------------------------
-    def test_a_room_switched_on_answers_through_its_speaker_and_hands_the_satellite_silence(self):
+    def test_a_satellite_with_a_chosen_speaker_answers_through_it_and_is_handed_silence(self):
         result = self.say('when is practice')
-        self.assertEqual(self.spoken(result), ' ', 'the satellite must have nothing to say (a space: '
-                         'the pipeline strips it and skips TTS, and a pre-1.6.0 component passes it through)')
+        self.assertEqual(self.spoken(result), ' ', 'the satellite must have nothing to say (a space: the '
+                         'pipeline strips it and skips TTS, and a pre-1.6.0 component passes it through)')
         self.assertEqual(result['spoken_on']['entity_id'], 'media_player.pool_lounge')
+        self.assertEqual(result['spoken_on']['area'], 'Pool Lounge')
         self.assertGreater(result['spoken_on']['seconds'], 1.0)
         self.assertEqual(self.tts_calls(), [('tts', 'speak', {
             'entity_id': 'tts.piper', 'media_player_entity_id': 'media_player.pool_lounge',
@@ -124,7 +133,7 @@ class VoiceAnswerSpeakerTests(unittest.TestCase):
         conv = next(iter(storage.conversations_table.all()))
         self.assertEqual(conv['messages'][-1]['content'], ANSWER)
 
-    def test_a_room_left_on_the_satellite_speaks_as_before(self):
+    def test_a_satellite_with_no_speaker_chosen_speaks_as_before(self):
         result = self.say('when is practice', satellite='assist_satellite.kitchen')
         self.assertEqual(self.spoken(result), ANSWER)
         self.assertNotIn('spoken_on', result)
@@ -136,28 +145,12 @@ class VoiceAnswerSpeakerTests(unittest.TestCase):
         self.assertNotIn('spoken_on', result)
         self.assertEqual(self.tts_calls(), [])
 
-    def test_the_pinned_speaker_wins_and_a_pinned_satellite_is_not_a_speaker(self):
-        self.settings['announce_targets'] = {'pool_lounge': 'media_player.pool_lounge_tv'}
-        self.states = _states(**{'media_player.pool_lounge_tv': 'on'})
-        result = self.say('when is practice')
-        self.assertEqual(result['spoken_on']['entity_id'], 'media_player.pool_lounge_tv')
-        # A satellite pin is announce's answer, not a speaker tts.speak can reach.
-        self.settings['announce_targets'] = {'pool_lounge': 'assist_satellite.pool'}
-        self.calls.clear()
-        result = self.say('when is practice')
-        self.assertEqual(result['spoken_on']['entity_id'], 'media_player.pool_lounge')
-
-    def test_an_off_tv_is_not_woken_to_answer_unless_pinned(self):
-        """The Cast face of a TV that is off would turn the TV on to speak; a room
-        whose only speaker is an off TV stays on the satellite instead."""
+    def test_a_chosen_speaker_that_is_unavailable_falls_back_to_the_satellite(self):
         self.states = _states(**{'media_player.pool_lounge': 'unavailable'})
         result = self.say('when is practice')
         self.assertEqual(self.spoken(result), ANSWER)
         self.assertNotIn('spoken_on', result)
         self.assertEqual(self.tts_calls(), [])
-        self.settings['announce_targets'] = {'pool_lounge': 'media_player.pool_lounge_tv'}
-        result = self.say('when is practice')
-        self.assertEqual(result['spoken_on']['entity_id'], 'media_player.pool_lounge_tv')
 
     def test_a_speaker_that_refuses_falls_back_to_the_satellite(self):
         self.speaker_ok = False
@@ -167,13 +160,14 @@ class VoiceAnswerSpeakerTests(unittest.TestCase):
         self.assertEqual(len(self.tts_calls()), 1, 'the speaker was tried once')
 
     def test_identity_and_setup_answers_ride_the_same_speaker(self):
-        """Every spoken answer in the room, not only the model's: "It's Jeff" is answered
-        by voice_identity before any model, and it must come out of the same speaker."""
+        """Every spoken answer on the satellite, not only the model's: "It's Jeff" is
+        answered by voice_identity before any model, and it must come out of the same
+        speaker."""
         result = self.say("It's Jeff")
         self.assertEqual(self.spoken(result), ' ')
         self.assertEqual(result['spoken_on']['entity_id'], 'media_player.pool_lounge')
         self.assertTrue(self.tts_calls()[0][2]['message'])
-        self.assertTrue(result['continue_conversation'] in (True, False))
+        self.assertIn(result['continue_conversation'], (True, False))
 
     def test_speaking_time_grows_with_the_sentence(self):
         short = announce.speaking_seconds('Yes.')
@@ -182,28 +176,47 @@ class VoiceAnswerSpeakerTests(unittest.TestCase):
         self.assertGreater(long, short + 5)
         self.assertLessEqual(long, 30)
 
-    # --- the hand path ----------------------------------------------------------
-    def test_the_setting_is_registered_on_the_map_page_beside_the_pins_and_the_model_takes_it(self):
-        entry = next(e for e in settings_registry.ENTRIES if e['key'] == 'voice_answer_speakers')
-        self.assertEqual((entry['page'], entry['anchor']), ('map', 'announce'))
-        self.assertEqual(entry['ui_marker'], 'announce-answer-toggle')
-        from models.schemas import Settings
-        self.assertEqual(Settings(voice_answer_speakers={'pool_lounge': True}).model_dump(exclude_unset=True),
-                         {'voice_answer_speakers': {'pool_lounge': True}})
-        page = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                 'templates', 'map.html'), encoding='utf-8').read()
-        self.assertIn('announce-answer-toggle', page)
-        self.assertIn('voice_answer_speakers', page)
-        # Device 2026-10-30: the strip's status line is shared by every room, so a bare
-        # 'Argyle answers through the speaker there.' read as a house-wide statement.
-        self.assertIn("'Argyle answers through the speaker in ' + r.name", page)
-        self.assertIn("'Argyle answers on the voice satellite in ' + r.name", page)
+    # --- the hand path: Config › Voice identity, the satellite's own row -----------
+    def test_the_choice_is_kept_on_the_satellites_row_and_only_a_media_player_counts(self):
+        rows = {r['satellite_id']: r for r in voice.configuration()['satellites']}
+        self.assertEqual(rows['assist_satellite.pool']['answer_speaker'], 'media_player.pool_lounge')
+        self.assertEqual(rows['assist_satellite.kitchen']['answer_speaker'], '')
+        # A satellite or anything else is not a speaker tts.speak can reach.
+        self.configure(pool_speaker='assist_satellite.pool')
+        self.assertEqual({r['satellite_id']: r['answer_speaker'] for r in voice.configuration()['satellites']}
+                         ['assist_satellite.pool'], '')
+        result = self.say('when is practice')
+        self.assertEqual(self.spoken(result), ANSWER)
+        # A satellite that joins by itself starts on its own voice.
+        with voice._lock:
+            voice._observed.clear()
+        voice.context(self.metadata('assist_satellite.office'), True)
+        office = next(r for r in voice.configuration()['satellites'] if r['satellite_id'] == 'assist_satellite.office')
+        self.assertEqual(office.get('answer_speaker', ''), '')
 
-    def test_the_rooms_api_says_which_rooms_answer_through_their_speaker(self):
-        import main
-        rooms = {r['id']: r for r in main.announce_rooms()}
-        self.assertTrue(rooms['pool_lounge']['answers'])
-        self.assertFalse(rooms['kitchen']['answers'])
+    def test_the_admin_state_offers_every_usable_player_with_its_room_and_the_rows_choice(self):
+        state = voice.admin_state()
+        choices = {s['entity_id']: s for s in state['speakers']}
+        self.assertEqual(choices['media_player.pool_lounge'], {'entity_id': 'media_player.pool_lounge',
+                                                               'name': 'Pool Lounge', 'area': 'Pool Lounge'})
+        self.assertEqual(choices['media_player.family_hub_tv']['area'], 'Kitchen')
+        self.assertNotIn('media_player.office_tv', choices, 'an unavailable player is not offered')
+        self.assertNotIn('assist_satellite.pool', choices)
+        row = next(s for s in state['satellites'] if s['satellite_id'] == 'assist_satellite.pool')
+        self.assertEqual(row['answer_speaker'], 'media_player.pool_lounge')
+        # No Home Assistant: the list is empty, the page still renders.
+        setattr(ha_api, 'get_states', lambda ttl=5: [])
+        self.assertEqual(voice.admin_state()['speakers'], [])
+
+    def test_the_select_sits_on_the_satellite_row_in_config_and_the_map_page_no_longer_carries_it(self):
+        base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'templates')
+        config = open(os.path.join(base, 'config.html'), encoding='utf-8').read()
+        self.assertIn('voice-answer-speaker', config)
+        self.assertIn('x-model="s.answer_speaker"', config)
+        self.assertIn('voiceState.speakers', config)
+        page = open(os.path.join(base, 'map.html'), encoding='utf-8').read()
+        self.assertNotIn('announce-answer-toggle', page)
+        self.assertNotIn('voice_answer_speakers', page)
 
 
 if __name__ == '__main__':

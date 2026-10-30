@@ -472,11 +472,6 @@ ENTRIES: List[dict] = [
        'Pin which speaker Argyle announces through in a room; unpinned rooms '
        'pick the voice satellite, then whichever player is already on.',
        page='map', anchor='announce', ui_marker='announce-pin-select'),
-    _e('voice_answer_speakers', 'integrations', 'Argyle answers through the room speaker',
-       "Per room: spoken answers to that room's voice satellite come out of the room's "
-       'pinned or best speaker (Sonos, Cast, Alexa and Music Assistant players duck and '
-       'resume what was playing) and the satellite stays quiet. Off everywhere by default.',
-       page='map', anchor='announce', ui_marker='announce-answer-toggle'),
 
     # --- AI
     _e('llm_provider', 'ai', 'Model provider',

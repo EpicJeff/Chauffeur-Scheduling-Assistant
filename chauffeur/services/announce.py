@@ -295,54 +295,51 @@ def speaking_seconds(text: str) -> float:
     return float(min(30.0, max(1.0, words / 2.6 + 0.8)))
 
 
-def answer_speaker(area: dict):
-    """The media player Argyle's spoken ANSWERS use in this room, or None when the
-    room is left on the satellite (settings.voice_answer_speakers[area_id] unset)
-    or nothing usable is there.
-
-    The announce pin wins when it is a media player (a pinned satellite is
-    announce's answer, not a speaker tts.speak can reach). Otherwise the best
-    player in the room by announce's own ranking, skipping players that are
-    OFF: the Cast face of a dark TV would turn the TV on to say three words.
-    Pin it if that is wanted.
-    """
-    from services import storage
-    settings = storage.get_settings() or {}
-    if not (settings.get('voice_answer_speakers') or {}).get(area.get('id')):
-        return None
-    states = _states_by_id()
-    pinned = (settings.get('announce_targets') or {}).get(area.get('id'))
-    if pinned and pinned.startswith('media_player.') and _usable(states, pinned):
-        return pinned
-    players = [e for e in (area.get('entities') or [])
-               if e.startswith('media_player.') and _usable(states, e)
-               and (states.get(e) or {}).get('state') not in ('off', 'standby')]
-    if not players:
-        return None
-    return sorted(players, key=lambda e: _music_rank(states, e))[0]
+def answer_speaker_choices() -> list:
+    """Every usable media player, with its room, for the Config row's "Argyle
+    answers through" select: [{'entity_id', 'name', 'area'}], rooms first in
+    name order. Empty with no Home Assistant; the page still renders."""
+    try:
+        states = _states_by_id()
+        rooms = {}
+        for area in ha_api.get_area_map() or []:
+            for e in area.get('entities') or []:
+                rooms.setdefault(e, area.get('name'))
+        out = [{'entity_id': e, 'area': rooms.get(e),
+                'name': ((states[e].get('attributes') or {}).get('friendly_name') or e)}
+               for e in states if e.startswith('media_player.') and _usable(states, e)]
+        return sorted(out, key=lambda c: (c['area'] is None, c['area'] or '', c['name']))
+    except Exception as e:
+        print(f'[announce] speaker choices failed: {e}')
+        return []
 
 
-def answer_through_speaker(satellite_id: str, speech: str):
-    """Say Argyle's answer on the satellite's room speaker when the family switched
-    that room on. Returns {'entity_id', 'area', 'seconds'} once the words are on
-    their way, or None for every other case (room on the satellite, satellite in
-    no area, no usable speaker, the speaker refused), so the caller falls back
-    to the satellite's own voice. Never raises: a speaker problem must not cost
-    the answer."""
+def answer_through_speaker(satellite_id: str, speech: str, installation: str = None):
+    """Say Argyle's answer on the speaker a parent chose for this satellite in
+    Config › Voice identity (the row's `answer_speaker`). Returns {'entity_id',
+    'area', 'seconds'} once the words are on their way, or None for every other
+    case (no speaker chosen, speaker unavailable, the speaker refused), so the
+    caller falls back to the satellite's own voice. Never raises: a speaker
+    problem must not cost the answer."""
     speech = (speech or '').strip()
     if not speech or not satellite_id:
         return None
     try:
-        area = next((a for a in (ha_api.get_area_map() or [])
-                     if satellite_id in (a.get('entities') or [])), None)
-        if not area:
+        from services import voice_identity
+        row = next((r for r in voice_identity.configuration().get('satellites', [])
+                    if r.get('satellite_id') == satellite_id
+                    and (not installation or r.get('ha_instance_id') == installation)), None)
+        entity_id = str((row or {}).get('answer_speaker') or '')
+        if not entity_id.startswith('media_player.'):
             return None
-        entity_id = answer_speaker(area)
-        if not entity_id:
+        states = _states_by_id()
+        if not _usable(states, entity_id):
             return None
         if speak_on(entity_id, speech).get('status') != 'success':
             return None
-        return {'entity_id': entity_id, 'area': area.get('name'), 'seconds': speaking_seconds(speech)}
+        area = next((a.get('name') for a in (ha_api.get_area_map() or [])
+                     if entity_id in (a.get('entities') or [])), None)
+        return {'entity_id': entity_id, 'area': area, 'seconds': speaking_seconds(speech)}
     except Exception as e:
         print(f'[announce] answer speaker failed: {e}')
         return None
