@@ -773,6 +773,18 @@ snapshots the already-ducked level. A new satellite must be added to the
 trigger's `entity_id` list by hand. `on` is accepted alongside `playing`
 because Samsung TVs never report `playing`.
 
+Only players that take `volume_set` count (`supported_features` bit 4). DEVICE-FOUND
+2026-10-30 on the Office TV: the Android TV Remote face (`media_player.office_tv_2`)
+reports a volume but offers step and mute only, so the first run died with
+"does not support action media_player.volume_set" and nothing ducked. The TV's
+Cast face (`media_player.googletv1645_2`, "Office Google TV Media Player") takes
+`volume_set` and moves the TV's own volume (the remote face reads the change
+back). It sat in no HA area, so it was moved into Office through the device
+registry; a TV whose Cast face is in the room is ducked, one with only the
+remote face is skipped. Verified with `assist_satellite.announce` on the Office
+satellite: 0.10 to 0.03 at `listening`, back to 0.10 on `idle`. Both satellites
+(Kitchen and Office) are in the trigger.
+
 Verified 2026-10-29 with `assist_satellite.announce` on the kitchen satellite:
 trace shows `volume_set` 0.5 -> 0.15 at `responding`, the wait completing on
 `idle` 4.4 s later, and `volume_set` back to 0.5; mute untouched.
@@ -781,13 +793,16 @@ trace shows `volume_set` 0.5 -> 0.15 at `responding`, the wait completing on
 id: voice_duck_room_while_listening
 alias: 'Voice: duck the room while listening'
 description: 'When a voice satellite leaves idle (listening / processing / responding), lower every playing
-  speaker in its room to 30% of its volume; when the satellite is idle again, put each one back to exactly
-  what it was. Volumes live in this run, not in a scene: scene restore sends mute commands, and a Samsung
-  TV''s mute is a toggle. Add new satellites to the trigger.'
+  speaker in its room that takes volume_set to 30% of its volume; when the satellite is idle again, put
+  each one back to exactly what it was. Volumes live in this run, not in a scene: scene restore sends
+  mute commands, and a Samsung TV''s mute is a toggle. A player without volume_set (the Android TV Remote
+  face offers step and mute only) is skipped; put the TV''s Cast face in the room instead, it moves the
+  TV volume. Add new satellites to the trigger.'
 triggers:
 - trigger: state
   entity_id:
   - assist_satellite.home_assistant_voice_0a6b85_assist_satellite
+  - assist_satellite.home_assistant_voice_0a8547_assist_satellite
   from: idle
   to:
   - listening
@@ -824,8 +839,9 @@ variables:
   ratio: 0.3
   snapshot: '{% set sat_dev = device_id(satellite) %}{% set ns = namespace(out={}) %}{% for e in area_entities(area_id(satellite))
     | select(''match'',''media_player\.'') | list %}{% if states(e) in [''playing'',''on''] and state_attr(e,''volume_level'')
-    is number and device_id(e) != sat_dev %}{% set ns.out = dict(ns.out, **{e: state_attr(e,''volume_level'')})
-    %}{% endif %}{% endfor %}{{ ns.out }}'
+    is number and device_id(e) != sat_dev and (state_attr(e,''supported_features'') | int(0)) | bitwise_and(4)
+    %}{% set ns.out = dict(ns.out, **{e: state_attr(e,''volume_level'')}) %}{% endif %}{% endfor %}{{
+    ns.out }}'
 ```
 
 ## Troubleshooting
