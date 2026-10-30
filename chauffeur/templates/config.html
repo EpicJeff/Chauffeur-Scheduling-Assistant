@@ -1245,15 +1245,18 @@
                                         <select x-model="s.answer_speaker" @change="saveVoiceIdentity()"
                                                 aria-label="Speaker Argyle answers through on this satellite"
                                                 class="voice-answer-speaker bg-gray-800 border border-gray-600 rounded p-2 text-xs flex-1 min-w-0">
-                                            <option value="">This satellite</option>
+                                            <!-- :selected on every option: Alpine applies x-model before the x-for
+                                                 options exist, so without it the select showed 'This satellite' until
+                                                 some other change re-rendered the row (device 2026-10-30). -->
+                                            <option value="" :selected="!s.answer_speaker">This satellite</option>
                                             <optgroup label="In this room" x-show="s.area && (voiceState.speakers || []).some(sp => sp.area === s.area)">
                                                 <template x-for="sp in (voiceState.speakers || []).filter(sp => s.area && sp.area === s.area)" :key="'here:' + sp.entity_id">
-                                                    <option :value="sp.entity_id" x-text="sp.name"></option>
+                                                    <option :value="sp.entity_id" :selected="sp.entity_id === s.answer_speaker" x-text="sp.name"></option>
                                                 </template>
                                             </optgroup>
                                             <optgroup label="Elsewhere">
                                                 <template x-for="sp in (voiceState.speakers || []).filter(sp => !(s.area && sp.area === s.area))" :key="'away:' + sp.entity_id">
-                                                    <option :value="sp.entity_id" x-text="sp.area ? sp.name + ' (' + sp.area + ')' : sp.name"></option>
+                                                    <option :value="sp.entity_id" :selected="sp.entity_id === s.answer_speaker" x-text="sp.area ? sp.name + ' (' + sp.area + ')' : sp.name"></option>
                                                 </template>
                                             </optgroup>
                                         </select>

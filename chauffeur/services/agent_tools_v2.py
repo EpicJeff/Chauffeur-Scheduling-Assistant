@@ -99,14 +99,33 @@ def _get_target_element_id(entity_type: str, entity_id: str) -> str:
 # CALENDAR TOOLS
 # ==============================================================================
 
-def get_calendar_events(start_date: str, end_date: str, spoken: bool = False) -> Dict[str, Any]:
+def get_calendar_events(start_date: str, end_date: str, spoken: bool = False,
+                        member_name: str = '') -> Dict[str, Any]:
     """
     Retrieves a slimmed-down JSON of calendar events for a specific date range.
+
+    member_name limits the answer to that person's assigned drives (the solver
+    assigns a driver's own appointments to them, so those ride along). Device
+    2026-10-30: a satellite that had just greeted the speaker by name answered
+    'what time do I need to leave' with another driver's departure, because
+    this tool offered no way to ask for one person's drives.
     """
-    from services.storage import get_all_drivers
+    from services.storage import get_all_drivers, get_all_members
     import re
     from dateutil.parser import parse
     import datetime
+
+    only_driver = None
+    if (member_name or '').strip():
+        low = member_name.strip().lower()
+        target = next((m for m in get_all_members() if not m.get('system')
+                       and (low == (m.get('name') or '').lower() or low in (m.get('name') or '').lower())), None)
+        if not target:
+            return {"status": "error", "message": f"I couldn't find a family member named '{member_name}'."}
+        if not target.get('driver_id'):
+            return {"status": "success", "events": [],
+                    "message": f"{target.get('name')} isn't a driver, so there are no drives of theirs to show."}
+        only_driver = target['driver_id']
 
     sched = access.cached_schedule(access.HOUSE if spoken else _calendar_viewer.get())
     events = sched.get("events", [])
@@ -137,6 +156,8 @@ def get_calendar_events(start_date: str, end_date: str, spoken: bool = False) ->
                 ev_dt = start.date()
                 if sd <= ev_dt <= ed:
                     drv_id = assignments.get(ev.get("id"))
+                    if only_driver and drv_id != only_driver:
+                        continue
                     row = _stamp_departure({
                         "id": ev.get("id"),
                         "title": ev.get("title"),
@@ -4878,7 +4899,8 @@ def get_available_tools() -> List[Dict]:
                 "type": "object",
                 "properties": {
                     "start_date": {"type": "string", "description": "The start date as YYYY-MM-DD, resolved from the CURRENT DATE in your context."},
-                    "end_date": {"type": "string", "description": "The end date as YYYY-MM-DD (inclusive), resolved from the CURRENT DATE in your context."}
+                    "end_date": {"type": "string", "description": "The end date as YYYY-MM-DD (inclusive), resolved from the CURRENT DATE in your context."},
+                    "member_name": {"type": "string", "description": "Limit to one person's drives ('when do I leave', 'Jeff's drives', 'my day'). For a voice speaker asking about their own day, pass the Named lens. Omit for the whole household."}
                 },
                 "required": ["start_date", "end_date"]
             }

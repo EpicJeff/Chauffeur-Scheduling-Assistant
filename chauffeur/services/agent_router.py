@@ -358,7 +358,9 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
         lens = voice_context.member()
         system_prompt += (f"\nSHARED SPEAKER. Identity level: {voice_context.level}. "
                           f"Named lens: {(lens or {}).get('name') or 'unknown'}. "
-                          "For shared-schedule questions, resolve 'me/my' to that lens when present; "
+                          "For shared-schedule questions, resolve 'me/my' to that lens when present: "
+                          "'when do I leave', 'my drives', 'my day' call get_calendar_events or get_drive_digest "
+                          "with member_name set to the lens, never the whole household; "
                           "it never supplies a sender identity or approval permission. "
                           "A spoken name or voice match is a lens, never authentication. "
                           "The server handles recognition greetings; answer without adding a greeting. "
@@ -769,7 +771,13 @@ sending or claiming, and never pass from_member/member_name for them.
 
             try:
                 if source == 'voice':
-                    from services.voice_tools import dispatch
+                    from services.voice_tools import dispatch, scope_to_speaker
+                    _lens = voice_context.member()
+                    if _lens:
+                        from services import storage as _st
+                        args = scope_to_speaker(func_name, args, asked, _lens.get('name'),
+                                                [m.get('name') for m in _st.get_all_members()
+                                                 if not m.get('system') and m.get('id') != _lens.get('id')])
                     res = dispatch(func_name, args, voice_context, focus_key)
                     if res.get('schedule_dirty'): schedule_dirty = True
                     if res.get('target_element_id'): target_id = res['target_element_id']

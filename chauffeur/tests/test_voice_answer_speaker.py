@@ -243,6 +243,10 @@ class VoiceAnswerSpeakerTests(unittest.TestCase):
         self.assertIn('<optgroup label="In this room"', config)
         self.assertIn('<optgroup label="Elsewhere">', config)
         self.assertIn('sp.area === s.area', config)
+        # Device 2026-10-30: the select showed 'This satellite' on load whatever was saved,
+        # because x-model ran before the x-for options existed. Every option binds :selected.
+        self.assertIn(':selected="sp.entity_id === s.answer_speaker"', config)
+        self.assertIn(':selected="!s.answer_speaker"', config)
         page = open(os.path.join(base, 'map.html'), encoding='utf-8').read()
         self.assertNotIn('announce-answer-toggle', page)
         self.assertNotIn('voice_answer_speakers', page)

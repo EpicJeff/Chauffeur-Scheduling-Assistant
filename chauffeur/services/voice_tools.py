@@ -1,4 +1,5 @@
 """Speech-safe projections and explicit household delegation on the agent rail."""
+import re
 from services import storage, scope, access
 from services.voice_identity import VoiceContext, _revision, voice_names
 
@@ -34,6 +35,35 @@ def record_action(ctx, name, principal=None, details=None, provenance=None):
         storage.set_app_state('voice_action_history', rows[-100:])
 
 
+# Tools that take a person and answer "whose day": a first-person question
+# from a known speaker is about them.
+_PERSONAL = ('get_calendar_events', 'get_drive_digest')
+_FIRST_PERSON = re.compile(r"(?i)(?<![\w'])(i|i'm|i’m|me|my|mine|myself)(?![\w'])")
+
+
+def scope_to_speaker(name, args, asked, speaker_name, other_names=()):
+    """The deterministic backstop under the model's 'me/my' reading (device
+    2026-10-30: 'what time do I need to leave today' from a speaker greeted by
+    name was answered with another driver's drive). When a personal read tool
+    was called with no member_name, the speaker is known (named or verified)
+    and the words are in the first person with no OTHER family member named,
+    member_name becomes the speaker. It only ever narrows a read; the model's
+    own member_name, a household question and an unknown speaker pass through."""
+    args = dict(args or {})
+    if name not in _PERSONAL or args.get('member_name') or not speaker_name:
+        return args
+    words = str(asked or '')
+    if not _FIRST_PERSON.search(words):
+        return args
+    low = words.lower()
+    for other in other_names or ():
+        first = str(other or '').strip().lower().split(' ')[0]
+        if first and first != speaker_name.strip().lower().split(' ')[0] and re.search(r"\b" + re.escape(first) + r"\b", low):
+            return args
+    args['member_name'] = speaker_name
+    return args
+
+
 def dispatch(name, args, ctx: VoiceContext, focus_key=None):
     from services import agent_tools_v2 as tools
     if name not in TOOLS:
@@ -62,7 +92,8 @@ def dispatch(name, args, ctx: VoiceContext, focus_key=None):
         from services.voice_approval import prepare
         return prepare(ctx, args.get('mission_ref') or '', args.get('kind') or 'submit')
     if name == 'get_calendar_events':
-        result = tools.get_calendar_events(args.get('start_date'), args.get('end_date'), spoken=True)
+        result = tools.get_calendar_events(args.get('start_date'), args.get('end_date'), spoken=True,
+                                           member_name=args.get('member_name') or '')
     elif name == 'get_travel_time':
         result = tools.get_travel_time(origin=args.get('origin') or '',
                                        destination=args.get('destination') or '')
