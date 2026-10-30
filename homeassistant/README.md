@@ -730,6 +730,26 @@ name to one device and acts, so an error response now falls through to it.
 The three extras were also unexposed from Assist by hand that day (keep
 `media_player.office_tv_2` exposed; the app launcher accepts any exposed face
 on the TV's device). Copy the component and restart HA to take 1.5.2.
+Component 1.6.0 (2026-10-30): Argyle can answer through the room's speaker
+instead of the satellite, per room. In Chauffeur's Map drawer, under
+"Speaker for each room", tick "Argyle answers here through the speaker" for a
+room; from then on every spoken answer to that room's satellite (the model's,
+voice identity's, a setup dialog's) is said on the room's pinned speaker, or
+its best player that is not off, through the same `tts.speak` announcements
+use (HA's announce flag: Sonos, Google Cast, Alexa Media Player and Music
+Assistant players duck, speak and resume; Apple TV and the Samsung TV face do
+not, so do not pin those), and Chauffeur hands the satellite blank speech (one
+space, which a 1.5.x component passes through unchanged) with a `spoken_on`
+field. The pipeline skips TTS on blank speech, so the Voice PE
+stays quiet. The component keeps the blank instead of its "did not return a
+response" line, and when the answer is a question it holds the turn for the
+speaking time before returning, since the satellite would otherwise reopen its
+mic while the room speaker is still talking, outside the satellite's echo
+cancel. Unticked rooms, a room with no usable speaker, a refused speaker call
+and typed requests all answer on the satellite as before. The room ducking
+automation (section 5) keeps the room ducked while the satellite shows
+`processing`, and the announce overlays on top. Copy the component and
+restart HA to take 1.6.0; the Map toggle needs the add-on at v2.499.736.
 `chauffeur/tests/test_voice_local_relay.py` runs the real entity against a
 stubbed default agent for each branch.
 

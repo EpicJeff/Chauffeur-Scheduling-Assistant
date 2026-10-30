@@ -26,6 +26,8 @@ class LocalRelayTests(unittest.IsolatedAsyncioTestCase):
         self.path = Path(__file__).resolve().parents[2] / 'homeassistant/custom_components/chauffeur_conversation'
         self.posted = []
         self.default_agent = None
+        self.reply = {'response': {'speech': {'plain': {'speech': ARGYLE}}}}
+        self.slept = []
         tests = self
 
         class FakeResp:
@@ -35,7 +37,7 @@ class LocalRelayTests(unittest.IsolatedAsyncioTestCase):
                 pass
 
             async def json(self):
-                return {'response': {'speech': {'plain': {'speech': ARGYLE}}}}
+                return tests.reply
 
         class FakeSession:
             async def post(self, url, json=None, headers=None, timeout=None):
@@ -149,6 +151,39 @@ class LocalRelayTests(unittest.IsolatedAsyncioTestCase):
         user_input = types.SimpleNamespace(text=text, language='en-US', conversation_id=conversation_id,
                                            context=types.SimpleNamespace(id='ctx'), device_id=None, satellite_id=None)
         return await self.entity.async_process(user_input)
+
+    async def test_an_answer_chauffeur_already_spoke_on_the_room_speaker_leaves_the_satellite_silent(self):
+        """Per-area answer-through-speaker (v2.499.736): Chauffeur says the words on the
+        room's Sonos itself and returns blank speech with `spoken_on`. Blank speech is
+        what HA's pipeline skips TTS on, so it must reach HA blank, not as the relay's
+        'Chauffeur did not return a response'. When the answer is a question, the relay
+        holds the turn for the speaking time first, or the satellite would reopen its
+        mic while the Sonos is still talking (its echo cancel covers only its own speaker)."""
+        import asyncio as _asyncio
+        tests = self
+
+        async def fake_sleep(seconds):
+            tests.slept.append(seconds)
+        self.house(types.SimpleNamespace(unmatched_entities={'name': 'x'}))
+        self.reply = {'response': {'speech': {'plain': {'speech': ' '}}},
+                      'spoken_on': {'entity_id': 'media_player.pool_lounge', 'seconds': 2.5},
+                      'continue_conversation': True}
+        with patch.object(_asyncio, 'sleep', fake_sleep):
+            result = await self.say('when is practice')
+        self.assertEqual(result.response.speech, '', 'the relay sends blank, whatever blank Chauffeur sent')
+        self.assertTrue(result.continue_conversation)
+        self.assertEqual(self.slept, [2.5], 'a follow-up question waits for the speaker to finish')
+        # A plain statement returns at once.
+        self.slept.clear()
+        self.reply = {**self.reply, 'continue_conversation': False}
+        with patch.object(_asyncio, 'sleep', fake_sleep):
+            result = await self.say('when is practice')
+        self.assertEqual(result.response.speech, '')
+        self.assertEqual(self.slept, [])
+        # Blank speech WITHOUT spoken_on is still the relay's own error line.
+        self.reply = {'response': {'speech': {'plain': {'speech': ''}}}}
+        result = await self.say('when is practice')
+        self.assertEqual(result.response.speech, 'Chauffeur did not return a response.')
 
     async def test_a_sentence_naming_a_real_device_gets_the_houses_answer_not_argyles(self):
         house = self.house(types.SimpleNamespace(unmatched_entities={}))

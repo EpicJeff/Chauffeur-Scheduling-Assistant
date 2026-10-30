@@ -3931,8 +3931,41 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
             speech = ctx.greeting + ' ' + speech
         return _voice_response(speech, req.language, voice_identity.expects_reply(ctx))
 
-    # Cache only sanitized replies. Authentication retries never check a PIN twice.
-    return voice_identity.once(ctx, perform)
+    def perform_and_speak():
+        return _answer_in_room(perform(), req)
+
+    # Cache only sanitized replies. Authentication retries never check a PIN twice,
+    # and a duplicate delivery of one utterance never says its answer twice on the
+    # room speaker: the speaking happens inside the cached computation.
+    return voice_identity.once(ctx, perform_and_speak)
+
+
+def _answer_in_room(result, req):
+    """Per-area answer-through-speaker (2026-10-30). When the satellite's room is
+    switched on in settings.voice_answer_speakers, the spoken answer, whoever
+    wrote it (the model, voice identity, a setup dialog, an approval), is said
+    on the room's speaker through announce.speak_on and HA gets blank speech
+    (one space: a component older than 1.6.0 passes it through where it would
+    replace an empty string with its own error line), which the pipeline's
+    tts_input.strip() check skips TTS on; `spoken_on` tells the component what was
+    done and how long it takes, so a follow-up question holds the mic. Runs
+    INSIDE voice_identity.once, so a duplicate delivery of the same utterance
+    gets the cached blank reply and the speaker says the words once. Every
+    failure leaves the reply exactly as it was."""
+    voice_meta = req.voice if isinstance(req.voice, dict) else {}
+    satellite = voice_meta.get('satellite_id')
+    speech = (((result or {}).get('response') or {}).get('speech') or {}).get('plain', {}).get('speech')
+    if not satellite or not speech:
+        return result
+    from services import announce as announce_svc
+    spoken = announce_svc.answer_through_speaker(satellite, speech)
+    if not spoken:
+        return result
+    out = dict(result)
+    out['response'] = {**result['response'],
+                       'speech': {'plain': {**result['response']['speech']['plain'], 'speech': ' '}}}
+    out['spoken_on'] = spoken
+    return out
 
 
 def _voice_response(speech, language='en', continue_conversation=False):
@@ -11185,7 +11218,9 @@ def announce_rooms():
     player (or carrying a pin), each with its resolved target and the full
     candidate list so a parent can pin a specific speaker."""
     from services import announce as announce_svc, ha_api
-    pins = storage.get_settings().get('announce_targets') or {}
+    settings = storage.get_settings() or {}
+    pins = settings.get('announce_targets') or {}
+    answers = settings.get('voice_answer_speakers') or {}
     names = {s.get('entity_id'): (s.get('attributes') or {}).get('friendly_name') or s.get('entity_id')
              for s in ha_api.get_states(ttl=10)}
     out = []
@@ -11198,6 +11233,7 @@ def announce_rooms():
         out.append({'id': area.get('id'), 'name': area.get('name'),
                     'candidates': [{'entity_id': e, 'name': names.get(e, e)} for e in candidates],
                     'pinned': pins.get(area.get('id')),
+                    'answers': bool(answers.get(area.get('id'))),
                     'target': target[1] if target else None,
                     'kind': target[0] if target else None})
     return out

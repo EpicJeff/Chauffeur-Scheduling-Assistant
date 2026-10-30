@@ -1,6 +1,7 @@
 """Conversation entity that proxies Assist text to Chauffeur's /api/v2/converse."""
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import aiohttp
@@ -140,13 +141,27 @@ class ChauffeurConversationEntity(conversation.ConversationEntity):
             resp.raise_for_status()
             data = await resp.json()
             continue_conversation = data.get('continue_conversation') is True
+            spoken_on = data.get('spoken_on') if isinstance(data.get('spoken_on'), dict) else None
             speech = (
                 data.get("response", {})
                 .get("speech", {})
                 .get("plain", {})
                 .get("speech")
             )
-            if not speech:
+            if not (speech or '').strip() and spoken_on:
+                # 1.6.0: Chauffeur already said the words on the room's speaker
+                # (per-area answer-through-speaker). Blank speech is what the
+                # pipeline skips TTS on, so it must stay blank. A follow-up
+                # question would reopen the satellite's mic at once, while the
+                # room speaker is still talking and outside the satellite's echo
+                # cancel, so the turn is held for the speaking time first.
+                speech = ""
+                if continue_conversation:
+                    try:
+                        await asyncio.sleep(min(float(spoken_on.get('seconds') or 0), 30.0))
+                    except (TypeError, ValueError):
+                        pass
+            elif not speech:
                 speech = data.get("error") or "Chauffeur did not return a response."
         except (aiohttp.ClientError, TimeoutError) as err:
             _LOGGER.error("Error talking to Chauffeur at %s: %s", self._base_url, err)
