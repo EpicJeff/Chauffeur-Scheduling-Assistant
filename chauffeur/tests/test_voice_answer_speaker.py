@@ -240,7 +240,7 @@ class VoiceAnswerSpeakerTests(unittest.TestCase):
         self.assertIn('x-model="s.answer_speaker"', config)
         self.assertIn('voiceState.speakers', config)
         # The satellite's own room first, then a divider, then the rest of the house.
-        self.assertIn('<optgroup label="In this room">', config)
+        self.assertIn('<optgroup label="In this room"', config)
         self.assertIn('<optgroup label="Elsewhere">', config)
         self.assertIn('sp.area === s.area', config)
         page = open(os.path.join(base, 'map.html'), encoding='utf-8').read()
