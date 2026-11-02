@@ -2661,9 +2661,14 @@ def errand_why_text(why):
 
 
 class _Stop:
-    __slots__ = ('id', 'title', 'start', 'end', 'location', 'is_ride', 'event')
+    """One stop on a driver's day route. `role` says what the car does there:
+    'drop' lets the stop's riders out, 'pickup' takes them back in, 'busy'
+    keeps them (a ride the driver stays at, or an own event). `pax` is the
+    set of passenger ids the stop's event carries, resolved the way the
+    solver matches a ride to its passengers (calendar ids and hashtags)."""
+    __slots__ = ('id', 'title', 'start', 'end', 'location', 'is_ride', 'event', 'role', 'pax')
 
-    def __init__(self, event, is_ride):
+    def __init__(self, event, is_ride, role='busy', pax=None):
         self.id = getattr(event, 'id', None)
         self.title = getattr(event, 'title', '') or (getattr(event, 'location', '') or '')
         self.start = event.start
@@ -2671,6 +2676,21 @@ class _Stop:
         self.location = getattr(event, 'location', None)
         self.is_ride = is_ride
         self.event = event
+        self.role = role
+        self.pax = set(pax or ())
+
+
+def _event_pax(e, passengers):
+    """Passenger ids riding event `e`: the solver's own match (calendar ids,
+    hashtags, name tag), see compute_event_trip_entities. Empty when the
+    pass was handed no passengers."""
+    if not passengers:
+        return set()
+    try:
+        ents = compute_event_trip_entities([e], passengers).get(e.id) or set()
+    except Exception:
+        return set()
+    return {str(x)[len('passenger_'):] for x in ents if str(x).startswith('passenger_')}
 
 
 def _errand_requires_stay(e, all_rules):
@@ -2692,8 +2712,10 @@ def _hhmm(s):
     return time(h, m)
 
 
-def _driver_day_route(date_obj, d_id, day_data, driver_events, all_rules):
-    """Build a day route with busy stops and drop/pickup anchors for rides."""
+def _driver_day_route(date_obj, d_id, day_data, driver_events, all_rules, passengers=None):
+    """Build a day route with busy stops and drop/pickup anchors for rides.
+    Each stop carries its role and riders so `_pax_in_car` can say who is in
+    the car on any leg (passengers=None: nobody, the pre-2026-11-02 reading)."""
     stops, ride_ids, ride_keys = [], set(), set()
     own_by_key = {key: e for e in (driver_events or {}).get(d_id, []) or []
                   if e.start.astimezone().date() == date_obj
@@ -2709,16 +2731,28 @@ def _driver_day_route(date_obj, d_id, day_data, driver_events, all_rules):
         if original_id:
             ride_keys.add(original_id)
         own = own_by_key.get(e.id) or own_by_key.get(original_id)
+        pax = _event_pax(e, passengers)
         if own is not None:
             if own.id not in attended:
-                busy = _Stop(e, True)
+                busy = _Stop(e, True, 'busy', pax)
                 busy.start, busy.end = min(e.start, own.start), max(e.end, own.end)
                 stops.append(busy)
                 attended.add(own.id)
         elif _errand_requires_stay(e, all_rules):
-            stops.append(_Stop(e, True))
+            stops.append(_Stop(e, True, 'busy', pax))
         else:
-            drop, pickup = _Stop(e, True), _Stop(e, True)
+            # The refresh usually hands the halves over already split (event_type
+            # 'dropoff' / 'pickup'); a whole ride is split here. Either way the
+            # first anchor lets the riders out and the second takes them in.
+            kind = (getattr(e, 'event_type', '') or '').lower()
+            title = (getattr(e, 'title', '') or '').lower()
+            if kind == 'dropoff' or title.startswith('dropoff'):
+                roles = ('drop', 'drop')
+            elif kind == 'pickup' or title.startswith('pickup'):
+                roles = ('pickup', 'pickup')
+            else:
+                roles = ('drop', 'pickup')
+            drop, pickup = _Stop(e, True, roles[0], pax), _Stop(e, True, roles[1], pax)
             drop.end = drop.start
             pickup.start = pickup.end
             stops.extend((drop, pickup))
@@ -2808,21 +2842,27 @@ def _first_fit(earliest, latest_start, duration, day_date, errand, now, *, lates
 
 
 def _pax_in_car(stops, gap_idx):
-    """Today's get_pax_in_car_at_gap, on stops."""
-    in_car = set()
-    for i in range(gap_idx + 1):
-        e = stops[i].event
-        title = (getattr(e, 'title', '') or '').lower()
-        pids = []
-        if getattr(e, 'passengers', None):
-            pids = [str(p.id) for p in e.passengers]
-        elif getattr(e, 'passenger_ids', None):
-            pids = [str(pid) for pid in e.passenger_ids]
-        if title.startswith('pickup'):
-            in_car.update(pids)
-        elif title.startswith('dropoff'):
-            for pid in pids:
-                in_car.discard(pid)
+    """Who is in the car on the leg that LEAVES stops[gap_idx] (gap_idx == -1:
+    the leg from home; len(stops) - 1: the leg home). A rider is in the car
+    from home until their drop-off and from their pickup until home; a busy
+    stop (a ride the driver stays at, an own event) keeps them aboard. So a
+    passenger whose first touch of the day is not a pickup rode from home.
+
+    Until 2026-11-02 this read `event.passengers`, a field an Event never
+    carries, and answered "nobody" on every leg; and only the between-stops
+    shape asked at all, so an errand barred for a kid landed on the drive
+    home from that kid's own pickup."""
+    first_touch = {}
+    for s in stops:
+        for pid in getattr(s, 'pax', ()) or ():
+            first_touch.setdefault(pid, s.role)
+    in_car = {pid for pid, role in first_touch.items() if role != 'pickup'}
+    for i in range(min(gap_idx, len(stops) - 1) + 1):
+        s = stops[i]
+        if s.role == 'drop':
+            in_car -= s.pax
+        elif s.role == 'pickup':
+            in_car |= s.pax
     return in_car
 
 
@@ -2835,7 +2875,8 @@ def _same_ride(a, b):
 
 
 def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None,
-                            driver_events=None, now=None, settings=None, *, home_location=None):
+                            driver_events=None, now=None, settings=None, *, home_location=None,
+                            passengers=None):
     """Place every active errand on the leg it costs least to add to (spec §1-§3).
 
     Returns (scheduled_by_date, notes). Drive time comes ONLY from
@@ -2870,7 +2911,8 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
         return scheduled, notes
     driver_map = {d.id: d for d in drivers if d.id != 'unassigned_ghost'}
     range_dates = sorted(datetime.strptime(d, "%Y-%m-%d").date() for d in base_schedules.keys())
-    routes = {d_str: {d_id: _driver_day_route(datetime.strptime(d_str, "%Y-%m-%d").date(), d_id, day, driver_events, all_rules)
+    routes = {d_str: {d_id: _driver_day_route(datetime.strptime(d_str, "%Y-%m-%d").date(), d_id, day, driver_events, all_rules,
+                                              passengers=passengers)
                       for d_id in driver_map}
               for d_str, day in base_schedules.items()}
     def errand_order(e):
@@ -3012,8 +3054,18 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                                                 t2=None if (unknown or t2e) else t2v,
                                                 unknown=unknown)))
 
+                    def riders_ok(in_car):
+                        """The errand's passenger rules against who is in the car on
+                        this leg: required riders must all be aboard, prohibited
+                        riders none. Every shape asks (home legs included)."""
+                        if req_pax and not req_pax.issubset(in_car):
+                            return False
+                        if proh_pax and not proh_pax.isdisjoint(in_car):
+                            return False
+                        return True
+
                     if not stops:
-                        if req_pax:
+                        if not riders_ok(set()):
                             continue
                         t, t_est = leg2(home, loc) if home else (None, False)
                         start = None
@@ -3035,7 +3087,7 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                         continue
 
                     first, last = stops[0], stops[-1]
-                    if not req_pax and not home_bound:
+                    if not home_bound and riders_ok(_pax_in_car(stops, -1)):
                         th, th_e = leg2(home, loc) if home else (None, False)
                         tf, tf_e = leg2(loc, first.location)
                         thf, thf_e = leg2(home, first.location) if home else (None, False)
@@ -3058,12 +3110,10 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                         if start is None:
                             continue
                         in_car = set() if _same_ride(a, b) else _pax_in_car(stops, i)
-                        if req_pax and not req_pax.issubset(in_car):
-                            continue
-                        if proh_pax and not proh_pax.isdisjoint(in_car):
+                        if not riders_ok(in_car):
                             continue
                         add('between', start, legs, (t1 or 0) + (t2 or 0) - (tab or 0), a, b, i, (t1, t1_e), (t2, t2_e))
-                    if not req_pax:
+                    if riders_ok(_pax_in_car(stops, len(stops) - 1)):
                         tl, tl_e = leg2(last.location, loc)
                         th, th_e = leg2(loc, home) if home else (None, False)
                         tlh, tlh_e = leg2(last.location, home) if home else (None, False)
