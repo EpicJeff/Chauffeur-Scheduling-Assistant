@@ -52,6 +52,18 @@ bounded width. Roll-call and packing states retain explicit marks as well as
 their semantic colors. Never give sheets a separate visual language from
 their adult parent screen.
 
+Admin dialogs with a body that can grow (the schedule page's event dialog,
+`dashboard.html` `#event-modal`; the calendar's, `family_calendar.html`
+`#modal-content-container`) are chrome: a `flex flex-col max-h-[90vh]
+overflow-hidden` panel with a `shrink-0` header holding the title and the
+close button, a `flex-1 min-h-0 overflow-y-auto` body, and a `shrink-0`
+footer holding the actions, so nothing a person must reach ever scrolls away.
+Such a dialog sits at `z-[90]`, above the sticky top nav (`z-[60]`) and the
+Argyle dock (`z-[80]`); a sticky header inside a scrolling drawer is `z-20`,
+and body rows carry no z-index of their own. When the dialog has a secondary
+block (rules, diagnostics) it becomes a second column at `lg` with each
+column scrolling on its own, and stacks below the details on a narrow screen.
+
 When two surfaces draw the same concept, they share ONE builder (the
 kiosk-shares-logic / TripLogic pattern — an included component both consumers
 load). Existing shared pieces:

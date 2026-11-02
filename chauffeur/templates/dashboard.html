@@ -112,15 +112,22 @@
         <!-- Mapbox API Stats Rollout Panel (Slide-out Drawer, Non-Modal) -->
 
 
-        <div id="event-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-            <div
-                class="bg-gray-800 p-8 rounded-2xl w-full max-w-2xl border border-gray-600 shadow-2xl max-h-[90vh] overflow-y-auto">
+        <!-- Above the sticky top nav (z-[60]) and the Argyle dock (z-[80]):
+             a dialog that opens under either reads as broken. The panel is
+             chrome: title and close in a fixed header, the actions in a fixed
+             footer, only the body scrolls (the calendar's dialog shape,
+             components/family_calendar.html). With rules or diagnostics to
+             show, a landscape browser gets them in a second column
+             (#modal-side) so the body is less tall. -->
+        <div id="event-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-[90] p-4">
+            <div id="event-modal-panel"
+                class="bg-gray-800 rounded-2xl w-full max-w-2xl border border-gray-600 shadow-2xl max-h-[90vh] flex flex-col overflow-hidden">
 
                 <!-- VIEW MODE -->
-                <div id="modal-view-mode">
-                    <div class="flex justify-between items-start mb-6">
+                <div id="modal-view-mode" class="flex flex-col min-h-0">
+                    <div class="shrink-0 flex justify-between items-start gap-4 px-8 pt-8 pb-4 border-b border-gray-700">
                         <h3 id="view-title" class="text-3xl font-bold text-blue-200">Event Title</h3>
-                        <button onclick="closeEventModal()" class="text-gray-400 hover:text-white">
+                        <button id="event-modal-close" onclick="closeEventModal()" class="text-gray-400 hover:text-white shrink-0 mt-1">
                             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                     d="M6 18L18 6M6 6l12 12"></path>
@@ -128,6 +135,8 @@
                         </button>
                     </div>
 
+                    <div id="modal-view-body" class="flex-1 min-h-0 overflow-y-auto px-8 py-6">
+                    <div id="modal-main">
                     <div class="space-y-4 text-lg">
                         <div class="flex items-center text-gray-300">
                             <svg class="w-5 h-5 mr-3 text-gray-500" fill="none" stroke="currentColor"
@@ -213,8 +222,13 @@
                         </div>
                     </div>
 
+                    </div>
+
+                    <!-- Rules and diagnostics: the second column on a landscape
+                         browser when there is anything to show. -->
+                    <div id="modal-side" class="hidden">
                     <!-- Tabs -->
-                    <div id="modal-tabs" class="mt-6 flex space-x-2 border-b border-gray-700 hidden">
+                    <div id="modal-tabs" class="mt-6 lg:mt-0 flex space-x-2 border-b border-gray-700 hidden">
                         <button id="tab-btn-rules" onclick="switchModalTab('rules')"
                             class="px-4 py-2 text-sm font-bold text-blue-400 hover:text-blue-300 border-b-2 border-blue-500 transition-colors focus:outline-none">Matched
                             Rules</button>
@@ -289,8 +303,10 @@
                             <div id="deal-result" class="mt-3 hidden text-sm text-gray-300"></div>
                         </div>
                     </div>
+                    </div>
+                    </div>
 
-                    <div class="mt-8 flex justify-end space-x-4">
+                    <div id="modal-view-footer" class="shrink-0 flex justify-end space-x-4 px-8 py-4 border-t border-gray-700">
                         <!-- Cancel the OCCURRENCE: recorded with a reason,
                              mirrored to Google (CANCELED + Free), driver and
                              kids pushed. Never a delete — the record is what
@@ -322,16 +338,26 @@
                 </div>
 
                 <!-- EDIT MODE (Configuration) -->
-                <div id="modal-edit-mode" class="hidden">
-                    <h3 class="text-2xl font-bold text-blue-200 mb-6">Configure Event</h3>
+                <div id="modal-edit-mode" class="hidden flex-col min-h-0">
+                    <div class="shrink-0 flex justify-between items-start gap-4 px-8 pt-8 pb-4 border-b border-gray-700">
+                        <h3 class="text-2xl font-bold text-blue-200">Configure Event</h3>
+                        <button onclick="closeEventModal()" class="text-gray-400 hover:text-white shrink-0" aria-label="Close">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                        </button>
+                    </div>
                     <input type="hidden" id="edit-event-id">
 
+                    <div class="flex-1 min-h-0 overflow-y-auto px-8 py-6">
                     <!-- The setup form is components/event_config_form.html,
                          shared with the Inbox dialog; drawn here with the
                          `edit` prefix, so its ids are the edit-* ids. -->
                     <div id="edit-form-mount"></div>
+                    </div>
 
-                    <div class="mt-8 flex justify-between items-center">
+                    <div class="shrink-0 flex justify-between items-center px-8 py-4 border-t border-gray-700">
                         <button id="ignore-event-btn" onclick="ignoreEvent()"
                             class="px-5 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-red-400 hover:text-red-300 font-bold transition-colors flex items-center min-w-[150px] justify-center">
                             <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1548,7 +1574,9 @@
                 tabsContainer.classList.add('hidden');
                 tabContentRules.classList.add('hidden');
                 tabContentDiag.classList.add('hidden');
+                setModalSide(false);
             } else {
+                setModalSide(true);
                 tabsContainer.classList.remove('hidden');
                 if (hasDiagnostics) {
                     tabBtnDiag.classList.remove('hidden');
@@ -1571,7 +1599,28 @@
 
         function switchToViewMode() {
             document.getElementById('modal-edit-mode').classList.add('hidden');
+            document.getElementById('modal-edit-mode').classList.remove('flex');
             document.getElementById('modal-view-mode').classList.remove('hidden');
+        }
+
+        // With rules or diagnostics the body has two parts; on a landscape
+        // browser (lg) they sit side by side so there is less to scroll.
+        function setModalSide(show) {
+            const side = document.getElementById('modal-side');
+            const body = document.getElementById('modal-view-body');
+            const panel = document.getElementById('event-modal-panel');
+            if (!side || !body || !panel) return;
+            side.classList.toggle('hidden', !show);
+            // Each column scrolls on its own at lg, so the details stay put
+            // while a long diagnostics list scrolls (the grid row is bounded
+            // to the body's height for that).
+            for (const c of ['lg:grid', 'lg:grid-cols-2', 'lg:gap-8', 'lg:grid-rows-[minmax(0,1fr)]']) body.classList.toggle(c, show);
+            for (const el of [side, document.getElementById('modal-main')]) {
+                for (const c of ['lg:overflow-y-auto', 'lg:min-h-0']) el.classList.toggle(c, show);
+            }
+            panel.classList.toggle('lg:max-w-5xl', show);
+            body.scrollTop = 0;
+            side.scrollTop = 0;
         }
 
         // The form as it was first drawn for the event being edited; a save
@@ -1585,6 +1634,7 @@
             editFormBaseline = null;
             document.getElementById('modal-view-mode').classList.add('hidden');
             document.getElementById('modal-edit-mode').classList.remove('hidden');
+            document.getElementById('modal-edit-mode').classList.add('flex');
             // Snapshot as soon as the form is drawn (the pickers load after),
             // so a quick Save still compares against what was shown.
             const filled = eventConfigFormFill('edit', ev, currentData || {});
@@ -1758,6 +1808,8 @@
         function closeEventModal() {
             document.getElementById('event-modal').classList.add('hidden');
             activeEventId = null;
+            // The next open starts in view mode whatever mode this one closed in.
+            switchToViewMode();
         }
 
         async function saveEventDetails() {

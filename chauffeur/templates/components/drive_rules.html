@@ -451,7 +451,7 @@
                         <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Matched Events in Schedule</div>
                         <div class="space-y-2">
                             <template x-for="ev in matchedEventsByRule['s_' + (rule.doc_id || rule.id)]" :key="ev.id">
-                                <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col z-10" :style="'border-left-color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')">
+                                <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col" :style="'border-left-color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')">
                                     <div class="px-2 py-1.5 w-full flex flex-col">
                                         <div class="flex items-center shrink-0">
                                             <template x-for="cid in (ev.calendar_ids || [])" :key="cid">
@@ -556,7 +556,7 @@
                         <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Matched Events in Schedule</div>
                         <div class="space-y-2">
                             <template x-for="ev in matchedEventsByRule['s_' + (rule.doc_id || rule.id)]" :key="ev.id">
-                                <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col z-10" :style="'border-left-color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')">
+                                <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col" :style="'border-left-color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')">
                                     <div class="px-2 py-1.5 w-full flex flex-col">
                                         <div class="flex items-center shrink-0">
                                             <template x-for="cid in (ev.calendar_ids || [])" :key="cid">
@@ -823,7 +823,7 @@
                         <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Matched Events in Schedule</div>
                         <div class="space-y-2">
                             <template x-for="ev in matchedEventsByRule['p_' + (rule.doc_id || rule.id)]" :key="ev.id">
-                                <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col z-10" :style="'border-left-color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')">
+                                <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col" :style="'border-left-color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')">
                                     <div class="px-2 py-1.5 w-full flex flex-col">
                                         <div class="flex items-center shrink-0">
                                             <template x-for="cid in (ev.calendar_ids || [])" :key="cid">
@@ -925,7 +925,7 @@
                         <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Matched Events in Schedule</div>
                         <div class="space-y-2">
                             <template x-for="ev in matchedEventsByRule['p_' + (rule.doc_id || rule.id)]" :key="ev.id">
-                                <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col z-10" :style="'border-left-color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')">
+                                <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col" :style="'border-left-color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')">
                                     <div class="px-2 py-1.5 w-full flex flex-col">
                                         <div class="flex items-center shrink-0">
                                             <template x-for="cid in (ev.calendar_ids || [])" :key="cid">
