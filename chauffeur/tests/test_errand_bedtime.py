@@ -69,6 +69,10 @@ def _hm(dt):
     return dt.astimezone().strftime('%H:%M') if dt else None
 
 
+def _t(r, key='start_time'):
+    return datetime.datetime.fromisoformat(r[key]).strftime('%H:%M')
+
+
 def scenario_the_bound():
     _reset()
     s = {'kid_quiet_start': '20:30'}
@@ -99,9 +103,17 @@ def scenario_the_drive_home_past_bedtime_is_not_an_errand_leg():
     base = _world({1: [drop, pick]}, [jeff], {'soccer_dropoff': 'd1', 'soccer_pickup': 'd1'})
     errand = _errand(time_window_start='19:00', time_window_end='21:00', valid_days_of_week=[1])
     rows, notes = _place(base, [errand], [jeff], settings={'kid_quiet_start': '20:30'})
+    d, r = _only(rows)
+    check(r['why']['kind'] == 'from_home' and _t(r) == '20:10' and r['inserted_after_event_id'] == 'soccer_pickup',
+          f"not on the drive home: a separate trip once Kate is in (19:50), out again 20:10: {r['why']} {_t(r)}")
+    # Window closing at 20:30: the separate trip (20:10-20:40) does not fit
+    # either, and the note says why the one drive with room was no good.
+    errand = _errand(time_window_start='19:00', time_window_end='20:30', valid_days_of_week=[1])
+    rows, notes = _place(base, [errand], [jeff], settings={'kid_quiet_start': '20:30'})
     check(not rows and notes.get('er1', {}).get('reason') == 'kids_bedtime',
           f"not placed, and the reason says why: {rows} {notes}")
     check('Kate' in notes['er1']['text'] and 'bedtime' in notes['er1']['text'], f"names the kid: {notes['er1']}")
+    errand = _errand(time_window_start='19:00', time_window_end='21:00', valid_days_of_week=[1])
     # Her bedtime routine starting at 21:00 moves the bound: now it fits.
     _reset(kate_bedtime='21:00')
     rows, notes = _place(base, [errand], [jeff], settings={'kid_quiet_start': '20:30'})
@@ -124,13 +136,15 @@ def scenario_the_drive_home_past_bedtime_is_not_an_errand_leg():
 def scenario_a_kid_already_late_is_not_made_later():
     # Soccer ends 19:45, Kate home 20:05, already past her 20:00 bound without
     # the errand. Still no errand on that leg: later is worse, not irrelevant.
+    # Jeff goes out again alone at 20:25 instead.
     _reset()
     jeff = _driver('d1', 'Jeff')
     drop, pick = _ride('soccer', 1, 19, 0, 'Soccer', 'Soccer', 45, 'kate_cal')
     base = _world({1: [drop, pick]}, [jeff], {'soccer_dropoff': 'd1', 'soccer_pickup': 'd1'})
     errand = _errand(time_window_start='19:00', time_window_end='21:00', valid_days_of_week=[1])
     rows, notes = _place(base, [errand], [jeff], settings={'kid_quiet_start': '20:30'})
-    check(not rows and notes.get('er1', {}).get('reason') == 'kids_bedtime', f"{rows} {notes}")
+    d, r = _only(rows)
+    check(r['why']['kind'] == 'from_home' and _t(r) == '20:25', f"{r['why']} {_t(r)} {notes}")
 
 
 def scenario_the_setting_has_its_home():

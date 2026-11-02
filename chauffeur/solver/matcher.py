@@ -3129,31 +3129,65 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                             return False
                         return True
 
-                    if not stops:
-                        if not riders_ok(set()):
-                            continue
-                        t, t_est = leg2(home, loc) if home else (None, False)
+                    def fit_dedicated(lo, hi):
+                        """The start of a separate trip from home inside [lo, hi]
+                        (latest start). §2: a dedicated trip keeps human hours when
+                        the person set nothing: the band first, then from the band's
+                        start to the day's end for a trip too long for the band."""
                         start = None
                         if not has_window:
-                            # §2: a dedicated trip keeps human hours when the person set
-                            # nothing: the band first, then from the band's start to the
-                            # day's end for a trip too long for the band.
                             ded_start = datetime.combine(
                                 day_date, _prefs.DEDICATED_START_WEEKEND if day_date.weekday() >= 5
                                 else _prefs.DEDICATED_START_WEEKDAY).astimezone()
                             ded_end = datetime.combine(day_date, _prefs.DEDICATED_END).astimezone()
-                            start = _first_fit(ded_start, ded_end - timedelta(minutes=duration), duration, day_date, errand, now)
+                            start = _first_fit(max(lo, ded_start), min(hi, ded_end - timedelta(minutes=duration)),
+                                               duration, day_date, errand, now)
                             if start is None:
-                                start = _first_fit(ded_start, day_end - timedelta(minutes=duration), duration, day_date, errand, now)
+                                start = _first_fit(max(lo, ded_start), hi, duration, day_date, errand, now)
                         if start is None:
-                            start = _first_fit(day_start, day_end - timedelta(minutes=duration), duration, day_date, errand, now)
+                            start = _first_fit(lo, hi, duration, day_date, errand, now)
+                        return start
+
+                    th, th_e = leg2(home, loc) if home else (None, False)
+                    if not stops:
+                        if not riders_ok(set()):
+                            continue
+                        start = fit_dedicated(day_start, day_end - timedelta(minutes=duration))
                         if start is not None:
-                            add('empty', start, [(t, t_est)], (t or 0) * 2, None, None, -1, (t, t_est), (t, t_est))
+                            add('empty', start, [(th, th_e)], (th or 0) * 2, None, None, -1, (th, th_e), (th, th_e))
                         continue
 
                     first, last = stops[0], stops[-1]
+
+                    # A separate trip from home is a candidate in any gap where the
+                    # driver is home: before the first stop, between two stops with
+                    # time to get home and back out, after the last stop. It carries
+                    # nobody (so a barred rider or a bedtime never bites, and a
+                    # required rider never takes it) and pays the dedicated penalty,
+                    # so a passing leg still wins whenever one exists. Until
+                    # 2026-11-02 this shape existed only on an empty day, and a day
+                    # whose one leg was ruled out gave up.
+                    if not req_pax:
+                        gaps = []
+                        thf, thf_e = leg2(home, first.location) if home else (None, False)
+                        gaps.append((day_start, first.start - timedelta(minutes=(th or 0) + (thf or 0)),
+                                     [(th, th_e), (thf, thf_e)], None, first, -1))
+                        for i in range(len(stops) - 1):
+                            a, b = stops[i], stops[i + 1]
+                            tah, tah_e = leg2(a.location, home) if home else (None, False)
+                            thb, thb_e = leg2(home, b.location) if home else (None, False)
+                            gaps.append((a.end + timedelta(minutes=(tah or 0) + (th or 0)),
+                                         b.start - timedelta(minutes=(th or 0) + (thb or 0)),
+                                         [(th, th_e), (tah, tah_e), (thb, thb_e)], a, b, i))
+                        tlh, tlh_e = leg2(last.location, home) if home else (None, False)
+                        gaps.append((last.end + timedelta(minutes=(tlh or 0) + (th or 0)), day_end,
+                                     [(th, th_e), (tlh, tlh_e)], last, None, len(stops) - 1))
+                        for lo, hi, legs, prev_stop, next_stop, idx in gaps:
+                            start = fit_dedicated(lo, hi - timedelta(minutes=duration))
+                            if start is not None:
+                                add('empty', start, legs, (th or 0) * 2, prev_stop, next_stop, idx, (th, th_e), (th, th_e))
+
                     if not home_bound and riders_ok(_pax_in_car(stops, -1)):
-                        th, th_e = leg2(home, loc) if home else (None, False)
                         tf, tf_e = leg2(loc, first.location)
                         thf, thf_e = leg2(home, first.location) if home else (None, False)
                         legs = [(th, th_e), (tf, tf_e), (thf, thf_e)]
@@ -3181,7 +3215,7 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                     in_car_home = _pax_in_car(stops, len(stops) - 1)
                     if riders_ok(in_car_home):
                         tl, tl_e = leg2(last.location, loc)
-                        th, th_e = leg2(loc, home) if home else (None, False)
+                        th, th_e = leg2(loc, home) if home else (None, False)   # loc -> home, not home -> loc
                         tlh, tlh_e = leg2(last.location, home) if home else (None, False)
                         legs = [(tl, tl_e), (th, th_e), (tlh, tlh_e)]
                         earliest = last.end + timedelta(minutes=(tl or 0))

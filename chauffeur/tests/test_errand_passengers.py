@@ -93,8 +93,9 @@ def scenario_a_prohibited_kid_bars_the_drive_home_from_her_own_pickup():
     errand = _errand(time_window_start='17:00', time_window_end='20:00', valid_days_of_week=[1],
                      prohibited_passengers=['p_kate'])
     rows, notes = _place(base, [errand], [jeff])
-    check(not rows and notes.get('er1', {}).get('reason') == 'no_slot',
-          f"Kate is in the car on the way home, so no Tuesday leg fits and the errand waits: {rows} {notes}")
+    d, r = _only(rows)
+    check(r['why']['kind'] == 'from_home' and r['inserted_after_event_id'] == 'soccer_pickup',
+          f"Kate is in the car on the way home, so the errand is a separate trip after she is home: {r['why']} {notes}")
     # The same errand with no prohibition rides home with her, as it did.
     rows, _ = _place(base, [_errand(time_window_start='17:00', time_window_end='20:00', valid_days_of_week=[1])], [jeff])
     d, r = _only(rows)
