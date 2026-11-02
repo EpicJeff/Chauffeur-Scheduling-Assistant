@@ -1086,6 +1086,9 @@ class Settings(BaseModel):
     # before a separate trip from home is worth it. Applied to the empty-day
     # shape only.
     errand_dedicated_trip_mins: int = Field(default=25, ge=0, le=120)
+    # Kids aboard the drive home must be in by their bedtime bound: the start
+    # of their timed bedtime routine, else kid quiet hours start minus this.
+    errand_kids_home_margin_mins: int = Field(default=30, ge=0, le=180)
     # Supply intake A4: a party-shaped event with a child riding gets a card
     # offering to track the present. Proposes, never creates — a title is a
     # guess, and "Ellie's birthday" (ours) reads exactly like "Jack's

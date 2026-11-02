@@ -2485,7 +2485,52 @@ ERRAND_UNPLACED_TEXT = {
     'pinned_day_passed': 'the day you picked has passed',
     'pinned_day_not_in_range': 'the day you picked is further out than the schedule looks; it will land when that week is planned',
     'every_day_skipped': 'every day in its window is skipped',
+    'kids_bedtime': 'the only drive with room would get the kids home after bedtime',
 }
+
+# Kids aboard the drive home must be in by their bedtime bound (2026-11-02).
+KID_HOME_MARGIN_DEFAULT = 30
+
+
+def kid_home_bound(passenger_id, day_date, settings, members=None):
+    """When this rider must be home on `day_date`, or None. A child's bound is
+    the START of their timed bedtime routine that day (the first bedtime item
+    with a time), else the household kid quiet hours start (Settings
+    kid_quiet_start, default 20:30) minus `errand_kids_home_margin_mins`
+    (default 30). None for an adult, an unknown rider, or quiet hours
+    disabled (start == end) with no bedtime item. No new errand field: the
+    house already holds the fact; the steer sheet is the override."""
+    from services import storage
+    if members is None:
+        try:
+            members = storage.get_all_members()
+        except Exception:
+            members = []
+    member = next((m for m in members if str(m.get('passenger_id') or '') == str(passenger_id)), None)
+    if not member or member.get('role') != 'child':
+        return None
+    try:
+        items = [r for r in storage.routines_for_day(member['id'], day_date.isoformat())
+                 if r.get('runway') == 'bedtime' and r.get('time_of_day')]
+    except Exception:
+        items = []
+    if items:
+        try:
+            return datetime.combine(day_date, _hhmm(min(str(r['time_of_day']) for r in items))).astimezone()
+        except (TypeError, ValueError):
+            pass
+    settings = settings or {}
+    start, end = str(settings.get('kid_quiet_start') or '20:30'), str(settings.get('kid_quiet_end') or '07:00')
+    if start == end:
+        return None
+    try:
+        margin = int(settings.get('errand_kids_home_margin_mins', KID_HOME_MARGIN_DEFAULT))
+    except (TypeError, ValueError):
+        margin = KID_HOME_MARGIN_DEFAULT
+    try:
+        return datetime.combine(day_date, _hhmm(start)).astimezone() - timedelta(minutes=max(0, margin))
+    except (TypeError, ValueError):
+        return None
 
 
 def errand_leg_minutes(a, b):
@@ -2904,6 +2949,25 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
         penalty = 25
     all_rules = storage.get_all_rules()
     pref_rows = storage.get_errand_preferences()
+    try:
+        members = storage.get_all_members() if passengers else []
+    except Exception:
+        members = []
+    bound_cache = {}
+
+    def late_kids(in_car, day_date, arrival):
+        """Names of the riders aboard who would get home after their bedtime
+        bound if the car arrives at `arrival`."""
+        names = []
+        for pid in sorted(in_car):
+            key = (pid, day_date)
+            if key not in bound_cache:
+                bound_cache[key] = kid_home_bound(pid, day_date, settings, members)
+            b = bound_cache[key]
+            if b is not None and arrival > b:
+                m = next((m for m in members if str(m.get('passenger_id') or '') == str(pid)), None)
+                names.append((m or {}).get('name') or 'a kid')
+        return names
     scheduled = {d: [] for d in base_schedules.keys()}
     notes = {}
     active = [e for e in errands if not e.get('is_completed') and e.get('status') != 'past_due']
@@ -2982,6 +3046,7 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                 return True
 
             candidates = []
+            bedtime_blocked = []
             saw_day = False
             saw_driver = False
             for day_date in range_dates:
@@ -3113,13 +3178,21 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                         if not riders_ok(in_car):
                             continue
                         add('between', start, legs, (t1 or 0) + (t2 or 0) - (tab or 0), a, b, i, (t1, t1_e), (t2, t2_e))
-                    if riders_ok(_pax_in_car(stops, len(stops) - 1)):
+                    in_car_home = _pax_in_car(stops, len(stops) - 1)
+                    if riders_ok(in_car_home):
                         tl, tl_e = leg2(last.location, loc)
                         th, th_e = leg2(loc, home) if home else (None, False)
                         tlh, tlh_e = leg2(last.location, home) if home else (None, False)
                         legs = [(tl, tl_e), (th, th_e), (tlh, tlh_e)]
                         earliest = last.end + timedelta(minutes=(tl or 0))
                         start = _first_fit(earliest, day_end - timedelta(minutes=duration), duration, day_date, errand, now)
+                        # The kids aboard must be home by their bedtime bound. The
+                        # earliest fit is the best case; later it is only worse.
+                        late = late_kids(in_car_home, day_date,
+                                         start + timedelta(minutes=duration + (th or 0))) if start is not None else []
+                        if late:
+                            bedtime_blocked.extend(n for n in late if n not in bedtime_blocked)
+                            start = None
                         if start is not None:
                             add('to_home_leg', start, legs, (tl or 0) + (th or 0) - (tlh or 0), last, None, len(stops) - 1, (tl, tl_e), (th, th_e))
 
@@ -3128,6 +3201,10 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                     continue
                 reason = 'no_slot' if saw_driver else 'no_driver'
                 text = ERRAND_UNPLACED_TEXT[reason]
+                if reason == 'no_slot' and bedtime_blocked:
+                    reason = 'kids_bedtime'
+                    who = ' and '.join(bedtime_blocked)
+                    text = f"the only drive with room would get {who} home after bedtime"
                 if reason == 'no_driver' and once:
                     text = f"{getattr(driver_map.get(once), 'name', once)} has no drive in its window, or may not run it"
                 notes[eid] = {'reason': reason, 'text': text}

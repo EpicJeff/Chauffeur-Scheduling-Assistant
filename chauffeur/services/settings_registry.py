@@ -246,6 +246,11 @@ ENTRIES: List[dict] = [
        'from home is worth it. Errands land on a route someone already drives '
        'unless a trip from home beats it by this much.',
        page='errands?tab=errands', anchor='errand-settings'),
+    _e('errand_kids_home_margin_mins', 'daily', 'Kids home before quiet hours by',
+       'Minutes before kid quiet hours a drive home carrying a kid must arrive '
+       'for an errand to ride it. A kid with a timed bedtime routine must be '
+       'home by its first item instead.',
+       page='errands?tab=errands', anchor='errand-settings'),
     _e('propose_invitations', 'meals', 'Notice party invitations',
        "When a child has a party on the calendar, offer to track the present.",
        page='meals?tab=meals', anchor='planning'),

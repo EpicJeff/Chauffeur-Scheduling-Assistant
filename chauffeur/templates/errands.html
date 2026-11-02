@@ -141,11 +141,19 @@
             <label class="block text-gray-400 mb-1 text-sm" for="errand-dedicated-trip-mins">Prefer errands on the way</label>
             <div class="flex items-center gap-3">
                 <input id="errand-dedicated-trip-mins" type="number" min="0" max="120" step="1"
-                    x-model.number="settings.errand_dedicated_trip_mins" @change="save()"
+                    x-model.number="settings.errand_dedicated_trip_mins" @change="save('errand_dedicated_trip_mins')"
                     class="w-28 bg-gray-800 border border-gray-600 rounded-lg p-2 text-white">
                 <span class="text-sm text-gray-400">extra minutes a passing drive may add before a separate trip from home is worth it</span>
             </div>
             <p class="text-xs text-gray-500 mt-2">Errands land on a drive someone already makes. A trip from home only wins when every passing drive would add more than this.</p>
+            <label class="block text-gray-400 mb-1 mt-4 text-sm" for="errand-kids-home-margin-mins">Kids home before quiet hours by</label>
+            <div class="flex items-center gap-3">
+                <input id="errand-kids-home-margin-mins" type="number" min="0" max="180" step="1"
+                    x-model.number="settings.errand_kids_home_margin_mins" @change="save('errand_kids_home_margin_mins')"
+                    class="w-28 bg-gray-800 border border-gray-600 rounded-lg p-2 text-white">
+                <span class="text-sm text-gray-400">minutes</span>
+            </div>
+            <p class="text-xs text-gray-500 mt-2">An errand never rides a drive home that would get a kid in later than this before kid quiet hours. A kid with a timed bedtime routine must be home by its first item instead. Steer the errand to override it.</p>
         </div>
         {% endcall %}
         {% include 'components/errand_rules.html' %}
@@ -1127,35 +1135,40 @@
     </script>
 <script>
     function errandRoutingSettings() {
+        const LIMITS = { errand_dedicated_trip_mins: [0, 120, 25], errand_kids_home_margin_mins: [0, 180, 30] };
         return {
-            settings: { errand_dedicated_trip_mins: 25 },
-            _last: 25,
+            settings: { errand_dedicated_trip_mins: 25, errand_kids_home_margin_mins: 30 },
+            _last: { errand_dedicated_trip_mins: 25, errand_kids_home_margin_mins: 30 },
             async load() {
                 try {
                     const r = await fetch('api/settings');
                     const s = r.ok ? await r.json() : {};
-                    if (typeof s.errand_dedicated_trip_mins === 'number') {
-                        this.settings.errand_dedicated_trip_mins = s.errand_dedicated_trip_mins;
-                        this._last = s.errand_dedicated_trip_mins;
+                    for (const key of Object.keys(LIMITS)) {
+                        if (typeof s[key] === 'number') {
+                            this.settings[key] = s[key];
+                            this._last[key] = s[key];
+                        }
                     }
                 } catch (e) { }
             },
-            async save() {
-                const raw = this.settings.errand_dedicated_trip_mins;
+            async save(key) {
+                key = key || 'errand_dedicated_trip_mins';
+                const [lo, hi] = LIMITS[key];
+                const raw = this.settings[key];
                 const parsed = typeof raw === 'number' ? raw :
                     (typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : NaN);
                 if (!Number.isFinite(parsed)) {
-                    this.settings.errand_dedicated_trip_mins = this._last;
+                    this.settings[key] = this._last[key];
                     return;
                 }
-                const v = Math.max(0, Math.min(120, Math.trunc(parsed)));
-                this.settings.errand_dedicated_trip_mins = v;
+                const v = Math.max(lo, Math.min(hi, Math.trunc(parsed)));
+                this.settings[key] = v;
                 if (typeof window.chfSettingsSaving === 'function') window.chfSettingsSaving();
                 try {
                     const r = await fetch('api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                                           body: JSON.stringify({ errand_dedicated_trip_mins: v }) });
+                                                           body: JSON.stringify({ [key]: v }) });
                     if (!r.ok) throw new Error('Could not save that.');
-                    this._last = v;
+                    this._last[key] = v;
                     if (typeof window.chfSettingsSaved === 'function') window.chfSettingsSaved(true);
                 } catch (e) {
                     const msg = 'Could not save that.';
