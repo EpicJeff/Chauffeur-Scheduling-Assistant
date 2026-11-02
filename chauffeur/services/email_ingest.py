@@ -849,6 +849,54 @@ def learned_route(from_addr: str, kind: str):
     return target
 
 
+def calendar_targets() -> list:
+    """Every calendar a proposal can be approved onto, for the /intake selects
+    (the card's target and the sender defaults): the family's shared calendar
+    first (default_calendar_id, the one ingest already falls back to), then
+    every active person's calendars in name order, then any shared calendar in
+    Settings that nobody owns. Rows: {'id', 'label', 'kind', 'member_id'} with
+    kind one of family | person | shared. Names come from calendar metadata
+    when Google answers and are the id when it does not; the list is never
+    empty for that reason alone. Until 2026-11-02 the page built this list
+    itself from passengers' and drivers' calendar_ids, so the family calendar
+    (which ingest had already chosen for an ownerless proposal) was not in the
+    select and the card read as unassigned."""
+    from services import calendar as _calendar
+    settings = storage.get_settings() or {}
+    family = (settings.get('default_calendar_id') or '').strip()
+    members = sorted((m for m in storage.get_all_members() if m.get('calendar_ids')),
+                     key=lambda m: ((m.get('name') or '').casefold(), str(m.get('id'))))
+    shared = [c for c in (settings.get('calendar_ids') or []) if c and str(c).strip()]
+    wanted = ([family] if family else []) + [c for m in members for c in m['calendar_ids'] if c] + shared
+    names = {}
+    try:
+        meta = _calendar.get_calendar_metadata(list(dict.fromkeys(wanted))) or {}
+        names = {cid: (row or {}).get('summary') for cid, row in meta.items() if isinstance(row, dict)}
+    except Exception:
+        names = {}
+
+    def name_of(cid):
+        return (names.get(cid) or '').strip() or cid
+
+    out, seen = [], set()
+    if family:
+        out.append({'id': family, 'label': f"★ Family — {name_of(family)}", 'kind': 'family', 'member_id': None})
+        seen.add(family)
+    for m in members:
+        for cid in m['calendar_ids']:
+            if not cid or cid in seen:
+                continue
+            seen.add(cid)
+            out.append({'id': cid, 'label': f"{m.get('name') or 'Someone'} — {name_of(cid)}",
+                        'kind': 'person', 'member_id': m.get('id')})
+    for cid in shared:
+        if cid in seen:
+            continue
+        seen.add(cid)
+        out.append({'id': cid, 'label': name_of(cid), 'kind': 'shared', 'member_id': None})
+    return out
+
+
 def _calendar_for_member_name(name: str):
     """Resolve the LLM's member-name guess to that person's calendar. Calendars
     are person-level now, so their own list answers first — including for

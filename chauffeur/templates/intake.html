@@ -1053,17 +1053,18 @@
                 },
                 async loadTargets() {
                     try {
-                        const [pres, dres, mres] = await Promise.all([
+                        const [pres, dres, mres, tres] = await Promise.all([
                             fetch(`${this.apiBase}api/passengers`), fetch(`${this.apiBase}api/drivers`),
-                            fetch(`${this.apiBase}api/members`)]);
+                            fetch(`${this.apiBase}api/members`), fetch(`${this.apiBase}api/ingest/targets`)]);
                         const passengers = await pres.json(), drivers = await dres.json();
                         const members = await mres.json();
-                        const opts = [];
-                        (Array.isArray(passengers) ? passengers : []).forEach(p =>
-                            (p.calendar_ids || []).forEach(c => opts.push({ id: c, label: `${p.name} — ${c}` })));
-                        (Array.isArray(drivers) ? drivers : []).forEach(d =>
-                            ((d.calendar_ids || d.calendarIds) || []).forEach(c => opts.push({ id: c, label: `${d.name} — ${c}` })));
-                        this.calendarTargets = opts;
+                        // The server owns the list: the family's shared calendar
+                        // first (ingest already defaults ownerless proposals to
+                        // it), then every person's calendars, then shared ones
+                        // nobody owns. Built here from passenger/driver records
+                        // until 2026-11-02, which left the family calendar out.
+                        const targets = tres.ok ? await tres.json() : {};
+                        this.calendarTargets = Array.isArray(targets.calendars) ? targets.calendars : [];
                         // Attendee chips: picking who rides on the card IS the
                         // Chauffeur setup — saved as the event config on approve.
                         this.passengerChips = (Array.isArray(passengers) ? passengers : [])

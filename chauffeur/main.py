@@ -4632,6 +4632,14 @@ class ProposalApprove(BaseModel):
 _INTAKE_RRULES = {'daily': 'FREQ=DAILY', 'weekly': 'FREQ=WEEKLY',
                   'biweekly': 'FREQ=WEEKLY;INTERVAL=2', 'monthly': 'FREQ=MONTHLY'}
 
+@app.get("/api/ingest/targets")
+def get_ingest_targets():
+    """Every calendar an intake proposal can land on: family first, then
+    people, then shared calendars nobody owns. See email_ingest.calendar_targets."""
+    from services import email_ingest
+    return {'calendars': email_ingest.calendar_targets()}
+
+
 @app.get("/api/ingest/config")
 def get_ingest_config():
     from services import email_ingest
