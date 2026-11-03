@@ -82,24 +82,86 @@ def stamp_ride_groups(events) -> None:
     by_date = {}
     for r in storage.get_ride_group_rows():
         by_date.setdefault(r.get('date'), []).append(r)
-    if not by_date:
-        return
     for e in events:
-        rows = by_date.get(occurrence_date(e))
-        if not rows:
-            continue
+        rows = by_date.get(occurrence_date(e), [])
         stamp = {}
         for leg in ('',) + LEGS:
             r = _row_for(e, leg, rows)
             if r:
                 stamp[leg] = r['group_id']
-        if stamp:
-            e.ride_groups = stamp
+        e.ride_groups = stamp
+        whole_row = _row_for(e, '', rows)
+        e.ride_group_mode = 'one' if whole_row and whole_row.get('mode') == 'one' else None
 
 
 def group_id_of(ev):
     """The ride group this solver event (a whole event or one leg) is in."""
     return (_get(ev, 'ride_groups') or {}).get(leg_of(_get(ev, 'id')))
+
+
+def group_mode_of(ev) -> str:
+    return 'one' if _get(ev, 'ride_group_mode') == 'one' else 'ride'
+
+
+def _same_place(events) -> bool:
+    places = {' '.join(str(_get(e, 'location') or '').casefold().split()) for e in events}
+    return len(places) == 1 and '' not in places
+
+
+def _known_members(events, rows):
+    """Include existing partners still present in the cached occurrence day."""
+    members = list(events)
+    cached = (storage.get_cached_schedule() or {}).get('events', [])
+    whole = [ev for ev in members + cached if not leg_of(_get(ev, 'id'))]
+    for row in rows:
+        partner = next((ev for ev in whole if occurrence_date(ev) == row['date']
+                        and row['google_id'] in _ids(ev)), None)
+        if partner is not None and partner not in members:
+            members.append(partner)
+    return members
+
+
+def merge_as_one(events, attendance_overrides) -> dict:
+    """Plan the attendance split once for each whole-event block on a day."""
+    buckets = {}
+    for e in events:
+        if e.event_type == 'background_trip' or leg_of(e.id) or group_mode_of(e) != 'one':
+            continue
+        gid = group_id_of(e)
+        if gid:
+            buckets.setdefault((gid, occurrence_date(e)), []).append(e)
+    plan = {'legs': {}, 'skip': set()}
+    for members in buckets.values():
+        if len(members) < 2 or not _same_place(members):
+            continue
+        if any((attendance_overrides.get(str(e.id)) or {}).get('action') == 'stay'
+               for e in members):
+            continue
+        members = sorted(members, key=lambda e: e.start)
+        first = members[0]
+        last = max(members, key=lambda e: e.end)
+        title = ' + '.join(dict.fromkeys(e.title for e in members))
+        unions = {key: list(dict.fromkeys(value for e in members
+                                        for value in (getattr(e, key, None) or [])))
+                  for key in ('calendar_ids', 'original_calendar_ids', 'source_event_ids')}
+        legs = []
+        for kind, prefix, at in (('dropoff', 'Dropoff', first.start),
+                                 ('pickup', 'Pickup', last.end)):
+            leg = first.model_copy() if hasattr(first, 'model_copy') else first.copy()
+            leg.id = f'{first.id}_{kind}'
+            leg.event_type = kind
+            leg.title = f'{prefix}: {title}'
+            leg.start = leg.end = at
+            leg.original_start = first.start
+            leg.original_end = last.end
+            leg.original_event_id = first.id
+            leg.needs_triage = False
+            for key, values in unions.items():
+                setattr(leg, key, list(values))
+            legs.append(leg)
+        plan['legs'][first.id] = legs
+        plan['skip'].update(e.id for e in members)
+    return plan
 
 
 def pairs(events) -> set:
@@ -124,15 +186,19 @@ def same_group(e1, e2) -> bool:
     return bool(g) and g == group_id_of(e2)
 
 
-def group(items) -> str:
+def group(items, mode=None) -> str:
     """Put these occurrences in one ride group. `items` is a list of
     (cached event dict, requested event id) -- the requested id carries the
     leg. The LAST item is the drop target: its existing group is kept, and
     any other group a member was already in is merged into it, so dropping
     onto a grouped event joins that group and there is no limit on size.
+    Mode one promotes legs to their parents and needs one nonempty place.
+    An omitted mode keeps the target group's mode; a new group rides together.
     Raises ValueError when the occurrences are not on one day."""
     if len(items) < 2:
         raise ValueError("Pick at least two events to group.")
+    if mode not in (None, 'ride', 'one'):
+        raise ValueError("Ride group mode must be ride or one.")
     dates = {occurrence_date(ev) for ev, _ in items}
     if len(dates) != 1 or '' in dates:
         raise ValueError("Only events on the same day can ride together.")
@@ -141,17 +207,37 @@ def group(items) -> str:
     existing = []
     for ev, req_id in items:
         r = _row_for(ev, leg_of(req_id), rows)
+        whole_row = _row_for(ev, '', rows)
+        if whole_row and (mode == 'one' or whole_row.get('mode') == 'one'):
+            r = whole_row
         if r and r['group_id'] not in existing:
             existing.append(r['group_id'])
     target_row = _row_for(items[-1][0], leg_of(items[-1][1]), rows)
+    whole_row = _row_for(items[-1][0], '', rows)
+    if whole_row and (mode == 'one' or whole_row.get('mode') == 'one'):
+        target_row = whole_row
     target = (target_row['group_id'] if target_row
               else existing[0] if existing else uuid.uuid4().hex)
+    target_rows = [r for r in rows if r['group_id'] == target]
+    mode = mode or (target_rows[0].get('mode') if target_rows else None) or 'ride'
+    if mode == 'one':
+        # Existing partners come along when groups join. Check those still in
+        # the cached day too; drift after a write is checked again by the plan.
+        members = _known_members([ev for ev, _ in items],
+                                 [r for r in rows if r['group_id'] in existing])
+        if not _same_place(members):
+            raise ValueError("One drop-off and pick-up needs every event at the same place.")
+    stored_mode = 'one' if mode == 'one' else None
     for r in rows:
-        if r['group_id'] in existing and r['group_id'] != target:
-            storage.set_ride_group_row(r['google_id'], date, r.get('leg') or '', target)
+        if r['group_id'] in existing:
+            old_leg = r.get('leg') or ''
+            if mode == 'one' and old_leg:
+                storage.remove_ride_group_row(r['google_id'], date, old_leg)
+            storage.set_ride_group_row(r['google_id'], date,
+                                       '' if mode == 'one' else old_leg, target, stored_mode)
     for ev, req_id in items:
         storage.set_ride_group_row(_ids(ev)[0], date,
-                                   leg_of(req_id), target)
+                                   '' if mode == 'one' else leg_of(req_id), target, stored_mode)
     return target
 
 
@@ -162,6 +248,9 @@ def ungroup(ev, req_id) -> bool:
     leg = leg_of(req_id)
     rows = storage.get_ride_group_rows(date)
     r = _row_for(ev, leg, rows)
+    whole_row = _row_for(ev, '', rows)
+    if whole_row and whole_row.get('mode') == 'one':
+        r = whole_row
     if not r:
         return False
     storage.remove_ride_group_row(r['google_id'], date, r.get('leg') or '')
@@ -193,7 +282,7 @@ def _refresh():
 
 
 def group_by_titles(event_names, target_date: str = 'today',
-                    acting_member: dict = None) -> dict:
+                    acting_member: dict = None, mode=None) -> dict:
     """Resolve each name on the date (fuzzy, over the cached schedule) and
     group them to ride together. The LAST name is the one the others join,
     as with a drop."""
@@ -219,11 +308,19 @@ def group_by_titles(event_names, target_date: str = 'today',
         seen[ev['id']] = name
         items.append((ev, ev['id']))
     try:
-        group(items)
+        gid = group(items, mode=mode)
     except ValueError as err:
         return {'status': 'error', 'message': str(err)}
     _refresh()
     titles = [ev.get('title') for ev, _ in items]
+    rows = [r for r in storage.get_ride_group_rows() if r['group_id'] == gid]
+    if any(r.get('mode') == 'one' for r in rows):
+        members = _known_members([ev for ev, _ in items], rows)
+        drop = min(str(ev.get('original_start') or ev['start']) for ev in members)[11:16]
+        pick = max(str(ev.get('original_end') or ev['end']) for ev in members)[11:16]
+        return {'status': 'success',
+                'message': f"Grouped {', '.join(titles)} as one event: one drop-off at {drop} "
+                           f"and one pick-up at {pick}, for that day only."}
     return {'status': 'success',
             'message': f"Grouped {', '.join(titles[:-1])} with {titles[-1]}: "
                        f"they ride together with one driver, for that day only."}

@@ -19053,7 +19053,7 @@ def ride_group_api(body: dict = Body(default={}), request: Request = None):
     supplied = {str(e.get('id')): e for e in (body.get('events') or []) if isinstance(e, dict)}
     items = [(_ride_group_event(i, supplied.get(i)), i) for i in ids]
     try:
-        group_id = ride_groups.group(items)
+        group_id = ride_groups.group(items, mode=body.get('mode'))
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err))
     trigger_background_refresh()
@@ -19068,7 +19068,7 @@ def _ride_group_event(event_id: str, supplied: Optional[dict]) -> dict:
     except HTTPException:
         if not supplied:
             raise
-    keep = ('id', 'source_event_ids', 'recurring_event_id', 'start', 'original_start')
+    keep = ('id', 'source_event_ids', 'recurring_event_id', 'start', 'original_start', 'location')
     return {k: supplied.get(k) for k in keep if supplied.get(k) is not None}
 
 @app.delete("/api/events/{event_id}/ride_group")
@@ -20241,6 +20241,7 @@ def hash_events(events_list, assist_map=None):
         rg = getattr(e, 'ride_groups', None)
         if rg:
             parts.append(f"rg:{eid}:{sorted(rg.items())}")
+            parts.append(f"rg_mode:{eid}:{getattr(e, 'ride_group_mode', None) or 'ride'}")
     return hashlib.sha256("||".join(parts).encode('utf-8')).hexdigest()
 
 import threading
@@ -21301,7 +21302,13 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     # written last month. Instance-scoped and short-lived — real-time opt-in
     # for the household that did not pre-plan, which is every household.
     attendance_overrides = storage.get_attendance_overrides()
+    one_plan = _rg.merge_as_one(events, attendance_overrides)
     for e in events:
+        if e.id in one_plan['skip']:
+            for leg in one_plan['legs'].get(e.id, []):
+                events_to_solve.append(leg)
+                all_events_for_ui[leg.id] = leg
+            continue
         if not e.location or not e.location.strip():
             no_location_events.append(e.id)
         else:

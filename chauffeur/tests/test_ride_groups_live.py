@@ -154,8 +154,8 @@ def scenario_drop_one_event_on_another_to_ride_together():
             # Drop Dive onto Swim (same column): Group / Cancel, no Assign.
             _drop(page, 'dive', 'swim', 'd1')
             labels = page.eval_on_selector_all('#cc-confirm-actions button', 'bs => bs.map(b => b.innerText.trim())')
-            check(labels == ['Cancel', 'Group Events'],
-                  "same column: nothing to assign to, so Group or Cancel: %r" % labels)
+            check(labels == ['Cancel', 'Group Events', 'One drop-off, one pick-up'],
+                  "same column, same pool: Group, One drop-off one pick-up, or Cancel: %r" % labels)
             page.click('#cc-confirm-actions button:has-text("Cancel")')
             page.evaluate('() => window.__dropDone')
             check(storage.get_ride_group_rows() == [], "Cancel writes nothing")
@@ -163,8 +163,8 @@ def scenario_drop_one_event_on_another_to_ride_together():
             # Dragged from Vovo's column onto Swim in Jeff's: all three choices.
             _drop(page, 'dive', 'swim', 'd2')
             labels = page.eval_on_selector_all('#cc-confirm-actions button', 'bs => bs.map(b => b.innerText.trim())')
-            check(labels == ['Cancel', 'Assign to Jeff', 'Group Events'],
-                  "a drop on another event offers Group / Assign to <driver>: %r" % labels)
+            check(labels == ['Cancel', 'Assign to Jeff', 'Group Events', 'One drop-off, one pick-up'],
+                  "a drop on another event offers Group / As one / Assign to <driver>: %r" % labels)
             _shot(page, 'drop_dialog')
             page.evaluate('() => { window.__alerts = []; window.showGlobalAlert = m => window.__alerts.push(m); }')
             page.click('#cc-confirm-actions button:has-text("Group Events")')
@@ -190,7 +190,10 @@ def scenario_drop_one_event_on_another_to_ride_together():
             # The chip ungroups.
             page.click('#event-dive button[onclick^="openRideGroupChip"]')
             page.wait_for_selector('#cc-confirm-modal:not(.hidden)', timeout=5000)
-            page.click('#cc-confirm-execute-btn')
+            labels = page.eval_on_selector_all('#cc-confirm-actions button', 'bs => bs.map(b => b.innerText.trim())')
+            check('Ungroup' in labels and 'One drop-off, one pick-up' in labels and 'Keep' in labels,
+                  "the chip offers Keep / Ungroup / the mode switch: %r" % labels)
+            page.click('#cc-confirm-actions button:has-text("Ungroup")')
             page.wait_for_function('() => true')
             for _ in range(50):
                 if not storage.get_ride_group_rows():
@@ -210,6 +213,62 @@ def scenario_drop_one_event_on_another_to_ride_together():
                      if o.get('event_id') == 'dive' and o.get('driver_id') == 'd1']
             check(saved and storage.get_ride_group_rows() == [],
                   "Assign is the ordinary override, and groups nothing")
+            check(not errors, "the page threw: %s" % errors)
+    finally:
+        served.stop()
+
+
+def scenario_one_dropoff_one_pickup_from_the_dialog_and_back_from_the_chip():
+    served = _serve()
+    if served is None:
+        return
+    try:
+        with served.browser() as page:
+            errors = []
+            page.on('pageerror', lambda e: errors.append(str(e)))
+            page.set_viewport_size({'width': 1280, 'height': 900})
+            _open(page, served)
+            # Swim 9:00-10:00 and Dive 10:05-11:05 at the pool, one hour each,
+            # so neither splits on its own. "One drop-off, one pick-up" makes
+            # the block: swim_dropoff at 9:00, swim_pickup at 11:05, no dive leg.
+            _drop(page, 'dive', 'swim', 'd1')
+            body = page.inner_text('#cc-confirm-modal')
+            check('Everyone waits at the venue' in body, "the dialog says what it means for the kids: %r" % body)
+            page.evaluate('() => { window.__alerts = []; window.showGlobalAlert = m => window.__alerts.push(m); }')
+            page.click('#cc-confirm-actions button:has-text("One drop-off, one pick-up")')
+            page.evaluate('() => window.__dropDone')
+            check(page.evaluate('() => window.__alerts') == [], "no alert")
+            rows = storage.get_ride_group_rows()
+            check(len(rows) == 2 and all(r.get('mode') == 'one' for r in rows), "the group is written as one: %r" % rows)
+
+            page.goto(served.url('dashboard_v2'), wait_until='networkidle')
+            page.wait_for_function('() => typeof currentData !== "undefined" && currentData'
+                                   ' && document.getElementById("event-swim_dropoff")'
+                                   ' && document.getElementById("event-swim_pickup")', timeout=20000)
+            ids = page.evaluate('() => Object.keys(currentEventsMap)')
+            check('dive_dropoff' not in ids and 'dive_pickup' not in ids, "no leg for the second member: %r" % ids)
+            times = page.evaluate('() => [currentEventsMap.swim_dropoff.start, currentEventsMap.swim_pickup.start]')
+            check(times[0][11:16] == '09:00' and times[1][11:16] == '11:05', "the block's ends: %r" % times)
+            chips = page.evaluate("""() => ['swim_dropoff', 'swim_pickup'].map(id => {
+                const b = document.querySelector('#event-' + id + ' button[onclick^="openRideGroupChip"]');
+                return b ? b.title : null; })""")
+            check(all(chips), "both merged legs wear the chip: %r" % chips)
+            _shot(page, 'as_one_cards')
+
+            # The chip on a merged leg switches the group back to ride together.
+            page.click('#event-swim_pickup button[onclick^="openRideGroupChip"]')
+            page.wait_for_selector('#cc-confirm-modal:not(.hidden)', timeout=5000)
+            labels = page.eval_on_selector_all('#cc-confirm-actions button', 'bs => bs.map(b => b.innerText.trim())')
+            check('Ride together only' in labels and 'Ungroup' in labels, "the chip offers the way back: %r" % labels)
+            page.click('#cc-confirm-actions button:has-text("Ride together only")')
+            for _ in range(50):
+                rows = storage.get_ride_group_rows()
+                if rows and all((r.get('mode') or 'ride') == 'ride' for r in rows):
+                    break
+                page.wait_for_timeout(100)
+            rows = storage.get_ride_group_rows()
+            check(len(rows) == 2 and all((r.get('mode') or 'ride') == 'ride' for r in rows),
+                  "ride together again, still grouped: %r" % rows)
             check(not errors, "the page threw: %s" % errors)
     finally:
         served.stop()

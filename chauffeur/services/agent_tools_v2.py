@@ -388,14 +388,15 @@ def restore_event(event_name: str, target_date: str = 'today',
 
 
 def group_events_ride_together(event_names, target_date: str = 'today',
-                               acting_member: dict = None) -> Dict[str, Any]:
+                               acting_member: dict = None, as_one: Optional[bool] = None) -> Dict[str, Any]:
     """
     Groups one day's event occurrences to ride together: one driver, never a
     conflict, one trip. That day only -- never a rule. Parent/adult only.
     """
     from services import ride_groups
     return ride_groups.group_by_titles(event_names, target_date,
-                                       acting_member=acting_member)
+                                       acting_member=acting_member,
+                                       mode=('one' if as_one else 'ride') if as_one is not None else None)
 
 
 def ungroup_event(event_name: str, target_date: str = 'today',
@@ -4964,6 +4965,7 @@ def get_available_tools() -> List[Dict]:
                 "type": "object",
                 "properties": {
                     "event_names": {"type": "array", "items": {"type": "string"}, "description": "Two or more event names (or substrings), all on target_date. The last is the event the others join."},
+                    "as_one": {"type": "boolean", "description": "True: one drop-off at the first start, one pick-up at the last end, at the same place; everyone waits at the venue until the last one ends. False: ride together only. Omit to keep the group's mode."},
                     "target_date": {"type": "string", "description": "The day of the occurrences as YYYY-MM-DD (relative terms like 'today' or 'tomorrow' are accepted). Default today."}
                 },
                 "required": ["event_names"]
@@ -7578,6 +7580,7 @@ class GroupEventsRideTogetherTool(BaseModel):
     """
     event_names: List[str] = Field(..., description="Two or more event names (or substrings), all on target_date. The last one is the event the others join.")
     target_date: Optional[str] = Field("today", description="The day of the occurrences, YYYY-MM-DD or relative ('today', 'tomorrow').")
+    as_one: Optional[bool] = Field(None, description="True: one drop-off at the first start, one pick-up at the last end, at the same place; everyone waits at the venue until the last one ends. False: ride together only. Omit to keep the group's mode.")
 
 class UngroupEventTool(BaseModel):
     """
@@ -9402,7 +9405,9 @@ def handle_group_events_ride_together(args: dict) -> dict:
     # (same reasoning as handle_cancel_event).
     from services import ride_groups
     return ride_groups.group_by_titles(args.get("event_names") or [],
-                                       args.get("target_date") or "today")
+                                       args.get("target_date") or "today",
+                                       mode=('one' if args['as_one'] else 'ride')
+                                       if args.get('as_one') is not None else None)
 
 def handle_ungroup_event(args: dict) -> dict:
     from services import ride_groups

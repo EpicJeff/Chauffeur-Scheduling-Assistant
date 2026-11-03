@@ -2824,7 +2824,7 @@ def get_ride_group_rows(date: str = None) -> List[dict]:
             return [dict(r) for r in ride_groups_table.search(Query().date == date)]
         return [dict(r) for r in ride_groups_table.all()]
 
-def set_ride_group_row(google_id: str, date: str, leg: str, group_id: str):
+def set_ride_group_row(google_id: str, date: str, leg: str, group_id: str, mode=None):
     import time as _time
     q = Query()
     with db_lock:
@@ -2833,7 +2833,7 @@ def set_ride_group_row(google_id: str, date: str, leg: str, group_id: str):
                                  & (q.leg == leg))
         deletion.check()
         ride_groups_table.insert({'google_id': google_id, 'date': date,
-                                  'leg': leg, 'group_id': group_id,
+                                  'leg': leg, 'group_id': group_id, 'mode': mode,
                                   'ts': _time.time()})
 
 def remove_ride_group_row(google_id: str, date: str, leg: str):

@@ -87,6 +87,7 @@
     // grouped independently.
     function stRideGroupOf(ev) {
         if (!ev || !ev.ride_groups) return null;
+        if (ev.ride_group_mode === 'one') return ev.ride_groups[''] || null;
         const m = String(ev.id || '').match(/_(dropoff|pickup)$/);
         return ev.ride_groups[m ? m[1] : ''] || null;
     }

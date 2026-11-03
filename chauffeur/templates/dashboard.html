@@ -146,6 +146,7 @@
                             </svg>
                             <span id="view-time">Time</span>
                         </div>
+                        <div id="view-leg" class="hidden text-sm text-gray-400 ml-8"></div>
                         <!-- Arrive By V2: its own line, under the real time,
                              never folded into it. -->
                         <div id="view-arrive-by" class="hidden text-sm text-amber-200/90 ml-8"></div>
@@ -1111,9 +1112,17 @@
             }
         }
 
+        function wholeEventForModal(ev) {
+            if (!ev || !rideIsLeg(ev)) return ev;
+            return currentEventsMap[ev.original_event_id] || {
+                ...ev, start: ev.original_start || ev.start, end: ev.original_end || ev.end
+            };
+        }
+
         function openEventModal(eventId, originLocationEnc) {
             activeEventId = eventId;
-            const ev = currentEventsMap[eventId];
+            const clicked = currentEventsMap[eventId];
+            const ev = wholeEventForModal(clicked);
             if (!ev) return;
 
             // A deal found for the PREVIOUS event must not linger onto this one.
@@ -1136,6 +1145,12 @@
             const timeStr = `${formatTime(ev.start)} - ${formatTime(ev.end)}`;
             document.getElementById('view-time').textContent = `${dateStr} • ${timeStr}`
                 + (ev.canceled ? ` • CANCELED${ev.cancel_reason ? ' — ' + ev.cancel_reason : ''}` : '');
+            const legEl = document.getElementById('view-leg');
+            const isLeg = rideIsLeg(clicked);
+            const pick = clicked.event_type === 'pickup' || /_pickup$/.test(clicked.id);
+            legEl.textContent = isLeg ? (pick ? 'Pick-up drive' : 'Drop-off drive')
+                + (clicked.ride_group_mode === 'one' ? ` for ${clicked.title.replace(/^(Dropoff|Pickup):\s*/i, '')}` : '') : '';
+            legEl.classList.toggle('hidden', !isLeg);
 
             // BE THERE BY, on its own line UNDER the real time — never
             // folded into it. The event detail is where a parent checks what
@@ -1587,9 +1602,9 @@
                 }
             }
 
-            populateAssistView(ev);
+            populateAssistView(clicked);
 
-            if (ev.needs_triage) {
+            if (clicked.needs_triage) {
                 switchToEditMode();
             } else {
                 switchToViewMode();
@@ -1629,7 +1644,7 @@
         let editFormBaseline = null;
 
         async function switchToEditMode() {
-            const ev = currentEventsMap[activeEventId];
+            const ev = wholeEventForModal(currentEventsMap[activeEventId]);
             if (!ev) return;
             editFormBaseline = null;
             document.getElementById('modal-view-mode').classList.add('hidden');
@@ -1677,7 +1692,7 @@
         }
 
         async function saveEventConfig() {
-            const ev = currentEventsMap[activeEventId];
+            const ev = wholeEventForModal(currentEventsMap[activeEventId]);
             if (!ev) return;
 
             const btn = document.getElementById('save-config-btn');
@@ -2267,6 +2282,15 @@
             return String(t || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
         }
 
+        function rideIsLeg(ev) {
+            return ['dropoff', 'pickup'].includes(ev.event_type) || /_(dropoff|pickup)$/.test(String(ev.id || ''));
+        }
+
+        function rideSamePlace(events) {
+            const places = events.map(ev => String(ev.location || '').trim().toLowerCase().replace(/\s+/g, ' '));
+            return places.length > 1 && !!places[0] && places.every(p => p === places[0]);
+        }
+
         // Dropped on another event: group, or (it was a miss) assign to the
         // column it landed in. Resolves 'group' | 'assign' | 'cancel'.
         function chooseDropAction(dragged, target, driverId, sameColumn) {
@@ -2285,8 +2309,15 @@
                     className: 'px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-colors shadow-lg shadow-blue-900/50',
                     onClick: () => resolve('group')
                 });
+                const canBeOne = !rideIsLeg(dragged) && !rideIsLeg(target) && rideSamePlace([dragged, target]);
+                const oneExplanation = canBeOne ? '\n\nSame place: "One drop-off, one pick-up" treats them as one event — a single drop-off at the first start and a single pick-up at the last end. Everyone waits at the venue until the last one ends.' : '';
+                if (canBeOne) buttons.push({
+                    text: 'One drop-off, one pick-up',
+                    className: 'px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-colors shadow-lg shadow-blue-900/50',
+                    onClick: () => resolve('group_one')
+                });
                 openCCConfirmModal(
-                    `Group **${escHtml(dragged.title)}** with **${escHtml(target.title)}**?\n\nGrouped events ride together with one driver, so they never count as a conflict. This applies to these occurrences only.`,
+                    `Group **${escHtml(dragged.title)}** with **${escHtml(target.title)}**?\n\nGrouped events ride together with one driver, so they never count as a conflict. This applies to these occurrences only.${oneExplanation}`,
                     null, buttons, '', 'Group events?');
             });
         }
@@ -2295,10 +2326,10 @@
             const e = currentEventsMap[id];
             if (!e) return null;
             return { id: e.id, source_event_ids: e.source_event_ids, recurring_event_id: e.recurring_event_id,
-                     start: e.start, original_start: e.original_start };
+                     start: e.start, original_start: e.original_start, location: e.location };
         }
 
-        async function rideTogether(eventIds) {
+        async function rideTogether(eventIds, mode) {
             const first = currentEventsMap[eventIds[0]];
             if (first) localSolvingDates.add(rideOccurrenceDate(first));
             document.getElementById('schedule-container').classList.add('opacity-50', 'pointer-events-none');
@@ -2308,7 +2339,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     // The occurrence keys ride along for a day outside the
                     // server's cached window (a week paged forward).
-                    body: JSON.stringify({ event_ids: eventIds, events: eventIds.map(rideKeys).filter(Boolean) })
+                    body: JSON.stringify({ event_ids: eventIds, events: eventIds.map(rideKeys).filter(Boolean), mode })
                 });
                 if (!res.ok) {
                     let msg = 'Could not group those events';
@@ -2328,11 +2359,14 @@
         async function leaveRideGroup(eventId) {
             const ev = currentEventsMap[eventId];
             if (ev) localSolvingDates.add(rideOccurrenceDate(ev));
+            const parentId = ev?.ride_group_mode === 'one'
+                ? (ev.original_event_id || eventId.replace(/_(dropoff|pickup)$/, '')) : eventId;
+            const keys = rideKeys(parentId) || rideKeys(eventId);
             try {
-                const res = await fetch(`api/events/${encodeURIComponent(eventId)}/ride_group`, {
+                const res = await fetch(`api/events/${encodeURIComponent(parentId)}/ride_group`, {
                     method: 'DELETE',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ event: rideKeys(eventId) })
+                    body: JSON.stringify({ event: keys })
                 });
                 if (!res.ok) { showGlobalAlert('Could not ungroup that event'); return; }
                 forceSync(false, false).catch(console.error);
@@ -2348,13 +2382,25 @@
             if (isReadOnly) return;
             const ev = currentEventsMap[eventId];
             const g = window.stRideGroupOf(ev);
-            const partners = [...new Set(Object.values(currentEventsMap)
-                .filter(x => x.id !== eventId && window.stRideGroupOf(x) === g)
-                .map(x => x.title))];
-            const ok = await promptConfirm('Riding together',
-                `${ev ? ev.title : 'This event'} rides with ${partners.join(', ') || 'nothing else now'}.\n\nTake it out of the group?`,
-                'Ungroup', 'Keep');
-            if (ok) await leaveRideGroup(eventId);
+            if (!ev || !g) return;
+            const one = ev.ride_group_mode === 'one';
+            const members = Object.values(currentEventsMap).filter(x =>
+                rideOccurrenceDate(x) === rideOccurrenceDate(ev) &&
+                (one ? !rideIsLeg(x) && x.ride_groups?.[''] === g : window.stRideGroupOf(x) === g));
+            const titles = [...new Set(members.map(x => x.title))];
+            const buttons = [
+                { text: 'Keep', onClick: () => {} },
+                { text: 'Ungroup', onClick: () => leaveRideGroup(eventId) }
+            ];
+            if (one || rideSamePlace(members)) buttons.push({
+                text: one ? 'Ride together only' : 'One drop-off, one pick-up',
+                className: 'px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-colors shadow-lg shadow-blue-900/50',
+                onClick: () => rideTogether(members.map(x => x.id), one ? 'ride' : 'one')
+            });
+            const explanation = one ? '\n\nOne drop-off at the first start and one pick-up at the last end. Everyone waits at the venue until the last one ends.'
+                : (rideSamePlace(members) ? '\n\n"One drop-off, one pick-up" treats them as one event. Everyone waits at the venue until the last one ends.' : '');
+            openCCConfirmModal(`${titles.map(escHtml).join(' + ')} ride together.${explanation}`,
+                null, buttons, '', 'Riding together');
         }
 
         async function drop(ev, driverId) {
@@ -2370,8 +2416,8 @@
             if (targetEv && rideGroupable(draggedEv, targetEv)) {
                 const sameColumn = driverId === sourceDriverId;
                 const choice = await chooseDropAction(draggedEv, targetEv, driverId, sameColumn);
-                if (choice === 'group') {
-                    await rideTogether([eventId, targetId]);
+                if (choice === 'group' || choice === 'group_one') {
+                    await rideTogether([eventId, targetId], choice === 'group_one' ? 'one' : undefined);
                     return;
                 }
                 if (choice !== 'assign') return;

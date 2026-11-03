@@ -105,6 +105,10 @@ class Event(BaseModel):
     # storage.ride_groups (services/ride_groups.py); never a rule, never
     # written to the event config.
     ride_groups: Dict[str, str] = Field(default_factory=dict)
+    # 'one' when the whole-event group row says the group is one event for
+    # attendance (one drop-off at the first start, one pick-up at the last
+    # end); None = ride together. Stamped with ride_groups, carried by legs.
+    ride_group_mode: Optional[str] = None
 
 class Driver(BaseModel):
     id: str

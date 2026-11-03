@@ -441,7 +441,8 @@ function eventConfigPayload(ev, v, base) {
     };
     const timeMoved = base ? (v.start !== base.start || v.end !== base.end)
         : (_ecfToIso(v.start) !== ev.start || _ecfToIso(v.end) !== ev.end);
-    const details = timeMoved ? {
+    const isLeg = ['dropoff', 'pickup'].includes(ev.event_type) || /_(dropoff|pickup)$/.test(String(ev.id || ''));
+    const details = !isLeg && timeMoved ? {
         source_event_ids: ev.source_event_ids,
         start: _ecfToIso(v.start),
         end: _ecfToIso(v.end),
