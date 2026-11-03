@@ -1089,6 +1089,10 @@ class Settings(BaseModel):
     # Kids aboard the drive home must be in by their bedtime bound: the start
     # of their timed bedtime routine, else kid quiet hours start minus this.
     errand_kids_home_margin_mins: int = Field(default=30, ge=0, le=180)
+    # Near stops are one outing: errands whose places are within this many
+    # minutes' drive of each other batch like a together kind (constrained
+    # first, the rest chain beside it). 0 turns it off.
+    errand_near_mins: int = Field(default=5, ge=0, le=60)
     # Supply intake A4: a party-shaped event with a child riding gets a card
     # offering to track the present. Proposes, never creates — a title is a
     # guess, and "Ellie's birthday" (ours) reads exactly like "Jack's

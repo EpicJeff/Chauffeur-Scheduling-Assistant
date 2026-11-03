@@ -251,6 +251,11 @@ ENTRIES: List[dict] = [
        'for an errand to ride it. A kid with a timed bedtime routine must be '
        'home by its first item instead.',
        page='errands?tab=errands', anchor='errand-settings'),
+    _e('errand_near_mins', 'daily', 'Near stops are one outing',
+       "Errands whose places are within this many minutes' drive of each other "
+       'go in one outing: the one with the tighter day or window is placed first '
+       'and the others chain beside it. 0 turns it off.',
+       page='errands?tab=errands', anchor='errand-settings'),
     _e('propose_invitations', 'meals', 'Notice party invitations',
        "When a child has a party on the calendar, offer to track the present.",
        page='meals?tab=meals', anchor='planning'),

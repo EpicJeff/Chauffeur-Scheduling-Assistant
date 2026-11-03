@@ -81,7 +81,7 @@ def scenario_describe_habits_says_each_fact():
     check(lines == ['Jeff runs errands 13:00-15:00 on weekdays (strict)'], f"{lines}")
     lines = errand_prefs.describe_habits('Lorena', LORENA)
     check(lines == ['Lorena would rather a passing drive add up to 40 min than go out just for it',
-                    'Lorena runs groceries and pharmacy runs together'], f"{lines}")
+                    'Lorena does groceries and pharmacy runs each in one outing'], f"{lines}")
     lines = errand_prefs.describe_habits('Lorena', dict(LORENA, separate_trip_mins=None, no_separate_trips=True,
                                                         hours=[{'days': [5, 6], 'start': '09:00', 'end': '12:00'},
                                                                {'days': [2], 'start': '18:00', 'end': '20:00'}],
@@ -143,7 +143,7 @@ def scenario_argyle_reads_and_sets_by_name():
     out = tools.handle_get_errand_habits({})
     check(out['status'] == 'success' and [d['name'] for d in out['drivers']] == ['Jeff', 'Lorena'], f"{out}")
     jeff = next(d for d in out['drivers'] if d['id'] == 'd1')
-    check(jeff['text'] == ['Jeff never makes a separate trip', 'Jeff runs groceries together'], f"{jeff}")
+    check(jeff['text'] == ['Jeff never makes a separate trip', 'Jeff does groceries in one outing'], f"{jeff}")
 
 
 def _render_errands(query=None):

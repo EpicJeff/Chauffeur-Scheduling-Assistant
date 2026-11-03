@@ -6689,7 +6689,7 @@ class SetErrandHabitsTool(BaseModel):
     separate_trip_mins: Optional[int] = Field(default=None, ge=-1, le=120,
                                              description="How many extra minutes a passing drive may add before a separate trip from home is worth it for this person (the household default is the Errands setting). Higher = would rather stop when already out. -1 restores the household default.")
     no_separate_trips: Optional[bool] = Field(default=None, description="true = never a trip from home just for an errand; errands wait for a drive they can ride.")
-    together_kinds: Optional[List[str]] = Field(default=None, description="Kinds this person does in one outing, replacing any set: groceries, pharmacy, return, pickup, service, other. 'All the groceries together' is ['groceries'].")
+    together_kinds: Optional[List[str]] = Field(default=None, description="Kinds this person batches, each kind in one outing (groceries with groceries, never groceries with pharmacy), replacing any set: groceries, pharmacy, return, pickup, service, other. 'All the groceries together' is ['groceries']. Stops near each other already go in one outing for everyone; that is the household setting errand_near_mins, not a habit.")
     clear_hours: bool = Field(default=False, description="true removes their errand hours (any time is fine again).")
 
 

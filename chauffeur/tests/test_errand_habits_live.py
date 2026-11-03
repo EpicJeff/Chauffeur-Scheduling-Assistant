@@ -56,7 +56,7 @@ def scenario_live():
             names = page.eval_on_selector_all('#errand-habits fieldset h3', 'els => els.map(e => e.textContent)')
             check(names == ['Jeff', 'Lorena'], f"one card per active driver, in name order: {names}")
             lines = page.eval_on_selector_all('#errand-habits fieldset > p:last-child', 'els => els.map(e => e.textContent)')
-            check(lines[0] == 'No errand habits set' and 'groceries and pharmacy runs together' in lines[1], f"{lines}")
+            check(lines[0] == 'No errand habits set' and 'groceries and pharmacy runs each in one outing' in lines[1], f"{lines}")
             top = page.evaluate("() => document.getElementById('errand-habits').getBoundingClientRect().top")
             check(0 <= top < 400, f"the deep link lands on the card: {top}")
             os.makedirs(SHOTS, exist_ok=True)

@@ -2650,6 +2650,29 @@ def _prime_errand_pairs(errand_loc, places, storage, maps, chunk=24):
         return 0
 
 
+def _prime_errand_cluster_pairs(places, storage, maps, chunk=24):
+    """Buy at most one matrix per disjoint chunk of errand places. Pairs
+    across chunks stay unknown; cache-only runs never buy a matrix."""
+    try:
+        import inspect as _inspect
+        me = _inspect.getmodule(_prime_errand_cluster_pairs)
+        if maps.travel_cache_only_active():
+            return 0
+        distinct = sorted({p for p in places if p and p.strip()})
+        if all(me.errand_leg_minutes(a, b) is not None
+               for a in distinct for b in distinct if a != b):
+            return 0
+        calls = 0
+        step = max(1, min(24, chunk))
+        for i in range(0, len(distinct), step):
+            maps.prime_matrix_cache(distinct[i:i + step], ignore_age=True)
+            calls += 1
+        return calls
+    except Exception as ex:
+        print(f"[errands] cluster primer failed: {ex}")
+        return 0
+
+
 def _prime_route_pairs(routes, driver_map, home_location, storage, maps, chunk=24):
     """§3: once per refresh, buy the adjacent pairs of every driver's day route
     (home → first, stop → next, last → home) that the cache does not know.
@@ -2693,6 +2716,8 @@ def errand_why_text(why):
         learned += f", {'in' if why['hours'] == 'inside' else 'outside'} {who}'s errand hours"
     if (why or {}).get('together'):
         learned += f", with the {why['together']}"
+    elif (why or {}).get('near'):
+        learned += f", next to the {why['near']}"
     if kind == 'unknown_travel':
         return 'drive time unknown, check the address'
     if kind == 'from_home':
@@ -2706,6 +2731,7 @@ def errand_why_text(why):
         inner.pop('learned', None)
         inner.pop('hours', None)
         inner.pop('together', None)
+        inner.pop('near', None)
         return 'the day you picked, ' + errand_why_text(inner) + learned
     if leg.get('to') == 'Home':
         return f"on {who}'s way home from {leg.get('from')}, {plus}{learned}"
@@ -2954,6 +2980,10 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
         penalty = int(settings.get('errand_dedicated_trip_mins', 25))
     except (TypeError, ValueError):
         penalty = 25
+    try:
+        near_mins = int(settings.get('errand_near_mins', 5))
+    except (TypeError, ValueError):
+        near_mins = 5
     all_rules = storage.get_all_rules()
     pref_rows = storage.get_errand_preferences()
     from models.schemas import ErrandHabits
@@ -3002,6 +3032,37 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                                               passengers=passengers)
                       for d_id in driver_map}
               for d_str, day in base_schedules.items()}
+
+    def root(parent, item):
+        while parent[item] != item:
+            parent[item] = parent[parent[item]]
+            item = parent[item]
+        return item
+
+    def union(parent, a, b):
+        parent[root(parent, b)] = root(parent, a)
+
+    from services import maps as _maps
+    cluster_of = {}
+    if near_mins > 0:
+        distinct = sorted({e['location'].strip() for e in active
+                           if isinstance(e.get('location'), str) and e['location'].strip()})
+        _prime_errand_cluster_pairs(distinct, storage, _maps)
+
+        def near(a, b):
+            if a == b:
+                return True
+            ab, _ = leg2(a, b)
+            ba, _ = leg2(b, a)
+            return ab is not None and ba is not None and ab <= near_mins and ba <= near_mins
+
+        parent = {loc: loc for loc in distinct}
+        for i, a in enumerate(distinct):
+            for b in distinct[i + 1:]:
+                if near(a, b):
+                    union(parent, a, b)
+        cluster_of = {loc: root(parent, loc) for loc in distinct}
+
     def errand_order(e):
         try:
             return (float(e.get('priority', 2)), -float(e.get('duration_mins', 30)))
@@ -3010,7 +3071,7 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
     active.sort(key=errand_order)
     batched_kinds = {k for d in driver_map.values() if not getattr(d, 'is_disabled', False)
                      for k in habits_for(d.id)['together_kinds']}
-    if batched_kinds:
+    if batched_kinds or cluster_of:
         def tightness(e):
             start = e.get('time_window_start') or e.get('pinned_start')
             end = e.get('time_window_end') or e.get('pinned_end')
@@ -3021,14 +3082,29 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
             return (0 if e.get('pinned_date') else 1, len(e.get('valid_days_of_week') or []) or 7,
                     window, *errand_order(e))
 
-        ordered, pulled = [], set()
-        for e in active:
+        # Kind and place edges share one union-find, so an errand belonging
+        # to both pulls the merged group into its first base-order position.
+        parent = {i: i for i in range(len(active))}
+        by_kind, by_cluster = {}, {}
+        for i, e in enumerate(active):
             k = _prefs.errand_kind(e)
-            if k not in batched_kinds:
-                ordered.append(e)
-            elif k not in pulled:
-                ordered.extend(sorted((s for s in active if _prefs.errand_kind(s) == k), key=tightness))
-                pulled.add(k)
+            if k in batched_kinds:
+                union(parent, i, by_kind.setdefault(k, i))
+            loc = e.get('location')
+            loc = loc.strip() if isinstance(loc, str) else ''
+            if loc in cluster_of:
+                cluster = cluster_of[loc]
+                union(parent, i, by_cluster.setdefault(cluster, i))
+        groups = {}
+        for i, e in enumerate(active):
+            groups.setdefault(root(parent, i), []).append(e)
+        ordered, pulled = [], set()
+        for i, e in enumerate(active):
+            group = root(parent, i)
+            if group not in pulled:
+                group_members = groups[group]
+                ordered.extend(sorted(group_members, key=tightness) if len(group_members) > 1 else group_members)
+                pulled.add(group)
         active = ordered
 
     places = {home_location} if home_location else set()
@@ -3038,7 +3114,6 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
             home = getattr(driver_map[d_id], 'home_location', None) or home_location
             if home:
                 places.add(home)
-    from services import maps as _maps
     _prime_route_pairs(routes, driver_map, home_location, storage, _maps)
 
     for errand in active:
@@ -3128,8 +3203,9 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                     habit = habits_for(d_id)
                     hours = habit['hours']
                     siblings = [r for r in scheduled[d_str]
-                                if (r.get('driver') or {}).get('id') == d_id and r.get('kind') == kind
-                                and kind in habit['together_kinds']]
+                                if (r.get('driver') or {}).get('id') == d_id
+                                and ((r.get('kind') == kind and kind in habit['together_kinds'])
+                                     or (loc in cluster_of and cluster_of.get(r.get('location')) == cluster_of[loc]))]
 
                     def add(shape, start, legs, detour, prev_stop, next_stop, insert_idx, t1, t2, outside=False):
                         unknown = any(v is None for v, _ in legs)
@@ -3172,7 +3248,8 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                         if hours:
                             why['hours'] = 'outside' if outside else 'inside'
                         if sibling:
-                            why['together'] = sibling['title']
+                            sibling_kind = sibling.get('kind') == kind and kind in habit['together_kinds']
+                            why['together' if sibling_kind else 'near'] = sibling['title']
                         why['text'] = errand_why_text(why)
                         t1v, t1e = t1 if isinstance(t1, tuple) else (t1, False)
                         t2v, t2e = t2 if isinstance(t2, tuple) else (t2, False)

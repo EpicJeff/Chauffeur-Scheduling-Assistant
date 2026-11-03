@@ -52,7 +52,7 @@
                             </div>
                             <div>
                                 <label class="block text-sm font-bold text-gray-300 mb-2">Together</label>
-                                <p class="text-xs text-gray-500 mb-2">Kinds this person likes to do in one outing.</p>
+                                <p class="text-xs text-gray-500 mb-2">Kinds this person does in one outing, each kind its own outing.</p>
                                 <div class="flex flex-wrap gap-1">
                                     <template x-for="kind in kinds" :key="kind.id">
                                         <button type="button" @click="toggleKind(driver.id, kind.id); save(driver.id)" :aria-pressed="driver.habits.together_kinds.includes(kind.id)"

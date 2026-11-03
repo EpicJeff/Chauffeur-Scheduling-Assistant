@@ -154,6 +154,14 @@
                 <span class="text-sm text-gray-400">minutes</span>
             </div>
             <p class="text-xs text-gray-500 mt-2">An errand never rides a drive home that would get a kid in later than this before kid quiet hours. A kid with a timed bedtime routine must be home by its first item instead. Steer the errand to override it.</p>
+            <label class="block text-gray-400 mb-1 mt-4 text-sm" for="errand-near-mins">Near stops are one outing</label>
+            <div class="flex items-center gap-3">
+                <input id="errand-near-mins" type="number" min="0" max="60" step="1"
+                    x-model.number="settings.errand_near_mins" @change="save('errand_near_mins')"
+                    class="w-28 bg-gray-800 border border-gray-600 rounded-lg p-2 text-white">
+                <span class="text-sm text-gray-400">minutes apart by car</span>
+            </div>
+            <p class="text-xs text-gray-500 mt-2">Nearby stops go in one outing, with the tighter day or window first. 0 turns it off.</p>
         </div>
         {% endcall %}
         {% call settings_section('errand-habits', 'How people run errands') %}
@@ -1138,10 +1146,10 @@
     </script>
 <script>
     function errandRoutingSettings() {
-        const LIMITS = { errand_dedicated_trip_mins: [0, 120, 25], errand_kids_home_margin_mins: [0, 180, 30] };
+        const LIMITS = { errand_dedicated_trip_mins: [0, 120, 25], errand_kids_home_margin_mins: [0, 180, 30], errand_near_mins: [0, 60, 5] };
         return {
-            settings: { errand_dedicated_trip_mins: 25, errand_kids_home_margin_mins: 30 },
-            _last: { errand_dedicated_trip_mins: 25, errand_kids_home_margin_mins: 30 },
+            settings: { errand_dedicated_trip_mins: 25, errand_kids_home_margin_mins: 30, errand_near_mins: 5 },
+            _last: { errand_dedicated_trip_mins: 25, errand_kids_home_margin_mins: 30, errand_near_mins: 5 },
             async load() {
                 try {
                     const r = await fetch('api/settings');

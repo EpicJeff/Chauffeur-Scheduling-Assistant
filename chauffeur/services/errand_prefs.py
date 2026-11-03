@@ -226,7 +226,9 @@ def describe_habits(name, habits) -> list[str]:
     elif habits.get('separate_trip_mins') is not None:
         lines.append(f"{name} would rather a passing drive add up to {habits['separate_trip_mins']} min than go out just for it")
     if habits.get('together_kinds'):
-        lines.append(f"{name} runs {_joined([KIND_LABELS[k] for k in habits['together_kinds']])} together")
+        kinds = habits['together_kinds']
+        each = ' each' if len(kinds) > 1 else ''
+        lines.append(f"{name} does {_joined([KIND_LABELS[k] for k in kinds])}{each} in one outing")
     return lines or ['No errand habits set']
 
 
