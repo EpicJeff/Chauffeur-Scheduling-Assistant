@@ -75,7 +75,7 @@ def ensure_vapid_keys():
 
 ensure_vapid_keys()
 
-from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, Car, FamilyMember, TelemetryEvent, Errand, ErrandRule, StatusTier, StatusProtocol, StatusDay, AssistContact, AssistAssignment, HouseholdTask, ProtectedCommitment, STEER_FIELDS, ERRAND_ROUTING_FIELDS
+from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, Car, FamilyMember, TelemetryEvent, Errand, ErrandHabits, ErrandRule, StatusTier, StatusProtocol, StatusDay, AssistContact, AssistAssignment, HouseholdTask, ProtectedCommitment, STEER_FIELDS, ERRAND_ROUTING_FIELDS
 from services import storage, calendar, maps, deletion
 from services import errand_prefs
 from services import assist as _assist_svc
@@ -18401,6 +18401,39 @@ def delete_errand_preference(pref_id: str, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=404, detail="Preference not found")
     background_tasks.add_task(trigger_background_refresh)
     return {"status": "deleted"}
+
+
+@app.get("/api/errands/habits")
+def get_errand_habits():
+    habits = storage.get_errand_habits()
+    drivers = []
+    for d in sorted(storage.get_all_drivers(), key=lambda d: d.get('name', '').casefold()):
+        if d.get('is_disabled'):
+            continue
+        h = ErrandHabits(**habits.get(str(d['id']), {})).model_dump()
+        drivers.append({'id': d['id'], 'name': d['name'], 'habits': h,
+                        'text': errand_prefs.describe_habits(d['name'], h)})
+    return {'drivers': drivers}
+
+
+@app.put("/api/errands/habits/{driver_id}")
+def set_errand_habits(driver_id: str, habits: ErrandHabits, background_tasks: BackgroundTasks):
+    driver = next((d for d in storage.get_all_drivers() if d['id'] == driver_id), None)
+    if driver is None:
+        raise HTTPException(status_code=404, detail="Driver not found")
+    h = storage.set_errand_habits(driver_id, habits.model_dump())
+    background_tasks.add_task(trigger_background_refresh)
+    return {'status': 'saved', 'habits': h, 'text': errand_prefs.describe_habits(driver['name'], h)}
+
+
+@app.delete("/api/errands/habits/{driver_id}")
+def clear_errand_habits(driver_id: str, background_tasks: BackgroundTasks):
+    driver = next((d for d in storage.get_all_drivers() if d['id'] == driver_id), None)
+    if driver is None:
+        raise HTTPException(status_code=404, detail="Driver not found")
+    h = storage.set_errand_habits(driver_id, None)
+    background_tasks.add_task(trigger_background_refresh)
+    return {'status': 'cleared', 'habits': h, 'text': errand_prefs.describe_habits(driver['name'], h)}
 
 
 @app.post("/api/errands")

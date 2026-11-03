@@ -1,0 +1,148 @@
+{# Per-person facts, above the learned nudges. Card and status shape follows errand_learned.html. #}
+<div x-data="errandHabitsPanel()" x-init="init()">
+    <div class="p-4 md:p-6">
+        <p x-show="forbidden" class="text-sm text-gray-500 italic">Errand habits are a parent's list.</p>
+        <template x-if="!forbidden">
+            <div>
+                <p x-show="loaded && drivers.length === 0" class="text-sm text-gray-500 italic">No drivers yet.</p>
+                <div class="space-y-4">
+                    <template x-for="driver in drivers" :key="driver.id">
+                        <fieldset :disabled="!!busy[driver.id]" class="bg-gray-700/30 border border-gray-600 rounded-lg px-4 py-3 space-y-4">
+                            <h3 class="text-sm font-bold text-gray-200" x-text="driver.name"></h3>
+                            <div>
+                                <label class="block text-sm font-bold text-gray-300 mb-2">Errand hours</label>
+                                <p class="text-xs text-gray-500 mb-2">When they like to run errands. Different from when they can drive. Strict means never outside; preferred means only when nothing inside works.</p>
+                                <template x-for="(row, index) in driver.habits.hours" :key="index">
+                                    <div class="border border-gray-600 rounded-lg p-2 mb-2">
+                                        <div class="flex flex-wrap gap-1 mb-2">
+                                            <template x-for="(day, dayIndex) in days" :key="dayIndex">
+                                                <button type="button" @click="toggleDay(driver.id, index, dayIndex); save(driver.id)"
+                                                    :aria-pressed="row.days.includes(dayIndex)"
+                                                    :class="row.days.includes(dayIndex) ? 'bg-teal-500/20 text-teal-300' : 'bg-gray-700 text-gray-300'"
+                                                    class="text-xs font-bold px-2 py-1 rounded" x-text="day"></button>
+                                            </template>
+                                        </div>
+                                        <div class="flex flex-wrap items-center gap-2">
+                                            <input type="time" aria-label="Errand hours start" x-model="row.start" @change="save(driver.id)" class="bg-gray-800 border border-gray-600 rounded-lg p-2 text-white">
+                                            <span class="text-sm text-gray-400">to</span>
+                                            <input type="time" aria-label="Errand hours end" x-model="row.end" @change="save(driver.id)" class="bg-gray-800 border border-gray-600 rounded-lg p-2 text-white">
+                                            <button type="button" @click="removeHours(driver.id, index); save(driver.id)" class="text-xs font-semibold text-red-300 hover:text-red-200">Remove</button>
+                                        </div>
+                                        <p x-show="row.days.length === 0" class="text-xs text-gray-500 mt-2">Choose at least one day to save these hours.</p>
+                                    </div>
+                                </template>
+                                <div class="flex items-center gap-3">
+                                    <button type="button" @click="addHours(driver.id)" class="text-xs font-semibold text-gray-400 hover:text-white border border-gray-600 rounded-lg px-3 py-1.5">Add hours</button>
+                                    <select x-show="driver.habits.hours.length > 0" aria-label="Errand hours rule" x-model="driver.habits.hours_strict" @change="driver.habits.hours_strict = ($event.target.value === 'true'); save(driver.id)" class="bg-gray-800 border border-gray-600 rounded-lg p-2 text-white text-sm">
+                                        <option value="true" :selected="driver.habits.hours_strict">Strict</option>
+                                        <option value="false" :selected="!driver.habits.hours_strict">Preferred</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-bold text-gray-300 mb-2">Separate trips</label>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <select aria-label="Separate trips" :value="tripMode(driver)" @change="setTripMode(driver.id, $event.target.value); save(driver.id)" class="bg-gray-800 border border-gray-600 rounded-lg p-2 text-white text-sm">
+                                        <option value="default" :selected="tripMode(driver) === 'default'" x-text="'Household default (' + householdMins + ' min)'"></option>
+                                        <option value="never" :selected="tripMode(driver) === 'never'">Never</option>
+                                        <option value="personal" :selected="tripMode(driver) === 'personal'">Up to … min</option>
+                                    </select>
+                                    <input x-show="tripMode(driver) === 'personal'" type="number" min="0" max="120" aria-label="Separate trip minutes" x-model.number="driver.habits.separate_trip_mins" @change="save(driver.id)" class="w-28 bg-gray-800 border border-gray-600 rounded-lg p-2 text-white">
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-bold text-gray-300 mb-2">Together</label>
+                                <p class="text-xs text-gray-500 mb-2">Kinds this person likes to do in one outing.</p>
+                                <div class="flex flex-wrap gap-1">
+                                    <template x-for="kind in kinds" :key="kind.id">
+                                        <button type="button" @click="toggleKind(driver.id, kind.id); save(driver.id)" :aria-pressed="driver.habits.together_kinds.includes(kind.id)"
+                                            :class="driver.habits.together_kinds.includes(kind.id) ? 'bg-teal-500/20 text-teal-300' : 'bg-gray-700 text-gray-300'"
+                                            class="text-xs font-bold px-2 py-1 rounded" x-text="kind.label"></button>
+                                    </template>
+                                </div>
+                            </div>
+                            <p class="text-xs text-gray-500" x-text="driver.text.join('. ')"></p>
+                        </fieldset>
+                    </template>
+                </div>
+            </div>
+        </template>
+    </div>
+</div>
+<script>
+    function errandHabitsPanel() {
+        return {
+            apiBase: (window.chfBase !== undefined ? window.chfBase : ''),
+            drivers: [], busy: {}, loaded: false, forbidden: false, householdMins: 25,
+            days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+            kinds: [{id: 'groceries', label: 'groceries'}, {id: 'pharmacy', label: 'pharmacy runs'},
+                {id: 'return', label: 'returns'}, {id: 'pickup', label: 'pickups'},
+                {id: 'service', label: 'appointments'}, {id: 'other', label: 'errands'}],
+            init() {
+                window.addEventListener('chf-settings-opened', e => {
+                    if (e.detail && e.detail.tab === 'errands') this.load();
+                });
+            },
+            async load() {
+                try {
+                    const r = await fetch(this.apiBase + 'api/errands/habits');
+                    if (r.status === 401 || r.status === 403) { this.forbidden = true; return; }
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    const data = await r.json();
+                    this.drivers = Array.isArray(data.drivers) ? data.drivers : [];
+                    this.loaded = true; this.forbidden = false;
+                    const s = await fetch(this.apiBase + 'api/settings');
+                    if (s.ok) {
+                        const settings = await s.json();
+                        if (typeof settings.errand_dedicated_trip_mins === 'number') this.householdMins = settings.errand_dedicated_trip_mins;
+                    }
+                } catch (e) { showGlobalAlert('Could not load errand habits just now.'); }
+            },
+            async save(driverId) {
+                const driver = this.drivers.find(d => d.id === driverId);
+                if (!driver || this.busy[driverId]) return;
+                // A newly added row is a draft until its first day is chosen.
+                if (driver.habits.hours.some(row => row.days.length === 0)) return;
+                this.busy = Object.assign({}, this.busy, { [driverId]: true });
+                window.chfSettingsSaving();
+                try {
+                    const r = await fetch(this.apiBase + 'api/errands/habits/' + encodeURIComponent(driverId), {
+                        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(driver.habits)
+                    });
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    const data = await r.json();
+                    driver.habits = data.habits; driver.text = data.text;
+                    window.chfSettingsSaved(true);
+                } catch (e) {
+                    window.chfSettingsSaved(false, 'Could not save errand habits. Check the days, times and minutes.');
+                    showGlobalAlert('Could not save errand habits. Check the days, times and minutes.');
+                } finally {
+                    const b = Object.assign({}, this.busy); delete b[driverId]; this.busy = b;
+                }
+            },
+            addHours(driverId) {
+                this.drivers.find(d => d.id === driverId).habits.hours.push({days: [], start: '13:00', end: '15:00'});
+            },
+            removeHours(driverId, index) {
+                this.drivers.find(d => d.id === driverId).habits.hours.splice(index, 1);
+            },
+            toggleDay(driverId, index, day) {
+                const row = this.drivers.find(d => d.id === driverId).habits.hours[index];
+                row.days = row.days.includes(day) ? row.days.filter(d => d !== day) : row.days.concat([day]).sort((a, b) => a - b);
+            },
+            toggleKind(driverId, kind) {
+                const h = this.drivers.find(d => d.id === driverId).habits;
+                h.together_kinds = h.together_kinds.includes(kind) ? h.together_kinds.filter(k => k !== kind) : h.together_kinds.concat([kind]);
+            },
+            tripMode(driver) {
+                return driver.habits.no_separate_trips ? 'never' : driver.habits.separate_trip_mins === null ? 'default' : 'personal';
+            },
+            setTripMode(driverId, mode) {
+                const h = this.drivers.find(d => d.id === driverId).habits;
+                h.no_separate_trips = mode === 'never';
+                if (mode === 'default') h.separate_trip_mins = null;
+                else if (mode === 'personal' && h.separate_trip_mins === null) h.separate_trip_mins = this.householdMins;
+            },
+        };
+    }
+</script>

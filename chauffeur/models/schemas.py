@@ -1676,6 +1676,49 @@ class TelemetryEvent(BaseModel):
 ERRAND_KINDS = ('groceries', 'pharmacy', 'return', 'pickup', 'service', 'other')
 
 
+class ErrandHoursRow(BaseModel):
+    days: List[int]
+    start: str
+    end: str
+
+    @field_validator('days')
+    @classmethod
+    def valid_days(cls, v):
+        if not v or any(d < 0 or d > 6 for d in v):
+            raise ValueError('days must contain weekdays from 0 to 6')
+        return sorted(set(v))
+
+    @field_validator('start', 'end')
+    @classmethod
+    def valid_time(cls, v):
+        import re
+        if not re.fullmatch(r'(?:[01][0-9]|2[0-3]):[0-5][0-9]', v):
+            raise ValueError('time must be HH:MM')
+        return v
+
+    @field_validator('end')
+    @classmethod
+    def end_after_start(cls, v, info):
+        if info.data.get('start') and v <= info.data['start']:
+            raise ValueError('end must be after start')
+        return v
+
+
+class ErrandHabits(BaseModel):
+    hours: List[ErrandHoursRow] = Field(default_factory=list)
+    hours_strict: bool = True
+    separate_trip_mins: Optional[int] = Field(default=None, ge=0, le=120)
+    no_separate_trips: bool = False
+    together_kinds: List[str] = Field(default_factory=list)
+
+    @field_validator('together_kinds')
+    @classmethod
+    def valid_kinds(cls, v):
+        if any(k not in ERRAND_KINDS for k in v):
+            raise ValueError(f"kinds must be one of {', '.join(ERRAND_KINDS)}")
+        return list(dict.fromkeys(v))
+
+
 class Errand(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     doc_id: Optional[int] = None

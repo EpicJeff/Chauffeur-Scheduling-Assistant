@@ -8610,6 +8610,38 @@ def get_errand_placement_notes() -> dict:
 # A handful of rows: what the household's steers have taught the errand pass.
 # Soft weights, decayed on read by errand_prefs.effective_weight, pruned on write.
 
+def get_errand_habits() -> dict:
+    """Each person's errand habits (errand-habits design §1), normalised through
+    the model; a row that no longer validates is skipped, never raised."""
+    from models.schemas import ErrandHabits
+    out = {}
+    for d_id, h in (get_app_state('errand_habits', {}) or {}).items():
+        try:
+            out[str(d_id)] = ErrandHabits(**(h or {})).model_dump()
+        except Exception as ex:
+            print(f"[errands] skipping unreadable habits for {d_id}: {ex}")
+    return out
+
+
+def get_driver_errand_habits(driver_id) -> dict:
+    from models.schemas import ErrandHabits
+    return get_errand_habits().get(str(driver_id), ErrandHabits().model_dump())
+
+
+def set_errand_habits(driver_id, habits: dict | None) -> dict:
+    from models.schemas import ErrandHabits
+    normalised = ErrandHabits(**(habits or {})).model_dump()
+    with db_lock:
+        rows = get_errand_habits()
+        if habits is None:
+            rows.pop(str(driver_id), None)
+        else:
+            rows[str(driver_id)] = normalised
+        set_app_state('errand_habits', rows)
+        _invalidate_schedule_caches()
+    return normalised
+
+
 def get_errand_preferences() -> List[dict]:
     return [dict(r) for r in (get_app_state('errand_preferences', []) or [])]
 

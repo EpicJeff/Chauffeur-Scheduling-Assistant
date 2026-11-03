@@ -39,6 +39,8 @@ ESTIMATE_SURCHARGE_MINS = 10
 ESTIMATE_MAX_MINS = 360  # an estimate past six hours is never an errand leg and reads as unknown.
 
 PREF_STEP_MINS = 5
+OUTSIDE_HOURS_MINS = 20
+TOGETHER_BONUS = 9999
 PREF_CAP_MINS = 30
 PREF_MAX_WEIGHT = 6
 PREF_HALF_LIFE_DAYS = 90
@@ -197,6 +199,36 @@ def learn_from_steer(before: dict, after: dict, placement: Optional[dict] = None
 
 
 # ------------------------------------------------------------------ words
+
+def _joined(items):
+    return ' and '.join(items) if len(items) < 3 else ', '.join(items[:-1]) + ' and ' + items[-1]
+
+
+def describe_habits(name, habits) -> list[str]:
+    lines = []
+    hours = []
+    for row in habits.get('hours') or []:
+        days = sorted(set(row['days']))
+        if days == list(range(7)):
+            phrase = 'every day'
+        elif days == list(range(5)):
+            phrase = 'on weekdays'
+        elif days == [5, 6]:
+            phrase = 'on weekends'
+        else:
+            phrase = 'on ' + _joined([DAY_NAMES[d] + 's' for d in days])
+        hours.append(f"{row['start']}-{row['end']} {phrase}")
+    if hours:
+        mode = 'strict' if habits.get('hours_strict', True) else 'preferred'
+        lines.append(f"{name} runs errands {' and '.join(hours)} ({mode})")
+    if habits.get('no_separate_trips'):
+        lines.append(f"{name} never makes a separate trip")
+    elif habits.get('separate_trip_mins') is not None:
+        lines.append(f"{name} would rather a passing drive add up to {habits['separate_trip_mins']} min than go out just for it")
+    if habits.get('together_kinds'):
+        lines.append(f"{name} runs {_joined([KIND_LABELS[k] for k in habits['together_kinds']])} together")
+    return lines or ['No errand habits set']
+
 
 def describe(row: dict, people: dict) -> str:
     scope = row.get('scope')

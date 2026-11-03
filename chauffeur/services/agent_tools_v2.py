@@ -6219,6 +6219,7 @@ ADMIN_TOOLS = [
     "run_solver",
     "add_errand", "update_errand", "delete_errand", "get_errands",
     "get_errand_preferences", "forget_errand_preference",
+    "get_errand_habits", "set_errand_habits",
     "add_errand_rule", "delete_errand_rule",
     "update_memory", "search_places",
     "generate_trip_plan",
@@ -6239,6 +6240,7 @@ SCHEDULE_MUTATING_ADMIN_TOOLS = {
     "run_solver",
     "add_errand", "update_errand", "delete_errand",
     "forget_errand_preference",
+    "set_errand_habits",
     "add_errand_rule", "delete_errand_rule",
     "manage_car",
 }
@@ -6669,6 +6671,27 @@ class GetErrandsTool(BaseModel):
     Gets a list of all active errands.
     """
     pass
+
+class GetErrandHabitsTool(BaseModel):
+    """
+    Reads how each person likes to run errands: their errand hours (not their driving hours), whether they make separate trips from home, and the kinds of errand they do in one outing. Use it for 'when does Jeff run errands', 'does Lorena group her groceries', or before changing a habit.
+    """
+    pass
+
+
+class SetErrandHabitsTool(BaseModel):
+    """
+    Sets how one person runs errands, for good: 'Jeff can only do errands between 1 and 3', 'Lorena likes to do all the groceries together', 'Lorena would rather stop when she is already out', 'Jeff never goes out just for an errand'. Only the fields given change. These are errand habits, NOT driving hours (a person can drive to soccer at 5:30 and still only run errands 1-3). For one errand on one day use update_errand instead.
+    """
+    driver_name: str = Field(..., description="The person's name as a driver (e.g. 'Jeff').")
+    hours: Optional[List[Dict[str, Any]]] = Field(default=None, description="Their errand hours, replacing any set: a list of rows {days: [0..6 with 0=Monday], start: 'HH:MM', end: 'HH:MM'}. 'Weekdays 1-3pm' is [{days: [0,1,2,3,4], start: '13:00', end: '15:00'}].")
+    hours_strict: Optional[bool] = Field(default=None, description="true = never outside those hours ('can only', 'never before'); false = outside only when nothing inside works ('likes to', 'prefers').")
+    separate_trip_mins: Optional[int] = Field(default=None, ge=-1, le=120,
+                                             description="How many extra minutes a passing drive may add before a separate trip from home is worth it for this person (the household default is the Errands setting). Higher = would rather stop when already out. -1 restores the household default.")
+    no_separate_trips: Optional[bool] = Field(default=None, description="true = never a trip from home just for an errand; errands wait for a drive they can ride.")
+    together_kinds: Optional[List[str]] = Field(default=None, description="Kinds this person does in one outing, replacing any set: groceries, pharmacy, return, pickup, service, other. 'All the groceries together' is ['groceries'].")
+    clear_hours: bool = Field(default=False, description="true removes their errand hours (any time is fine again).")
+
 
 class GetErrandPreferencesTool(BaseModel):
     """
@@ -7614,6 +7637,8 @@ TOOL_SCHEMAS = {
     "delete_errand": DeleteErrandTool.model_json_schema(),
     "get_errands": GetErrandsTool.model_json_schema(),
     "get_errand_preferences": GetErrandPreferencesTool.model_json_schema(),
+    "get_errand_habits": GetErrandHabitsTool.model_json_schema(),
+    "set_errand_habits": SetErrandHabitsTool.model_json_schema(),
     "forget_errand_preference": ForgetErrandPreferenceTool.model_json_schema(),
     "add_errand_rule": AddErrandRuleTool.model_json_schema(),
     "delete_errand_rule": DeleteErrandRuleTool.model_json_schema(),
@@ -8085,6 +8110,40 @@ def handle_get_errands(args: dict) -> dict:
             e['unplaced'] = notes[e['id']]
         out.append(e)
     return {"status": "success", "errands": out}
+
+def handle_get_errand_habits(args: dict) -> dict:
+    from services import storage, errand_prefs
+    from models.schemas import ErrandHabits
+    habits = storage.get_errand_habits()
+    rows = []
+    for d in sorted(storage.get_all_drivers(), key=lambda d: d.get('name', '').casefold()):
+        if d.get('is_disabled'):
+            continue
+        h = ErrandHabits(**habits.get(str(d['id']), {})).model_dump()
+        rows.append({'id': d['id'], 'name': d['name'], 'habits': h,
+                     'text': errand_prefs.describe_habits(d['name'], h)})
+    return {'status': 'success', 'drivers': rows}
+
+
+def handle_set_errand_habits(args: dict) -> dict:
+    from services import storage, errand_prefs
+    name = str(args.get('driver_name') or '').strip().casefold()
+    driver = next((d for d in storage.get_all_drivers()
+                   if not d.get('is_disabled') and d.get('name', '').casefold() == name), None)
+    if driver is None:
+        return {'status': 'error', 'message': 'No active driver with that name.'}
+    h = storage.get_driver_errand_habits(driver['id'])
+    for field in ('hours', 'hours_strict', 'separate_trip_mins', 'no_separate_trips', 'together_kinds'):
+        if field in args and args[field] is not None:
+            h[field] = None if field == 'separate_trip_mins' and args[field] == -1 else args[field]
+    if args.get('clear_hours'):
+        h['hours'] = []
+    try:
+        h = storage.set_errand_habits(driver['id'], h)
+    except ValueError as ex:
+        return {'status': 'error', 'message': str(ex)}
+    return {'status': 'success', 'habits': h, 'text': errand_prefs.describe_habits(driver['name'], h)}
+
 
 def handle_get_errand_preferences(args: dict) -> dict:
     from services import storage, errand_prefs
@@ -9613,6 +9672,8 @@ TOOL_HANDLERS = {
     "delete_errand": handle_delete_errand,
     "get_errands": handle_get_errands,
     "get_errand_preferences": handle_get_errand_preferences,
+    "get_errand_habits": handle_get_errand_habits,
+    "set_errand_habits": handle_set_errand_habits,
     "forget_errand_preference": handle_forget_errand_preference,
     "add_errand_rule": handle_add_errand_rule,
     "delete_errand_rule": handle_delete_errand_rule,

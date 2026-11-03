@@ -2486,6 +2486,7 @@ ERRAND_UNPLACED_TEXT = {
     'pinned_day_not_in_range': 'the day you picked is further out than the schedule looks; it will land when that week is planned',
     'every_day_skipped': 'every day in its window is skipped',
     'kids_bedtime': 'the only drive with room would get the kids home after bedtime',
+    'errand_hours': "outside everyone's errand hours",
 }
 
 # Kids aboard the drive home must be in by their bedtime bound (2026-11-02).
@@ -2688,6 +2689,10 @@ def errand_why_text(why):
     est = bool((why or {}).get('estimated'))
     plus = f"about +{det} min (estimated)" if est else f"+{det} min"
     learned = ', as you steered it before' if (why or {}).get('learned') else ''
+    if (why or {}).get('hours'):
+        learned += f", {'in' if why['hours'] == 'inside' else 'outside'} {who}'s errand hours"
+    if (why or {}).get('together'):
+        learned += f", with the {why['together']}"
     if kind == 'unknown_travel':
         return 'drive time unknown, check the address'
     if kind == 'from_home':
@@ -2699,6 +2704,8 @@ def errand_why_text(why):
         inner = dict(why)
         inner['kind'] = 'from_home' if not leg else ('inside_stop' if leg.get('from') == leg.get('to') else 'on_the_way')
         inner.pop('learned', None)
+        inner.pop('hours', None)
+        inner.pop('together', None)
         return 'the day you picked, ' + errand_why_text(inner) + learned
     if leg.get('to') == 'Home':
         return f"on {who}'s way home from {leg.get('from')}, {plus}{learned}"
@@ -2949,6 +2956,22 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
         penalty = 25
     all_rules = storage.get_all_rules()
     pref_rows = storage.get_errand_preferences()
+    from models.schemas import ErrandHabits
+    from services import errand_prefs as _prefs
+    try:
+        habits = {str(d_id): ErrandHabits(**h).model_dump()
+                  for d_id, h in storage.get_errand_habits().items()}
+    except Exception as ex:   # a bad stored row never takes the pass down
+        print(f"[errands] habits unreadable, placing without them: {ex}")
+        habits = {}
+    default_habits = ErrandHabits().model_dump()
+
+    def habits_for(d_id):
+        return habits.get(str(d_id), default_habits)
+
+    def penalty_for(d_id):
+        personal = habits_for(d_id)['separate_trip_mins']
+        return penalty if personal is None else personal
     try:
         members = storage.get_all_members() if passengers else []
     except Exception:
@@ -2985,6 +3008,28 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
         except (TypeError, ValueError):
             return (2, 0)
     active.sort(key=errand_order)
+    batched_kinds = {k for d in driver_map.values() if not getattr(d, 'is_disabled', False)
+                     for k in habits_for(d.id)['together_kinds']}
+    if batched_kinds:
+        def tightness(e):
+            start = e.get('time_window_start') or e.get('pinned_start')
+            end = e.get('time_window_end') or e.get('pinned_end')
+            try:
+                window = (_prefs._mins(end) - _prefs._mins(start)) if start and end else 1440
+            except (TypeError, ValueError):
+                window = 1440  # The per-errand planner reports malformed times without stopping the run.
+            return (0 if e.get('pinned_date') else 1, len(e.get('valid_days_of_week') or []) or 7,
+                    window, *errand_order(e))
+
+        ordered, pulled = [], set()
+        for e in active:
+            k = _prefs.errand_kind(e)
+            if k not in batched_kinds:
+                ordered.append(e)
+            elif k not in pulled:
+                ordered.extend(sorted((s for s in active if _prefs.errand_kind(s) == k), key=tightness))
+                pulled.add(k)
+        active = ordered
 
     places = {home_location} if home_location else set()
     for d_str, by_driver in routes.items():
@@ -3008,7 +3053,6 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                 continue
             _prime_errand_pairs(loc, places, storage, _maps)
             duration = max(5, errand.get('duration_mins', 30) - errand.get('tolerance_mins', 0)) + errand.get('buffer_mins', 0)
-            from services import errand_prefs as _prefs
             kind = _prefs.errand_kind(errand)
             home_bound = _prefs.is_home_bound(errand, kind)
             has_window = bool(errand.get('time_window_start') or errand.get('time_window_end')
@@ -3047,6 +3091,8 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
 
             candidates = []
             bedtime_blocked = []
+            hours_blocked = {}
+            drivers_seen = set()
             saw_day = False
             saw_driver = False
             for day_date in range_dates:
@@ -3076,18 +3122,32 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                     if home != default_home and not group_bonus:
                         continue
                     saw_driver = True
+                    drivers_seen.add(d_id)
                     stops = routes[d_str][d_id]
                     dname = getattr(driver, 'name', d_id)
+                    habit = habits_for(d_id)
+                    hours = habit['hours']
+                    siblings = [r for r in scheduled[d_str]
+                                if (r.get('driver') or {}).get('id') == d_id and r.get('kind') == kind
+                                and kind in habit['together_kinds']]
 
-                    def add(shape, start, legs, detour, prev_stop, next_stop, insert_idx, t1, t2):
+                    def add(shape, start, legs, detour, prev_stop, next_stop, insert_idx, t1, t2, outside=False):
                         unknown = any(v is None for v, _ in legs)
                         estimated = (not unknown) and any(flag for _, flag in legs)
                         if estimated:
                             detour = max(0, detour)
                         cost = ((0 if unknown else detour)
-                                + (penalty if shape == 'empty' else 0)
+                                + (penalty_for(d_id) if shape == 'empty' else 0)
+                                + (_prefs.OUTSIDE_HOURS_MINS if outside else 0)
                                 + (_prefs.ESTIMATE_SURCHARGE_MINS if estimated else 0)
                                 - group_bonus)
+                        # One outing: the sibling is the stop before or after this
+                        # leg (the same location is the inside-stop case, prev ==
+                        # next). A trip home and out again is never one outing.
+                        beside = {s.id for s in (prev_stop, next_stop) if s is not None}
+                        sibling = next((r for r in siblings if shape != 'empty' and r['id'] in beside), None)
+                        if sibling:
+                            cost -= _prefs.TOGETHER_BONUS
                         pref_cost, learned = _prefs.preference_cost(pref_rows, d_id, kind, day_date, start, now.timestamp())
                         cost += pref_cost
                         end = start + timedelta(minutes=duration)
@@ -3109,6 +3169,10 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                             why['estimated'] = True
                         if learned and pref_cost < 0:
                             why['learned'] = list(learned)
+                        if hours:
+                            why['hours'] = 'outside' if outside else 'inside'
+                        if sibling:
+                            why['together'] = sibling['title']
                         why['text'] = errand_why_text(why)
                         t1v, t1e = t1 if isinstance(t1, tuple) else (t1, False)
                         t2v, t2e = t2 if isinstance(t2, tuple) else (t2, False)
@@ -3129,11 +3193,37 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                             return False
                         return True
 
+                    def fit_hours(lo, hi, *, latest=False):
+                        if not hours:
+                            return _first_fit(lo, hi, duration, day_date, errand, now, latest=latest), False
+                        for row in sorted(hours, key=lambda r: r['start'], reverse=latest):
+                            if day_date.weekday() not in row['days']:
+                                continue
+                            h0 = datetime.combine(day_date, _hhmm(row['start'])).astimezone()
+                            h1 = datetime.combine(day_date, _hhmm(row['end'])).astimezone()
+                            start = _first_fit(max(lo, h0), min(hi, h1 - timedelta(minutes=duration)),
+                                               duration, day_date, errand, now, latest=latest)
+                            if start is not None:
+                                return start, False
+                        if habit['hours_strict']:
+                            hours_blocked[d_id] = dname
+                            return None, None
+                        return _first_fit(lo, hi, duration, day_date, errand, now, latest=latest), True
+
                     def fit_dedicated(lo, hi):
                         """The start of a separate trip from home inside [lo, hi]
                         (latest start). §2: a dedicated trip keeps human hours when
                         the person set nothing: the band first, then from the band's
                         start to the day's end for a trip too long for the band."""
+                        if habit['no_separate_trips']:
+                            return None, None
+                        if hours:
+                            # The person's own hours beat the default band. Preferred
+                            # hours with nothing inside: the band as for anyone, and
+                            # the row says it is outside.
+                            start, outside = fit_hours(lo, hi)
+                            if start is None or not outside:
+                                return start, outside
                         start = None
                         if not has_window:
                             ded_start = datetime.combine(
@@ -3146,15 +3236,15 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                                 start = _first_fit(max(lo, ded_start), hi, duration, day_date, errand, now)
                         if start is None:
                             start = _first_fit(lo, hi, duration, day_date, errand, now)
-                        return start
+                        return start, bool(hours)
 
                     th, th_e = leg2(home, loc) if home else (None, False)
                     if not stops:
                         if not riders_ok(set()):
                             continue
-                        start = fit_dedicated(day_start, day_end - timedelta(minutes=duration))
+                        start, outside = fit_dedicated(day_start, day_end - timedelta(minutes=duration))
                         if start is not None:
-                            add('empty', start, [(th, th_e)], (th or 0) * 2, None, None, -1, (th, th_e), (th, th_e))
+                            add('empty', start, [(th, th_e)], (th or 0) * 2, None, None, -1, (th, th_e), (th, th_e), outside)
                         continue
 
                     first, last = stops[0], stops[-1]
@@ -3167,7 +3257,7 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                     # so a passing leg still wins whenever one exists. Until
                     # 2026-11-02 this shape existed only on an empty day, and a day
                     # whose one leg was ruled out gave up.
-                    if not req_pax:
+                    if not req_pax and not habit['no_separate_trips']:
                         gaps = []
                         thf, thf_e = leg2(home, first.location) if home else (None, False)
                         gaps.append((day_start, first.start - timedelta(minutes=(th or 0) + (thf or 0)),
@@ -3183,18 +3273,18 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                         gaps.append((last.end + timedelta(minutes=(tlh or 0) + (th or 0)), day_end,
                                      [(th, th_e), (tlh, tlh_e)], last, None, len(stops) - 1))
                         for lo, hi, legs, prev_stop, next_stop, idx in gaps:
-                            start = fit_dedicated(lo, hi - timedelta(minutes=duration))
+                            start, outside = fit_dedicated(lo, hi - timedelta(minutes=duration))
                             if start is not None:
-                                add('empty', start, legs, (th or 0) * 2, prev_stop, next_stop, idx, (th, th_e), (th, th_e))
+                                add('empty', start, legs, (th or 0) * 2, prev_stop, next_stop, idx, (th, th_e), (th, th_e), outside)
 
                     if not home_bound and riders_ok(_pax_in_car(stops, -1)):
                         tf, tf_e = leg2(loc, first.location)
                         thf, thf_e = leg2(home, first.location) if home else (None, False)
                         legs = [(th, th_e), (tf, tf_e), (thf, thf_e)]
                         latest = first.start - timedelta(minutes=(tf or 0) + duration)
-                        start = _first_fit(day_start, latest, duration, day_date, errand, now, latest=True)
+                        start, outside = fit_hours(day_start, latest, latest=True)
                         if start is not None:
-                            add('from_home_leg', start, legs, (th or 0) + (tf or 0) - (thf or 0), None, first, -1, (th, th_e), (tf, tf_e))
+                            add('from_home_leg', start, legs, (th or 0) + (tf or 0) - (thf or 0), None, first, -1, (th, th_e), (tf, tf_e), outside)
                     for i in range(len(stops) - 1):
                         if home_bound:
                             break
@@ -3205,13 +3295,13 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                         legs = [(t1, t1_e), (t2, t2_e), (tab, tab_e)]
                         earliest = a.end + timedelta(minutes=(t1 or 0))
                         latest = b.start - timedelta(minutes=(t2 or 0) + duration)
-                        start = _first_fit(earliest, latest, duration, day_date, errand, now)
+                        start, outside = fit_hours(earliest, latest)
                         if start is None:
                             continue
                         in_car = set() if _same_ride(a, b) else _pax_in_car(stops, i)
                         if not riders_ok(in_car):
                             continue
-                        add('between', start, legs, (t1 or 0) + (t2 or 0) - (tab or 0), a, b, i, (t1, t1_e), (t2, t2_e))
+                        add('between', start, legs, (t1 or 0) + (t2 or 0) - (tab or 0), a, b, i, (t1, t1_e), (t2, t2_e), outside)
                     in_car_home = _pax_in_car(stops, len(stops) - 1)
                     if riders_ok(in_car_home):
                         tl, tl_e = leg2(last.location, loc)
@@ -3219,7 +3309,7 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                         tlh, tlh_e = leg2(last.location, home) if home else (None, False)
                         legs = [(tl, tl_e), (th, th_e), (tlh, tlh_e)]
                         earliest = last.end + timedelta(minutes=(tl or 0))
-                        start = _first_fit(earliest, day_end - timedelta(minutes=duration), duration, day_date, errand, now)
+                        start, outside = fit_hours(earliest, day_end - timedelta(minutes=duration))
                         # The kids aboard must be home by their bedtime bound. The
                         # earliest fit is the best case; later it is only worse.
                         late = late_kids(in_car_home, day_date,
@@ -3228,7 +3318,7 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                             bedtime_blocked.extend(n for n in late if n not in bedtime_blocked)
                             start = None
                         if start is not None:
-                            add('to_home_leg', start, legs, (tl or 0) + (th or 0) - (tlh or 0), last, None, len(stops) - 1, (tl, tl_e), (th, th_e))
+                            add('to_home_leg', start, legs, (tl or 0) + (th or 0) - (tlh or 0), last, None, len(stops) - 1, (tl, tl_e), (th, th_e), outside)
 
             if not candidates:
                 if not saw_day:
@@ -3239,6 +3329,10 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
                     reason = 'kids_bedtime'
                     who = ' and '.join(bedtime_blocked)
                     text = f"the only drive with room would get {who} home after bedtime"
+                elif hours_blocked and drivers_seen.issubset(hours_blocked):
+                    reason = 'errand_hours'
+                    who = ' and '.join(f"{name}'s" for name in hours_blocked.values())
+                    text = f"outside {who} errand hours"
                 if reason == 'no_driver' and once:
                     text = f"{getattr(driver_map.get(once), 'name', once)} has no drive in its window, or may not run it"
                 notes[eid] = {'reason': reason, 'text': text}
@@ -3251,6 +3345,7 @@ def insert_errands_globally(base_schedules, errands, drivers, trip_metadata=None
             ve = Event(id=eid, title=errand.get('title', ''), start=start, end=end, location=loc,
                        calendar_ids=[], source_event_ids=[], event_type="errand")
             routes[d_str][d_id].insert(int(best['insert_idx']) + 1, _Stop(ve, False))
+            places.add(loc)
             drv = driver_map[d_id]
             scheduled[d_str].append({
                 "id": eid,

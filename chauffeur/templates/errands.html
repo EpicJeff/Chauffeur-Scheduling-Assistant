@@ -156,6 +156,9 @@
             <p class="text-xs text-gray-500 mt-2">An errand never rides a drive home that would get a kid in later than this before kid quiet hours. A kid with a timed bedtime routine must be home by its first item instead. Steer the errand to override it.</p>
         </div>
         {% endcall %}
+        {% call settings_section('errand-habits', 'How people run errands') %}
+        {% include 'components/errand_habits.html' %}
+        {% endcall %}
         {% include 'components/errand_rules.html' %}
         {% include 'components/errand_learned.html' %}
         {% endcall %}
