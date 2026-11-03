@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The wall orb, one tab wide</title>
+<style>
+  :root { --ink:#1f1d2b; --muted:#6b6880; --faint:#9b98ad; --line:rgba(31,29,43,.08); --accent:#5b5bd6; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family: -apple-system, "SF Pro Text", Inter, Segoe UI, system-ui, sans-serif; background:#f3f2f7; color:var(--ink); padding:28px 20px 60px; }
+  h1 { font-size:22px; margin:0 0 6px; }
+  .sub { color:var(--muted); font-size:14px; margin:0 0 26px; max-width:900px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(390px, 390px)); gap:26px 28px; justify-content:center; }
+  .prof h3 { margin:0 0 4px; font-size:15px; }
+  .prof p { margin:0 0 10px; font-size:13px; color:var(--muted); }
+  .bar { position:relative; width:390px; height:84px; background:#fff; border-radius:0 0 40px 40px; border-top:1px solid var(--line); box-shadow:0 10px 30px rgba(31,29,43,.10); display:flex; align-items:flex-start; justify-content:space-between; padding:12px 18px 0 18px; font-size:11px; color:var(--faint); }
+  .bar div.t { display:flex; flex-direction:column; align-items:center; gap:4px; width:64px; flex:none; }
+  .bar .on { color:var(--ink); font-weight:600; }
+  .bar .i { width:24px; height:24px; border-radius:7px; background:currentColor; opacity:.25; }
+  .bar .on .i { opacity:1; background:var(--accent); }
+  .orb { flex:1; align-self:flex-start; margin:0 auto; width:44px; height:44px; max-width:44px; flex-basis:0; position:relative; top:-2px; display:flex; align-items:center; justify-content:center; border:1px solid rgb(255 255 255 / 0.22); border-radius:999px; color:#fff;
+    background: radial-gradient(120% 120% at 30% 25%, #a78bfa 0%, #6366f1 45%, #2563eb 100%);
+    box-shadow: 0 6px 22px rgb(79 70 229 / .45), 0 0 0 6px rgb(99 102 241 / .12); animation: breathe 4.5s ease-in-out infinite; }
+  .orb svg { width:20px; height:20px; }
+  .slot .orb { flex:none; margin:0; }
+  @keyframes breathe { 0%,100%{ box-shadow:0 6px 22px rgb(79 70 229 / .40), 0 0 0 5px rgb(99 102 241 / .10);} 50%{ box-shadow:0 6px 26px rgb(79 70 229 / .55), 0 0 0 9px rgb(99 102 241 / .05);} }
+  .dark .bar { background:#1a1f2a; border-top-color:rgba(255,255,255,.08); color:#7c8597; }
+  .dark .bar .on { color:#fff; }
+  .note { max-width:1240px; margin:30px auto 0; font-size:14px; color:var(--muted); line-height:1.6; }
+</style>
+</head>
+<body>
+<h1>The wall orb, one tab wide, edges anchored</h1>
+<p class="sub">Same orb as the wall panel: the radial violet-to-blue gradient, the hairline, the soft ring, the lightning glyph, the 4.5 s breath. The orb takes one tab's width, no more: the first tab and the orb sit at the edges and the rest spread evenly between.</p>
+
+<div class="grid">
+  <div class="prof"><h3>Adult driver / parent</h3><p>My Day · Plan · Household · Messages · More, then the orb.</p>
+    <div class="bar"><div class="t on"><div class="i"></div>My Day</div><div class="t"><div class="i"></div>Plan</div><div class="t"><div class="i"></div>Household</div><div class="t"><div class="i"></div>Messages</div><div class="t"><div class="i"></div>More</div>
+      <div class="t slot"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></div></div></div></div>
+
+  <div class="prof"><h3>Helper driver</h3><p>Two tabs. The orb only when a parent has granted the helper Argyle (their default scope has none).</p>
+    <div class="bar"><div class="t on"><div class="i"></div>My Day</div><div class="t"><div class="i"></div>Messages</div>
+      <div class="t slot"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></div></div></div></div>
+
+  <div class="prof"><h3>Navigator / Copilot</h3><p>Five tabs plus the orb.</p>
+    <div class="bar"><div class="t on"><div class="i"></div>Today</div><div class="t"><div class="i"></div>Plan</div><div class="t"><div class="i"></div>Tasks</div><div class="t"><div class="i"></div>Messages</div><div class="t"><div class="i"></div>More</div>
+      <div class="t slot"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></div></div></div></div>
+
+  <div class="prof dark"><h3>Dark mode</h3><p>The orb is the one thing that keeps its colour.</p>
+    <div class="bar"><div class="t on"><div class="i"></div>My Day</div><div class="t"><div class="i"></div>Plan</div><div class="t"><div class="i"></div>Household</div><div class="t"><div class="i"></div>Messages</div><div class="t"><div class="i"></div>More</div>
+      <div class="t slot"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></div></div></div></div>
+</div>
+
+<p class="note">Implementation note for later: the orb is one shared piece. The wall's button and CSS move out of ha_theme / control_center into a component both shells include, so the phone and the wall can never drift. On the phone it hides inside the Argyle conversation and while the overlay is open, the same way the wall's hides while its chat bar is open.</p>
+</body>
+</html>

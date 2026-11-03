@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Chauffeur PWA, reimagined: mockups and flows</title>
+<style>
+  :root { --ink:#1f1d2b; --muted:#6b6880; --faint:#9b98ad; --card:rgba(255,255,255,.62); --line:rgba(31,29,43,.08); --accent:#5b5bd6; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family: -apple-system, "SF Pro Text", Inter, Segoe UI, system-ui, sans-serif; background:linear-gradient(180deg,#fff0e6 0%, #f6eef7 42%, #eef0fb 100%); min-height:100vh; color:var(--ink); padding:40px 24px 80px; }
+  main { max-width:900px; margin:0 auto; }
+  h1 { font-size:40px; letter-spacing:-.03em; margin:0 0 8px; }
+  .lead { color:var(--muted); font-size:18px; margin:0 0 32px; max-width:640px; }
+  h2 { font-size:20px; margin:36px 0 12px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:12px; }
+  a.card { display:block; background:var(--card); border-radius:22px; padding:18px 20px; text-decoration:none; color:var(--ink); }
+  a.card:hover { background:#fff; }
+  a.card b { display:block; font-size:17px; margin-bottom:4px; }
+  a.card span { font-size:14px; color:var(--muted); }
+  .flow { background:var(--card); border-radius:22px; padding:18px 20px; margin-bottom:12px; }
+  .flow b { font-size:16px; }
+  .steps { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; align-items:center; }
+  .step { background:#fff; border-radius:12px; padding:8px 12px; font-size:14px; font-weight:600; }
+  .step.q { background:#ffe6cc; }
+  .step.g { background:#dcf3e8; }
+  .arrow { color:var(--faint); font-size:14px; }
+  .note { font-size:14px; color:var(--muted); line-height:1.6; margin-top:20px; }
+  code { background:rgba(31,29,43,.06); padding:1px 6px; border-radius:6px; font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>The PWA, reimagined</h1>
+  <p class="lead">Mockups approved in conversation on 2026-11-03, one per screen, and the flows between them. The design is written up in <code>docs/superpowers/specs/2026-11-03-pwa-reimagined-design.md</code>. Names and events in the mockups are placeholders.</p>
+
+  <h2>Screens</h2>
+  <div class="cards">
+    <a class="card" href="mockups/myday.html"><b>My Day</b><span>Three directions; A, the warm brief, is the one. Greeting, weather, Argyle's sentence, the hero, Needs you, the day collapsed. The speaker icon on the date line is dropped (decided after the builder check).</span></a>
+    <a class="card" href="mockups/tabbar.html"><b>The tab bar and the orb</b><span>The wall's orb at the far right, one slot wide, tabs from the left, edges anchored.</span></a>
+    <a class="card" href="mockups/argyle-overlay.html"><b>Argyle from anywhere</b><span>The Siri-shaped overlay (the third phone). The two summon options on that page are superseded by the tab bar page.</span></a>
+    <a class="card" href="mockups/household.html"><b>Household</b><span>Five cards, each a door; Chores tapped in.</span></a>
+    <a class="card" href="mockups/messages.html"><b>Messages</b><span>Signal's list, Messenger's thread, Argyle's asks as bubbles with buttons. "Note to self" is dropped.</span></a>
+    <a class="card" href="mockups/plan-and-drive.html"><b>Plan and the drive</b><span>Week strip with weather, the day's timeline, the drive before and on the road.</span></a>
+  </div>
+
+  <h2>Flows</h2>
+  <div class="flow"><b>Morning</b>
+    <div class="steps"><span class="step">Open the app</span><span class="arrow">then</span><span class="step">My Day brief</span><span class="arrow">then</span><span class="step">tap the hero</span><span class="arrow">then</span><span class="step">The drive, before</span><span class="arrow">then</span><span class="step">Start drive</span><span class="arrow">then</span><span class="step">On the road</span><span class="arrow">then</span><span class="step g">Arrived</span><span class="arrow">then</span><span class="step">My Day, hero moved on</span></div></div>
+  <div class="flow"><b>Something needs you</b>
+    <div class="steps"><span class="step">My Day</span><span class="arrow">then</span><span class="step q">Needs-you card</span><span class="arrow">then</span><span class="step">where the decision lives (review dialog · Household › Chores › To check · Plan day)</span><span class="arrow">then</span><span class="step">decide</span><span class="arrow">then</span><span class="step">Back, card gone</span></div></div>
+  <div class="flow"><b>Ask Argyle from anywhere</b>
+    <div class="steps"><span class="step">Any screen</span><span class="arrow">then</span><span class="step">tap or hold the orb</span><span class="arrow">then</span><span class="step">overlay: say or type</span><span class="arrow">then</span><span class="step">reply with buttons</span><span class="arrow">then</span><span class="step">tap a button or swipe down</span><span class="arrow">then</span><span class="step">same screen, exchange in Messages › Argyle</span></div></div>
+  <div class="flow"><b>Household</b>
+    <div class="steps"><span class="step">Household</span><span class="arrow">then</span><span class="step">a card</span><span class="arrow">then</span><span class="step">the thing in full, with a segment</span><span class="arrow">then</span><span class="step">Back</span></div></div>
+  <div class="flow"><b>Messages</b>
+    <div class="steps"><span class="step">Messages</span><span class="arrow">then</span><span class="step">a row</span><span class="arrow">then</span><span class="step">the thread</span><span class="arrow">then</span><span class="step">type · + photo · mic</span><span class="arrow">then</span><span class="step">Back</span></div></div>
+  <div class="flow"><b>Plan</b>
+    <div class="steps"><span class="step">Plan</span><span class="arrow">then</span><span class="step">a day on the strip</span><span class="arrow">then</span><span class="step">the day's timeline</span><span class="arrow">then</span><span class="step">a block</span><span class="arrow">then</span><span class="step">event details</span><span class="arrow">then</span><span class="step">Back</span></div>
+    <div class="steps"><span class="step">a leave-at strip</span><span class="arrow">then</span><span class="step">The drive, before</span></div></div>
+
+  <p class="note">The current app's screens, for comparison, are in <code>../pwa-audience-audit/current/</code>. The read-only inventory of what each current screen does, and what each mockup still has to place, is <code>current-state-inventory.md</code> beside this file.</p>
+</main>
+</body>
+</html>

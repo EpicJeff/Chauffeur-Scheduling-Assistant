@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Messages — clean and sparse</title>
+<style>
+  :root { --ink:#1f1d2b; --muted:#6b6880; --faint:#9b98ad; --card:rgba(255,255,255,.62); --line:rgba(31,29,43,.08); --accent:#5b5bd6; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family: -apple-system, "SF Pro Text", Inter, Segoe UI, system-ui, sans-serif; background:#f3f2f7; color:var(--ink); padding:28px 20px 60px; }
+  h1 { font-size:22px; margin:0 0 6px; }
+  .sub { color:var(--muted); font-size:14px; margin:0 0 26px; max-width:900px; }
+  .row { display:flex; gap:28px; flex-wrap:wrap; align-items:flex-start; justify-content:center; }
+  .opt { width:390px; }
+  .opt .tag { display:flex; align-items:center; gap:10px; margin:0 0 12px; }
+  .opt .letter { width:30px; height:30px; border-radius:50%; background:var(--ink); color:#fff; font-weight:700; display:flex; align-items:center; justify-content:center; font-size:14px; }
+  .opt h3 { margin:0; font-size:16px; }
+  .opt p.d { margin:4px 0 0; font-size:13px; color:var(--muted); }
+  .phone { width:390px; height:844px; border-radius:44px; overflow:hidden; position:relative; background:#fff; box-shadow:0 18px 50px rgba(31,29,43,.18); border:1px solid rgba(0,0,0,.06); }
+  .screen { position:absolute; inset:0; overflow-y:auto; padding:0 0 110px; scrollbar-width:none; background:#fff; }
+  .screen::-webkit-scrollbar { display:none; }
+  .status { height:54px; display:flex; align-items:center; justify-content:space-between; font-size:15px; font-weight:600; padding:0 28px; }
+  .hd { display:flex; align-items:center; justify-content:space-between; padding:8px 20px 6px; }
+  .hd .t { font-size:34px; font-weight:700; letter-spacing:-.03em; }
+  .hd .ico { display:flex; gap:10px; }
+  .hd .ico span { width:36px; height:36px; border-radius:50%; background:rgba(31,29,43,.05); display:flex; align-items:center; justify-content:center; font-size:16px; }
+  .search { margin:8px 20px 14px; background:rgba(31,29,43,.05); border-radius:12px; padding:10px 14px; font-size:15px; color:var(--faint); }
+  .lbl { font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); padding:10px 20px 6px; }
+  .conv { display:flex; align-items:center; gap:14px; padding:11px 20px; }
+  .conv .av { width:52px; height:52px; border-radius:50%; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:22px; color:#fff; font-weight:700; }
+  .conv .tx { flex:1; min-width:0; }
+  .conv .n { display:flex; justify-content:space-between; align-items:baseline; font-size:16px; font-weight:600; }
+  .conv .n small { font-size:13px; font-weight:400; color:var(--faint); }
+  .conv .p { font-size:14px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px; }
+  .conv .p.u { color:var(--ink); }
+  .conv .dot { width:10px; height:10px; border-radius:50%; background:var(--accent); flex-shrink:0; }
+  .conv .cnt { min-width:22px; height:22px; border-radius:11px; background:var(--accent); color:#fff; font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center; padding:0 7px; }
+  .moments { display:flex; gap:12px; padding:4px 20px 14px; overflow:hidden; }
+  .mo { width:62px; flex-shrink:0; text-align:center; font-size:11px; color:var(--muted); }
+  .mo .ring { width:58px; height:58px; border-radius:50%; padding:3px; background:linear-gradient(135deg,#8a7cff,#ffb36b); margin:0 auto 4px; }
+  .mo .ring i { display:block; width:100%; height:100%; border-radius:50%; background:#d9d6ea; border:2px solid #fff; }
+  .mo.add .ring { background:rgba(31,29,43,.08); } .mo.add .ring i { background:#fff; }
+  /* thread */
+  .thd { display:flex; align-items:center; gap:12px; padding:6px 16px 10px; }
+  .thd .bk { font-size:22px; color:var(--accent); }
+  .thd .av { width:38px; height:38px; border-radius:50%; background:#7bc0a7; }
+  .thd .nm { font-size:17px; font-weight:600; }
+  .thd .st { font-size:12px; color:var(--muted); }
+  .day { text-align:center; font-size:12px; color:var(--faint); margin:14px 0 8px; }
+  .msg { display:flex; padding:2px 16px; }
+  .msg .b { max-width:78%; padding:9px 13px; border-radius:20px; font-size:16px; line-height:1.35; background:rgba(31,29,43,.06); color:var(--ink); }
+  .msg.me { justify-content:flex-end; } .msg.me .b { background:var(--accent); color:#fff; }
+  .msg .who { font-size:11px; color:var(--faint); margin:8px 0 2px 14px; }
+  .msg .b.pic { padding:4px; background:transparent; }
+  .msg .b.pic img, .msg .b.pic i { display:block; width:200px; height:140px; border-radius:16px; background:#cfd6e6; }
+  .msg .b.arg { background:#fff; border:1px solid var(--line); }
+  .msg .b.arg .acts { display:flex; gap:8px; margin-top:8px; }
+  .msg .b.arg .acts span { font-size:13px; font-weight:600; padding:7px 12px; border-radius:999px; background:var(--ink); color:#fff; }
+  .msg .b.arg .acts span.s { background:rgba(31,29,43,.06); color:var(--ink); }
+  .compose { position:absolute; left:0; right:0; bottom:84px; display:flex; align-items:center; gap:10px; padding:10px 14px; background:#fff; }
+  .compose .plus { width:36px; height:36px; border-radius:50%; background:rgba(31,29,43,.05); display:flex; align-items:center; justify-content:center; }
+  .compose .in { flex:1; border-radius:22px; background:rgba(31,29,43,.05); padding:11px 16px; font-size:16px; color:var(--faint); }
+  .compose .mic { width:36px; height:36px; border-radius:50%; background:var(--accent); color:#fff; display:flex; align-items:center; justify-content:center; }
+  .tabbar { position:absolute; left:0; right:0; bottom:0; height:84px; background:rgba(255,255,255,.85); backdrop-filter:blur(14px); border-top:1px solid var(--line); display:flex; justify-content:space-around; align-items:flex-start; padding-top:12px; font-size:11px; color:var(--faint); }
+  .tabbar div { display:flex; flex-direction:column; align-items:center; gap:4px; }
+  .tabbar .on { color:var(--ink); font-weight:600; }
+  .tabbar .i { width:24px; height:24px; border-radius:7px; background:currentColor; opacity:.25; }
+  .tabbar .on .i { opacity:1; background:var(--accent); }
+  .q { max-width:1240px; margin:30px auto 0; font-size:14px; color:var(--muted); line-height:1.6; }
+</style>
+</head>
+<body>
+<h1>Messages — Signal's list, Messenger's thread</h1>
+<p class="sub">No cards, no separators, no borders. A conversation is an avatar, a name, one preview line and a time. Unread is weight plus a dot. Event threads sit with the rest. Argyle is a conversation, not a floating button.</p>
+
+<div class="row">
+
+  <div class="opt">
+    <div class="tag"><div class="letter">1</div><div><h3>Conversations</h3><p class="d">Pinned first, then by last message. Moments as a quiet row up top.</p></div></div>
+    <div class="phone">
+      <div class="screen">
+        <div class="status"><span>3:12</span><span>●●● ▲ ▮</span></div>
+        <div class="hd"><div class="t">Messages</div><div class="ico"><span>📷</span><span>✎</span></div></div>
+        <div class="search">Search</div>
+
+        <div class="moments">
+          <div class="mo add"><div class="ring"><i></i></div>Add</div>
+          <div class="mo"><div class="ring"><i></i></div>Soccer</div>
+          <div class="mo"><div class="ring"><i></i></div>Sam</div>
+          <div class="mo"><div class="ring"><i></i></div>Lorena</div>
+          <div class="mo"><div class="ring"><i></i></div>Halloween</div>
+        </div>
+
+        <div class="lbl">Pinned</div>
+        <div class="conv"><div class="av" style="background:#8aa6e8">👨‍👩‍👧‍👦</div><div class="tx"><div class="n">Family <small>2m</small></div><div class="p u">Lorena: I can grab Sam if practice runs long</div></div><div class="cnt">2</div></div>
+        <div class="conv"><div class="av" style="background:linear-gradient(135deg,#8a7cff,#ffb36b)">A</div><div class="tx"><div class="n">Argyle <small>28m</small></div><div class="p">Kate's Thursday pickup still needs a driver. Want me to ask Grandma?</div></div></div>
+
+        <div class="lbl">Chats</div>
+        <div class="conv"><div class="av" style="background:#7bc0a7">L</div><div class="tx"><div class="n">Lorena <small>9:40 AM</small></div><div class="p u">Did you move the dentist?</div></div><div class="dot"></div></div>
+        <div class="conv"><div class="av" style="background:#f2b07a">⚽</div><div class="tx"><div class="n">Soccer practice · today <small>Tue</small></div><div class="p">You: 📷 3 photos</div></div></div>
+        <div class="conv"><div class="av" style="background:#c7c3e8">M</div><div class="tx"><div class="n">Maya <small>Mon</small></div><div class="p">Maya: can u get me at 3:15 instead</div></div></div>
+        <div class="conv"><div class="av" style="background:#e8b4c8">G</div><div class="tx"><div class="n">Grandma Ruth <small>Sun</small></div><div class="p">You: Thank you for Thursday!</div></div></div>
+        <div class="conv"><div class="av" style="background:#b8c4d6">🎃</div><div class="tx"><div class="n">Halloween <small>Oct 31</small></div><div class="p">Sam: 📷 photo</div></div></div>
+        <div class="conv"><div class="av" style="background:#d6d2c4">📝</div><div class="tx"><div class="n">Note to self <small>Oct 28</small></div><div class="p">Costco: paper towels, dog food</div></div></div>
+      </div>
+      <div class="tabbar"><div><div class="i"></div>My Day</div><div><div class="i"></div>Plan</div><div><div class="i"></div>Household</div><div class="on"><div class="i"></div>Messages</div><div><div class="i"></div>More</div></div>
+    </div>
+  </div>
+
+  <div class="opt">
+    <div class="tag"><div class="letter">2</div><div><h3>A thread</h3><p class="d">Family chat. Argyle's asks are a bubble with buttons, in the same stream.</p></div></div>
+    <div class="phone">
+      <div class="screen">
+        <div class="status"><span>3:12</span><span>●●● ▲ ▮</span></div>
+        <div class="thd"><div class="bk">‹</div><div class="av"></div><div><div class="nm">Family</div><div class="st">Jeff, Lorena, Maya, Sam</div></div></div>
+
+        <div class="day">Today</div>
+        <div class="msg"><div><div class="who">Maya</div><div class="b">practice might go late, coach said</div></div></div>
+        <div class="msg me"><div class="b">ok, I'll wait in the lot</div></div>
+        <div class="msg"><div><div class="who">Argyle</div><div class="b arg">If Maya's practice runs to 5:30, Sam's piano pickup lands on Lorena. Want me to swap it now?<div class="acts"><span>Swap it</span><span class="s">Not yet</span></div></div></div></div>
+        <div class="msg"><div><div class="who">Lorena</div><div class="b">I can grab Sam if practice runs long</div></div></div>
+        <div class="msg me"><div class="b pic"><i></i></div></div>
+        <div class="msg me"><div class="b">warmups 🙂</div></div>
+
+        <div class="compose"><div class="plus">+</div><div class="in">Message</div><div class="mic">🎤</div></div>
+      </div>
+      <div class="tabbar"><div><div class="i"></div>My Day</div><div><div class="i"></div>Plan</div><div><div class="i"></div>Household</div><div class="on"><div class="i"></div>Messages</div><div><div class="i"></div>More</div></div>
+    </div>
+  </div>
+
+</div>
+
+<p class="q">Guesses to react to: the Moments row at the top (Signal's stories, but ours are event albums); Argyle pinned as a conversation and the floating Argyle button gone from this tab; "Note to self" as a conversation; the compose bar with + for photos and a mic for voice, no send button until you type.</p>
+</body>
+</html>

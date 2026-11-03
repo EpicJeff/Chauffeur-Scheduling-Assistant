@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>My Day — three directions</title>
+<style>
+  :root { --ink:#1f1d2b; --muted:#6b6880; --faint:#9b98ad; --card:rgba(255,255,255,.62); --line:rgba(31,29,43,.08); --accent:#5b5bd6; --green:#1f7a5c; --amber:#b86b00; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family: -apple-system, "SF Pro Text", Inter, Segoe UI, system-ui, sans-serif; background:#f3f2f7; color:var(--ink); padding:28px 20px 60px; }
+  h1 { font-size:22px; margin:0 0 6px; }
+  .sub { color:var(--muted); font-size:14px; margin:0 0 26px; }
+  .row { display:flex; gap:28px; flex-wrap:wrap; align-items:flex-start; justify-content:center; }
+  .opt { width:390px; cursor:pointer; }
+  .opt .tag { display:flex; align-items:center; gap:10px; margin:0 0 12px; }
+  .opt .letter { width:30px; height:30px; border-radius:50%; background:var(--ink); color:#fff; font-weight:700; display:flex; align-items:center; justify-content:center; font-size:14px; }
+  .opt h3 { margin:0; font-size:16px; }
+  .opt p.d { margin:4px 0 0; font-size:13px; color:var(--muted); }
+  .opt.selected .phone { outline:4px solid var(--accent); outline-offset:4px; }
+  .phone { width:390px; height:844px; border-radius:44px; overflow:hidden; position:relative; background:#fff; box-shadow:0 18px 50px rgba(31,29,43,.18); border:1px solid rgba(0,0,0,.06); }
+  .screen { position:absolute; inset:0; overflow-y:auto; padding:0 20px 110px; scrollbar-width:none; }
+  .screen::-webkit-scrollbar { display:none; }
+  .status { height:54px; display:flex; align-items:center; justify-content:space-between; font-size:15px; font-weight:600; padding:0 8px; }
+  .topline { display:flex; align-items:center; justify-content:space-between; font-size:15px; color:var(--muted); margin:8px 0 26px; }
+  .topline .dot { width:34px; height:34px; border-radius:50%; background:rgba(255,255,255,.7); display:flex; align-items:center; justify-content:center; font-size:14px; }
+  .greet { font-size:52px; line-height:1; font-weight:700; letter-spacing:-.03em; margin:0; }
+  .greet .n { display:block; }
+  .weather { position:absolute; right:22px; top:124px; text-align:center; }
+  .weather .t { font-size:34px; font-weight:600; letter-spacing:-.02em; }
+  .weather .w { font-size:12px; color:var(--muted); }
+  .summary { color:var(--muted); font-size:17px; line-height:1.4; margin:22px 0 26px; max-width:300px; }
+  .card { background:var(--card); border-radius:22px; padding:16px 18px; margin:0 0 12px; backdrop-filter: blur(6px); }
+  .hero { background:#fff; box-shadow:0 10px 30px rgba(91,91,214,.12); }
+  .hero .kicker { font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); }
+  .hero .big { font-size:30px; font-weight:700; letter-spacing:-.02em; margin:6px 0 2px; }
+  .hero .who { font-size:16px; color:var(--ink); }
+  .hero .meta { font-size:13px; color:var(--muted); margin-top:4px; }
+  .hero .acts { display:flex; gap:10px; margin-top:14px; }
+  .btn { flex:1; text-align:center; padding:13px 0; border-radius:14px; font-weight:600; font-size:15px; }
+  .btn.p { background:var(--ink); color:#fff; }
+  .btn.s { background:rgba(31,29,43,.06); color:var(--ink); }
+  .sect { font-size:18px; font-weight:600; margin:22px 0 12px; display:flex; justify-content:space-between; align-items:baseline; }
+  .sect small { font-size:13px; color:var(--accent); font-weight:600; }
+  .att { display:flex; align-items:center; gap:14px; }
+  .att .ic { width:40px; height:40px; border-radius:14px; display:flex; align-items:center; justify-content:center; font-size:19px; background:rgba(31,29,43,.05); flex-shrink:0; }
+  .att .tx { flex:1; min-width:0; }
+  .att .t1 { font-size:15px; font-weight:600; }
+  .att .t2 { font-size:13px; color:var(--muted); margin-top:2px; }
+  .att .chev { color:var(--faint); font-size:18px; }
+  .ev { display:flex; justify-content:space-between; align-items:center; padding:14px 18px; background:var(--card); border-radius:18px; margin-bottom:8px; font-size:16px; }
+  .ev .tm { color:var(--muted); font-size:15px; }
+  .fade { position:relative; max-height:150px; overflow:hidden; }
+  .fade::after { content:""; position:absolute; left:0; right:0; bottom:0; height:70px; background:linear-gradient(to bottom, rgba(243,242,247,0), var(--bg-end, #eef0fb)); }
+  .expand { text-align:center; color:var(--accent); font-weight:600; font-size:14px; padding:6px 0 0; }
+  .tabbar { position:absolute; left:0; right:0; bottom:0; height:84px; background:rgba(255,255,255,.85); backdrop-filter:blur(14px); border-top:1px solid var(--line); display:flex; justify-content:space-around; align-items:flex-start; padding-top:12px; font-size:11px; color:var(--faint); }
+  .tabbar div { display:flex; flex-direction:column; align-items:center; gap:4px; }
+  .tabbar .on { color:var(--ink); font-weight:600; }
+  .tabbar .i { width:24px; height:24px; border-radius:7px; background:currentColor; opacity:.25; }
+  .tabbar .on .i { opacity:1; background:var(--accent); }
+  /* A: warm brief */
+  .a .screen { background:linear-gradient(180deg,#fff0e6 0%, #f6eef7 42%, #eef0fb 100%); --bg-end:#eef0fb; }
+  /* B: tiles board */
+  .b .screen { background:linear-gradient(180deg,#eaf4ff 0%, #f4f3fb 50%, #f7f6f3 100%); --bg-end:#f7f6f3; }
+  .b .greet { font-size:30px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .grid .span { grid-column:1 / -1; }
+  .tile { background:var(--card); border-radius:22px; padding:16px; min-height:118px; }
+  .tile .k { font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); }
+  .tile .v { font-size:26px; font-weight:700; letter-spacing:-.02em; margin-top:6px; }
+  .tile .m { font-size:13px; color:var(--muted); margin-top:4px; }
+  /* C: Argyle-led */
+  .c .screen { background:linear-gradient(180deg,#fdf6ec 0%, #f5f2ee 50%, #eef1f4 100%); --bg-end:#eef1f4; }
+  .c .greet { font-size:36px; }
+  .argyle { display:flex; gap:12px; align-items:flex-start; margin:18px 0 22px; }
+  .argyle .av { width:38px; height:38px; border-radius:50%; background:linear-gradient(135deg,#8a7cff,#ffb36b); flex-shrink:0; }
+  .argyle .bub { font-size:17px; line-height:1.45; color:var(--ink); }
+  .argyle .bub b { font-weight:600; }
+  .argyle .chips { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  .chip { font-size:13px; padding:7px 12px; border-radius:999px; background:#fff; border:1px solid var(--line); color:var(--ink); }
+  .note { max-width:1240px; margin:30px auto 0; font-size:13px; color:var(--muted); line-height:1.5; }
+</style>
+</head>
+<body>
+<h1>My Day — which direction feels like something you'd turn to?</h1>
+<p class="sub">Same content in all three: greeting, weather, next thing up, what needs you, the day's list tucked away. Only the presentation differs. Click one to pick it, then tell me in the terminal what's right and wrong about it.</p>
+
+<div class="row">
+
+  <!-- A -->
+  <div class="opt a" data-choice="a" onclick="toggleSelect(this)">
+    <div class="tag"><div class="letter">A</div><div><h3>The warm brief</h3><p class="d">Hero's shape: big greeting, weather, one sentence, then cards.</p></div></div>
+    <div class="phone">
+      <div class="screen">
+        <div class="status"><span>3:12</span><span>●●● ▲ ▮</span></div>
+        <div class="topline"><div class="dot">🔊</div><span>Tuesday, November 3rd</span><div class="dot">✎</div></div>
+        <div style="position:relative">
+          <h2 class="greet">Good<br>afternoon,<br><span class="n">Jeff</span></h2>
+          <div class="weather"><div style="font-size:30px">⛅</div><div class="t">71°</div><div class="w">clearing by 5</div></div>
+        </div>
+        <p class="summary">Two drives this afternoon, and Sam finished the recycling.</p>
+
+        <div class="card hero">
+          <div class="kicker">Next departure · in 28 min</div>
+          <div class="big">Leave at 3:40</div>
+          <div class="who">Take Maya to soccer practice</div>
+          <div class="meta">📍 Riverside fields · 18 min drive · the Highlander</div>
+          <div class="acts"><div class="btn p">Start drive</div><div class="btn s">Ask for cover</div></div>
+        </div>
+
+        <div class="sect">Needs you <small>3</small></div>
+        <div class="card att"><div class="ic">✅</div><div class="tx"><div class="t1">Sam finished recycling</div><div class="t2">15 points waiting on your yes</div></div><div class="chev">›</div></div>
+        <div class="card att"><div class="ic">🚗</div><div class="tx"><div class="t1">Kate's pickup needs a driver</div><div class="t2">Thursday 5:10 · piano · nobody's free yet</div></div><div class="chev">›</div></div>
+        <div class="card att"><div class="ic">🛒</div><div class="tx"><div class="t1">Shop day is tomorrow</div><div class="t2">12 things on the list · Kroger</div></div><div class="chev">›</div></div>
+
+        <div class="sect">Your day <small>6 things · 9am – 6:30pm</small></div>
+        <div class="fade">
+          <div class="ev"><span>1:1 Akhil</span><span class="tm">9:00am</span></div>
+          <div class="ev"><span>⚽ Maya · Soccer practice</span><span class="tm">4:00pm</span></div>
+          <div class="ev"><span>🎹 Sam · Piano</span><span class="tm">5:30pm</span></div>
+          <div class="ev"><span>Dinner at home</span><span class="tm">6:30pm</span></div>
+        </div>
+        <div class="expand">Show the whole day ⌄</div>
+      </div>
+      <div class="tabbar"><div class="on"><div class="i"></div>My Day</div><div><div class="i"></div>Plan</div><div><div class="i"></div>Household</div><div><div class="i"></div>Messages</div><div><div class="i"></div>More</div></div>
+    </div>
+  </div>
+
+  <!-- B -->
+  <div class="opt b" data-choice="b" onclick="toggleSelect(this)">
+    <div class="tag"><div class="letter">B</div><div><h3>The pocket board</h3><p class="d">The wall-panel Home board, shrunk to one hand: tiles, with the hero spanning.</p></div></div>
+    <div class="phone">
+      <div class="screen">
+        <div class="status"><span>3:12</span><span>●●● ▲ ▮</span></div>
+        <div class="topline"><span>Tuesday, Nov 3</span><div class="dot">👤</div></div>
+        <h2 class="greet">Good afternoon, Jeff</h2>
+        <p class="summary" style="margin:8px 0 18px;font-size:15px">Two drives this afternoon.</p>
+
+        <div class="grid">
+          <div class="tile span card hero" style="margin:0">
+            <div class="kicker">Next up · in 28 min</div>
+            <div class="big">Leave at 3:40</div>
+            <div class="who">Maya → Soccer practice</div>
+            <div class="meta">Riverside fields · 18 min · Highlander</div>
+            <div class="acts"><div class="btn p">Start drive</div><div class="btn s">Ask for cover</div></div>
+          </div>
+          <div class="tile"><div class="k">Weather</div><div class="v">71° ⛅</div><div class="m">clearing by 5</div></div>
+          <div class="tile"><div class="k">Needs your yes</div><div class="v">1</div><div class="m">Sam · recycling · 15 pts</div></div>
+          <div class="tile"><div class="k">Needs a driver</div><div class="v">Thu 5:10</div><div class="m">Kate's piano pickup</div></div>
+          <div class="tile"><div class="k">Shop day</div><div class="v">Tomorrow</div><div class="m">12 on the list</div></div>
+          <div class="tile span" style="min-height:0"><div class="k">Who's where</div><div class="m" style="margin-top:8px;font-size:14px">🏫 Maya at school · 🏠 Sam home · 🏢 Lorena at work</div></div>
+        </div>
+
+        <div class="sect">Your day <small>6 things</small></div>
+        <div class="fade">
+          <div class="ev"><span>1:1 Akhil</span><span class="tm">9:00am</span></div>
+          <div class="ev"><span>⚽ Maya · Soccer practice</span><span class="tm">4:00pm</span></div>
+          <div class="ev"><span>🎹 Sam · Piano</span><span class="tm">5:30pm</span></div>
+        </div>
+        <div class="expand">Show the whole day ⌄</div>
+      </div>
+      <div class="tabbar"><div class="on"><div class="i"></div>My Day</div><div><div class="i"></div>Plan</div><div><div class="i"></div>Household</div><div><div class="i"></div>Messages</div><div><div class="i"></div>More</div></div>
+    </div>
+  </div>
+
+  <!-- C -->
+  <div class="opt c" data-choice="c" onclick="toggleSelect(this)">
+    <div class="tag"><div class="letter">C</div><div><h3>Argyle walks you in</h3><p class="d">The brief is Argyle speaking, with quick replies; cards sit under the words.</p></div></div>
+    <div class="phone">
+      <div class="screen">
+        <div class="status"><span>3:12</span><span>●●● ▲ ▮</span></div>
+        <div class="topline"><span>Tuesday, November 3rd</span><span>71° ⛅</span></div>
+        <h2 class="greet">Good afternoon, Jeff</h2>
+        <div class="argyle">
+          <div class="av"></div>
+          <div>
+            <div class="bub">You leave at <b>3:40</b> to get Maya to soccer. Sam finished the recycling and wants his points, and <b>Kate's Thursday pickup</b> still has no driver. Shop day is tomorrow.</div>
+            <div class="chips"><span class="chip">Approve Sam's points</span><span class="chip">Find a driver</span><span class="chip">Read it to me</span></div>
+          </div>
+        </div>
+
+        <div class="card hero">
+          <div class="kicker">Next departure · in 28 min</div>
+          <div class="big">Leave at 3:40</div>
+          <div class="who">Take Maya to soccer practice</div>
+          <div class="meta">📍 Riverside fields · 18 min drive · the Highlander</div>
+          <div class="acts"><div class="btn p">Start drive</div><div class="btn s">Ask for cover</div></div>
+        </div>
+
+        <div class="sect">Needs you <small>3</small></div>
+        <div class="card att"><div class="ic">✅</div><div class="tx"><div class="t1">Sam finished recycling</div><div class="t2">15 points waiting on your yes</div></div><div class="chev">›</div></div>
+        <div class="card att"><div class="ic">🚗</div><div class="tx"><div class="t1">Kate's pickup needs a driver</div><div class="t2">Thursday 5:10 · piano</div></div><div class="chev">›</div></div>
+
+        <div class="sect">Your day <small>6 things</small></div>
+        <div class="fade">
+          <div class="ev"><span>1:1 Akhil</span><span class="tm">9:00am</span></div>
+          <div class="ev"><span>⚽ Maya · Soccer practice</span><span class="tm">4:00pm</span></div>
+          <div class="ev"><span>🎹 Sam · Piano</span><span class="tm">5:30pm</span></div>
+        </div>
+        <div class="expand">Show the whole day ⌄</div>
+      </div>
+      <div class="tabbar"><div class="on"><div class="i"></div>My Day</div><div><div class="i"></div>Plan</div><div><div class="i"></div>Household</div><div><div class="i"></div>Messages</div><div><div class="i"></div>More</div></div>
+    </div>
+  </div>
+
+</div>
+
+<p class="note">Names and events are placeholders. All three share one card vocabulary (soft translucent cards, no borders, 22px corners) so the Household and Messages screens can inherit whichever you pick. The "Your day" list collapses by default in every option; tap or pull to open the full timeline you have today.</p>
+</body>
+</html>

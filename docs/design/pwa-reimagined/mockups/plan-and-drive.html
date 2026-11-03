@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Plan and the drive</title>
+<style>
+  :root { --ink:#1f1d2b; --muted:#6b6880; --faint:#9b98ad; --card:rgba(255,255,255,.62); --line:rgba(31,29,43,.08); --accent:#5b5bd6; --green:#1f7a5c; --amber:#b86b00; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family: -apple-system, "SF Pro Text", Inter, Segoe UI, system-ui, sans-serif; background:#f3f2f7; color:var(--ink); padding:28px 20px 60px; }
+  h1 { font-size:22px; margin:0 0 6px; }
+  .sub { color:var(--muted); font-size:14px; margin:0 0 26px; max-width:960px; }
+  .row { display:flex; gap:28px; flex-wrap:wrap; align-items:flex-start; justify-content:center; }
+  .opt { width:390px; }
+  .opt .tag { display:flex; align-items:center; gap:10px; margin:0 0 12px; }
+  .opt .letter { width:30px; height:30px; border-radius:50%; background:var(--ink); color:#fff; font-weight:700; display:flex; align-items:center; justify-content:center; font-size:14px; }
+  .opt h3 { margin:0; font-size:16px; }
+  .opt p.d { margin:4px 0 0; font-size:13px; color:var(--muted); }
+  .phone { width:390px; height:844px; border-radius:44px; overflow:hidden; position:relative; background:#fff; box-shadow:0 18px 50px rgba(31,29,43,.18); border:1px solid rgba(0,0,0,.06); }
+  .screen { position:absolute; inset:0; overflow-y:auto; padding:0 20px 110px; scrollbar-width:none; background:linear-gradient(180deg,#fff0e6 0%, #f6eef7 42%, #eef0fb 100%); }
+  .screen::-webkit-scrollbar { display:none; }
+  .status { height:54px; display:flex; align-items:center; justify-content:space-between; font-size:15px; font-weight:600; padding:0 8px; }
+  .title { font-size:34px; font-weight:700; letter-spacing:-.03em; margin:14px 0 2px; display:flex; justify-content:space-between; align-items:center; }
+  .title small { font-size:14px; color:var(--accent); font-weight:600; }
+  .lead { color:var(--muted); font-size:16px; margin:0 0 16px; }
+  .card { background:var(--card); border-radius:22px; padding:16px 18px; margin:0 0 12px; }
+  /* plan */
+  .people { display:flex; gap:8px; margin:0 0 16px; overflow:hidden; }
+  .pp { display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600; padding:6px 10px 6px 6px; border-radius:999px; background:rgba(31,29,43,.05); color:var(--muted); white-space:nowrap; }
+  .pp i { width:22px; height:22px; border-radius:50%; background:#c7c3e8; display:block; }
+  .pp.on { background:#fff; color:var(--ink); box-shadow:0 1px 4px rgba(31,29,43,.1); }
+  .week { display:flex; justify-content:space-between; margin:0 0 18px; }
+  .dy { text-align:center; width:44px; font-size:12px; color:var(--faint); }
+  .dy b { display:block; width:36px; height:36px; line-height:36px; border-radius:50%; margin:4px auto 4px; font-size:16px; font-weight:600; color:var(--ink); }
+  .dy.on b { background:var(--accent); color:#fff; }
+  .dy .w { font-size:13px; }
+  .dy .cnt { display:inline-block; min-width:16px; height:16px; border-radius:8px; background:rgba(31,29,43,.08); font-size:10px; line-height:16px; color:var(--muted); }
+  .tl { position:relative; padding-left:54px; }
+  .tl .hr { position:relative; height:66px; }
+  .tl .hr::before { content:attr(data-h); position:absolute; left:-54px; top:-8px; font-size:12px; color:var(--faint); width:44px; text-align:right; }
+  .tl .hr::after { content:""; position:absolute; left:0; right:0; top:0; border-top:1px solid var(--line); }
+  .ev { position:absolute; left:0; right:0; border-radius:14px; padding:8px 12px; font-size:14px; font-weight:600; color:#fff; display:flex; justify-content:space-between; gap:8px; }
+  .ev small { font-weight:500; opacity:.85; font-size:12px; }
+  .now { position:absolute; left:-54px; right:0; border-top:2px solid #e0544f; }
+  .now::before { content:"3:12"; position:absolute; left:0; top:-8px; font-size:11px; color:#e0544f; font-weight:600; }
+  .lane { display:flex; gap:6px; }
+  .tlw { position:absolute; right:-6px; top:-14px; font-size:14px; }
+  /* drive */
+  .back { font-size:15px; color:var(--accent); font-weight:600; margin-top:10px; }
+  .leave { background:#fff; box-shadow:0 10px 30px rgba(91,91,214,.12); }
+  .leave .k { font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); }
+  .leave .t { font-size:56px; font-weight:700; letter-spacing:-.03em; line-height:1; margin:6px 0 4px; }
+  .leave .m { font-size:14px; color:var(--muted); }
+  .stops { margin:6px 0 4px; }
+  .stop { display:flex; gap:12px; padding:8px 0; }
+  .stop .dot { width:12px; height:12px; border-radius:50%; border:2px solid var(--accent); margin-top:5px; flex-shrink:0; background:#fff; }
+  .stop .dot.f { background:var(--accent); }
+  .stop .l { width:2px; background:var(--line); margin-left:5px; }
+  .stop .t1 { font-size:16px; font-weight:600; }
+  .stop .t2 { font-size:13px; color:var(--muted); }
+  .k2 { font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); margin:10px 0 8px; }
+  .chips { display:flex; gap:8px; flex-wrap:wrap; }
+  .ch { display:flex; align-items:center; gap:8px; padding:9px 14px 9px 9px; border-radius:999px; background:#fff; font-size:15px; font-weight:600; box-shadow:0 1px 4px rgba(31,29,43,.08); }
+  .ch i { width:26px; height:26px; border-radius:50%; background:#c7c3e8; display:block; }
+  .ch.on { background:var(--ink); color:#fff; }
+  .ch.pk { padding:9px 14px; }
+  .ch.pk.on { background:#dcf3e8; color:var(--green); }
+  .big { width:100%; text-align:center; padding:18px 0; border-radius:18px; font-weight:700; font-size:18px; margin-top:14px; }
+  .big.p { background:var(--ink); color:#fff; }
+  .big.g { background:var(--green); color:#fff; }
+  .big.s { background:rgba(31,29,43,.06); color:var(--ink); padding:14px 0; font-size:16px; margin-top:10px; }
+  .nav3 { display:flex; gap:10px; margin:0 0 6px; }
+  .nav3 div { flex:1; text-align:center; padding:14px 0; border-radius:16px; background:#fff; font-size:13px; font-weight:600; box-shadow:0 1px 4px rgba(31,29,43,.08); }
+  .nav3 div b { display:block; font-size:22px; margin-bottom:2px; }
+  .tell { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .tell div { padding:12px; border-radius:14px; background:#fff; font-size:14px; font-weight:600; box-shadow:0 1px 4px rgba(31,29,43,.08); }
+  .eta { display:flex; justify-content:space-between; align-items:baseline; }
+  .eta b { font-size:40px; letter-spacing:-.02em; }
+  .tabbar { position:absolute; left:0; right:0; bottom:0; height:84px; background:rgba(255,255,255,.85); backdrop-filter:blur(14px); border-top:1px solid var(--line); display:flex; justify-content:space-between; align-items:flex-start; padding:12px 18px 0; font-size:11px; color:var(--faint); }
+  .tabbar div { display:flex; flex-direction:column; align-items:center; gap:4px; width:52px; }
+  .tabbar .on { color:var(--ink); font-weight:600; }
+  .tabbar .i { width:24px; height:24px; border-radius:7px; background:currentColor; opacity:.25; }
+  .tabbar .on .i { opacity:1; background:var(--accent); }
+  .orb { width:44px; height:44px; border-radius:999px; border:1px solid rgb(255 255 255 / .22); background:radial-gradient(120% 120% at 30% 25%, #a78bfa 0%, #6366f1 45%, #2563eb 100%); box-shadow:0 6px 22px rgb(79 70 229 / .45), 0 0 0 6px rgb(99 102 241 / .12); display:flex; align-items:center; justify-content:center; color:#fff; margin-top:-2px; }
+  .orb svg { width:20px; height:20px; }
+  .q { max-width:1240px; margin:30px auto 0; font-size:14px; color:var(--muted); line-height:1.6; }
+</style>
+</head>
+<body>
+<h1>Plan and the drive, same treatment</h1>
+<p class="sub">Plan is the whole family's week, one day at a time, with people as filters and the weather on each day. The drive is one sheet, two moments: before you pull out, and on the road.</p>
+
+<div class="row">
+
+  <div class="opt">
+    <div class="tag"><div class="letter">1</div><div><h3>Plan</h3><p class="d">Week strip, a day's timeline, people as filters. Argyle's line says what the day is.</p></div></div>
+    <div class="phone">
+      <div class="screen">
+        <div class="status"><span>3:12</span><span>●●● ▲ ▮</span></div>
+        <div class="title">Plan <small>Today</small></div>
+        <p class="lead">Tuesday is two drives and dinner at home.</p>
+        <div class="people"><span class="pp on"><i style="background:#8aa6e8"></i>Everyone</span><span class="pp"><i style="background:#7bc0a7"></i>Lorena</span><span class="pp"><i style="background:#c7c3e8"></i>Maya</span><span class="pp"><i style="background:#f2b07a"></i>Sam</span><span class="pp"><i style="background:#e8b4c8"></i>Kate</span></div>
+        <div class="week">
+          <div class="dy">S<b>1</b><span class="w">☀️</span></div>
+          <div class="dy">M<b>2</b><span class="w">🌤</span></div>
+          <div class="dy on">T<b>3</b><span class="w">⛅</span></div>
+          <div class="dy">W<b>4</b><span class="w">🌧</span></div>
+          <div class="dy">T<b>5</b><span class="w">🌧</span></div>
+          <div class="dy">F<b>6</b><span class="w">☀️</span></div>
+          <div class="dy">S<b>7</b><span class="w">☀️</span></div>
+        </div>
+        <div class="tl">
+          <div class="hr" data-h="9 AM"><div class="ev" style="top:4px;height:40px;background:#8aa6e8">1:1 Akhil <small>Jeff</small></div></div>
+          <div class="hr" data-h="10 AM"></div>
+          <div class="hr" data-h="11 AM"></div>
+          <div class="hr" data-h="12 PM"></div>
+          <div class="hr" data-h="1 PM"></div>
+          <div class="hr" data-h="2 PM"></div>
+          <div class="hr" data-h="3 PM"><div class="now" style="top:14px"></div><div class="ev" style="top:44px;height:22px;background:rgba(91,91,214,.18);color:var(--accent);padding:3px 12px;font-size:12px">🚗 Leave 3:40 · Jeff drives Maya</div></div>
+          <div class="hr" data-h="4 PM"><div class="ev" style="top:2px;height:62px;background:#c7a6e8">⚽ Soccer practice <small>Maya · Riverside</small></div></div>
+          <div class="hr" data-h="5 PM"><div class="ev" style="top:33px;height:30px;background:#f2b07a">🎹 Piano <small>Sam · Lorena drives</small></div></div>
+          <div class="hr" data-h="6 PM"><div class="ev" style="top:33px;height:40px;background:#7bc0a7">Dinner at home <small>Tacos · Jeff cooks</small></div></div>
+          <div class="hr" data-h="7 PM"></div>
+        </div>
+      </div>
+      <div class="tabbar"><div><div class="i"></div>My Day</div><div class="on"><div class="i"></div>Plan</div><div><div class="i"></div>Household</div><div><div class="i"></div>Messages</div><div><div class="i"></div>More</div><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></div></div>
+    </div>
+  </div>
+
+  <div class="opt">
+    <div class="tag"><div class="letter">2</div><div><h3>The drive, before</h3><p class="d">Leave time huge, the stops, who's aboard, what's packed, Start.</p></div></div>
+    <div class="phone">
+      <div class="screen">
+        <div class="status"><span>3:12</span><span>●●● ▲ ▮</span></div>
+        <div class="back">‹ My Day</div>
+        <div class="card leave" style="margin-top:12px">
+          <div class="k">Leave at</div>
+          <div class="t">3:40</div>
+          <div class="m">18 min drive · arrive 3:58 · the Highlander, 72% charge</div>
+        </div>
+        <div class="stops">
+          <div class="stop"><div><div class="dot f"></div></div><div><div class="t1">Home</div><div class="t2">Pick up Maya · soccer bag</div></div></div>
+          <div class="stop"><div><div class="dot"></div></div><div><div class="t1">Riverside fields</div><div class="t2">Arrive by 3:58 · field 2</div></div></div>
+        </div>
+        <div class="k2">Everybody in?</div>
+        <div class="chips"><span class="ch on"><i style="background:#c7c3e8"></i>Maya</span><span class="ch"><i style="background:#8aa6e8"></i>Ella (ride share)</span></div>
+        <div class="k2">Packed?</div>
+        <div class="chips"><span class="ch pk on">✓ Soccer bag</span><span class="ch pk on">✓ Water</span><span class="ch pk">Shin guards</span></div>
+        <div class="big p">Start drive</div>
+        <div class="big s">Ask someone to cover</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="opt">
+    <div class="tag"><div class="letter">3</div><div><h3>The drive, on the road</h3><p class="d">Navigate, tell them, ETA, Arrived. Nothing here needs reading.</p></div></div>
+    <div class="phone">
+      <div class="screen">
+        <div class="status"><span>3:42</span><span>●●● ▲ ▮</span></div>
+        <div class="back">‹ My Day</div>
+        <div class="card leave eta" style="margin-top:12px"><div><div class="k">On the way · Riverside fields</div><b>3:58</b></div><div class="m">16 min · Maya aboard</div></div>
+        <div class="nav3"><div><b>🗺</b>Google</div><div><b>🍎</b>Apple</div><div><b>🚘</b>Waze</div></div>
+        <div class="k2">Tell Lorena</div>
+        <div class="tell"><div>On my way</div><div>Running 10 late</div><div>Traffic, be there soon</div><div>Send my ETA</div></div>
+        <div class="big g">Arrived</div>
+        <div class="big s">Not staying, schedule pick-up</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<p class="q">Calls I made, for you to check: Plan keeps the full family timeline (everything, as locked) with people as filter chips, not a per-person tab; the solver's "leave" row appears as a thin tinted strip in the timeline, so a drive reads as part of the day; the drive opens as a pushed screen from the hero card rather than a bottom sheet, so Start and Arrived sit low and thumb-sized without a scroll; Google / Apple / Waze stay three across as today; the drive's accent colour is the one green on the whole surface, reserved for Arrived.</p>
+</body>
+</html>

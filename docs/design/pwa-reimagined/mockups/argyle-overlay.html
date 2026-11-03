@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Argyle from anywhere</title>
+<style>
+  :root { --ink:#1f1d2b; --muted:#6b6880; --faint:#9b98ad; --card:rgba(255,255,255,.62); --line:rgba(31,29,43,.08); --accent:#5b5bd6; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family: -apple-system, "SF Pro Text", Inter, Segoe UI, system-ui, sans-serif; background:#f3f2f7; color:var(--ink); padding:28px 20px 60px; }
+  h1 { font-size:22px; margin:0 0 6px; }
+  .sub { color:var(--muted); font-size:14px; margin:0 0 26px; max-width:960px; }
+  .row { display:flex; gap:28px; flex-wrap:wrap; align-items:flex-start; justify-content:center; }
+  .opt { width:390px; cursor:pointer; }
+  .opt .tag { display:flex; align-items:center; gap:10px; margin:0 0 12px; }
+  .opt .letter { width:30px; height:30px; border-radius:50%; background:var(--ink); color:#fff; font-weight:700; display:flex; align-items:center; justify-content:center; font-size:14px; }
+  .opt h3 { margin:0; font-size:16px; }
+  .opt p.d { margin:4px 0 0; font-size:13px; color:var(--muted); }
+  .opt.selected .phone { outline:4px solid var(--accent); outline-offset:4px; }
+  .phone { width:390px; height:844px; border-radius:44px; overflow:hidden; position:relative; background:#fff; box-shadow:0 18px 50px rgba(31,29,43,.18); border:1px solid rgba(0,0,0,.06); }
+  .screen { position:absolute; inset:0; overflow:hidden; padding:0 20px 110px; background:linear-gradient(180deg,#fff0e6 0%, #f6eef7 42%, #eef0fb 100%); }
+  .status { height:54px; display:flex; align-items:center; justify-content:space-between; font-size:15px; font-weight:600; padding:0 8px; }
+  .topline { display:flex; align-items:center; justify-content:space-between; font-size:15px; color:var(--muted); margin:8px 0 26px; }
+  .greet { font-size:44px; line-height:1; font-weight:700; letter-spacing:-.03em; margin:0; }
+  .summary { color:var(--muted); font-size:17px; line-height:1.4; margin:18px 0 22px; max-width:300px; }
+  .card { background:var(--card); border-radius:22px; padding:16px 18px; margin:0 0 12px; }
+  .hero { background:#fff; box-shadow:0 10px 30px rgba(91,91,214,.12); }
+  .hero .kicker { font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); }
+  .hero .big { font-size:30px; font-weight:700; letter-spacing:-.02em; margin:6px 0 2px; }
+  .hero .meta { font-size:13px; color:var(--muted); margin-top:4px; }
+  .sect { font-size:18px; font-weight:600; margin:22px 0 12px; }
+  .att { display:flex; align-items:center; gap:14px; }
+  .att .ic { width:40px; height:40px; border-radius:14px; display:flex; align-items:center; justify-content:center; font-size:19px; background:rgba(31,29,43,.05); flex-shrink:0; }
+  .att .t1 { font-size:15px; font-weight:600; } .att .t2 { font-size:13px; color:var(--muted); }
+  .tabbar { position:absolute; left:0; right:0; bottom:0; height:84px; background:rgba(255,255,255,.85); backdrop-filter:blur(14px); border-top:1px solid var(--line); display:flex; justify-content:space-around; align-items:flex-start; padding-top:12px; font-size:11px; color:var(--faint); }
+  .tabbar div { display:flex; flex-direction:column; align-items:center; gap:4px; }
+  .tabbar .on { color:var(--ink); font-weight:600; }
+  .tabbar .i { width:24px; height:24px; border-radius:7px; background:currentColor; opacity:.25; }
+  .tabbar .on .i { opacity:1; background:var(--accent); }
+  /* orb */
+  .orb { position:absolute; right:18px; bottom:100px; width:52px; height:52px; border-radius:50%; background:linear-gradient(135deg,#8a7cff,#ffb36b); box-shadow:0 8px 24px rgba(91,91,214,.35); }
+  .orb.center { right:auto; left:50%; transform:translateX(-50%); bottom:30px; width:46px; height:46px; }
+  /* siri overlay */
+  .dim { position:absolute; inset:0; background:rgba(31,29,43,.18); backdrop-filter:blur(2px); }
+  .glow { position:absolute; inset:0; border-radius:44px; pointer-events:none; box-shadow: inset 0 0 0 3px rgba(138,124,255,.9), inset 0 0 40px 10px rgba(255,179,107,.45), inset 0 0 90px 30px rgba(138,124,255,.35); }
+  .ask { position:absolute; left:16px; right:16px; bottom:24px; }
+  .ask .you { text-align:right; font-size:17px; color:#fff; text-shadow:0 1px 6px rgba(0,0,0,.4); margin:0 10px 12px; }
+  .ask .reply { background:rgba(255,255,255,.92); backdrop-filter:blur(16px); border-radius:26px; padding:16px 18px; font-size:17px; line-height:1.4; box-shadow:0 14px 40px rgba(31,29,43,.25); }
+  .ask .reply .acts { display:flex; gap:8px; margin-top:12px; }
+  .ask .reply .acts span { font-size:14px; font-weight:600; padding:10px 14px; border-radius:999px; background:var(--ink); color:#fff; }
+  .ask .reply .acts span.s { background:rgba(31,29,43,.07); color:var(--ink); }
+  .ask .bar { margin-top:12px; display:flex; align-items:center; gap:10px; background:rgba(255,255,255,.92); border-radius:28px; padding:8px 8px 8px 18px; }
+  .ask .bar .in { flex:1; font-size:16px; color:var(--faint); }
+  .ask .bar .m { width:40px; height:40px; border-radius:50%; background:linear-gradient(135deg,#8a7cff,#ffb36b); }
+  .ask .wave { display:flex; justify-content:center; gap:4px; margin:0 0 14px; }
+  .ask .wave i { width:5px; border-radius:3px; background:#fff; opacity:.9; height:14px; }
+  .ask .wave i:nth-child(2){height:26px} .ask .wave i:nth-child(3){height:38px} .ask .wave i:nth-child(4){height:22px} .ask .wave i:nth-child(5){height:30px} .ask .wave i:nth-child(6){height:12px}
+  .ask .hint { text-align:center; color:#fff; font-size:13px; opacity:.85; margin-top:10px; text-shadow:0 1px 4px rgba(0,0,0,.4); }
+  .q { max-width:1240px; margin:30px auto 0; font-size:14px; color:var(--muted); line-height:1.6; }
+</style>
+</head>
+<body>
+<h1>Argyle from anywhere — the Siri shape</h1>
+<p class="sub">You keep the Argyle conversation in Messages as the full record. On top of that, a way to summon Argyle over whatever screen you're on, that comes and goes like Siri: the screen stays where it was, the edges glow, your words show, Argyle answers in one bubble with buttons, and it dissolves. Everything said here lands in the Argyle conversation too. The question is how you summon it.</p>
+
+<div class="row">
+
+  <div class="opt" data-choice="orb" onclick="toggleSelect(this)">
+    <div class="tag"><div class="letter">A</div><div><h3>The orb</h3><p class="d">A small floating orb, bottom right. Tap to type, hold to talk.</p></div></div>
+    <div class="phone">
+      <div class="screen">
+        <div class="status"><span>3:12</span><span>●●● ▲ ▮</span></div>
+        <div class="topline"><span>🔊</span><span>Tuesday, November 3rd</span><span>✎</span></div>
+        <h2 class="greet">Good<br>afternoon,<br>Jeff</h2>
+        <p class="summary">Two drives this afternoon, and Sam finished the recycling.</p>
+        <div class="card hero"><div class="kicker">Next departure · in 28 min</div><div class="big">Leave at 3:40</div><div>Take Maya to soccer practice</div><div class="meta">📍 Riverside fields · 18 min drive</div></div>
+        <div class="sect">Needs you</div>
+        <div class="card att"><div class="ic">✅</div><div><div class="t1">Sam finished recycling</div><div class="t2">15 points waiting on your yes</div></div></div>
+        <div class="card att"><div class="ic">🚗</div><div><div class="t1">Kate's pickup needs a driver</div><div class="t2">Thursday 5:10 · piano</div></div></div>
+      </div>
+      <div class="orb"></div>
+      <div class="tabbar"><div class="on"><div class="i"></div>My Day</div><div><div class="i"></div>Plan</div><div><div class="i"></div>Household</div><div><div class="i"></div>Messages</div><div><div class="i"></div>More</div></div>
+    </div>
+  </div>
+
+  <div class="opt" data-choice="tabbar" onclick="toggleSelect(this)">
+    <div class="tag"><div class="letter">B</div><div><h3>In the tab bar</h3><p class="d">Argyle is the centre of the bar. Nothing floats over content.</p></div></div>
+    <div class="phone">
+      <div class="screen">
+        <div class="status"><span>3:12</span><span>●●● ▲ ▮</span></div>
+        <div class="topline"><span>🔊</span><span>Tuesday, November 3rd</span><span>✎</span></div>
+        <h2 class="greet">Good<br>afternoon,<br>Jeff</h2>
+        <p class="summary">Two drives this afternoon, and Sam finished the recycling.</p>
+        <div class="card hero"><div class="kicker">Next departure · in 28 min</div><div class="big">Leave at 3:40</div><div>Take Maya to soccer practice</div><div class="meta">📍 Riverside fields · 18 min drive</div></div>
+        <div class="sect">Needs you</div>
+        <div class="card att"><div class="ic">✅</div><div><div class="t1">Sam finished recycling</div><div class="t2">15 points waiting on your yes</div></div></div>
+        <div class="card att"><div class="ic">🚗</div><div><div class="t1">Kate's pickup needs a driver</div><div class="t2">Thursday 5:10 · piano</div></div></div>
+      </div>
+      <div class="tabbar"><div class="on"><div class="i"></div>My Day</div><div><div class="i"></div>Plan</div><div style="width:46px"></div><div><div class="i"></div>Household</div><div><div class="i"></div>Messages</div></div>
+      <div class="orb center"></div>
+    </div>
+  </div>
+
+  <div class="opt" data-choice="overlay" onclick="toggleSelect(this)">
+    <div class="tag"><div class="letter">→</div><div><h3>Summoned, either way</h3><p class="d">What it looks like once it's up. Not an option, the shared result.</p></div></div>
+    <div class="phone">
+      <div class="screen" style="filter:saturate(.9)">
+        <div class="status"><span>3:12</span><span>●●● ▲ ▮</span></div>
+        <div class="topline"><span>🔊</span><span>Tuesday, November 3rd</span><span>✎</span></div>
+        <h2 class="greet">Good<br>afternoon,<br>Jeff</h2>
+        <p class="summary">Two drives this afternoon, and Sam finished the recycling.</p>
+        <div class="card hero"><div class="kicker">Next departure · in 28 min</div><div class="big">Leave at 3:40</div><div>Take Maya to soccer practice</div><div class="meta">📍 Riverside fields · 18 min drive</div></div>
+        <div class="sect">Needs you</div>
+        <div class="card att"><div class="ic">✅</div><div><div class="t1">Sam finished recycling</div><div class="t2">15 points waiting on your yes</div></div></div>
+      </div>
+      <div class="dim"></div>
+      <div class="glow"></div>
+      <div class="ask">
+        <div class="wave"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="you">“Can Grandma take Kate Thursday?”</div>
+        <div class="reply">Grandma Ruth is free Thursday at 5:10. I can ask her and put her on Kate's piano pickup if she says yes.
+          <div class="acts"><span>Ask her</span><span class="s">Not now</span></div>
+        </div>
+        <div class="bar"><div class="in">Or type…</div><div class="m"></div></div>
+        <div class="hint">Swipe down to dismiss · full conversation in Messages</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<p class="q">The overlay is the same in A and B; pick where the summon lives. My lean: A, the orb, because B steals a tab slot from More and the orb can hide itself while you're already in the Argyle conversation or mid-drive. The orb also reserves its footprint in scroll content, so it never sits on a checkbox (the audit's old complaint). Holding it talks; tapping it types; the Messages Argyle thread keeps every exchange.</p>
+</body>
+</html>

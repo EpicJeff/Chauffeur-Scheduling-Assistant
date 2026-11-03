@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Household — cards, then focus</title>
+<style>
+  :root { --ink:#1f1d2b; --muted:#6b6880; --faint:#9b98ad; --card:rgba(255,255,255,.62); --line:rgba(31,29,43,.08); --accent:#5b5bd6; --green:#1f7a5c; --amber:#b86b00; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family: -apple-system, "SF Pro Text", Inter, Segoe UI, system-ui, sans-serif; background:#f3f2f7; color:var(--ink); padding:28px 20px 60px; }
+  h1 { font-size:22px; margin:0 0 6px; }
+  .sub { color:var(--muted); font-size:14px; margin:0 0 26px; max-width:900px; }
+  .row { display:flex; gap:28px; flex-wrap:wrap; align-items:flex-start; justify-content:center; }
+  .opt { width:390px; }
+  .opt .tag { display:flex; align-items:center; gap:10px; margin:0 0 12px; }
+  .opt .letter { width:30px; height:30px; border-radius:50%; background:var(--ink); color:#fff; font-weight:700; display:flex; align-items:center; justify-content:center; font-size:14px; }
+  .opt h3 { margin:0; font-size:16px; }
+  .opt p.d { margin:4px 0 0; font-size:13px; color:var(--muted); }
+  .phone { width:390px; height:844px; border-radius:44px; overflow:hidden; position:relative; background:#fff; box-shadow:0 18px 50px rgba(31,29,43,.18); border:1px solid rgba(0,0,0,.06); }
+  .screen { position:absolute; inset:0; overflow-y:auto; padding:0 20px 110px; scrollbar-width:none; background:linear-gradient(180deg,#fff0e6 0%, #f6eef7 42%, #eef0fb 100%); }
+  .screen::-webkit-scrollbar { display:none; }
+  .status { height:54px; display:flex; align-items:center; justify-content:space-between; font-size:15px; font-weight:600; padding:0 8px; }
+  .title { font-size:34px; font-weight:700; letter-spacing:-.03em; margin:14px 0 4px; }
+  .lead { color:var(--muted); font-size:16px; margin:0 0 22px; }
+  .back { font-size:15px; color:var(--accent); font-weight:600; margin-top:10px; }
+  .card { background:var(--card); border-radius:22px; padding:16px 18px; margin:0 0 12px; backdrop-filter: blur(6px); }
+  .hc { display:flex; gap:14px; align-items:flex-start; }
+  .hc .ic { width:44px; height:44px; border-radius:15px; display:flex; align-items:center; justify-content:center; font-size:22px; background:#fff; box-shadow:0 2px 8px rgba(31,29,43,.06); flex-shrink:0; }
+  .hc .tx { flex:1; min-width:0; }
+  .hc .t1 { font-size:18px; font-weight:600; display:flex; justify-content:space-between; align-items:center; }
+  .hc .t1 .chev { color:var(--faint); font-weight:400; }
+  .hc .t2 { font-size:14px; color:var(--muted); margin-top:3px; }
+  .hc .pills { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+  .pill { font-size:12px; font-weight:600; padding:5px 10px; border-radius:999px; background:rgba(31,29,43,.06); color:var(--ink); }
+  .pill.hot { background:#ffe6cc; color:var(--amber); }
+  .pill.ok { background:#dcf3e8; color:var(--green); }
+  .faces { display:flex; margin-top:10px; }
+  .face { width:26px; height:26px; border-radius:50%; border:2px solid #fff; margin-right:-6px; background:#c7c3e8; font-size:11px; display:flex; align-items:center; justify-content:center; font-weight:700; color:#fff; }
+  .f2 { background:#f2b07a; } .f3 { background:#7bc0a7; } .f4 { background:#8aa6e8; }
+  .bar { height:6px; border-radius:3px; background:rgba(31,29,43,.08); margin-top:10px; overflow:hidden; }
+  .bar i { display:block; height:100%; width:60%; background:var(--accent); border-radius:3px; }
+  .sect { font-size:13px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); margin:22px 0 10px; }
+  .job { background:var(--card); border-radius:18px; padding:14px 16px; margin-bottom:8px; display:flex; align-items:center; gap:12px; }
+  .job .pic { width:44px; height:44px; border-radius:12px; background:#e8e4f6; flex-shrink:0; }
+  .job .tx { flex:1; min-width:0; }
+  .job .t1 { font-size:16px; font-weight:600; }
+  .job .t2 { font-size:13px; color:var(--muted); margin-top:2px; }
+  .job .act { font-size:14px; font-weight:600; color:#fff; background:var(--ink); padding:9px 14px; border-radius:12px; }
+  .job .act.s { background:rgba(31,29,43,.06); color:var(--ink); }
+  .seg { display:flex; gap:6px; background:rgba(31,29,43,.05); padding:4px; border-radius:14px; margin:0 0 16px; }
+  .seg span { flex:1; text-align:center; font-size:14px; padding:8px 0; border-radius:11px; color:var(--muted); font-weight:600; }
+  .seg .on { background:#fff; color:var(--ink); box-shadow:0 1px 4px rgba(31,29,43,.08); }
+  .tabbar { position:absolute; left:0; right:0; bottom:0; height:84px; background:rgba(255,255,255,.85); backdrop-filter:blur(14px); border-top:1px solid var(--line); display:flex; justify-content:space-around; align-items:flex-start; padding-top:12px; font-size:11px; color:var(--faint); }
+  .tabbar div { display:flex; flex-direction:column; align-items:center; gap:4px; }
+  .tabbar .on { color:var(--ink); font-weight:600; }
+  .tabbar .i { width:24px; height:24px; border-radius:7px; background:currentColor; opacity:.25; }
+  .tabbar .on .i { opacity:1; background:var(--accent); }
+  .q { max-width:1240px; margin:30px auto 0; font-size:14px; color:var(--muted); line-height:1.6; }
+</style>
+</head>
+<body>
+<h1>Household — a list of cards, each one a door</h1>
+<p class="sub">Left: the Household tab as cards. Each card says what state that thing is in right now, for you. Right: what you land on when you tap Chores. Same card vocabulary as My Day.</p>
+
+<div class="row">
+
+  <div class="opt">
+    <div class="tag"><div class="letter">1</div><div><h3>Household</h3><p class="d">Five cards, in the order of what needs you most today.</p></div></div>
+    <div class="phone">
+      <div class="screen">
+        <div class="status"><span>3:12</span><span>●●● ▲ ▮</span></div>
+        <div class="title">Household</div>
+        <p class="lead">Two things want your yes. Shop day is tomorrow.</p>
+
+        <div class="card hc"><div class="ic">🧹</div><div class="tx">
+          <div class="t1">Chores <span class="chev">›</span></div>
+          <div class="t2">3 open · Maya has 2 claimed · 1 done waiting on you</div>
+          <div class="pills"><span class="pill hot">1 to check</span><span class="pill">Recycling · Sam</span><span class="pill">Dishes · open</span></div>
+        </div></div>
+
+        <div class="card hc"><div class="ic">⭐</div><div class="tx">
+          <div class="t1">Rewards <span class="chev">›</span></div>
+          <div class="t2">Sam asked for Movie night · 120 pts · Family goal: Zoo trip 60%</div>
+          <div class="pills"><span class="pill hot">1 request</span><span class="pill">Maya 85 pts</span><span class="pill">Sam 120 pts</span></div>
+          <div class="bar"><i></i></div>
+        </div></div>
+
+        <div class="card hc"><div class="ic">☑️</div><div class="tx">
+          <div class="t1">Tasks <span class="chev">›</span></div>
+          <div class="t2">2 due this week · Renew Maya's passport is overdue</div>
+          <div class="pills"><span class="pill hot">1 overdue</span><span class="pill">Call the dentist · Fri</span></div>
+        </div></div>
+
+        <div class="card hc"><div class="ic">🛒</div><div class="tx">
+          <div class="t1">Lists <span class="chev">›</span></div>
+          <div class="t2">Groceries 12 · Costco 4 · Camping 9 of 14 packed</div>
+          <div class="pills"><span class="pill ok">Shop day tomorrow</span><span class="pill">3 lists</span></div>
+        </div></div>
+
+        <div class="card hc"><div class="ic">🎯</div><div class="tx">
+          <div class="t1">Projects &amp; programs <span class="chev">›</span></div>
+          <div class="t2">Kate's bike · Portuguese (lesson 4 of 12) · Bathroom paint</div>
+          <div class="pills"><span class="pill">Portuguese · Wed 4:30</span><span class="pill">2 running</span></div>
+          <div class="faces"><div class="face">K</div><div class="face f2">S</div><div class="face f3">J</div></div>
+        </div></div>
+
+      </div>
+      <div class="tabbar"><div><div class="i"></div>My Day</div><div><div class="i"></div>Plan</div><div class="on"><div class="i"></div>Household</div><div><div class="i"></div>Messages</div><div><div class="i"></div>More</div></div>
+    </div>
+  </div>
+
+  <div class="opt">
+    <div class="tag"><div class="letter">2</div><div><h3>Chores, tapped in</h3><p class="d">The whole thing, with a segment for mine / open / to check. Back returns to the cards.</p></div></div>
+    <div class="phone">
+      <div class="screen">
+        <div class="status"><span>3:12</span><span>●●● ▲ ▮</span></div>
+        <div class="back">‹ Household</div>
+        <div class="title">Chores</div>
+        <p class="lead">3 open, 2 claimed, 1 done waiting on you.</p>
+        <div class="seg"><span>Mine</span><span class="on">Open</span><span>To check · 1</span></div>
+
+        <div class="sect">Ready to check</div>
+        <div class="job"><div class="pic"></div><div class="tx"><div class="t1">Recycling</div><div class="t2">Sam · done 2:10pm · 15 pts</div></div><div class="act">Yes</div></div>
+
+        <div class="sect">Open jobs</div>
+        <div class="job"><div class="pic"></div><div class="tx"><div class="t1">Dishes</div><div class="t2">tonight · 10 pts · anyone</div></div><div class="act s">Claim</div></div>
+        <div class="job"><div class="pic"></div><div class="tx"><div class="t1">Walk Spooky</div><div class="t2">before 6 · 10 pts · Maya or Sam</div></div><div class="act s">Claim</div></div>
+        <div class="job"><div class="pic"></div><div class="tx"><div class="t1">Water the plants</div><div class="t2">this week · 5 pts</div></div><div class="act s">Claim</div></div>
+
+        <div class="sect">Claimed</div>
+        <div class="job"><div class="pic"></div><div class="tx"><div class="t1">Trash to the curb</div><div class="t2">Maya · due tonight</div></div></div>
+        <div class="job"><div class="pic"></div><div class="tx"><div class="t1">Vacuum the stairs</div><div class="t2">Maya · due Thursday</div></div></div>
+      </div>
+      <div class="tabbar"><div><div class="i"></div>My Day</div><div><div class="i"></div>Plan</div><div class="on"><div class="i"></div>Household</div><div><div class="i"></div>Messages</div><div><div class="i"></div>More</div></div>
+    </div>
+  </div>
+
+</div>
+
+<p class="q">Things I'm guessing at, for you to react to: the one-line lead under the title (Argyle's sentence again); the card order changing by what needs you (a card with nothing pending sinks); chips on the card for the two or three specific items so you can read the state without tapping; and tapping a card pushes a full screen with a Back, rather than opening a sheet.</p>
+</body>
+</html>
