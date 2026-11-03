@@ -52,6 +52,59 @@ bounded width. Roll-call and packing states retain explicit marks as well as
 their semantic colors. Never give sheets a separate visual language from
 their adult parent screen.
 
+### Adult PWA, reimagined: the vocabulary (slice 0, v2.499.751)
+
+The approved redesign (`docs/superpowers/specs/2026-11-03-pwa-reimagined-design.md`,
+mockups `docs/design/pwa-reimagined/index.html`) replaces the neutral adult
+surfaces above screen by screen. Slice 0 ships the shell every later slice
+draws on; the rules below apply under `html[data-audience="adult"]` only and
+leave every child stage and the kiosk exactly as they were.
+
+- **The sky.** The body wears a time-of-day wash, never the person's colour:
+  `linear-gradient(180deg, var(--pwa-sky-top) 0%, var(--pwa-sky-mid) 42%,
+  var(--pwa-sky-bottom) 100%) fixed`. `pwaSky(hour, dark)` in
+  `static/pwa_shell.js` is a pure table lookup over four bands (morning 05-11,
+  afternoon 12-16, evening 17-20, night 21-04); the light morning is the
+  mockup's `#fff0e6 / #f6eef7 / #eef0fb`. Every stop contrasts 4.5:1 or better
+  with the ink in both themes (`tests/test_pwa_sky.py` proves all 24 hours).
+  `pwaSyncSky()` writes the three vars on `:root` from `pwaSyncShell`, from
+  `applyTheme`, and when the page becomes visible again. Never set a body
+  background on an adult surface; never derive the sky from a member.
+- **Ink and cards.** `--pwa-ink` (`#1f1d2b` light, `#f3f2f7` dark),
+  `--pwa-card` (`rgba(255,255,255,.62)` light, `rgba(255,255,255,.06)` dark),
+  `--pwa-card-raised` (`#ffffff` / `#262a36`), `--pwa-radius: 22px`.
+  Translucent, borderless, 22px corners; the person's hue stays the accent
+  (`--pwa-accent`) and nothing else.
+- **The orb.** Argyle is one component: `static/argyle_orb.css` (class
+  `.argyle-orb`, size via `--argyle-orb-size`, hidden state
+  `.argyle-orb-hidden`) and `static/argyle_orb.js`
+  (`ArgyleOrb.create({ id, label })`, `ArgyleOrb.glyph()`). The wall panel's
+  `#panel-chat-orb` and the phone's `#tab-argyle` are both built from it; the
+  wall keeps only its position rules in `ha_theme.html`. Never paint a second
+  orb; never change the look in one place.
+- **The tab bar.** An evenly spaced row of equal 44px slots,
+  `justify-content: space-between` with 18px edge padding, the first tab
+  anchored left and the orb anchored right as the last slot; tabs fill from
+  the left, so a two-tab helper bar and a five-tab parent bar obey the same
+  rule. Labels may spill past the slot (`white-space: nowrap`; 10px under
+  360px). The orb shows only when `pwaOrbAllowed()` (an adult whose scope's
+  `chat.agent` is not `none`), hides while the Argyle thread is open, and in
+  this slice tapping it opens the Argyle DM in Messages (the Siri-style
+  overlay is slice 2). Kid bars never show it.
+- **Pushed screens.** `static/pwa_nav.js` (`PwaNav.push({ id, title, render,
+  onPop })`, `pop()`, `clear()`, `depth()`, `current()`) owns `#pwa-stack`
+  in `components/pwa_shell.html`. A pushed screen is a `.pwa-screen` with a
+  `.pwa-back` button ("‹ " + the parent's title) and an `h1`; it rides
+  `history.pushState({ pwaScreen, pwaDepth })`, so hardware Back pops one
+  screen, an empty stack leaves Back to the browser, and foreign history
+  states (the moments gallery) are ignored. `setView` clears the stack, so a
+  tab always lands on its root. Anything that "taps in" on an adult screen
+  pushes; it never opens a second tab or a full-page route.
+
+Screenshot proof for this slice lives in the live test
+(`PWA_REVIEW_OUTPUT=tests/probe_shots/pwa_slice0 python
+tests/test_pwa_adult_shell_live.py`).
+
 Admin dialogs with a body that can grow (the schedule page's event dialog,
 `dashboard.html` `#event-modal`; the calendar's, `family_calendar.html`
 `#modal-content-container`) are chrome: a `flex flex-col max-h-[90vh]

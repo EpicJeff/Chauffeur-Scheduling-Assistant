@@ -1,0 +1,36 @@
+/* Shared Argyle orb appearance; each surface owns its placement. */
+.argyle-orb {
+    width: var(--argyle-orb-size, 3.25rem);
+    height: var(--argyle-orb-size, 3.25rem);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgb(255 255 255 / 0.22);
+    border-radius: 999px;
+    color: #fff;
+    background: radial-gradient(120% 120% at 30% 25%, #a78bfa 0%, #6366f1 45%, #2563eb 100%);
+    box-shadow: 0 6px 22px rgb(79 70 229 / .45), 0 0 0 6px rgb(99 102 241 / .12);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    cursor: pointer;
+    transition: opacity .18s ease, transform .18s ease, visibility .18s;
+}
+
+.argyle-orb svg { width: 1.4rem; height: 1.4rem; }
+
+.argyle-orb-hidden {
+    opacity: 0;
+    visibility: hidden;
+    transform: var(--argyle-orb-base-transform, translate(0)) scale(0.72);
+}
+
+/* A slow breath, so it reads as available rather than as a notification.
+   Anything faster is a thing demanding to be tapped. */
+@media (prefers-reduced-motion: no-preference) {
+    .argyle-orb { animation: argyle-orb-breathe 4.5s ease-in-out infinite; }
+
+    @keyframes argyle-orb-breathe {
+        0%, 100% { box-shadow: 0 6px 22px rgb(79 70 229 / .40), 0 0 0 5px rgb(99 102 241 / .10); }
+        50%      { box-shadow: 0 6px 26px rgb(79 70 229 / .55), 0 0 0 9px rgb(99 102 241 / .05); }
+    }
+}

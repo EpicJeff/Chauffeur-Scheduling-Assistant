@@ -25,7 +25,7 @@ from services import storage, ha_api
 DAY = datetime.now().strftime('%Y-%m-%d')
 PROFILES = [('parent', 'parent', 'd1'), ('adult', 'adult', 'd2'),
             ('keeping', 'parent', None), ('helper', 'helper', 'd3'),
-            ('guest', 'guest', None)] + [(stage, 'child', None) for stage in
+            ('guest', 'guest', None), ('scoped_out', 'parent', 'd5')] + [(stage, 'child', None) for stage in
             ('sprout', 'explorer', 'navigator', 'copilot')] + [('copilot_driver', 'child', 'd4')]
 
 
@@ -37,9 +37,96 @@ def seed():
             member['stage_override'] = key.split('_')[0]
         if key == 'keeping':
             member['scope'] = {'preset': 'keeping_up'}
+        if key == 'scoped_out':
+            # A parent whose household switched Argyle off for them
+            # (services/scope.py _table_value reads scope.overrides[facet]).
+            member['scope'] = {'preset': 'household_adult', 'overrides': {'chat.agent': 'none'}}
         storage.add_member(member)
         if driver:
             storage.add_driver({'id': driver, 'name': 'Alex Morgan', 'home_location': 'Home', 'color_code': '#287a72'})
+
+
+def check_nav_stack(page):
+    """Slice 0 Task 4: the served page carries PwaNav and #pwa-stack, a pushed
+    screen covers the tab view with Back chrome, the tab bar and the orb stay
+    tappable, and tapping a tab empties the stack (setView clears it)."""
+    assert page.evaluate("typeof window.PwaNav === 'object' && !!document.getElementById('pwa-stack')")
+    assert page.evaluate("PwaNav.depth()") == 0
+    page.evaluate("PwaNav.push({ id: 'probe', title: 'Probe screen', render(body) { body.textContent = 'probe body'; } })")
+    stack = page.locator('#pwa-stack')
+    assert stack.is_visible(), 'the stack did not show'
+    assert page.locator('#pwa-stack .pwa-screen h1').inner_text() == 'Probe screen'
+    back = page.locator('#pwa-stack .pwa-back').inner_text().strip()
+    assert back.startswith('‹ ') and len(back) > 2, back
+    assert page.evaluate("document.documentElement.getAttribute('data-pwa-stack')") == '1'
+    sb = stack.bounding_box(); bar = page.locator('#pwa-tab-bar').bounding_box()
+    assert abs((sb['y'] + sb['height']) - bar['y']) <= 2, (sb, bar)
+    assert page.locator('#pwa-tab-bar').evaluate("b => { const r = b.getBoundingClientRect(); const e = document.elementFromPoint(r.left + r.width / 2, r.top + 8); return !!e && !!e.closest('#pwa-tab-bar'); }"), 'the stack covers the tab bar'
+    home = page.evaluate("document.querySelector('#pwa-tab-bar [aria-current=\"page\"]').id")
+    other = page.evaluate("[...document.querySelectorAll('#pwa-tab-bar > button:not(#tab-argyle)')].find(b => b.checkVisibility() && b.getAttribute('aria-current') !== 'page').id")
+    page.locator('#' + other).click()
+    page.wait_for_function("PwaNav.depth() === 0")
+    assert not stack.is_visible(), 'the stack did not clear on a tab tap'
+    assert page.evaluate("document.documentElement.hasAttribute('data-pwa-stack')") is False
+    page.locator('#' + home).click()
+    page.wait_for_function("document.querySelector('#%s').getAttribute('aria-current') === 'page'" % home)
+
+
+def check_sky(page):
+    """Slice 0 Task 3: the adult shell wears the time-of-day sky, in both
+    themes. run() fixes the clock at 12:00, so the vars are pwaSky(12, ...)."""
+    assert page.evaluate('new Date().getHours()') == 12
+    sky_vars = """() => { const s = getComputedStyle(document.documentElement);
+        return Object.fromEntries(['top','mid','bottom'].map(k =>
+            [k, s.getPropertyValue('--pwa-sky-' + k).trim().toLowerCase()])); }"""
+    want = """dark => { const s = pwaSky(12, dark);
+        return Object.fromEntries(['top','mid','bottom'].map(k => [k, String(s[k]).toLowerCase()])); }"""
+    background = "getComputedStyle(document.body).backgroundImage"
+    assert 'linear-gradient' in page.evaluate(background), page.evaluate(background)
+    assert page.evaluate(sky_vars) == page.evaluate(want, False), page.evaluate(sky_vars)
+    page.evaluate("applyTheme('dark')")
+    assert 'linear-gradient' in page.evaluate(background), page.evaluate(background)
+    assert page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--pwa-sky-top').trim()") != ''
+    assert page.evaluate(sky_vars) == page.evaluate(want, True), page.evaluate(sky_vars)
+    page.evaluate("applyTheme('light')")
+    assert page.evaluate(sky_vars) == page.evaluate(want, False), page.evaluate(sky_vars)
+
+
+def check_orb(page, key, role, dm_posts=None):
+    """Slice 0 Task 2: the Argyle orb is the far-right slot of the adult tab
+    bar, shown only to whoever may talk to Argyle, and opens the Argyle DM."""
+    orb = page.locator('#tab-argyle')
+    allowed = page.evaluate("pwaOrbAllowed()")
+    expected = role in ('parent', 'adult') and key != 'scoped_out'
+    assert allowed == expected and orb.is_visible() == expected, (key, allowed)
+    slots = page.locator('#pwa-tab-bar > button:visible')
+    boxes = [b.bounding_box() for b in slots.all()]
+    bar = page.locator('#pwa-tab-bar').bounding_box()
+    assert abs(boxes[0]['x'] - (bar['x'] + 18)) <= 1, boxes[0]
+    assert abs((boxes[-1]['x'] + boxes[-1]['width']) - (bar['x'] + bar['width'] - 18)) <= 1, boxes[-1]
+    widths = {round(b['width']) for b in boxes}; assert len(widths) == 1, widths
+    gaps = [round(boxes[i+1]['x'] - (boxes[i]['x'] + boxes[i]['width'])) for i in range(len(boxes)-1)]
+    if gaps: assert max(gaps) - min(gaps) <= 1, gaps
+    if not expected: return
+    assert orb.evaluate('e=>e===e.parentElement.lastElementChild')
+    assert round(orb.evaluate('e=>e.getBoundingClientRect().width')) == 44
+    size = orb.evaluate("""e=>{const s=getComputedStyle(e);
+        return {w:parseFloat(s.width), h:parseFloat(s.height), r:parseFloat(s.borderRadius)||0};}""")
+    assert round(size['w']) == 44 and round(size['h']) == 44 and size['r'] > 0, size
+    assert 'radial-gradient' in orb.evaluate('e=>getComputedStyle(e).backgroundImage')
+    view = page.evaluate('currentView')
+    orb.click()
+    page.wait_for_function("activeChannelId && threadChannel && threadChannel.member_ids.includes('argyle')")
+    if dm_posts is not None:
+        assert dm_posts and dm_posts[-1].get('member_id') == key \
+            and dm_posts[-1].get('other_member_id') == 'argyle', dm_posts
+    # .argyle-orb-hidden fades visibility over .18s; wait it out, then assert.
+    try: orb.wait_for(state='hidden', timeout=2000)
+    except Exception: pass
+    assert not orb.is_visible(), 'the orb covers the composer'
+    page.evaluate('closeThread()')   # app.html:6420
+    page.wait_for_function("document.getElementById('tab-argyle').checkVisibility({visibilityProperty: true, opacityProperty: true})")
+    page.evaluate('v => setView(v)', view)
 
 
 def check_route_departure(page, schedule, driver, output=None):
@@ -186,6 +273,14 @@ def run():
                 page.route('**/api/points', lambda r: r.fulfill(json=[]))
                 page.route('**/api/rewards', lambda r: r.fulfill(json=[]))
                 page.route('**/api/redemptions?*', lambda r: r.fulfill(json=[]))
+                dm_posts = []
+                def open_dm(route):
+                    if route.request.method != 'POST':
+                        return route.continue_()
+                    dm_posts.append(route.request.post_data_json or {})
+                    route.fulfill(json={'id': 'dm_argyle', 'kind': 'dm', 'member_ids': [key, 'argyle']})
+                page.route('**/api/channels/dm', open_dm)
+                page.route('**/api/channels/dm_argyle/messages*', lambda r: r.fulfill(json=[]))
                 page.route('**/api/channels?*', lambda r: r.fulfill(json=[{'id':'family','kind':'family','title':'Family','member_ids':[key], 'last_message':{'sender_member_id':key,'body':'See you at the front doors.','ts':int(datetime.now().timestamp())}}, {'id':'school','kind':'group','title':'School pickup','member_ids':[key]}]))
                 page.route('**/api/programs', lambda r: r.fulfill(json={'programs':[dict(id='practice', member_id=key, title='Strength training', state='active', progress={}, emissions={})]}))
                 page.route('**/api/practice-windows?*', lambda r: r.fulfill(json={'windows':[dict(program_id='practice', member_id=key, date=DAY, time_start='21:00', time_end='21:30', title='Strength training', session_label='Push and core', steps=[])]}))
@@ -204,7 +299,7 @@ def run():
                 assert page.evaluate('currentMemberRole()') == role
                 check_profile_palette(page)
                 if role == 'child' and not driver: page.evaluate('void renderMyDay()'); page.wait_for_selector('.child-greeting')
-                tabs = page.locator('#pwa-tab-bar > button:visible').all_text_contents()
+                tabs = page.locator('#pwa-tab-bar > button:visible:not(#tab-argyle)').all_text_contents()
                 tabs = [' '.join(t.split()) for t in tabs]
                 overflow = page.evaluate('''()=>({width:document.documentElement.scrollWidth,
                     viewport:innerWidth, elements:[...document.querySelectorAll('body *')]
@@ -212,6 +307,8 @@ def run():
                     .slice(0,8).map(e=>({tag:e.tagName,id:e.id,cls:e.className}))})''')
                 assert overflow['width'] <= overflow['viewport'], (key, overflow, errors)
                 if role == 'child':
+                    # [data-audience="child"] #tab-argyle { display:none } is global.
+                    assert not page.locator('#tab-argyle').is_visible(), key
                     if driver: check_child_driver(page, output)
                     else: check_child(page, key, output, child_calls)
                 else:
@@ -219,6 +316,9 @@ def run():
                     assert not page.locator('#tab-map').is_visible()
                     assert not page.locator('#kiosk-chat-fab').is_visible()
                     assert page.locator('header').bounding_box()['height'] <= 72
+                    check_sky(page)
+                    check_orb(page, key, role, dm_posts)
+                    check_nav_stack(page)
                     if key == 'parent':
                         assert len(tabs) == 5, tabs   # Projects left the bar for More (one-list spec §5)
                         page.wait_for_selector('.pwa-next')
@@ -277,7 +377,7 @@ def run():
                     search.fill('no-match-xyz')
                     assert page.locator('#pwa-search-empty').is_visible()
                     search.fill('')
-                    if key in ('parent', 'adult'):
+                    if key in ('parent', 'adult', 'scoped_out'):
                         page.locator('[data-feature="map"]').click()
                         assert page.locator('#tab-more').get_attribute('aria-current') == 'page'
                         page.locator('#tab-more').click()

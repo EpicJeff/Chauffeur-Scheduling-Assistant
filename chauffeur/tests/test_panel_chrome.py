@@ -644,8 +644,13 @@ def scenario_chat_none_still_wins_over_the_orb():
 
 
 def scenario_the_orb_does_not_pulse_for_people_who_asked_it_not_to():
-    check('prefers-reduced-motion: no-preference' in THEME,
-          "the orb animates regardless of the reduced-motion preference")
+    """The breathe lives in the shared orb stylesheet since the phone took the
+    same orb (v2.499.751); the gate must sit on the animation itself."""
+    orb_css = open(os.path.join(os.path.dirname(TPL), 'static', 'argyle_orb.css'), encoding='utf-8').read()
+    gate = orb_css.find('prefers-reduced-motion: no-preference')
+    check(gate >= 0, "the orb animates regardless of the reduced-motion preference")
+    check('animation:' in orb_css[gate:gate + 300] and 'argyle-orb-breathe' in orb_css[gate:gate + 300],
+          "the reduced-motion gate no longer wraps the breathe animation")
 
 
 def scenario_the_server_can_tap_the_panel_on_the_shoulder():

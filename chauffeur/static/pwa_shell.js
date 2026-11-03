@@ -1,24 +1,57 @@
 /* Presentation adapter only. Existing views still own data and actions. */
 let pwaChoresOwner = null, pwaRequestsOwner = null;
 let pwaHouseSection = 'tasks', pwaDatesExpanded = false;
+let pwaArgyleOpening = false;
 function pwaIsAdult() {
     return !!selectedMemberId && currentMemberRole() !== 'child';
 }
 function pwaOrderTabs(order) {
+    order = [...order, 'argyle'];
     const bar = document.getElementById('pwa-tab-bar');
     const actual = [...bar.children].map(button => button.id.slice(4)).filter(id => order.includes(id));
     if (actual.join() !== order.join()) order.forEach(id => bar.append(document.getElementById('tab-' + id)));
 }
+function pwaOrbAllowed() {
+    return pwaIsAdult() && scopeOf('chat.agent') !== 'none';
+}
+async function pwaOpenArgyle() {
+    if (!pwaOrbAllowed() || pwaArgyleOpening) return;
+    pwaArgyleOpening = true;
+    let ch;
+    try {
+        const res = await fetch(`${apiBase}api/channels/dm`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ member_id: selectedMemberId, other_member_id: 'argyle' })
+        });
+        if (!res.ok) throw new Error('dm refused');
+        ch = await res.json();
+        if (!ch?.id) throw new Error('no channel');
+    } catch (e) {
+        showGlobalAlert('Could not open Argyle');
+        return;
+    } finally {
+        pwaArgyleOpening = false;
+    }
+    setView('messages');
+    openChannel(ch.id, ch);
+}
 
 // One profile palette for every audience. Keep the chosen hue, adjusting
 // accent brightness only as needed for text/buttons on both theme surfaces.
+function pwaRelativeLuminance(color) {
+    let hex = Array.isArray(color) ? null : color.replace(/^#/, '');
+    if (hex && hex.length === 3) hex = [...hex].map(c => c + c).join('');
+    const rgb = Array.isArray(color) ? color : [0,2,4].map(i => parseInt(hex.slice(i,i+2),16));
+    return rgb.map(v => v/255).map(v => v <= .04045 ? v/12.92 : ((v+.055)/1.055)**2.4)
+        .reduce((sum,v,i) => sum + v*[.2126,.7152,.0722][i],0);
+}
 function pwaProfilePalette(color, dark) {
     let hex = /^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/i.test(color || '') ? color.slice(1) : '3b82f6';
     if (hex.length === 3) hex = [...hex].map(c => c + c).join('');
     const rgb = [0,2,4].map(i => parseInt(hex.slice(i,i+2),16));
     const mix = (a,b,t) => a.map((v,i) => Math.round(v*(1-t)+b[i]*t));
-    const luminance = c => c.map(v => v/255).map(v => v <= .04045 ? v/12.92 : ((v+.055)/1.055)**2.4)
-        .reduce((sum,v,i) => sum + v*[.2126,.7152,.0722][i],0);
+    const luminance = pwaRelativeLuminance;
     const contrast = (a,b) => (Math.max(luminance(a),luminance(b))+.05)/(Math.min(luminance(a),luminance(b))+.05);
     const tint = (base, amount) => mix(base,rgb,amount);
     const bases = dark
@@ -35,6 +68,48 @@ function pwaProfilePalette(color, dark) {
     }
     return {...Object.fromEntries(Object.entries(palette).map(([shade,value]) => ['gray-'+shade,value.join(' ')])),
         accent:`rgb(${accent.join(' ')})`, wash:`rgb(${wash.join(' ')})`};
+}
+
+// The sky follows the clock; the person's hue remains the accent.
+const pwaSkyBands = {
+    morning: {
+        light: { top: '#fff0e6', mid: '#f6eef7', bottom: '#eef0fb' },
+        dark: { top: '#30242b', mid: '#272536', bottom: '#202839' }
+    },
+    afternoon: {
+        light: { top: '#fff4e8', mid: '#f1f2fa', bottom: '#e6effb' },
+        dark: { top: '#2d2a2c', mid: '#242c3a', bottom: '#222c3e' }
+    },
+    evening: {
+        light: { top: '#fbe7df', mid: '#f0e7f4', bottom: '#e5eaf9' },
+        dark: { top: '#39252d', mid: '#302638', bottom: '#232b40' }
+    },
+    night: {
+        light: { top: '#eee6ee', mid: '#e5e7f3', bottom: '#dce5f6' },
+        dark: { top: '#25212e', mid: '#202333', bottom: '#192539' }
+    }
+};
+function pwaSky(hour, dark) {
+    const band = hour >= 5 && hour < 12 ? 'morning'
+        : hour >= 12 && hour < 17 ? 'afternoon'
+        : hour >= 17 && hour < 21 ? 'evening' : 'night';
+    return Object.assign({}, pwaSkyBands[band][dark ? 'dark' : 'light']);
+}
+pwaSky.contrast = function (hexA, hexB) {
+    const a = pwaRelativeLuminance(hexA), b = pwaRelativeLuminance(hexB);
+    return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);
+};
+function pwaSyncSky() {
+    const root = document.documentElement;
+    const sky = pwaSky(new Date().getHours(), root.dataset.theme === 'dark');
+    for (const [stop, color] of Object.entries(sky)) root.style.setProperty('--pwa-sky-' + stop, color);
+}
+window.pwaSyncSky = pwaSyncSky;
+if (!window.pwaSkyVisibilityBound) {
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') pwaSyncSky();
+    });
+    window.pwaSkyVisibilityBound = true;
 }
 function pwaSyncProfileColors() {
     const root = document.documentElement;
@@ -66,6 +141,9 @@ function pwaSyncShell() {
     Object.entries(labels).forEach(([id, label]) => {
         document.querySelector(`#tab-${id} > span`).textContent = label;
     });
+    const orb = document.getElementById('tab-argyle');
+    orb.hidden = !pwaOrbAllowed();
+    if (!orb.firstElementChild && window.ArgyleOrb) orb.innerHTML = ArgyleOrb.glyph();
     // Keep keyboard/reading order aligned with the visual tab order.
     if (adult) pwaOrderTabs(['myday','drives','family','chores','messages','map','music','more']);
     const more = document.getElementById('tab-more');
@@ -87,6 +165,7 @@ function pwaSyncShell() {
     }
     pwaChildSync();
     pwaSyncProfileColors();
+    pwaSyncSky();
 }
 
 function pwaAllowed(view) {

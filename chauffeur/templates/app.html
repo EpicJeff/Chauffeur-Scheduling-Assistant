@@ -36,6 +36,7 @@
                 const resolved = window.resolveTheme(pref);
                 const root = document.documentElement;
                 root.dataset.theme = resolved;
+                window.pwaSyncSky?.();
                 root.dataset.themePref = pref;
                 // Tailwind's darkMode:'class' hook, kept in sync for any
                 // dark: variant added later.
@@ -111,6 +112,9 @@
     <link rel="stylesheet" href="{{ 'static/tailwind-app.css'|ver }}">
     <link rel="stylesheet" href="{{ 'static/pwa_shell.css'|ver }}">
     <script defer src="{{ 'static/pwa_shell.js'|ver }}"></script>
+    <script defer src="{{ 'static/pwa_nav.js'|ver }}"></script>
+    <link rel="stylesheet" href="{{ 'static/argyle_orb.css'|ver }}">
+    <script defer src="{{ 'static/argyle_orb.js'|ver }}"></script>
     <script defer src="{{ 'static/situations.js'|ver }}"></script>
     <script defer src="{{ 'static/errand_steer.js'|ver }}"></script>
     <link rel="stylesheet" href="{{ 'static/pwa_child_shell.css'|ver }}">
@@ -527,6 +531,7 @@
                 <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
                 <span class="text-xs font-bold tracking-wide">More</span>
             </button>
+            <button id="tab-argyle" class="argyle-orb" type="button" aria-label="Ask Argyle" onclick="pwaOpenArgyle()" hidden></button>
         </div>
     </div>
 
@@ -856,6 +861,7 @@
         updateThemeButton();
 
         function setView(view, focusMemberId = null) {
+            window.PwaNav?.clear();
             if (view !== 'messages') window.ChauffeurPhoneVoice?.stop(false);
             if (pwaChildStage()) {
                 if (view === 'projects' && pwaChildStage() === 'sprout') view = 'more';
@@ -949,6 +955,11 @@
         // "Select Family Member", where it cannot work: Argyle answers AS
         // somebody, and at that moment nobody has said who they are.
         function updateAgentFab() {
+            const threadOpen =
+                (document.getElementById('thread-view') || {}).style?.display === 'flex';
+            const inThread = currentView === 'messages' && threadOpen;
+            document.getElementById('tab-argyle')?.classList.toggle('argyle-orb-hidden',
+                !!(inThread && threadChannel?.member_ids?.includes('argyle')));
             const fab = document.getElementById('kiosk-chat-fab');
             if (!fab) return;
             // Asked of the SCREEN rather than of `selectedMemberId`, which
@@ -965,9 +976,6 @@
             // Argyle has messaging tools (v2.25.0) so the FAB belongs on the
             // Messages channel list; it still hides inside an OPEN thread,
             // where it overlays the composer's Send button.
-            const threadOpen =
-                (document.getElementById('thread-view') || {}).style?.display === 'flex';
-            const inThread = currentView === 'messages' && threadOpen;
             fab.style.display = (picking || inThread) ? 'none' : '';
         }
 
@@ -4824,6 +4832,7 @@
                 && (!c || c.kind === 'event')
                 && !(c && (c.member_ids || []).includes(selectedMemberId));
             threadChannel = c || { id: channelId, kind: null, member_ids: [] };
+            updateAgentFab();
             window.ChauffeurPhoneVoice?.visibility();
             const guestsBtn = document.getElementById('thread-guests-btn');
             if (guestsBtn) guestsBtn.style.display =

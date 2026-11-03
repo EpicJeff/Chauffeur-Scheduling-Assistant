@@ -1146,13 +1146,11 @@ function closeChatHelpModal() {
         // no pixels, and does not compete with the board for attention.
         if (params.get('panel') !== 'true' || !el) return;
 
-        const orb = document.createElement('button');
-        orb.id = 'panel-chat-orb';
-        orb.type = 'button';
-        orb.setAttribute('aria-label', 'Ask Argyle');
-        orb.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
-            + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
-            + '<path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>';
+        if (!window.ArgyleOrb) {
+            console.warn('Argyle orb is unavailable');
+            return;
+        }
+        const orb = ArgyleOrb.create({ id: 'panel-chat-orb', label: 'Ask Argyle' });
         document.body.appendChild(orb);
 
         function openChat() {

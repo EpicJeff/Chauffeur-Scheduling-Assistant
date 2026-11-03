@@ -463,26 +463,12 @@
         position: fixed;
         left: 50%;
         transform: translateX(-50%);
+        --argyle-orb-base-transform: translateX(-50%);
         transform-origin: 50% 100%;
         bottom: calc(var(--panel-shelf-h) + 1rem);
         z-index: 80;
-        width: 3.25rem;
-        height: 3.25rem;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border: 1px solid rgb(255 255 255 / 0.22);
-        border-radius: 999px;
-        color: #fff;
-        background: radial-gradient(120% 120% at 30% 25%, #a78bfa 0%, #6366f1 45%, #2563eb 100%);
-        box-shadow: 0 6px 22px rgb(79 70 229 / .45), 0 0 0 6px rgb(99 102 241 / .12);
-        -webkit-backdrop-filter: blur(8px);
-        backdrop-filter: blur(8px);
-        cursor: pointer;
         transition: opacity .18s ease, transform .18s ease, visibility .18s;
     }
-
-    html[data-panel] #panel-chat-orb svg { width: 1.4rem; height: 1.4rem; }
 
     /* The collapse keeps the centring transform, or the orb would jump to the
        left edge on its way out. */
@@ -492,16 +478,7 @@
         transform: translateX(-50%) scale(0.72);
     }
 
-    /* A slow breath, so it reads as available rather than as a notification.
-       Anything faster is a thing demanding to be tapped. */
-    @media (prefers-reduced-motion: no-preference) {
-        #panel-chat-orb { animation: panel-orb-breathe 4.5s ease-in-out infinite; }
-    }
-
-    @keyframes panel-orb-breathe {
-        0%, 100% { box-shadow: 0 6px 22px rgb(79 70 229 / .40), 0 0 0 5px rgb(99 102 241 / .10); }
-        50%      { box-shadow: 0 6px 26px rgb(79 70 229 / .55), 0 0 0 9px rgb(99 102 241 / .05); }
-    }
+    /* The orb's breath and its reduced-motion gate live in static/argyle_orb.css. */
 
     /* Typing still has to work — the no-select rule is about stray long
        presses on labels, not about the errand box. */
