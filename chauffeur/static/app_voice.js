@@ -7,7 +7,7 @@
         generation: 0, turn: null, stream: null, recorder: null, recognition: null,
         audio: null, audioUrl: null, timer: null, watcher: null, controller: null,
         state: 'idle', token: '', response: null, submitRecording: false,
-        timings: [], started: 0, ended: 0, anchor: '',
+        timings: [], started: 0, ended: 0, anchor: '', host: null,
         visibility() {
             const channel = typeof threadChannel === 'undefined' ? null : threadChannel;
             if (el('mic')) el('mic').style.display = channel?.kind === 'dm'
@@ -16,6 +16,7 @@
         status(label, state = 'idle') {
             this.state = state;
             if (state === 'idle') { clearInterval(this.watcher); this.watcher = null; }
+            if (this.host) { this.host.status(label, state); return; }
             el('panel')?.classList.remove('hidden');
             if (el('status')) el('status').textContent = label;
             el('done')?.classList.toggle('hidden', state !== 'listening');
@@ -27,10 +28,20 @@
                 el('mic').setAttribute('aria-label', state === 'listening' ? 'Recording; press Done to send' : 'Talk to Argyle');
             }
         },
+        fail(label, host = this.host) {
+            if (host) {
+                this.generation++;
+                this.state = 'idle';
+                clearInterval(this.watcher); this.watcher = null;
+                host.status(label, 'error');
+                this.host = null;
+            } else this.status(label);
+        },
         url(suffix) { return (typeof apiBase === 'undefined' ? '' : apiBase) + 'api/app-voice/' + suffix; },
         valid(generation) {
             return generation === this.generation && !document.hidden && this.token === memberToken()
-                && (!this.turn || typeof activeChannelId === 'undefined' || activeChannelId === this.turn.channel.id);
+                && (this.host ? this.host.isOpen()
+                    : (!this.turn || typeof activeChannelId === 'undefined' || activeChannelId === this.turn.channel.id));
         },
         async json(suffix, body, signal) {
             const res = await fetch(this.url(suffix), {
@@ -73,49 +84,58 @@
             this.releaseCapture(); this.releaseAudio();
             this.cancelServer(this.turn, this.token);
             this.turn = null; this.response = null;
+            if (this.host) {
+                this.state = 'idle';
+                this.host.status('', 'idle');
+                this.host = null;
+                return;
+            }
             if (show && active) this.status('Stopped. Completed actions remain in your conversation.');
             else if (!show) { this.state = 'idle'; el('panel')?.classList.add('hidden'); }
         },
-        async start() {
+        async start(opts = {}) {
             this.stop(false);
             if (!memberToken()) {
+                opts.host?.status('', 'idle');
                 showGlobalAlert('Sign in on your personal device to talk to Argyle.'); return;
             }
             if (!window.isSecureContext || window.self !== window.top) {
+                opts.host?.status('', 'idle');
                 showGlobalAlert('Open the secure Chauffeur app outside Home Assistant ingress for voice.'); return;
             }
+            this.host = opts.host || null;
             this.token = memberToken();
             const generation = this.generation;
             const credential = this.token;
             const requestId = crypto.randomUUID ? crypto.randomUUID()
                 : Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('');
-            const ownChannel = typeof threadChannel !== 'undefined' && threadChannel?.kind === 'dm'
-                && threadChannel.member_ids?.includes('argyle') ? threadChannel.id : null;
+            const ownChannel = this.host ? this.host.channelId()
+                : (typeof threadChannel !== 'undefined' && threadChannel?.kind === 'dm'
+                    && threadChannel.member_ids?.includes('argyle') ? threadChannel.id : null);
             this.status('Starting microphone…', 'starting');
             this.started = performance.now();
             this.ended = 0; this.anchor = 'recording ended / Done';
-            if (el('transcript')) el('transcript').textContent = '';
+            if (!this.host && el('transcript')) el('transcript').textContent = '';
             try {
                 // Do not abort this request: a late start response must revoke
                 // the exact turn it created after local cancellation.
                 const turn = await this.json('start', {request_id: requestId, channel_id: ownChannel});
                 if (!this.valid(generation)) { this.cancelServer(turn, credential); return; }
                 this.turn = turn;
-                const popup = document.getElementById('kiosk-chat-popup');
-                if (popup) { popup.classList.add('hidden'); popup.classList.remove('flex'); }
-                setView('messages');
-                await openChannel(turn.channel.id, turn.channel);
+                if (!this.host) {
+                    setView('messages');
+                    await openChannel(turn.channel.id, turn.channel);
+                }
                 if (!this.valid(generation)) { this.cancelServer(turn, credential); return; }
-                this.status('Listening — press Done when you finish.', 'listening');
                 const browserProbe = new URLSearchParams(location.search).get('voice_probe') === 'browser';
                 if (browserProbe) this.browser(generation);
                 else await this.capture(generation);
             } catch (error) {
                 if (generation !== this.generation) return;
                 this.releaseCapture(); this.cancelServer(this.turn, credential);
-                if (!this.turn && document.getElementById('thread-view')?.style.display !== 'flex')
+                if (!this.host && !this.turn && document.getElementById('thread-view')?.style.display !== 'flex')
                     showGlobalAlert(error.message || 'Voice could not start. You can still type.');
-                this.status(error.name === 'NotAllowedError' ? 'Microphone access was denied. Allow it in Settings or use text.'
+                this.fail(error.name === 'NotAllowedError' ? 'Microphone access was denied. Allow it in Settings or use text.'
                     : (error.message || 'Microphone unavailable. You can still type.'));
             }
         },
@@ -131,7 +151,10 @@
             if (!this.valid(generation)) { stream.getTracks().forEach(t => t.stop()); return; }
             this.stream = stream;
             stream.getTracks().forEach(t => t.addEventListener('ended', () => {
-                if (this.stream === stream) { this.stop(); this.status('Microphone interrupted. Tap to resume.'); }
+                if (this.stream === stream) {
+                    const host = this.host;
+                    this.stop(); this.fail('Microphone interrupted. Tap to resume.', host);
+                }
             }));
             const format = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']
                 .find(type => MediaRecorder.isTypeSupported(type));
@@ -141,11 +164,19 @@
             const chunks = [];
             let size = 0;
             recorder.ondataavailable = event => {
+                if (!this.valid(generation) || this.recorder !== recorder) return;
                 size += event.data.size;
-                if (size > 5000000) { this.stop(); this.status('Recording exceeded its limit. Try a shorter request.'); }
+                if (size > 5000000) {
+                    const host = this.host;
+                    this.stop(); this.fail('Recording exceeded its limit. Try a shorter request.', host);
+                }
                 else if (event.data.size) chunks.push(event.data);
             };
-            recorder.onerror = () => { this.stop(); this.status('Recording failed. Tap to try again or use text.'); };
+            recorder.onerror = () => {
+                if (!this.valid(generation) || this.recorder !== recorder) return;
+                const host = this.host;
+                this.stop(); this.fail('Recording failed. Tap to try again or use text.', host);
+            };
             recorder.onstop = () => {
                 const submit = this.submitRecording && this.valid(generation);
                 this.submitRecording = false;
@@ -155,6 +186,7 @@
                 chunks.length = 0;
             };
             recorder.start(250);
+            this.status('Listening — press Done when you finish.', 'listening');
             this.watch(generation);
             this.timer = setTimeout(() => this.done(), 14500);
         },
@@ -182,19 +214,26 @@
                     const text = Array.from(event.results).filter(r => r.isFinal).map(r => r[0].transcript).join(' ');
                     const data = await this.json(this.turn.request_id + '/text', {text});
                     if (this.valid(generation)) await this.dispatch(data.transcript, generation);
-                } catch (error) { if (this.valid(generation)) this.status(error.message); }
+                } catch (error) { if (this.valid(generation)) this.fail(error.message); }
             };
             recognition.onerror = () => {
-                if (!final && this.valid(generation)) { this.releaseCapture(); this.status('Browser recognition failed. Tap to retry or use text.'); }
+                if (!final && this.valid(generation)) { this.releaseCapture(); this.fail('Browser recognition failed. Tap to retry or use text.'); }
             };
             recognition.onend = () => {
-                if (!final && this.valid(generation)) { this.releaseCapture(); this.status('No speech result. Tap to retry or use text.'); }
+                if (!final && this.valid(generation)) { this.releaseCapture(); this.fail('No speech result. Tap to retry or use text.'); }
             };
             recognition.start();
+            this.status('Listening — press Done when you finish.', 'listening');
             this.watch(generation);
             this.timer = setTimeout(() => this.done(), 15000);
         },
         done() {
+            if (this.state === 'starting') {
+                const host = this.host;
+                this.stop(false);
+                this.fail('Keep holding until Listening… appears, or type.', host);
+                return;
+            }
             if (this.state !== 'listening') return;
             this.ended = performance.now();
             if (this.recognition) { this.recognition.stop(); this.status('Recognizing speech…', 'thinking'); }
@@ -218,12 +257,13 @@
             } catch (error) {
                 if (this.valid(generation)) {
                     this.cancelServer(this.turn, this.token);
-                    this.status(error.name === 'AbortError' ? 'Recognition took too long. Tap to try again or use text.' : error.message);
+                    this.fail(error.name === 'AbortError' ? 'Recognition took too long. Tap to try again or use text.' : error.message);
                 }
             } finally { clearTimeout(timeout); }
         },
         async dispatch(transcript, generation) {
-            if (el('transcript')) el('transcript').textContent = transcript;
+            if (this.host) this.host.transcript(transcript);
+            else if (el('transcript')) el('transcript').textContent = transcript;
             const timing = {capture: new URLSearchParams(location.search).get('voice_probe') === 'browser' ? 'browser' : 'ha',
                 anchor: this.anchor,
                 transcript_ms: Math.round(performance.now() - this.ended)};
@@ -233,7 +273,10 @@
             if (!this.valid(generation)) return;
             timing.text_ms = Math.round(performance.now() - this.ended);
             this.response = data;
-            await refreshThread();
+            if (this.host) this.host.reply(data.reply, {
+                continue_conversation: data.continue_conversation, speech_safe: data.speech_safe
+            });
+            if (currentView === 'messages') await refreshThread();
             if (!this.valid(generation)) return;
             this.status('Reply ready. Preparing speech…', 'thinking');
             await this.play(timing);
@@ -263,12 +306,15 @@
                     if (!this.valid(generation)) return;
                     this.releaseAudio();
                     this.status(this.response?.continue_conversation ? 'Tap to reply.' : 'Tap the microphone for another request.');
+                    if (this.host) { this.host = null; return; }
                     if (this.response?.continue_conversation) el('reply')?.classList.remove('hidden');
                 };
                 this.audio.onerror = () => {
                     if (!this.valid(generation)) return;
                     this.releaseAudio();
-                    this.status('Audio playback failed. Your answer is on screen.');
+                    const hosted = !!this.host;
+                    this.fail('Audio playback failed. Your answer is on screen.');
+                    if (hosted) return;
                     el('play')?.classList.remove('hidden');
                     if (this.response?.continue_conversation) el('reply')?.classList.remove('hidden');
                 };
@@ -276,7 +322,10 @@
             } catch (_) {
                 if (this.valid(generation)) {
                     this.releaseAudio();
-                    this.status('Your answer is on screen. Tap Play reply to hear it.');
+                    const hosted = !!this.host;
+                    this.fail(hosted ? 'Your answer is on screen. Speech is unavailable.'
+                        : 'Your answer is on screen. Tap Play reply to hear it.');
+                    if (hosted) return;
                     el('play')?.classList.remove('hidden');
                     if (this.response?.continue_conversation) el('reply')?.classList.remove('hidden');
                 }

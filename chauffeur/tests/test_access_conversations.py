@@ -303,61 +303,69 @@ def scenario_panel_mission_keeps_member_subject_but_cannot_see_contacts():
 
 
 def scenario_clients_request_server_owned_conversations():
+    # The client half runs the wall's Argyle bar (the control-center widget);
+    # the PWA popup is retired, the server's surface=pwa stays (scenarios above).
     src = (ROOT / 'templates/components/control_center.html').read_text(encoding='utf-8')
     check('chauffeurActiveConvId' not in src, 'widget has no invented localStorage id')
     check('api/chat/conversation?surface=' in src, 'widget asks server')
-    src = (ROOT / 'templates/app.html').read_text(encoding='utf-8')
-    # Execute the actual popup script with DOM/network stubs, including identity loss.
-    script = src[src.index("        const chatMessages = document.getElementById('chat-messages');"):src.rindex('</script>')]
+    # Execute the widget's chat client (input history, conversation resolve,
+    # keydown wiring, submitChat) with DOM/network stubs, including identity loss.
+    first, last = '    let chatInputHistory = [];', '    let isOperationsSidebarOpen = false;'
+    script = src[src.index(first):src.index(last, src.index(first))]
+    check('async function resolveChatConversation()' in script and 'async function submitChat(e)' in script,
+          'slice holds the widget client')
     js = """
 const assert = require('assert');
-let selectedMemberId = 'mom', token = 'mom-token', selectedDriverId = 'driver';
-let calls = [], messages = [];
-const box = {innerHTML:'', scrollHeight:0, scrollTop:0, appendChild(){}};
-const input = {value:'hello', style:{}, focus(){}};
-const events = {};
-const popup = {classList:{hidden:true, toggle(k){if(k==='hidden')this.hidden=!this.hidden;}, contains(){return this.hidden;}}};
-const document = {getElementById:id=>id==='chat-messages'?box:id==='chat-input'?input:id==='kiosk-chat-popup'?popup:{},
- addEventListener(k,fn){events[k]=fn;}, createElement(){return {remove(){}}}};
-const window = {location:{pathname:'/app', search:''}};
-function memberToken(){return token;}
-function showGlobalAlert(s){messages.push(s);}
-async function fetch(url, opts){calls.push([url,opts]); return {ok:true,json:async()=>
- url.includes('conversation?')?{conversation:{id:'owned-'+selectedMemberId,surface:{kind:'pwa',owner:selectedMemberId},messages:[]}}:
- url.includes('history?')?{history:[]}:{reply:'ok'}};}
-function fetchSchedule(){}
+const location = {search:SEARCH};
+const store = {};
+const localStorage = {getItem:k=>k==='chauffeur_device_token'?DEVICE:(k in store?store[k]:null), setItem(k,v){store[k]=v;}};
+let who = 'mom', calls = [], bubbles = [];
+const window = {chfBase:'/', chfPersonToken:()=>who?who+'-token':'', location:{pathname:'/admin', search:SEARCH},
+ showAnchoredChatBubble(id,text){bubbles.push(text);}};
+const chatInput = {value:'', style:{}, disabled:false, focus(){}, addEventListener(){}};
+const chatSubmitBtn = {innerHTML:'Send', disabled:false};
+async function fetch(url, opts){calls.push([url,opts]);
+ if(url.includes('api/chat/conversation?')){
+  if(!who) return {ok:false,status:401,json:async()=>({})};
+  const s = new URL(url,'http://x').searchParams.get('surface');
+  return {ok:true,json:async()=>({conversation:{id:'owned-'+s+'-'+who,surface:{kind:s,owner:who},messages:[]}})};
+ }
+ return {ok:true,json:async()=>({reply:'ok'})};}
 """ + script + """
-appendMessage = (role,text)=>messages.push(text);
+const posts = ()=>calls.filter(x=>x[1]&&x[1].method==='POST');
+async function send(text){chatInput.value=text; await submitChat({preventDefault(){}});}
 (async()=>{
- if(events.DOMContentLoaded) await events.DOMContentLoaded();
- assert.equal(calls.length,0,'closed popup does not create a row on page load');
- toggleKioskChat();
- await new Promise(resolve=>setImmediate(resolve));
- assert(calls.some(x=>x[0].includes('api/chat/conversation?surface=pwa')));
- assert(!calls.some(x=>x[0].endsWith('api/chat/conversations')));
- await submitChat({preventDefault(){}});
- let sent = calls.find(x=>x[1]?.method==='POST');
- assert.equal(JSON.parse(sent[1].body).conversation_id,'owned-mom');
- selectedMemberId='dad'; token='dad-token'; input.value='hello';
- await loadChatHistory(); await submitChat({preventDefault(){}});
- sent = calls.filter(x=>x[1]?.method==='POST').at(-1);
- assert.equal(JSON.parse(sent[1].body).conversation_id,'owned-dad');
- selectedMemberId=null; token=''; calls=[]; input.value='hello';
- await loadChatHistory(); await submitChat({preventDefault(){}});
- assert.equal(activeConversationId,null); assert.equal(calls.length,0);
- assert(messages.some(x=>x.includes('Sign in on your personal device')));
- selectedMemberId='mom'; token='mom-token'; calls=[]; popup.classList.hidden=true;
- await resetPwaChat();
- assert.equal(activeConversationId,null); assert.equal(calls.length,0,'closed identity reset stays lazy');
- input.value='first send'; await submitChat({preventDefault(){}});
- assert(calls.some(x=>x[0].includes('conversation?surface=pwa')),'first send resolves its conversation');
- selectedMemberId='dad'; token='dad-token'; calls=[]; popup.classList.hidden=false;
- await resetPwaChat();
- assert.equal(activeConversationId,'owned-dad','open popup follows changed identity');
+ assert.equal(chatSurface,SURFACE,'surface chosen from the page');
+ await send('hello');
+ const asked = calls.filter(x=>x[0].includes('api/chat/conversation?surface='+SURFACE));
+ assert.equal(asked.length,1,'a send asks the server for its surface conversation');
+ assert.equal(asked[0][0].includes('device_token=panel-credential'),SURFACE==='panel','panel carries its device credential');
+ assert(!calls.some(x=>x[0].includes('api/chat/conversations')),'the client never mints a conversation');
+ assert.equal(posts().length,1);
+ assert(posts()[0][0].includes('api/chat?surface='+SURFACE),'post names the same surface');
+ assert.equal(JSON.parse(posts()[0][1].body).conversation_id,'owned-'+SURFACE+'-mom','post carries the returned id');
+ assert(calls.indexOf(asked[0])<calls.indexOf(posts()[0]),'conversation resolved before the post');
+ who='dad'; calls=[];
+ await send('hello again');
+ assert(calls[0][0].includes('api/chat/conversation?surface='+SURFACE),'identity change asks again');
+ assert.equal(JSON.parse(posts()[0][1].body).conversation_id,'owned-'+SURFACE+'-dad','open widget follows changed identity');
+ who=null; calls=[]; bubbles=[];
+ await send('hello');
+ assert.equal(activeConversationId,null,'identity loss forgets the conversation');
+ assert.equal(posts().length,0,'no identity never posts');
+ assert(bubbles.some(x=>x.includes('Sign in on your personal device')),'identity loss says so');
+ assert.equal(chatInput.disabled,false,'input usable again');
+ who='mom'; calls=[];
+ await send('back again');
+ assert.equal(JSON.parse(posts()[0][1].body).conversation_id,'owned-'+SURFACE+'-mom','sign-in resolves again');
 })().catch(e=>{console.error(e);process.exitCode=1});
 """
-    r = subprocess.run(['node', '-e', js], text=True, capture_output=True)
-    check(r.returncode == 0, f'popup runtime: {r.stdout}\n{r.stderr}')
+    # A surface switch (wall page vs enrolled panel) requests its own conversation.
+    for search, device, surface in [('', None, 'admin'), ('?panel=true', 'panel-credential', 'panel')]:
+        runtime = (js.replace('SEARCH', repr(search)).replace('DEVICE', 'null' if device is None else repr(device))
+                   .replace('SURFACE', repr(surface)))
+        r = subprocess.run(['node', '-e', runtime], text=True, capture_output=True, encoding='utf-8')
+        check(r.returncode == 0, f'widget client runtime ({surface}): {r.stdout}\n{r.stderr}')
 
 
 def scenario_widget_preserves_enrolled_panel_with_member_session():

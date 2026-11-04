@@ -10,7 +10,7 @@
 [data-child-stage] #pwa-identity { width:44px; height:44px; display:grid; place-items:center; }
 [data-child-stage] #driver-avatar { height:36px; width:36px; border:0; box-shadow:none; }
 [data-child-stage] #pwa-identity > span,
-[data-child-stage] :is(#btn-pet,#btn-theme,#btn-sync,#btn-push,#btn-switch-driver,#tab-map,#tab-music,#tab-drives,#tab-family,#kiosk-chat-fab) { display:none !important; }
+[data-child-stage] :is(#btn-pet,#btn-theme,#btn-sync,#btn-push,#btn-switch-driver,#tab-map,#tab-music,#tab-drives,#tab-family) { display:none !important; }
 [data-child-stage] #btn-notif { background:transparent; }
 [data-child-stage] #pwa-tab-bar { box-shadow:none; }
 [data-child-stage] #pwa-tab-bar > button { flex:1; min-width:0; min-height:64px; padding:8px 2px; color:rgb(var(--c-gray-400)); gap:3px; }

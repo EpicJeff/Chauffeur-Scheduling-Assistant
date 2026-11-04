@@ -82,6 +82,31 @@ leave every child stage and the kiosk exactly as they were.
   `#panel-chat-orb` and the phone's `#tab-argyle` are both built from it; the
   wall keeps only its position rules in `ha_theme.html`. Never paint a second
   orb; never change the look in one place.
+- **Argyle from anywhere (slice 2, v2.499.753).** The orb has two gestures:
+  tap opens the overlay to type, hold (350 ms) opens it listening through the
+  phone voice path; a click with no pointer pair (VoiceOver, TalkBack, Switch
+  Control) opens type mode; Enter/Space on the focused orb too. The overlay
+  (`static/pwa_argyle.js`, `window.PwaArgyle`) rises over the current screen
+  and NEVER routes through `setView` or `openChannel`: `currentView`,
+  `PwaNav.depth()` and the scroll are what they were when it closes. It
+  ensures the Argyle DM once, sends text with the thread's own
+  `POST api/channels/{id}/messages`, and learns of the reply the way the
+  thread does (the `api/messages/stream` channel event, then one messages
+  read); the newest Argyle message's body and `card` are drawn with the
+  thread's `renderCard`, so the buttons are the same buttons, and the card
+  re-pulls after a tap. Voice runs in `ChauffeurPhoneVoice.start({ host })`:
+  one state machine, the overlay a sink for its states; "Starting
+  microphone…" has no wave, "Listening…" does; a release before listening
+  cancels the turn with "Keep holding until Listening… appears, or type."
+  Every exchange lands in the Argyle DM; Messages is the record. Dismiss by
+  swipe down, backdrop tap (ignored within 400 ms of open), Escape (ignored
+  under a prompt) and hardware Back (a `{pwaOverlay:'argyle'}` history entry
+  `PwaNav` ignores; a view change over a pushed screen walks both in one
+  `PwaNav.clear({ extra: 1 })`). Reduced motion: no glow, no wave, a plain
+  fade. A refused DM shows the server's detail and no input; a 5xx or
+  offline is "Could not reach Argyle" with the bar kept. "Ask Argyle" is not
+  in More; the old popup and its `surface=pwa` history are gone; the orb and
+  the DM are the one path. Never add a second Argyle client to the phone.
 - **The tab bar.** An evenly spaced row of equal 44px slots,
   `justify-content: space-between` with 18px edge padding, the first tab
   anchored left and the orb anchored right as the last slot; tabs fill from

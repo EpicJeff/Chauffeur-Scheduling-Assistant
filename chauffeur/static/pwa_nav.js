@@ -98,8 +98,8 @@
         removeScreen();
     }
 
-    function clear() {
-        walkBack(depth() - pendingPushes.length);
+    function clear({ extra = 0 } = {}) {
+        walkBack(depth() - pendingPushes.length + extra);
         while (depth()) removeScreen();
     }
 

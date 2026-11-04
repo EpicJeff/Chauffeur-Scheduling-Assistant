@@ -148,8 +148,23 @@ def scenario_the_phone_bar_ends_with_the_orb():
     js = read('static/pwa_shell.js')
     check('function pwaOrbAllowed' in js and "scopeOf('chat.agent')" in js,
           'the orb does not read the chat.agent facet')
-    check('function pwaOpenArgyle' in js, 'tapping the orb has no handler')
     check('alert(' not in js.replace('showGlobalAlert(', ''), 'a browser dialog crept into the shell')
+    # Slice 2: the orb's tap/hold is a gesture bound by the shell, not an
+    # inline onclick; it opens the overlay (static/pwa_argyle.js). The DM
+    # opener survives as the overlay hint's path to Messages.
+    tag_start = app.rindex('<', 0, app.index('id="tab-argyle"'))
+    tag = app[tag_start:app.index('>', app.index('id="tab-argyle"')) + 1]
+    check('onclick="pwaOpenArgyle()"' not in tag and 'onclick=' not in tag,
+          'the orb still opens the DM from an inline onclick: ' + tag)
+    check("'static/pwa_argyle.js'|ver" in app, 'the phone does not load the Argyle overlay')
+    check('function pwaOpenArgyle' in js, 'the overlay hint has no path to the Messages thread')
+    check('function pwaArgyleBindOrb' in js, 'the orb has no tap/hold gesture binding')
+    for name, src in (('templates/app.html', app), ('static/pwa_shell.js', js)):
+        check('toggleKioskChat' not in src, name + ' still carries the Ask Argyle popup (toggleKioskChat)')
+        check('kiosk-chat-popup' not in src, name + ' still carries #kiosk-chat-popup')
+    overlay = read('static/pwa_argyle.js')
+    check(overlay, 'static/pwa_argyle.js is missing')
+    check('window.PwaArgyle' in overlay, 'the overlay module does not export window.PwaArgyle')
 
 
 if __name__ == '__main__':

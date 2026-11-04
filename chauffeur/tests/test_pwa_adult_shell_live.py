@@ -167,17 +167,37 @@ def check_orb(page, key, role, dm_posts=None):
     assert round(size['w']) == 44 and round(size['h']) == 44 and size['r'] > 0, size
     assert 'radial-gradient' in orb.evaluate('e=>getComputedStyle(e).backgroundImage')
     view = page.evaluate('currentView')
+    orb_back = "document.getElementById('tab-argyle').checkVisibility({visibilityProperty: true, opacityProperty: true})"
+    # Slice 2: a tap opens the Argyle overlay over the current screen (no
+    # setView), after ensuring the Argyle DM the overlay talks through.
     orb.click()
-    page.wait_for_function("activeChannelId && threadChannel && threadChannel.member_ids.includes('argyle')")
+    overlay = page.locator('#pwa-argyle-overlay')
+    overlay.wait_for(state='visible', timeout=4000)
+    assert page.evaluate('currentView') == view, (view, page.evaluate('currentView'))
     if dm_posts is not None:
+        for _ in range(40):
+            if dm_posts: break
+            page.wait_for_timeout(50)
         assert dm_posts and dm_posts[-1].get('member_id') == key \
             and dm_posts[-1].get('other_member_id') == 'argyle', dm_posts
     # .argyle-orb-hidden fades visibility over .18s; wait it out, then assert.
     try: orb.wait_for(state='hidden', timeout=2000)
     except Exception: pass
+    assert not orb.is_visible(), 'the orb shows through the Argyle overlay'
+    page.keyboard.press('Escape')
+    overlay.wait_for(state='hidden', timeout=2000)
+    page.wait_for_function(orb_back)
+    # The hint's "full conversation in Messages" opens the Argyle thread.
+    orb.click()
+    overlay.wait_for(state='visible', timeout=4000)
+    page.locator('#pwa-argyle-overlay .pwa-argyle-to-messages').click()
+    page.wait_for_function("activeChannelId && threadChannel && threadChannel.member_ids.includes('argyle')")
+    assert not overlay.is_visible(), 'the overlay stayed over the Argyle thread'
+    try: orb.wait_for(state='hidden', timeout=2000)
+    except Exception: pass
     assert not orb.is_visible(), 'the orb covers the composer'
-    page.evaluate('closeThread()')   # app.html:6420
-    page.wait_for_function("document.getElementById('tab-argyle').checkVisibility({visibilityProperty: true, opacityProperty: true})")
+    page.evaluate('closeThread()')   # app.html:6481
+    page.wait_for_function(orb_back)
     page.evaluate('v => setView(v)', view)
 
 
@@ -371,6 +391,8 @@ def run():
                     assert page.locator('#tab-more').is_visible(), tabs
                     assert not page.locator('#tab-map').is_visible()
                     assert not page.locator('#kiosk-chat-fab').is_visible()
+                    # Slice 2: the Ask Argyle popup is gone; the orb's overlay replaced it.
+                    assert page.locator('#kiosk-chat-popup').count() == 0
                     assert page.locator('header').bounding_box()['height'] <= 72
                     if key == 'keeping':
                         # Slice 1: the keeping-up adult gets My Day too (no drives tab).
@@ -452,6 +474,8 @@ def run():
                     search.fill('no-match-xyz')
                     assert page.locator('#pwa-search-empty').is_visible()
                     search.fill('')
+                    # Slice 2: Ask Argyle left More (the orb is the way in).
+                    assert page.locator('[data-feature="assistant"]').count() == 0
                     if key in ('parent', 'adult', 'scoped_out'):
                         page.locator('[data-feature="map"]').click()
                         assert page.locator('#tab-more').get_attribute('aria-current') == 'page'

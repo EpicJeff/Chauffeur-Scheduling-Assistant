@@ -114,6 +114,7 @@
     <script defer src="{{ 'static/pwa_shell.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_nav.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_myday.js'|ver }}"></script>
+    <script defer src="{{ 'static/pwa_argyle.js'|ver }}"></script>
     <link rel="stylesheet" href="{{ 'static/argyle_orb.css'|ver }}">
     <script defer src="{{ 'static/argyle_orb.js'|ver }}"></script>
     {% include 'components/hero_card.html' %}
@@ -534,7 +535,7 @@
                 <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
                 <span class="text-xs font-bold tracking-wide">More</span>
             </button>
-            <button id="tab-argyle" class="argyle-orb" type="button" aria-label="Ask Argyle" onclick="pwaOpenArgyle()" hidden></button>
+            <button id="tab-argyle" class="argyle-orb" type="button" aria-label="Ask Argyle" hidden></button>
         </div>
     </div>
 
@@ -865,7 +866,9 @@
 
         function setView(view, focusMemberId = null) {
             if (view === 'drives' && ['parent', 'adult'].includes(currentMemberRole())) view = 'myday';
-            window.PwaNav?.clear();
+            const clearOverlay = window.PwaArgyle?.isOpen() && window.PwaNav?.depth() > 0;
+            if (view !== currentView || clearOverlay) window.PwaArgyle?.close('view', {keepHistory: clearOverlay});
+            window.PwaNav?.clear({extra: clearOverlay ? 1 : 0});
             if (view !== 'messages') window.ChauffeurPhoneVoice?.stop(false);
             if (pwaChildStage()) {
                 if (view === 'projects' && pwaChildStage() === 'sprout') view = 'more';
@@ -959,28 +962,16 @@
         // "Select Family Member", where it cannot work: Argyle answers AS
         // somebody, and at that moment nobody has said who they are.
         function updateAgentFab() {
+            const picker = document.getElementById('screen-select-driver');
+            const login = document.getElementById('screen-login');
+            // Read the visible screen: a restored identity may still be on the picker.
+            const picking = (picker && !picker.classList.contains('hidden'))
+                || (login && !login.classList.contains('hidden'));
             const threadOpen =
                 (document.getElementById('thread-view') || {}).style?.display === 'flex';
             const inThread = currentView === 'messages' && threadOpen;
             document.getElementById('tab-argyle')?.classList.toggle('argyle-orb-hidden',
-                !!(inThread && threadChannel?.member_ids?.includes('argyle')));
-            const fab = document.getElementById('kiosk-chat-fab');
-            if (!fab) return;
-            // Asked of the SCREEN rather than of `selectedMemberId`, which
-            // survives in localStorage and can still name somebody the app
-            // just failed to restore — the exact state that lands on this
-            // picker. What is on the glass is the only thing that cannot lie.
-            const picker = document.getElementById('screen-select-driver');
-            const login = document.getElementById('screen-login');
-            // The login screen is the picker's untrusted-ground twin (S8):
-            // both are "nobody has said who they are yet", where a chat
-            // button that answers AS somebody cannot work.
-            const picking = (picker && !picker.classList.contains('hidden'))
-                || (login && !login.classList.contains('hidden'));
-            // Argyle has messaging tools (v2.25.0) so the FAB belongs on the
-            // Messages channel list; it still hides inside an OPEN thread,
-            // where it overlays the composer's Send button.
-            fab.style.display = (picking || inThread) ? 'none' : '';
+                !!(picking || (inThread && threadChannel?.member_ids?.includes('argyle')) || window.PwaArgyle?.isOpen()));
         }
 
         function updateTabBar() {
@@ -1168,7 +1159,6 @@
             localStorage.removeItem('chauffeur_driver_id');
             selectedMemberId = memberId;
             localStorage.setItem('chauffeur_member_id', memberId);
-            if (previousMemberId !== selectedMemberId) resetPwaChat();
             if (previousMemberId !== selectedMemberId && typeof mwOnMemberChanged === 'function') {
                 mwOnMemberChanged();
             }
@@ -4378,7 +4368,6 @@
                 selectedMemberId = m.id;
                 localStorage.setItem('chauffeur_member_id', m.id);
             }
-            if (previous !== selectedMemberId) resetPwaChat();
         }
 
         function currentMemberRole() {
@@ -4597,6 +4586,7 @@
                         return;
                     }
                     if (data.moment) maybePopMoment(data.moment);
+                    window.PwaArgyle?.onStream?.(data.channel_id);
                     if (activeChannelId && data.channel_id === activeChannelId && currentView === 'messages') {
                         refreshThread();
                     } else {
@@ -4918,6 +4908,7 @@
         }
 
         async function refreshThread() {
+            if (window.PwaArgyle && PwaArgyle.isOpen()) PwaArgyle.pull();
             if (!activeChannelId || helperShareMode) return;
             try {
                 const res = await fetch(`${apiBase}api/channels/${activeChannelId}/messages?limit=100`);
@@ -8205,7 +8196,6 @@
             localStorage.removeItem('chauffeur_member_id');
             localStorage.removeItem('chauffeur_member_token');
             localStorage.removeItem('chauffeur_member_token_for');
-            resetPwaChat();
             // Signing out has to reach the worker too, or a notification action
             // would keep posting as the person who just left this device.
             mirrorTokenToServiceWorker();
@@ -10839,188 +10829,6 @@
         </div>
     </div>
 
-    <!-- Argyle Chat Popup -->
-    <div id="kiosk-chat-popup" class="hidden fixed bottom-40 right-4 w-80 h-[30rem] max-h-[65vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl flex-col z-50 overflow-hidden">
-        <div class="bg-indigo-600 px-4 py-3 flex justify-between items-center text-white shrink-0 shadow-sm border-b border-indigo-700">
-            <span class="font-bold flex items-center gap-2">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
-                </svg>
-                Argyle
-            </span>
-            <button onclick="toggleKioskChat()" class="text-gray-100 hover:text-gray-200 focus:outline-none transition-colors">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                </svg>
-            </button>
-        </div>
-        <div id="kiosk-chat-popup-body" class="flex-1 flex flex-col min-h-0 bg-gray-900">
-            <div id="chat-content" class="flex-1 flex flex-col bg-gray-900 overflow-hidden">
-                <div id="chat-messages" class="flex-1 p-4 overflow-y-auto flex flex-col gap-3">
-                    <div class="text-center text-gray-500 text-sm mt-4">Loading chat history...</div>
-                </div>
-                <div class="p-3 bg-gray-800 border-t border-gray-700 shrink-0">
-                    <form id="chat-form" onsubmit="submitChat(event)" class="flex gap-2">
-                        <input type="text" id="chat-input" autocomplete="off" placeholder="Message Argyle..." class="flex-1 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-[16px] text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                        <button type="button" onclick="ChauffeurPhoneVoice.start()" aria-label="Talk to Argyle"
-                                class="rounded-lg bg-indigo-700 text-white px-2 inline-flex items-center justify-center" style="min-width:44px;min-height:44px">
-                            <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true">
-                                <rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/>
-                            </svg>
-                        </button>
-                        <button type="submit" id="chat-submit-btn" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg font-bold text-sm transition-colors">Send</button>
-                    </form>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Floating Action Button -->
-    <button id="kiosk-chat-fab" onclick="toggleKioskChat()" class="fixed bottom-24 right-4 w-14 h-14 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full shadow-lg flex items-center justify-center transition-transform hover:scale-110 z-50 focus:outline-none">
-        <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
-        </svg>
-    </button>
-
-        <script>
-        const chatMessages = document.getElementById('chat-messages');
-        const chatInput = document.getElementById('chat-input');
-        const chatSubmitBtn = document.getElementById('chat-submit-btn');
-
-        function toggleKioskChat() {
-            const popup = document.getElementById('kiosk-chat-popup');
-            if (popup) {
-                popup.classList.toggle('hidden');
-                popup.classList.toggle('flex');
-                if (!popup.classList.contains('hidden')) {
-                    loadChatHistory();
-                    if (chatInput) chatInput.focus();
-                    scrollToBottom();
-                }
-            }
-        }
-
-        let activeConversationId = null;
-        let pwaChatOwner = null;
-        let pwaChatEpoch = 0;
-
-        function resetPwaChat() {
-            ++pwaChatEpoch;
-            activeConversationId = null;
-            pwaChatOwner = null;
-            if (chatMessages) chatMessages.innerHTML = '';
-            const popup = document.getElementById('kiosk-chat-popup');
-            if (popup && !popup.classList.contains('hidden')) return loadChatHistory();
-        }
-
-        async function loadChatHistory() {
-            const epoch = ++pwaChatEpoch;
-            activeConversationId = null;
-            pwaChatOwner = null;
-            if (!chatMessages) return false;
-            chatMessages.innerHTML = '';
-            const owner = selectedMemberId;
-            const token = memberToken();
-            if (!owner || !token) {
-                appendMessage('assistant', 'Sign in on your personal device to talk to Argyle.');
-                return false;
-            }
-            try {
-                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
-                const cRes = await fetch(`${apiBase}api/chat/conversation?surface=pwa`);
-                if (!cRes.ok) throw new Error('Sign in on your personal device to talk to Argyle.');
-                const cData = await cRes.json();
-                if (epoch !== pwaChatEpoch || owner !== selectedMemberId || token !== memberToken()) return false;
-                const conv = cData.conversation;
-                if (!conv || conv.surface?.kind !== 'pwa' || conv.surface.owner !== owner) {
-                    throw new Error('Sign in on your personal device to talk to Argyle.');
-                }
-                activeConversationId = conv.id;
-                pwaChatOwner = owner;
-                if (conv.messages && conv.messages.length > 0) {
-                    conv.messages.forEach(msg => appendMessage(msg.role, msg.content));
-                } else {
-                    appendMessage('assistant', 'Hello! I am Argyle. Need help with your route today?');
-                }
-                scrollToBottom();
-                return true;
-            } catch (err) {
-                if (epoch === pwaChatEpoch) appendMessage('assistant', err.message);
-                return false;
-            }
-        }
-
-        function appendMessage(role, content) {
-            if (!chatMessages) return;
-            const div = document.createElement('div');
-            div.className = `max-w-[85%] rounded-lg p-3 text-sm ${role === 'user' ? 'bg-blue-600 text-white self-end rounded-tr-none' : 'bg-gray-700 text-gray-100 self-start rounded-tl-none border border-gray-600'}`;
-            let formatted = content.replace(/\n/g, '<br/>').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
-            div.innerHTML = formatted;
-            chatMessages.appendChild(div);
-            scrollToBottom();
-        }
-
-        function scrollToBottom() {
-            if (chatMessages) {
-                chatMessages.scrollTop = chatMessages.scrollHeight;
-            }
-        }
-
-        async function submitChat(e) {
-            e.preventDefault();
-            const text = chatInput.value.trim();
-            if (!text) return;
-
-            if (!selectedMemberId || !memberToken() || pwaChatOwner !== selectedMemberId || !activeConversationId) {
-                if (!await loadChatHistory()) return;
-            }
-            const owner = selectedMemberId;
-            const token = memberToken();
-            const conversationId = activeConversationId;
-
-            appendMessage('user', text);
-            chatInput.value = '';
-            chatInput.disabled = true;
-            chatSubmitBtn.disabled = true;
-
-            const typingDiv = document.createElement('div');
-            typingDiv.className = 'text-gray-400 text-xs italic self-start mt-1 mb-2 animate-pulse';
-            typingDiv.innerText = 'Argyle is thinking...';
-            chatMessages.appendChild(typingDiv);
-            scrollToBottom();
-
-            try {
-                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
-                const res = await fetch(`${apiBase}api/chat?surface=pwa`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: text, source: 'pwa', driver_id: selectedDriverId, conversation_id: conversationId })
-                });
-                if (!res.ok) throw new Error('Sign in on your personal device to talk to Argyle.');
-                const data = await res.json();
-                typingDiv.remove();
-                if (owner !== selectedMemberId || token !== memberToken()) return;
-
-                if (data.error) {
-                    appendMessage('assistant', `Error: ${data.error}`);
-                } else {
-                    appendMessage('assistant', data.reply);
-                    // Refresh PWA UI silently to reflect LLM changes (errands or status)
-                    fetchSchedule();
-                }
-            } catch (err) {
-                typingDiv.remove();
-                if (owner === selectedMemberId && token === memberToken()) {
-                    appendMessage('assistant', `Connection error: ${err.message}`);
-                }
-            } finally {
-                chatInput.disabled = false;
-                chatSubmitBtn.disabled = false;
-                chatInput.focus();
-            }
-        }
-
-    </script>
     {% from 'components/audience_picker.html' import audience_sheet %}
     {{ audience_sheet() }}
     {% from 'components/record_delete.html' import record_delete_script %}
