@@ -113,8 +113,11 @@
     <link rel="stylesheet" href="{{ 'static/pwa_shell.css'|ver }}">
     <script defer src="{{ 'static/pwa_shell.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_nav.js'|ver }}"></script>
+    <script defer src="{{ 'static/pwa_myday.js'|ver }}"></script>
     <link rel="stylesheet" href="{{ 'static/argyle_orb.css'|ver }}">
     <script defer src="{{ 'static/argyle_orb.js'|ver }}"></script>
+    {% include 'components/hero_card.html' %}
+    {% include 'components/agenda_row.html' %}
     <script defer src="{{ 'static/situations.js'|ver }}"></script>
     <script defer src="{{ 'static/errand_steer.js'|ver }}"></script>
     <link rel="stylesheet" href="{{ 'static/pwa_child_shell.css'|ver }}">
@@ -861,6 +864,7 @@
         updateThemeButton();
 
         function setView(view, focusMemberId = null) {
+            if (view === 'drives' && ['parent', 'adult'].includes(currentMemberRole())) view = 'myday';
             window.PwaNav?.clear();
             if (view !== 'messages') window.ChauffeurPhoneVoice?.stop(false);
             if (pwaChildStage()) {
@@ -891,7 +895,7 @@
                 startFamilyMapPolling();
             } else if (view === 'myday') {
                 mydayOffset = 0;
-                renderMyDay();
+                renderMyDay(true);
             } else if (view === 'chores') {
                 fetchChores();
                 fetchHouseLists();
@@ -1018,6 +1022,7 @@
         }
 
         function applyRoleTabs() {
+            const adult = ['parent', 'adult'].includes(currentMemberRole());
             const passenger = isPassengerMode();
             const helper = currentMemberRole() === 'helper';
             // Family-network S15: a guest's app is messages (their invited
@@ -1026,8 +1031,8 @@
             // other door is closed by their scope map anyway.
             const guest = currentMemberRole() === 'guest';
             const keepingUp = isKeepingUpAdult();
-            document.getElementById('tab-myday').style.display = ((passenger || currentMemberRole() === 'child') && !helper && !guest && !keepingUp) ? 'flex' : 'none';
-            document.getElementById('tab-drives').style.display = (passenger || !kidCan('can_drive')) ? 'none' : 'flex';
+            document.getElementById('tab-myday').style.display = (adult || ((passenger || currentMemberRole() === 'child') && !helper && !guest)) ? 'flex' : 'none';
+            document.getElementById('tab-drives').style.display = (adult || passenger || !kidCan('can_drive')) ? 'none' : 'flex';
             document.getElementById('tab-family').style.display = (currentMemberRole() === 'child' || (passenger && !keepingUp) || helper || guest) ? 'none' : 'flex';
             // A keeping-up PARENT keeps chores (they verify and pay out);
             // a keeping-up adult is a spectator there and loses the tab.
@@ -1053,8 +1058,8 @@
                 ? ['family', 'map', 'music', 'myday', 'chores', 'projects']
                 : guest
                     ? ['drives', 'family', 'map', 'music', 'myday', 'chores', 'projects']
-                    : keepingUp
-                        ? ['drives', 'myday'].concat(keepingUpSpectator ? ['chores'] : [])
+                    : adult
+                        ? ['drives'].concat(keepingUpSpectator ? ['chores'] : []).concat(passenger && !keepingUp ? ['family'] : [])
                         : (passenger ? ['drives', 'family'] : ['myday']);
             if (noMap && !hiddenNow.includes('map')) hiddenNow.push('map');
             if (noMusic && !hiddenNow.includes('music')) hiddenNow.push('music');
@@ -1070,11 +1075,10 @@
                 localStorage.setItem('chauffeur_view', currentView);
             }
             if (hiddenNow.includes(currentView)) {
-                // The keeping-up adult LANDS on Family — it is what they
-                // opened the app for. A guest lands on Messages, for the
-                // same reason.
+                // Every adult lands on the brief, including a saved drives
+                // tab. Helpers and guests keep their existing landing rules.
                 currentView = currentMemberRole() === 'child' ? 'myday' : guest ? 'messages'
-                    : keepingUp ? 'family'
+                    : adult ? 'myday'
                     : (passenger && !helper ? 'myday' : 'drives');
                 localStorage.setItem('chauffeur_view', currentView);
             }
@@ -1194,7 +1198,7 @@
             if (currentView === 'messages') fetchChannels();
             else if (currentView === 'map') { initFamilyMap(); startFamilyMapPolling(); }
             else if (currentView === 'chores') fetchChores();
-            else if (currentView === 'myday') renderMyDay();
+            else if (currentView === 'myday') renderMyDay(true);
             // 'family' needs nothing here: fetchSchedule above draws it.
         }
 
@@ -1232,6 +1236,7 @@
             mydayOffset = next;
             mydaySlideDir = delta > 0 ? 1 : -1;
             updateMyDayLabel();
+            if (pwaIsAdult()) { pwaBriefSelectDate(_mydayLocalDate(next)); return; }
             renderMyDay();
         }
 
@@ -1266,15 +1271,22 @@
                 ? `<span class="text-xs font-black text-orange-300 bg-orange-500/10 border border-orange-500/40 px-2 py-1 rounded-full">🔥 ${s.current} day${s.current === 1 ? '' : 's'}</span>`
                 : '';
             const interactive = offset === 0;
-            const rows = routineData.items.map(item => `
-                <label class="flex items-center gap-3 py-2.5 px-1 ${interactive ? 'cursor-pointer active:opacity-70' : 'opacity-70'}">
+            const rows = routineData.items.map(item => {
+                const date = new Date();
+                date.setDate(date.getDate() + offset);
+                const [hours, minutes] = (item.time_of_day || '00:00').split(':').map(Number);
+                date.setHours(hours, minutes, 0, 0);
+                const primary = `toggleRoutine(${JSON.stringify(item.id)}, ${!item.checked})`;
+                return `
+                <label data-kind="routine" data-start="${mfEscape(pwaLocalIso(date))}" data-end="${mfEscape(pwaLocalIso(new Date(date.getTime() + 30 * 60000)))}" data-title="${mfEscape(item.title)}" data-place="" data-meta="" data-state="${item.checked ? 'done' : 'upcoming'}" data-primary="${mfEscape(primary)}" data-leg-id="" data-event-id="" class="flex items-center gap-3 py-2.5 px-1 ${interactive ? 'cursor-pointer active:opacity-70' : 'opacity-70'}">
                     <input type="checkbox" ${item.checked ? 'checked' : ''} ${interactive ? '' : 'disabled'}
                         onchange="toggleRoutine('${item.id}', this.checked)"
                         class="w-7 h-7 rounded-lg accent-green-500 shrink-0">
                     <span class="text-xl shrink-0">${kidGlyph(item)}</span>
                     <span class="flex-1 text-[15px] font-bold ${item.checked ? 'text-gray-500 line-through' : 'text-gray-100'}">${mfEscape(item.title)}</span>
                     ${item.time_of_day ? `<span class="text-xs font-bold text-blue-400">${formatClock(item.time_of_day)}</span>` : ''}
-                </label>`).join('');
+                </label>`;
+            }).join('');
             return `
             <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-1">
                 <div class="flex items-center justify-between mb-1">
@@ -1296,8 +1308,9 @@
             if (typeof schoolRemember === 'function') schoolRemember(t);
             const bar = t.course_color && /^#[0-9a-fA-F]{6}$/.test(t.course_color) ? t.course_color : 'transparent';
             const meta = typeof schoolTaskMeta === 'function' ? schoolTaskMeta(t) : '';
+            const due = t.due_date ? `${t.due_date.slice(0, 10)}T23:59:00` : '';
             return `
-                <div class="flex items-center gap-3 py-2.5 pl-2 pr-1 ${['test', 'project'].includes(t.kind) ? 'border-l-[7px]' : 'border-l-4'}" style="border-left-color:${bar}" id="task-row-${t.id}">
+                <div data-kind="task" data-start="${mfEscape(due)}" data-end="${mfEscape(due)}" data-title="${mfEscape(t.title)}" data-place="" data-meta="${mfEscape(t.label || '')}" data-state="${t.completed ? 'done' : 'upcoming'}" data-primary="${mfEscape(`openKidTaskDetail(${JSON.stringify(t.id)})`)}" data-leg-id="" data-event-id="" class="flex items-center gap-3 py-2.5 pl-2 pr-1 ${['test', 'project'].includes(t.kind) ? 'border-l-[7px]' : 'border-l-4'}" style="border-left-color:${bar}" id="task-row-${t.id}">
                     <input type="checkbox" onchange="completeKidTask('${t.id}', this.checked)" aria-label="${mfEscape(t.title)}"
                         class="w-7 h-7 rounded-lg accent-indigo-500 shrink-0">
                     <button type="button" onclick="openKidTaskDetail('${t.id}')" class="flex-1 min-w-0 text-left flex items-center gap-3 active:opacity-70">
@@ -1354,6 +1367,7 @@
                 if (!res.ok) throw new Error();
                 const b = document.getElementById('still-open-bucket');
                 if (b) b.remove();
+                if (pwaIsAdult()) await renderMyDay(true);
                 showGlobalAlert('Cleared ✅');
             } catch (e) { showGlobalAlert('Could not clear'); }
         }
@@ -1459,7 +1473,12 @@
             const mine = ids.map(id => commitmentsById[id])
                 .filter(c => c && c.active !== false
                     && (c.days_of_week || []).length);
-            if (!mine.length) return '';
+            if (!mine.length) {
+                // The brief already fetched the server's dated windows;
+                // use that actual claim when commitment summaries are lazy.
+                const next = pwaIsAdult() && currentView === 'myday' ? upcomingWindows(p.id)[0] : null;
+                return next ? sessionDateLabel(next) : '';
+            }
             const now = new Date();
             for (let add = 0; add < 8; add++) {
                 const d = new Date(now);
@@ -1716,7 +1735,7 @@
                         class="text-xs font-bold px-3 py-1.5 rounded-lg bg-teal-700 text-white active:bg-teal-800">Open the session</button>
                 </div>` : '';
             return `
-            <div data-myday-key="${mfEscape(key)}" data-myday-program="${mfEscape(p.id)}"
+            <div data-kind="session" data-start="${mfEscape(w ? pwaLocalIso(`${w.date}T${w.time_start}`) : '')}" data-end="${mfEscape(w ? pwaLocalIso(`${w.date}T${w.time_end}`) : '')}" data-title="${mfEscape(p.title || '')}" data-place="" data-meta="${mfEscape(sub)}" data-state="${w && w.logged ? 'done' : ended ? 'past' : now ? 'active' : 'upcoming'}" data-primary="${mfEscape(w ? `openSessionSheet(${JSON.stringify(sessionKey(w))})` : '')}" data-leg-id="" data-event-id="" data-myday-key="${mfEscape(key)}" data-myday-program="${mfEscape(p.id)}"
                  class="bg-gray-900 border ${now ? 'border-teal-500/60' : 'border-gray-800'} rounded-xl ${ended && !dated && !w.logged ? 'opacity-50' : ''}">
                 <button type="button" data-myday-toggle onclick="${dated ? `openSessionSheet('${sessionKey(w)}')` : 'toggleMyDayItem(this)'}"
                     ${dated ? 'aria-haspopup="dialog"' : `aria-expanded="${open ? 'true' : 'false'}"`}
@@ -2421,7 +2440,7 @@
                               list: [], commitmentsById: {} };
         let practiceBuiltAt = 0;
 
-        async function buildPracticeParts() {
+        async function buildPracticeParts({brief = false, day = null} = {}) {
             // `list` and `commitmentsById` are the programs themselves, for
             // a surface that places them rather than stacking the blocks:
             // My Day threads each session into the day at its own time.
@@ -2438,7 +2457,7 @@
                 // Thursday. `practiceWindowsOn` still narrows to a date, so
                 // the now-block is unaffected by the wider fetch.
                 const wk = new Date(t);
-                wk.setDate(wk.getDate() + (currentMemberRole() === 'child' ? kidHorizonDays() : 6));
+                wk.setDate(wk.getDate() + (currentMemberRole() === 'child' ? kidHorizonDays() : brief ? 7 : 6));
                 const weekEnd = `${wk.getFullYear()}-${pad(wk.getMonth() + 1)}-${pad(wk.getDate())}`;
                 practiceWindows = await fetchPracticeWindows(todayStr, weekEnd);
                 out.now = renderPracticeNow(practiceNow(t));
@@ -2447,10 +2466,10 @@
                 // the week tops up on its own tap (openSessionSheet's Start
                 // handler) rather than costing a request here for an
                 // evening nobody has opened yet.
-                await Promise.all(practiceWindowsOn(todayStr).map(loadWindowLesson));
+                if (!brief) await Promise.all(practiceWindowsOn(todayStr).map(loadWindowLesson));
                 const myPrograms = await fetchMyPrograms();
                 if (myPrograms.length) {
-                    const myCommitments = await fetchMyCommitments();
+                    const myCommitments = brief ? [] : await fetchMyCommitments();
                     const commitmentsById = {};
                     for (const c of myCommitments) commitmentsById[c.id] = c;
                     out.programs = renderProgramsSection(myPrograms, commitmentsById);
@@ -2474,8 +2493,13 @@
             // adult today -- it renders to nothing, and lights up on its own
             // the day adults get tasks.
             try {
-                const r = await fetch(`${apiBase}api/members/${selectedMemberId}/day?date=${todayStr}`);
-                if (r.ok) {
+                const r = brief ? null : await fetch(`${apiBase}api/members/${selectedMemberId}/day?date=${todayStr}`);
+                if (brief) {
+                    const data = await day;
+                    out.status = renderStatusBanner(data.status_days, todayStr);
+                    out.dueSoon = renderDueSoonSection(data.due_soon, data.still_open);
+                }
+                if (r && r.ok) {
                     const day = await r.json();
                     out.status = renderStatusBanner(day.status_days, todayStr);
                     out.dueSoon = renderDueSoonSection(day.due_soon, day.still_open);
@@ -2585,6 +2609,7 @@
         }
 
         function paintPaneSections() {
+            if (pwaIsAdult() && currentView === 'myday') { renderScheduleAnchors(); return; }
             if (document.getElementById('proposals-content')) renderProposals();
             if (document.getElementById('mind-content')) renderMind();
             if (document.getElementById('today-content')) refreshPracticeSection(false);
@@ -2655,7 +2680,7 @@
         // that is. `force`, because the write just invalidated the cache.
         function afterProgramWrite() {
             datedTimelineDays.clear(); datedTimelineLoads.clear();
-            if (currentView === 'myday') renderMyDay();
+            if (currentView === 'myday') renderMyDay(true);
             else {
                 refreshDatedTimeline(currentDates[activeDateIndex], true);
                 refreshPracticeSection(true);
@@ -2669,9 +2694,9 @@
         // either of these, and neither did coming back to the foreground. An
         // app left open on the right tab simply showed the state it had when
         // you put the phone down.
-        function refreshTodaySurfaces() {
+        function refreshTodaySurfaces(force = false) {
             if (!selectedMemberId) return;
-            if (currentView === 'myday') { renderMyDay(); return; }
+            if (currentView === 'myday') { renderMyDay(force); return; }
             refreshDatedTimeline(currentDates[activeDateIndex], true);
             if (currentView === 'drives') refreshPracticeSection(true);
         }
@@ -2679,16 +2704,26 @@
         // Programs arc, task 6: "My program" -- end
 
         async function completeKidTask(taskId, done) {
+            const member = selectedMemberId;
             try {
                 const res = await fetch(`${apiBase}api/kid-tasks/${taskId}/complete`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ member_id: selectedMemberId, done: done })
+                    body: JSON.stringify({ member_id: member, done: done })
                 });
                 if (!res.ok) throw new Error();
                 // Strike through in place — the row disappears on the next
                 // render, which feels less abrupt than vanishing on tap.
                 const row = document.getElementById(`task-row-${taskId}`);
                 if (row) row.querySelector('.task-title').classList.toggle('line-through', done);
+                if (pwaIsAdult() && member === selectedMemberId && pwaBriefCache?.member === member) {
+                    if (done) {
+                        for (const key of ['due_soon', 'still_open']) {
+                            pwaBriefCache.data[key] = (pwaBriefCache.data[key] || []).filter(task => task.id !== taskId);
+                        }
+                        window.pwaMemberDay = pwaBriefCache.data;
+                        if (currentView === 'myday') renderMyDay();
+                    } else await renderMyDay(true);
+                }
                 if (done) showGlobalAlert('Nice — checked off! ✅');
             } catch (e) { showGlobalAlert('Could not update'); }
         }
@@ -2710,6 +2745,13 @@
                 }
                 if (data.streak && data.streak.today_complete && checked) {
                     showGlobalAlert(`Routine complete! 🔥 ${data.streak.current} day streak`);
+                }
+                if (pwaIsAdult() && pwaBriefCache?.member === selectedMemberId && pwaBriefCache.dateStr === todayStr()) {
+                    const routine = pwaBriefCache.routineData;
+                    const item = routine?.items?.find(item => item.id === routineId);
+                    if (item) item.checked = checked;
+                    if (routine && data.streak) routine.streak = data.streak;
+                    if (routine && data.tier_status) routine.status = data.tier_status;
                 }
                 renderMyDay();
             } catch (e) { showGlobalAlert('Could not update'); }
@@ -3018,7 +3060,8 @@
             if (currentView === 'myday') renderMyDay();
         });
 
-        async function renderMyDay() {
+        async function renderMyDay(force = false) {
+            if (pwaIsAdult()) return pwaRenderBrief(force);
             const wrap = document.getElementById('myday-content');
             if (!wrap || !selectedMemberId) return;
             updateMyDayLabel();
@@ -3090,12 +3133,7 @@
                 // The day, in time order: drives and today's program sessions
                 // together. A session is not a drive, so "No rides today"
                 // still says so beside it.
-                const rideMin = r => { const d = new Date(r.start);
-                    return isNaN(d) ? 0 : d.getHours() * 60 + d.getMinutes(); };
-                const timeline = data.rides.map(r => ({ min: rideMin(r), html: renderMyDayCard(r) }))
-                    .concat(programItems.timed)
-                    .sort((a, b) => a.min - b.min)
-                    .map(x => x.html).join('');
+                const timeline = myDayTimelineHtml(data, programItems);
                 const anyProgram = programItems.timed.length || programItems.rest;
                 const noRides = data.rides.length ? '' :
                     '<div class="text-gray-500 text-sm bg-gray-900 border border-gray-800 rounded-xl p-4">' +
@@ -3198,7 +3236,7 @@
                 });
                 await fetchRequests();
                 if (currentView === 'drives') refreshPracticeSection(true);
-                renderMyDay();
+                renderMyDay(true);
             } catch (e) { showGlobalAlert("That didn't go through."); }
         }
 
@@ -3210,7 +3248,7 @@
                 });
                 await fetchRequests();
                 if (currentView === 'drives') refreshPracticeSection(true);
-                renderMyDay();
+                renderMyDay(true);
             } catch (e) { showGlobalAlert("That didn't go through."); }
         }
 
@@ -3226,7 +3264,7 @@
                 });
                 await fetchRequests();
                 if (currentView === 'drives') refreshPracticeSection(true);
-                renderMyDay();
+                renderMyDay(true);
                 showGlobalAlert("Asked — I'll tell you as soon as there's an answer.");
             } catch (e) { showGlobalAlert("That didn't go through."); }
         }
@@ -3278,7 +3316,7 @@
             }).join('');
             const setRow = canEdit ? `
                 <div class="mb-2">
-                    <button onclick="toggleStatusSetRow('${dateStr}')"
+                    <button onclick="toggleStatusSetRow('${dateStr}', this)"
                         class="text-xs font-bold text-gray-500 active:text-gray-300">＋ Family status</button>
                     <div id="status-set-row-${dateStr}"></div>
                 </div>` : '';
@@ -3303,12 +3341,13 @@
             try {
                 await fetch(`${apiBase}api/status/days/${dayId}`, { method: 'DELETE' });
                 datedTimelineDays.clear(); datedTimelineLoads.clear();
-                refreshTodaySurfaces();
+                if (pwaIsAdult() && currentView === 'myday') await pwaRenderBrief(true);
+                else refreshTodaySurfaces();
             } catch (e) { showGlobalAlert('Could not clear the status'); }
         }
 
-        async function toggleStatusSetRow(dateStr) {
-            const row = document.getElementById('status-set-row-' + dateStr);
+        async function toggleStatusSetRow(dateStr, btn) {
+            const row = btn?.nextElementSibling || document.getElementById('status-set-row-' + dateStr);
             if (!row) return;
             if (row.innerHTML) { row.innerHTML = ''; return; }
             row.innerHTML = '<p class="text-xs text-gray-500 mt-1">Loading…</p>';
@@ -3330,12 +3369,15 @@
 
         async function setStatusDay(protocolId, dateStr) {
             try {
-                await fetch(`${apiBase}api/status/days`, {
+                const res = await fetch(`${apiBase}api/status/days`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ date: dateStr, protocol_id: protocolId, set_by: selectedMemberId })
                 });
+                if (!res.ok) throw new Error('Could not set the status');
                 datedTimelineDays.clear(); datedTimelineLoads.clear();
-                refreshTodaySurfaces();
+                document.querySelector('[data-brief-sheet="pencil"]')?.remove();
+                if (pwaIsAdult() && currentView === 'myday') await pwaRenderBrief(true);
+                else refreshTodaySurfaces();
             } catch (e) { showGlobalAlert('Could not set the status'); }
         }
 
@@ -3413,6 +3455,7 @@
             // Once it has started, the event can take a moment — today or
             // any day after, from whoever has the photos.
             const started = r.start && new Date(r.start) <= new Date();
+            const primary = r.id ? `openEventThread(${JSON.stringify(String(r.id))}, ${JSON.stringify(r.title || '')}, ${JSON.stringify(r.end || '')})` : '';
             const momentBtn = !(started && r.id) ? '' : `
                 <div class="mt-3 pt-3 border-t border-gray-800">
                     <button onclick="openEventThread(this.dataset.id, this.dataset.title, this.dataset.end)"
@@ -3420,7 +3463,7 @@
                         class="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-gray-800 text-pink-300 border border-gray-700 active:bg-gray-700">📷 Add a moment</button>
                 </div>`;
             return `
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
+            <div data-kind="ride" data-start="${mfEscape(pwaLocalIso(r.start))}" data-end="${mfEscape(pwaLocalIso(r.end))}" data-title="${mfEscape(r.title)}" data-place="${mfEscape(r.place || r.location || '')}" data-meta="${mfEscape(r.driver ? r.driver.name + ' is driving you' : '')}" data-state="${new Date(r.end) < new Date() ? 'past' : 'upcoming'}" data-primary="${mfEscape(primary)}" data-leg-id="" data-event-id="${mfEscape(String(r.id))}" class="bg-gray-900 border border-gray-800 rounded-xl p-4">
                 <div class="flex items-center justify-between gap-2 mb-1">
                     <span class="text-sm font-bold uppercase tracking-wider text-blue-400">${timeStr}</span>
                     ${r.arrive_by ? `<span class="text-xs font-bold text-amber-300/90">${mfEscape(r.arrive_by.label)}</span>` : ''}
@@ -3646,16 +3689,18 @@
             }
         }
 
-        async function renderUnplacedErrands() {
+        async function renderUnplacedErrands(rows = null) {
             const driverId = selectedDriverId;
             if (!driverId) return;
             const index = currentDates.indexOf(todayStr());
             const pane = index < 0 ? null : document.getElementById(`pane-${index}`);
             if (!pane) return;
             try {
-                const res = await fetch(`${apiBase}api/errands`);
-                if (!res.ok) return;
-                const rows = (await res.json()).filter(e => !e.is_completed && e.unplaced);
+                if (rows == null) {
+                    const res = await fetch(`${apiBase}api/errands`);
+                    if (!res.ok) return;
+                    rows = (await res.json()).filter(e => !e.is_completed && e.unplaced);
+                }
                 // A rebuild or identity change while fetching must not paint an old pane.
                 if (selectedDriverId !== driverId || document.getElementById(`pane-${index}`) !== pane) return;
                 const previous = pane.querySelector('#unplaced-errands');
@@ -3685,7 +3730,13 @@
                     button.onclick = async () => {
                         button.disabled = true;
                         try {
-                            if (await pwaSteerErrand({ id: e.id })) await fetchSchedule(true);
+                            if (await pwaSteerErrand({ id: e.id })) {
+                                await fetchSchedule(true);
+                                if (pwaIsAdult() && currentView === 'myday') {
+                                    button.closest('[data-brief-sheet]')?.remove();
+                                    await pwaRenderBrief(true);
+                                }
+                            }
                         } finally { button.disabled = false; }
                     };
                     row.appendChild(copy);
@@ -3771,7 +3822,7 @@
             if (owner) p._pax = [owner.id];
         }
 
-        async function fetchProposals() {
+        async function fetchProposals({summaryOnly = false} = {}) {
             if (currentMemberRole() !== 'parent') { proposalsData = []; return; }
             try {
                 const res = await fetch(`${apiBase}api/proposals?status=proposed`);
@@ -3794,10 +3845,11 @@
                         _target: p.supplies_only ? 'supplies' : (p.calendar_id || '') };
                 });
             } catch (e) { proposalsData = []; }
-            if (proposalsData.length && !proposalTargets) await fetchProposalTargets();
+            if (proposalsData.length && !proposalTargets && !summaryOnly) await fetchProposalTargets();
             // Sender-default targets arrive with the proposal; once the chip
             // lists exist, fresh rows get their kid pre-checked exactly once.
             proposalsData.forEach(p => {
+                if (summaryOnly) return;
                 if (p._paxInit) return;
                 p._paxInit = true;
                 prefillProposalPax(p);
@@ -6736,8 +6788,8 @@
                     fetch(`${apiBase}api/redemptions?state=pending`),
                 ]);
                 const [chores, rewards, redemptions, balances] = await Promise.all([
-                    choresRes.json(), rewardsRes.ok ? rewardsRes.json() : [],
-                    redRes.ok ? redRes.json() : [], pointsRes.json()]);
+                    choresRes.ok ? choresRes.json() : [], rewardsRes.ok ? rewardsRes.json() : [],
+                    redRes.ok ? redRes.json() : [], pointsRes.ok ? pointsRes.json() : []]);
                 if (owner !== selectedMemberId) return;
                 choresData = chores;
                 rewardsData = rewards;
@@ -9475,11 +9527,16 @@
             } catch (e) { showGlobalAlert('Could not update the event'); }
         }
 
-        function renderLegPill(timeStr, title, mins, delayMins, actionArgs, colorTheme = 'blue', subtitleHtml = '', legId = null, isPast = false, lateMins = 0) {
+        function renderLegPill(timeStr, title, mins, delayMins, actionArgs, colorTheme = 'blue', subtitleHtml = '', legId = null, isPast = false, lateMins = 0, start = null, end = null, eventId = null, location = null) {
             const isCompleted = legId && scheduleData && scheduleData.completed_drives && scheduleData.completed_drives.includes(legId);
             const isInProgress = legId && scheduleData && scheduleData.in_progress_drives && scheduleData.in_progress_drives.includes(legId) && !isCompleted;
+            const ev = [...((scheduleData && scheduleData.events) || []), ...((scheduleData && scheduleData.scheduled_errands) || [])].find(e => e.id === eventId);
+            const eventKey = eventId ? encodeURIComponent(JSON.stringify({...ev, id:eventId,
+                title:ev ? ev.title : title, timeStr:ev ? formatTime(ev.start || ev.start_time) : timeStr,
+                end:ev ? ev.end || ev.end_time : end, location:ev ? ev.location : location,
+                isErrand:!!ev && ev.event_type === 'errand'})) : '';
             if (pwaIsAdult() || pwaChildStage()) return pwaDriveRow({timeStr, title, mins, delayMins, actionArgs, colorTheme,
-                subtitleHtml, legId, isPast, lateMins, isCompleted, isInProgress});
+                subtitleHtml, legId, isPast, lateMins, isCompleted, isInProgress, start, end, eventId, location, eventKey});
 
             if (isCompleted) {
                 return `
@@ -9745,7 +9802,8 @@
                 const steps = (w.steps || []).slice(0, 4);
                 if (pwaIsAdult() || pwaChildStage()) return pwaAgendaRow({time:formatTime(card.start), title:w.title || card.title,
                     meta:mfEscape([w.member_name, w.session_label].filter(Boolean).join(' · ')),
-                    action:`openSessionSheet('${sessionKey(w)}')`, state:w.logged ? 'Logged' : past ? 'Past' : ''});
+                    action:`openSessionSheet('${sessionKey(w)}')`, state:w.logged ? 'Logged' : past ? 'Past' : '',
+                    attrs:`data-kind="session" data-program-id="${mfEscape(w.program_id || '')}" data-start="${mfEscape(pwaLocalIso(card.start))}" data-end="${mfEscape(pwaLocalIso(card.end))}" data-title="${mfEscape(w.title || card.title)}" data-place="" data-meta="${mfEscape(w.session_label || '')}" data-state="${w.logged ? 'done' : past ? 'past' : 'upcoming'}" data-primary="${mfEscape(`openSessionSheet('${sessionKey(w)}')`)}"`});
                 // Tappable, like every other agenda row. It was the one
                 // card in this view that opened nothing, on the reasoning
                 // that a practice window had nothing behind it -- which
@@ -9770,7 +9828,8 @@
             }
 
             if (card.isTrip) {
-                if (pwaIsAdult() || pwaChildStage()) return pwaAgendaRow({time:'All day', title:card.title, meta:'Trip', action:`openTripSheet('${sessionKey(card)}')`});
+                if (pwaIsAdult() || pwaChildStage()) return pwaAgendaRow({time:'All day', title:card.title, meta:'Trip', action:`openTripSheet('${sessionKey(card)}')`,
+                    attrs:`data-kind="event" data-all-day="1" data-start="${mfEscape(pwaLocalIso(card.start))}" data-end="${mfEscape(pwaLocalIso(card.end))}" data-title="${mfEscape(card.title)}" data-place="" data-meta="Trip" data-state="upcoming" data-primary="${mfEscape(`openTripSheet('${sessionKey(card)}')`)}"`});
                 // Tappable like every other row here. It was the last card in
                 // this view that answered nothing, and a background trip is
                 // exactly the one whose MEANING a person cannot infer from
@@ -9948,6 +10007,11 @@
             const l = edge && edge.legs && edge.legs[i];
             return l && l.depart ? new Date(l.depart) : fallback;
         }
+
+        function legEndAt(edge, i, fallback, mins) {
+            const leg = edge && edge.legs && edge.legs[i];
+            return new Date(legAt(edge, i, fallback).getTime() + (leg ? leg.mins : mins) * 60000);
+        }
         function leaveMarginMins() {
             const m = scheduleData && scheduleData.leave_margin_mins;
             return Number.isFinite(m) ? m : 5;
@@ -9960,7 +10024,12 @@
             // keeping-up adult this view IS the app, and the old guard
             // returned a blank page to exactly the person the tab is for.
             // Only the driver-scoped timeline still requires a driver.
-            if (!scheduleData || (!dId && currentView !== 'family')) return;
+            const briefFamily = pwaIsAdult() && currentView === 'myday' && isKeepingUpAdult();
+            if (!scheduleData || (!dId && currentView !== 'family' && !briefFamily)) return;
+            const briefScrollTop = document.getElementById('myday-container').scrollTop;
+            // The brief moves the active dated pane with its rows. A rebuild
+            // replaces it too, keeping pane IDs unique across both hosts.
+            document.querySelector('#myday-content [data-pwa-brief-pane]')?.remove();
 
             const savedPaneScrolls = {};
             const existingPanes = container.querySelectorAll('[id^="pane-"]');
@@ -10045,7 +10114,7 @@
             container.innerHTML = '';
             const frag = document.createDocumentFragment();
 
-            const familyByDate = currentView === 'family' ? buildFamilyByDate() : null;
+            const familyByDate = currentView === 'family' || briefFamily ? buildFamilyByDate() : null;
 
             currentDates.forEach((dateStr, index) => {
                 const evs = byDate[dateStr] || [];
@@ -10155,14 +10224,14 @@
 
                                 if (leg1Mins > 0) {
                                     let args1 = `'${originLocation.replace(/'/g, "\\'")}', '${paxPickupLoc.replace(/'/g, "\\'")}', 'Drive to Pickup', '${ev.id}'`;
-                                    html += pr(depTime.toISOString()) + renderLegPill(formatTime(depTime.toISOString()), "Drive to Pickup", leg1Mins, 0, args1 + `, 'init_${ev.id}_1'`, 'blue', badges, `init_${ev.id}_1`, depTime < new Date());
+                                    html += pr(depTime.toISOString()) + renderLegPill(formatTime(depTime.toISOString()), "Drive to Pickup", leg1Mins, 0, args1 + `, 'init_${ev.id}_1'`, 'blue', badges, `init_${ev.id}_1`, depTime < new Date(), 0, pwaLocalIso(depTime), pwaLocalIso(legEndAt(edge, 0, depTime, leg1Mins)), ev.id, paxPickupLoc);
                                 }
 
                                 let args2 = `'${paxPickupLoc.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
-                                html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'init_${ev.id}_2'`, 'blue', leg1Mins > 0 ? '' : badges, `init_${ev.id}_2`, leg2DepTime < new Date());
+                                html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'init_${ev.id}_2'`, 'blue', leg1Mins > 0 ? '' : badges, `init_${ev.id}_2`, leg2DepTime < new Date(), 0, pwaLocalIso(leg2DepTime), pwaLocalIso(legEndAt(edge, 1, leg2DepTime, leg2Mins)), ev.id, destinationLocation);
                             } else {
                                 let args = `'${originLocation.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
-                                html += pr(depTime.toISOString()) + renderLegPill(formatTime(depTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, edge.travel_mins, edge.delay_mins, args + `, 'init_${ev.id}'`, 'blue', badges, `init_${ev.id}`, depTime < new Date());
+                                html += pr(depTime.toISOString()) + renderLegPill(formatTime(depTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, edge.travel_mins, edge.delay_mins, args + `, 'init_${ev.id}'`, 'blue', badges, `init_${ev.id}`, depTime < new Date(), 0, pwaLocalIso(depTime), pwaLocalIso(legEndAt(edge, 0, depTime, edge.travel_mins)), ev.id, destinationLocation);
                             }
                         }
                     }
@@ -10263,18 +10332,18 @@
                                 const leg2DepTime = legAt(edge, 1, new Date(new Date(ev.end).getTime() + (leg1Mins + edge.home_waypoint.layover_mins) * 60000));
 
                                 let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${driverHomeLoc.replace(/'/g, "\\'")}', '${homeLabel.replace(/'/g, "\\'")}', '${ev.id}'`;
-                                html += pr(leg1DepTime.toISOString()) + renderLegPill(formatTime(leg1DepTime.toISOString()), homeLabel, leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', '', `route_${ev.id}_1`, leg1DepTime < new Date());
+                                html += pr(leg1DepTime.toISOString()) + renderLegPill(formatTime(leg1DepTime.toISOString()), homeLabel, leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', '', `route_${ev.id}_1`, leg1DepTime < new Date(), 0, pwaLocalIso(leg1DepTime), pwaLocalIso(legEndAt(edge, 0, leg1DepTime, leg1Mins)), ev.id, driverHomeLoc);
 
                                 if (leg2Mins === 0) { // Meaning pickupLocation == driverHomeLoc
                                     let args3 = `'${driverHomeLoc.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${nextEv.id}'`;
-                                    html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg3Mins, edge.delay_mins, args3 + `, 'route_${ev.id}_2'`, 'blue', nextBadges, `route_${ev.id}_2`, leg2DepTime < new Date(), edge.late_mins || 0);
+                                    html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg3Mins, edge.delay_mins, args3 + `, 'route_${ev.id}_2'`, 'blue', nextBadges, `route_${ev.id}_2`, leg2DepTime < new Date(), edge.late_mins || 0, pwaLocalIso(leg2DepTime), pwaLocalIso(legEndAt(edge, 1, leg2DepTime, leg3Mins)), nextEv.id, destinationLocation);
                                 } else {
                                     const leg3DepTime = legAt(edge, 2, new Date(leg2DepTime.getTime() + leg2Mins * 60000));
                                     let args2 = `'${driverHomeLoc.replace(/'/g, "\\'")}', '${pickupLocation.replace(/'/g, "\\'")}', '${pickupTitle.replace(/'/g, "\\'")}', '${nextEv.id}'`;
-                                    html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), pickupTitle, leg2Mins, 0, args2 + `, 'route_${ev.id}_2'`, 'blue', nextBadges, `route_${ev.id}_2`, leg2DepTime < new Date());
+                                    html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), pickupTitle, leg2Mins, 0, args2 + `, 'route_${ev.id}_2'`, 'blue', nextBadges, `route_${ev.id}_2`, leg2DepTime < new Date(), 0, pwaLocalIso(leg2DepTime), pwaLocalIso(legEndAt(edge, 1, leg2DepTime, leg2Mins)), nextEv.id, pickupLocation);
 
                                     let args3 = `'${pickupLocation.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${nextEv.id}'`;
-                                    html += pr(leg3DepTime.toISOString()) + renderLegPill(formatTime(leg3DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg3Mins, edge.delay_mins, args3 + `, 'route_${ev.id}_3'`, 'blue', '', `route_${ev.id}_3`, leg3DepTime < new Date(), edge.late_mins || 0);
+                                    html += pr(leg3DepTime.toISOString()) + renderLegPill(formatTime(leg3DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg3Mins, edge.delay_mins, args3 + `, 'route_${ev.id}_3'`, 'blue', '', `route_${ev.id}_3`, leg3DepTime < new Date(), edge.late_mins || 0, pwaLocalIso(leg3DepTime), pwaLocalIso(legEndAt(edge, 2, leg3DepTime, leg3Mins)), nextEv.id, destinationLocation);
                                 }
                             } else if (edge.home_waypoint) {
                                 const leg1Mins = edge.home_waypoint.to_home_mins;
@@ -10285,10 +10354,10 @@
 
                                 const homeLabel = getHomeLabel(driverHomeLoc);
                                 let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${driverHomeLoc.replace(/'/g, "\\'")}', '${homeLabel.replace(/'/g, "\\'")}', '${ev.id}'`;
-                                html += pr(leg1DepTime.toISOString()) + renderLegPill(formatTime(leg1DepTime.toISOString()), homeLabel, leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', '', `route_${ev.id}_1`, leg1DepTime < new Date());
+                                html += pr(leg1DepTime.toISOString()) + renderLegPill(formatTime(leg1DepTime.toISOString()), homeLabel, leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', '', `route_${ev.id}_1`, leg1DepTime < new Date(), 0, pwaLocalIso(leg1DepTime), pwaLocalIso(legEndAt(edge, 0, leg1DepTime, leg1Mins)), ev.id, driverHomeLoc);
 
                                 let args2 = `'${driverHomeLoc.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${nextEv.id}'`;
-                                html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'route_${ev.id}_2'`, 'blue', nextBadges, `route_${ev.id}_2`, leg2DepTime < new Date(), edge.late_mins || 0);
+                                html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'route_${ev.id}_2'`, 'blue', nextBadges, `route_${ev.id}_2`, leg2DepTime < new Date(), edge.late_mins || 0, pwaLocalIso(leg2DepTime), pwaLocalIso(legEndAt(edge, 1, leg2DepTime, leg2Mins)), nextEv.id, destinationLocation);
                             } else if (edge.pickup_waypoint) {
                                 const leg1Mins = edge.pickup_waypoint.to_pickup_mins;
                                 const leg2Mins = edge.pickup_waypoint.from_pickup_mins;
@@ -10298,15 +10367,15 @@
                                 const leg2DepTime = legAt(edge, 1, new Date(new Date(ev.end).getTime() + leg1Mins * 60000));
 
                                 let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${pickupLocation.replace(/'/g, "\\'")}', '${pickupTitle.replace(/'/g, "\\'")}', '${nextEv.id}'`;
-                                html += pr(leg1DepTime.toISOString()) + renderLegPill(formatTime(leg1DepTime.toISOString()), pickupTitle, leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', nextBadges, `route_${ev.id}_1`, leg1DepTime < new Date());
+                                html += pr(leg1DepTime.toISOString()) + renderLegPill(formatTime(leg1DepTime.toISOString()), pickupTitle, leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', nextBadges, `route_${ev.id}_1`, leg1DepTime < new Date(), 0, pwaLocalIso(leg1DepTime), pwaLocalIso(legEndAt(edge, 0, leg1DepTime, leg1Mins)), nextEv.id, pickupLocation);
 
                                 let args2 = `'${pickupLocation.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${nextEv.id}'`;
-                                html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'route_${ev.id}_2'`, 'blue', '', `route_${ev.id}_2`, leg2DepTime < new Date(), edge.late_mins || 0);
+                                html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'route_${ev.id}_2'`, 'blue', '', `route_${ev.id}_2`, leg2DepTime < new Date(), edge.late_mins || 0, pwaLocalIso(leg2DepTime), pwaLocalIso(legEndAt(edge, 1, leg2DepTime, leg2Mins)), nextEv.id, destinationLocation);
                             } else {
                                 let destStr = destinationLocation ? destinationLocation.split(',')[0] : 'Next Event';
                                 let args = `'${(computedOrigin || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', 'Drive to ${destStr.replace(/'/g, "\\'")}', '${nextEv.id}'`;
                                 const depDirect = legAt(edge, 0, new Date(ev.end));
-                                html += pr(depDirect.toISOString()) + renderLegPill(formatTime(depDirect.toISOString()), `Drive to ${destStr}`, edge.travel_mins, edge.delay_mins, args + `, 'route_${ev.id}_${nextEv.id}'`, 'blue', nextBadges, `route_${ev.id}_${nextEv.id}`, depDirect < new Date(), edge.late_mins || 0);
+                                html += pr(depDirect.toISOString()) + renderLegPill(formatTime(depDirect.toISOString()), `Drive to ${destStr}`, edge.travel_mins, edge.delay_mins, args + `, 'route_${ev.id}_${nextEv.id}'`, 'blue', nextBadges, `route_${ev.id}_${nextEv.id}`, depDirect < new Date(), edge.late_mins || 0, pwaLocalIso(depDirect), pwaLocalIso(legEndAt(edge, 0, depDirect, edge.travel_mins)), nextEv.id, destinationLocation);
                             }
                         }
                     }
@@ -10333,15 +10402,15 @@
                                 const driverHomeLoc = edge.dropoff_waypoint.driver_home_location || destinationLocation;
 
                                 let args1 = `'${originLocation.replace(/'/g, "\\'")}', '${paxDropoffLoc.replace(/'/g, "\\'")}', 'Drive to Dropoff', '${ev.id}'`;
-                                html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), "Drive to Dropoff", leg1Mins, 0, args1 + `, 'final_${ev.id}_1'`, 'green', badges, `final_${ev.id}_1`, leg2DepTime < new Date());
+                                html += pr(leg2DepTime.toISOString()) + renderLegPill(formatTime(leg2DepTime.toISOString()), "Drive to Dropoff", leg1Mins, 0, args1 + `, 'final_${ev.id}_1'`, 'green', badges, `final_${ev.id}_1`, leg2DepTime < new Date(), 0, pwaLocalIso(legAt(edge, 0, new Date(ev.end))), pwaLocalIso(legEndAt(edge, 0, legAt(edge, 0, new Date(ev.end)), leg1Mins)), ev.id, paxDropoffLoc);
 
                                 const homeLabel = getHomeLabel(driverHomeLoc);
                                 let args2 = `'${paxDropoffLoc.replace(/'/g, "\\'")}', '${driverHomeLoc.replace(/'/g, "\\'")}', '${homeLabel.replace(/'/g, "\\'")}', '${ev.id}'`;
-                                html += pr(leg2ArrTime.toISOString()) + renderLegPill(formatTime(leg2ArrTime.toISOString()), homeLabel, leg2Mins, edge.delay_mins, args2 + `, 'final_${ev.id}'`, 'green', '', `final_${ev.id}`, leg2ArrTime < new Date());
+                                html += pr(leg2ArrTime.toISOString()) + renderLegPill(formatTime(leg2ArrTime.toISOString()), homeLabel, leg2Mins, edge.delay_mins, args2 + `, 'final_${ev.id}'`, 'green', '', `final_${ev.id}`, leg2ArrTime < new Date(), 0, pwaLocalIso(leg2DepTime), pwaLocalIso(legEndAt(edge, 1, leg2DepTime, leg2Mins)), ev.id, driverHomeLoc);
                             } else {
                                 const homeLabel = getHomeLabel(destinationLocation);
                                 let args = `'${(originLocation || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', '${homeLabel.replace(/'/g, "\\'")}', '${ev.id}'`;
-                                html += pr(arriveDate.toISOString()) + renderLegPill(formatTime(arriveDate.toISOString()), homeLabel, edge.travel_mins, edge.delay_mins, args + `, 'final_${ev.id}'`, 'green', badges, `final_${ev.id}`, arriveDate < new Date());
+                                html += pr(arriveDate.toISOString()) + renderLegPill(formatTime(arriveDate.toISOString()), homeLabel, edge.travel_mins, edge.delay_mins, args + `, 'final_${ev.id}'`, 'green', badges, `final_${ev.id}`, arriveDate < new Date(), 0, pwaLocalIso(legAt(edge, 0, new Date(ev.end))), pwaLocalIso(legEndAt(edge, 0, legAt(edge, 0, new Date(ev.end)), edge.travel_mins)), ev.id, destinationLocation);
                             }
                         }
                     }
@@ -10401,7 +10470,8 @@
                 activeDateIndex = idx;
                 updateHeaderDate();
             };
-            if (selectedDriverId) renderUnplacedErrands();
+            if (selectedDriverId && !(pwaIsAdult() && currentView === 'myday')) renderUnplacedErrands();
+            if (pwaIsAdult() && currentView === 'myday') pwaBriefTimelineBuilt(briefScrollTop);
         }
 
         function updateHeaderDate() {
@@ -10668,7 +10738,7 @@
         setInterval(() => {
             if (document.hidden) return;
             reanchorIfDayChanged();
-            refreshTodaySurfaces();
+            refreshTodaySurfaces(true);
             if (selectedDriverId) fetchSchedule(false, true);
         }, 300000);
         document.addEventListener('visibilitychange', () => {
@@ -10677,7 +10747,7 @@
             // A phone that was asleep through the start of a window comes
             // back to the state it went to sleep in unless something says
             // otherwise. This is that something.
-            refreshTodaySurfaces();
+            refreshTodaySurfaces(true);
             if (selectedDriverId) {
                 fetchSchedule(false, true);
                 fetchNotifications();

@@ -105,6 +105,53 @@ Screenshot proof for this slice lives in the live test
 (`PWA_REVIEW_OUTPUT=tests/probe_shots/pwa_slice0 python
 tests/test_pwa_adult_shell_live.py`).
 
+#### My Day, the brief (slice 1, v2.499.752)
+
+One My Day for every adult (parent, household adult, keeping-up adult);
+`static/pwa_myday.js` owns it and paints into `#myday-container`. Helpers,
+guests and every child stage are untouched (`renderMyDay` still serves kids;
+for an adult it returns to `pwaRenderBrief()` at its first line).
+
+- **Order, top to bottom.** `.pwa-brief-date` (the selected day, a
+  `.pwa-brief-pencil` only when an option applies), `.pwa-brief-greet`
+  (`pwaGreeting`: the word on line one, the first name on line two) with
+  `.pwa-brief-weather` to the right (from `GET /api/weather/now`; null,
+  `unavailable` or `unknown` means no slot, never an empty box),
+  `.pwa-brief-sentence` (Argyle's one or two sentences, `pwaBriefSentence`
+  over `pwaBriefFacts`), the hero (`HeroCard.html(next, {phone: true, now})`),
+  "Needs you" (`.pwa-need` cards, absent when the pile is empty), then
+  "Your day" (`.pwa-brief-day`, collapsed behind a fade to
+  `--pwa-sky-bottom`, `chauffeur_myday_day_open` remembers; a day other than
+  today opens expanded and has no hero).
+- **The rows are the truth.** Every row "Your day" draws stamps
+  `data-kind` (`drive|event|ride|session|routine|task`), `data-start`,
+  `data-end`, `data-title`, `data-place`, `data-meta`, `data-state`,
+  `data-primary` (the row's own tap), `data-secondary` (drives: the event
+  dialog) and `data-all-day`. `pwaRowsFromDom` reads them and `pwaNextThing`
+  picks the hero: never a row whose end has passed, never an all-day row, an
+  underway row first, ties by kind in that order. A drive stays the hero until
+  its arrival time passes, so "Start drive" is there when a person is late.
+  The hero's buttons are the row's own handlers; no hero button without a
+  row behind it. Drivers' legs and events are the existing `buildTimeline`
+  rows, adopted (moved, not cloned) from the active `#pane-drives`; a
+  keeping-up adult's day is the Family branch; rides come from the
+  member-day payload for every adult.
+- **Needs you.** `pwaNeedsYou` ranks requests, reviews (parents), due-soon
+  tasks, proposals (parents, one card), situations in `now`, needs-a-driver
+  events within seven days (merged by base id) and active status days:
+  deadline first, then rank, then title. Each card opens the dialog that
+  exists today (`pwaOpenNeed`): the requests sheet, Household reviews, the
+  task detail, Plan's proposals or Needs-you lane, the event dialog, the
+  status sheet. "Ask for something" is a chip under the pile for roles with
+  `can_request`.
+- **Sheets reuse the builders.** The status sheet is `renderStatusBanner`
+  (chooser and two-tap clear), the requests sheet is `renderRequests`, both
+  inside `_pwaModal`. The pencil lists Family status (parents and adults,
+  today or later), Ask for something, and the show-whole-day default.
+- **Never** fetch an endpoint the brief does not own, restyle a row's
+  builder for adults in a way kids would see, or compute a number the
+  owning payload already carries.
+
 Admin dialogs with a body that can grow (the schedule page's event dialog,
 `dashboard.html` `#event-modal`; the calendar's, `family_calendar.html`
 `#modal-content-container`) are chrome: a `flex flex-col max-h-[90vh]

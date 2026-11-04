@@ -167,7 +167,7 @@ def check_child(page, key, output, calls):
         }""")
         assert page.locator('html').get_attribute('data-child-stage') is None
         adult_tabs = page.locator('#pwa-tab-bar > button:visible > span:first-of-type').all_text_contents()
-        assert adult_tabs == ['Today','Plan','Household','Messages','More'], adult_tabs
+        assert adult_tabs == ['My Day','Plan','Household','Messages','More'], adult_tabs
         assert page.evaluate('pwaChildDay') is None
 
 

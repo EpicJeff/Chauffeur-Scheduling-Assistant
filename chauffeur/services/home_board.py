@@ -5351,6 +5351,38 @@ def _access_input_digest():
     return digest
 
 
+def current_conditions(settings=None, *, with_line=True) -> dict | None:
+    """Current weather shared by the wall and phone, or None without HA."""
+    try:
+        from services import ha_api, family_digest
+        if settings is None:
+            settings = storage.get_settings() or {}
+        ent = (settings.get('weather_entity') or '').strip()
+        if not ent:
+            ents = ha_api.get_entities('weather') or []
+            ent = (ents[0] or {}).get('entity_id') if ents else None
+        if not ent:
+            return None
+        st = ha_api.get_state(ent)
+        if not st:
+            return None
+        attrs = st.get('attributes') or {}
+        temp_now = (round(float(attrs['temperature']))
+                    if attrs.get('temperature') is not None else None)
+        condition = st.get('state')
+        emoji = (family_digest._WEATHER_EMOJI.get(condition or '', '🌤️')
+                 if condition else None)
+    except Exception as e:
+        print(f"[home_board] current temp failed: {e}")
+        return None
+
+    try:
+        line = family_digest.weather_line(datetime.date.today()) if with_line else None
+    except Exception:
+        line = None
+    return {'temp_now': temp_now, 'condition': condition, 'emoji': emoji, 'line': line}
+
+
 @access.batch()
 def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
           now: datetime.datetime = None, page: Optional[str] = None,
@@ -5476,21 +5508,7 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
     # The temperature RIGHT NOW, not today's high. On these displays the
     # temperature is the second-largest thing on the screen after the clock,
     # and a forecast high shown that big is wrong for most of the day.
-    temp_now, condition = None, None
-    try:
-        from services import ha_api
-        ent = (settings.get('weather_entity') or '').strip()
-        if not ent:
-            ents = ha_api.get_entities('weather') or []
-            ent = (ents[0] or {}).get('entity_id') if ents else None
-        if ent:
-            st = ha_api.get_state(ent) or {}
-            attrs = st.get('attributes') or {}
-            if attrs.get('temperature') is not None:
-                temp_now = round(float(attrs['temperature']))
-            condition = st.get('state')
-    except Exception as e:
-        print(f"[home_board] current temp failed: {e}")
+    conditions = current_conditions(settings, with_line=False) or {}
 
     try:
         from services import status_protocols
@@ -5504,10 +5522,9 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
         # raises on Windows, where this is developed.
         'date_label': f"{now.strftime('%A, %B')} {now.day}",
         'weather': weather,
-        'temp_now': temp_now,
-        'condition': condition,
-        'condition_emoji': (family_digest._WEATHER_EMOJI.get(condition or '', '🌤️')
-                            if condition else None),
+        'temp_now': conditions.get('temp_now'),
+        'condition': conditions.get('condition'),
+        'condition_emoji': conditions.get('emoji'),
         # The page's own picture, then the household's. A board made for the
         # hallway is allowed to look different from the one in the kitchen —
         # that is most of what makes it a different board rather than the same

@@ -46,6 +46,58 @@ def seed():
             storage.add_driver({'id': driver, 'name': 'Alex Morgan', 'home_location': 'Home', 'color_code': '#287a72'})
 
 
+BRIEF_READY = """() => {
+    const c = document.getElementById('myday-content');
+    return !!c && !!c.querySelector('.pwa-brief-greet') && !!c.querySelector('.pwa-brief-day')
+        && !c.innerText.includes('Loading your day');
+}"""
+
+
+def wait_brief(page, timeout=8000):
+    """Slice 1: an adult's My Day is the brief (test_pwa_myday_live.py owns
+    its detail; this shell test only needs it drawn)."""
+    try:
+        page.wait_for_function(BRIEF_READY, timeout=timeout)
+    except Exception:
+        pass
+    assert page.locator('#myday-content .pwa-brief-greet').count() == 1, \
+        '.pwa-brief-greet missing: My Day did not render the brief'
+    assert page.locator('#myday-content .pwa-brief-day').count() == 1
+
+
+def rerender_brief(page, before=''):
+    page.evaluate("async () => { %s; buildTimeline(); await pwaRenderBrief(); }" % (before or 'void 0'))
+    wait_brief(page)
+
+
+def expand_day(page):
+    if page.locator('#myday-content .pwa-brief-day.is-collapsed').count():
+        page.locator('#myday-content .pwa-brief-expand').click()
+
+
+def open_review_card(page):
+    """The review card in Needs you replaced the .pwa-attention summary."""
+    kinds = page.evaluate("(window.pwaNeedCards || []).map(c => c.kind)")
+    assert 'review' in kinds, kinds
+    page.locator('#myday-content .pwa-need').nth(kinds.index('review')).click()
+    page.wait_for_function("document.getElementById('chores-container').dataset.section === 'reviews'")
+
+
+def assert_no_drive_hero(page):
+    """All drives have passed. No drive hero remains; a hero for a later
+    non-drive row (the 21:00 program session) is pwaNextThing's pick."""
+    hero = page.locator('#myday-content .pwa-hero')
+    assert hero.get_by_role('button', name='Start drive').count() == 0, 'a passed drive is still the hero'
+    picked = page.evaluate("""() => { const n = pwaNextThing(pwaRowsFromDom(
+        document.querySelector('.pwa-brief-day')), new Date()); return n ? n.kind : null; }""")
+    if picked is None:
+        assert hero.count() == 0
+    else:
+        assert picked != 'drive' and hero.count() == 1, picked
+        kicker = hero.locator('.pwa-hero-kicker').inner_text().lower()
+        assert 'departure' not in kicker and 'current drive' not in kicker, kicker
+
+
 def check_nav_stack(page):
     """Slice 0 Task 4: the served page carries PwaNav and #pwa-stack, a pushed
     screen covers the tab view with Back chrome, the tab bar and the orb stay
@@ -149,11 +201,14 @@ def check_route_departure(page, schedule, driver, output=None):
                           'from_home_mins': 20, 'layover_mins': 315}}}}
     storage.set_cached_schedule(schedule)
     page.clock.set_fixed_time(datetime.now().replace(hour=12, minute=0, second=0))
-    page.evaluate('''s => {
+    page.evaluate('''async s => {
         document.documentElement.style.fontSize = '';
-        scheduleData = s; setView('drives'); buildTimeline();
+        scheduleData = s; if (currentView !== 'myday') setView('myday');
+        buildTimeline(); await pwaRenderBrief();
     }''', schedule)
-    page.locator('.pwa-event-row .pwa-row-main').filter(has_text='Soccer practice').click()
+    wait_brief(page)
+    expand_day(page)
+    page.locator('#myday-content .pwa-event-row .pwa-row-main').filter(has_text='Soccer practice').click()
     assert page.locator('#em-passengers').inner_text() == 'James'
     check_profile_button(page, '#em-map-btn')
     page.wait_for_function("getComputedStyle(document.getElementById('event-modal')).opacity === '1'")
@@ -161,7 +216,7 @@ def check_route_departure(page, schedule, driver, output=None):
     if output: Path(output, 'adult-event-sheet-light.png').write_bytes(page.screenshot())
     page.evaluate('closeEventModal()')
     page.wait_for_selector('#event-modal', state='hidden')
-    page.locator('.pwa-next button').click()
+    page.locator('#myday-content .pwa-hero .pwa-btn-primary').click()
     page.wait_for_function("driveSheetData?.leg_id === 'route_morning_2'")
     assert page.locator('#drive-dest').inner_text() == 'Riverside fields'
     assert page.evaluate('driveSheetData.passengers.map(p=>p.name)') == ['James']
@@ -245,7 +300,8 @@ def run():
                 page.route('**/static/**', static_asset)
                 token = storage.create_member_token(key)
                 values = {'chauffeur_member_id': key, 'chauffeur_member_token': token,
-                          'chauffeur_member_token_for': key, 'chauffeur_view': 'drives',
+                          'chauffeur_member_token_for': key,
+                          'chauffeur_view': 'drives' if role == 'child' else 'myday',
                           'chauffeur_theme': 'light'}
                 if driver:
                     values['chauffeur_driver_id'] = driver
@@ -316,27 +372,41 @@ def run():
                     assert not page.locator('#tab-map').is_visible()
                     assert not page.locator('#kiosk-chat-fab').is_visible()
                     assert page.locator('header').bounding_box()['height'] <= 72
+                    if key == 'keeping':
+                        # Slice 1: the keeping-up adult gets My Day too (no drives tab).
+                        assert page.locator('#tab-myday').is_visible(), tabs
+                        assert not page.locator('#tab-drives').is_visible(), tabs
+                        wait_brief(page)
                     check_sky(page)
                     check_orb(page, key, role, dm_posts)
                     check_nav_stack(page)
                     if key == 'parent':
                         assert len(tabs) == 5, tabs   # Projects left the bar for More (one-list spec §5)
-                        page.wait_for_selector('.pwa-next')
-                        original = page.locator('.pwa-leg-row[data-next="upcoming"]').first
+                        # Slice 1: My Day is the brief; the hero replaced .pwa-next.
+                        wait_brief(page)
+                        page.wait_for_selector('#myday-content .pwa-hero')
+                        original = page.locator('#myday-content .pwa-brief-day .pwa-leg-row[data-next="upcoming"]').first
                         time_label = original.get_attribute('data-time-label')
-                        assert page.locator('.pwa-next h2').inner_text() == time_label
-                        page.locator('.pwa-next button').click()
+                        assert page.locator('#myday-content .pwa-hero h2').inner_text() == time_label
+                        page.locator('#myday-content .pwa-hero .pwa-btn-primary').click()
                         assert page.locator('#action-sheet').is_visible()
                         page.evaluate('closeActionSheet()')
                         page.wait_for_selector('#action-sheet', state='hidden')
-                        assert page.locator('#pwa-page-heading h2').inner_text() == 'Your afternoon'
-                        assert page.locator('#day-nav').is_hidden()
-                        assert page.locator('.pwa-event-row').first.evaluate('(e)=>getComputedStyle(e).opacity') == '1'
-                        assert page.locator('.pwa-event-row').first.evaluate('(e)=>getComputedStyle(e).backgroundColor') == 'rgba(0, 0, 0, 0)'
+                        greet = ' '.join(page.locator('#myday-content .pwa-brief-greet').inner_text().split())
+                        assert greet.startswith('Good afternoon'), greet
+                        # My Day keeps its day arrows (Task 7: #day-nav acts on Your day).
+                        assert page.locator('#day-nav').is_visible()
+                        past_row = page.locator('#myday-content .pwa-brief-day .pwa-event-row').first
+                        assert past_row.evaluate('(e)=>getComputedStyle(e).opacity') == '1'
+                        # Brief rows wear the card token (Task 7), not a bare transparent row.
+                        card = page.evaluate("""() => { const p = document.createElement('div');
+                            p.style.background = 'var(--pwa-card)';
+                            document.querySelector('#myday-content .pwa-brief-day').append(p);
+                            const c = getComputedStyle(p).backgroundColor; p.remove(); return c; }""")
+                        assert past_row.evaluate('(e)=>getComputedStyle(e).backgroundColor') == card, card
                         if output:
                             Path(output, 'adult-today-light.png').write_bytes(page.screenshot())
-                        page.locator('.pwa-attention').click()
-                        page.locator('#pwa-attention-dialog [data-feature="household"]').click()
+                        open_review_card(page)
                         assert page.locator('#chores-container').get_attribute('data-section') == 'reviews'
                         assert page.get_by_role('button', name='\u2713 Verify').is_visible()
                         page.get_by_role('button', name='Tasks', exact=True).click()
@@ -356,19 +426,24 @@ def run():
                         page.get_by_role('searchbox', name='Find a conversation').fill('')
                         page.get_by_role('searchbox', name='Find a conversation').blur()
                         if output: Path(output, 'adult-messages-light.png').write_bytes(page.screenshot())
-                        page.locator('#tab-drives').click()
-                        page.evaluate("scheduleData.completed_drives=['init_soccer']; buildTimeline()")
-                        assert page.locator('.pwa-next').count() == 0
-                        page.evaluate("scheduleData.completed_drives=[]; scheduleData.in_progress_drives=['init_soccer']; buildTimeline()")
-                        assert page.locator('.pwa-next > p').inner_text() == 'CURRENT DRIVE'
-                        page.evaluate("scheduleData.in_progress_drives=[]; buildTimeline()")
+                        page.locator('#tab-myday').click()
+                        wait_brief(page)
+                        # A completed leg leaves the hero; the hero moves on to the next row.
+                        rerender_brief(page, "scheduleData.completed_drives=['init_soccer']")
+                        assert page.locator('#myday-content .pwa-hero').count() == 1
+                        assert page.locator('#myday-content .pwa-hero h2').inner_text() != time_label
+                        rerender_brief(page, "scheduleData.completed_drives=[]; scheduleData.in_progress_drives=['init_soccer']")
+                        # The in-progress wording is 'Current drive' (CSS may uppercase it).
+                        assert 'current drive' in page.locator('#myday-content .pwa-hero-kicker').inner_text().lower()
+                        rerender_brief(page, "scheduleData.in_progress_drives=[]")
                         # Real program disclosures retain their existing handler.
-                        program = page.locator('[data-myday-program="practice"]').first
-                        page.wait_for_selector('[data-myday-program="practice"]')
+                        expand_day(page)
+                        program = page.locator('#myday-content [data-myday-program="practice"]').first
+                        page.wait_for_selector('#myday-content [data-myday-program="practice"]')
                         program.locator('[data-myday-toggle]').click()
                         assert program.locator('[data-myday-body]').is_visible()
                         program.locator('[data-myday-toggle]').click()
-                        page.evaluate('document.getElementById(`pane-${activeDateIndex}`).scrollTop=0')
+                        page.evaluate("document.getElementById('myday-container').scrollTop=0")
                     page.get_by_role('button', name='Search features', exact=True).click()
                     search = page.get_by_role('searchbox', name='Search features')
                     assert search.evaluate('(e)=>e === document.activeElement')
@@ -393,7 +468,8 @@ def run():
                     assert not page.locator('#pwa-profile').is_visible()
                     assert page.locator('#pwa-identity').evaluate('(e)=>e === document.activeElement')
                     if key == 'parent':
-                        page.locator('#tab-drives').click()
+                        page.locator('#tab-myday').click()
+                        wait_brief(page)
                         if output:
                             page.wait_for_function("document.getElementById('global-alert').classList.contains('opacity-0')")
                             page.wait_for_timeout(350)
@@ -401,9 +477,10 @@ def run():
                         # Match the user's reported case: all drives have passed,
                         # with a later program still ahead. Past text stays legible.
                         page.clock.set_fixed_time(datetime.now().replace(hour=18, minute=0, second=0))
-                        page.evaluate("applyTheme('light'); buildTimeline()")
-                        assert page.locator('.pwa-next').count() == 0
-                        assert page.locator('.pwa-leg-row[data-next="past"]').first.evaluate('(e)=>getComputedStyle(e).opacity') == '1'
+                        rerender_brief(page, "applyTheme('light')")
+                        assert_no_drive_hero(page)
+                        assert page.locator('.pwa-attention').count() == 0
+                        assert page.locator('#myday-content .pwa-leg-row[data-next="past"]').first.evaluate('(e)=>getComputedStyle(e).opacity') == '1'
                         if output: Path(output, 'adult-driver-past-light.png').write_bytes(page.screenshot())
                         # Follow the review summary to the original verify action.
                         def verify(route):
@@ -412,18 +489,24 @@ def run():
                             chores[1]['state'] = 'verified'
                             route.fulfill(json={})
                         page.route('**/api/chores/recycling/verify', verify)
-                        page.locator('.pwa-attention').click()
-                        page.locator('#pwa-attention-dialog [data-feature="household"]').click()
+                        open_review_card(page)
                         page.get_by_role('button', name='\u2713 Verify').click()
                         page.wait_for_function('houseChoresAttention() === 0')
-                        page.locator('#tab-drives').click()
+                        page.locator('#tab-myday').click()
+                        wait_brief(page)
+                        page.wait_for_function("!(window.pwaNeedCards || []).some(c => c.kind === 'review')")
                         assert page.locator('.pwa-attention').count() == 0
-                        page.get_by_role('button', name='Choose schedule day').click()
+                        # The day arrows move My Day (and, for a driver, the
+                        # timeline day the brief adopts its rows from).
                         assert page.locator('#day-nav').is_visible()
-                        page.locator('#pwa-date-strip button').nth(1).click()
-                        assert page.evaluate('activeDateIndex') == 1
-                        page.locator('#pwa-date-strip button').first.click()
-                        page.get_by_role('button', name='Choose schedule day').click()
+                        page.locator('#btn-next-day').click()
+                        page.wait_for_function('mydayOffset === 1')
+                        wait_brief(page)
+                        assert page.evaluate('currentDates[activeDateIndex] === _mydayLocalDate(1)')
+                        page.locator('#btn-prev-day').click()
+                        page.wait_for_function('mydayOffset === 0')
+                        wait_brief(page)
+                        assert page.evaluate('currentDates[activeDateIndex] === todayStr()')
                         for width in (360, 768):
                             page.set_viewport_size({'width': width, 'height': 844})
                             assert not page.evaluate('document.documentElement.scrollWidth > innerWidth')

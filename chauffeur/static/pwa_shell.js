@@ -136,7 +136,7 @@ function pwaSyncShell() {
         pwaDatesExpanded = false;
         document.querySelector('.pwa-conversation-search input').value = '';
     }
-    const labels = {drives: adult ? 'Today' : 'My Day', myday: adult ? 'Today' : 'My Day',
+    const labels = {drives: adult ? 'Today' : 'My Day', myday: 'My Day',
         family: adult ? 'Plan' : 'Family', chores: adult ? 'Household' : 'House', messages:'Messages', more:'More'};
     Object.entries(labels).forEach(([id, label]) => {
         document.querySelector(`#tab-${id} > span`).textContent = label;
@@ -301,6 +301,7 @@ async function pwaStartVoiceSetup() {
 function pwaRefreshOverview() {
     document.querySelectorAll('.pwa-overview').forEach(node => node.remove());
     document.querySelectorAll('.pwa-promoted').forEach(node => node.classList.remove('pwa-promoted'));
+    if (pwaIsAdult() && currentView === 'myday') return;
     if (!pwaIsAdult() && !(pwaChildStage() && selectedDriverId && kidCan('can_drive') && currentView === 'drives')) return;
     if (currentView === 'family') {
         document.querySelectorAll('#days-container > div').forEach(pane => {
@@ -390,6 +391,14 @@ function pwaPageHeading() {
     const host = document.getElementById('pwa-page-heading');
     if (!host) return;
     const adult = pwaIsAdult();
+    if (adult && currentView === 'myday') {
+        host.hidden = true;
+        host.innerHTML = '';
+        delete host.dataset.signature;
+        const strip = document.getElementById('pwa-date-strip');
+        if (strip) strip.hidden = true;
+        return;
+    }
     const date = currentDates[activeDateIndex] || todayStr();
     const isToday = date === todayStr();
     const formatted = new Date(date + 'T12:00:00').toLocaleDateString(undefined, {weekday:'long', month:'long', day:'numeric'});
@@ -438,9 +447,15 @@ function pwaPageHeading() {
 
 function pwaToggleDates() { pwaDatesExpanded = !pwaDatesExpanded; pwaPageHeading(); }
 function pwaSelectDay(index) {
+    if (!currentDates[index]) return;
     activeDateIndex = index;
     const days = document.getElementById('days-container');
     days.scrollLeft = index * days.clientWidth;
+    if (pwaIsAdult() && currentView === 'myday') {
+        mydayOffset = Math.round((new Date(currentDates[index] + 'T12:00:00') - new Date(todayStr() + 'T12:00:00')) / 86400000);
+        updateMyDayLabel();
+        return pwaRenderBrief();
+    }
     updateHeaderDate();
 }
 
@@ -456,23 +471,29 @@ function pwaAgendaRow({time, title, meta = '', extras = '', action = '', state =
 function pwaDriveRow(d) {
     const timeLabel = d.isInProgress ? 'En route' : `${d.colorTheme === 'blue' ? 'Leave at' : 'Arrive by'} ${d.timeStr}`;
     const next = d.isCompleted ? 'completed' : d.isInProgress ? 'active' : d.isPast ? 'past' : 'upcoming';
+    const end = new Date(d.end).getTime();
+    const state = d.isCompleted ? 'completed' : d.isInProgress ? 'active'
+        : (Number.isFinite(end) ? end < Date.now() : d.isPast) ? 'past' : 'upcoming';
     const meta = `${formatDuration(d.mins)} drive${d.delayMins > 3 ? ` · ${d.delayMins}m traffic delay` : ''}`;
-    const attrs = `data-next="${next}" data-time-label="${mfEscape(timeLabel)}" data-title="${mfEscape(d.title)}" data-meta="${mfEscape(meta)}"`;
+    const primary = d.isCompleted ? '' : `openActionSheet(${d.actionArgs})`;
+    const secondary = d.eventKey ? `openEventModal(${JSON.stringify(d.eventKey)})` : '';
+    const attrs = `data-kind="drive" data-start="${mfEscape(d.start || '')}" data-end="${mfEscape(d.end || '')}" data-place="${mfEscape(d.location || '')}" data-state="${state}" data-primary="${mfEscape(primary)}" data-secondary="${mfEscape(secondary)}" data-leg-id="${mfEscape(d.legId || '')}" data-event-id="${mfEscape(d.eventId || '')}" data-late="${mfEscape(d.lateMins || 0)}" data-next="${next}" data-time-label="${mfEscape(timeLabel)}" data-title="${mfEscape(d.title)}" data-meta="${mfEscape(meta)}"`;
     return pwaAgendaRow({time:d.timeStr, title:d.title,
         meta: d.subtitleHtml + `<span>${mfEscape(meta)}</span>`,
         extras:d.lateMins > 0 ? `<p class="pwa-warning">Arriving ${d.lateMins}m late</p>` : '',
-        action:d.isCompleted ? '' : `openActionSheet(${d.actionArgs})`,
+        action:primary,
         state:d.isCompleted ? 'Completed' : d.isInProgress ? 'Driving' : d.isPast ? 'Past' : (d.colorTheme === 'blue' ? 'Leave' : 'Arrive'),
         attrs, cls:'pwa-leg-row'});
 }
 
 function pwaEventRow(event, start, past, badges, extras) {
     const key = encodeURIComponent(JSON.stringify(event)).replace(/'/g, "\\'");
-    const allDay = event.timeStr === 'All Day';
+    const allDay = event.timeStr === 'All Day' || !!event.all_day;
     const end = !allDay && event.end && new Date(event.end) > new Date(start) ? `<span>Until ${mfEscape(formatTime(event.end))}</span>` : '';
+    const attrs = `data-kind="event" data-all-day="${allDay ? '1' : '0'}" data-start="${mfEscape(pwaLocalIso(start))}" data-end="${mfEscape(pwaLocalIso(event.end || start))}" data-title="${mfEscape(event.title)}" data-place="${mfEscape(event.location || '')}" data-meta="${mfEscape(end ? 'Until ' + formatTime(event.end) : '')}" data-state="${past ? 'past' : 'upcoming'}" data-primary="${mfEscape(`openEventModal('${key}')`)}" data-leg-id="" data-event-id="${mfEscape(event.id || '')}"`;
     return pwaAgendaRow({time:allDay ? 'All day' : formatTime(start), title:event.title,
         meta: badges + (event.location ? `<span>${mfEscape(event.location.split(',')[0])}</span>` : '') + end,
-        extras, action:`openEventModal('${key}')`, state:past ? 'Past' : '', cls:'pwa-event-row'});
+        extras, action:`openEventModal('${key}')`, state:past ? 'Past' : '', attrs, cls:'pwa-event-row'});
 }
 
 function pwaAttention() {

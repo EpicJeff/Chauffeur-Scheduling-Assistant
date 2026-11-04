@@ -108,11 +108,11 @@ def scenario_a_due_session_is_drawn_without_being_asked_for():
     src = _app()
     tick = re.search(r'setInterval\(\(\) => \{(.*?)\}, 300000\);', src, re.S)
     check(tick, "the five-minute heartbeat must still exist")
-    check('refreshTodaySurfaces()' in tick.group(1),
+    check(re.search(r'refreshTodaySurfaces\((true)?\)', tick.group(1)),   # slice 1: the heartbeat forces a quiet refetch of the brief
           "and must redraw today's surfaces, not only the schedule")
     viz = re.search(r"addEventListener\('visibilitychange', \(\) => \{"
                     r"\s*if \(document\.hidden\) return;(.*?)\}\);", src, re.S)
-    check(viz and 'refreshTodaySurfaces()' in viz.group(1),
+    check(viz and re.search(r'refreshTodaySurfaces\((true)?\)', viz.group(1)),
           "and coming back to the foreground must too")
 
 

@@ -2320,6 +2320,12 @@ def weather_daily(days: int = 7, start: str = None):
         return []
 
 
+@app.get("/api/weather/now")
+def weather_now():
+    from services import home_board
+    return home_board.current_conditions()
+
+
 @app.get("/api/school/status")
 def school_status():
     """What the school-day system currently believes (Config diagnostics):

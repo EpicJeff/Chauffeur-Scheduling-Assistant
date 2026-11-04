@@ -8,7 +8,7 @@
     //
     // Classic script, no framework: home.html binds the output through
     // Alpine's x-html, nav.html sets innerHTML directly. Included once, from
-    // nav.html, which every page already includes.
+    // nav.html, which every page already includes, and from app.html for the PWA.
     window.HeroCard = {
         esc(s) {
             return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
@@ -149,8 +149,35 @@
             return `<div class="${cls || ''}">${bits.join(' · ')}</div>`;
         },
 
+        // Phone presentation shares the wall's clock and countdown semantics.
+        _phoneHtml(next, opts) {
+            const esc = this.esc.bind(this);
+            const now = opts.now != null ? new Date(opts.now) : new Date();
+            const labels = {
+                drive: next.live ? 'Current drive' : 'Next departure',
+                ride: 'Next ride', event: 'Up next', session: 'Next session',
+                routine: this.onNow(next, now) ? 'Right now' : 'Up next',
+                task: 'Due'
+            };
+            const kicker = (labels[next.kind] || 'Up next') + ' · ' + this.countdown(next, now).text;
+            const big = next.kind === 'drive' && next.leave_label
+                ? next.leave_label
+                : new Date(next.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+            const meta = [next.location, next.meta].filter(Boolean).join(' · ');
+            const actions = (next.actions || []).slice(0, 2).map((action, i) =>
+                `<button type="button" class="${i ? 'pwa-btn-secondary' : 'pwa-btn-primary'}" onclick="${esc(action.run)}">${esc(action.label)}</button>`).join('');
+            return `<section class="pwa-hero">
+                <p class="pwa-hero-kicker">${esc(kicker)}</p>
+                <h2 class="pwa-hero-big">${esc(big.replace(/\u202f/g, ' '))}</h2>
+                <p class="pwa-hero-who">${esc(next.title)}</p>
+                ${meta ? `<p class="pwa-hero-meta">${esc(meta)}</p>` : ''}
+                <div class="pwa-hero-actions">${actions}</div>
+            </section>`;
+        },
+
         html(next, opts) {
             if (!next) return '';
+            if (opts && opts.phone) return this._phoneHtml(next, opts);
             opts = opts || {};
             const esc = this.esc.bind(this);
             const now = new Date();
