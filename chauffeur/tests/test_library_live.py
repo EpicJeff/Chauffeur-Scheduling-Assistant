@@ -176,10 +176,10 @@ def pwa(page, served, who, theme='dark'):
 
 
 def _open_projects(page):
-    """Projects lives in More on the phone (one-list spec §5); as project_sheets_fixture.open_projects."""
-    page.locator('#tab-more').click()
-    page.locator('#pwa-feature-list').get_by_text('Projects', exact=True).first.click()
-    page.wait_for_selector('#projects-container [data-project-card], #projects-container [data-project-detail]', timeout=15000)
+    """Projects opens through the person's one door (the user's ruling 2026-11-04);
+    as project_sheets_fixture.open_projects (tests/pwa_projects_door.py)."""
+    from pwa_projects_door import open_projects
+    return open_projects(page)
 
 
 def shot(page, name):

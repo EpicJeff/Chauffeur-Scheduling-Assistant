@@ -382,6 +382,54 @@ kids (`kidplan`), helpers and guests are untouched.
 Screenshot proof lives in `tests/test_pwa_plan_live.py`
 (`PWA_REVIEW_OUTPUT=1` writes `tests/probe_shots/pwa_slice5/`).
 
+#### The drive, one screen two moments; the header; one door for Projects (slice 6, v2.499.757)
+
+- **The drive adopts the sheet.** For an adult, `openActionSheet(...)`
+  pushes `PwaNav.push({id: 'drive'})` and MOVES `#action-sheet-content` into
+  the screen body; every id, handler, the live lane and the resume keep
+  working; `closeActionSheet()` pops and `onPop` runs `pwaDriveRestore()`
+  (today's close). Hardware Back closes the drive as the × did; the Argyle
+  overlay over the drive is closed first (`PwaNav.clear({extra: 1})`). A tab
+  switch while the leg is in progress keeps the live lane and the resume
+  record (the drive is not over); only an explicit close, completion or
+  arrival stops it. Kids keep the bottom sheet.
+- **Two moments, same blocks.** Before (`#sheet-state-1`): the leave-at card
+  (`#drive-leave-card`: the solver's departure huge, drive minutes, arrive-by
+  — ⚠ when late — the car and its range), `.pwa-drive-stops` (where you
+  start, who to pick up and what to bring; the destination with arrive-by,
+  the server's reason and the full address), "Everybody in?" and "Packed?"
+  chips (the three-state roll call and the packing claims), Start drive,
+  `#btn-drive-cover` Ask someone to cover (the drive row's own
+  `data-secondary`: the event dialog's assign/claim), the retro-split
+  options, Mark as completed. On the road (`#sheet-state-2`): the arrival
+  card (`#drive-arrival-card`: the place, the ETA big, who is aboard,
+  arrive-by), Google / Apple / Waze three across, "Tell <audience>" lines and
+  Send my ETA, the roll call and packing chips (still editable), Arrived (the
+  one green, `#1f7a5c`), the retro-split options. The words are pure
+  (`pwaDriveView(sheet, ctx)` in `static/pwa_drive.js`) over the
+  `/api/drive_sheet/{leg}` payload and the drive row's dataset; nothing is
+  timed on the phone.
+- **My Day.** Packing joins the Needs-you pile (`packing`: "Pack for <title>",
+  the items and the leave time; it opens the drive and leaves once the prep
+  is confirmed or the drive is over). A passenger's ride hero carries the ride
+  row's own buttons (`data-actions`: Where? / Message / Add a moment); the
+  phone hero paints up to three.
+- **The header (adults).** The date line (`#pwa-header-date`), the bell and
+  the avatar (Profile). Search lives in More and Messages; refresh, theme,
+  switch person / sign out, notifications and the critter live in Profile.
+  Kids keep their header.
+- **One door for Projects & programs.** Household for everyone with a
+  Household tab: adults through the Projects & programs card, kids of stage
+  explorer / navigator / copilot through a Projects section in their House
+  tab (`#projects-container` adopted, their programs under it); More offers
+  Projects and My programs only to people without that door (lists-only
+  adults; Sprout keeps its own spot). Every project link on the phone goes
+  through `chfPwaOpenProjects`. Library stays on More.
+
+Screenshot proof lives in `tests/test_pwa_drive_live.py` and
+`tests/test_projects_one_door_live.py` (`PWA_REVIEW_OUTPUT=1` writes
+`tests/probe_shots/pwa_slice6/`).
+
 Admin dialogs with a body that can grow (the schedule page's event dialog,
 `dashboard.html` `#event-modal`; the calendar's, `family_calendar.html`
 `#modal-content-container`) are chrome: a `flex flex-col max-h-[90vh]

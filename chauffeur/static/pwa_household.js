@@ -152,6 +152,47 @@ function pwaHouseholdInputs() {
         use24h:typeof use24h !== 'undefined' && use24h};
 }
 
+// The directory and record links use the same door the Household draws.
+function pwaHouseHasProjects() {
+    if (!pwaAllowed('projects') || !pwaAllowed('chores') || houseRevealListsOnly) return false;
+    if (currentMemberRole() === 'child')
+        return ['explorer', 'navigator', 'copilot'].includes(pwaChildStage());
+    return pwaHouseholdCards(pwaHouseholdInputs()).some(c => c.id === 'projects');
+}
+
+// Both Household hosts borrow this one island from its original position.
+let pwaProjectsAdoption = null;
+function pwaRestoreProjectsNode() {
+    const adoption = pwaProjectsAdoption;
+    if (!adoption) return;
+    pwaProjectsAdoption = null;
+    const restore = () => adoption.home.replaceWith(adoption.node);
+    if (window.Alpine) Alpine.mutateDom(restore); else restore();
+    adoption.node.style.display = adoption.display;
+}
+function pwaAdoptProjectsNode(host) {
+    pwaRestoreProjectsNode();
+    const node = document.getElementById('projects-container');
+    const adoption = {node, home:document.createComment('projects home'), display:node.style.display,
+        member:selectedMemberId, audience:pwaChildStage() || currentMemberRole()};
+    node.before(adoption.home);
+    const move = () => host.append(node);
+    if (window.Alpine) Alpine.mutateDom(move); else move();
+    node.style.display = 'flex';
+    pwaProjectsAdoption = adoption;
+    return () => { if (pwaProjectsAdoption === adoption) pwaRestoreProjectsNode(); };
+}
+function pwaSyncProjectsNode() {
+    if (!pwaProjectsAdoption || (pwaProjectsAdoption.member === selectedMemberId
+            && pwaProjectsAdoption.audience === (pwaChildStage() || currentMemberRole())
+            && currentView === 'chores' && pwaHouseHasProjects())) return;
+    if (pwaHouseActive?.id === 'projects') {
+        pwaHouseActive.clearing = true;
+        PwaNav.clear({restoreFocus:false});
+    }
+    pwaRestoreProjectsNode();
+}
+
 async function pwaReadHousehold(path) {
     try { const r = await fetch(apiBase + path); return r.ok ? await r.json() : null; }
     catch (e) { return null; }
@@ -251,6 +292,10 @@ function pwaRefreshHouseScreen(cards) {
 // Move the actual builder node, retaining its listeners and Alpine state.
 function pwaAdoptHouseNode(id, host, returns) {
     const node = document.getElementById(id);
+    if (id === 'projects-container') {
+        returns.push(pwaAdoptProjectsNode(host));
+        return node;
+    }
     const home = document.createComment('household adoption');
     node.before(home);
     host.append(node);

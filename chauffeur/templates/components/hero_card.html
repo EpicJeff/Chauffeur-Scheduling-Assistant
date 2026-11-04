@@ -164,7 +164,9 @@
                 ? next.leave_label
                 : new Date(next.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
             const meta = [next.location, next.meta].filter(Boolean).join(' · ');
-            const actions = (next.actions || []).slice(0, 2).map((action, i) =>
+            const actions = (next.actions || []).filter(action => action
+                && typeof action.label === 'string' && action.label.trim()
+                && typeof action.run === 'string' && action.run.trim()).slice(0, 3).map((action, i) =>
                 `<button type="button" class="${i ? 'pwa-btn-secondary' : 'pwa-btn-primary'}" onclick="${esc(action.run)}">${esc(action.label)}</button>`).join('');
             return `<section class="pwa-hero">
                 <p class="pwa-hero-kicker">${esc(kicker)}</p>

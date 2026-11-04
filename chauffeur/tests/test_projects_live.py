@@ -14,7 +14,10 @@ test relies on (exact):
   * on the list page `[data-new-project]` opens the New project sheet: inputs
     named title, goal, done_when, the shared audience picker
     (`[data-create-audience] [data-audience-value]`), and `[data-create-project]`;
-  * the phone app has no Projects tab: Projects is reached from More (one-list spec §5);
+  * the phone app has no Projects tab (one-list spec §5): Projects opens through the
+    person's one door (the user's ruling 2026-11-04) -- Household's Projects & programs
+    card for an adult, the House tab's Projects section for an explorer / navigator /
+    copilot, More's own slot for a sprout (tests/pwa_projects_door.py);
   * an old Programs link opens its piece sheet inside the owning project.
 No browser dialogs anywhere (alert/confirm/prompt).
 
@@ -110,10 +113,10 @@ def _pwa(page, served, who):
 
 
 def _open_projects(page):
-    """Projects lives in More on the phone (one-list spec §5); as project_sheets_fixture.open_projects."""
-    page.locator('#tab-more').click()
-    page.locator('#pwa-feature-list').get_by_text('Projects', exact=True).first.click()
-    page.wait_for_selector('#projects-container [data-project-card], #projects-container [data-project-detail]', timeout=15000)
+    """Projects opens through the person's one door (the user's ruling 2026-11-04);
+    as project_sheets_fixture.open_projects (tests/pwa_projects_door.py)."""
+    from pwa_projects_door import open_projects
+    return open_projects(page)
 
 
 def _step(pid, sid):
@@ -236,7 +239,8 @@ def scenario_the_phone_tab_for_a_child_and_a_parent():
 
 
 def scenario_younger_children_reach_their_projects_without_a_tab():
-    """A sprout's and an explorer's tab bars stay as approved; their projects live in My things and More."""
+    """A sprout's and an explorer's tab bars stay as approved; a sprout's projects live in My things,
+    an explorer's in her House tab's Projects section (the user's ruling 2026-11-04)."""
     served = _serve()
     if served is None:
         return
@@ -254,10 +258,9 @@ def scenario_younger_children_reach_their_projects_without_a_tab():
             page.goto(served.url('app'), wait_until='load')
             page.wait_for_selector('#tab-more', timeout=15000)
             check(page.locator('#tab-projects').count() == 0, "an explorer has no Projects tab")
-            page.locator('#tab-more').click()
-            page.locator('text=Projects').first.click()
-            page.wait_for_selector(f'[data-project-id="{IDS["exp"]}"]', timeout=15000)
-            check('Learn to swim' in page.locator('body').inner_text(), "Ana finds hers through More")
+            check(_open_projects(page) == 'house', "an explorer's door is her House tab")
+            page.wait_for_selector(f'#chores-container[data-child-section="projects"] [data-project-id="{IDS["exp"]}"]', timeout=15000)
+            check('Learn to swim' in page.locator('body').inner_text(), "Ana finds hers in her House tab's Projects section")
     finally:
         served.stop()
 

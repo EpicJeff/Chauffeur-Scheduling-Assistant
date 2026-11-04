@@ -257,6 +257,26 @@ def close_sheet(page):
     page.wait_for_function("document.querySelectorAll('.pwa-prompt-overlay').length === 0")
 
 
+def wait_drive_screen(page):
+    """Slice 6: for an adult the drive opens as the PwaNav pushed screen that
+    adopts #action-sheet-content; the bottom-sheet overlay stays hidden."""
+    settle(page, """PwaNav.depth() === 1
+        && !!document.querySelector('#pwa-stack .pwa-screen[data-screen="drive"] #action-sheet-content')""")
+    assert page.evaluate('PwaNav.depth()') == 1, ('the drive is not a pushed screen', page.evaluate('PwaNav.depth()'))
+    assert page.locator('#pwa-stack .pwa-screen[data-screen="drive"] #action-sheet-content').count() == 1, \
+        'the drive screen did not adopt #action-sheet-content'
+    assert not page.locator('#action-sheet').is_visible(), 'the bottom-sheet overlay showed for an adult'
+
+
+def wait_drive_closed(page):
+    """closeActionSheet() pops the drive screen and puts the node back."""
+    settle(page, """PwaNav.depth() === 0
+        && document.getElementById('action-sheet-content').parentElement.id === 'action-sheet'""")
+    assert page.evaluate('PwaNav.depth()') == 0, 'closeActionSheet() did not pop the drive screen'
+    assert page.evaluate("document.getElementById('action-sheet-content').parentElement.id") == 'action-sheet'
+    page.wait_for_selector('#action-sheet', state='hidden')
+
+
 def day_collapsed(page):
     return page.locator('#myday-content .pwa-brief-day.is-collapsed').count() == 1
 
@@ -339,9 +359,9 @@ def hero_is_the_next_row(page, key):
         return
     assert row['kind'] == 'drive', row
     hero.locator('.pwa-btn-primary').click()
-    page.wait_for_selector('#action-sheet', state='visible')
+    wait_drive_screen(page)
     page.evaluate('closeActionSheet()')
-    page.wait_for_selector('#action-sheet', state='hidden')
+    wait_drive_closed(page)
     hero.locator('.pwa-btn-secondary').click()
     page.wait_for_selector('#event-modal', state='visible')
     page.evaluate('closeEventModal()')
@@ -457,9 +477,9 @@ def nothing_removed(page, posts, key):
         page.locator('#myday-content .pwa-brief-expand').click()
     day = page.locator('#myday-content .pwa-brief-day')
     day.locator('.pwa-leg-row[data-state="upcoming"] .pwa-row-main').first.click()
-    page.wait_for_selector('#action-sheet', state='visible')
+    wait_drive_screen(page)
     page.evaluate('closeActionSheet()')
-    page.wait_for_selector('#action-sheet', state='hidden')
+    wait_drive_closed(page)
     ride = day.locator('[data-kind="ride"]')
     assert ride.count() == 1, 'the ride is not on Your day'
     assert ride.get_by_role('button', name='Message').count() >= 1, ride.inner_text()

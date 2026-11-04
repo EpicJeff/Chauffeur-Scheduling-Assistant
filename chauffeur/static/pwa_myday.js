@@ -35,8 +35,15 @@ function pwaRowsFromDom(container) {
     if (!container) return [];
     return Array.from(container.querySelectorAll('[data-kind]')).filter(element => PWA_DAY_KIND_ORDER.includes(element.dataset.kind)).map(element => {
         const d = element.dataset;
+        let actions = [];
+        try {
+            const parsed = JSON.parse(d.actions || '[]');
+            if (Array.isArray(parsed)) actions = parsed.filter(action =>
+                action && typeof action.label === 'string' && typeof action.run === 'string' && action.run.trim());
+        } catch (_) { /* A malformed row has no extra hero actions. */ }
         return {kind:d.kind, start:d.start, end:d.end, title:d.title || '', place:d.place || '',
             meta:d.meta || '', state:d.state || '', primary:d.primary || '', secondary:d.secondary || '',
+            actions,
             legId:d.legId || '', eventId:d.eventId || '', late:Number(d.late) || 0, allDay:d.allDay === '1' || d.allDay === 'true'};
     });
 }
@@ -52,6 +59,7 @@ function pwaHeroNext(row, now, opts = {}) {
         travel_mins:drive && duration && (duration[1] || duration[2]) ? Number(duration[1] || 0) * 60 + Number(duration[2] || 0) : null, driver:row.driver || null,
         live:start <= clock && clock <= end, minutes_until:Math.max(0, Math.ceil((start - clock) / 60000)),
         actions:drive ? [{label:'Start drive', run:row.primary}, {label:'Ask for cover', run:row.secondary}]
+            : row.kind === 'ride' && Array.isArray(row.actions) && row.actions.length ? row.actions.slice(0, 3)
             : row.primary ? [{label:row.kind === 'ride' && /^openEventThread\(/.test(row.primary) ? 'Discuss' : labels[row.kind] || 'Open', run:row.primary}] : []};
 }
 
@@ -131,6 +139,12 @@ function pwaNeedsYou(inputs, now, opts = {}) {
     const list = value => Array.isArray(value) ? value : [];
     const add = (id, kind, icon, title, why, deadline, rank, open) =>
         cards.push({id, kind, icon, title, why, deadline:pwaNeedDate(deadline), rank, open});
+    for (const packing of list(inputs.packing)) {
+        const time = pwaClock(packing.leaveAt, opts);
+        add(`packing:${packing.eventId}`, 'packing', '🎒', `Pack for ${packing.title}`,
+            [list(packing.items).join(', '), time ? `leave ${time}` : ''].filter(Boolean).join(' · '),
+            packing.leaveAt, 2, {run:packing.primary});
+    }
     for (const request of list(inputs.requests)) {
         const body = String(request.body || '');
         add(`request:${request.id}`, 'request', '🙋', `${request.from_name} asks: ${body.slice(0, 60)}${body.length > 60 ? '…' : ''}`,
@@ -220,7 +234,7 @@ function pwaConflictOf(diagnosticsForEvent) {
     return {conflictReason:texts.length === 1 ? texts[0] : null};
 }
 
-function pwaNeedsYouInputs() {
+function pwaNeedsYouInputs(brief = document.querySelector('#myday-content .pwa-brief-day')) {
     const list = value => Array.isArray(value) ? value : [];
     const role = typeof currentMemberRole === 'function' ? currentMemberRole() : '';
     const memberDay = typeof window !== 'undefined' && window.pwaMemberDay || {};
@@ -233,6 +247,24 @@ function pwaNeedsYouInputs() {
     const threads = list(typeof houseThreads !== 'undefined' ? houseThreads : null);
     const unassigned = list(schedule.true_unassigned || schedule.unassigned).map(event =>
         typeof event === 'object' ? event : list(schedule.events).find(e => e.id === event)).filter(Boolean);
+    const packing = [], packed = new Set(list(schedule.prep_confirmed)), seenPacking = new Set();
+    const completed = new Set(list(schedule.completed_drives)), now = Date.now();
+    const baseId = id => String(id || '').replace(/_(dropoff|pickup)$/, '');
+    const events = [...list(schedule.events), ...list(memberDay.rides)];
+    for (const row of pwaRowsFromDom(brief).filter(row => ['drive', 'ride'].includes(row.kind))
+        .sort((a, b) => new Date(a.start) - new Date(b.start))) {
+        const id = baseId(row.eventId), event = events.find(event => baseId(event.id) === id);
+        const items = list(schedule.prep_by_event?.[id]).filter(Boolean);
+        // Keep the kit available while driving; after the stamped arrival it
+        // is no longer a useful request, even if nobody checked the drive off.
+        const arrival = new Date(row.end).getTime();
+        if (!event || pwaLocalDay(new Date(event.start)) !== todayStr()
+            || completed.has(row.legId) || ['completed', 'done'].includes(row.state)
+            || (Number.isFinite(arrival) && now > arrival)
+            || !items.length || packed.has(id) || seenPacking.has(id) || !row.primary) continue;
+        seenPacking.add(id);
+        packing.push({eventId:id, title:event.title || row.title, items, leaveAt:row.start, primary:row.primary});
+    }
     const conflicts = new Map();
     for (const event of unassigned) {
         const base = String(event.id).replace(/_(dropoff|pickup)$/, '');
@@ -242,7 +274,7 @@ function pwaNeedsYouInputs() {
         conflicts.set(base, {isConflict,
             conflictReason:isConflict ? previous?.conflictReason || leg?.conflictReason || null : null});
     }
-    return {role, requests:list(requests.waiting_on_me).map(r => ({...r, from_name:r.from_name || r.from})),
+    return {role, packing, requests:list(requests.waiting_on_me).map(r => ({...r, from_name:r.from_name || r.from})),
         reviews:{chores:chores.filter(c => c.state === 'done'),
             redemptions:redemptions.filter(r => !r.state || r.state === 'pending'),
             pools:rewards.filter(r => r.pooled && r.pool && r.pool.funded).map(r => ({...r, funded:r.pool.funded}))},
@@ -281,6 +313,7 @@ function pwaOpenNeed(card) {
         if (open.anchor && typeof document !== 'undefined') document.getElementById(open.anchor)?.scrollIntoView();
     }
     if (open.fn && typeof window !== 'undefined' && typeof window[open.fn] === 'function') window[open.fn](...(open.args || []));
+    if (open.run) new Function(open.run)();
 }
 
 // The passenger and child renderers share this assembly; the brief also
@@ -490,7 +523,7 @@ function pwaPaintBrief(cache, full = false, savedScrollTop, timelineBuilt = fals
     if (previous) previous.replaceWith(section);
     else brief.append(section);
     const clockOpts = {use24h:typeof use24h !== 'undefined' && use24h};
-    window.pwaNeedCards = pwaNeedsYou(pwaNeedsYouInputs(), new Date(), clockOpts);
+    window.pwaNeedCards = pwaNeedsYou(pwaNeedsYouInputs(section), new Date(), clockOpts);
     brief.querySelector('.pwa-brief-needs')?.remove();
     const rows = pwaRowsFromDom(section.querySelector('.pwa-brief-day'));
     const sentence = brief.querySelector('.pwa-brief-sentence') || document.createElement('p');
@@ -525,6 +558,7 @@ function pwaPaintBrief(cache, full = false, savedScrollTop, timelineBuilt = fals
             ${kidCan('can_request') ? '<button type="button" class="pwa-brief-ask" onclick="askForSomething()">🙋 Ask for something…</button>' : ''}</section>`);
     }
     if (full) wrap.replaceChildren(brief);
+    if (typeof routeContext !== 'undefined' && routeContext) pwaRenderDriveCards();
     pwaRefreshBriefSheet();
     scroller.scrollTop = scrollTop;
 }

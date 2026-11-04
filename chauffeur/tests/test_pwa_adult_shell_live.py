@@ -253,13 +253,20 @@ def check_route_departure(page, schedule, driver, output=None):
     page.evaluate('closeEventModal()')
     page.wait_for_selector('#event-modal', state='hidden')
     page.locator('#myday-content .pwa-hero .pwa-btn-primary').click()
+    # Slice 6: for an adult the drive is a PwaNav pushed screen that ADOPTS
+    # #action-sheet-content (every id and handler kept); the overlay stays hidden.
+    page.wait_for_function("""() => PwaNav.depth() === 1
+        && !!document.querySelector('#pwa-stack .pwa-screen[data-screen="drive"] #action-sheet-content')""")
+    assert not page.locator('#action-sheet').is_visible(), 'the bottom-sheet overlay showed for an adult'
     page.wait_for_function("driveSheetData?.leg_id === 'route_morning_2'")
-    assert page.locator('#drive-dest').inner_text() == 'Riverside fields'
+    # #drive-dest and #sheet-title may be hidden inside the stack (the leave
+    # card and the screen's h1 carry them); their text is still written.
+    assert page.locator('#drive-dest').text_content().strip() == 'Riverside fields'
     assert page.evaluate('driveSheetData.passengers.map(p=>p.name)') == ['James']
     assert page.evaluate('routeContext.eventId') == 'soccer'
     assert page.evaluate('routeContext.destination') == 'Riverside fields'
     assert page.evaluate('driveSheetData.next_drive.title') == 'Piano lesson'
-    assert page.locator('#sheet-title').inner_text() == 'Your drive'
+    assert page.locator('#sheet-title').text_content().strip() == 'Your drive'
     check_profile_button(page, '#btn-start-drive')
     assert page.locator('#btn-mark-completed').evaluate('(e)=>getComputedStyle(e).boxShadow') == 'none'
     page.locator('#drive-roll-chips button').click()
@@ -275,7 +282,10 @@ def check_route_departure(page, schedule, driver, output=None):
         assert not page.evaluate('document.documentElement.scrollWidth > innerWidth')
         assert page.locator('#action-sheet-content').evaluate('(e)=>e.scrollWidth <= e.clientWidth')
     page.set_viewport_size({'width': 390, 'height': 844})
-    page.get_by_role('button', name='Close drive details', exact=True).click()
+    # Back (the pushed screen's own control) closes the drive the way the x did.
+    page.locator('#pwa-stack .pwa-screen[data-screen="drive"] .pwa-back').click()
+    page.wait_for_function("""() => PwaNav.depth() === 0
+        && document.getElementById('action-sheet-content').parentElement.id === 'action-sheet'""")
     page.wait_for_selector('#action-sheet', state='hidden')
     page.evaluate("window.sheetAnswer = 'pending'; void promptConfirm('Approve task?', 'Sam finished taking out recycling.', 'Approve', 'Not yet').then(v=>window.sheetAnswer=v)")
     if output: Path(output, 'adult-confirm-sheet-light.png').write_bytes(page.screenshot())
@@ -427,8 +437,13 @@ def run():
                         time_label = original.get_attribute('data-time-label')
                         assert page.locator('#myday-content .pwa-hero h2').inner_text() == time_label
                         page.locator('#myday-content .pwa-hero .pwa-btn-primary').click()
-                        assert page.locator('#action-sheet').is_visible()
+                        # Slice 6: the drive is the pushed screen; closeActionSheet() pops it.
+                        page.wait_for_function("""() => PwaNav.depth() === 1
+                            && !!document.querySelector('#pwa-stack .pwa-screen[data-screen="drive"] #action-sheet-content')""")
+                        assert not page.locator('#action-sheet').is_visible()
                         page.evaluate('closeActionSheet()')
+                        page.wait_for_function("""() => PwaNav.depth() === 0
+                            && document.getElementById('action-sheet-content').parentElement.id === 'action-sheet'""")
                         page.wait_for_selector('#action-sheet', state='hidden')
                         greet = ' '.join(page.locator('#myday-content .pwa-brief-greet').inner_text().split())
                         assert greet.startswith('Good afternoon'), greet
@@ -500,8 +515,12 @@ def run():
                         assert program.locator('[data-myday-body]').is_visible()
                         program.locator('[data-myday-toggle]').click()
                         page.evaluate("document.getElementById('myday-container').scrollTop=0")
-                    page.get_by_role('button', name='Search features', exact=True).click()
+                    # Slice 6: search left the adult header (an approved
+                    # disposition); More's field is the way in.
+                    assert not page.locator('body > header').get_by_role('button', name='Search features', exact=True).is_visible()
+                    page.locator('#tab-more').click()
                     search = page.get_by_role('searchbox', name='Search features')
+                    search.click()
                     assert search.evaluate('(e)=>e === document.activeElement')
                     search.fill('music')
                     assert page.locator('#pwa-feature-list [data-feature="music"]').count() == (0 if role in ('helper', 'guest') else 1)

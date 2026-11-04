@@ -121,6 +121,16 @@ const CASES = {
     const why = (opts) => (opts === undefined ? pwaNeedsYou(inp, NOW) : pwaNeedsYou(inp, NOW, opts))[0].why;
     return {h24: why({use24h: true}), h12_false: why({use24h: false}), h12_empty: why({}), h12_absent: why()};
   },
+  // slice 6 task 1: an unconfirmed packing kit is a card (pwaNeedsYouInputs
+  // feeds only unconfirmed kits; a confirmed one never reaches the input)
+  packing_is_a_card: () => {
+    const primary = "openActionSheet('Home','Riverside','Soccer practice','soccer','init_soccer')";
+    const inp = inputs({packing: [{eventId: 'soccer', title: 'Soccer practice', items: ['soccer bag', 'water'],
+      leaveAt: '2026-11-03T15:40:00', primary}]});
+    return {cards: cards(inp), h24: pwaNeedsYou(inp, NOW, {use24h: true})[0].why,
+            leave_ms: new Date('2026-11-03T15:40:00').getTime()};
+  },
+  confirmed_packing_is_not: () => ({empty: cards(inputs({packing: []})), absent: cards(inputs())}),
   one_proposal_is_singular_and_sourced: () => cards(inputs({proposals: [
     {id: 'p3', start: '2026-11-07T19:00:00', source_subject: 'Fall concert'}]})),
   proposal_without_a_source: () => cards(inputs({proposals: [{id: 'p4', start: '2026-11-07T19:00:00'}]})),
@@ -385,6 +395,44 @@ def scenario_full_pile_is_ranked():
         _open_has(card, view='chores', section='reviews')
     check(len({c['id'] for c in got}) == len(got) and all(c['id'] for c in got),
           f"every card needs its own id: {[c['id'] for c in got]!r}")
+
+
+def scenario_packing_is_a_card():
+    """Slice 6 task 1: inputs.packing = [{eventId, title, items, leaveAt,
+    primary}] -> one card {kind 'packing', icon, title 'Pack for <title>',
+    why '<items joined ", "> \u00b7 leave <time>', deadline = leaveAt, rank 2,
+    open {run: primary}} (pwaOpenNeed runs open.run)."""
+    out = _out()
+    if out is None:
+        print("  skip  node is not installed")
+        return
+    got = out['cases']['packing_is_a_card']
+    check('error' not in got, f"packing_is_a_card threw under node:\n{got.get('error')}")
+    val = got['value']
+    cards = val['cards']
+    check(len(cards) == 1 and cards[0]['kind'] == 'packing', f"one packing card expected, got {cards!r}")
+    c = cards[0]
+    check(c['icon'] == '\U0001F392', f"packing icon {c['icon']!r}, expected the backpack")
+    check(c['title'] == 'Pack for Soccer practice', f"packing title {c['title']!r}")
+    check(c['why'] == 'soccer bag, water \u00b7 leave 3:40', f"packing why {c['why']!r}, expected 'soccer bag, water \u00b7 leave 3:40'")
+    check(val['h24'] == 'soccer bag, water \u00b7 leave 15:40', f"use24h packing why {val['h24']!r}")
+    check(c['rank'] == 2, f"packing rank {c['rank']!r}, expected 2")
+    check(c['deadline_ms'] == val['leave_ms'], f"packing deadline {c['deadline_ms']!r}, expected leaveAt")
+    want = "openActionSheet('Home','Riverside','Soccer practice','soccer','init_soccer')"
+    check(c['open'] == {'run': want}, f"packing open {c['open']!r}, expected {{'run': <primary>}}")
+
+
+def scenario_confirmed_packing_is_not():
+    """A confirmed kit never reaches the pile: pwaNeedsYouInputs filters it, so
+    the pure function sees an empty (or absent) packing list and draws none."""
+    out = _out()
+    if out is None:
+        print("  skip  node is not installed")
+        return
+    got = out['cases']['confirmed_packing_is_not']
+    check('error' not in got, f"confirmed_packing_is_not threw under node:\n{got.get('error')}")
+    check(got['value']['empty'] == [] and got['value']['absent'] == [],
+          f"no packing input, no packing card: {got['value']!r}")
 
 
 def scenario_one_proposal_is_singular_and_sourced():

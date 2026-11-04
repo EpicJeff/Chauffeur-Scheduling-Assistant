@@ -124,6 +124,26 @@ const CASES = {
     }
     return labels;
   },
+  // slice 6 task 1: a ride row's own buttons (parsed from data-actions) are the hero's actions
+  ride_hero_with_actions: () => {
+    const acts = [{label: 'Where?', run: "pwaWhere('d1')"}, {label: 'Message', run: "messageMember('d1')"},
+                  {label: 'Add a moment', run: "openEventThread('soccer')"}];
+    const r = row('ride', '2026-11-03T16:00:00', '2026-11-03T16:00:00', 'Sam drives you to soccer',
+      {primary: "openEventModal('soccer')", actions: acts});
+    const h = pwaHeroNext(r, NOW);
+    return {kind: h.kind, actions: h.actions.map(a => ({label: a.label, run: a.run}))};
+  },
+  ride_hero_without_actions: () => {
+    const plain = row('ride', '2026-11-03T16:00:00', '2026-11-03T16:00:00', 'Sam drives you to piano',
+      {primary: "openEventModal('piano')"});
+    const thread = row('ride', '2026-11-03T16:00:00', '2026-11-03T16:00:00', 'Sam drives you to piano',
+      {primary: "openEventThread('piano')"});
+    const empty = row('ride', '2026-11-03T16:00:00', '2026-11-03T16:00:00', 'Sam drives you to piano',
+      {primary: "openEventModal('piano')", actions: []});
+    const acts = h => h.actions.map(a => ({label: a.label, run: a.run}));
+    return {absent: acts(pwaHeroNext(plain, NOW)), thread: acts(pwaHeroNext(thread, NOW)),
+            empty: acts(pwaHeroNext(empty, NOW))};
+  },
   all_day_rows_are_never_next: () => pick([
     row('event', '2026-11-03T00:00:00', '2026-11-03T23:59:00', 'Teacher workday', {allDay: true}),
     row('drive', '2026-11-03T16:00:00', '2026-11-03T16:18:00', 'Drop-off: Piano')]),
@@ -293,6 +313,31 @@ def scenario_every_other_kind_has_its_label():
     for kind, label in want.items():
         check(labels[kind] == [{'label': label, 'run': f"tap('{kind}')"}],
               f"{kind} hero actions {labels[kind]!r}, expected one {label!r} running the row's primary")
+
+
+def scenario_ride_hero_takes_the_rows_buttons():
+    """Slice 6 task 1: a ride row carrying `actions` ([{label, run}], up to
+    three, parsed from data-actions) makes those the hero's actions, exactly
+    and in order, replacing the single Details/Discuss button."""
+    got, ran = _case('ride_hero_with_actions')
+    if not ran:
+        return
+    want = [{'label': 'Where?', 'run': "pwaWhere('d1')"},
+            {'label': 'Message', 'run': "messageMember('d1')"},
+            {'label': 'Add a moment', 'run': "openEventThread('soccer')"}]
+    check(got['kind'] == 'ride', f"hero kind {got['kind']!r}")
+    check(got['actions'] == want, f"ride hero actions {got['actions']!r}, expected the row's three buttons {want!r}")
+
+
+def scenario_ride_hero_without_actions_unchanged():
+    """No `actions` (absent or empty): today's one button, 'Details' running
+    the primary, or 'Discuss' when the primary is openEventThread(...)."""
+    got, ran = _case('ride_hero_without_actions')
+    if not ran:
+        return
+    check(got['absent'] == [{'label': 'Details', 'run': "openEventModal('piano')"}], f"absent actions: {got['absent']!r}")
+    check(got['empty'] == [{'label': 'Details', 'run': "openEventModal('piano')"}], f"empty actions: {got['empty']!r}")
+    check(got['thread'] == [{'label': 'Discuss', 'run': "openEventThread('piano')"}], f"thread primary: {got['thread']!r}")
 
 
 def scenario_all_day_rows_are_never_next():

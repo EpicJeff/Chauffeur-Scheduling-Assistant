@@ -255,8 +255,9 @@
         openProject(id) {
             if (phone()) {
                 if (typeof window.chfPhoneCloseSheets === 'function') window.chfPhoneCloseSheets();
-                if (typeof setView === 'function') setView('projects');
-                window.dispatchEvent(new CustomEvent('chf-project-open', {detail: {id}}));
+                if (typeof window.chfPwaOpenProjects !== 'function' && typeof setView === 'function') setView('projects');
+                if (window.chfPwaOpenProjects?.() !== false)
+                    window.dispatchEvent(new CustomEvent('chf-project-open', {detail: {id}}));
                 return;
             }
             window.location.href = base() + 'work?tab=projects&id=' + encodeURIComponent(id);

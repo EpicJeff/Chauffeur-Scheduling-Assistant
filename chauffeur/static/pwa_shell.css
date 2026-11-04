@@ -128,11 +128,17 @@
 }
 [data-audience="adult"] .pwa-adult-only { display: flex; }
 [data-audience="adult"] body > header {
-  padding: 14px 20px 12px; gap: 10px; min-height: 72px; box-shadow: none;
+  padding: 8px 20px; gap: 10px; min-height: 60px; box-shadow: none;
   background: rgb(var(--c-gray-950)); border: 0;
 }
 [data-audience="adult"] body > header > div:first-child { min-width: 0; flex: 1; gap: 10px; }
 [data-audience="adult"] body > header > div:first-child > div { min-width: 0; }
+html[data-audience="adult"] body > header > div { display: contents; }
+html[data-audience="adult"] body > header > div:first-child > div { display: none; }
+html[data-audience="adult"] body > header #pwa-header-date { order: 1; flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: var(--pwa-msg-muted); }
+html[data-audience="adult"] body > header #btn-notif { order: 2; flex-shrink: 0; }
+html[data-audience="adult"] body > header #pwa-identity { order: 3; }
+html[data-audience="adult"] body > header :is([aria-label="Search features"], #driver-name, #date-subtitle) { display: none !important; }
 [data-audience="adult"] body {
   font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; line-height: 1.4;
 }
@@ -163,6 +169,64 @@
 [data-audience="adult"] { --pwa-tabbar-h: calc(67px + env(safe-area-inset-bottom, 0px)); }
 #pwa-stack { position: fixed; inset: 0 0 var(--pwa-tabbar-h, 84px) 0; z-index: 40; overflow: hidden; }
 #pwa-stack[hidden] { display: none; }
+.pwa-drive-leave, .pwa-drive-stops { display: none; }
+/* The drive adopts its sheet; its scroll, head and cards belong to the stack.
+   Card/ink tokens and the accent shadow match the My Day hero. */
+html[data-audience="adult"] #pwa-stack #action-sheet-content {
+  width: 100%; max-width: 520px; max-height: none; overflow: visible;
+  padding: 12px 0 0; margin: 0 auto; border: 0; border-radius: 0;
+  background: transparent; color: var(--pwa-ink); box-shadow: none;
+  transform: none; transition: none; line-height: 1.4;
+}
+html[data-audience="adult"] #pwa-stack #action-sheet-content :is(.pwa-sheet-head, #sheet-title, #sheet-subtitle, .pwa-drive-handle, #drive-brief, [onclick="closeActionSheet()"]) { display: none; }
+html[data-audience="adult"] #pwa-stack .pwa-drive-leave {
+  display: block; background: var(--pwa-card-raised); border-radius: 22px; padding: 16px 18px;
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--pwa-accent) 12%, transparent);
+}
+html[data-audience="adult"] #pwa-stack .pwa-drive-leave[hidden] { display: none; }
+html[data-audience="adult"] #pwa-stack .pwa-drive-arrive-by { margin-top: 8px; font-size: 14px; color: var(--pwa-msg-muted); font-weight: 600; }
+html[data-audience="adult"] #pwa-stack .pwa-drive-late { --pwa-drive-warning: #865000; }
+html[data-audience="adult"][data-theme="dark"] #pwa-stack .pwa-drive-late { --pwa-drive-warning: #ffd18a; }
+html[data-audience="adult"] #pwa-stack .pwa-drive-arrive-by.pwa-drive-late,
+html[data-audience="adult"] #pwa-stack .pwa-drive-leave.pwa-drive-late .pwa-drive-sub { color: var(--pwa-drive-warning); }
+html[data-audience="adult"] #pwa-stack .pwa-screen[data-screen="drive"] h1 { font-size: 22px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html[data-audience="adult"] #pwa-stack .pwa-drive-leave .k { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--pwa-accent); overflow-wrap: anywhere; }
+html[data-audience="adult"] #pwa-stack .pwa-drive-time { font-size: 56px; font-weight: 700; letter-spacing: -.03em; line-height: 1; margin: 6px 0 4px; color: var(--pwa-ink); }
+html[data-audience="adult"] #pwa-stack .pwa-drive-eta { font-size: 40px; font-weight: 700; letter-spacing: -.02em; margin: 4px 0; color: var(--pwa-ink); }
+html[data-audience="adult"] #pwa-stack .pwa-drive-sub { font-size: 14px; color: var(--pwa-msg-muted); overflow-wrap: anywhere; }
+html[data-audience="adult"] #pwa-stack .pwa-drive-stops { display: block; margin: 6px 0 4px; }
+html[data-audience="adult"] #pwa-stack .pwa-drive-stop { display: flex; position: relative; gap: 12px; padding: 8px 0; }
+html[data-audience="adult"] #pwa-stack .pwa-drive-stop:not(:last-child)::before { content: ''; position: absolute; left: 5px; top: 25px; bottom: -13px; width: 2px; background: var(--pwa-msg-line); }
+html[data-audience="adult"] #pwa-stack .pwa-drive-dot { position: relative; flex: 0 0 12px; width: 12px; height: 12px; margin-top: 5px; border: 2px solid var(--pwa-accent); border-radius: 50%; background: var(--pwa-card-raised); }
+html[data-audience="adult"] #pwa-stack .pwa-drive-stop.done .pwa-drive-dot { background: var(--pwa-accent); }
+html[data-audience="adult"] #pwa-stack .pwa-drive-stop > div { min-width: 0; }
+html[data-audience="adult"] #pwa-stack .pwa-drive-place { font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }
+html[data-audience="adult"] #pwa-stack .pwa-drive-stop .pwa-drive-sub { font-size: 13px; }
+html[data-audience="adult"] #pwa-stack :is(#drive-roll, #drive-prep) { margin: 0; }
+html[data-audience="adult"] #pwa-stack :is(#drive-roll, #drive-prep, #drive-messages) > div:first-child { font-size: 12px; font-weight: 700; color: var(--pwa-msg-muted); margin: 10px 0 8px; }
+html[data-audience="adult"] #pwa-stack #drive-roll > div:first-child > span { color: var(--pwa-msg-muted); }
+html[data-audience="adult"] #pwa-stack :is(#drive-roll-chips, #drive-prep-items) button {
+  display: flex; align-items: center; gap: 8px; border: 0; border-radius: 999px; padding: 9px 14px 9px 9px;
+  background: var(--pwa-card-raised); color: var(--pwa-ink); font-size: 15px; font-weight: 600;
+  box-shadow: 0 1px 4px rgba(31,29,43,.08); max-width: 100%; overflow-wrap: anywhere;
+}
+html[data-audience="adult"] #pwa-stack #drive-roll-chips button > :first-child { width: 26px; height: 26px; flex-shrink: 0; }
+html[data-audience="adult"] #pwa-stack #drive-roll-chips [data-aboard="yes"] { background: var(--pwa-ink); color: var(--pwa-card-raised); }
+html[data-audience="adult"] #pwa-stack #drive-roll-chips [data-aboard="no"] { background: var(--pwa-card); color: var(--pwa-msg-muted); }
+html[data-audience="adult"] #pwa-stack #drive-prep-items button { padding: 9px 14px; }
+html[data-audience="adult"] #pwa-stack #drive-prep-items [aria-pressed="true"] { background: #dcf3e8; color: #1f7a5c; }
+html[data-audience="adult"] #pwa-stack #action-sheet-content :is(#btn-start-drive, #btn-drive-cover, #btn-arrived) { min-height: 56px; border-radius: 18px; font-size: 18px; font-weight: 700; }
+html[data-audience="adult"] #pwa-stack #btn-start-drive { background: var(--pwa-accent); border-color: transparent; }
+html[data-audience="adult"] #pwa-stack #btn-drive-cover { display: block; width: 100%; background: color-mix(in srgb, var(--pwa-ink) 6%, transparent); color: var(--pwa-ink); border: 0; }
+html[data-audience="adult"] #pwa-stack #btn-drive-cover.hidden { display: none; }
+html[data-audience="adult"] #pwa-stack #btn-mark-completed { order: 2; }
+html[data-audience="adult"] #pwa-stack #sheet-state-2 > .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+html[data-audience="adult"] #pwa-stack #sheet-state-2 button[onclick^="openMaps"] { min-height: 64px; border: 0; border-radius: 16px; background: var(--pwa-card-raised); color: var(--pwa-ink); padding: 10px 4px; box-shadow: 0 1px 4px rgba(31,29,43,.08); }
+html[data-audience="adult"] #pwa-stack #drive-message-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+html[data-audience="adult"] #pwa-stack #drive-message-buttons button { background: var(--pwa-card-raised); color: var(--pwa-ink); border: 0; border-radius: 14px; padding: 12px; box-shadow: 0 1px 4px rgba(31,29,43,.08); overflow-wrap: anywhere; }
+html[data-audience="adult"] #pwa-stack #action-sheet-content #btn-arrived { background: #1f7a5c; border-color: transparent; color: white; }
+html[data-audience="adult"] #pwa-stack #action-sheet-content #btn-send-eta { background: var(--pwa-card-raised); color: var(--pwa-ink); border-color: var(--pwa-msg-line); }
+html[data-audience="adult"] #pwa-stack :is(#drive-next, #drive-live) { color: var(--pwa-msg-muted); }
 [data-audience="adult"] .pwa-screen { position: absolute; inset: 0; overflow-y: auto; padding: 0 20px 24px; background: inherit; }
 [data-audience="adult"] .pwa-back { color: var(--pwa-accent); font-weight: 600; font-size: 15px; min-height: 44px; margin-top: 8px; background: none; border: 0; padding: 0; }
 [data-audience="adult"] .pwa-screen h1 { font-size: 34px; font-weight: 700; letter-spacing: -.03em; margin: 8px 0 4px; color: var(--pwa-ink); outline: none; }

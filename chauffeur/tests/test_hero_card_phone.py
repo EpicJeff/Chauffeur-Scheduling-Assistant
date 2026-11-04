@@ -76,6 +76,17 @@ ROUTINE_NEXT = {
 }
 ROUTINE_DURING = '2026-11-03T16:10:00'
 
+# A passenger's next ride carries the ride row's own buttons (slice 6): up to
+# THREE on the phone, in order; an entry missing its label or run never paints.
+RIDE_NEXT = {
+    'kind': 'ride', 'start': '2026-11-03T16:00:00', 'end': '2026-11-03T17:00:00',
+    'title': 'Soccer practice', 'location': 'Riverside fields', 'live': False, 'driver': None,
+    'actions': [{'label': 'Where?', 'run': "pwaWhere('d1')"},
+                {'label': 'Message', 'run': "messageMember('d1')"},
+                {'label': 'Add a moment', 'run': "openEventThread('soccer')"},
+                {'label': 'Broken'}, {'run': "nope()"}],
+}
+
 # A wall-shaped hero that walks more of the wall template's branches (colour,
 # driver, arrive-by, optional, pack chip, outing), for the golden only.
 WALL_RICH_NEXT = {
@@ -187,6 +198,7 @@ def _node_results():
                 'drive': {'next': DRIVE_NEXT, 'now': NOW},
                 'routine_before': {'next': ROUTINE_NEXT, 'now': NOW},
                 'routine_during': {'next': ROUTINE_NEXT, 'now': ROUTINE_DURING},
+                'ride_three': {'next': RIDE_NEXT, 'now': NOW},
             },
         }, f)
     proc = subprocess.run([node, probe, head_path, COMPONENT, data_path],
@@ -333,6 +345,14 @@ def scenario_phone_drive_has_two_buttons_running_the_actions():
           f"secondary onclick must be actions[1].run: {sec['attrs'].get('onclick')!r}")
     check(buttons[0] is prim or _classes(buttons[0]) == _classes(prim),
           "the primary button comes first")
+
+
+def scenario_phone_ride_paints_the_rows_three_buttons():
+    out, _ = _phone('ride_three')
+    buttons = [e for e in _elements(out) if e['tag'] == 'button']
+    check([_text(b) for b in buttons] == ['Where?', 'Message', 'Add a moment'],
+          f"a ride hero paints its three row buttons in order and drops entries without a label or run: {[_text(b) for b in buttons]!r}")
+    check('undefined' not in out, "no button reads or runs 'undefined'")
 
 
 def scenario_phone_routine_before_start_is_up_next_with_one_button():

@@ -103,10 +103,15 @@
 [data-child-stage] :is(#chores-content,#house-lists,#house-threads) { padding-inline:20px; }
 [data-child-stage] #chores-container [data-child-house] { display:none; }
 [data-child-stage] #chores-container[data-child-section="tasks"] [data-child-house="tasks"],
-[data-child-stage] #chores-container[data-child-section="rewards"] [data-child-house="rewards"] { display:block; }
+[data-child-stage] #chores-container[data-child-section="rewards"] [data-child-house="rewards"],
+[data-child-stage] #chores-container[data-child-section="projects"] [data-child-house="projects"] { display:block; }
 [data-child-stage] #chores-container:not([data-child-section="lists"]) #house-lists,
 [data-child-stage] #chores-container:not([data-child-section="threads"]) #house-threads { display:none; }
-[data-child-stage] #chores-container:is([data-child-section="lists"],[data-child-section="threads"]) #chores-content { display:none; }
+[data-child-stage] #chores-container:is([data-child-section="lists"],[data-child-section="threads"],[data-child-section="projects"]) #chores-content { display:none; }
+[data-child-stage] .child-house-projects { min-width:0; }
+[data-child-stage] .child-house-projects .panel-page-title { display:none; }
+[data-child-stage] .child-house-projects #projects-container { flex:none; overflow:visible; }
+[data-child-stage] .child-house-projects > .child-programs { padding:0 20px 20px; }
 [data-child-stage] [data-child-house] > * { margin-bottom:12px; }
 [data-child-stage] [data-child-house] > .uppercase { font-size:0.75rem; letter-spacing:.05em; padding-top:12px; }
 [data-child-stage] :is(#chores-content,#house-lists,#house-threads) button { min-height:48px; font-size:0.875rem; box-shadow:none; }

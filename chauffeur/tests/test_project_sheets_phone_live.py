@@ -73,13 +73,21 @@ def scenario_no_tab_and_no_admin_anchor_in_sheets():
             page.goto(served.url('app'), wait_until='load')
             page.wait_for_selector('#tab-more', state='visible', timeout=15000)
             check(page.locator('#tab-projects').count() == 0, "no Projects tab")
-            page.locator('#tab-more').click()
-            page.get_by_text('Projects', exact=True).first.click()
+            # A parent's one door is Household's Projects & programs card (the
+            # user's ruling 2026-11-04); More no longer lists Projects for her.
+            page.locator('#tab-chores').click()
+            card = page.locator('#house-cards .pwa-house-card[data-card="projects"]')
+            card.wait_for(state='visible', timeout=15000)
+            card.click()
+            page.wait_for_function("() => PwaNav.depth() === 1 && !!document.querySelector('#pwa-stack .pwa-screen #projects-container')",
+                                   timeout=15000)
+            check(page.locator('#pwa-stack .pwa-screen h1').last.inner_text().strip() == 'Projects & programs',
+                  "the Household's Projects & programs screen is up")
             page.wait_for_selector('[data-project-card]', timeout=15000)
             page.locator(f'[data-project-id="{IDS["bath"]}"]').click()
             page.wait_for_selector('[data-row]', timeout=10000)
             check(page.locator('#projects-container a[href]').count() == 0, "no anchors in the projects surface")
-            check(page.locator('#tab-more').get_attribute('aria-current') == 'page', "More stays lit while Projects is open")
+            check(page.locator('#tab-chores').get_attribute('aria-current') == 'page', "Household stays lit while Projects is open")
             page.locator(f'[data-row="conversation:{IDS["thread"]}"] [data-row-title]').click()
             page.wait_for_function("() => (document.querySelector('[data-piece-sheet]') || {}).innerText?.includes('Tiler')", timeout=10000)
             check(_admin_hrefs(page) == [], f"no admin anchors inside the thread sheet: {_admin_hrefs(page)}")
@@ -102,9 +110,11 @@ def scenario_no_tab_and_no_admin_anchor_in_sheets():
 
 
 def scenario_a_project_opens_only_through_its_door():
-    """phoneOpenRecord('project') and chfPwaOpenProjects open Projects only for
-    someone More offers it to: a helper is told where to find it instead; a
-    sprout lands on More, where its projects live in their own slot."""
+    """phoneOpenRecord('project') and chfPwaOpenProjects open Projects only
+    through the person's own door: a helper is told where to find it instead;
+    a navigator lands on the House tab's Projects section (the user's ruling
+    2026-11-04: Projects & programs live in Household); a sprout lands on More,
+    where its projects live in their own slot."""
     served = serve()
     if served is None:
         return
@@ -133,6 +143,24 @@ def scenario_a_project_opens_only_through_its_door():
             if 'chfPwaOpenProjects' in call:
                 check(answer is False, f"chfPwaOpenProjects answers false: {answer}")
         check(page.evaluate('window._opens') == 0, "nothing opens Projects for a helper")
+    # The fixture's kid is a navigator: her door is the House tab's Projects section.
+    with served.browser() as page:
+        page.set_viewport_size({'width': 390, 'height': 844})
+        pwa(page, served, 'kid')
+        page.goto(served.url('app'), wait_until='load')
+        page.wait_for_function("() => typeof window.phoneOpenRecord === 'function' && pwaChildStage() === 'navigator'", timeout=15000)
+        loaded = len(served.errors())   # a child's page 403s on api/settings at load
+        page.evaluate("() => window.phoneOpenRecord('project', 'prj-bike')")
+        page.wait_for_selector('#chores-container[data-child-section="projects"] [data-project-detail]', state='visible', timeout=10000)
+        check(page.evaluate('currentView') == 'chores', f"a navigator's project opens in the House tab: {page.evaluate('currentView')}")
+        check('Ride a bike' in page.locator('#chores-container [data-project-detail]').first.inner_text(), "on her project")
+        page.evaluate("setView('myday')")
+        page.wait_for_function("currentView === 'myday'")
+        check(page.evaluate('() => window.chfPwaOpenProjects()') is True, "chfPwaOpenProjects answers true for her")
+        page.wait_for_function("() => currentView === 'chores' && document.getElementById('chores-container').dataset.childSection === 'projects'",
+                               timeout=10000)
+        check(page.locator('#chores-container #projects-container').count() == 1, "the section holds the projects page")
+        check(served.errors()[loaded:] == [], f"no page errors from the calls: {served.errors()[loaded:]}")
     original = storage.get_member('kid').get('stage_override')
     storage.update_member('kid', {'stage_override': 'sprout'})
     try:

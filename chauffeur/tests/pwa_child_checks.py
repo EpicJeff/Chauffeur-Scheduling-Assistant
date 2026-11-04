@@ -47,7 +47,8 @@ def check_child(page, key, output, calls):
     page.wait_for_selector('.child-greeting')
     assert page.locator('html').get_attribute('data-child-stage') == key
     tabs = [' '.join(x.split()) for x in page.locator('#pwa-tab-bar > button:visible > span:first-of-type').all_text_contents()]
-    # Projects has no tab (one-list spec §5): a sprout finds projects in My things, every older child in More.
+    # Projects has no tab (one-list spec §5): a sprout finds projects in My things, every older child in
+    # the Tasks (House) tab's Projects section (the user's ruling 2026-11-04; tests/test_projects_one_door_live.py).
     expected = ['Today','My things','Family'] if key == 'sprout' else ['Today','Tasks','Messages','More'] if key == 'explorer' else ['Today','Plan','Tasks','Messages','More']
     assert tabs == expected, (key,tabs)
     assert page.locator('#btn-pet').is_hidden()

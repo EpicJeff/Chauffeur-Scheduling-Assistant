@@ -117,6 +117,7 @@
     <script defer src="{{ 'static/pwa_myday.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_household.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_plan.js'|ver }}"></script>
+    <script defer src="{{ 'static/pwa_drive.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_messages.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_argyle.js'|ver }}"></script>
     <link rel="stylesheet" href="{{ 'static/argyle_orb.css'|ver }}">
@@ -159,6 +160,7 @@
     <header
         class="bg-gray-900 border-b border-gray-800 p-4 flex items-center justify-between shrink-0 shadow-md relative z-20">
         <div class="flex items-center gap-3">
+            <span id="pwa-header-date" class="pwa-adult-only"></span>
             <!-- Tap your own face to open the dressing-up box (avatar arc A3). -->
             <button id="pwa-identity" type="button" class="relative shrink-0" aria-label="Edit your avatar"
                 onclick="if (selectedMemberId) pwaOpenProfile()">
@@ -700,11 +702,14 @@
             </div>
 
             <div id="sheet-state-1" class="flex flex-col gap-3">
+                <div id="drive-leave-card" class="pwa-drive-leave"></div>
+                <div class="pwa-drive-stops"></div>
                 <button onclick="startDrive()" id="btn-start-drive"
                     class="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-bold text-lg shadow-lg transition-colors">
                     <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                     Start Drive
                 </button>
+                <button id="btn-drive-cover" type="button" class="pwa-adult-only hidden" onclick="pwaDriveCover()">Ask someone to cover</button>
                 <div id="mark-completed-separator" class="w-full h-px bg-gray-800 my-1"></div>
                 <button onclick="markCompleted()" id="btn-mark-completed"
                     class="w-full flex items-center justify-center gap-3 py-4 rounded-xl border-2 border-green-600/50 hover:bg-green-900/20 active:bg-green-600 text-green-400 font-bold text-lg shadow-lg transition-colors">
@@ -732,6 +737,7 @@
             </div>
 
             <div id="sheet-state-2" class="flex flex-col gap-3 hidden">
+                <div id="drive-arrival-card" class="pwa-drive-leave"></div>
                 <!-- Navigation stays first: it is what the driver reaches for
                      the second the car moves. Three across rather than three
                      stacked, because the sheet now has more to say and the
@@ -744,7 +750,7 @@
                     </button>
                     <button onclick="openMaps('apple')"
                         class="flex flex-col items-center justify-center gap-1 py-4 rounded-xl bg-gray-700 active:bg-gray-600 text-gray-100 font-bold shadow-lg">
-                        <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                        <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="16 8 14 14 8 16 10 10 16 8"></polygon></svg>
                         <span class="text-xs">Apple</span>
                     </button>
                     <button onclick="openMaps('waze')"
@@ -837,6 +843,7 @@
         let _timelineUserTouched = false;   // real interaction disables the restoration guard
         let routeContext = null;
         let currentView = localStorage.getItem('chauffeur_view') || 'drives';
+        let pwaNavigationReady = false;
 
         // --- Theme (light / dark / auto) ---
         // applyTheme + resolveTheme are defined in <head> so the first paint
@@ -885,7 +892,13 @@
             if (view === 'messages' && view === currentView && !focusMemberId && !clearOverlay) return;
             if (view !== currentView || clearOverlay) window.PwaArgyle?.close('view', {keepHistory: clearOverlay});
             if (pwaHouseActive) pwaHouseActive.clearing = true;
-            window.PwaNav?.clear({extra: clearOverlay ? 1 : 0, restoreFocus:false});
+            // A tab change dismisses the drive's screen, not an active drive.
+            if (typeof pwaDriveOpen === 'function') pwaDriveOpen.clearing = true;
+            try {
+                window.PwaNav?.clear({extra: clearOverlay ? 1 : 0, restoreFocus:false});
+            } finally {
+                if (typeof pwaDriveOpen === 'function') pwaDriveOpen.clearing = false;
+            }
             if (view !== 'messages') window.ChauffeurPhoneVoice?.stop(false);
             if (pwaChildStage()) {
                 if (view === 'projects' && pwaChildStage() === 'sprout') view = 'more';
@@ -942,7 +955,7 @@
             const isLibrary = currentView === 'library';
             const isTimeline = !isProjects && !isLibrary && !isMessages && !isMap && !isMyDay && !isMusic && !isChores && currentView !== 'more';
             pwaSyncShell();
-            document.getElementById('projects-container').style.display = isProjects ? 'flex' : 'none';
+            document.getElementById('projects-container').style.display = isProjects || pwaProjectsAdoption ? 'flex' : 'none';
             document.getElementById('library-container').style.display = isLibrary ? 'flex' : 'none';
             document.getElementById('chores-container').style.display = isChores ? 'flex' : 'none';
             document.getElementById('days-container').style.display = isTimeline ? 'flex' : 'none';
@@ -1172,6 +1185,11 @@
             const authToken = await ensureMemberAuth(m);
             if (authToken === null) return;  // backed out of PIN entry
             const previousMemberId = selectedMemberId;
+            if (previousMemberId !== memberId) {
+                if (routeContext || window.PwaNav?.current()?.id === 'drive') closeActionSheet();
+                stopDriveLive(true);
+                forgetDriveSheet();
+            }
             pagedSchedule = null;
             selectedDriverId = null;
             currentDriverId = null;
@@ -1209,6 +1227,7 @@
             else if (currentView === 'chores') fetchChores();
             else if (currentView === 'myday') renderMyDay(true);
             // 'family' needs nothing here: fetchSchedule above draws it.
+            maybeOpenNavigation();
         }
 
         let mydayOffset = 0;
@@ -1223,6 +1242,7 @@
         const MYDAY_MAX_OFFSET = 13;
 
         function updateMyDayLabel() {
+            pwaSyncHeaderDate();
             const label = document.getElementById('current-day-label');
             if (!label) return;
             // Back is open-ended: yesterday's game is where its photos go.
@@ -2163,12 +2183,21 @@
         // sheet, the Projects view, or the kind's own phone home; never an
         // admin page. A kind with no phone home yet says where to find it.
         const phoneRecordWords = {trip: 'trip', occasion: 'occasions', event: 'calendar', member: 'people', contact: 'contacts', list: 'shopping', project: 'projects'};
-        // Projects' door is More, closed to a helper or a guest (pwaAllowed);
-        // a sprout's projects sit in More's own slot, where setView lands it.
+        // Projects use the person's Household door, with More as the fallback
+        // and the sprout's own slot. Helpers and guests remain refused.
         function phoneOpenProjects() {
             if (!pwaAllowed('projects')) {
                 showGlobalAlert('Open that from the ' + phoneRecordWords.project + ' page on a computer.');
                 return false;
+            }
+            if (pwaHouseHasProjects()) {
+                if (pwaIsAdult()) {
+                    if (pwaOpenHouseScreen('projects', 'projects')) return true;
+                } else {
+                    setView('chores');
+                    pwaChildSelectTasks('projects');
+                    return true;
+                }
             }
             setView('projects');
             return true;
@@ -2699,7 +2728,10 @@
         function afterProgramWrite() {
             datedTimelineDays.clear(); datedTimelineLoads.clear();
             if (currentView === 'myday') renderMyDay(true);
-            else if (currentView === 'chores') void pwaRefreshHousePrograms();
+            else if (currentView === 'chores') {
+                if (pwaChildStage()) void pwaChildRefreshHousePrograms();
+                else void pwaRefreshHousePrograms();
+            }
             else {
                 refreshDatedTimeline(currentDates[activeDateIndex], true);
                 refreshPracticeSection(true);
@@ -2716,6 +2748,7 @@
         function refreshTodaySurfaces(force = false) {
             if (!selectedMemberId) return;
             if (currentView === 'myday') { renderMyDay(force); return; }
+            if (currentView === 'chores' && pwaChildStage()) { void pwaChildRefreshHousePrograms(); return; }
             refreshDatedTimeline(currentDates[activeDateIndex], true);
             if (currentView === 'drives') refreshPracticeSection(true);
         }
@@ -3401,6 +3434,11 @@
         }
 
         function renderMyDayCard(r) {
+            const actions = [];
+            const rideButton = (label, run, classes) => {
+                actions.push({label, run});
+                return `<button onclick="${mfEscape(run)}" class="${classes}">${label}</button>`;
+            };
             const typeBadge = r.event_type === 'dropoff'
                 ? '<span class="text-xs tracking-widest uppercase bg-orange-600/30 text-orange-300 px-2 py-0.5 rounded border border-orange-500/50">Dropoff</span>'
                 : (r.event_type === 'pickup'
@@ -3419,11 +3457,12 @@
                 const isHelper = d.role === 'helper';
                 // Helpers have no HA person entity, so no live map dot; kid
                 // contact is relayed through the family channel.
-                const whereBtn = isHelper || !pwaAllowed('map') ? '' : `<button onclick="setView('map', '${d.member_id}')"
-                    class="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-gray-800 text-blue-300 border border-gray-700 active:bg-gray-700">Where?</button>`;
+                const whereBtn = isHelper || !pwaAllowed('map') ? '' : rideButton('Where?',
+                    `setView('map', ${JSON.stringify(d.member_id)})`,
+                    'text-xs font-bold px-2.5 py-1.5 rounded-lg bg-gray-800 text-blue-300 border border-gray-700 active:bg-gray-700');
                 return `${whereBtn}
-                    <button onclick="messageMember('${d.member_id}', 'driving ${mfEscape(rideTitle).replace(/'/g, '&#39;')}')"
-                        class="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Message</button>`;
+                    ${rideButton('Message', `messageMember(${JSON.stringify(d.member_id)}, ${JSON.stringify('driving ' + (rideTitle || ''))})`,
+                        'text-xs font-bold px-2.5 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700')}`;
             };
             if (r.legs && r.legs.length) {
                 const legRow = (l) => {
@@ -3475,14 +3514,15 @@
             // any day after, from whoever has the photos.
             const started = r.start && new Date(r.start) <= new Date();
             const primary = r.id ? `openEventThread(${JSON.stringify(String(r.id))}, ${JSON.stringify(r.title || '')}, ${JSON.stringify(r.end || '')})` : '';
+            if (started && r.id) actions.push({label:'Add a moment', run:primary});
             const momentBtn = !(started && r.id) ? '' : `
                 <div class="mt-3 pt-3 border-t border-gray-800">
-                    <button onclick="openEventThread(this.dataset.id, this.dataset.title, this.dataset.end)"
+                    <button onclick="${mfEscape(primary)}"
                         data-id="${mfEscape(String(r.id))}" data-title="${mfEscape(r.title || '')}" data-end="${mfEscape(r.end || '')}"
                         class="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-gray-800 text-pink-300 border border-gray-700 active:bg-gray-700">📷 Add a moment</button>
                 </div>`;
             return `
-            <div data-kind="ride" data-start="${mfEscape(pwaLocalIso(r.start))}" data-end="${mfEscape(pwaLocalIso(r.end))}" data-title="${mfEscape(r.title)}" data-place="${mfEscape(r.place || r.location || '')}" data-meta="${mfEscape(r.driver ? r.driver.name + ' is driving you' : '')}" data-state="${new Date(r.end) < new Date() ? 'past' : 'upcoming'}" data-primary="${mfEscape(primary)}" data-leg-id="" data-event-id="${mfEscape(String(r.id))}" class="bg-gray-900 border border-gray-800 rounded-xl p-4">
+            <div data-kind="ride" data-actions="${mfEscape(JSON.stringify(actions.filter((action, i) => actions.findIndex(a => a.label === action.label) === i)))}" data-start="${mfEscape(pwaLocalIso(r.start))}" data-end="${mfEscape(pwaLocalIso(r.end))}" data-title="${mfEscape(r.title)}" data-place="${mfEscape(r.place || r.location || '')}" data-meta="${mfEscape(r.driver ? r.driver.name + ' is driving you' : '')}" data-state="${new Date(r.end) < new Date() ? 'past' : 'upcoming'}" data-primary="${mfEscape(primary)}" data-leg-id="" data-event-id="${mfEscape(String(r.id))}" class="bg-gray-900 border border-gray-800 rounded-xl p-4">
                 <div class="flex items-center justify-between gap-2 mb-1">
                     <span class="text-sm font-bold uppercase tracking-wider text-blue-400">${timeStr}</span>
                     ${r.arrive_by ? `<span class="text-xs font-bold text-amber-300/90">${mfEscape(r.arrive_by.label)}</span>` : ''}
@@ -8070,7 +8110,7 @@
         // Returns true when the leg ended, so a caller holding a sheet open
         // over it can close (the arrival push's own call ignores it).
         async function handleArrivalCheck(legId) {
-            history.replaceState({}, '', location.pathname);
+            history.replaceState(history.state, '', location.pathname);
             const fix = await getPositionFix(6000);
             let d = null;
             try {
@@ -8318,6 +8358,11 @@
                 const token = await ensureMemberAuth(member);
                 if (token === null) return;  // backed out of PIN entry
             }
+            if (member && member.id !== selectedMemberId) {
+                if (routeContext || window.PwaNav?.current()?.id === 'drive') closeActionSheet();
+                stopDriveLive(true);
+                forgetDriveSheet();
+            }
             currentDriverId = id;
             if (selectedDriverId !== id) pagedSchedule = null;
             selectedDriverId = id;
@@ -8344,6 +8389,7 @@
 
             await fetchSchedule();
             fetchNotifications();
+            maybeOpenNavigation();
         }
 
 
@@ -8400,6 +8446,9 @@
         }
 
         function clearDriver() {
+            if (routeContext || window.PwaNav?.current()?.id === 'drive') closeActionSheet();
+            stopDriveLive(true);
+            forgetDriveSheet();
             pagedSchedule = null;
             selectedDriverId = null;
             selectedMemberId = null;
@@ -8632,6 +8681,12 @@
         }
 
         function openActionSheet(origin, destination, legTitle, eventId = null, legId = null) {
+            if (pwaIsAdult() && window.PwaNav?.current()?.id === 'drive'
+                && legId && routeContext?.legId === legId) return;
+            // Only restart this leg's lane. Another open is just a screen over
+            // the drive that is still sharing in the background.
+            if (legId && driveLiveContext?.legId === legId) stopDriveLive(true);
+            forgetDriveSheet(legId);
             routeContext = { origin, destination, legTitle, eventId, legId };
             document.getElementById('sheet-subtitle').textContent = legTitle;
             document.getElementById('sheet-title').textContent = (pwaIsAdult() || pwaChildStage()) && legId ? 'Your drive' : 'Open in Maps';
@@ -8672,9 +8727,13 @@
             if (legId) {
                 loadDriveSheet(legId);
                 rememberDriveSheet();
-                if (alreadyDriving) startDriveLive();
+                if (alreadyDriving && (!driveLiveContext || driveLiveContext.legId === legId)) startDriveLive();
             }
 
+            if (pwaIsAdult() && window.PwaNav) {
+                pwaDriveOpen();
+                return;
+            }
             const sheet = document.getElementById('action-sheet');
             const content = document.getElementById('action-sheet-content');
             sheet.scrollTop = 0;
@@ -8689,10 +8748,17 @@
         }
 
         function closeActionSheet() {
+            if (window.PwaNav?.current()?.id === 'drive') {
+                if (window.PwaArgyle?.isOpen()) {
+                    window.PwaArgyle.close('view', {keepHistory:true});
+                    window.PwaNav.clear({extra:1});
+                } else window.PwaNav.pop();
+                return;
+            }
             const sheet = document.getElementById('action-sheet');
             const content = document.getElementById('action-sheet-content');
-            stopDriveLive(true);
-            forgetDriveSheet();
+            if (!driveLiveContext || driveLiveContext.legId === routeContext?.legId) stopDriveLive(true);
+            forgetDriveSheet(routeContext?.legId);
 
             sheet.classList.add('opacity-0');
             content.classList.add('translate-y-full');
@@ -8737,12 +8803,13 @@
                 url = `waze://?q=${destEnc}&navigate=yes`;
             }
 
-            closeActionSheet();
+            // Custom schemes must launch while the tap still has user activation.
             const a = document.createElement('a');
             a.href = url;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
+            closeActionSheet();
         }
 
         async function startDrive() {
@@ -8854,6 +8921,7 @@
         // declining to share position must not silence the other's.
         let driveSheetData = null;
         let driveLiveTimer = null;
+        let driveLiveContext = null;       // survives a tab change, unlike the screen
         let driveWakeLock = null;
         let drivePrepChecked = new Set();   // the loading tally, per open
         const DRIVE_LIVE_KEY = 'chauffeur_drive_live';
@@ -8871,7 +8939,7 @@
         function resetDriveSheet() {
             driveSheetData = null;
             drivePrepChecked = new Set();
-            ['drive-brief', 'drive-roll', 'drive-prep', 'drive-next',
+            ['drive-brief', 'drive-roll', 'drive-prep', 'drive-next', 'drive-live',
              'drive-messages'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.classList.add('hidden');
@@ -9009,6 +9077,7 @@
                 nextEl.innerHTML = `<span class="text-gray-400 font-bold">🎉 Last drive of the day</span>`;
             }
             show('drive-next', !!nx || !!d.day_done);
+            pwaRenderDriveCards();
         }
 
         // Unanswered -> aboard -> not here -> unanswered. One target, because
@@ -9041,20 +9110,29 @@
         async function toggleDrivePrep(item) {
             if (drivePrepChecked.has(item)) drivePrepChecked.delete(item);
             else drivePrepChecked.add(item);
-            renderDriveSheet();
             const items = ((driveSheetData || {}).prep || {}).items || [];
             const evId = (driveSheetData || {}).event_id;
             if (!evId || !items.length) return;
             const all = items.every(i => drivePrepChecked.has(i));
-            if (all === !!((driveSheetData.prep || {}).confirmed)) return;
+            const changed = all !== !!((driveSheetData.prep || {}).confirmed);
             driveSheetData.prep.confirmed = all;
+            renderDriveSheet();
+            if (!changed) return;
             try {
-                await fetch(`${apiBase}api/prep_status`, {
+                const res = await fetch(`${apiBase}api/prep_status`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         event_id: String(evId).replace(/_(dropoff|pickup)$/, ''),
                         confirmed: all, member_id: selectedMemberId })
                 });
+                if (!res.ok) throw new Error('Prep confirm refused');
+                if (scheduleData) {
+                    const baseId = String(evId).replace(/_(dropoff|pickup)$/, '');
+                    const confirmed = new Set(scheduleData.prep_confirmed || []);
+                    if (all) confirmed.add(baseId); else confirmed.delete(baseId);
+                    scheduleData.prep_confirmed = Array.from(confirmed);
+                    if (pwaIsAdult() && currentView === 'myday') pwaRenderBrief();
+                }
                 if (all) showGlobalAlert('✓ Packed');
             } catch (e) {
                 console.warn('Prep confirm failed', e);
@@ -9130,13 +9208,21 @@
         // --- keeping the screen on, and the family informed of where the car is
         async function acquireWakeLock() {
             if (!('wakeLock' in navigator) || driveWakeLock) return;
+            const context = driveLiveContext;
             try {
-                driveWakeLock = await navigator.wakeLock.request('screen');
-                driveWakeLock.addEventListener('release', () => { driveWakeLock = null; });
+                const lock = await navigator.wakeLock.request('screen');
+                if (!context || driveLiveContext !== context || selectedMemberId !== context.memberId) {
+                    await lock.release();
+                    return;
+                }
+                driveWakeLock = lock;
+                lock.addEventListener('release', () => {
+                    if (driveWakeLock === lock) driveWakeLock = null;
+                });
             } catch (e) {
                 // Refused (battery saver, not a standalone PWA on iOS): the
                 // sheet still works, the screen just dims like any page.
-                driveWakeLock = null;
+                if (driveLiveContext === context) driveWakeLock = null;
             }
         }
 
@@ -9146,22 +9232,37 @@
         }
 
         async function pingDriveLocation() {
-            const legId = driveSheetLegOpen();
-            if (!legId || !driveLiveEnabled()) return;
+            const context = driveLiveContext;
+            if (!context) return;
+            const stillOwned = () => {
+                // A delayed fix/response from an old lane cannot stop a new one.
+                if (driveLiveContext !== context) return false;
+                if (selectedMemberId !== context.memberId) {
+                    stopDriveLive(true);
+                    forgetDriveSheet();
+                    return false;
+                }
+                return true;
+            };
+            const legId = context.legId;
+            if (!stillOwned() || !legId || !driveLiveEnabled()) return;
             const fix = await getPositionFix(8000);
-            if (!fix) return;
+            if (!stillOwned() || !fix || !driveLiveEnabled()) return;
             try {
                 const res = await fetch(`${apiBase}api/drive_status/ping`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Member-Token': memberToken() },
-                    body: JSON.stringify({ leg_id: legId, member_id: selectedMemberId, ...fix })
+                    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Member-Token': context.token },
+                    body: JSON.stringify({ leg_id: legId, member_id: context.memberId, ...fix })
                 });
                 const d = await res.json();
+                if (!stillOwned()) return;
                 // Arrival closed the leg on its own: say so and get off the
                 // screen, which is the whole point of the position lane.
                 if (d && d.completed) {
                     showGlobalAlert(`✅ You're there — drive checked off.`);
+                    stopDriveLive(true);
+                    forgetDriveSheet();
                     fetchSchedule(true);
-                    closeActionSheet();
+                    if (driveSheetLegOpen() === legId) closeActionSheet();
                 }
             } catch (e) {
                 // A drive goes through dead zones; a missed ping is nothing.
@@ -9169,7 +9270,16 @@
         }
 
         function startDriveLive() {
+            const context = routeContext
+                ? {...routeContext, memberId:selectedMemberId, token:memberToken()} : driveLiveContext;
             stopDriveLive();
+            if (!context?.legId || !context.memberId || context.memberId !== selectedMemberId) {
+                forgetDriveSheet();
+                return;
+            }
+            driveLiveContext = context;
+            // Starting another leg transfers resume ownership with the lane.
+            rememberDriveSheet();
             const banner = document.getElementById('drive-live');
             if (banner) banner.classList.remove('hidden');
             renderDriveLiveBanner();
@@ -9182,6 +9292,7 @@
         function stopDriveLive(hideBanner) {
             if (driveLiveTimer) clearInterval(driveLiveTimer);
             driveLiveTimer = null;
+            driveLiveContext = null;
             releaseWakeLock();
             if (hideBanner) {
                 const banner = document.getElementById('drive-live');
@@ -9229,6 +9340,7 @@
         function enterEnRouteState() {
             document.getElementById('sheet-state-1').classList.add('hidden');
             document.getElementById('sheet-state-2').classList.remove('hidden');
+            pwaDrivePlaceChecks();
             startDriveLive();
         }
 
@@ -9237,13 +9349,31 @@
         // lands back on the drive rather than on a timeline.
         function rememberDriveSheet() {
             if (!routeContext || !routeContext.legId) return;
+            if (driveLiveContext && driveLiveContext.legId !== routeContext.legId) return;
             try {
+                let saved = null;
+                try { saved = JSON.parse(localStorage.getItem(DRIVE_RESUME_KEY) || 'null'); } catch (e) { }
+                if (!driveLiveContext && saved?.legId !== routeContext.legId
+                    && (scheduleData?.in_progress_drives || []).includes(saved?.legId)) return;
                 localStorage.setItem(DRIVE_RESUME_KEY, JSON.stringify(routeContext));
             } catch (e) { }
         }
 
-        function forgetDriveSheet() {
-            try { localStorage.removeItem(DRIVE_RESUME_KEY); } catch (e) { }
+        function forgetDriveSheet(legId) {
+            try {
+                // Only another running lane's record survives a screen reuse
+                // or close. Pending records must not linger behind map-only opens.
+                if (arguments.length) {
+                    let saved = null;
+                    try { saved = JSON.parse(localStorage.getItem(DRIVE_RESUME_KEY) || 'null'); } catch (e) { }
+                    const running = saved?.legId && driveLiveContext?.legId === saved.legId
+                        && ((scheduleData?.in_progress_drives || []).includes(saved.legId)
+                            || (driveSheetData?.leg_id === saved.legId && driveSheetData.status === 'in_progress'))
+                        && !(scheduleData?.completed_drives || []).includes(saved.legId);
+                    if (running && saved.legId !== legId) return;
+                }
+                localStorage.removeItem(DRIVE_RESUME_KEY);
+            } catch (e) { }
         }
 
         function maybeResumeDriveSheet() {
@@ -10673,9 +10803,11 @@
             };
             if (selectedDriverId && !(pwaIsAdult() && currentView === 'myday')) renderUnplacedErrands();
             if (pwaIsAdult() && currentView === 'myday') pwaBriefTimelineBuilt(briefScrollTop);
+            if (routeContext) pwaRenderDriveCards();
         }
 
         function updateHeaderDate() {
+            pwaSyncHeaderDate();
             if (currentDates.length === 0) return;
             const dStr = currentDates[activeDateIndex];
 
@@ -10866,22 +10998,23 @@
             }
         }
 
-        window.onload = () => {
-            init();
-
-            // Check for navigation URL parameters
+        function maybeOpenNavigation() {
+            if (!pwaNavigationReady || !membersData.some(m => m.id === selectedMemberId)) return;
             const params = new URLSearchParams(window.location.search);
             const navDest = params.get('navigate_dest');
             if (navDest) {
                 const navTitle = params.get('navigate_title') || 'Navigation';
                 const navLeg = params.get('navigate_leg') || null;
-                setTimeout(() => {
-                    openActionSheet('', navDest, navTitle, null, navLeg);
-                }, 500); // Give UI time to render
-
+                openActionSheet('', navDest, navTitle, null, navLeg);
                 // Clean up the URL so it doesn't pop up again on refresh
-                window.history.replaceState({}, document.title, window.location.pathname);
+                window.history.replaceState(window.history.state, document.title, window.location.pathname);
             }
+        }
+
+        window.onload = async () => {
+            await init();
+            pwaNavigationReady = true;
+            maybeOpenNavigation();
         };
 
         // Listen for real-time updates from the backend

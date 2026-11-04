@@ -185,7 +185,18 @@ function pwaSyncProfileColors() {
     if (meta) meta.content = `rgb(${getComputedStyle(root).getPropertyValue('--c-gray-900').trim()})`;
 }
 
+function pwaSyncHeaderDate() {
+    const date = document.getElementById('pwa-header-date');
+    if (!date || !pwaIsAdult()) return;
+    const selected = currentView === 'myday' ? _mydayLocalDate(mydayOffset)
+        : currentView === 'family' ? currentDates[activeDateIndex] || todayStr() : todayStr();
+    date.textContent = new Date(selected + 'T12:00:00').toLocaleDateString('en-US',
+        {weekday:'long', month:'long', day:'numeric'});
+}
+
 function pwaSyncShell() {
+    pwaSyncHeaderDate();
+    pwaSyncProjectsNode();
     const adult = pwaIsAdult();
     document.documentElement.dataset.audience = adult ? 'adult' : 'child';
     document.documentElement.dataset.pwaView = currentView;
@@ -230,8 +241,8 @@ function pwaSyncShell() {
 }
 
 function pwaAllowed(view) {
-    // Projects has no tab (one-list spec §5): More is its only door, open to
-    // every signed-in member but a helper or a guest (applyRoleTabs' rule).
+    // Projects has no tab; Household or More supplies its door. Helpers and
+    // guests have neither (applyRoleTabs' rule).
     if (view === 'projects') return !!selectedMemberId && !['helper', 'guest'].includes(currentMemberRole());
     // Inline display is set by applyRoleTabs, including the async list grant.
     const tab = document.getElementById(`tab-${view}`);
@@ -244,9 +255,11 @@ function pwaFeatures() {
         if (pwaAllowed(view)) items.push({id, title, description, run: () => setView(view)});
     };
     if (pwaChildStage() && selectedDriverId && kidCan('can_drive')) route('drives', 'My drives', 'Your driving responsibilities', 'drives');
-    // Explorer reaches the same view from More, with no extra tab.
-    if (pwaChildStage() === 'explorer' || (pwaChildStage() !== 'sprout' && pwaAllowed('projects')))
-        items.push({id: 'projects', title: 'Projects', description: 'Your goals, steps and linked records', run: () => setView('projects')});
+    if (!pwaHouseHasProjects() && (pwaChildStage() === 'explorer' || (pwaChildStage() !== 'sprout' && pwaAllowed('projects'))))
+        items.push({id: 'projects', title: 'Projects', description: 'Your goals, steps and linked records', run: () => {
+            if (typeof window.chfPwaOpenProjects === 'function') window.chfPwaOpenProjects();
+            else setView('projects');
+        }});
     // The program library: the household's programs, each run in a project.
     if (pwaChildStage() !== 'sprout' && (pwaChildStage() === 'explorer' || pwaAllowed('projects')))
         items.push({id: 'library', title: 'Library', description: 'The household’s programs and who is running them', run: () => setView('library')});
@@ -256,7 +269,7 @@ function pwaFeatures() {
     route('household', pwaChildStage() ? (rewards ? 'Tasks & rewards' : 'Tasks & points') : 'Household',
         rewards ? 'Tasks, rewards and shared lists' : 'Tasks, points and shared lists', 'chores');
     route('moments', 'Messages & moments', 'Conversations and shared family updates', 'messages');
-    if (pwaAllowed('drives') || pwaAllowed('myday')) {
+    if (!pwaHouseHasProjects() && (pwaAllowed('drives') || pwaAllowed('myday'))) {
         items.push({id: 'programs', title: 'My programs', description: 'Practice and learning in your day', run: () => {
             setView(pwaChildStage() ? 'myday' : pwaAllowed('drives') ? 'drives' : 'myday');
             if (pwaChildStage()) pwaChildScrollPrograms();
@@ -314,6 +327,8 @@ function pwaSearch() {
 
 function pwaOpenProfile() {
     const dialog = document.getElementById('pwa-profile');
+    document.getElementById('pwa-profile-title').textContent =
+        membersData.find(member => member.id === selectedMemberId)?.name || 'Your profile';
     const action = (id, title, description, run, keepOpen = false) => ({id, title, description, run: () => {
         if (!keepOpen) dialog.close();
         run();
