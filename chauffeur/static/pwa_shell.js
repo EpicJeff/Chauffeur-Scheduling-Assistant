@@ -227,7 +227,8 @@ function pwaSyncShell() {
         if (active) button.setAttribute('aria-current', 'page');
         else button.removeAttribute('aria-current');
     });
-    if (adult) document.getElementById('pwa-more-title').textContent = 'More from Chauffeur';
+    if (adult) document.getElementById('pwa-more-title').textContent = 'More';
+    document.querySelector('label[for="pwa-feature-search"]')?.classList.toggle('sr-only', adult);
     if (adult && currentView === 'more') pwaRenderDirectory();
     pwaPageHeading();
     if (adult) {
@@ -309,7 +310,13 @@ function pwaFeatureButton(item) {
     const copy = document.createElement('div'); copy.append(title, detail);
     const glyph = document.createElement('span'); glyph.className = 'pwa-feature-icon';
     glyph.innerHTML = pwaIcon(item.id);
-    button.append(glyph, copy); button.onclick = item.run;
+    button.append(glyph, copy);
+    if (item.chevron !== false) {
+        const chevron = document.createElement('span'); chevron.className = 'pwa-feature-chevron';
+        chevron.setAttribute('aria-hidden', 'true'); chevron.innerHTML = pwaIcon('arrow');
+        button.append(chevron);
+    }
+    button.onclick = item.run;
     return button;
 }
 
@@ -329,7 +336,7 @@ function pwaOpenProfile() {
     const dialog = document.getElementById('pwa-profile');
     document.getElementById('pwa-profile-title').textContent =
         membersData.find(member => member.id === selectedMemberId)?.name || 'Your profile';
-    const action = (id, title, description, run, keepOpen = false) => ({id, title, description, run: () => {
+    const action = (id, title, description, run, {keepOpen = false, chevron = true} = {}) => ({id, title, description, chevron, run: () => {
         if (!keepOpen) dialog.close();
         run();
     }});
@@ -341,19 +348,19 @@ function pwaOpenProfile() {
             cycleTheme();
             const button = dialog.querySelector('[data-feature="theme"] small');
             button.textContent = `Theme: ${themePref()}. Change between device, light and dark.`;
-        }, true),
-        action('refresh', 'Refresh', 'Get the latest schedule', () => fetchSchedule(true)),
+        }, {keepOpen:true, chevron:false}),
+        action('refresh', 'Refresh', 'Get the latest schedule', () => fetchSchedule(true), {chevron:false}),
     ];
     if (!document.getElementById('btn-push').classList.contains('hidden'))
-        items.push(action('push', 'Enable notifications', 'Receive family updates on this device', enableNotifications));
+        items.push(action('push', 'Enable notifications', 'Receive family updates on this device', enableNotifications, {chevron:false}));
     if (window.ChauffeurVoiceSetup) {
         // Set up my voice (spec 2026-10-13). Enrollment, re-enrollment and
         // deletion are the member's own acts here; turning recognition on
         // is a parent's, per speaker, by voice or in Config.
         items.push(action('voice', 'Set up my voice', 'Answer five short questions so your speakers can recognise you', () => ChauffeurVoiceSetup.open()));
-        items.push(action('voice-delete', 'Delete my voice', 'Remove your voice template from every speaker', () => ChauffeurVoiceSetup.deleteVoice()));
+        items.push(action('voice-delete', 'Delete my voice', 'Remove your voice template from every speaker', () => ChauffeurVoiceSetup.deleteVoice(), {chevron:false}));
     }
-    items.push(action('switch', 'Switch person / sign out', 'Return to the family member picker', clearDriver));
+    items.push(action('switch', 'Switch person / sign out', 'Return to the family member picker', clearDriver, {chevron:false}));
     document.getElementById('pwa-profile-actions').replaceChildren(...items.map(pwaFeatureButton));
     if (!dialog.open) dialog.showModal();
 }
@@ -482,6 +489,7 @@ function pwaPageHeading() {
         drives: [isToday ? `Your ${hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening'}` : 'Your day', isToday ? 'Your drives and commitments, in one place.' : formatted],
         myday: ['Your day', 'Your commitments, with room to plan ahead.'],
         chores: ['Household', 'The work, the lists, and who’s doing what.'],
+        music: ['Music', 'Favorites and household listening.'],
     };
     host.hidden = !adult || !names[currentView];
     if (!host.hidden) {

@@ -81,8 +81,8 @@ def scenario_no_tab_and_no_admin_anchor_in_sheets():
             card.click()
             page.wait_for_function("() => PwaNav.depth() === 1 && !!document.querySelector('#pwa-stack .pwa-screen #projects-container')",
                                    timeout=15000)
-            check(page.locator('#pwa-stack .pwa-screen h1').last.inner_text().strip() == 'Projects & programs',
-                  "the Household's Projects & programs screen is up")
+            check(page.locator('#pwa-stack .pwa-screen h1').last.inner_text().strip() == 'Projects',
+                  "the Household's Projects screen is up")
             page.wait_for_selector('[data-project-card]', timeout=15000)
             page.locator(f'[data-project-id="{IDS["bath"]}"]').click()
             page.wait_for_selector('[data-row]', timeout=10000)

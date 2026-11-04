@@ -232,17 +232,6 @@ function pwaChildRestoreHouseProjects() {
     active.restore();
     active.host.remove();
 }
-async function pwaChildRefreshHousePrograms() {
-    const active = pwaChildHouseProjects;
-    if (!active) return;
-    const request = active.request = (active.request || 0) + 1;
-    const [programs, windows, commitments] = await Promise.all([
-        fetchMyPrograms(), fetchPracticeWindows(), fetchMyCommitments()
-    ]);
-    if (active !== pwaChildHouseProjects || active.member !== selectedMemberId || request !== active.request) return;
-    practiceWindows = windows;
-    active.programs.innerHTML = renderProgramsSection(programs, Object.fromEntries(commitments.map(c => [c.id, c])));
-}
 function pwaChildOpenHouseProjects() {
     if (pwaChildHouseProjects && document.getElementById('projects-container').parentElement === pwaChildHouseProjects.host) return;
     pwaChildRestoreHouseProjects();
@@ -250,10 +239,8 @@ function pwaChildOpenHouseProjects() {
     host.className = 'child-house-projects'; host.dataset.childHouse = 'projects';
     document.getElementById('chores-container').append(host);
     const restore = pwaAdoptProjectsNode(host);
-    const programs = document.createElement('div'); programs.className = 'child-programs'; host.append(programs);
-    pwaChildHouseProjects = {host, programs, restore, member:selectedMemberId, stage:pwaChildStage()};
+    pwaChildHouseProjects = {host, restore, member:selectedMemberId, stage:pwaChildStage()};
     window.dispatchEvent(new CustomEvent('chf-projects-open'));
-    void pwaChildRefreshHousePrograms();
 }
 function pwaChildHouseTabs() {
     const stage = pwaChildStage(); if (!stage) return;
@@ -270,7 +257,7 @@ function pwaChildHouseTabs() {
     if (houseThreads.length && !houseRevealListsOnly) tabs.push(['threads','Threads']);
     if (!tabs.some(([id])=>id === pwaChildTaskSection)) pwaChildTaskSection = tabs[0][0];
     document.getElementById('chores-container').dataset.childSection = pwaChildTaskSection;
-    const title = pwaChildTaskSection === 'projects' ? 'Projects & programs' : stage === 'sprout' ? 'My things' : 'Your tasks';
+    const title = pwaChildTaskSection === 'projects' ? 'Projects' : stage === 'sprout' ? 'My things' : 'Your tasks';
     const html = `<header class="child-page-heading"><h1>${title}</h1><p>${stage === 'sprout' ? 'Little jobs. Things you love.' : 'One thing at a time.'}</p></header><div class="child-section-tabs" aria-label="Task sections">${tabs.map(([id,label])=>`<button aria-pressed="${id === pwaChildTaskSection}" onclick="pwaChildSelectTasks('${id}')">${label}</button>`).join('')}</div>${stage === 'sprout' ? `<div class="child-shortcuts"><button onclick="setView('more')">${chfFeatureOn('critters') ? `${pwaIcon('critter')}<span>Critter, music & more</span>` : `${pwaIcon('music')}<span>Music & more</span>`}</button><button onclick="setView('myday')">${pwaIcon('drives')}<span>My routine</span></button></div>` : ''}`;
     const host = document.getElementById('house-anchors');
     if (host.innerHTML !== html) host.innerHTML = html;

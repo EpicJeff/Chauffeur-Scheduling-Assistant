@@ -283,17 +283,17 @@ def adult_one_door(served):
             card.click()
             page.wait_for_function("PwaNav.depth() === 1 && !!document.querySelector('#pwa-stack .pwa-screen h1')")
             h1 = norm(page.locator('#pwa-stack .pwa-screen h1').last.text_content())
-            assert h1 == 'Projects & programs', (key, h1)
+            assert h1 == 'Projects', (key, h1)
             screen = page.locator('#pwa-stack .pwa-screen').last
             assert screen.locator('#projects-container').count() == 1, (key, '#projects-container was not adopted')
             settle(page, "[...document.querySelectorAll('#pwa-stack .pwa-screen [data-project-card]')]"
                          ".some(e => e.checkVisibility())", timeout=10000)
             cards = visible_cards(page, '#pwa-stack .pwa-screen #projects-container')
             assert any(HOUSE_PROJECT[1] in c for c in cards), (key, 'the household project card is missing', cards)
-            # My programs left More: the same screen's Programs segment carries them.
-            screen.locator('.pwa-seg .pwa-seg-item[data-segment="programs"]').click()
-            settle(page, "document.querySelector('#pwa-stack .pwa-screen').innerText.includes('Strength training')")
-            assert 'Strength training' in norm(screen.inner_text()), (key, 'no program under Programs')
+            # The user's ruling 2026-11-04 (slice 7): Projects, one list; a
+            # program lives in its project, no Programs tab.
+            assert screen.locator('.pwa-seg').count() == 0, (key, 'the Projects screen still has segments')
+            assert screen.locator('[data-house-programs]').count() == 0, (key, 'a Programs list is still drawn')
             no_errors(served, page, key, failed)
             print('  ok  adult_one_door', key, flush=True)
 
@@ -363,12 +363,14 @@ def kid_house_projects(served):
             cards = visible_cards(page, '#chores-container #projects-container')
             assert any(title in c for c in cards), (key, f'the kid\'s own project {title!r} is missing', cards)
             assert page.evaluate('window._projOpens') >= 1, (key, 'chf-projects-open was never dispatched')
-            # The kid's own programs under it (renderProgramsSection, as My Day's).
-            settle(page, f"document.getElementById('chores-container').innerText.includes({json.dumps(program)})")
-            text = norm(page.locator('#chores-container').inner_text())
-            assert program in text, (key, f'the kid\'s program {program!r} is not in the Projects section', text[:400])
-            # Scoped to the House: My Day draws the same program earlier in the DOM (hidden).
-            assert page.locator('#chores-container').get_by_text(program, exact=True).first.is_visible(), (key, program, 'not visible')
+            # Projects, one list (the user's ruling 2026-11-04, slice 7): the
+            # kid's programs are not listed under it; My Day keeps them.
+            heading = norm(page.locator('#chores-container .child-page-heading h1').first.text_content())
+            assert heading == 'Projects', (key, 'the House section heading', heading)
+            page.wait_for_timeout(500)
+            assert page.locator('#chores-container .child-programs').count() == 0, (key, 'a programs list is still under Projects')
+            assert not page.locator('#chores-container').get_by_text(program, exact=True).first.is_visible(), \
+                (key, f'the kid program {program!r} is listed under Projects')
             if key == 'navigator':
                 shot(page, 'kid-house-projects.png')
             else:

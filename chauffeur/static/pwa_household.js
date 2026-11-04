@@ -87,12 +87,16 @@ function pwaHouseholdCards(inputs) {
     lists.pills.push(pill(`${listRows.length} ${listRows.length === 1 ? 'list' : 'lists'}`));
     lists.score = runDays === 0 || runDays === 1 ? 2 : Number(listRows.some(l => l.open_count > 0));
 
-    const projects = card('projects', '📋', 'Projects & programs');
+    const projects = card('projects', '📋', 'Projects');
     const active = list(inputs.projects).filter(p => p.state === 'active').slice()
         .sort((a, b) => Number(b.lane === 'needs_you') - Number(a.lane === 'needs_you'));
     const programs = list(inputs.programs).filter(p => ['active', 'paused'].includes(p.state));
-    projects.line = active.map(p => p.title).concat(programs.map(p => p.unit_n != null && p.total_units != null
-        ? `${p.title} (lesson ${p.unit_n} of ${p.total_units})` : p.title)).slice(0, 3).join(' · ') || 'Nothing running';
+    const activeIds = new Set(active.map(p => p.id));
+    const unmatchedPrograms = programs.filter(p => !activeIds.has(p.project_id));
+    const withLesson = (title, program) => program?.unit_n != null && program.total_units != null
+        ? `${title} (lesson ${program.unit_n} of ${program.total_units})` : title;
+    projects.line = active.map(p => withLesson(p.title, programs.find(program => program.project_id === p.id)))
+        .concat(unmatchedPrograms.map(p => withLesson(p.title, p))).slice(0, 3).join(' · ') || 'Nothing running';
     const windows = programs.map(p => {
         const w = inputs.nextWindowFor?.(p.id);
         return {program:p, start:w && (w.start || (w.date + 'T' + w.time_start))};
@@ -106,7 +110,7 @@ function pwaHouseholdCards(inputs) {
         }
         projects.pills.push(pill(`${next.program.title} · ${pwaDayLabel(next.start, today)} ${time(next.start)}`, 'hot'));
     }
-    projects.pills.push(pill(`${active.length + programs.length} running`));
+    projects.pills.push(pill(`${active.length + unmatchedPrograms.length} running`));
     projects.faces = [...new Set(active.map(p => p.owner_member_id).concat(programs.map(p => p.member_id)).filter(Boolean))];
     projects.score = 3 * active.filter(p => p.lane === 'needs_you').length
         + Number(windows.some(p => daysAway(p.start) === 0));
@@ -134,7 +138,7 @@ function pwaHouseholdLead(cards) {
 
 // The household reads are separate from My Day's viewer-filtered programs.
 let pwaHouseBalances = [], pwaHouseProjects = [], pwaHousePrograms = [], pwaHouseWindows = [];
-let pwaHouseRuns = {}, pwaHouseCommitments = {}, pwaHouseActive = null;
+let pwaHouseRuns = {}, pwaHouseActive = null;
 
 function pwaHouseholdInputs() {
     const role = currentMemberRole();
@@ -200,18 +204,17 @@ async function pwaReadHousehold(path) {
 
 async function pwaRefreshHousePrograms() {
     if (houseRevealListsOnly) {
-        pwaHousePrograms = []; pwaHouseWindows = []; pwaHouseCommitments = {};
+        pwaHousePrograms = []; pwaHouseWindows = [];
         pwaRenderHousehold();
         return;
     }
     const owner = selectedMemberId;
-    const [data, windows, rows] = await Promise.all([
-        pwaReadHousehold('api/programs'), fetchPracticeWindows(), fetchMyCommitments()
+    const [data, windows] = await Promise.all([
+        pwaReadHousehold('api/programs'), fetchPracticeWindows()
     ]);
     if (owner !== selectedMemberId) return;
     pwaHousePrograms = (data?.programs || []).filter(p => ['active', 'paused'].includes(p.state));
     pwaHouseWindows = windows;
-    pwaHouseCommitments = Object.fromEntries(rows.map(c => [c.id, c]));
     pwaRenderHousehold();
 }
 
@@ -266,7 +269,6 @@ function pwaRenderHousehold() {
 }
 
 function pwaHouseSegments(id) {
-    if (id === 'projects') return [['projects','Projects'], ['programs','Programs']];
     if (id !== 'chores') return [];
     const count = choresToCheck().length;
     return [['mine','Mine'], ['open','Open'], ...(currentMemberRole() === 'parent'
@@ -282,11 +284,6 @@ function pwaRefreshHouseScreen(cards) {
     active.body.querySelectorAll('.pwa-seg-item').forEach(b => {
         b.textContent = segments.find(s => s[0] === b.dataset.segment)?.[1] || '';
     });
-    if (active.programsHost) {
-        practiceWindows = pwaHouseWindows;
-        active.programsHost.innerHTML = renderProgramsSection(pwaHousePrograms, pwaHouseCommitments, {title:'Programs'})
-            || '<p class="pwa-empty">Nothing running yet.</p>';
-    }
 }
 
 // Move the actual builder node, retaining its listeners and Alpine state.
@@ -306,7 +303,7 @@ function pwaAdoptHouseNode(id, host, returns) {
 function pwaOpenHouseScreen(id, segment) {
     const grantedList = id === 'lists' && houseLists.some(l => l.id === houseActiveListId);
     if (!pwaIsAdult() || (!pwaAllowed('chores') && !grantedList) || !window.PwaNav) return false;
-    const titles = {chores:'Chores', rewards:chfFeatureOn('rewards') ? 'Rewards' : 'Points', tasks:'Tasks', lists:'Lists', projects:'Projects & programs'};
+    const titles = {chores:'Chores', rewards:chfFeatureOn('rewards') ? 'Rewards' : 'Points', tasks:'Tasks', lists:'Lists', projects:'Projects'};
     if (!titles[id] || (!grantedList && !pwaHouseholdCards(pwaHouseholdInputs()).some(c => c.id === id))) return false;
     if (currentView !== 'chores') setView('chores');
     if (pwaHouseActive?.id === id) { if (segment) pwaHouseSegment(id, segment); return true; }
@@ -344,8 +341,6 @@ function pwaOpenHouseScreen(id, segment) {
             returns.push(() => { if (householdTasksHost === host) householdTasksHost = null; });
         } else if (id === 'projects') {
             pwaAdoptHouseNode('projects-container', body, returns);
-            const host = document.createElement('div'); host.dataset.housePrograms = '';
-            body.append(host); pwaHouseActive.programsHost = host;
             window.dispatchEvent(new CustomEvent('chf-projects-open'));
         }
         if (id === 'chores' && !segments.some(s => s[0] === segment)) {
@@ -353,8 +348,6 @@ function pwaOpenHouseScreen(id, segment) {
                 : choresAvailable().length ? 'open'
                 : currentMemberRole() === 'parent' ? 'check' : 'mine';
         }
-        if (id === 'projects' && !segments.some(s => s[0] === segment)) segment = pwaHouseProjects.length ? 'projects'
-            : pwaHousePrograms.length ? 'programs' : 'projects';
         pwaHouseSegment(id, segment || id);
         pwaRefreshHouseScreen(pwaHouseholdCards(pwaHouseholdInputs()));
     }, onPop() {

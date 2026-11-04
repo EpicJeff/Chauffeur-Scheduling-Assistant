@@ -209,6 +209,7 @@ async function pwaSchoolOpen(ownerId) {
     overlay.id = 'pwa-school-overlay';
     overlay.className = 'pwa-sheet-overlay fixed inset-0 z-[400] bg-black/70 flex items-end sm:items-center justify-center p-4';
     overlay.innerHTML = `<div class="pwa-sheet w-full max-w-sm bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-5 max-h-[85dvh] overflow-y-auto" role="dialog" aria-label="School"><div id="pwa-school-body"><p class="text-xs text-gray-500 italic">Loading…</p></div></div>`;
+    if (pwaIsAdult()) overlay.querySelector('.pwa-sheet').setAttribute('data-pwa-skin', '');
     overlay.addEventListener('click', e => { if (e.target === overlay) pwaSchoolClose(); });
     document.body.appendChild(overlay);
     await pwaSchoolLoad();

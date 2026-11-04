@@ -108,6 +108,9 @@ const PROGRAMS = [
   {id: 'pg2', title: 'Spanish', state: 'paused', member_id: 'k3', unit_n: null, total_units: null},
   {id: 'pg3', title: 'Chess', state: 'done', member_id: 'k1', unit_n: 9, total_units: 9},
 ];
+const OWN_PROJECT = [{id: 'prL', title: 'Learn piano', state: 'active', lane: 'doing', owner_member_id: 'k2'}];
+const OWN_PROGRAM = [{id: 'pgL', title: 'Learn piano', state: 'active', member_id: 'k2', unit_n: 3, total_units: 20,
+                      project_id: 'prL'}];
 const WIN_THU = {pg1: {start: '2026-11-05T16:30:00'}, pg2: {start: '2026-11-06T09:00:00'}};
 const WIN_TODAY = {pg1: {start: '2026-11-04T16:30:00'}};
 const winFor = (m) => (id) => m[id] || null;
@@ -124,6 +127,7 @@ const ADULT = (over) => inp(Object.assign({role: 'adult', canReview: false, meId
 const summary = (cs) => cs.map(c => ({
   id: c.id, icon_is_text: typeof c.icon === 'string' && c.icon.length > 0,
   title_is_text: typeof c.title === 'string' && c.title.length > 0,
+  title: c.title,
   line: c.line, pills: c.pills, faces: c.faces, progress: c.progress, score: c.score, open: c.open}));
 const cards = (i) => summary(pwaHouseholdCards(i));
 const lead = (i) => pwaHouseholdLead(pwaHouseholdCards(i));
@@ -166,6 +170,7 @@ const CASES = {
   lists_in_five: () => cards(inp({lists: LISTS, runs: {next: '2026-11-09'}})),
   lists_in_eight: () => cards(inp({lists: LISTS, runs: {next: '2026-11-12'}})),
   lists_quiet: () => cards(inp({lists: LISTS_QUIET})),
+  program_in_its_project: () => cards(inp({projects: OWN_PROJECT, programs: OWN_PROGRAM})),
   projects_window_thursday: () => cards(inp({projects: PROJECTS, programs: PROGRAMS, nextWindowFor: winFor(WIN_THU)})),
   // slice 5 task 1: inputs.use24h words the window time as HH:mm
   projects_window_thursday_24h: () => cards(inp({projects: PROJECTS, programs: PROGRAMS,
@@ -477,6 +482,30 @@ def scenario_lead_is_at_most_two_sentences():
         return
     check(got.count('.') <= 2,
           f"at most two sentences even with a shop day, an overdue task and a lesson: {got!r}")
+
+
+def scenario_a_program_and_its_project_count_once():
+    """A program lives in its project (programs.create_row adopts it): the
+    Projects card names the project once, with the lesson suffix, and counts
+    one thing running."""
+    got = _cards('program_in_its_project')
+    if got is None:
+        return
+    card = next((c for c in got if c['id'] == 'projects'), None)
+    check(card is not None and card['line'] == 'Learn piano (lesson 3 of 20)',
+          f"the project and its program read once: {card and card['line']!r}")
+    texts = [p['text'] for p in (card or {}).get('pills', [])]
+    check('1 running' in texts, f"one thing running, not two: {texts!r}")
+
+
+def scenario_projects_card_is_projects():
+    """The user's ruling 2026-11-04 (slice 7): the card opens Projects, no
+    Programs tab; programs still feed its line, lead and next-session pill."""
+    got = _cards('full_parent_order')
+    if got is None:
+        return
+    card = next((c for c in got if c['id'] == 'projects'), None)
+    check(card is not None and card['title'] == 'Projects', f"the projects card title {card and card['title']!r}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

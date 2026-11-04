@@ -55,7 +55,7 @@ NAMES = {'parent': 'Alex Morgan', 'adult': 'Robin Lee', 'keeping': 'Casey Morgan
          'lists_only': 'Jo Ellis', 'granted': 'June Ellis', 'helper': 'Nana Bea'}
 THREAD = {}
 SCREEN_TITLES = {'chores': 'Chores', 'rewards': 'Rewards', 'tasks': 'Tasks', 'lists': 'Lists',
-                 'projects': 'Projects & programs'}
+                 'projects': 'Projects'}
 ALL_CARDS = {'chores', 'rewards', 'tasks', 'lists', 'projects'}
 BAD_RESPONSES = []
 SHOTS = None
@@ -853,11 +853,12 @@ def lists_screen(page, mocks, profile):
 
 def projects_screen(page, mocks):
     open_card(page, mocks, 'projects')
+    # The user's ruling 2026-11-04 (slice 7): Projects, one list. A program
+    # lives in its project (its piece sheet carries Coming up); no Programs tab.
     segs = page.evaluate(SEGMENTS)
-    assert [s['text'] for s in segs] == ['Projects', 'Programs'], segs
-    assert page.evaluate(SEGMENT) == 'projects', page.evaluate(SEGMENT)
-    assert section(page) == 'projects', section(page)
+    assert segs == [], ('the Projects screen still has segments', segs)
     screen = top_screen(page)
+    assert screen.locator('[data-house-programs]').count() == 0, 'a Programs list is still drawn'
     assert screen.locator('#projects-container').count() == 1, '#projects-container was not adopted'
     settle(page, "[...document.querySelectorAll('#pwa-stack .pwa-screen [data-project-card]')].filter(e => e.checkVisibility()).length === 2", timeout=8000)
     cards = screen.locator('#projects-container [data-project-card]')
@@ -865,22 +866,7 @@ def projects_screen(page, mocks):
     titles = norm(screen.locator('#projects-container').inner_text())
     assert 'Rebuild the deck' in titles and 'Spring garden' in titles, titles
     shot(page, 'household-projects.png')
-    pick_segment(page, 'Programs', 'programs')
-    assert page.evaluate("[...document.querySelectorAll('#pwa-stack .pwa-screen [data-project-card]')].every(e => !e.checkVisibility())"), \
-        'project cards still show under Programs'
-    settle(page, "document.querySelector('#pwa-stack .pwa-screen').innerText.includes('Strength training')")
-    assert 'Strength training' in screen_text(page), 'the program card is missing under Programs'
-    # The next window (tomorrow 16:30) opens the session sheet: the program
-    # card's Coming-up row, the same openSessionSheet every surface uses.
-    session = screen.get_by_role('button').filter(has_text='Tomorrow').first
-    assert session.count() == 1 and session.is_visible(), 'no row opens the next session'
-    session.click()
-    page.wait_for_selector('.pwa-prompt-overlay', state='visible')
-    sheet = page.locator('.pwa-prompt-overlay').last
-    assert 'Strength training' in norm(sheet.inner_text()), sheet.inner_text()
-    assert sheet.get_by_role('button', name='Start', exact=True).count() == 1, sheet.inner_text()
-    sheet.locator('[data-close]').click()
-    page.wait_for_function("document.querySelectorAll('.pwa-prompt-overlay').length === 0")
+    assert 'Strength training' not in screen_text(page), 'a program is listed outside its project'
     go_back(page, mocks)
     assert page.locator('#pwa-stack #projects-container').count() == 0, '#projects-container stayed in the stack'
 

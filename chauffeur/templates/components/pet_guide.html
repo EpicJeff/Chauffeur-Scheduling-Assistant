@@ -114,7 +114,7 @@ function petGuidePanel() {
 }
 </script>
 
-<div x-data="petGuidePanel()" x-cloak x-show="show"
+<div x-data="petGuidePanel()" data-pwa-skin x-cloak x-show="show"
      @pet-guide-open.window="open($event.detail)"
      class="panel-modal fixed inset-0 z-[120] bg-gray-950 flex flex-col select-none">
 

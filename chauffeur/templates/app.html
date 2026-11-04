@@ -324,7 +324,7 @@
 
         <div id="pwa-covered" class="flex-1 flex flex-col min-h-0">
         <!-- Music (dedicated tab) -->
-        <div id="music-container" class="flex-1 flex-col min-h-0 overflow-y-auto p-3" style="display: none">
+        <div id="music-container" data-pwa-skin class="flex-1 flex-col min-h-0 overflow-y-auto p-3" style="display: none">
             {% include 'components/music_widget.html' %}
         </div>
 
@@ -439,7 +439,7 @@
         </div>
 
         <!-- Family Map -->
-        <div id="map-container" class="flex-1 flex-col min-h-0 relative" style="display: none">
+        <div id="map-container" data-pwa-skin class="flex-1 flex-col min-h-0 relative" style="display: none">
             {% include 'components/family_map.html' %}
         </div>
 
@@ -460,13 +460,13 @@
         </div>
 
         {% include 'components/pwa_directory.html' %}
-        <div id="projects-container" class="flex-1 flex-col min-h-0 overflow-y-auto" style="display: none">
+        <div id="projects-container" data-pwa-skin class="flex-1 flex-col min-h-0 overflow-y-auto" style="display: none">
             {% set projects_host = 'phone' %}
             {% include 'components/projects_page.html' %}
         </div>
         <!-- The program library's phone home (More -> Library): the admin
              page's own builder, components/library_page.html. -->
-        <div id="library-container" class="flex-1 flex-col min-h-0 overflow-y-auto" style="display: none">
+        <div id="library-container" data-pwa-skin class="flex-1 flex-col min-h-0 overflow-y-auto" style="display: none">
             {% set library_host = 'phone' %}
             <script>window.chfLibraryHost = 'phone';</script>
             {% include 'components/library_page.html' %}
@@ -2729,8 +2729,7 @@
             datedTimelineDays.clear(); datedTimelineLoads.clear();
             if (currentView === 'myday') renderMyDay(true);
             else if (currentView === 'chores') {
-                if (pwaChildStage()) void pwaChildRefreshHousePrograms();
-                else void pwaRefreshHousePrograms();
+                if (!pwaChildStage()) void pwaRefreshHousePrograms();
             }
             else {
                 refreshDatedTimeline(currentDates[activeDateIndex], true);
@@ -2748,7 +2747,7 @@
         function refreshTodaySurfaces(force = false) {
             if (!selectedMemberId) return;
             if (currentView === 'myday') { renderMyDay(force); return; }
-            if (currentView === 'chores' && pwaChildStage()) { void pwaChildRefreshHousePrograms(); return; }
+            if (currentView === 'chores' && pwaChildStage()) return;
             refreshDatedTimeline(currentDates[activeDateIndex], true);
             if (currentView === 'drives') refreshPracticeSection(true);
         }

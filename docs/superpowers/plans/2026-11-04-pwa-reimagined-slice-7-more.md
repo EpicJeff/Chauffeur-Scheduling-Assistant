@@ -52,7 +52,7 @@
   - `music`: More › Music → `#pwa-page-heading h2` "Music" 34px/700; `check_skin(page, '#music-container', title='#pwa-page-heading h2', raised='#mw-nowplaying')`; `#music-widget` itself transparent with border 0 (the page is the wash, not one big card); `#mw-playpause` background `--pwa-ink`; `#mw-search` border 0; favorites / results rows have no dividers (`border-top-width` 0); screenshot `music-light.png`.
   - `map`: More › Family map → `#family-map` height ≥ 300 and its box unchanged against a measurement taken with the stylesheet's adult rules removed (`document.documentElement.dataset.audience='child'` probe, then restored); `#family-map-chips` transparent over the wash with border 0; each chip a pill (radius ≥ 999 or ≥ half its height) with border 0 on `--pwa-card-raised`; contrast on the chips; screenshot `map-light.png`.
   - `school`: More › School (parent picks Maya through `promptChoice` when two children, or straight in with one) → `#pwa-school-overlay .pwa-sheet` background `--pwa-card-raised` (slice 0 already gives it border 0 and 22px top corners — those stay); `check_skin(page, '#pwa-school-overlay .pwa-sheet', cards=<the task row selector pwaSchoolRender draws>)`; a task opens its detail and Back/close returns; screenshot `school-light.png`.
-  - `critter`: More › My critter → `#pet-editor-panel`'s dialog surface `--pwa-card-raised`, radius 22px, border 0; tabs/chips pills; the preview art's box unchanged (same probe as the map); save button background `--pwa-ink`; screenshot `critter-light.png`.
+  - `critter`: More › My critter → the first-visit guide sits on the wash with "Got it!" in the ink; then `#pet-editor-panel` sits on the wash (background-image a gradient, `data-pwa-skin`); tabs/chips pills; the preview art's box unchanged (same probe as the map); save button background `--pwa-ink`; screenshot `critter-light.png`.
   - `contrast` (parent): every destination above again in dark at 390 and in light and dark at 360: `check_skin` with no failures; screenshots `*-dark.png`.
   - `sheets_still_open`: a project piece sheet, the Library run sheet, the School detail and the critter guide each open above their page, close back to it, and the body-appended `.pwa-sheet`s other than School's keep slice 0's skin (22px top corners at 390, background `rgb(var(--c-gray-900))`).
   - `other_hosts_untouched`: the source of `templates/*.html` other than `app.html` never names `pwa_shell.css`; navigator: More › School sheet has no `data-pwa-skin` and its background is `rgb(var(--c-gray-900))`; sprout: `#pwa-feature-list` is still `display: grid`; `served.errors()` empty for every profile.
@@ -102,14 +102,15 @@
 ### Task 4: Music, Family map, School and the critter (Codex)
 
 **Files:**
-- Modify: `chauffeur/static/pwa_school.js` (`data-pwa-skin` on the School `.pwa-sheet` for adults only — `pwaIsAdult()` at build time), `chauffeur/templates/components/pet_editor.html` (`data-pwa-skin` on `#pet-editor-panel`; nothing else), `chauffeur/static/pwa_shell.js` (`pwaPageHeading`'s `names` gains `music: ['Music', 'Favorites and household listening.']`), `chauffeur/static/pwa_shell.css` (the four blocks; the adult `.pwa-page-heading h2` moves to 34px/700/-.03em with the other titles)
+- Modify: `chauffeur/static/pwa_school.js` (`data-pwa-skin` on the School `.pwa-sheet` for adults only — `pwaIsAdult()` at build time), `chauffeur/templates/components/pet_editor.html` (`data-pwa-skin` on `#pet-editor-panel`; nothing else), `chauffeur/templates/components/pet_guide.html` (`data-pwa-skin` on the `petGuidePanel()` root; nothing else), `chauffeur/static/pwa_shell.js` (`pwaPageHeading`'s `names` gains `music: ['Music', 'Favorites and household listening.']`), `chauffeur/static/pwa_shell.css` (the four blocks; the adult `.pwa-page-heading h2` moves to 34px/700/-.03em with the other titles)
 - Test: Task 1 `music`, `map`, `school`, `critter`, `contrast`, `sheets_still_open`, `other_hosts_untouched`; `tests/test_school_view_live.py`, `tests/test_family_map_live.py`, `tests/test_household_features_live.py` (its critter half), `tests/test_pwa_drive_live.py` (its `openPetEditor` use)
 
 **Interfaces:**
 - Music: `#music-widget` dissolves (transparent, border 0, shadow none, padding 0) so its parts sit on the wash; `#mw-nowplaying` is the one raised card (`--pwa-card-raised`, 22px, padding 16px, `0 10px 30px color-mix(in srgb, var(--pwa-accent) 18%, transparent)`) and shows only when it does today; `#mw-art` 14px corners; `#mw-playpause` the ink circle 48px; shuffle / repeat / queue icon buttons on the muted fill 44px; `#mw-queue`, `#mw-results`, `#mw-fav-tracks` → `--pwa-card` groups radius 18px, no outer border, no `divide-y` hairlines; favorites tiles 14px corners; `#mw-player` select and `#mw-search` per the shared inputs; the volume range accent `--pwa-accent`.
 - Family map: `#map-container` keeps its full-bleed layout and `#family-map` its box; `#family-map-chips` transparent, border 0, padding 10px 12px; chips (`family_map_core.html` ~292) pills on `--pwa-card-raised`, border 0, 13px/600 `--pwa-ink`, the colour dot kept; no title (the map is the screen).
 - School (adult sheet only): the sheet background `--pwa-card-raised` (slice 0's border 0 and corners stay); the sheet title 22px/700; agenda day labels 12px uppercase muted; task rows the nested surface (muted fill, 14px); the month grid's cells unchanged in size; the mode toggle a segmented control in the Household `.pwa-seg` style; chips per the shared map.
-- Critter (adult panel only): the panel's dialog surface `--pwa-card-raised`, radius 22px, border 0; tabs and part chips pills; Save the ink primary, Cancel and the rest secondary; the preview art and the battle arena (`pet_battle.html`) untouched.
+- Critter guide (adult only; it opens by itself on a member's first editor visit with no critter): the same wash as the editor panel, "Got it!" the ink primary, its steps on the shared map.
+- Critter (adult panel only): the panel is full-screen, so it sits on the wash (the pushed screens' sky gradient, `linear-gradient(180deg, var(--pwa-sky-top), var(--pwa-sky-mid) 42%, var(--pwa-sky-bottom))`), the header band loses its hairline, controls on the shared map; tabs and part chips pills; Save the ink primary, Cancel and the rest secondary; the preview art and the battle arena (`pet_battle.html`) untouched.
 
 - [ ] **Step 1: Read** `music_widget.html`, `family_map.html` + `family_map_core.html`, `pwa_school.js`'s renderers, `pet_editor.html` and list the selectors.
 - [ ] **Step 2: Implement**; `python tools/build_tailwind.py`.
@@ -117,7 +118,21 @@
 
 ---
 
-### Task 5: Record it, gate it, ship it (Claude)
+### Task 5: Projects, one list (Codex; the user's ruling 2026-11-04, added mid-slice)
+
+The user, seeing a program's piece sheet inside its project and the Programs tab draw the same card: the Programs tab duplicates what the project already holds (Coming up, Done when, did-it-happen, Add a session). **The Household card opens Projects, one list; programs are reached through their project. The Library keeps its door in More. Kids get the same cut.**
+
+**Files:**
+- Modify: `chauffeur/static/pwa_household.js` (the projects card's title "Projects"; `pwaHouseSegments('projects')` returns no segments; the screen no longer creates the `[data-house-programs]` host or renders `renderProgramsSection` into it; the screen h1 "Projects"; the card's line, lead ("<program> is at h:mm."), next-session pill, faces and score keep reading the household's programs), `chauffeur/static/pwa_child_shell.js` (the kid House Projects section: no `.child-programs` host, no `pwaChildRefreshHousePrograms` render under it; the section heading "Projects"), `chauffeur/static/pwa_shell.css` / `pwa_child_shell.css` (drop the now-dead `[data-house-segment="programs"]` / `[data-house-programs]` rules)
+- Test: `tests/test_pwa_household_cards.py` `scenario_projects_card_is_projects`; `tests/test_pwa_household_live.py` `projects_screen` (no segments, no `[data-house-programs]`, no program listed outside its project; title "Projects"); `tests/test_projects_one_door_live.py` `adult_one_door` (h1 "Projects", no `.pwa-seg`) and `kid_house_projects` (heading "Projects", no `.child-programs`, the kid's program not listed under Projects); `tests/test_project_sheets_phone_live.py` (the screen's h1 "Projects")
+
+Unchanged: a program's piece sheet in its project; My Day's and Plan's session rows; More's "My programs" for people without a Household door; the Library on More.
+
+- [ ] **Step 1: Write the failing tests** (Claude, done before dispatch). **Step 2: Implement.** **Step 3: Run** `python tests/test_pwa_household_cards.py && python tests/test_pwa_household_live.py && python tests/test_projects_one_door_live.py && python tests/test_project_sheets_phone_live.py && python tests/test_projects_live.py && python tests/test_pwa_more_live.py` → green.
+
+---
+
+### Task 6: Record it, gate it, ship it (Claude)
 
 **Files:**
 - Modify: `chauffeur/docs/ui_design_guide.md` ("More, a list; destinations take the vocabulary": the `data-pwa-skin` marker, the shared map, the per-destination exceptions, the contrast checker), `chauffeur/system_capabilities.md` (new top entry `v2.499.758`), `chauffeur/config.yaml` (→ `2.499.758`)
@@ -126,7 +141,7 @@
 - [ ] **Step 2: Gate** (from `chauffeur/`, `HA_BASE_URL` unset):
 
 ```bash
-python tests/test_pwa_nav.py && python tests/test_template_js.py && python tests/test_tailwind_build.py && python tests/test_auth.py && python tests/test_pwa_more_live.py && python tests/test_pwa_adult_shell_live.py && python tests/test_pwa_household_live.py && python tests/test_pwa_myday_live.py && python tests/test_projects_live.py && python tests/test_project_sheets_phone_live.py && python tests/test_projects_one_door_live.py && python tests/test_library_live.py && python tests/test_school_view_live.py && python tests/test_family_map_live.py && python tests/test_pwa_drive_live.py
+python tests/test_pwa_nav.py && python tests/test_template_js.py && python tests/test_tailwind_build.py && python tests/test_auth.py && python tests/test_pwa_more_live.py && python tests/test_pwa_adult_shell_live.py && python tests/test_pwa_household_live.py && python tests/test_pwa_myday_live.py && python tests/test_projects_live.py && python tests/test_project_sheets_phone_live.py && python tests/test_projects_one_door_live.py && python tests/test_library_live.py && python tests/test_school_view_live.py && python tests/test_family_map_live.py && python tests/test_pwa_drive_live.py && python tests/test_pwa_household_cards.py
 ```
 
 - [ ] **Step 3: Commit** as one commit `feat(pwa): slice 7 of the reimagined PWA, More and its destinations (v2.499.758)` and push.

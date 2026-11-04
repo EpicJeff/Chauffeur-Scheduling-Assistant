@@ -111,7 +111,6 @@
 [data-child-stage] .child-house-projects { min-width:0; }
 [data-child-stage] .child-house-projects .panel-page-title { display:none; }
 [data-child-stage] .child-house-projects #projects-container { flex:none; overflow:visible; }
-[data-child-stage] .child-house-projects > .child-programs { padding:0 20px 20px; }
 [data-child-stage] [data-child-house] > * { margin-bottom:12px; }
 [data-child-stage] [data-child-house] > .uppercase { font-size:0.75rem; letter-spacing:.05em; padding-top:12px; }
 [data-child-stage] :is(#chores-content,#house-lists,#house-threads) button { min-height:48px; font-size:0.875rem; box-shadow:none; }

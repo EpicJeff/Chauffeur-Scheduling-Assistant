@@ -112,8 +112,8 @@
 :is([data-audience="adult"], [data-child-stage])[data-theme="dark"] #em-cancel-btn { color: #f4b6ae; }
 :is([data-audience="adult"], [data-child-stage]) .pwa-prompt-overlay .pwa-sheet > .text-lg { margin-bottom: 13px; }
 :is([data-audience="adult"], [data-child-stage]) .pwa-sheet [data-pick] { text-align: left; border: 0; border-bottom: 1px solid rgb(var(--c-gray-800)); border-radius: 0; padding-inline: 0; }
-:is([data-audience="adult"], [data-child-stage]) .pwa-sheet .pwa-feature { border: 0; border-bottom: 1px solid rgb(var(--c-gray-800)); border-radius: 0; padding: 16px 0; text-align: left; }
-:is([data-audience="adult"], [data-child-stage]) .pwa-sheet .pwa-feature small { font-size: 13px; font-weight: 400; line-height: 1.5; }
+[data-child-stage] .pwa-sheet .pwa-feature { border: 0; border-bottom: 1px solid rgb(var(--c-gray-800)); border-radius: 0; padding: 16px 0; text-align: left; }
+[data-child-stage] .pwa-sheet .pwa-feature small { font-size: 13px; font-weight: 400; line-height: 1.5; }
 :is([data-audience="adult"], [data-child-stage]) #notif-modal-content { height: auto; }
 :is([data-audience="adult"], [data-child-stage]) #notif-list { flex: 0 1 auto; max-height: 55dvh; }
 :is([data-audience="adult"], [data-child-stage]) #new-chat-suggestions > button { background: transparent; border: 0; border-bottom: 1px solid rgb(var(--c-gray-800)); border-radius: 0; padding-inline: 0; }
@@ -250,6 +250,27 @@ html[data-audience="adult"] #pwa-stack :is(#drive-next, #drive-live) { color: va
 .pwa-profile { width: min(420px, calc(100% - 32px)); max-height: calc(100dvh - 48px); margin: auto; padding: 24px; color: rgb(var(--c-gray-100)); background: rgb(var(--c-gray-900)); border: 1px solid rgb(var(--c-gray-700)); border-radius: 12px; overflow: auto; }
 .pwa-profile::backdrop { background: #0009; }
 .pwa-close { display: block; margin-left: auto; min-height: 44px; padding: 8px; }
+/* More and Profile reuse Messages' rows/search and Household's raised icon tiles. */
+html[data-audience="adult"] #pwa-more-container { padding: 12px 20px 28px; color: var(--pwa-ink); }
+html[data-audience="adult"] #pwa-more-title { font-size: 34px; font-weight: 700; letter-spacing: -.03em; color: var(--pwa-ink); }
+html[data-audience="adult"] .pwa-directory > .pwa-muted { font-size: 16px; line-height: 1.45; color: var(--pwa-msg-muted); }
+html[data-audience="adult"] .pwa-directory-search { margin: 18px 0 14px; }
+html[data-audience="adult"] .pwa-directory-search input { min-width: 0; min-height: 44px; margin: 0; padding: 10px 14px; border: 0; border-radius: 12px; background: var(--pwa-msg-soft); color: var(--pwa-ink); font-size: 15px; }
+html[data-audience="adult"] .pwa-directory-search input::placeholder { color: var(--pwa-msg-muted); }
+html[data-audience="adult"] #pwa-search-empty { color: var(--pwa-msg-muted); }
+html[data-audience="adult"] .pwa-feature:has(> .pwa-feature-icon) { display: flex; flex-direction: row; align-items: center; gap: 14px; padding: 10px 0; min-height: 56px; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--pwa-ink); }
+html[data-audience="adult"] .pwa-feature:has(> .pwa-feature-icon):not(:disabled):hover { background: transparent; }
+html[data-audience="adult"] .pwa-feature-icon { display: grid; place-items: center; width: 44px; height: 44px; flex: 0 0 44px; border-radius: 14px; background: var(--pwa-card-raised); box-shadow: 0 2px 8px rgba(31,29,43,.06); color: var(--pwa-accent); }
+html[data-audience="adult"] .pwa-feature:has(> .pwa-feature-icon) > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+html[data-audience="adult"] .pwa-feature:has(> .pwa-feature-icon) > div > span { font-size: 16px; font-weight: 600; color: var(--pwa-ink); }
+html[data-audience="adult"] .pwa-feature:has(> .pwa-feature-icon) small { font-size: 14px; font-weight: 400; line-height: 1.5; color: var(--pwa-msg-muted); white-space: normal; overflow: visible; text-overflow: clip; -webkit-line-clamp: unset; }
+html[data-audience="adult"] .pwa-feature-chevron { display: flex; width: 20px; height: 20px; margin-left: auto; flex-shrink: 0; color: var(--pwa-msg-muted); }
+html[data-audience="adult"] .pwa-feature-chevron svg { width: 20px; height: 20px; }
+[data-child-stage] .pwa-feature-chevron { display: none; }
+html[data-audience="adult"] .pwa-profile { background: var(--pwa-card-raised); border: 0; border-radius: 22px; color: var(--pwa-ink); }
+html[data-audience="adult"] .pwa-profile.pwa-sheet h2 { font-size: 22px; font-weight: 700; color: var(--pwa-ink); }
+html[data-audience="adult"] .pwa-profile .pwa-close,
+html[data-audience="adult"] .pwa-profile > form[method="dialog"]::before { color: var(--pwa-msg-muted); }
 .pwa-overview { margin-bottom: 22px; }
 /* The approved My Day hero, using the shell's raised-card and ink tokens. */
 [data-audience="adult"] .pwa-hero {
@@ -536,10 +557,8 @@ html[data-audience="adult"] #pwa-stack #thread-form:is(.has-text, .has-attachmen
 [data-audience="adult"] [data-house-screen="rewards"] [data-chore-group],
 [data-audience="adult"] [data-house-segment="mine"] [data-chore-group]:not([data-chore-group="mine"]),
 [data-audience="adult"] [data-house-segment="open"] [data-chore-group]:not([data-chore-group="open"]),
-[data-audience="adult"] [data-house-segment="check"] [data-chore-group]:not([data-chore-group="check"]),
-[data-audience="adult"] [data-house-segment="projects"] [data-house-programs],
-[data-audience="adult"] [data-house-segment="programs"] #projects-container { display: none !important; }
-[data-audience="adult"] [data-house-segment="projects"] #projects-container { display: flex !important; overflow: visible; }
+[data-audience="adult"] [data-house-segment="check"] [data-chore-group]:not([data-chore-group="check"]) { display: none !important; }
+[data-audience="adult"] [data-house-screen="projects"] #projects-container { display: flex !important; overflow: visible; }
 [data-audience="adult"] .pwa-screen #projects-container > section { padding: 0; }
 [data-audience="adult"] .pwa-screen #projects-container .panel-page-title { display: none; }
 [data-audience="adult"] .pwa-screen :is(.pwa-chore-row, #house-lists label, [data-reward-group] > .rounded-xl) { background: var(--pwa-card); border: 0; border-radius: 18px; padding: 14px 16px; margin-bottom: 8px; }
@@ -632,3 +651,213 @@ html[data-audience="adult"] .pwa-now > span { position: absolute; left: 0; top: 
   [data-audience="adult"] .pwa-argyle[data-state="listening"] .pwa-argyle-wave i { animation: none; }
   [data-audience="adult"] .pwa-argyle-ask { animation: pwa-argyle-fade .15s; transition: opacity .15s; }
 }
+
+/* Shared destination skin. The marker belongs to the phone host, never the
+   shared builder. Map chrome may inherit it; the canvas subtree never does. */
+html[data-audience="adult"] [data-pwa-skin] {
+  --pwa-skin-muted-fill: color-mix(in srgb, var(--pwa-ink) 6%, transparent);
+  --pwa-skin-danger: #a61b2b;
+  --pwa-skin-warning: #865000;
+  background: transparent; color: var(--pwa-ink); min-width: 0;
+  padding: 12px 20px 28px;
+}
+html[data-audience="adult"][data-theme="dark"] [data-pwa-skin] { --pwa-skin-danger: #ffb4b4; --pwa-skin-warning: #ffd18a; }
+/* These builders already own their page padding. The existing slice-3
+   .pwa-screen #projects-container > section rule still unpads the adopted node. */
+html[data-audience="adult"] [data-pwa-skin]:has(> .panel-page) { padding: 0; }
+html[data-audience="adult"] [data-pwa-skin] > .panel-page { padding: 12px 20px 28px; min-width: 0; }
+html[data-audience="adult"] .pwa-page-heading h2,
+html[data-audience="adult"] [data-pwa-skin]:is(#projects-container, #library-container) .panel-page-title {
+  font-size: 34px; font-weight: 700; letter-spacing: -.03em; line-height: 1.2; color: var(--pwa-ink);
+}
+html[data-audience="adult"] .pwa-page-heading h2 { margin: 0 0 7px; }
+html[data-audience="adult"] .pwa-page-heading p { color: var(--pwa-msg-muted); }
+/* No inset around a full-height map; do not touch #family-map or its children. */
+html[data-audience="adult"] [data-pwa-skin]#map-container { padding: 0; }
+
+/* Only surfaces: controls, artwork and the small progress track are not cards.
+   All matching surfaces start as cards; a matching ancestor makes one a tile. */
+html[data-audience="adult"] [data-pwa-skin] :is(.bg-gray-900, .bg-gray-800):is(.border, .rounded-xl, .rounded-2xl):not(button, input, textarea, select, img, canvas, svg):where(:not(#family-map, #family-map *)) {
+  background: var(--pwa-card); border: 0; border-radius: var(--pwa-radius); box-shadow: none;
+}
+html[data-audience="adult"] [data-pwa-skin] :is(.bg-gray-900, .bg-gray-800):is(.border, .rounded-xl, .rounded-2xl):not(button, input, textarea, select, img, canvas, svg) :is(.bg-gray-900, .bg-gray-800):is(.border, .rounded-xl, .rounded-2xl):not(button, input, textarea, select, img, canvas, svg):where(:not(#family-map, #family-map *)) {
+  background: var(--pwa-skin-muted-fill); border-radius: 14px;
+}
+html[data-audience="adult"] [data-pwa-skin] :is(.text-xs, .text-\[11px\]):where(:not(#family-map, #family-map *)) { font-size: 13px; }
+html[data-audience="adult"] [data-pwa-skin] :is(.text-white, .text-gray-100, .text-gray-200, .text-gray-300):where(:not(#family-map, #family-map *)) { color: var(--pwa-ink); }
+html[data-audience="adult"] [data-pwa-skin] :is(.text-gray-400, .text-gray-500, .text-gray-600):where(:not(#family-map, #family-map *)) { color: var(--pwa-msg-muted); }
+/* Older semantic text colours were designed for dark gray panels. Keep their
+   words and affordances legible on the wash in either theme. */
+html[data-audience="adult"] [data-pwa-skin] :is(.text-teal-300, .text-teal-400, .text-blue-300, .text-blue-400, .text-amber-300, .text-amber-400, .text-red-300, .text-red-400):where(:not(#family-map, #family-map *)) { color: var(--pwa-ink); }
+html[data-audience="adult"] [data-pwa-skin] :is(.text-red-300, .text-red-400):not(button):where(:not(#family-map, #family-map *)) { color: var(--pwa-skin-danger); }
+html[data-audience="adult"] [data-pwa-skin] :is(.text-amber-300, .text-amber-400):not(button):where(:not(#family-map, #family-map *)) { color: var(--pwa-skin-warning); }
+html[data-audience="adult"] [data-pwa-skin] .uppercase:where(:not(#family-map, #family-map *)) { font-size: 12px; font-weight: 700; letter-spacing: .08em; color: var(--pwa-msg-muted); }
+html[data-audience="adult"] [data-pwa-skin] .rounded-full:is(.text-xs, .text-\[11px\]):where(:not(#family-map, #family-map *)) {
+  font-size: 12px; font-weight: 600; border-radius: 999px; background: var(--pwa-skin-muted-fill); color: var(--pwa-ink); border: 0;
+}
+html[data-audience="adult"] [data-pwa-skin] .divide-y > :where(:not(#family-map, #family-map *)) { border: 0; }
+html[data-audience="adult"] [data-pwa-skin] .divide-y > :where(:not(#family-map, #family-map *)) + :where(:not(#family-map, #family-map *)) { margin-top: 4px; }
+html[data-audience="adult"] [data-pwa-skin] :is(.border-b, .border-t):where(:not(#family-map, #family-map *)) { border-top: 0; border-bottom: 0; }
+html[data-audience="adult"] [data-pwa-skin] :is(input:not([type="checkbox"], [type="radio"], [type="range"]), textarea, select):where(:not(#family-map, #family-map *)) {
+  min-width: 0; max-width: 100%; min-height: 44px; border: 0; border-radius: 12px; background: var(--pwa-msg-soft); color: var(--pwa-ink);
+}
+html[data-audience="adult"] [data-pwa-skin] :is(input, textarea):where(:not(#family-map, #family-map *))::placeholder { color: var(--pwa-msg-muted); opacity: 1; }
+html[data-audience="adult"] [data-pwa-skin] button:is(.bg-gray-900, .bg-gray-800, .bg-gray-700):where(:not(#family-map, #family-map *)) {
+  background: var(--pwa-skin-muted-fill); color: var(--pwa-ink); border: 0; border-radius: 14px; min-height: 44px;
+}
+html[data-audience="adult"] [data-pwa-skin] button:is(.bg-teal-700, .bg-blue-600, .bg-emerald-600):where(:not(#family-map, #family-map *)) {
+  background: var(--pwa-ink); color: var(--pwa-card-raised); border: 0; border-radius: 14px; min-height: 44px;
+}
+html[data-audience="adult"] [data-pwa-skin] button:is(.bg-teal-700, .bg-blue-600, .bg-emerald-600) ~ button:is(.bg-teal-700, .bg-blue-600, .bg-emerald-600):not(.rounded-full):where(:not(#family-map, #family-map *)) {
+  background: var(--pwa-skin-muted-fill); color: var(--pwa-ink);
+}
+/* Rounded controls carry selection state, rather than a second primary verb. */
+html[data-audience="adult"] [data-pwa-skin] button.rounded-full:where(:not(#family-map, #family-map *)) { border-radius: 999px; }
+html[data-audience="adult"] [data-pwa-skin] button.rounded-full:is(.text-xs, .text-\[11px\]):is(.bg-teal-700, .bg-blue-600, .bg-emerald-600):where(:not(#family-map, #family-map *)) {
+  background: var(--pwa-ink); color: var(--pwa-card-raised);
+}
+/* The builder's p-2 / p-2.5 round controls are icons; labelled chips use px/py.
+   Keep their 44px target square so rounded-full paints a circle in either state. */
+html[data-audience="adult"] [data-pwa-skin] button.rounded-full:is(.p-2, .p-2\.5):not(.text-xs, .text-\[11px\]):where(:not(#family-map, #family-map *)) {
+  width: 44px; height: 44px; min-width: 44px; flex-shrink: 0; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+/* Destructive controls keep their cue; badge and primary-fill colours retain
+   their existing treatment. These reds meet 4.5:1 over the muted surfaces. */
+html[data-audience="adult"] [data-pwa-skin] button:is(.text-red-300, .text-red-400):where(:not(.bg-teal-700, .bg-blue-600, .bg-emerald-600, #family-map, #family-map *)) { color: var(--pwa-skin-danger); }
+
+/* Projects: restore cards over the earlier adult row skin, through either
+   door. Rows/elsewhere and piece forms use the muted nested surface. */
+html[data-audience="adult"] [data-pwa-skin]#projects-container [data-project-card] { background: var(--pwa-card); border: 0; border-radius: var(--pwa-radius); box-shadow: none; padding: 16px 18px; }
+html[data-audience="adult"] [data-pwa-skin]#projects-container :is([data-project-id] .text-sm, [data-row-title]) { font-size: 16px; font-weight: 600; }
+html[data-audience="adult"] [data-pwa-skin]#projects-container :is([data-row], [data-elsewhere-row], [data-piece-form]) { background: var(--pwa-skin-muted-fill); border: 0; border-radius: 14px; }
+html[data-audience="adult"] [data-pwa-skin]#projects-container [data-row] { border-radius: 18px; }
+/* Later remains visibly muted without multiplying the text's contrast away. */
+html[data-audience="adult"] [data-pwa-skin]#projects-container [data-row-group="later"] { opacity: 1; }
+html[data-audience="adult"] [data-pwa-skin]#projects-container [data-row-group="later"] [data-row-title] { color: var(--pwa-msg-muted); }
+html[data-audience="adult"] [data-pwa-skin]#projects-container [data-progress] > .bg-gray-800 { background: var(--pwa-skin-muted-fill); border: 0; border-radius: 999px; }
+html[data-audience="adult"] [data-pwa-skin]#projects-container [data-progress] .bg-teal-500 { background: var(--pwa-accent); }
+html[data-audience="adult"] [data-pwa-skin]#projects-container [role="dialog"] { background: var(--pwa-card-raised); border: 0; border-radius: var(--pwa-radius) var(--pwa-radius) 0 0; }
+html[data-audience="adult"] [data-pwa-skin]#projects-container :is([data-project-menu], [role="dialog"] button[aria-label="Close"]) { min-width: 44px; }
+/* + Add is the detail card's primary; per-row and inline-form verbs are secondary. */
+html[data-audience="adult"] [data-pwa-skin]#projects-container [data-project-card] button:is([data-row-action], [data-piece-create]) { background: var(--pwa-skin-muted-fill); color: var(--pwa-ink); }
+html[data-audience="adult"] [data-pwa-skin]#projects-container :is([data-project-card], [data-elsewhere-row]) { overflow-wrap: anywhere; min-width: 0; }
+html[data-audience="adult"] [data-pwa-skin]#projects-container [data-piece-form] > .flex { flex-wrap: wrap; }
+
+/* Library: its source/status chips use .rounded, not .rounded-full. Run links
+   and course lessons are nested surfaces; the course header/phases/Steer are cards. */
+html[data-audience="adult"] [data-pwa-skin]#library-container :is([data-library-card], [data-course-header], [data-course-phase], [data-steer]) { min-width: 0; overflow-wrap: anywhere; }
+html[data-audience="adult"] [data-pwa-skin]#library-container :is([data-library-open], [data-library-new], [data-lesson-title], [data-course-lesson] .font-semibold:not(.text-\[11px\])) { font-size: 16px; }
+html[data-audience="adult"] [data-pwa-skin]#library-container .rounded:is(.text-\[10px\], .text-\[11px\]) {
+  font-size: 12px; font-weight: 600; border-radius: 999px; background: var(--pwa-skin-muted-fill); color: var(--pwa-ink); border: 0;
+}
+html[data-audience="adult"] [data-pwa-skin]#library-container :is([data-course-lesson], [data-library-lesson], [data-steer-changes], [data-variant-row]) { background: var(--pwa-skin-muted-fill); border: 0; border-radius: 14px; }
+html[data-audience="adult"] [data-pwa-skin]#library-container [data-library-runner] { border-radius: 14px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+html[data-audience="adult"] [data-pwa-skin]#library-container :is([data-library-new], [data-library-open], [data-library-back], [data-course-why]) { min-height: 44px; }
+html[data-audience="adult"] [data-pwa-skin]#library-container [data-course-menu] { min-width: 44px; }
+/* The hand form is the second creation verb in the New program card. */
+html[data-audience="adult"] [data-pwa-skin]#library-container button[data-library-create] { background: var(--pwa-skin-muted-fill); color: var(--pwa-ink); }
+
+/* Music dissolves into the wash. Only now-playing is raised, following the
+   pushed Household screens' cards and the shared destination controls. */
+html[data-audience="adult"] [data-pwa-skin]#music-container #music-widget {
+  background: transparent; border: 0; border-radius: 0; box-shadow: none; padding: 0;
+}
+html[data-audience="adult"] [data-pwa-skin]#music-container #mw-nowplaying {
+  background: var(--pwa-card-raised); border: 0; border-radius: var(--pwa-radius); padding: 16px;
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--pwa-accent) 18%, transparent);
+}
+html[data-audience="adult"] [data-pwa-skin]#music-container #mw-art { border-radius: 14px; }
+html[data-audience="adult"] [data-pwa-skin]#music-container #mw-playpause {
+  width: 48px; height: 48px; min-width: 48px; min-height: 48px; border-radius: 999px;
+  background: var(--pwa-ink); color: var(--pwa-card-raised);
+}
+html[data-audience="adult"] [data-pwa-skin]#music-container :is(#mw-shuffle, #mw-repeat, #mw-queue-btn) { min-height: 44px; }
+html[data-audience="adult"] [data-pwa-skin]#music-container #music-widget > .flex:has(> #mw-shuffle) { flex-wrap: wrap; }
+html[data-audience="adult"] [data-pwa-skin]#music-container #mw-volume { min-width: 0; width: 0; accent-color: var(--pwa-accent); }
+html[data-audience="adult"] [data-pwa-skin]#music-container :is(#mw-queue, #mw-results, #mw-fav-tracks) {
+  background: var(--pwa-card); border: 0; border-radius: 18px; box-shadow: none;
+}
+html[data-audience="adult"] [data-pwa-skin]#music-container :is(#mw-queue, #mw-results, #mw-fav-tracks) > * { background: transparent; border: 0; }
+html[data-audience="adult"] [data-pwa-skin]#music-container #mw-queue > .bg-blue-950\/60 { background: var(--pwa-skin-muted-fill); }
+html[data-audience="adult"] [data-pwa-skin]#music-container #mw-favorites :is(img, .rounded-xl) { border-radius: 14px; box-shadow: none; }
+html[data-audience="adult"] [data-pwa-skin]#music-container [data-mwrow] .text-\[15px\] { font-size: 16px; }
+
+/* Family map: chrome only. #family-map and every Leaflet/MapLibre child
+   remain excluded by the shared map; no inset or new box around the canvas. */
+html[data-audience="adult"] [data-pwa-skin]#map-container #family-map-chips {
+  background: transparent; border: 0; padding: 10px 12px;
+}
+html[data-audience="adult"] [data-pwa-skin]#map-container #family-map-chips > span {
+  background: var(--pwa-card-raised); border: 0; border-radius: 999px;
+  font-size: 13px; font-weight: 600; color: var(--pwa-ink); max-width: 100%; overflow-wrap: anywhere;
+}
+html[data-audience="adult"] [data-pwa-skin]#map-container #family-map-chips > span > span { flex-shrink: 0; }
+
+/* School's marker is on the adult sheet alone. Its separate _pwaModal task
+   detail stays on slice 0's skin and later in the same overlay layer. */
+html[data-audience="adult"] #pwa-school-overlay .pwa-sheet[data-pwa-skin] {
+  background: var(--pwa-card-raised); padding: 22px 22px max(30px, env(safe-area-inset-bottom));
+}
+html[data-audience="adult"] [data-pwa-skin] #pwa-school-body > .flex:first-child > .text-lg { font-size: 22px; font-weight: 700; min-width: 0; overflow-wrap: anywhere; }
+html[data-audience="adult"] [data-pwa-skin] #pwa-school-body > .flex:first-child { gap: 8px; }
+html[data-audience="adult"] [data-pwa-skin] #pwa-school-body :has(> [role="button"]) { border-radius: 14px; }
+html[data-audience="adult"] [data-pwa-skin] #pwa-school-body .rounded-xl.border {
+  background: transparent; border: 0; border-radius: 18px;
+}
+html[data-audience="adult"] [data-pwa-skin] #pwa-school-body .rounded-xl.border > .text-sm:first-child {
+  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--pwa-msg-muted);
+}
+html[data-audience="adult"] [data-pwa-skin] #pwa-school-body .bg-gray-800.rounded-lg {
+  background: var(--pwa-skin-muted-fill); border-radius: 14px;
+}
+html[data-audience="adult"] [data-pwa-skin] #pwa-school-body .bg-gray-800.rounded-lg:has(> [role="button"]) { min-height: 44px; }
+html[data-audience="adult"] [data-pwa-skin] #pwa-school-body .text-\[15px\] { font-size: 16px; font-weight: 600; }
+html[data-audience="adult"] [data-pwa-skin] #pwa-school-body > .flex:has(> [onclick^="pwaSchoolMode"]) {
+  gap: 6px; padding: 4px; border-radius: 14px; background: var(--pwa-skin-muted-fill); margin-bottom: 16px;
+}
+html[data-audience="adult"] [data-pwa-skin] #pwa-school-body [onclick^="pwaSchoolMode"] {
+  min-width: 0; min-height: 44px; padding: 8px 0; border-radius: 11px; font-size: 14px; font-weight: 600; color: var(--pwa-msg-muted);
+}
+html[data-audience="adult"] [data-pwa-skin] #pwa-school-body [onclick^="pwaSchoolMode"][aria-pressed="true"] {
+  background: var(--pwa-card-raised); color: var(--pwa-ink); box-shadow: 0 1px 4px rgba(31,29,43,.08);
+}
+html[data-audience="adult"] [data-pwa-skin] #pwa-school-body :is([data-add-task], [data-planner-snap]) { min-height: 44px; padding: 8px; }
+html[data-audience="adult"] [data-pwa-skin] #pwa-school-body .rounded.text-xs {
+  border: 0; border-radius: 999px; background: var(--pwa-skin-muted-fill); color: var(--pwa-ink); font-size: 12px; font-weight: 600;
+}
+/* The class builder uses inline course colours. Keep its pressed state, but
+   use the shared chip palette so every class name has readable contrast. */
+html[data-audience="adult"] [data-pwa-skin] #pwa-school-body [data-pill] {
+  background: var(--pwa-skin-muted-fill) !important; color: var(--pwa-ink) !important; border: 0 !important; opacity: 1;
+}
+html[data-audience="adult"] [data-pwa-skin] #pwa-school-body :is([data-pill], [data-big-pill])[aria-pressed="true"] {
+  background: var(--pwa-ink) !important; color: var(--pwa-card-raised) !important;
+}
+
+/* The critter editor and first-visit guide are full-screen panels, on the
+   pushed screens' sky wash. The preview SVGs and battle arena are untouched. */
+html[data-audience="adult"] [data-pwa-skin]:is(#pet-editor-panel, [x-data="petGuidePanel()"]) {
+  background: linear-gradient(180deg, var(--pwa-sky-top), var(--pwa-sky-mid) 42%, var(--pwa-sky-bottom));
+  padding: 0; border: 0; border-radius: 0; box-shadow: none;
+}
+html[data-audience="adult"] [data-pwa-skin]:is(#pet-editor-panel, [x-data="petGuidePanel()"]) :is(.text-emerald-300, .text-emerald-400, .text-blue-200) { color: var(--pwa-ink); }
+html[data-audience="adult"] [data-pwa-skin]:is(#pet-editor-panel, [x-data="petGuidePanel()"]) button.w-10 { min-width: 44px; height: 44px; }
+html[data-audience="adult"] [data-pwa-skin]#pet-editor-panel .pet-tabs button {
+  border: 0; border-radius: 999px; min-height: 44px; background: var(--pwa-skin-muted-fill); color: var(--pwa-ink); font-size: 12px; font-weight: 600;
+}
+html[data-audience="adult"] [data-pwa-skin]#pet-editor-panel .pet-tabs button[aria-pressed="true"] { background: var(--pwa-ink); color: var(--pwa-card-raised); }
+html[data-audience="adult"] [data-pwa-skin]#pet-editor-panel .pet-parts > button {
+  border: 0; border-radius: 16px; background: var(--pwa-skin-muted-fill); min-height: 44px;
+}
+html[data-audience="adult"] [data-pwa-skin]#pet-editor-panel .pet-parts > button.border-blue-500 { box-shadow: inset 0 0 0 2px var(--pwa-accent); }
+html[data-audience="adult"] [data-pwa-skin]#pet-editor-panel :is(.bg-emerald-900\/60, button.bg-emerald-700, button.bg-gray-800\/50) { background: var(--pwa-skin-muted-fill); color: var(--pwa-ink); border: 0; border-radius: 14px; }
+html[data-audience="adult"] [data-pwa-skin]#pet-editor-panel button.bg-emerald-700 { min-height: 44px; }
+html[data-audience="adult"] [data-pwa-skin]#pet-editor-panel .pet-choices button.w-8 { min-width: 44px; height: 44px; }
+html[data-audience="adult"] [data-pwa-skin]#pet-editor-panel .pet-footer { flex-wrap: wrap; }
+html[data-audience="adult"] [data-pwa-skin]#pet-editor-panel .pet-footer > button { flex-shrink: 0; }
+html[data-audience="adult"] [data-pwa-skin]#pet-editor-panel .pet-footer > button.flex-1 { min-width: 88px; background: var(--pwa-ink); color: var(--pwa-card-raised); }
+html[data-audience="adult"] [data-pwa-skin]#pet-editor-panel .pet-cancel { min-height: 44px; padding: 8px 14px; border: 0; border-radius: 14px; background: var(--pwa-skin-muted-fill); color: var(--pwa-ink); }
+html[data-audience="adult"] [data-pwa-skin][x-data="petGuidePanel()"] .pg-step { background: var(--pwa-card); border: 0; border-radius: var(--pwa-radius); padding: 16px; }
+html[data-audience="adult"] [data-pwa-skin][x-data="petGuidePanel()"] .pg-num { background: var(--pwa-skin-muted-fill); color: var(--pwa-ink); }
+html[data-audience="adult"] [data-pwa-skin][x-data="petGuidePanel()"] .bg-blue-950\/50 { background: var(--pwa-skin-muted-fill); border: 0; border-radius: 14px; }

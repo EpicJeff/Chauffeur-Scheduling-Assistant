@@ -185,7 +185,7 @@ tab (`pwaChildHouseTabs`, the child branches of `renderChores`,
 `renderHouseLists` for kids) is untouched.
 
 - **The cards are pure.** `pwaHouseholdCards(pwaHouseholdInputs())` ranks
-  Chores, Rewards, Tasks, Lists and Projects & programs by a score computed
+  Chores, Rewards, Tasks, Lists and Projects by a score computed
   only from the owning payloads (`choresData`, `/api/points`, `rewardsData`
   pools, pending redemptions, `/api/household-tasks` rows with their
   `past_due` / `due_today`, `houseLists[].open_count`, the `runs` field of
@@ -211,8 +211,8 @@ tab (`pwaChildHouseTabs`, the child branches of `renderChores`,
   `data-reward-group="balances|goals|redemptions"` wrappers for adults and a
   segment (`.pwa-seg[role=group] .pwa-seg-item[aria-pressed]`,
   `data-house-segment` on the body) shows one group; Rewards shows its
-  three groups without segments; Projects & programs has Projects /
-  Programs. The shared filters `choresMine()`, `choresAvailable()`,
+  three groups without segments; Projects is one list, no segments (slice
+  7, the user's ruling 2026-11-04). The shared filters `choresMine()`, `choresAvailable()`,
   `choresToCheck()` in app.html feed `renderChores`, the badge and the
   segment counts, so they cannot drift. `#chores-container.dataset.section`
   still mirrors the open screen (`tasks|reviews|rewards|lists|projects`)
@@ -418,10 +418,11 @@ Screenshot proof lives in `tests/test_pwa_plan_live.py`
   the avatar (Profile). Search lives in More and Messages; refresh, theme,
   switch person / sign out, notifications and the critter live in Profile.
   Kids keep their header.
-- **One door for Projects & programs.** Household for everyone with a
-  Household tab: adults through the Projects & programs card, kids of stage
+- **One door for Projects.** Household for everyone with a
+  Household tab: adults through the Projects card, kids of stage
   explorer / navigator / copilot through a Projects section in their House
-  tab (`#projects-container` adopted, their programs under it); More offers
+  tab (`#projects-container` adopted; since slice 7 no programs list under
+  it, see "Projects, one list"); More offers
   Projects and My programs only to people without that door (lists-only
   adults; Sprout keeps its own spot). Every project link on the phone goes
   through `chfPwaOpenProjects`. Library stays on More.
@@ -429,6 +430,62 @@ Screenshot proof lives in `tests/test_pwa_plan_live.py`
 Screenshot proof lives in `tests/test_pwa_drive_live.py` and
 `tests/test_projects_one_door_live.py` (`PWA_REVIEW_OUTPUT=1` writes
 `tests/probe_shots/pwa_slice6/`).
+
+#### More, a list; its destinations take the vocabulary (slice 7, v2.499.758)
+
+- **More is a list, not cards.** A 34 px "More" title, the lead in the muted
+  ink, a borderless search (the Messages field; its label `sr-only` for
+  adults, visible for kids), then rows: a 44 px icon tile on the raised card,
+  a 16 px title, ONE secondary line in `--pwa-msg-muted` that wraps (never an
+  ellipsis), a chevron (`.pwa-feature-chevron`), no separators, no fills.
+  Profile's sheet takes the same rows on `--pwa-card-raised`. The row skin is
+  keyed on `.pwa-feature:has(> .pwa-feature-icon)`, so the voice-setup
+  dialog's `.pwa-feature` buttons stay buttons. Kids keep their rows and
+  Sprout's grid; the chevron is hidden for them.
+- **A destination opts in with `data-pwa-skin`.** One adult map in
+  `pwa_shell.css` (`html[data-audience="adult"] [data-pwa-skin] ...`)
+  translates the shared components' Tailwind surfaces onto the tokens: the
+  host goes transparent (the wash shows), top-level cards become
+  `--pwa-card` at `--pwa-radius` with no border, a card inside a card becomes
+  the muted tile, `text-gray-400/500/600` become `--pwa-msg-muted`, small
+  `rounded-full` labels become 12 px pills, a coloured-fill button is the
+  ink primary (a selected chip too), gray buttons the muted secondary,
+  `rounded-full` buttons stay round, destructive red text keeps
+  `--pwa-skin-danger` (`#a61b2b` light, `#ffb4b4` dark), inputs go
+  borderless on `--pwa-msg-soft`, titles 34 px / 700. The map canvas
+  (`#family-map` and its subtree) is excluded. The marker sits on the
+  phone's hosts (`#projects-container`, `#library-container`,
+  `#music-container`, `#map-container` in `app.html`; the adult School sheet
+  built in `pwa_school.js`; `#pet-editor-panel`; the critter guide), never
+  in a component's shared markup except where the component IS the phone
+  surface (the two critter panels); `pwa_shell.css` is linked only by
+  `app.html`, so admin pages, the wall and kids cannot pick it up. The next
+  destination is one attribute plus its exceptions.
+- **The exceptions.** Music: the widget's outer card dissolves, now-playing
+  is the one raised card (`--pwa-card-raised` + an accent shadow), play /
+  pause the 48 px ink circle, lists are card groups without hairlines, and
+  the page gets a heading ("Music"). The map stays full-bleed with no title;
+  its zone-only chips are raised pills over it. School: the adult sheet is
+  the raised surface, rows are muted tiles, Agenda / Month the Household
+  segmented control; a task's detail (`_pwaModal`) opens above it in slice
+  0's sheet skin. The critter editor and its first-visit guide are
+  full-screen panels, so they sit on the wash (the pushed screens'
+  gradient), not on a rounded card; the art and the battle arena are not
+  restyled.
+- **Contrast is measured.** `tests/pwa_vocab_checks.py` `check_skin`
+  composites every ancestor's background over the wash and fails any
+  visible text under 4.5:1, light and dark, 360 and 390 wide; a new
+  destination's live test calls it rather than listing classes.
+- **Projects, one list (the user's ruling 2026-11-04).** The Household card
+  is "Projects" and opens the projects list with no Programs tab; a program
+  is reached through its project (the piece sheet carries Coming up, Done
+  when, did-it-happen, Add a session). The card's line, lead and
+  next-session pill still read the household's programs. Kids' House
+  Projects section has the same cut (My Day keeps their programs). The
+  Program Library stays in More.
+
+Screenshot proof lives in `tests/test_pwa_more_live.py`
+(`PWA_REVIEW_OUTPUT=1` writes `tests/probe_shots/pwa_slice7/`).
 
 Admin dialogs with a body that can grow (the schedule page's event dialog,
 `dashboard.html` `#event-modal`; the calendar's, `family_calendar.html`

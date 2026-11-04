@@ -506,7 +506,7 @@ function petEditorPanel() {
 }
 </script>
 
-<div id="pet-editor-panel" x-data="petEditorPanel()" x-cloak x-show="show"
+<div id="pet-editor-panel" data-pwa-skin x-data="petEditorPanel()" x-cloak x-show="show"
      @keydown.escape.prevent.stop="close()"
      @keydown.tab="trapFocus($event)"
      @pet-editor-open.window="open($event.detail)"
