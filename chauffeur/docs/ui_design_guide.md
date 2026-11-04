@@ -257,6 +257,68 @@ tab (`pwaChildHouseTabs`, the child branches of `renderChores`,
 Screenshot proof lives in `tests/test_pwa_household_live.py`
 (`PWA_REVIEW_OUTPUT=1` writes `tests/probe_shots/pwa_slice3/`).
 
+#### Messages, Signal's list and Messenger's thread (slice 4, v2.499.755)
+
+The adult Messages tab is a list with no cards and no separators, and a
+thread is a pushed screen. `static/pwa_messages.js` owns the adult parts;
+kids share `#messages-container`, `#channel-list`, `#thread-view` and every
+handler and render exactly as before (their look is untouched).
+
+- **The rows are pure.** `pwaConversationRows(channelsData, ctx)` groups
+  the `/api/channels` payload into Pinned (the family channel, then Argyle:
+  the DM whose `member_ids` holds `argyle`, or a synthetic row whose tap is
+  `pwaOpenArgyle` when `pwaOrbAllowed()`) and Chats (the server's order).
+  Names, colours, avatars and attachment words enter only through the ctx
+  callbacks (`channelDisplay`, `momentPreviewLabel`); `pwaTimeLabel` is the
+  clock (`h:mm` today, Yesterday, a short weekday within six days, `Oct 28`,
+  `Oct 31, 2025`); unread is a dot (one) or a count (more), with a
+  screen-reader ", N unread". `pwaRenderConversations()` paints
+  `.pwa-conv-label` + `button.pwa-conv[data-channel]` rows as DIRECT children
+  of `#channel-list` (the search filter and the kid check depend on it);
+  a label shows only with rows.
+- **The header is in the page.** `h1.pwa-msg-title` (34px) replaces the
+  `#pwa-page-heading` entry for Messages; the presence stack, the camera
+  (`#messages-add-moment`, adults only: a `promptChoice` over the event
+  threads, one goes straight through, none says to start from the event;
+  the thread opens with the picker pulsing) and New chat
+  (`#messages-new-chat`) are 36px circles with 44px hit areas. The Moments
+  row keeps `loadMomentsStrip` and its tap-through; adults get rings and an
+  "Add" ring first when an event thread exists; the row is absent with no
+  moments.
+- **A thread adopts, never re-renders.** For an adult, `openChannel` pushes
+  `PwaNav.push({id: 'thread'})` and MOVES `#thread-view` into the screen
+  body under `pwaThreadHead(c)` (a 38px avatar and the member line: the
+  other household members' first names for the family, the other members
+  for a group, the day for an event thread, "Ask anything · every exchange
+  lands here" for Argyle); `closeThread` pops and `onPop` runs
+  `pwaThreadRestore()` (voice stopped, state reset, staging cleared, any
+  lightbox closed, the node back after `#channel-list`, hidden, the list
+  refetched). Hardware Back, the Messages tab's own tap and a tab change all
+  go through the same restore. Re-entrancy: the same channel on top is a
+  no-op (the voice door calls `setView('messages')` + `openChannel` on every
+  turn and must not kill its own turn); a different channel reuses the one
+  screen. Kids keep the absolute overlay and no history entry.
+- **The skin is CSS over the builders' classes** (`static/pwa_shell.css`
+  under `html[data-audience="adult"]`): theirs `rgba(31,29,43,.06)` 20px
+  radius with `.pwa-who` above, mine the accent (dark ink on the accent in
+  dark mode), `.pwa-day` centred, photos 16px radius, Argyle's `renderCard`
+  boxes white with a 1px border and pill buttons, reactions and the ⋯ row
+  dimmed to 60% (never the time), the compose row `+` / the field / the mic
+  only where `ChauffeurPhoneVoice.visibility()` shows it / `#thread-send`
+  only while `#thread-form.has-text` (or `has-attachment`). Times, names
+  and day markers use the muted ink, never the faint one: 4.5:1 is the
+  rule, the mockup's faint grey was not.
+- **The overlay's carry-forwards** (`static/pwa_argyle.js`): a swipe down
+  closes only from the dim or from a reply scrolled to its top (`dy >= 60`,
+  vertical by 2:1); `button.pwa-argyle-dismiss` sits before the input for
+  assistive technology; a landed reply calls `refreshTodaySurfaces(true)`
+  once per message id + card state.
+- **Never** draw a second copy of `#thread-view`, route a thread through
+  `setView`, stack a second thread screen, or restyle the kid list.
+
+Screenshot proof lives in `tests/test_pwa_messages_live.py`
+(`PWA_REVIEW_OUTPUT=1` writes `tests/probe_shots/pwa_slice4/`).
+
 Admin dialogs with a body that can grow (the schedule page's event dialog,
 `dashboard.html` `#event-modal`; the calendar's, `family_calendar.html`
 `#modal-content-container`) are chrome: a `flex flex-col max-h-[90vh]

@@ -412,9 +412,10 @@ function typeAndSubmit(w, text) {
   send.click();          // the real submit path: an unprevented submit logs a jsdom "Not implemented"
 }
 
-function touch(w, el, type, y) {
+function touch(w, el, type, y, x) {
+  x = x === undefined ? 200 : x;
   const e = new w.Event(type, { bubbles: true, cancelable: true });
-  const pt = [{ identifier: 0, target: el, clientX: 200, pageX: 200, screenX: 200, clientY: y, pageY: y, screenY: y }];
+  const pt = [{ identifier: 0, target: el, clientX: x, pageX: x, screenX: x, clientY: y, pageY: y, screenY: y }];
   const list = type === 'touchend' ? [] : pt.slice();
   const withItem = a => Object.assign(a, { item: i => a[i] || null });
   Object.defineProperty(e, 'touches', { value: withItem(list) });
@@ -636,6 +637,100 @@ const RUN = {
     await flush();
     return { said, errors: ctx.errors };
   },
+  async swipe_ignores_a_scrolling_reply() {
+    const { w, ctx } = fresh();
+    w.PwaArgyle.open({ mode: 'type' });
+    await flush();
+    typeAndSubmit(w, ASK_TEXT);
+    await flush();
+    ctx.messages = [
+      { id: 'm3', sender_member_id: 'parent', body: ASK_TEXT },
+      { id: 'm4', sender_member_id: 'argyle', body: REPLY_TEXT },
+    ];
+    w.PwaArgyle.onStream('dm_argyle');
+    await flush();
+    const body = q(w, '.pwa-argyle-ask .pwa-argyle-reply-body');
+    const reply = q(w, '.pwa-argyle-ask .pwa-argyle-reply');
+    const dim = q(w, '.pwa-argyle-dim');
+    const ask = q(w, '.pwa-argyle-ask');
+    // jsdom has no layout: make the reply's containers scrollers by every sign.
+    const tops = {};
+    const scroller = (el, key) => {
+      tops[key] = 0;
+      Object.defineProperty(el, 'scrollTop', { configurable: true, get: () => tops[key], set: v => { tops[key] = v; } });
+      Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => 400 });
+      Object.defineProperty(el, 'clientHeight', { configurable: true, get: () => 100 });
+      el.style.overflowY = 'auto';
+    };
+    scroller(body, 'body'); scroller(reply, 'reply');
+    const setTop = v => { tops.body = v; tops.reply = v; };
+    const gesture = async (name, from, startTop, endTop, dy, dx) => {
+      setTop(startTop);
+      touch(w, from, 'touchstart', 500, 200);
+      setTop(endTop);
+      touch(w, from, 'touchend', 500 + dy, 200 + dx);
+      await flush(250);
+      const r = { name, ...lite(w) };
+      if (!r.isOpen) { w.PwaArgyle.open({ mode: 'type' }); await flush(); }
+      return r;
+    };
+    const steps = [];
+    steps.push(await gesture('scrolled_reply', body, 40, 40, 100, 0));
+    steps.push(await gesture('top_reply', body, 0, 0, 100, 0));
+    steps.push(await gesture('scrolled_during', body, 0, 40, 100, 0));
+    steps.push(await gesture('diagonal', ask, 0, 0, 80, 60));
+    steps.push(await gesture('on_dim', dim, 0, 0, 100, 0));
+    return { steps, errors: ctx.errors };
+  },
+  async dismiss_control_closes_and_returns_focus() {
+    const { w, ctx } = fresh();
+    const orb = w.document.getElementById('tab-argyle');
+    orb.focus();
+    w.PwaArgyle.open({ mode: 'type', keyboard: true, via: 'keyboard' });
+    await flush();
+    const btn = q(w, 'button.pwa-argyle-dismiss');
+    const input = q(w, 'form.pwa-argyle-bar input.pwa-argyle-input');
+    const info = {
+      exists: !!btn, label: btn ? btn.getAttribute('aria-label') : null, type: btn ? btn.getAttribute('type') : null,
+      before_input: !!(btn && input && (btn.compareDocumentPosition(input) & w.Node.DOCUMENT_POSITION_FOLLOWING)),
+      hidden: btn ? hiddenish(btn) : null, text: btn ? btn.textContent : null,
+      focusableByTab: btn ? btn.tabIndex >= 0 : null,
+    };
+    info.hint = txt(q(w, '.pwa-argyle-hint'));
+    if (btn) btn.click();
+    await flush(250);
+    return { info, closed: lite(w), focusIsOrb: w.document.activeElement === orb, errors: ctx.errors };
+  },
+  async reply_refreshes_today_once() {
+    const { w, ctx } = fresh();
+    const calls = [];
+    w.refreshTodaySurfaces = (quiet) => { calls.push(quiet === undefined ? '__undefined__' : quiet); };
+    w.PwaArgyle.open({ mode: 'type' });
+    await flush();
+    typeAndSubmit(w, ASK_TEXT);
+    await flush();
+    const afterSend = calls.slice();
+    ctx.messages = [
+      { id: 'm3', sender_member_id: 'parent', body: ASK_TEXT },
+      { id: 'm4', sender_member_id: 'argyle', body: REPLY_TEXT, card: { kind: 'ask', ask_id: 'a1' } },
+    ];
+    w.PwaArgyle.onStream('dm_argyle');
+    await flush();
+    const afterReply = calls.slice();
+    w.PwaArgyle.onStream('dm_argyle');
+    await flush();
+    await w.PwaArgyle.pull();
+    await flush();
+    const btn = q(w, '.pwa-argyle-reply-card button');
+    if (btn) btn.click();
+    await flush(450);
+    const afterRepulls = calls.slice();
+    ctx.messages = ctx.messages.concat([{ id: 'm5', sender_member_id: 'argyle', body: 'And she can stay for dinner.' }]);
+    w.PwaArgyle.onStream('dm_argyle');
+    await flush();
+    const afterNew = calls.slice();
+    return { afterSend, afterReply, afterRepulls, afterNew, errors: ctx.errors };
+  },
 };
 
 (async () => {
@@ -652,7 +747,9 @@ const RUN = {
 
 CASES = ['open_builds_chrome', 'send_posts_to_the_dm', 'pull_draws_the_reply_and_card',
          'closed_overlay_ignores_events', 'dismissals', 'refusal_shows_detail', 'send_ignores_empty',
-         'voice_turn_never_draws_an_old_reply', 'host_labels_are_the_overlays_own']
+         'voice_turn_never_draws_an_old_reply', 'host_labels_are_the_overlays_own',
+         'swipe_ignores_a_scrolling_reply', 'dismiss_control_closes_and_returns_focus',
+         'reply_refreshes_today_once']
 
 _RESULT = {}
 
@@ -910,6 +1007,49 @@ def scenario_host_labels_are_the_overlays_own():
     check(said[0]['waveHidden'] is False, f"'listening' shows the wave: {said[0]}")
 
 
+def scenario_swipe_ignores_a_scrolling_reply():
+    """A downward drag that starts inside a scrolled reply is the reply
+    scrolling back up, not a dismissal. Close only when dy >= 60, |dy| > 2|dx|
+    and no scroller under the finger was scrolled (at start or at the end)."""
+    r = _case('swipe_ignores_a_scrolling_reply')
+    if r is None:
+        return
+    s = {x['name']: x for x in r['steps']}
+    check(s['scrolled_reply']['isOpen'], "a 100 px drag starting inside a reply scroller at scrollTop 40 must NOT close the overlay")
+    check(not s['top_reply']['isOpen'], "the same drag with the reply scroller at scrollTop 0 closes the overlay")
+    check(s['scrolled_during']['isOpen'], "a scroller at 0 at touchstart but at 40 at touchend (the drag scrolled it) must NOT close")
+    check(s['diagonal']['isOpen'], "a diagonal drag (dy 80, dx 60) breaks |dy| > 2|dx| and must NOT close")
+    check(not s['on_dim']['isOpen'], "a swipe down starting on .pwa-argyle-dim always closes")
+
+
+def scenario_dismiss_control_closes_and_returns_focus():
+    r = _case('dismiss_control_closes_and_returns_focus')
+    if r is None:
+        return
+    i = r['info']
+    check(i['exists'], "the overlay has no button.pwa-argyle-dismiss")
+    check(i['label'] == 'Dismiss' and i['type'] == 'button', f"the dismiss control is type=button aria-label=Dismiss: {i}")
+    check(i['hidden'] is False and i['focusableByTab'], f"the dismiss control is visible and in the tab order: {i}")
+    check((i['text'] or '').strip() in ('\u00d7', 'x', 'X'), f"the dismiss control shows a multiplication sign: {i['text']!r}")
+    check(i['before_input'], "the dismiss control precedes input.pwa-argyle-input in DOM order (tab order)")
+    check((i['hint'] or '').startswith(HINT), f"the hint keeps 'Swipe down to dismiss', got {i['hint']!r}")
+    c = r['closed']
+    check(c['hidden'] is True and c['isOpen'] is False, f"activating the dismiss control closes the overlay: {c}")
+    check(r['focusIsOrb'], "a keyboard-opened overlay closed by the dismiss control returns focus to #tab-argyle")
+
+
+def scenario_reply_refreshes_today_once():
+    """When a reply lands in the overlay, My Day and Plan must hear of it:
+    window.refreshTodaySurfaces(true) once per reply message id."""
+    r = _case('reply_refreshes_today_once')
+    if r is None:
+        return
+    check(r['afterSend'] == [], f"sending alone refreshes nothing, got {r['afterSend']}")
+    check(r['afterReply'] == [True], f"a landed reply calls refreshTodaySurfaces(true) exactly once, got {r['afterReply']}")
+    check(r['afterRepulls'] == [True], f"a re-pull of the same reply (stream, pull(), card-tap re-pull) does not call again, got {r['afterRepulls']}")
+    check(r['afterNew'] == [True, True], f"a NEW reply (new message id) calls once more, got {r['afterNew']}")
+
+
 # --- the skin (source) -------------------------------------------------------
 
 def _rules(css):
@@ -987,6 +1127,9 @@ SCENARIOS = [
     scenario_voice_turn_never_draws_an_old_reply,
     scenario_host_labels_are_the_overlays_own,
     scenario_focus_ring_follows_the_pill,
+    scenario_swipe_ignores_a_scrolling_reply,
+    scenario_dismiss_control_closes_and_returns_focus,
+    scenario_reply_refreshes_today_once,
 ]
 
 if __name__ == "__main__":

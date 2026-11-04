@@ -203,10 +203,16 @@ def check_orb(page, key, role, dm_posts=None):
     page.locator('#pwa-argyle-overlay .pwa-argyle-to-messages').click()
     page.wait_for_function("activeChannelId && threadChannel && threadChannel.member_ids.includes('argyle')")
     assert not overlay.is_visible(), 'the overlay stayed over the Argyle thread'
+    # Slice 4: the thread is a pushed screen (it adopts #thread-view).
+    try: page.wait_for_function("PwaNav.depth() === 1 && !!document.querySelector('#pwa-stack .pwa-screen h1')", timeout=6000)
+    except Exception: pass
+    assert page.evaluate('PwaNav.depth()') == 1, ('the Argyle thread is not a pushed screen', page.evaluate('PwaNav.depth()'))
+    assert ' '.join(page.locator('#pwa-stack .pwa-screen h1').last.inner_text().split()) == 'Argyle'
     try: orb.wait_for(state='hidden', timeout=2000)
     except Exception: pass
     assert not orb.is_visible(), 'the orb covers the composer'
     page.evaluate('closeThread()')   # app.html:6481
+    page.wait_for_function('PwaNav.depth() === 0', timeout=6000)
     page.wait_for_function(orb_back)
     page.evaluate('v => setView(v)', view)
 
@@ -461,6 +467,11 @@ def run():
                         assert page.evaluate('activeDateIndex') == 1
                         page.locator('#pwa-date-strip button').first.click()
                         page.locator('#tab-messages').click()
+                        # Slice 4: Signal's list, Pinned (Family first) then Chats.
+                        page.wait_for_selector('#channel-list .pwa-conv-label', timeout=8000)
+                        labels = [' '.join(t.split()) for t in page.locator('#channel-list .pwa-conv-label').all_text_contents()]
+                        assert labels == ['Pinned', 'Chats'], labels
+                        assert page.locator('#channel-list > button.pwa-conv').first.get_attribute('data-channel') == 'family'
                         page.get_by_role('searchbox', name='Find a conversation').fill('School')
                         assert page.locator('#channel-list > button:visible').count() == 1
                         page.get_by_role('searchbox', name='Find a conversation').fill('')

@@ -189,6 +189,7 @@ function pwaSyncShell() {
     const adult = pwaIsAdult();
     document.documentElement.dataset.audience = adult ? 'adult' : 'child';
     document.documentElement.dataset.pwaView = currentView;
+    document.getElementById('messages-add-moment').style.display = currentMemberRole() === 'guest' ? 'none' : '';
     if (pwaSyncShell.member !== selectedMemberId) {
         pwaSyncShell.member = selectedMemberId;
         pwaDatesExpanded = false;
@@ -466,7 +467,6 @@ function pwaPageHeading() {
         family: ['Family plan', 'Everyone’s day, with the details that matter.'],
         myday: ['Your day', 'Your commitments, with room to plan ahead.'],
         chores: ['Household', 'The work, the lists, and who’s doing what.'],
-        messages: ['Messages', 'Your conversations and family updates.'],
     };
     host.hidden = !adult || !names[currentView];
     if (!host.hidden) {
@@ -596,7 +596,12 @@ function pwaSelectHouse(section) {
     else if (['rewards', 'lists', 'projects'].includes(section)) pwaOpenHouseScreen(section);
 }
 function pwaFilterConversations(query) {
+    const term = query.trim().toLocaleLowerCase();
     document.querySelectorAll('#channel-list > button').forEach(button => {
-        button.hidden = !button.textContent.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
+        const name = button.querySelector('.pwa-conv-name')?.cloneNode(true);
+        name?.querySelector('.pwa-conv-time')?.remove();
+        const text = name ? `${name.textContent} ${button.querySelector('.pwa-conv-preview')?.textContent || ''}` : button.textContent;
+        button.hidden = !text.toLocaleLowerCase().includes(term);
     });
+    document.querySelectorAll('#channel-list .pwa-conv-label').forEach(label => { label.hidden = !!term; });
 }

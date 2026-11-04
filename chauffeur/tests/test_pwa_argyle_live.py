@@ -471,10 +471,23 @@ def to_messages(page, key, calls):
     assert threads_argyle(page)
     assert len(calls['dm']) >= posts
     assert_closed_only(page)
+    # Slice 4: the Argyle thread is a screen pushed over the Messages list
+    # (it adopts #thread-view); Back returns to the list.
+    settle(page, "PwaNav.depth() === 1 && !!document.querySelector('#pwa-stack .pwa-screen h1')")
+    assert page.evaluate('PwaNav.depth()') == 1, 'the Argyle thread is not a pushed screen'
+    assert norm(page.locator('#pwa-stack .pwa-screen h1').last.inner_text()) == 'Argyle'
+    assert page.evaluate("!!document.getElementById('thread-view').closest('#pwa-stack')"), \
+        '#thread-view was not adopted into the pushed screen'
+    assert page.evaluate('currentView') == 'messages', page.evaluate('currentView')
     try: page.locator('#tab-argyle').wait_for(state='hidden', timeout=2000)
     except Exception: pass
     assert not page.locator('#tab-argyle').is_visible(), 'the orb covers the composer'
-    page.evaluate('closeThread()')   # app.html:6481
+    page.locator('#pwa-stack .pwa-screen .pwa-back').last.click()
+    page.wait_for_function('PwaNav.depth() === 0')
+    assert page.evaluate('currentView') == 'messages', page.evaluate('currentView')
+    assert page.locator('#channel-list').is_visible(), 'Back did not return to the Messages list'
+    assert not page.locator('#thread-view').is_visible(), 'the thread stayed up after Back'
+    assert page.evaluate('activeChannelId') is None, page.evaluate('activeChannelId')
     page.wait_for_function(ORB_BACK)
     page.evaluate('v => setView(v)', view)
     page.wait_for_function('v => currentView === v', arg=view)

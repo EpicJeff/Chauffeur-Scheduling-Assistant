@@ -98,6 +98,12 @@ def scenario_yesterdays_event_takes_a_moment():
                 "getComputedStyle(document.getElementById('thread-view')).display !== 'none'",
                 timeout=10000)
             page.wait_for_timeout(400)
+            # Slice 4: an adult's thread is a PwaNav screen that adopts
+            # #thread-view (kids keep the overlay in #messages-container).
+            check(page.evaluate("PwaNav.depth()") == 1,
+                  "an adult's thread is a pushed screen: depth %r" % page.evaluate("PwaNav.depth()"))
+            check(page.evaluate("!!document.getElementById('thread-view').closest('#pwa-stack')"),
+                  '#thread-view now lives inside #pwa-stack')
             title = page.evaluate("document.getElementById('thread-title').textContent")
             check('Soccer game' in title, "the tap opens the game's thread: %r" % title)
             ch = [c for c in storage.chat_channels_table.all() if c.get('kind') == 'event']

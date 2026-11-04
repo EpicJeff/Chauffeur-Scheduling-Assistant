@@ -32,6 +32,7 @@ function pwaArgyleNewestReply(messages, afterId, argyleId) {
     'use strict';
     const ARGYLE_ID = 'argyle';
     const channels = new Map();
+    const refreshedReplies = new Set();
     let overlay, opened = false, member = null, id = null, epoch = 0, turn = 0;
     let state = 'idle', pwaArgyleAfterId = null, replyId = null, replyCard = null, timer = null;
     let refused = false, voiceLive = false, sending = false, streamPending = false;
@@ -62,6 +63,7 @@ function pwaArgyleNewestReply(messages, afterId, argyleId) {
         overlay.className = 'pwa-argyle';
         overlay.hidden = true;
         overlay.innerHTML = '<div class="pwa-argyle-dim"></div><div class="pwa-argyle-glow"></div>'
+            + '<button class="pwa-argyle-dismiss" type="button" aria-label="Dismiss">×</button>'
             + '<div class="pwa-argyle-ask"><div class="pwa-argyle-wave" hidden aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>'
             + '<div class="pwa-argyle-you"></div><div class="pwa-argyle-reply" hidden>'
             + '<div class="pwa-argyle-reply-body"></div><div class="pwa-argyle-reply-card"></div></div>'
@@ -71,6 +73,7 @@ function pwaArgyleNewestReply(messages, afterId, argyleId) {
             + (typeof ArgyleOrb !== 'undefined' ? ArgyleOrb.glyph() : '') + '</button></form>'
             + '<div class="pwa-argyle-hint">Swipe down to dismiss · <button type="button" class="pwa-argyle-to-messages">full conversation in Messages</button></div></div>';
         document.body.appendChild(overlay);
+        q('dismiss').addEventListener('click', () => close('dismiss'));
         q('dim').addEventListener('click', () => {
             if (performance.now() - openedAt >= 400) close('dim');
         });
@@ -97,13 +100,30 @@ function pwaArgyleNewestReply(messages, afterId, argyleId) {
             if (owner !== selectedMemberId) return;
             pwaOpenArgyle();
         });
-        let touchY = null;
-        q('ask').addEventListener('touchstart', event => { touchY = event.touches[0]?.clientY ?? null; }, {passive: true});
-        q('ask').addEventListener('touchcancel', () => { touchY = null; });
-        q('ask').addEventListener('touchend', event => {
-            const end = event.changedTouches[0]?.clientY;
-            if (touchY !== null && end - touchY >= 60) close('swipe');
-            touchY = null;
+        let touch = null;
+        overlay.addEventListener('touchstart', event => {
+            touch = null;
+            if (event.touches.length !== 1) return;
+            const point = event.touches[0];
+            let scroller = null;
+            for (let node = event.target; node && node !== overlay; node = node.parentElement) {
+                if (!q('ask').contains(node)) continue;
+                const overflow = getComputedStyle(node).overflowY;
+                if ((overflow === 'auto' || overflow === 'scroll') && node.scrollHeight > node.clientHeight) {
+                    scroller = node;
+                    break;
+                }
+            }
+            touch = {x: point.clientX, y: point.clientY, scroller, top: scroller?.scrollTop || 0};
+        }, {passive: true});
+        overlay.addEventListener('touchcancel', () => { touch = null; });
+        overlay.addEventListener('touchend', event => {
+            const start = touch, end = event.changedTouches[0];
+            touch = null;
+            if (!start || !end) return;
+            const dy = end.clientY - start.y, dx = end.clientX - start.x;
+            if (dy >= 60 && Math.abs(dy) > 2 * Math.abs(dx)
+                    && (!start.scroller || (start.top <= 0 && start.scroller.scrollTop <= 0))) close('swipe');
         }, {passive: true});
         document.addEventListener('keydown', event => {
             if (opened && event.key === 'Escape' && !event.defaultPrevented
@@ -246,16 +266,17 @@ function pwaArgyleNewestReply(messages, afterId, argyleId) {
     }
     function close(reason, {keepHistory = false} = {}) {
         if (!opened) return;
+        const returnFocus = restoreOrbFocus || overlay.contains(document.activeElement);
         opened = false; epoch++; turn++;
         clearTimeout(timer); timer = null;
         if (voiceLive && typeof ChauffeurPhoneVoice !== 'undefined') ChauffeurPhoneVoice.stop(false);
         voiceLive = false; talkPending = false; sending = false; streamPending = false;
-        overlay.hidden = true;
         delete document.documentElement.dataset.pwaArgyle;
+        fab();
+        if (returnFocus) document.getElementById('tab-argyle')?.focus();
+        overlay.hidden = true;
         q('you').textContent = ''; clearReply(); setState('idle');
         if (!keepHistory && reason !== 'back' && history.state?.pwaOverlay === 'argyle') history.back();
-        fab();
-        if (restoreOrbFocus) document.getElementById('tab-argyle')?.focus();
         restoreOrbFocus = false;
     }
     async function send(text) {
@@ -313,7 +334,7 @@ function pwaArgyleNewestReply(messages, afterId, argyleId) {
             if (voicePending()) return;
             const message = pwaArgyleNewestReply(messages, pwaArgyleAfterId, ARGYLE_ID);
             if (!message) return;
-            const card = JSON.stringify(message.card);
+            const card = JSON.stringify(message.card || null);
             if (message.id === replyId && card === replyCard) return;
             q('reply-body').textContent = message.body || '';
             q('reply-card').innerHTML = message.card && typeof renderCard === 'function' ? renderCard(message.card) : '';
@@ -322,6 +343,13 @@ function pwaArgyleNewestReply(messages, afterId, argyleId) {
             replyCard = card;
             clearTimeout(timer); timer = null;
             if (state !== 'speaking') setState('idle');
+            // A card answer rewrites the same message. Refresh each drawn card
+            // state once, including replies pulled by the voice host.
+            const refreshKey = message.id + '|' + card;
+            if (!refreshedReplies.has(refreshKey)) {
+                refreshedReplies.add(refreshKey);
+                window.refreshTodaySurfaces?.(true);
+            }
         } catch (_) {
             if (live(generation) && request === turn) setState('error', 'Could not reach Argyle');
         }

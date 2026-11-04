@@ -115,6 +115,7 @@
     <script defer src="{{ 'static/pwa_nav.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_myday.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_household.js'|ver }}"></script>
+    <script defer src="{{ 'static/pwa_messages.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_argyle.js'|ver }}"></script>
     <link rel="stylesheet" href="{{ 'static/argyle_orb.css'|ver }}">
     <script defer src="{{ 'static/argyle_orb.js'|ver }}"></script>
@@ -339,17 +340,21 @@
             <label class="pwa-adult-only pwa-conversation-search"><span class="sr-only">Find a conversation</span><input type="search" placeholder="Find a conversation" oninput="pwaFilterConversations(this.value)"></label>
             <div class="flex items-center justify-between px-4 pt-4 pb-1 shrink-0 relative">
                 <div class="text-lg font-bold text-gray-100">Messages</div>
+                <h1 class="pwa-adult-only pwa-msg-title">Messages</h1>
                 <div class="flex items-center gap-3">
                     <!-- Online-now avatar stack (Google-Docs style); tap for the
                          full roster flyout with offline members dimmed -->
                     <button id="presence-stack" onclick="togglePresenceFlyout(event)" title="Who's online"
                         class="flex items-center" style="display:none"></button>
-                    <button onclick="openNewChat()" title="New chat"
+                    <button type="button" id="messages-add-moment" class="pwa-adult-only" aria-label="Add a moment" onclick="pwaAddMoment()">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/></svg>
+                    </button>
+                    <button id="messages-new-chat" onclick="openNewChat()" title="New chat" aria-label="New chat"
                         class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-600 active:bg-blue-700 text-white text-sm font-bold">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"></path>
                         </svg>
-                        New chat
+                        <span>New chat</span>
                     </button>
                 </div>
                 <div id="presence-flyout"
@@ -399,6 +404,7 @@
                         </svg>
                     </button>
                     <input id="thread-input" type="text" autocomplete="off" placeholder="Message..."
+                        oninput="pwaSyncCompose()"
                         class="flex-1 min-w-0 bg-gray-800 border border-gray-600 rounded-full px-4 py-2.5 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500">
                     <button type="button" id="phone-voice-mic" onclick="ChauffeurPhoneVoice.start()" aria-label="Talk to Argyle"
                             style="display:none;min-width:44px;min-height:44px"
@@ -407,8 +413,8 @@
                             <rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/>
                         </svg>
                     </button>
-                    <button type="submit"
-                        class="bg-blue-600 active:bg-blue-700 text-white font-bold px-5 py-2.5 rounded-full shrink-0">Send</button>
+                    <button type="submit" id="thread-send" aria-label="Send"
+                        class="bg-blue-600 active:bg-blue-700 text-white font-bold px-5 py-2.5 rounded-full shrink-0"><span>Send</span><svg class="pwa-adult-only" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 12 6-6 6 6M12 6v13"/></svg></button>
                 </form>
                 <div id="phone-voice-panel" class="hidden bg-gray-900 px-3 pb-3 text-sm text-gray-200">
                     <p id="phone-voice-status" role="status" aria-live="polite"></p>
@@ -496,7 +502,7 @@
                 </svg>
                 <span class="text-xs font-bold tracking-wide">Family</span>
             </button>
-            <button id="tab-messages" onclick="setView('messages')"
+            <button id="tab-messages" onclick="currentView === 'messages' && PwaNav.depth() ? PwaNav.pop() : setView('messages')"
                 class="flex-1 flex flex-col items-center gap-0.5 pt-2.5 pb-2 text-gray-500 transition-colors relative">
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round"
@@ -871,6 +877,9 @@
         function setView(view, focusMemberId = null) {
             if (view === 'drives' && ['parent', 'adult'].includes(currentMemberRole())) view = 'myday';
             const clearOverlay = window.PwaArgyle?.isOpen() && window.PwaNav?.depth() > 0;
+            // The thread mic re-enters Messages on every voice turn. Leave its
+            // adopted screen (and the live turn) in place on that same-view door.
+            if (view === 'messages' && view === currentView && !focusMemberId && !clearOverlay) return;
             if (view !== currentView || clearOverlay) window.PwaArgyle?.close('view', {keepHistory: clearOverlay});
             if (pwaHouseActive) pwaHouseActive.clearing = true;
             window.PwaNav?.clear({extra: clearOverlay ? 1 : 0, restoreFocus:false});
@@ -4588,6 +4597,7 @@
         let messagesStream = null;
         let threadMessages = [];      // last rendered thread, for the lightbox
         let momentsStripData = [];    // 📸 strip rows, for moments not in-thread
+        let pwaThreadNode = null;      // survives PwaNav removing its section before onPop
 
         function connectMessagesStream() {
             if (!selectedMemberId) return;
@@ -4812,8 +4822,8 @@
                 momentsStripData = moments;
                 const strip = document.getElementById('moments-strip');
                 const row = document.getElementById('moments-strip-row');
-                if (!moments.length) { strip.style.display = 'none'; return; }
-                row.innerHTML = moments.map(m => {
+                if (!moments.length) { row.replaceChildren(); strip.style.display = 'none'; return; }
+                row.innerHTML = (pwaIsAdult() ? pwaAddMomentRing() : '') + moments.map(m => {
                     // By-URL + lazy, and always a still (clips carry a poster
                     // frame) so the strip stays cheap however many exist.
                     const poster = `${apiBase}${String(m.poster_url || m.media_url || '').replace(/^\//, '')}`;
@@ -4821,6 +4831,8 @@
                     const media = `<img src="${poster}" loading="lazy" data-fallback="${full}"
                         onerror="momentThumbFallback(this)" class="w-full h-full object-cover">`
                         + (m.kind === 'video' ? playBadge(true) : '');
+                    if (pwaIsAdult()) return `<button type="button" class="pwa-mo" onclick="openMomentFromStrip('${m.channel_id}','${m.id}')">
+                        <span class="ring"><i>${media}</i></span><span>${mfEscape(m.event_title)}</span></button>`;
                     return `<button onclick="openMomentFromStrip('${m.channel_id}','${m.id}')"
                         class="relative w-20 h-20 rounded-xl overflow-hidden border border-pink-900/60 shrink-0">
                         ${media}
@@ -4840,6 +4852,7 @@
         }
 
         function renderChannelList() {
+            if (pwaIsAdult()) return pwaRenderConversations();
             const list = document.getElementById('channel-list');
             if (!list) return;
             if (!channelsData.length) {
@@ -4876,8 +4889,10 @@
         // (tapping a thumbnail should show the moment, not just the room it
         // lives in) — dismissing drops you into the conversation around it.
         async function openChannel(channelId, channelObj = null, focusMessageId = null) {
+            const sameThread = activeChannelId === channelId && window.PwaNav?.current()?.id === 'thread';
             activeChannelId = channelId;
-            document.getElementById('thread-view').style.display = 'flex';
+            const threadView = document.getElementById('thread-view');
+            if (!pwaIsAdult()) threadView.style.display = 'flex';
             applyViewVisibility();  // hides the Argyle FAB over the composer
             // Empty channels aren't in the list payload (they only get listed
             // once the first message is posted), so Discuss/DM creation passes
@@ -4895,8 +4910,6 @@
                 && (!c || c.kind === 'event')
                 && !(c && (c.member_ids || []).includes(selectedMemberId));
             threadChannel = c || { id: channelId, kind: null, member_ids: [] };
-            updateAgentFab();
-            window.ChauffeurPhoneVoice?.visibility();
             const guestsBtn = document.getElementById('thread-guests-btn');
             if (guestsBtn) guestsBtn.style.display =
                 (!helperShareMode && currentMemberRole() === 'parent'
@@ -4905,6 +4918,25 @@
             if (guestsPanel) guestsPanel.classList.add('hidden');
             document.getElementById('thread-title').textContent =
                 helperShareMode ? 'Share a moment' : (c ? channelDisplay(c).name : 'Chat');
+            if (pwaIsAdult()) {
+                const title = document.getElementById('thread-title').textContent;
+                const screen = window.PwaNav.current();
+                if (screen?.id === 'thread') {
+                    screen.title = title;
+                    const section = document.querySelector('#pwa-stack .pwa-screen[data-screen="thread"]');
+                    section.querySelector('h1').textContent = title;
+                    section.querySelector('.pwa-thread-head').replaceWith(pwaThreadHead(threadChannel));
+                } else {
+                    pwaThreadNode = document.getElementById('thread-view');
+                    window.PwaNav.push({id: 'thread', title,
+                        render(body) { body.append(pwaThreadHead(threadChannel), pwaThreadNode); },
+                        onPop() { pwaThreadRestore(); }});
+                }
+            }
+            threadView.style.display = 'flex';  // adults are now inside the pushed screen
+            updateAgentFab();
+            window.ChauffeurPhoneVoice?.visibility();
+            if (sameThread && !focusMessageId) return;
             if (helperShareMode) {
                 document.getElementById('thread-messages').innerHTML =
                     '<div class="text-center text-gray-500 text-sm mt-6 px-6">Share a photo or video from the event — it goes straight to the family. The family\'s thread stays theirs, so it isn\'t shown here.</div>';
@@ -4931,12 +4963,15 @@
         async function refreshThread() {
             if (window.PwaArgyle && PwaArgyle.isOpen()) PwaArgyle.pull();
             if (!activeChannelId || helperShareMode) return;
+            const channelId = activeChannelId;
             try {
-                const res = await fetch(`${apiBase}api/channels/${activeChannelId}/messages?limit=100`);
+                const res = await fetch(`${apiBase}api/channels/${channelId}/messages?limit=100`);
                 if (!res.ok) return;
                 const msgs = await res.json();
+                // Back or another channel can win while this read is in flight.
+                if (activeChannelId !== channelId || helperShareMode) return;
                 renderThread(msgs);
-                if (msgs.length) markRead(activeChannelId, msgs[msgs.length - 1].ts);
+                if (msgs.length) markRead(channelId, msgs[msgs.length - 1].ts);
             } catch (e) { }
         }
 
@@ -4951,7 +4986,7 @@
             else if (dayDiff > 1 && dayDiff < 7) label = d.toLocaleDateString([], { weekday: 'long' });
             else if (d.getFullYear() === now.getFullYear()) label = d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
             else label = d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
-            return `<div class="flex items-center gap-2 my-3 self-stretch">
+            return `<div class="pwa-day flex items-center gap-2 my-3 self-stretch">
                 <div class="flex-1 h-px bg-gray-700/60"></div>
                 <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">${label}</span>
                 <div class="flex-1 h-px bg-gray-700/60"></div>
@@ -5013,6 +5048,7 @@
             if (!items.length) return;
             const overlay = document.createElement('div');
             overlay.className = 'moment-overlay fixed inset-0 z-[205] bg-black/95 overflow-y-auto p-3';
+            if (activeChannelId) overlay.dataset.threadMoment = activeChannelId;
             overlay.innerHTML = `
                 <button onclick="this.closest('.moment-overlay').remove()"
                     class="sticky top-0 float-right w-10 h-10 rounded-full bg-white/15 text-white text-lg leading-none">✕</button>
@@ -5070,7 +5106,7 @@
                     divider += `<div class="flex justify-center my-2"><span class="text-[11px] font-bold text-blue-300 bg-blue-500/10 border border-blue-500/30 rounded-full px-3 py-1">🚗 re: ${mfEscape(ctxLabel)}</span></div>`;
                 }
                 lastCtx = ctxLabel;
-                const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const t = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
                 let att = '';
                 if (m.attachment) {
                     const items = attachmentItemsJs(m.attachment);
@@ -5101,7 +5137,7 @@
                     ? `<div class="px-3.5 py-2 rounded-2xl ${mine ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-gray-800 text-gray-100 rounded-bl-sm'} text-[15px] leading-snug break-words whitespace-pre-wrap">${mfEscape(m.body)}</div>`
                     : '';
                 return `${divider}<div id="msg-${m.id}" class="max-w-[80%] ${mine ? 'self-end' : 'self-start'}">
-                    ${!mine ? `<div class="text-xs font-bold mb-0.5" style="color:${sender.color_code || '#9ca3af'}">${mfEscape(sender.name || '?')}</div>` : ''}
+                    ${!mine ? `<div class="pwa-who text-xs font-bold mb-0.5" style="color:${sender.color_code || '#9ca3af'}">${mfEscape(sender.name || '?')}</div>` : ''}
                     ${att}${bubble}
                     ${m.card ? renderCard(m.card) : ''}
                     <div class="flex items-center gap-1.5 mt-0.5 ${mine ? 'justify-end' : ''}">
@@ -5442,6 +5478,7 @@
             let idx = Math.min(Math.max(0, opts.index || 0), items.length - 1);
             const overlay = document.createElement('div');
             overlay.className = 'moment-overlay fixed inset-0 z-[210] bg-black/90 flex items-center justify-center p-3';
+            if (opts.threadChannelId) overlay.dataset.threadMoment = opts.threadChannelId;
 
             function srcFor(i) {
                 const it = items[i] || {};
@@ -5608,6 +5645,7 @@
                 const sender = membersData.find(x => x.id === m.sender_member_id) || {};
                 const ch = channelsData.find(c => c.id === activeChannelId) || {};
                 return showMomentOverlay({
+                    threadChannelId: activeChannelId,
                     items: attachmentItemsJs(m.attachment),
                     index: index || 0,
                     kind: m.attachment.kind,
@@ -5635,6 +5673,7 @@
                 const canDelete = row.sender_member_id === selectedMemberId
                     || myRole() === 'parent';
                 return showMomentOverlay({
+                    threadChannelId: activeChannelId,
                     items: (row.items || []).map(i => ({ kind: i.kind, url: i.media_url })),
                     index: index || 0,
                     kind: row.kind,
@@ -6003,6 +6042,7 @@
         function showAttachPreview(html) {
             document.getElementById('thread-attach-slot').innerHTML = html;
             document.getElementById('thread-attach-preview').style.display = 'block';
+            document.getElementById('thread-form').classList.add('has-attachment');
             document.getElementById('thread-attach-btn').classList.remove('animate-pulse');
             document.getElementById('thread-input').placeholder = 'Add a caption…';
         }
@@ -6340,6 +6380,7 @@
         function clearPendingAttachment() {
             pendingAlbum = [];
             document.getElementById('thread-attach-preview').style.display = 'none';
+            document.getElementById('thread-form').classList.remove('has-attachment');
             document.getElementById('thread-input').placeholder = 'Message...';
         }
 
@@ -6392,6 +6433,7 @@
                 return;
             }
             input.value = '';
+            document.getElementById('thread-form').classList.remove('has-text');
             clearPendingAttachment();
             if (entries.length) {
                 sendAlbum(entries, body);   // deliberately not awaited
@@ -6409,6 +6451,7 @@
             } catch (err) {
                 showGlobalAlert('Failed to send message');
                 input.value = body;
+                document.getElementById('thread-form').classList.toggle('has-text', !!body);
             }
         }
 
@@ -6491,6 +6534,21 @@
         }
 
         function closeThread() {
+            if (pwaIsAdult() && window.PwaNav?.current()?.id === 'thread') {
+                window.PwaNav.pop();
+                return;
+            }
+            pwaThreadRestore();
+        }
+
+        function pwaThreadRestore() {
+            document.querySelectorAll('.moment-overlay[data-thread-moment]').forEach(overlay => overlay.remove());
+            // onPop runs after the section is detached. Return the SAME node
+            // first, so cleanup and voice can still resolve their existing ids.
+            const view = pwaThreadNode || document.getElementById('thread-view');
+            view.style.display = 'none';
+            document.getElementById('channel-list').after(view);
+            pwaThreadNode = null;
             window.ChauffeurPhoneVoice?.stop(false);
             activeChannelId = null;
             helperShareMode = false;
@@ -6501,7 +6559,6 @@
             if (gb) gb.style.display = 'none';
             clearPendingAttachment();
             document.getElementById('thread-attach-btn').classList.remove('animate-pulse');
-            document.getElementById('thread-view').style.display = 'none';
             applyViewVisibility();  // FAB returns on the channel list
             fetchChannels();
         }
@@ -7744,6 +7801,7 @@
                 input.value = context
                     ? `To ${helperName} (${context}): `
                     : `To ${helperName}: `;
+                pwaSyncCompose();
                 input.focus();
             }
         }
