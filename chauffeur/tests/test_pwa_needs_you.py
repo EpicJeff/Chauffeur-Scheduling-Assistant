@@ -49,6 +49,7 @@ PROBE = r"""
 const NOW = new Date('2026-11-03T15:12:00');
 const out = {document_defined: typeof document !== 'undefined',
              window_defined: typeof window !== 'undefined', cases: {},
+             day_ms: {'2026-11-03': [new Date('2026-11-03').getTime(), new Date('2026-11-03T00:00:00').getTime()]},
              ms: {pickup: new Date('2026-11-05T17:10:00').getTime(),
                   situation: new Date('2026-11-05T09:00:00').getTime(),
                   proposal: new Date('2026-11-05T17:00:00').getTime()}};
@@ -111,6 +112,22 @@ const CASES = {
     {id: 'chess_pickup', title: 'Pickup: Chess', start: '2026-11-04T17:00:00', end: '2026-11-04T17:00:00', key: 'chess-key'}]})),
   status_card_without_a_person: () => cards(inputs({statusDays: [
     {id: 'sd9', status_name: 'Snow day', emoji: '❄', line: 'School closed'}]})),
+  household_task_due_today_is_a_card: () => ({
+    today: cards(inputs({householdTasks: [{id: 'h1', title: 'Take the bins out', due_date: '2026-11-03',
+      past_due: false, due_today: true, assigned_to_name: null}]})),
+    overdue: cards(inputs({householdTasks: [{id: 'h2', title: 'Call the plumber', due_date: '2026-11-01',
+      past_due: true, due_today: false, assigned_to_name: 'Lorena'}]})),
+  }),
+  thread_in_now_is_a_card: () => ({
+    now: cards(inputs({threads: [{id: 'th1', kind: 'thread', title: 'Dentist for Sam',
+      next_move: 'Call the office', due_at: '2026-11-05T09:00:00', group: 'now'}]})),
+    soon: cards(inputs({threads: [{id: 'th2', kind: 'thread', title: 'Summer camp',
+      next_move: 'Compare prices', due_at: '2026-11-20T09:00:00', group: 'soon'}]})),
+  }),
+  household_tasks_outrank_quiet_lists_but_not_a_needs_driver: () => cards(inputs({
+    unassigned: UNASSIGNED.slice(0, 1),
+    householdTasks: [{id: 'h2', title: 'Call the plumber', due_date: '2026-11-01', past_due: true,
+      due_today: false, assigned_to_name: null}]})),
   a_closed_chores_door_is_not_a_crash: () => {
     // /api/chores answers 403 {"detail": "Requires chores.board"} for a scope
     // without the chores door; fetchChores used to store that object. The
@@ -381,7 +398,11 @@ def scenario_every_card_has_a_hand_path():
     check(got, "the full pile drew no cards")
     for c in got:
         o = c.get('open') or {}
-        check(o.get('view') or o.get('fn'), f"{c['kind']} card {c['title']!r} opens nothing: {o!r}")
+        check(o.get('view') or o.get('fn') or o.get('screen'),
+              f"{c['kind']} card {c['title']!r} opens nothing: {o!r}")
+        if o.get('screen'):
+            check(o['screen'] in ('chores', 'rewards', 'tasks', 'lists', 'projects'),
+                  f"{c['kind']} card {c['title']!r} opens an unknown Household screen {o['screen']!r}")
         if o.get('fn'):
             check(o['fn'] in ALLOWED_FNS,
                   f"{c['kind']} card {c['title']!r} opens {o['fn']!r}, not one of {sorted(ALLOWED_FNS)}")
@@ -392,6 +413,64 @@ def scenario_a_closed_chores_door_is_not_a_crash():
     if kinds is None:
         return
     check(kinds == ['request'], f"a 403 object in the review sources must yield no review cards and keep the rest: {kinds!r}")
+
+
+def scenario_household_task_due_today_is_a_card():
+    out = _out()
+    if out is None:
+        print("  skip  node is not installed")
+        return
+    got = out['cases']['household_task_due_today_is_a_card']
+    check('error' not in got, f"threw under node: {got.get('error')}")
+    val = got['value']
+    today = val['today']
+    check(len(today) == 1 and today[0]['kind'] == 'household_task',
+          f"a household task due today is ONE household_task card, got {today!r}")
+    c = today[0]
+    check(c['icon'] == '☑️', f"household_task icon {c['icon']!r}, expected the ballot box with check")
+    check(c['title'] == 'Take the bins out', f"household_task title {c['title']!r}")
+    check(c['why'] == 'due today', f"household_task why {c['why']!r}, expected 'due today'")
+    check(c['rank'] == 2, f"household_task rank {c['rank']!r}, expected 2")
+    check(c['deadline_ms'] in _out()['day_ms']['2026-11-03'],
+          f"deadline must be the due_date (UTC or local midnight), got {c['deadline_ms']!r}")
+    check(c['open'] == {'screen': 'tasks'}, f"household_task open {c['open']!r}, expected {{'screen': 'tasks'}}")
+    over = val['overdue']
+    check(len(over) == 1 and over[0]['kind'] == 'household_task' and over[0]['why'] == 'overdue',
+          f"a past-due task reads 'overdue': {over!r}")
+
+
+def scenario_thread_in_now_is_a_card():
+    out = _out()
+    if out is None:
+        print("  skip  node is not installed")
+        return
+    got = out['cases']['thread_in_now_is_a_card']
+    check('error' not in got, f"threw under node: {got.get('error')}")
+    val = got['value']
+    now = val['now']
+    check(len(now) == 1 and now[0]['kind'] == 'thread', f"a thread in group 'now' is ONE thread card, got {now!r}")
+    c = now[0]
+    check(c['icon'] == '🧵', f"thread icon {c['icon']!r}, expected the spool of thread")
+    check(c['title'] == 'Dentist for Sam' and c['why'] == 'Call the office',
+          f"thread title/why {c['title']!r}/{c['why']!r}, why is the next move")
+    check(c['rank'] == 2 and c['deadline_ms'] == _ms('situation'),
+          f"thread rank/deadline {c['rank']!r}/{c['deadline_ms']!r}, expected 2 and its due_at")
+    _open_has(c, view='family', anchor='house-threads')
+    check(val['soon'] == [], f"a thread in group 'soon' is no card, got {val['soon']!r}")
+
+
+def scenario_household_tasks_outrank_quiet_lists_but_not_a_needs_driver():
+    got = _cards('household_tasks_outrank_quiet_lists_but_not_a_needs_driver')
+    if got is None:
+        return
+    kinds = [c['kind'] for c in got]
+    check(sorted(kinds) == ['household_task', 'needs_driver'], f"both cards must be present, got {kinds!r}")
+    # The overdue task's deadline (Nov 1) is earlier than the pickup's (Nov 5), and
+    # deadline cards sort by deadline first: the rule is deadline, then rank.
+    check(kinds == ['household_task', 'needs_driver'],
+          f"deadline cards sort by deadline: the Nov 1 overdue task comes before the Nov 5 pickup, got {kinds!r}")
+    nd = [c for c in got if c['kind'] == 'needs_driver'][0]
+    check(nd['rank'] == 1 and nd['deadline_ms'] == _ms('pickup'), f"needs_driver card {nd!r}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

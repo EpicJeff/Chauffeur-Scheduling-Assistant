@@ -114,6 +114,7 @@
     <script defer src="{{ 'static/pwa_shell.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_nav.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_myday.js'|ver }}"></script>
+    <script defer src="{{ 'static/pwa_household.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_argyle.js'|ver }}"></script>
     <link rel="stylesheet" href="{{ 'static/argyle_orb.css'|ver }}">
     <script defer src="{{ 'static/argyle_orb.js'|ver }}"></script>
@@ -315,6 +316,7 @@
             </button>
         </div>
 
+        <div id="pwa-covered" class="flex-1 flex flex-col min-h-0">
         <!-- Music (dedicated tab) -->
         <div id="music-container" class="flex-1 flex-col min-h-0 overflow-y-auto p-3" style="display: none">
             {% include 'components/music_widget.html' %}
@@ -441,12 +443,12 @@
              My Day shape) that leaves room for future sections. -->
         <div id="chores-container" class="flex-1 flex-col min-h-0 overflow-y-auto" style="display: none">
             <div id="house-anchors" class="px-4 pt-3"></div>
+            <div id="house-cards"></div>
             <div id="chores-content" class="p-4 space-y-3 pb-4" style="scroll-margin-top: 76px"></div>
             <div id="house-lists" class="p-4 pt-0 space-y-3 pb-8" style="scroll-margin-top: 76px"></div>
-            <div id="house-threads" class="p-4 pt-0 space-y-3 pb-8" style="scroll-margin-top: 76px"></div>
         </div>
 
-        {% include 'components/pwa_shell.html' %}
+        {% include 'components/pwa_directory.html' %}
         <div id="projects-container" class="flex-1 flex-col min-h-0 overflow-y-auto" style="display: none">
             {% set projects_host = 'phone' %}
             {% include 'components/projects_page.html' %}
@@ -458,6 +460,8 @@
             <script>window.chfLibraryHost = 'phone';</script>
             {% include 'components/library_page.html' %}
         </div>
+        </div>
+        {% include 'components/pwa_shell.html' %}
         <!-- One-pass setup (programs spec §4): + Add › Program on the phone's
              project and the library's Start it for… open this one builder. -->
         {% include 'components/program_setup_sheet.html' %}
@@ -868,7 +872,8 @@
             if (view === 'drives' && ['parent', 'adult'].includes(currentMemberRole())) view = 'myday';
             const clearOverlay = window.PwaArgyle?.isOpen() && window.PwaNav?.depth() > 0;
             if (view !== currentView || clearOverlay) window.PwaArgyle?.close('view', {keepHistory: clearOverlay});
-            window.PwaNav?.clear({extra: clearOverlay ? 1 : 0});
+            if (pwaHouseActive) pwaHouseActive.clearing = true;
+            window.PwaNav?.clear({extra: clearOverlay ? 1 : 0, restoreFocus:false});
             if (view !== 'messages') window.ChauffeurPhoneVoice?.stop(false);
             if (pwaChildStage()) {
                 if (view === 'projects' && pwaChildStage() === 'sprout') view = 'more';
@@ -900,14 +905,16 @@
                 mydayOffset = 0;
                 renderMyDay(true);
             } else if (view === 'chores') {
-                fetchChores();
-                fetchHouseLists();
-                fetchHouseThreads();
+                if (pwaIsAdult()) { pwaRenderHousehold(); void pwaFetchHousehold(); }
+                else {
+                    fetchChores(); fetchHouseLists();
+                    if (pwaChildStage()) fetchHouseThreads();
+                }
             } else if (view === 'music') {
                 if (musicWidgetStarted && typeof mwRefresh === 'function') mwRefresh();
             } else if (view !== 'more' && view !== 'library') {
                 buildTimeline();
-                if (view === 'family') { fetchProposals(); fetchMind(); }
+                if (view === 'family') { fetchProposals(); fetchMind(); fetchHouseThreads(); }
             }
             if (view !== 'map' && typeof stopFamilyMapPolling === 'function') stopFamilyMapPolling();
         }
@@ -1466,7 +1473,7 @@
             if (!mine.length) {
                 // The brief already fetched the server's dated windows;
                 // use that actual claim when commitment summaries are lazy.
-                const next = pwaIsAdult() && currentView === 'myday' ? upcomingWindows(p.id)[0] : null;
+                const next = pwaIsAdult() && ['myday', 'chores'].includes(currentView) ? upcomingWindows(p.id)[0] : null;
                 return next ? sessionDateLabel(next) : '';
             }
             const now = new Date();
@@ -1663,12 +1670,12 @@
 
         // Rule 1: a household that never set one up sees nothing -- no
         // reserved blank space under chrome for a feature nobody proposed.
-        function renderProgramsSection(programs, commitmentsById) {
+        function renderProgramsSection(programs, commitmentsById, {title} = {}) {
             if (!programs || !programs.length) return '';
             return `
             <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-1">
                 <div class="flex items-center justify-between mb-1">
-                    <span class="text-xs font-black uppercase tracking-widest text-gray-500">My Program${programs.length === 1 ? '' : 's'}</span>
+                    <span class="text-xs font-black uppercase tracking-widest text-gray-500">${mfEscape(title || ('My Program' + (programs.length === 1 ? '' : 's')))}</span>
                 </div>
                 ${programs.map(p => renderProgramCard(p, commitmentsById)).join('')}
             </div>`;
@@ -2010,14 +2017,14 @@
         // window that has ENDED is behind you whatever the log says -- the
         // "did it happen?" ask is what chases an unanswered one, and it has
         // its own row on this card.
-        function upcomingWindows(programId) {
+        function upcomingWindows(programId, windows = practiceWindows) {
             // Keyed on the program, never on the viewer: a parent running a
             // small child's session is looking at that child's windows.
             const now = new Date();
             const pad = n => String(n).padStart(2, '0');
             const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
             const nowHM = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
-            return (practiceWindows || [])
+            return (windows || [])
                 .filter(w => w.program_id === programId && !w.logged)
                 .filter(w => w.date > today
                           || (w.date === today && (w.time_end || '') >= nowHM))
@@ -2168,6 +2175,11 @@
         // (the way pwaChildOpenRewards lands on Rewards).
         function phoneOpenList(id) {
             houseActiveListId = id;
+            if (pwaIsAdult()) {
+                if (pwaOpenHouseScreen('lists')) void fetchHouseLists();
+                else showGlobalAlert('Open that from the shopping page on a computer.');
+                return;
+            }
             const there = currentView === 'chores';
             setView('chores');
             if (there) fetchHouseLists();
@@ -2550,6 +2562,7 @@
             if (family) {
                 parts.push('<div id="mind-container" style="scroll-margin-top:8px" class="mb-3">'
                          + '<div id="mind-content" class="space-y-2"></div></div>');
+                parts.push('<div id="house-threads" style="scroll-margin-top:8px" class="mb-3 space-y-3"></div>');
             }
             if (!family) {
                 parts.push('<div id="today-container" style="scroll-margin-top:8px" class="mb-3">'
@@ -2602,6 +2615,9 @@
             if (pwaIsAdult() && currentView === 'myday') { renderScheduleAnchors(); return; }
             if (document.getElementById('proposals-content')) renderProposals();
             if (document.getElementById('mind-content')) renderMind();
+            if (currentView === 'family' && document.getElementById('house-threads')) {
+                renderHouseThreads();
+            }
             if (document.getElementById('today-content')) refreshPracticeSection(false);
             renderScheduleAnchors();
         }
@@ -2671,6 +2687,7 @@
         function afterProgramWrite() {
             datedTimelineDays.clear(); datedTimelineLoads.clear();
             if (currentView === 'myday') renderMyDay(true);
+            else if (currentView === 'chores') void pwaRefreshHousePrograms();
             else {
                 refreshDatedTimeline(currentDates[activeDateIndex], true);
                 refreshPracticeSection(true);
@@ -4305,7 +4322,11 @@
             } else if (['messages', 'chores', 'family', 'projects', 'library'].includes(params.get('view')) && selectedMemberId) {
                 setView(params.get('view'));
             } else if (currentView === 'chores') {
-                fetchChores();  // restored from localStorage: setView early-returns
+                // Restored from localStorage: setView early-returns.
+                if (pwaIsAdult()) { pwaRenderHousehold(); void pwaFetchHousehold(); }
+                else { fetchChores(); if (pwaChildStage()) fetchHouseThreads(); }
+            } else if (currentView === 'family' && pwaIsAdult()) {
+                fetchHouseThreads();
             } else if (currentView === 'map') {
                 // restored from localStorage: setView() would early-return
                 initFamilyMap();
@@ -4620,11 +4641,11 @@
         // avatars in the header and a roster flyout with offline members dim.
         let onlineMemberIds = [];
 
-        function presenceCircle(m, sizeClass, extra) {
-            return `<div class="${sizeClass} rounded-full overflow-hidden flex items-center justify-center
+        function presenceCircle(m, sizeClass, extra, tag = 'div') {
+            return `<${tag} class="${sizeClass} rounded-full overflow-hidden flex items-center justify-center
                         font-bold text-white shrink-0 ${extra || ''}"
                         style="background:${m.color_code || '#6b7280'}">${avatarInner(m,
-                            m.avatar || (m.name || '?').charAt(0).toUpperCase())}</div>`;
+                            m.avatar || (m.name || '?').charAt(0).toUpperCase())}</${tag}>`;
         }
 
         function renderPresence() {
@@ -6785,20 +6806,34 @@
                 choresData = chores;
                 rewardsData = rewards;
                 redemptionsData = redemptions;
+                pwaHouseBalances = balances;
                 pwaChoresOwner = owner;
                 renderChores(balances);
                 updateChoresBadge();
                 pwaRefreshOverview();
+                pwaRenderHousehold();
             } catch (e) { console.error('Failed to fetch chores', e); }
+        }
+
+        function choresMine() {
+            return choresData.filter(c => c.claimed_by === selectedMemberId && ['claimed', 'done'].includes(c.state));
+        }
+
+        function choresAvailable() {
+            return choresData.filter(c => c.state === 'open' && (currentMemberRole() === 'parent' || choreEligibleForMe(c)));
+        }
+
+        function choresToCheck() {
+            return choresData.filter(c => c.state === 'done');
         }
 
         function houseChoresAttention() {
             const role = currentMemberRole();
             if (role === 'parent') {
-                return choresData.filter(c => c.state === 'done').length + redemptionsData.length
+                return choresToCheck().length + redemptionsData.length
                     + rewardsData.filter(rw => rw.pooled && rw.pool && rw.pool.funded).length;
             }
-            return choresData.filter(c => c.state === 'open' && choreEligibleForMe(c)).length;
+            return choresAvailable().length;
         }
 
         function updateChoresBadge() {
@@ -6808,6 +6843,101 @@
             badge.textContent = n > 99 ? '99+' : n;
             badge.style.display = n > 0 ? 'flex' : 'none';
             renderHouseAnchors();
+        }
+
+        // Household to-dos: the server owns due flags and assignee names.
+        let householdTasksData = [];
+        let householdTasksHost = null;
+
+        function householdTasksAllowed() {
+            return !pwaChildStage() && scopeOf('lists.household_tasks') !== 'none';
+        }
+
+        async function fetchHouseholdTasks() {
+            const owner = selectedMemberId;
+            if (!owner || !householdTasksAllowed()) { householdTasksData = []; return; }
+            let rows = [];
+            try {
+                const res = await fetch(apiBase + 'api/household-tasks');
+                if (res.ok) rows = await res.json();
+            } catch (e) { /* unavailable or forbidden means no tasks */ }
+            if (owner !== selectedMemberId) return;
+            householdTasksData = Array.isArray(rows) ? rows : [];
+            if (householdTasksHost?.isConnected) renderHouseholdTasks(householdTasksHost);
+            pwaRenderHousehold();
+        }
+
+        function renderHouseholdTasks(host) {
+            if (!host) return;
+            householdTasksHost = host;
+            const tasks = householdTasksData.filter(t => t.status !== 'done').slice().sort((a, b) =>
+                Number(!!b.past_due) - Number(!!a.past_due)
+                || String(a.due_date || '9999').localeCompare(String(b.due_date || '9999')));
+            host.innerHTML = tasks.map(t => {
+                const due = t.due_date ? pwaDayLabel(t.due_date, todayStr()) : '';
+                const chip = t.past_due ? '<span class="pwa-household-task-chip" data-tone="hot">overdue</span>'
+                    : t.due_today ? '<span class="pwa-household-task-chip">today</span>' : '';
+                return `<div class="pwa-chore-row"><div class="pwa-row-copy"><h3>${mfEscape(t.title)}</h3>
+                    <p class="pwa-muted">${mfEscape([due, t.assigned_to_name || 'anyone'].filter(Boolean).join(' · '))} ${chip}</p></div>
+                    <div class="pwa-row-actions"><button type="button" data-household-complete="${mfEscape(t.id)}"
+                        aria-label="${mfEscape('Complete ' + t.title)}">✓</button></div></div>`;
+            }).join('') || '<p class="pwa-empty">Nothing on the household list.</p>';
+            host.insertAdjacentHTML('beforeend', `<form class="pwa-household-task-add">
+                <input id="household-task-add" type="text" autocomplete="off" placeholder="Add a household task…" aria-label="New household task" required>
+                <button type="submit">Add</button></form>`);
+            host.querySelectorAll('[data-household-complete]').forEach(button => {
+                button.onclick = async () => {
+                    button.disabled = true;
+                    try { await completeHouseholdTask(button.dataset.householdComplete); }
+                    finally { if (button.isConnected) button.disabled = false; }
+                };
+            });
+            host.querySelector('form').onsubmit = event => { event.preventDefault(); void addHouseholdTask(); };
+        }
+
+        async function completeHouseholdTask(id) {
+            try {
+                const res = await fetch(apiBase + 'api/household-tasks/' + encodeURIComponent(id) + '/complete', {
+                    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({done:true, member_id:selectedMemberId})});
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) { showGlobalAlert(data.detail || 'Could not complete that task.'); return; }
+                if (data.message) showGlobalAlert(data.message);
+                await fetchHouseholdTasks();
+            } catch (e) { showGlobalAlert('Could not complete that task.'); }
+        }
+
+        async function addHouseholdTask() {
+            const input = document.getElementById('household-task-add');
+            const title = (input?.value || '').trim();
+            if (!title || input.disabled) return;
+            input.disabled = true;
+            const owner = selectedMemberId;
+            try {
+                const due = await promptInput('When is it due? (YYYY-MM-DD, blank for none)');
+                if (due === null) return;
+                const dueDate = due.trim();
+                if (dueDate && (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)
+                    || !Number.isFinite(Date.parse(dueDate)) || new Date(dueDate).toISOString().slice(0, 10) !== dueDate)) {
+                    showGlobalAlert('Use a due date like 2026-11-04.'); return;
+                }
+                const choices = [{value:'', label:'Anyone'}, ...membersData
+                    .filter(m => ['parent', 'adult'].includes(m.role) && !m.system && (!m.status || m.status === 'active'))
+                    .map(m => ({value:m.id, label:m.name}))];
+                const assigned = await promptChoice('Who is doing it?', '', choices);
+                if (assigned === null || owner !== selectedMemberId) return;
+                const body = {title};
+                if (dueDate) body.due_date = dueDate;
+                if (assigned) body.assigned_to = assigned;
+                const res = await fetch(apiBase + 'api/household-tasks', {
+                    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    showGlobalAlert(data.detail || 'Could not add that task.'); return;
+                }
+                input.value = '';
+                await fetchHouseholdTasks();
+            } catch (e) { showGlobalAlert('Could not add that task.'); }
+            finally { if (input.isConnected) input.disabled = false; }
         }
 
         // --- House tab: the lists half ---
@@ -6828,7 +6958,11 @@
         let houseRevealListsOnly = false;
 
         async function fetchHouseLists() {
-            if (!selectedMemberId) return;
+            if (!selectedMemberId) {
+                houseLists = []; houseItems = []; houseActiveListId = null;
+                renderHouseAnchors(); renderHouseLists(); pwaRenderHousehold();
+                return;
+            }
             try {
                 const r = await fetch(`${apiBase}api/shopping/lists`);
                 houseLists = r.ok ? await r.json() : [];
@@ -6846,6 +6980,7 @@
             }
             renderHouseAnchors();
             renderHouseLists();
+            pwaRenderHousehold();
         }
 
         // A member whose scope closes chores may still hold lists (an
@@ -6990,7 +7125,7 @@
             fetchHouseLists();
         }
 
-        // --- House tab: the threads half ---
+        // --- Plan's Family pane: the member's threads ---
         // The signed-in member's own open loops with somebody outside the
         // family (the full picture, with create/edit/research, lives on
         // threads.html). Same vanilla-render idiom as chores/lists above:
@@ -7002,12 +7137,16 @@
         // primary button. A child owner sees cards with no buttons (the
         // builder draws none without canWrite) and no note form.
         async function fetchHouseThreads() {
-            if (!selectedMemberId) return;
+            const owner = selectedMemberId;
+            if (!owner) return;
+            let rows = [];
             try {
-                const r = await fetch(`${apiBase}api/situations?kinds=thread&owner=${encodeURIComponent(selectedMemberId)}`);
+                const r = await fetch(`${apiBase}api/situations?kinds=thread&owner=${encodeURIComponent(owner)}`);
                 const d = r.ok ? await r.json() : { situations: [] };
-                houseThreads = d.situations || [];
-            } catch (e) { houseThreads = []; }
+                rows = d.situations || [];
+            } catch (e) { /* unavailable means an empty lane */ }
+            if (owner !== selectedMemberId) return;
+            houseThreads = rows;
             renderHouseAnchors();
             renderHouseThreads();
         }
@@ -7029,16 +7168,19 @@
         function renderHouseThreads() {
             const wrap = document.getElementById('house-threads');
             if (!wrap) return;
-            if (!houseThreads.length || !window.Situations) { wrap.innerHTML = ''; return; }
+            if (!houseThreads.length || !window.Situations) { wrap.innerHTML = ''; delete wrap.threadSignature; return; }
             // POST /api/threads/{id}/note is parent/adult-only server-side
             // (_mind_actor); rendering the form for a child owner just hands
             // them a 403 alert on tap. Same gate the Mind lane uses.
             const canNote = ['parent', 'adult'].includes(currentMemberRole());
+            const signature = JSON.stringify([selectedMemberId, canNote, houseThreads]);
+            if (wrap.threadSignature === signature) return;
             wrap.innerHTML = '<div class="text-xs font-black uppercase tracking-widest text-gray-500 pt-2">🧵 Threads</div>'
                 + '<div id="house-threads-lane" class="space-y-2"></div>';
             window.Situations.render(document.getElementById('house-threads-lane'), houseThreads, {
                 apiBase, canWrite: canNote, readOnly: false, memberId: selectedMemberId, onChange: fetchHouseThreads,
                 navigate: phoneOpenRecord, extraHtml: (s) => houseThreadExtras(s, canNote) });
+            wrap.threadSignature = signature;
         }
 
         // A photo on a thread (browse missions §3): the fetch wrapper adds the
@@ -7185,7 +7327,7 @@
                     <span class="text-3xl font-black text-gray-100">${mine ? mine.balance : 0} ⭐</span>
                 </div>`);
             } else if (balances && balances.length) {
-                parts.push(`<details class="pwa-balances" data-pwa-house="tasks"><summary>Family point balances</summary><div class="flex gap-2 flex-wrap">${balances.map(b => `
+                parts.push(`<details open class="pwa-balances" data-reward-group="balances"><summary>Family point balances</summary><div class="flex gap-2 flex-wrap">${balances.map(b => `
                     <span class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gray-900 border border-gray-700 text-sm font-bold text-gray-100">
                         <span class="w-2.5 h-2.5 rounded-full" style="background-color:${b.color_code || '#3b82f6'}"></span>
                         ${mfEscape(b.name)}: ${b.balance} ⭐
@@ -7196,14 +7338,18 @@
                 `<button onclick="${onclick}" class="text-xs font-bold px-3 py-2 rounded-lg ${cls}">${label}</button>`;
 
             if (role === 'parent') {
-                const toVerify = choresData.filter(c => c.state === 'done');
-                parts.push('<section data-pwa-house="reviews">');
-                if (toVerify.length || redemptionsData.length) {
+                const toVerify = choresToCheck();
+                parts.push('<section data-chore-group="check">');
+                if (toVerify.length) {
                     parts.push('<div class="text-xs font-black uppercase tracking-widest text-amber-400 pt-2">Needs your OK</div>');
                     toVerify.forEach(c => parts.push(choreCard(c,
                         btn('✓ Verify', 'bg-green-600 text-white active:bg-green-700', `verifyChore('${c.id}')`) +
                         btn('✗', 'bg-red-600/80 text-white active:bg-red-700', `rejectChore('${c.id}')`),
                         `done by ${mfEscape(c.claimed_by_name || '?')}`)));
+                } else parts.push('<p class="pwa-empty">No chores waiting for review.</p>');
+                parts.push('</section><section data-reward-group="redemptions">');
+                if (redemptionsData.length) {
+                    parts.push('<div class="text-xs font-black uppercase tracking-widest text-gray-500 pt-2">Reward requests</div>');
                     redemptionsData.forEach(r => parts.push(`
                         <div class="bg-gray-900 border border-indigo-800/60 rounded-xl p-4 flex items-center justify-between gap-2">
                             <div class="min-w-0">
@@ -7219,17 +7365,19 @@
             }
 
             if (role === 'parent') {
-                if (!choresData.some(c => c.state === 'done') && !redemptionsData.length) parts.push(`<p class="pwa-empty">No tasks${chfFeatureOn('rewards') ? ' or reward requests' : ''} waiting for review.</p>`);
+                if (!redemptionsData.length && chfFeatureOn('rewards')) parts.push('<p class="pwa-empty">No reward requests waiting for review.</p>');
                 parts.push('</section>');
             }
             // Family goals (pooled rewards): kids pledge, parents grant.
             const pooledGoals = rewardsData.filter(rw => rw.pooled && rw.pool);
             const plainRewards = rewardsData.filter(rw => !rw.pooled);
             if (pooledGoals.length) {
-                if (pwaIsAdult()) parts.push(`<section data-pwa-house="${role === 'parent' ? 'reviews' : 'tasks'}">`);
+                if (pwaIsAdult()) parts.push('<section data-reward-group="goals">');
                 parts.push('<div class="text-xs font-black uppercase tracking-widest text-emerald-400 pt-2">Family Goals</div>');
                 pooledGoals.forEach(rw => parts.push(poolGoalCard(rw, role)));
                 if (pwaIsAdult()) parts.push('</section>');
+            } else if (pwaIsAdult() && !(balances && balances.length)) {
+                parts.push('<section data-reward-group="goals"><p class="pwa-empty">No family goals yet.</p></section>');
             }
 
             // Rewards store (children see redeem buttons; pending shown)
@@ -7258,8 +7406,8 @@
             }
 
             if (role === 'child') parts.push('</section><section data-child-house="tasks">');
-            if (pwaIsAdult()) parts.push('<section data-pwa-house="tasks">');
-            const mine = choresData.filter(c => c.claimed_by === selectedMemberId && (c.state === 'claimed' || c.state === 'done'));
+            if (pwaIsAdult()) parts.push('<section data-chore-group="mine">');
+            const mine = choresMine();
             if (mine.length) {
                 parts.push(`<div class="text-xs font-black uppercase tracking-widest text-gray-500 pt-2">${pwaIsAdult() ? 'Assigned to you' : 'My chores'}</div>`);
                 mine.forEach(c => parts.push(choreCard(c,
@@ -7268,13 +7416,14 @@
                           btn('↩', 'bg-gray-800 text-gray-400 border border-gray-700', `unclaimChore('${c.id}')`)
                         : '<span class="text-xs font-black uppercase text-amber-300 bg-amber-500/10 border border-amber-500/40 px-2 py-1 rounded-full self-center">Waiting for OK</span>',
                     '')));
-            }
+            } else if (pwaIsAdult()) parts.push('<p class="pwa-empty">Nothing assigned to you.</p>');
+
+            if (pwaIsAdult()) parts.push('</section><section data-chore-group="open">');
 
             // A parent sees the whole pot, not only what they could take
             // themselves — they are handing work out, not picking it up.
             const isParent = currentMemberRole() === 'parent';
-            const available = choresData.filter(c => c.state === 'open'
-                && (isParent || choreEligibleForMe(c)));
+            const available = choresAvailable();
             parts.push('<div class="text-xs font-black uppercase tracking-widest text-gray-500 pt-2">Available</div>');
             if (available.length) {
                 available.forEach(c => parts.push(choreCard(c,

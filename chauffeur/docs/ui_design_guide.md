@@ -177,6 +177,86 @@ for an adult it returns to `pwaRenderBrief()` at its first line).
   builder for adults in a way kids would see, or compute a number the
   owning payload already carries.
 
+#### Household, cards then focus (slice 3, v2.499.754)
+
+The adult Household tab is five cards ranked by what needs you, and a tap on
+a card pushes a full screen. `static/pwa_household.js` owns it; the kid House
+tab (`pwaChildHouseTabs`, the child branches of `renderChores`,
+`renderHouseLists` for kids) is untouched.
+
+- **The cards are pure.** `pwaHouseholdCards(pwaHouseholdInputs())` ranks
+  Chores, Rewards, Tasks, Lists and Projects & programs by a score computed
+  only from the owning payloads (`choresData`, `/api/points`, `rewardsData`
+  pools, pending redemptions, `/api/household-tasks` rows with their
+  `past_due` / `due_today`, `houseLists[].open_count`, the `runs` field of
+  `/api/shopping/runs`, `/api/projects` rows, the household's running
+  programs from `/api/programs` with `upcomingWindows(id)[0]` as the next
+  session). Each card carries `{id, icon, title, line, pills, faces,
+  progress, score, lead, open: {screen}}`; a card whose facet is `none` is
+  absent; a lists-only reveal shows only Lists; score 0 sinks in the stable
+  order. `pwaHouseholdLead(cards)` writes the one-line lead from the cards'
+  structured `lead` fields ("Two things want your yes. Shop day is
+  tomorrow."; a session is named only when it is today; "All quiet in the
+  house." when every score is 0; otherwise "Nothing needs your yes."). Dates
+  within six days are weekdays, beyond that "Dec 20" (`pwaDayLabel`); the
+  viewer's own claims read "you have N claimed".
+- **A screen adopts, never re-renders.** `pwaOpenHouseScreen(id, segment)`
+  pushes `PwaNav.push({id: 'house-' + id, …})` and MOVES the builder's own
+  node into the screen body (`#chores-content` for Chores and Rewards,
+  `#house-lists` for Lists, `#projects-container` for Projects with one
+  `chf-projects-open`); `onPop` puts the node back where it was. Handlers and
+  Alpine state survive; no id is ever duplicated. The Tasks screen is
+  `renderHouseholdTasks(host)` drawn fresh. `renderChores` stamps
+  `data-chore-group="mine|open|check"` and
+  `data-reward-group="balances|goals|redemptions"` wrappers for adults and a
+  segment (`.pwa-seg[role=group] .pwa-seg-item[aria-pressed]`,
+  `data-house-segment` on the body) shows one group; Rewards shows its
+  three groups without segments; Projects & programs has Projects /
+  Programs. The shared filters `choresMine()`, `choresAvailable()`,
+  `choresToCheck()` in app.html feed `renderChores`, the badge and the
+  segment counts, so they cannot drift. `#chores-container.dataset.section`
+  still mirrors the open screen (`tasks|reviews|rewards|lists|projects`)
+  and the cards view carries `data-house="cards"`.
+- **Every door still opens.** `pwaSelectHouse(section)` is the shim for the
+  old section names; `phoneOpenList` opens the Lists screen (a granted list
+  without its card still opens; otherwise the person is told where to find
+  it); My Day's review card opens Chores › To check for a chore and Rewards
+  for a redemption; the attention dialog's reviews door does the same.
+  Writes from a screen (verify, grant, complete, check, add, a program
+  write through `afterProgramWrite`) refetch and repaint the cards so Back
+  shows the right pills and badge.
+- **Threads live on Plan.** `#house-threads` is emitted by
+  `paneSectionsHtml()` after `#mind-container` in the Family pane;
+  `setView('family')` and a reload onto Plan fetch them;
+  `paintPaneSections` only repaints. The builder, its names and its ids are
+  unchanged; My Day's pile gains kind `thread`. A child's House still draws
+  its own `#house-threads` (created by `pwaChildHouseTabs`).
+- **Household tasks on the phone.** `fetchHouseholdTasks` /
+  `renderHouseholdTasks` / `completeHouseholdTask` (`{done, member_id}`)
+  / `addHouseholdTask` (title, an optional date through `promptInput`, an
+  assignee through `promptChoice`); gated by `householdTasksAllowed()`
+  (never a child, never `lists.household_tasks` none). My Day's pile gains
+  kind `household_task` (overdue / due today, `open: {screen: 'tasks'}`).
+- **PwaNav hardening.** A reload with a stale `pwaDepth` in history is
+  re-stamped to the root; `push` focuses the screen's `h1` (tabindex −1) and
+  `pop`/Back return focus to the opener (or the current tab); while a
+  screen is up `#pwa-covered` (the wrapper around every view container;
+  the tab bar and `#pwa-stack` sit outside it) is `inert` and
+  `aria-hidden`; `setView` clears with `restoreFocus: false`. More's
+  directory lives in `components/pwa_directory.html` so it sits inside the
+  wrapper.
+- **Skin** (`static/pwa_shell.css`, from the mockup): title 34px/700, lead
+  16px muted, card `--pwa-card` 22px radius, 44px icon tile, pills (`hot`
+  amber `#ffe6cc`, `ok` green), 26px faces with −6px overlap, 6px bar,
+  segment 4px/14px with a white `.on` item, adopted rows `--pwa-card` 18px
+  radius. Dark through the tokens; reduced motion = no animation.
+- **Never** draw a second copy of a builder's node, route a card through
+  `setView`, compute a card number the owning module already has, or put
+  threads back on Household.
+
+Screenshot proof lives in `tests/test_pwa_household_live.py`
+(`PWA_REVIEW_OUTPUT=1` writes `tests/probe_shots/pwa_slice3/`).
+
 Admin dialogs with a body that can grow (the schedule page's event dialog,
 `dashboard.html` `#event-modal`; the calendar's, `family_calendar.html`
 `#modal-content-container`) are chrome: a `flex flex-col max-h-[90vh]

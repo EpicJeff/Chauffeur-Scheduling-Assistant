@@ -84,6 +84,8 @@ function pwaBriefFacts({rows = [], needs = []}) {
             text = `${card.title.split(' asks:')[0]} asked you for something.`;
         } else if (card.kind === 'proposal') {
             text = `${card.title} ${/^(1|One) proposed event$/.test(card.title) ? 'is' : 'are'} waiting.`;
+        } else if (card.kind === 'household_task') {
+            text = `${card.title} is ${card.why === 'overdue' ? 'overdue' : 'due today'}.`;
         }
         if (text) unusual.push({kind:card.kind, text, rank:card.rank});
     }
@@ -142,17 +144,17 @@ function pwaNeedsYou(inputs, now) {
         for (const chore of list(reviews.chores)) {
             if (chore.state !== 'done') continue;
             add(`review:chore:${chore.id}`, 'review', '🧹', `${chore.claimed_by_name} finished ${chore.title}`,
-                `${chore.points} points waiting on your yes`, null, 3, {view:'chores', section:'reviews'});
+                `${chore.points} points waiting on your yes`, null, 3, {screen:'chores', segment:'check', view:'chores', section:'reviews'});
         }
         for (const redemption of list(reviews.redemptions)) {
             if (redemption.state && redemption.state !== 'pending') continue;
             add(`review:redemption:${redemption.id}`, 'review', '🎁', `${redemption.member_name} wants ${redemption.reward_title}`,
-                `${redemption.cost} points`, null, 3, {view:'chores', section:'reviews'});
+                `${redemption.cost} points`, null, 3, {screen:'rewards', view:'chores', section:'reviews'});
         }
         for (const pool of list(reviews.pools)) {
             if (!pool.funded) continue;
             add(`review:pool:${pool.id}`, 'review', '🎁', `${pool.title} is funded`, 'ready to grant', null, 3,
-                {view:'chores', section:'reviews'});
+                {screen:'rewards', view:'chores', section:'reviews'});
         }
     }
     if (inputs.canAssign) {
@@ -173,6 +175,11 @@ function pwaNeedsYou(inputs, now) {
         }
     }
     const seenTasks = new Set();
+    for (const task of list(inputs.householdTasks)) {
+        if (!task.past_due && !task.due_today) continue;
+        add(`household_task:${task.id}`, 'household_task', '☑️', task.title, task.past_due ? 'overdue' : 'due today',
+            task.due_date ? task.due_date + 'T00:00:00' : null, 2, {screen:'tasks'});
+    }
     for (const [tasks, overdue] of [[list(inputs.dueSoon), false], [list(inputs.stillOpen), true]]) {
         for (const task of tasks) {
             if (seenTasks.has(task.id)) continue;
@@ -192,6 +199,11 @@ function pwaNeedsYou(inputs, now) {
         if (situation.group !== 'now') continue;
         add(`situation:${situation.kind}:${situation.id}`, 'situation', situation.icon || PWA_NEED_ICONS[situation.kind] || '✨',
             situation.title, situation.next_move || '', situation.due_at, 2, {view:'family', anchor:'mind-container'});
+    }
+    for (const thread of list(inputs.threads)) {
+        if (thread.group !== 'now') continue;
+        add(`thread:${thread.id}`, 'thread', '🧵', thread.title, thread.next_move || '', thread.due_at, 2,
+            {view:'family', anchor:'house-threads'});
     }
     for (const status of list(inputs.statusDays)) {
         add(`status:${status.id}`, 'status', status.emoji || '💙', [status.person_name || status.member_name, status.status_name].filter(Boolean).join(': '),
@@ -213,6 +225,7 @@ function pwaNeedsYouInputs() {
     const redemptions = list(typeof redemptionsData !== 'undefined' ? redemptionsData : null);
     const rewards = list(typeof rewardsData !== 'undefined' ? rewardsData : null);
     const situations = list(typeof mindSituations !== 'undefined' ? mindSituations : null);
+    const threads = list(typeof houseThreads !== 'undefined' ? houseThreads : null);
     return {role, requests:list(requests.waiting_on_me).map(r => ({...r, from_name:r.from_name || r.from})),
         reviews:{chores:chores.filter(c => c.state === 'done'),
             redemptions:redemptions.filter(r => !r.state || r.state === 'pending'),
@@ -221,6 +234,12 @@ function pwaNeedsYouInputs() {
             person_name:s.person_name || s.member_name, status_name:s.status_name || s.name,
             line:s.line || s.adult_message || s.need_label || 'tap to change'})),
         proposals:list(typeof proposalsData !== 'undefined' ? proposalsData : null),
+        householdTasks:list(typeof householdTasksAllowed === 'function' && householdTasksAllowed()
+            && typeof householdTasksData !== 'undefined' ? householdTasksData : null)
+            .filter(t => t.past_due || t.due_today),
+        threads:threads.filter(s => s.kind === 'thread' && s.group === 'now').map(s => ({...s,
+            next_move:s.next_move || (s.next_step && (s.next_step.title || s.next_step.label)) || s.status_note || '',
+            due_at:s.due_at == null ? s.due : s.due_at})),
         situations:situations.filter(s => s.group === 'now').map(s => ({...s,
             next_move:s.next_move || (s.next_step && (s.next_step.title || s.next_step.label)) || s.status_note || '',
             due_at:s.due_at == null ? s.due : s.due_at})),
@@ -234,6 +253,12 @@ function pwaNeedsYouInputs() {
 function pwaOpenNeed(card) {
     const open = card && card.open;
     if (!open) return;
+    if (open.screen) {
+        const opened = typeof window !== 'undefined' && typeof window.pwaOpenHouseScreen === 'function'
+            && window.pwaOpenHouseScreen(open.screen, open.segment);
+        if (!opened && typeof setView === 'function') setView('chores');
+        return; // screen is canonical; view/section remain for older consumers.
+    }
     if (open.view && typeof setView === 'function') {
         setView(open.view);
         if (open.section && typeof pwaSelectHouse === 'function') pwaSelectHouse(open.section);
@@ -373,7 +398,8 @@ async function pwaRenderBrief(force = false) {
             .finally(() => { pwaBriefScheduleLoad = null; });
         const results = await Promise.allSettled([day, routines, parts, pwaBriefWeather(),
             fetchRequests(), fetchChores(), fetchProposals({summaryOnly:true}), fetchMind(), pwaBriefScheduleLoad,
-            selectedDriverId && offset === 0 ? read(`${apiBase}api/errands`) : []]);
+            selectedDriverId && offset === 0 ? read(`${apiBase}api/errands`) : [],
+            householdTasksAllowed() ? fetchHouseholdTasks() : null, fetchHouseThreads()]);
         if (!current()) return;
         if (results[0].status !== 'fulfilled') throw new Error('Could not load your day.');
         const data = results[0].value || {};

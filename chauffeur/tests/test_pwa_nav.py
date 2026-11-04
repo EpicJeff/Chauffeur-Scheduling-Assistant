@@ -51,18 +51,25 @@ const [,, navPath, casesPath] = process.argv;
 const cases = JSON.parse(fs.readFileSync(casesPath, 'utf8'));
 const src = fs.existsSync(navPath) ? fs.readFileSync(navPath, 'utf8') : null;
 const HTML = '<!doctype html><html><body>'
+  + '<div id="pwa-covered"><button id="opener">x</button></div>'
   + '<div id="pwa-stack" hidden></div>'
   + '<div id="pwa-more-container"></div>'
-  + '<nav id="pwa-tab-bar"><button aria-current="page"><span>Household</span></button><button><span>More</span></button></nav>'
+  + '<nav id="pwa-tab-bar"><button id="tab-household" aria-current="page"><span>Household</span></button><button><span>More</span></button></nav>'
   + '</body></html>';
 
-function fresh() {
+// Per-case setup that must run BEFORE the nav script is evaluated.
+const BEFORE = {
+  reload_restamps_the_root(w) { w.history.replaceState({ pwaScreen: 'x', pwaDepth: 1 }, ''); },
+};
+
+function fresh(name) {
   const errors = [];
   const vc = new VirtualConsole();
   vc.on('jsdomError', e => errors.push(String(e && e.message || e)));
   const dom = new JSDOM(HTML, { url: 'http://localhost/app', runScripts: 'outside-only', virtualConsole: vc });
   const w = dom.window;
   if (src === null) throw new Error('static/pwa_nav.js is missing, PwaNav undefined');
+  if (name && BEFORE[name]) BEFORE[name](w);
   w.eval(src);
   if (!w.PwaNav) throw new Error('static/pwa_nav.js loaded but window.PwaNav is undefined');
   return { w, errors };
@@ -227,6 +234,85 @@ const RUN = {
     const after = await p;
     return { ...snap(w), counts, after, label, errors };
   },
+  async reload_restamps_the_root() {
+    // A reload on a pushed entry keeps history.state {pwaDepth:1} with an empty stack.
+    const { w, errors } = fresh('reload_restamps_the_root');
+    const stateAfterLoad = JSON.parse(JSON.stringify(w.history.state));
+    let thrown = null, after = null;
+    try {
+      const p = nextPop(w);
+      w.history.back();
+      after = await p;
+    } catch (e) { thrown = String(e && e.stack || e); }
+    return { ...snap(w), stateAfterLoad, thrown, after, errors };
+  },
+  async push_moves_focus_to_the_title() {
+    const { w, errors } = fresh();
+    w.PwaNav.push({ id: 'chores', title: 'Chores', render(body) { body.textContent = 'hi'; } });
+    const h1 = w.document.querySelector('#pwa-stack .pwa-screen h1');
+    const ae = w.document.activeElement;
+    return { isH1: !!h1 && ae === h1, tabindex: h1 ? h1.getAttribute('tabindex') : null,
+             activeTag: ae ? ae.tagName : null, errors };
+  },
+  async pop_returns_focus_to_the_opener() {
+    const { w, errors } = fresh();
+    const d = w.document;
+    const counts = {};
+    const opener = d.getElementById('opener');
+    opener.focus();
+    const focusedBefore = d.activeElement === opener;
+    w.PwaNav.push(screen('a', 'Chores', counts));
+    const leftOpener = d.activeElement !== opener;
+    w.PwaNav.pop();
+    const backOnOpener = d.activeElement === opener;
+    await new Promise(r => setTimeout(r, 250));   // let the history walk land
+    const stillOnOpener = d.activeElement === opener;
+    // Second half: the opener is gone, focus falls back to the current tab.
+    w.eval("var currentView = 'household';");
+    opener.focus();
+    w.PwaNav.push(screen('b', 'Detail', counts));
+    opener.remove();
+    w.PwaNav.pop();
+    const onTab = d.activeElement === d.getElementById('tab-household');
+    await new Promise(r => setTimeout(r, 250));
+    // Third: no opener and no tab, focus stays where it is, nothing throws.
+    let thrown = null, strayKept = null;
+    try {
+      d.getElementById('tab-household').remove();
+      const stray = d.createElement('button');
+      stray.id = 'stray';
+      d.body.append(stray);
+      w.PwaNav.push(screen('c', 'Lists', counts));
+      stray.remove();
+      w.PwaNav.pop();
+      strayKept = true;
+    } catch (e) { thrown = String(e && e.stack || e); }
+    return { focusedBefore, leftOpener, backOnOpener, stillOnOpener, onTab, thrown, strayKept, errors };
+  },
+  async covered_root_is_inert_while_a_screen_is_up() {
+    const { w, errors } = fresh();
+    const d = w.document;
+    const covered = d.getElementById('pwa-covered');
+    const bar = d.getElementById('pwa-tab-bar');
+    const stack = d.getElementById('pwa-stack');
+    const probe = () => ({
+      inert: covered.hasAttribute('inert'),
+      aria: covered.getAttribute('aria-hidden'),
+      barInert: bar.hasAttribute('inert') || bar.hasAttribute('aria-hidden'),
+      stackInert: stack.hasAttribute('inert') || stack.hasAttribute('aria-hidden'),
+    });
+    const counts = {};
+    const before = probe();
+    w.PwaNav.push(screen('a', 'Chores', counts));
+    const up1 = probe();
+    w.PwaNav.push(screen('b', 'Detail', counts));
+    const up2 = probe();
+    w.PwaNav.pop();
+    const afterOne = probe();
+    w.PwaNav.pop();
+    const after = probe();
+    return { before, up1, up2, afterOne, after, errors };
+  },
 };
 
 (async () => {
@@ -242,7 +328,9 @@ const RUN = {
 CASES = ['push_draws_chrome', 'second_screen_backs_to_the_first', 'pop_calls_onpop', 'back_pops_one',
          'back_with_empty_stack_is_inert', 'foreign_state_is_ignored', 'clear_empties',
          'clear_then_push_keeps_the_new_screen', 'pop_walks_history_back',
-         'push_over_a_bare_root_state', 'back_button_pops_through_pwanav']
+         'push_over_a_bare_root_state', 'back_button_pops_through_pwanav',
+         'reload_restamps_the_root', 'push_moves_focus_to_the_title',
+         'pop_returns_focus_to_the_opener', 'covered_root_is_inert_while_a_screen_is_up']
 
 _RESULT = {}
 
@@ -426,6 +514,56 @@ def scenario_the_back_button_is_pop():
     check(r['errors'] == [], f"no listener errors: {r['errors']}")
 
 
+def scenario_reload_restamps_the_root():
+    r = _case('reload_restamps_the_root')
+    if r is None:
+        return
+    st = r['stateAfterLoad']
+    check(st is not None and st.get('pwaDepth') == 0, f"a stale pwaDepth is reset to 0 on load: {st}")
+    check(st is not None and st.get('pwaScreen') is None, f"a stale pwaScreen is nulled on load: {st}")
+    check(r['thrown'] is None, f"Back on the restamped root threw: {r['thrown']}")
+    check(r['depth'] == 0 and r['screens'] == [], f"the stack stays empty: {r}")
+    check(r['stackHidden'] is True, f"#pwa-stack stays hidden: {r}")
+    check(r['errors'] == [], f"no listener errors: {r['errors']}")
+
+
+def scenario_push_moves_focus_to_the_title():
+    r = _case('push_moves_focus_to_the_title')
+    if r is None:
+        return
+    check(r['isH1'], f"document.activeElement is the screen's h1 after push (was {r['activeTag']}): {r}")
+    check(r['tabindex'] == '-1', f"the h1 is programmatically focusable, tabindex=-1: {r['tabindex']!r}")
+
+
+def scenario_pop_returns_focus_to_the_opener():
+    r = _case('pop_returns_focus_to_the_opener')
+    if r is None:
+        return
+    check(r['focusedBefore'], f"harness: opener focusable: {r}")
+    check(r['leftOpener'], f"push moved focus off the opener: {r}")
+    check(r['backOnOpener'], f"pop() puts focus back on the opener at once: {r}")
+    check(r['stillOnOpener'], f"focus stays on the opener after the history walk lands: {r}")
+    check(r['onTab'], f"with the opener removed, pop() focuses #tab-household: {r}")
+    check(r['thrown'] is None, f"no opener and no tab: nothing throws: {r['thrown']}")
+    check(r['errors'] == [], f"no listener errors: {r['errors']}")
+
+
+def scenario_covered_root_is_inert_while_a_screen_is_up():
+    r = _case('covered_root_is_inert_while_a_screen_is_up')
+    if r is None:
+        return
+    check(not r['before']['inert'] and r['before']['aria'] is None, f"nothing inert before a push: {r['before']}")
+    for k in ('up1', 'up2'):
+        check(r[k]['inert'], f"#pwa-covered has inert while a screen is up ({k}): {r[k]}")
+        check(r[k]['aria'] == 'true', f"#pwa-covered aria-hidden=true while a screen is up ({k}): {r[k]}")
+    check(r['afterOne']['inert'] and r['afterOne']['aria'] == 'true', f"still inert at depth 1 after one pop: {r['afterOne']}")
+    check(not r['after']['inert'] and r['after']['aria'] is None, f"inert and aria-hidden removed at depth 0: {r['after']}")
+    for k in ('before', 'up1', 'up2', 'afterOne', 'after'):
+        check(not r[k]['barInert'], f"#pwa-tab-bar is never inert/hidden ({k}): {r[k]}")
+        check(not r[k]['stackInert'], f"#pwa-stack is never inert/hidden ({k}): {r[k]}")
+    check(r['errors'] == [], f"no listener errors: {r['errors']}")
+
+
 SCENARIOS = [
     scenario_push_draws_the_chrome,
     scenario_a_second_screen_backs_to_the_first,
@@ -438,6 +576,10 @@ SCENARIOS = [
     scenario_pop_keeps_history_in_step,
     scenario_a_bare_root_state_still_takes_back,
     scenario_the_back_button_is_pop,
+    scenario_reload_restamps_the_root,
+    scenario_push_moves_focus_to_the_title,
+    scenario_pop_returns_focus_to_the_opener,
+    scenario_covered_root_is_inert_while_a_screen_is_up,
 ]
 
 if __name__ == "__main__":

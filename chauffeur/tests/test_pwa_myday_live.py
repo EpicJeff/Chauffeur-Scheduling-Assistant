@@ -378,6 +378,16 @@ def needs_you_pile(page, key):
     page.wait_for_function("""() => { const c = document.getElementById('chores-container');
         return c.dataset.section === 'reviews' && getComputedStyle(c).display !== 'none'; }""")
     assert page.evaluate('currentView') == 'chores'
+    # Slice 3: the review card's route is pwaOpenNeed -> pwaOpenHouseScreen('chores', 'check'):
+    # the Household Chores screen, pushed, at its "To check" segment.
+    settle(page, "PwaNav.depth() === 1 && !!document.querySelector('#pwa-stack .pwa-screen h1')")
+    assert page.evaluate('PwaNav.depth()') == 1, page.evaluate('PwaNav.depth()')
+    assert norm(page.locator('#pwa-stack .pwa-screen h1').last.inner_text()) == 'Chores'
+    segment = page.evaluate("""() => { const s = [...document.querySelectorAll('#pwa-stack .pwa-screen')].pop();
+        const e = s.matches('[data-house-segment]') ? s : s.querySelector('[data-house-segment]');
+        return e ? e.dataset.houseSegment : null; }""")
+    assert segment == 'check', segment
+    assert page.locator('#pwa-stack .pwa-screen').last.get_by_role('button', name='✓ Verify').is_visible()
     page.locator('#tab-myday').click()
     wait_brief(page)
     kinds = need_kinds(page)

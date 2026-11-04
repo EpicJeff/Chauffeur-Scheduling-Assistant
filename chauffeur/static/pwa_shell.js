@@ -1,6 +1,6 @@
 /* Presentation adapter only. Existing views still own data and actions. */
 let pwaChoresOwner = null, pwaRequestsOwner = null;
-let pwaHouseSection = 'tasks', pwaDatesExpanded = false;
+let pwaDatesExpanded = false;
 let pwaArgyleOpening = false;
 function pwaIsAdult() {
     return !!selectedMemberId && currentMemberRole() !== 'child';
@@ -191,7 +191,6 @@ function pwaSyncShell() {
     document.documentElement.dataset.pwaView = currentView;
     if (pwaSyncShell.member !== selectedMemberId) {
         pwaSyncShell.member = selectedMemberId;
-        pwaHouseSection = 'tasks';
         pwaDatesExpanded = false;
         document.querySelector('.pwa-conversation-search input').value = '';
     }
@@ -568,7 +567,7 @@ function pwaOpenAttention() {
     body.replaceChildren();
     const attention = pwaAttention();
     if (attention.jobs) body.append(pwaFeatureButton({id:'household', title:'Household reviews', description:`${attention.jobs} waiting for you`, run:() => {
-        dialog.close(); pwaHouseSection = 'reviews'; setView('chores'); pwaRenderHouseTabs();
+        dialog.close(); pwaSelectHouse('reviews');
     }}));
     if (attention.requests) {
         const requests = document.createElement('div'); requests.className = 'pwa-review-requests'; requests.innerHTML = renderRequests();
@@ -581,21 +580,21 @@ function pwaOpenAttention() {
 
 function pwaRenderHouseTabs() {
     if (!pwaIsAdult()) return;
-    const tabs = houseRevealListsOnly ? [['lists','Lists']] : [['tasks','Tasks'],['lists','Lists']];
-    if (!houseRevealListsOnly && currentMemberRole() === 'parent') tabs.push(['reviews','Reviews']);
-    if (houseThreads.length && !houseRevealListsOnly) tabs.push(['threads','Threads']);
-    if (!tabs.some(([id]) => id === pwaHouseSection)) pwaHouseSection = tabs[0][0];
-    const root = document.getElementById('chores-container'); root.dataset.section = pwaHouseSection;
-    const count = pwaChoresOwner === selectedMemberId ? houseChoresAttention() : 0;
-    const wrap = document.getElementById('house-anchors');
-    const html = `<div class="pwa-section-tabs" aria-label="Household sections">${tabs.map(([id,label]) => `<button onclick="pwaSelectHouse('${id}')" aria-pressed="${id === pwaHouseSection}">${label}${id === 'reviews' && count ? ` (${count})` : ''}</button>`).join('')}</div>`;
-    if (wrap.innerHTML !== html) {
-        const hadFocus = wrap.contains(document.activeElement);
-        wrap.innerHTML = html;
-        if (hadFocus) wrap.querySelector('[aria-pressed="true"]').focus();
-    }
+    pwaRenderHousehold();
 }
-function pwaSelectHouse(section) { pwaHouseSection = section; pwaRenderHouseTabs(); }
+function pwaSelectHouse(section) {
+    if (section === 'threads') {
+        setView('family');
+        document.getElementById('house-threads')?.scrollIntoView();
+        return;
+    }
+    if (section === 'reviews') {
+        if (choresToCheck().length) pwaOpenHouseScreen('chores', 'check');
+        else pwaOpenHouseScreen('rewards');
+    }
+    else if (section === 'tasks') pwaOpenHouseScreen('chores', 'mine');
+    else if (['rewards', 'lists', 'projects'].includes(section)) pwaOpenHouseScreen(section);
+}
 function pwaFilterConversations(query) {
     document.querySelectorAll('#channel-list > button').forEach(button => {
         button.hidden = !button.textContent.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());

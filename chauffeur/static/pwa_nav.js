@@ -9,16 +9,43 @@
     const depth = () => screens.length;
     const current = () => screens.length ? screens[screens.length - 1].screen : null;
 
+    if (window.history.state && typeof window.history.state.pwaDepth === 'number'
+        && window.history.state.pwaDepth > 0 && depth() === 0) {
+        window.history.replaceState({...window.history.state, pwaDepth:0, pwaScreen:null}, '');
+    }
+
     function sync() {
         const host = document.getElementById('pwa-stack');
         if (host) host.hidden = depth() === 0;
         if (depth()) document.documentElement.dataset.pwaStack = String(depth());
         else delete document.documentElement.dataset.pwaStack;
+        const covered = document.querySelector(typeof PWA_NAV_COVERED_ROOT === 'string' ? PWA_NAV_COVERED_ROOT : '#pwa-covered');
+        if (covered) {
+            covered.toggleAttribute('inert', depth() > 0);
+            if (depth()) covered.setAttribute('aria-hidden', 'true');
+            else covered.removeAttribute('aria-hidden');
+        }
+    }
+
+    function restoreFocus(opener) {
+        const visible = element => {
+            if (!element?.isConnected || element.closest('[hidden], [inert]')) return false;
+            for (let node = element; node; node = node.parentElement) {
+                const style = window.getComputedStyle(node);
+                if (style.display === 'none' || style.visibility === 'hidden') return false;
+            }
+            return true;
+        };
+        const view = typeof currentView !== 'undefined' ? currentView : '';
+        const tab = document.getElementById('tab-' + view) || document.querySelector('#pwa-tab-bar [aria-current="page"]');
+        if (visible(opener)) opener.focus({preventScroll:true});
+        else if (visible(tab)) tab.focus({preventScroll:true});
     }
 
     function push(screen) {
         const host = document.getElementById('pwa-stack');
         if (!host) return;
+        const opener = document.activeElement;
 
         if (depth() === 0) {
             const s = window.history.state;
@@ -42,20 +69,22 @@
         back.addEventListener('click', () => pop());
         const title = document.createElement('h1');
         title.textContent = screen.title;
+        title.setAttribute('tabindex', '-1');
         header.append(back, title);
         const body = document.createElement('div');
         body.className = 'pwa-screen-body';
         section.append(header, body);
         screen.render?.(body);
         host.append(section);
-        const entry = { screen, section, state: { pwaScreen: screen.id, pwaDepth: depth() + 1 } };
+        const entry = { screen, section, opener, state: { pwaScreen: screen.id, pwaDepth: depth() + 1 } };
         screens.push(entry);
         sync();
+        title.focus({preventScroll:true});
         if (pendingWalk) pendingPushes.push(entry);
         else window.history.pushState(entry.state, '');
     }
 
-    function removeScreen() {
+    function removeScreen({ restore = true } = {}) {
         const entry = screens.pop();
         if (!entry) return;
         if (pendingPushes[pendingPushes.length - 1] === entry) pendingPushes.pop();
@@ -66,6 +95,7 @@
         } catch (error) {
             console.error('PwaNav onPop failed', error);
         }
+        if (restore) restoreFocus(entry.opener);
     }
 
     function startWalk(count) {
@@ -98,9 +128,9 @@
         removeScreen();
     }
 
-    function clear({ extra = 0 } = {}) {
+    function clear({ extra = 0, restoreFocus = true } = {}) {
         walkBack(depth() - pendingPushes.length + extra);
-        while (depth()) removeScreen();
+        while (depth()) removeScreen({restore:restoreFocus});
     }
 
     window.addEventListener('popstate', event => {

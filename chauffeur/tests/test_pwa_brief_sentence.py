@@ -95,6 +95,14 @@ const CASES = {
             unusual: (f.unusual || []).map(u => ({kind: u.kind, text: u.text, rank: u.rank})),
             plain_unusual: plain.unusual};
   },
+  household_task_facts: () => {
+    const card = (id, title, why) => ({id, kind: 'household_task', icon: '☑️', title, why,
+                                       deadline: new Date('2026-11-03T00:00:00'), rank: 2, open: {screen: 'tasks'}});
+    const needs = [card('household_task:h2', 'Call the plumber', 'overdue'),
+                   card('household_task:h1', 'Take the bins out', 'due today')];
+    return pwaBriefFacts({rows: [], role: 'parent', isDriver: true, needs}).unusual
+      .filter(u => u.kind === 'household_task').map(u => u.text);
+  },
   abbreviations_survive_in_unusual_text: () => pwaBriefSentence(F(1, 0, [
     {kind: 'needs_driver', text: 'Dr. Patel checkup Thursday still needs a driver.', rank: 1}])),
   one_ride_no_drives_reads_naturally: () => ({one: pwaBriefSentence(F(0, 1)), two: pwaBriefSentence(F(0, 2))}),
@@ -284,6 +292,13 @@ def scenario_status_without_a_person_has_no_undefined():
         check('undefined' not in texts[0], f"{source} status fact says 'undefined': {texts[0]!r}")
     check('undefined' not in got['built_sentence'],
           f"Argyle's sentence says 'undefined': {got['built_sentence']!r}")
+
+
+def scenario_household_task_facts():
+    got, ran = _case('household_task_facts')
+    if ran:
+        check(got == ['Call the plumber is overdue.', 'Take the bins out is due today.'],
+              f"household_task cards read {got!r}, expected '<title> is overdue.' / '<title> is due today.'")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

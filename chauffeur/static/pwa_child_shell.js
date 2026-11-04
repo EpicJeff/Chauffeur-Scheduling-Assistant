@@ -26,6 +26,7 @@ function pwaChildSync() {
     const root = document.documentElement, stage = pwaChildStage();
     pwaChildProjects(stage);
     if (!stage) {
+        document.querySelector('#chores-container > #house-threads')?.remove();
         delete root.dataset.childStage; delete root.dataset.childPlan;
         pwaChildSync.member = null; pwaChildPlan = false; pwaChildDay = null;
         document.getElementById('pwa-child-detail').close();
@@ -222,6 +223,14 @@ function pwaChildRenderDay({data, routineData, programItems, balance, jobs = [],
 function pwaChildOpenRewards() { setView('chores'); pwaChildTaskSection = 'rewards'; pwaChildHouseTabs(); }
 function pwaChildHouseTabs() {
     const stage = pwaChildStage(); if (!stage) return;
+    const chores = document.getElementById('chores-container');
+    let threads = document.getElementById('house-threads');
+    if (!threads) { threads = document.createElement('div'); threads.id = 'house-threads'; }
+    if (threads.parentElement !== chores) {
+        threads.className = 'p-4 pt-0 space-y-3 pb-8';
+        threads.style.scrollMarginTop = '76px';
+        chores.appendChild(threads);
+    }
     const tabs = houseRevealListsOnly ? [['lists','Lists']] : [['tasks',stage === 'sprout' ? 'My jobs' : 'Tasks'],['rewards',chfFeatureOn('rewards') ? 'Rewards' : 'Points'],['lists','Lists']];
     if (houseThreads.length && !houseRevealListsOnly) tabs.push(['threads','Threads']);
     if (!tabs.some(([id])=>id === pwaChildTaskSection)) pwaChildTaskSection = tabs[0][0];

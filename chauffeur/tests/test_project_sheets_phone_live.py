@@ -169,6 +169,10 @@ def scenario_a_linked_list_opens_its_phone_home():
             page.locator('[data-link-open]').click()
             page.wait_for_function("() => document.getElementById('chores-container').style.display === 'flex'"
                                    " && document.getElementById('chores-container').dataset.section === 'lists'", timeout=10000)
+            # Slice 3: phoneOpenList pushes the Household Lists screen, which adopts #house-lists.
+            page.wait_for_function("() => window.PwaNav && PwaNav.depth() === 1"
+                                   " && !!document.querySelector('#pwa-stack .pwa-screen #house-lists')", timeout=10000)
+            check(page.locator('#pwa-stack .pwa-screen h1').last.inner_text().strip() == 'Lists', "the Lists screen is up")
             check('/app' in page.url, f"the list opens in the phone app, not an admin page: {page.url}")
             check(page.evaluate('houseActiveListId') == lst['id'], "on that list")
             check(served.errors() == [], f"no page errors: {served.errors()}")

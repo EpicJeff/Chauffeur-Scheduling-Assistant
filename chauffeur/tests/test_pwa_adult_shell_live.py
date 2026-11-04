@@ -76,11 +76,21 @@ def expand_day(page):
 
 
 def open_review_card(page):
-    """The review card in Needs you replaced the .pwa-attention summary."""
+    """The review card in Needs you replaced the .pwa-attention summary.
+    Slice 3: it pushes the Household Chores screen at its "To check" segment
+    (pwaOpenNeed -> pwaOpenHouseScreen('chores', 'check')); #chores-container's
+    data-section stays the mirror ('reviews')."""
     kinds = page.evaluate("(window.pwaNeedCards || []).map(c => c.kind)")
     assert 'review' in kinds, kinds
     page.locator('#myday-content .pwa-need').nth(kinds.index('review')).click()
     page.wait_for_function("document.getElementById('chores-container').dataset.section === 'reviews'")
+    page.wait_for_function("PwaNav.depth() === 1 && !!document.querySelector('#pwa-stack .pwa-screen h1')")
+    assert page.evaluate('currentView') == 'chores', page.evaluate('currentView')
+    assert ' '.join(page.locator('#pwa-stack .pwa-screen h1').last.inner_text().split()) == 'Chores'
+    segment = page.evaluate("""() => { const s = [...document.querySelectorAll('#pwa-stack .pwa-screen')].pop();
+        const e = s.matches('[data-house-segment]') ? s : s.querySelector('[data-house-segment]');
+        return e ? e.dataset.houseSegment : null; }""")
+    assert segment == 'check', segment
 
 
 def assert_no_drive_hero(page):
@@ -430,11 +440,19 @@ def run():
                             Path(output, 'adult-today-light.png').write_bytes(page.screenshot())
                         open_review_card(page)
                         assert page.locator('#chores-container').get_attribute('data-section') == 'reviews'
-                        assert page.get_by_role('button', name='\u2713 Verify').is_visible()
-                        page.get_by_role('button', name='Tasks', exact=True).click()
-                        assert page.get_by_role('button', name='Mark done').is_visible()
-                        assert not page.get_by_role('button', name='\u2713 Verify').is_visible()
+                        screen = page.locator('#pwa-stack .pwa-screen').last
+                        assert screen.get_by_role('button', name='\u2713 Verify').is_visible()
+                        # Slice 3: the old "Tasks" section tab is the Chores screen's "Mine" segment.
+                        screen.locator('.pwa-seg .pwa-seg-item').filter(has_text='Mine').first.click()
+                        page.wait_for_function("document.getElementById('chores-container').dataset.section === 'tasks'")
+                        assert screen.get_by_role('button', name='Mark done').is_visible()
+                        assert not screen.get_by_role('button', name='\u2713 Verify').is_visible()
                         if output: Path(output, 'adult-household-light.png').write_bytes(page.screenshot())
+                        # Back returns to the Household cards.
+                        screen.locator('.pwa-back').click()
+                        page.wait_for_function('PwaNav.depth() === 0')
+                        page.wait_for_selector('#house-cards .pwa-house-card')
+                        assert page.evaluate('currentView') == 'chores'
                         page.locator('#tab-family').click()
                         page.wait_for_selector('#pane-events .pwa-agenda-row')
                         assert page.locator('#pwa-page-heading h2').inner_text() == 'Family plan'
@@ -514,7 +532,7 @@ def run():
                             route.fulfill(json={})
                         page.route('**/api/chores/recycling/verify', verify)
                         open_review_card(page)
-                        page.get_by_role('button', name='\u2713 Verify').click()
+                        page.locator('#pwa-stack .pwa-screen').last.get_by_role('button', name='\u2713 Verify').click()
                         page.wait_for_function('houseChoresAttention() === 0')
                         page.locator('#tab-myday').click()
                         wait_brief(page)
