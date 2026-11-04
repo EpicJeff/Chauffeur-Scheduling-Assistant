@@ -113,8 +113,10 @@
     <link rel="stylesheet" href="{{ 'static/pwa_shell.css'|ver }}">
     <script defer src="{{ 'static/pwa_shell.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_nav.js'|ver }}"></script>
+    <script defer src="{{ 'static/pwa_clock.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_myday.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_household.js'|ver }}"></script>
+    <script defer src="{{ 'static/pwa_plan.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_messages.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_argyle.js'|ver }}"></script>
     <link rel="stylesheet" href="{{ 'static/argyle_orb.css'|ver }}">
@@ -297,6 +299,7 @@
 
         <!-- Day Navigation -->
         <section id="pwa-page-heading" class="pwa-adult-only pwa-page-heading"></section>
+        <div id="plan-head" class="pwa-adult-only"></div>
         <div id="day-nav"
             class="flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-800 shrink-0 z-10 shadow-sm">
             <button onclick="prevDay()"
@@ -923,7 +926,7 @@
                 if (musicWidgetStarted && typeof mwRefresh === 'function') mwRefresh();
             } else if (view !== 'more' && view !== 'library') {
                 buildTimeline();
-                if (view === 'family') { fetchProposals(); fetchMind(); fetchHouseThreads(); }
+                if (view === 'family') { pwaRenderPlan(); fetchProposals(); fetchMind(); fetchHouseThreads(); }
             }
             if (view !== 'map' && typeof stopFamilyMapPolling === 'function') stopFamilyMapPolling();
         }
@@ -3967,6 +3970,7 @@
         }
 
         function renderProposals() {
+            if (currentView === 'family') pwaRenderPlan();
             const wrap = document.getElementById('proposals-content');
             if (!wrap) { renderScheduleAnchors(); return; }
             wrap.innerHTML = '';
@@ -9799,12 +9803,6 @@
             // passenger double-booked blocks everybody identically) is the
             // honest label; mixed reasons stay generic.
             const diagnostics = scheduleData.diagnostics || {};
-            function conflictFor(evId) {
-                const reasons = Object.values(diagnostics[evId] || {});
-                if (!reasons.length || !reasons.every(r => r && r.type !== 'optimization')) return null;
-                const texts = [...new Set(reasons.map(r => r && r.text).filter(Boolean))];
-                return { reason: texts.length === 1 ? texts[0] : null };
-            }
             const cards = new Map();
 
             (events || []).forEach(ev => {
@@ -9877,14 +9875,14 @@
                     card.carIds.add(carId);
                 }
                 const legUnassigned = trueUnassigned.includes(ev.id);
-                const legConflict = legUnassigned ? conflictFor(ev.id) : null;
+                const legConflict = legUnassigned ? pwaConflictOf(diagnostics[ev.id]) : null;
                 if (legUnassigned) {
                     // Conflict only while EVERY unassigned leg is a conflict —
                     // one assignable leg keeps the actionable red chip.
                     card.isConflict = card.isUnassigned
                         ? (card.isConflict && !!legConflict) : !!legConflict;
                     card.conflictReason = card.isConflict
-                        ? (card.conflictReason || (legConflict && legConflict.reason)) : null;
+                        ? (card.conflictReason || (legConflict && legConflict.conflictReason)) : null;
                     card.isUnassigned = true;
                 }
 
@@ -10000,7 +9998,7 @@
                 if (pwaIsAdult() || pwaChildStage()) return pwaAgendaRow({time:formatTime(card.start), title:w.title || card.title,
                     meta:mfEscape([w.member_name, w.session_label].filter(Boolean).join(' · ')),
                     action:`openSessionSheet('${sessionKey(w)}')`, state:w.logged ? 'Logged' : past ? 'Past' : '',
-                    attrs:`data-kind="session" data-program-id="${mfEscape(w.program_id || '')}" data-start="${mfEscape(pwaLocalIso(card.start))}" data-end="${mfEscape(pwaLocalIso(card.end))}" data-title="${mfEscape(w.title || card.title)}" data-place="" data-meta="${mfEscape(w.session_label || '')}" data-state="${w.logged ? 'done' : past ? 'past' : 'upcoming'}" data-primary="${mfEscape(`openSessionSheet('${sessionKey(w)}')`)}"`});
+                    attrs:`data-kind="session" data-program-id="${mfEscape(w.program_id || '')}" data-start="${mfEscape(pwaLocalIso(card.start))}" data-end="${mfEscape(pwaLocalIso(card.end))}" data-title="${mfEscape(w.title || card.title)}" data-place="" data-meta="${mfEscape(w.session_label || '')}" data-state="${w.logged ? 'done' : past ? 'past' : 'upcoming'}" data-primary="${mfEscape(`openSessionSheet('${sessionKey(w)}')`)}" data-event-id="${mfEscape(card.id)}" data-color="#14B8A6" data-cal="${mfEscape((card.calendarIds || []).join(','))}" data-drivers="${mfEscape([...card.driverIds || []].join(','))}"`});
                 // Tappable, like every other agenda row. It was the one
                 // card in this view that opened nothing, on the reasoning
                 // that a practice window had nothing behind it -- which
@@ -10026,7 +10024,7 @@
 
             if (card.isTrip) {
                 if (pwaIsAdult() || pwaChildStage()) return pwaAgendaRow({time:'All day', title:card.title, meta:'Trip', action:`openTripSheet('${sessionKey(card)}')`,
-                    attrs:`data-kind="event" data-all-day="1" data-start="${mfEscape(pwaLocalIso(card.start))}" data-end="${mfEscape(pwaLocalIso(card.end))}" data-title="${mfEscape(card.title)}" data-place="" data-meta="Trip" data-state="upcoming" data-primary="${mfEscape(`openTripSheet('${sessionKey(card)}')`)}"`});
+                    attrs:`data-kind="event" data-all-day="1" data-start="${mfEscape(pwaLocalIso(card.start))}" data-end="${mfEscape(pwaLocalIso(card.end))}" data-title="${mfEscape(card.title)}" data-place="" data-meta="Trip" data-state="upcoming" data-primary="${mfEscape(`openTripSheet('${sessionKey(card)}')`)}" data-event-id="${mfEscape(card.id)}" data-color="#3B82F6" data-cal="${mfEscape((card.calendarIds || []).join(','))}" data-drivers="${mfEscape([...card.driverIds || []].join(','))}"`});
                 // Tappable like every other row here. It was the last card in
                 // this view that answered nothing, and a background trip is
                 // exactly the one whose MEANING a person cannot infer from
@@ -10093,6 +10091,8 @@
                 isErrand: card.isErrand,
                 why: card.why || null,
                 driverIds: Array.from(card.driverIds || []),
+                calendarIds: card.calendarIds || [],
+                color,
                 suppressed: !!card.suppressed,
                 dateStr: (card.start || '').split('T')[0],
                 legs: legsData,
@@ -10355,9 +10355,10 @@
                     </div>` : '';
 
                 if (familyByDate) {
+                    const rows = renderFamilyDay(familyByDate[dateStr]);
                     pane.innerHTML = sections
                         + '<div id="pane-events" style="scroll-margin-top:8px">'
-                        + renderFamilyDay(familyByDate[dateStr]) + '</div>';
+                        + (pwaIsAdult() && currentView === 'family' ? '<div class="pwa-plan-rows" hidden>' + rows + '</div>' : rows) + '</div>';
                     frag.appendChild(pane);
                     return;
                 }
@@ -10618,6 +10619,9 @@
                 frag.appendChild(pane);
             });
             container.appendChild(frag);
+            if (pwaIsAdult() && currentView === 'family') {
+                document.querySelectorAll('#days-container > [id^="pane-"]').forEach(pwaRenderPlanDay);
+            }
             // The panes were just replaced, taking every node the section
             // renderers wrote into with them. All of them repaint from data
             // already in hand -- this is a repaint, never a refetch.
@@ -10698,6 +10702,7 @@
             document.getElementById('current-day-label').textContent = label;
             document.getElementById('date-subtitle').textContent = dDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
             pwaPageHeading();
+            if (currentView === 'family') pwaRenderPlan();
             refreshDatedTimeline(dStr);
 
             // document.getElementById('btn-prev-day').disabled = activeDateIndex === 0;
@@ -10925,7 +10930,7 @@
             // old day, so an app left open overnight woke up offering last
             // night's session as the next one.
             practiceBuiltAt = 0;
-            if (scheduleData && selectedDriverId) buildTimeline();
+            if (scheduleData && (selectedDriverId || (pwaIsAdult() && currentView === 'family'))) buildTimeline();
             refreshTodaySurfaces();
         }
 
@@ -10936,6 +10941,7 @@
             if (document.hidden) return;
             reanchorIfDayChanged();
             refreshTodaySurfaces(true);
+            pwaRefreshPlan();
             if (selectedDriverId) fetchSchedule(false, true);
         }, 300000);
         document.addEventListener('visibilitychange', () => {
@@ -10945,6 +10951,7 @@
             // back to the state it went to sleep in unless something says
             // otherwise. This is that something.
             refreshTodaySurfaces(true);
+            pwaRefreshPlan();
             if (selectedDriverId) {
                 fetchSchedule(false, true);
                 fetchNotifications();

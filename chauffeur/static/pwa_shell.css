@@ -485,6 +485,47 @@ html[data-audience="adult"] #pwa-stack #thread-form:is(.has-text, .has-attachmen
 [data-audience="adult"] .pwa-screen #house-lists form input { width: 0; min-width: 120px; }
 [data-audience="adult"] .pwa-screen .pwa-balances { order: 0; }
 [data-audience="adult"] :is(button, input, [role="button"]):focus-visible { outline: 3px solid var(--pwa-accent); outline-offset: 3px; }
+
+/* Plan: plan-and-drive.html's first phone, with the shared adult ink tokens. */
+html[data-audience="adult"] #plan-head { display: none; }
+html[data-audience="adult"][data-pwa-view="family"] #plan-head { display: block; flex-shrink: 0; min-width: 0; padding: 12px 20px 0; color: var(--pwa-ink); }
+html[data-audience="adult"][data-pwa-view="family"] #pwa-page-heading { display: none !important; }
+html[data-audience="adult"][data-pwa-view="family"] #day-nav { position: absolute; top: 12px; right: 20px; width: 88px; height: 44px; padding: 0; gap: 0; }
+html[data-audience="adult"][data-pwa-view="family"] #day-nav > button { width: 44px; min-width: 44px; height: 44px; }
+html[data-audience="adult"][data-pwa-view="family"] #current-day-label { display: none; }
+html[data-audience="adult"][data-pwa-view="family"] .pwa-plan-title { padding-right: 92px; }
+html[data-audience="adult"] .pwa-plan-title { display: flex; justify-content: space-between; align-items: center; font-size: 34px; font-weight: 700; letter-spacing: -.03em; line-height: 1.2; margin: 0 0 4px; color: var(--pwa-ink); }
+html[data-audience="adult"] .pwa-plan-today { min-height: 44px; font-size: 14px; font-weight: 600; letter-spacing: 0; color: var(--pwa-accent); }
+html[data-audience="adult"] .pwa-plan-lead { font-size: 16px; color: var(--pwa-msg-muted); line-height: 1.45; margin: 0 0 16px; }
+html[data-audience="adult"] .pwa-people { display: flex; gap: 8px; overflow-x: auto; padding: 3px; margin: -3px -3px 13px; scrollbar-width: none; }
+html[data-audience="adult"] .pwa-pp { display: flex; flex-shrink: 0; align-items: center; gap: 6px; min-height: 44px; padding: 6px 10px 6px 6px; border-radius: 999px; background: color-mix(in srgb, var(--pwa-ink) 5%, transparent); color: var(--pwa-msg-muted); font-size: 13px; font-weight: 600; white-space: nowrap; }
+html[data-audience="adult"] .pwa-pp i { display: block; width: 22px; height: 22px; border-radius: 50%; }
+html[data-audience="adult"] .pwa-pp[aria-pressed="true"] { background: var(--pwa-card-raised); color: var(--pwa-ink); box-shadow: 0 1px 4px rgba(31,29,43,.1); }
+html[data-audience="adult"] .pwa-week { display: flex; justify-content: space-between; margin: 0 0 12px; }
+html[data-audience="adult"] .pwa-week-day { position: relative; width: 44px; flex: 0 1 44px; min-width: 0; text-align: center; font-size: 12px; color: var(--pwa-msg-muted); padding-bottom: 10px; }
+html[data-audience="adult"] .pwa-week-day b { display: block; width: 36px; height: 36px; line-height: 36px; margin: 4px auto; border-radius: 50%; font-size: 16px; font-weight: 600; color: var(--pwa-ink); }
+html[data-audience="adult"] .pwa-week-day[aria-pressed="true"] b { background: var(--pwa-accent); color: rgb(var(--c-gray-950)); }
+html[data-audience="adult"][data-theme="light"] .pwa-week-day[aria-pressed="true"] b { color: white; }
+html[data-audience="adult"] .pwa-week-day .w { display: block; font-size: 13px; }
+html[data-audience="adult"] .pwa-week-day .cnt { display: inline-block; min-width: 16px; height: 16px; line-height: 16px; padding: 0 3px; border-radius: 8px; background: color-mix(in srgb, var(--pwa-ink) 8%, transparent); font-size: 10px; color: var(--pwa-msg-muted); }
+html[data-audience="adult"] .pwa-week-day .proposed { position: absolute; bottom: 0; left: calc(50% - 3px); width: 6px; height: 6px; border-radius: 50%; background: var(--pwa-accent); }
+html[data-audience="adult"] .pwa-plan-rows[hidden] { display: none; }
+html[data-audience="adult"] .pwa-plan-allday { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+html[data-audience="adult"] .pwa-plan-allday:empty { margin: 0; }
+html[data-audience="adult"] .pwa-band-item { max-width: 100%; min-height: 44px; padding: 8px 14px; border-radius: 999px; background: var(--pwa-card); color: var(--pwa-ink); font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+html[data-audience="adult"] .pwa-tl { position: relative; padding-left: 54px; min-width: 0; margin-top: 8px; }
+html[data-audience="adult"] .pwa-plan-track { position: relative; }
+html[data-audience="adult"] .pwa-hr { position: relative; height: 66px; box-sizing: border-box; border-top: 1px solid var(--pwa-msg-line); }
+html[data-audience="adult"] .pwa-hr > span { position: absolute; left: -54px; top: -9px; width: 44px; text-align: right; font-size: 12px; color: var(--pwa-msg-muted); }
+html[data-audience="adult"] .pwa-ev { position: absolute; display: flex; flex-direction: column; text-align: left; gap: 2px; box-sizing: border-box; min-height: 0; border-radius: 14px; padding: 8px 12px; font-size: 14px; line-height: 1.25; font-weight: 600; color: white; overflow: hidden; }
+html[data-audience="adult"] .pwa-ev[data-ink="dark"] { --pwa-ink: var(--pwa-ink-light, #1f1d2b); color: var(--pwa-ink); }
+html[data-audience="adult"] .pwa-ev[data-ink="light"] { color: white; }
+html[data-audience="adult"] .pwa-ev > span { flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
+html[data-audience="adult"] .pwa-ev small { font-size: 12px; opacity: .85; font-weight: 500; overflow: hidden; }
+html[data-audience="adult"] .pwa-ev.dim { opacity: .5; }
+html[data-audience="adult"] .pwa-leave { position: absolute; left: 0; right: 0; height: 22px; box-sizing: border-box; padding: 2px 8px; border-radius: 8px; font-size: 12px; line-height: 18px; font-weight: 600; color: var(--pwa-accent); background: color-mix(in srgb, var(--pwa-driver-color) 18%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+html[data-audience="adult"] .pwa-now { position: absolute; left: -54px; right: 0; border-top: 2px solid #e0544f; pointer-events: none; }
+html[data-audience="adult"] .pwa-now > span { position: absolute; left: 0; top: -9px; padding-right: 6px; font-size: 11px; font-weight: 600; color: #e0544f; background: var(--pwa-sky-mid); }
 @media (min-width: 768px) {
   [data-audience="adult"] #screen-schedule { width: min(100%, 960px); margin-inline: auto; border-inline: 1px solid rgb(var(--c-gray-800)); }
   [data-audience="adult"] body > header { padding-inline: max(24px, calc((100% - 928px) / 2)); }

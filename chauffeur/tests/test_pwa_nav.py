@@ -18,6 +18,10 @@ Pinned shapes (static/pwa_nav.js sets window.PwaNav):
   * `clear()` pops every screen (each onPop once) and, when depth was > 0,
     undoes the pushes with ONE `history.go(-depth)`.
 
+Slice 5 task 5: while depth() > 0, `body > header` and `#day-nav` carry
+`inert` + aria-hidden="true" too (the harness page has both as direct body
+children, outside #pwa-covered); #pwa-tab-bar and #pwa-stack never.
+
 jsdom 30 dispatches popstate asynchronously on history.back()/go() (checked
 empirically), so the harness waits for the next popstate or 200 ms.
 
@@ -51,6 +55,8 @@ const [,, navPath, casesPath] = process.argv;
 const cases = JSON.parse(fs.readFileSync(casesPath, 'utf8'));
 const src = fs.existsSync(navPath) ? fs.readFileSync(navPath, 'utf8') : null;
 const HTML = '<!doctype html><html><body>'
+  + '<header id="hdr"><button>me</button></header>'
+  + '<nav id="day-nav"><button>prev</button></nav>'
   + '<div id="pwa-covered"><button id="opener">x</button></div>'
   + '<div id="pwa-stack" hidden></div>'
   + '<div id="pwa-more-container"></div>'
@@ -313,6 +319,32 @@ const RUN = {
     const after = probe();
     return { before, up1, up2, afterOne, after, errors };
   },
+  async header_and_day_nav_go_inert() {
+    // Slice 5 task 5: the app header (body > header) and the day arrows
+    // (#day-nav) sit outside #pwa-covered, so a pushed screen must silence
+    // them too; the tab bar and the stack never.
+    const { w, errors } = fresh();
+    const d = w.document;
+    const hdr = d.querySelector('body > header');
+    const nav = d.getElementById('day-nav');
+    const bar = d.getElementById('pwa-tab-bar');
+    const stack = d.getElementById('pwa-stack');
+    const of = el => ({ inert: el.hasAttribute('inert'), aria: el.getAttribute('aria-hidden') });
+    const probe = () => ({
+      hdr: of(hdr), nav: of(nav),
+      barInert: bar.hasAttribute('inert') || bar.hasAttribute('aria-hidden'),
+      stackInert: stack.hasAttribute('inert') || stack.hasAttribute('aria-hidden'),
+    });
+    const counts = {};
+    const before = probe();
+    w.PwaNav.push(screen('a', 'Chores', counts));
+    const up1 = probe();
+    w.PwaNav.pop();
+    const after = probe();
+    await new Promise(r => setTimeout(r, 250));   // let the history walk land
+    const settled = probe();
+    return { before, up1, after, settled, errors };
+  },
 };
 
 (async () => {
@@ -330,7 +362,8 @@ CASES = ['push_draws_chrome', 'second_screen_backs_to_the_first', 'pop_calls_onp
          'clear_then_push_keeps_the_new_screen', 'pop_walks_history_back',
          'push_over_a_bare_root_state', 'back_button_pops_through_pwanav',
          'reload_restamps_the_root', 'push_moves_focus_to_the_title',
-         'pop_returns_focus_to_the_opener', 'covered_root_is_inert_while_a_screen_is_up']
+         'pop_returns_focus_to_the_opener', 'covered_root_is_inert_while_a_screen_is_up',
+         'header_and_day_nav_go_inert']
 
 _RESULT = {}
 
@@ -564,6 +597,28 @@ def scenario_covered_root_is_inert_while_a_screen_is_up():
     check(r['errors'] == [], f"no listener errors: {r['errors']}")
 
 
+def scenario_header_and_day_nav_go_inert():
+    """Slice 5 task 5 (carry-forward): `body > header` and `#day-nav` carry
+    `inert` + aria-hidden="true" while depth() > 0, like #pwa-covered, and
+    lose both at depth 0; #pwa-tab-bar and #pwa-stack never get either."""
+    r = _case('header_and_day_nav_go_inert')
+    if r is None:
+        return
+    for el in ('hdr', 'nav'):
+        name = 'body > header' if el == 'hdr' else '#day-nav'
+        check(not r['before'][el]['inert'] and r['before'][el]['aria'] is None,
+              f"{name} is live before a push: {r['before'][el]}")
+        check(r['up1'][el]['inert'], f"{name} has inert at depth 1: {r['up1'][el]}")
+        check(r['up1'][el]['aria'] == 'true', f"{name} has aria-hidden=true at depth 1: {r['up1'][el]}")
+        for k in ('after', 'settled'):
+            check(not r[k][el]['inert'] and r[k][el]['aria'] is None,
+                  f"{name} loses inert and aria-hidden after the pop ({k}): {r[k][el]}")
+    for k in ('before', 'up1', 'after', 'settled'):
+        check(not r[k]['barInert'], f"#pwa-tab-bar is never inert/hidden ({k}): {r[k]}")
+        check(not r[k]['stackInert'], f"#pwa-stack is never inert/hidden ({k}): {r[k]}")
+    check(r['errors'] == [], f"no listener errors: {r['errors']}")
+
+
 SCENARIOS = [
     scenario_push_draws_the_chrome,
     scenario_a_second_screen_backs_to_the_first,
@@ -580,6 +635,7 @@ SCENARIOS = [
     scenario_push_moves_focus_to_the_title,
     scenario_pop_returns_focus_to_the_opener,
     scenario_covered_root_is_inert_while_a_screen_is_up,
+    scenario_header_and_day_nav_go_inert,
 ]
 
 if __name__ == "__main__":

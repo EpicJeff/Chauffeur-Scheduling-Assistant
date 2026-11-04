@@ -11,10 +11,7 @@ function pwaHouseholdCards(inputs) {
     const today = inputs.today;
     const dayNumber = iso => Date.parse(String(iso).slice(0, 10) + 'T00:00:00Z') / 86400000;
     const daysAway = iso => dayNumber(iso) - dayNumber(today);
-    const time = iso => {
-        const date = new Date(iso);
-        return `${date.getHours() % 12 || 12}:${String(date.getMinutes()).padStart(2, '0')}`;
-    };
+    const time = iso => pwaClock(iso, {use24h:inputs.use24h});
     const card = (id, icon, title) => ({id, icon, title, line:'', pills:[], faces:[], progress:null, score:0, open:{screen:id},
         lead:{reviews:0, overdueTitle:null, shopDay:null, windowProgram:null, windowTime:null}});
     const pill = (text, tone = 'plain') => ({text, tone});
@@ -151,7 +148,8 @@ function pwaHouseholdInputs() {
         redemptions:ownChores ? redemptionsData : [], householdTasks:householdTasksData.filter(t => t.status !== 'done'),
         lists:houseLists, runs:pwaHouseRuns, projects:pwaHouseProjects, programs:pwaHousePrograms,
         nextWindowFor:id => upcomingWindows(id, pwaHouseWindows)[0] || null,
-        members:membersData, meId:selectedMemberId, today:todayStr()};
+        members:membersData, meId:selectedMemberId, today:todayStr(),
+        use24h:typeof use24h !== 'undefined' && use24h};
 }
 
 async function pwaReadHousehold(path) {

@@ -40,9 +40,9 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pwa_pure import check, pure_source, run_node  # noqa: E402
+from pwa_pure import check, clock_source, pure_source, run_node  # noqa: E402
 
-WANTED = ['pwaNeedsYou']
+WANTED = ['pwaNeedsYou', 'pwaConflictOf']
 ALLOWED_FNS = {'pwaOpenNeedRequests', 'openEventModal', 'openKidTaskDetail', 'pwaOpenStatusSheet'}
 
 PROBE = r"""
@@ -93,6 +93,18 @@ function cards(inp) {
 }
 const LONG = 'Can you pick me up from the library after the robotics meeting runs late again tonight please';
 const CASES = {
+  // The calendar's Conflict rule, shared by buildFamilyCards and the pile
+  // (pwaConflictOf over scheduleData.diagnostics[eventId], a map of reasons
+  // {type, text}): a conflict only when every reason exists and none is an
+  // optimization; one distinct text is the reason, mixed texts none.
+  conflict_rule: () => ({
+    empty: pwaConflictOf({}),
+    none: pwaConflictOf(undefined),
+    hard: pwaConflictOf({d1: {type: 'hard', text: 'Sam is in two places at 4:30'}, d2: {type: 'hard', text: 'Sam is in two places at 4:30'}}),
+    mixed_text: pwaConflictOf({d1: {type: 'hard', text: 'A'}, d2: {type: 'hard', text: 'B'}}),
+    optimization: pwaConflictOf({d1: {type: 'hard', text: 'A'}, d2: {type: 'optimization', text: 'cheaper'}}),
+    missing_reason: pwaConflictOf({d1: {type: 'hard', text: 'A'}, d2: null}),
+  }),
   empty_pile_is_absent: () => cards(inputs()),
   deadlines_come_first: () => cards(inputs({requests: REQUESTS, dueSoon: DUE_SOON})),
   needs_driver_outranks_review_on_the_same_day: () => cards(inputs({reviews: REVIEWS, unassigned: UNASSIGNED.slice(0, 1)})),
@@ -103,6 +115,12 @@ const CASES = {
   unassigned_beyond_seven_days_is_skipped: () => cards(inputs({unassigned: UNASSIGNED})),
   request_body_is_truncated: () => cards(inputs({requests: [{id: 'rq2', from_name: 'Sam', body: LONG}]})),
   full_pile: () => cards(FULL()),
+  // slice 5 task 1: pwaNeedsYou(inputs, now, opts), opts.use24h words the clock
+  needs_driver_24h: () => {
+    const inp = inputs({unassigned: UNASSIGNED.slice(0, 1)});
+    const why = (opts) => (opts === undefined ? pwaNeedsYou(inp, NOW) : pwaNeedsYou(inp, NOW, opts))[0].why;
+    return {h24: why({use24h: true}), h12_false: why({use24h: false}), h12_empty: why({}), h12_absent: why()};
+  },
   one_proposal_is_singular_and_sourced: () => cards(inputs({proposals: [
     {id: 'p3', start: '2026-11-07T19:00:00', source_subject: 'Fall concert'}]})),
   proposal_without_a_source: () => cards(inputs({proposals: [{id: 'p4', start: '2026-11-07T19:00:00'}]})),
@@ -137,6 +155,21 @@ const CASES = {
       requests: [{id: 'r1', from_name: 'Sam', body: 'Ride?'}]}), NOW);
     return out.map(c => c.kind);
   },
+  // slice 5 task 5: the calendar's Conflict rule on the needs-driver card.
+  // An unassigned row carries the calendar card's own fields, isConflict and
+  // conflictReason (templates/app.html conflictFor / familyDriverChips).
+  needs_driver_conflict_wording: () => {
+    const rows = [
+      {id: 'swim', title: 'Swim meet', start: '2026-11-05T17:10:00', end: '2026-11-05T17:10:00', key: 'swim-key',
+       isConflict: true, conflictReason: 'Alex is driving Sam'},
+      {id: 'chess', title: 'Chess club', start: '2026-11-04T17:00:00', end: '2026-11-04T17:00:00', key: 'chess-key',
+       isConflict: false, conflictReason: 'stale reason'},
+      {id: 'art', title: 'Art class', start: '2026-11-06T16:00:00', end: '2026-11-06T16:00:00', key: 'art-key',
+       isConflict: true, conflictReason: null},
+    ];
+    const swim24 = pwaNeedsYou(inputs({unassigned: rows.slice(0, 1)}), NOW, {use24h: true})[0];
+    return {cards: cards(inputs({unassigned: rows})), h24: swim24 && swim24.why};
+  },
 };
 for (const [name, fn] of Object.entries(CASES)) {
   try { out.cases[name] = {value: fn()}; }
@@ -151,7 +184,7 @@ _CACHE = {}
 
 def _out():
     if 'out' not in _CACHE:
-        _CACHE['out'] = run_node(pure_source('pwa_myday.js', WANTED) + '\n' + PROBE)
+        _CACHE['out'] = run_node(clock_source() + pure_source('pwa_myday.js', WANTED) + '\n' + PROBE)
     return _CACHE['out']
 
 
@@ -281,6 +314,23 @@ def scenario_unassigned_beyond_seven_days_is_skipped():
     args = (nd.get('open') or {}).get('args')
     check(isinstance(args, list) and len(args) == 1 and isinstance(args[0], str) and args[0],
           f"openEventModal needs the one event key as its argument, got {args!r}")
+
+
+def scenario_needs_driver_honours_use24h():
+    """The same Thursday pickup (17:10): 'Thursday 17:10 · nobody yet' with
+    {use24h: true}; the 12-hour wording stays with false, {} or no opts."""
+    got = _out()
+    if got is None:
+        print("  skip  node is not installed")
+        return
+    got = got['cases']['needs_driver_24h']
+    check('error' not in got, f"needs_driver_24h threw under node:\n{got.get('error')}")
+    got = got['value']
+    check(got['h24'] == 'Thursday 17:10 · nobody yet', f"use24h why {got['h24']!r}, expected 'Thursday 17:10 · nobody yet'")
+    for key in ('h12_false', 'h12_empty', 'h12_absent'):
+        why = got[key]
+        check(why.startswith('Thursday') and '5:10' in why and 'PM' in why and why.endswith('· nobody yet'),
+              f"{key} why {why!r}, expected the 12-hour 'Thursday 5:10 PM · nobody yet'")
 
 
 def scenario_request_body_is_truncated():
@@ -472,6 +522,53 @@ def scenario_household_tasks_outrank_quiet_lists_but_not_a_needs_driver():
     nd = [c for c in got if c['kind'] == 'needs_driver'][0]
     check(nd['rank'] == 1 and nd['deadline_ms'] == _ms('pickup'), f"needs_driver card {nd!r}")
 
+
+def scenario_needs_driver_conflict_wording():
+    """Slice 5 task 5, the calendar's Conflict rule: an unassigned row with
+    `isConflict: true` and a `conflictReason` (the fields the family card
+    carries, app.html ~9859/9884-9887, filled from the solver diagnostics by
+    `conflictFor`) reads '<weekday> <time> · <conflictReason>' instead of
+    '· nobody yet'; `isConflict: false` keeps '· nobody yet' whatever
+    conflictReason says; a conflict with no reason never prints
+    'undefined'/'null'. The card stays a rank-1 needs_driver opening the event."""
+    out = _out()
+    if out is None:
+        print("  skip  node is not installed")
+        return
+    got = out['cases']['needs_driver_conflict_wording']
+    check('error' not in got, f"needs_driver_conflict_wording threw under node:\n{got.get('error')}")
+    val = got['value']
+    by = {c['title']: c for c in val['cards']}
+    check(set(by) == {'Swim meet needs a driver', 'Chess club needs a driver', 'Art class needs a driver'},
+          f"three needs-driver cards: {list(by)!r}")
+    swim = by['Swim meet needs a driver']
+    check(swim['why'] == 'Thursday 5:10 PM · Alex is driving Sam',
+          f"a conflict reads its reason, never 'nobody yet': {swim['why']!r}, expected 'Thursday 5:10 PM · Alex is driving Sam'")
+    check(swim['kind'] == 'needs_driver' and swim['rank'] == 1 and swim['deadline_ms'] == _ms('pickup'),
+          f"the conflict card is still a rank-1 needs_driver due at the start: {swim!r}")
+    _open_has(swim, fn='openEventModal', args=['swim-key'])
+    check(val['h24'] == 'Thursday 17:10 · Alex is driving Sam', f"use24h conflict why {val['h24']!r}")
+    chess = by['Chess club needs a driver']
+    check(chess['why'] == 'Wednesday 5:00 PM · nobody yet',
+          f"isConflict false keeps 'nobody yet' and ignores a stale conflictReason: {chess['why']!r}")
+    art = by['Art class needs a driver']['why'] or ''
+    check(art.startswith('Friday 4:00 PM · ') and 'undefined' not in art and 'null' not in art,
+          f"a conflict with no reason still reads '<weekday> <time> · ...' and never undefined/null: {art!r}")
+
+
+
+def scenario_conflict_rule_is_the_calendars():
+    got = _case('conflict_rule') if '_case' in globals() else None
+    if got is None:
+        out = _out()
+        if out is None:
+            return
+        got = out['cases']['conflict_rule']['value']
+    check(got['empty'] is None and got['none'] is None, f"no diagnostics, no conflict: {got!r}")
+    check(got['hard'] == {'conflictReason': 'Sam is in two places at 4:30'}, f"every reason hard, one text: {got['hard']!r}")
+    check(got['mixed_text'] == {'conflictReason': None}, f"a conflict with mixed texts has no single reason: {got['mixed_text']!r}")
+    check(got['optimization'] is None, f"an optimization reason keeps the event assignable: {got['optimization']!r}")
+    check(got['missing_reason'] is None, f"a missing reason keeps the event assignable: {got['missing_reason']!r}")
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 

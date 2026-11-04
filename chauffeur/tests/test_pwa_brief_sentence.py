@@ -11,7 +11,7 @@ PWA reimagined slice 1, Task 3 (task-3-brief.md):
   the card's rank: needs_driver -> "<title> <day> still needs a driver.",
   status -> "<status label> for <person> today." (or "<status label> today." with no person).
 - `pwaBriefSentence(facts)`: "Nothing on the road today." / "One drive
-  today" / "<N spelled out up to twelve> drives today", plus " and <n>
+  today" / "<N spelled out up to 12> drives today", plus " and <n>
   ride(s)", a full stop, then one space and the TOP-ranked unusual text.
   Never more than two sentences; never a number the facts do not hold.
 
@@ -35,7 +35,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pwa_pure import check, pure_source, run_node  # noqa: E402
+from pwa_pure import check, clock_source, pure_source, run_node  # noqa: E402
 
 WANTED = ['pwaGreeting', 'pwaBriefSentence', 'pwaBriefFacts', 'pwaNeedsYou']
 
@@ -69,7 +69,7 @@ const CASES = {
   nothing_on_the_road: () => pwaBriefSentence(F(0, 0)),
   one_unusual_only: () => pwaBriefSentence(F(2, 0, UNUSUAL)),
   numbers_survive: () => ({three_two: pwaBriefSentence(F(3, 2)),
-                           twelve: pwaBriefSentence(F(12, 0)),
+                           12: pwaBriefSentence(F(12, 0)),
                            thirteen: pwaBriefSentence(F(13, 0))}),
   never_three_sentences: () => [F(0, 0, UNUSUAL), F(1, 0, UNUSUAL), F(4, 3, UNUSUAL), F(1, 1, UNUSUAL.slice(2))]
     .map(pwaBriefSentence),
@@ -94,6 +94,21 @@ const CASES = {
             firstDrive: f.firstDrive ? f.firstDrive.title : null,
             unusual: (f.unusual || []).map(u => ({kind: u.kind, text: u.text, rank: u.rank})),
             plain_unusual: plain.unusual};
+  },
+  // slice 5 task 1: the 24-hour setting runs through the whole brief chain. No
+  // fact SENTENCE prints a clock time today (needs_driver names the weekday), so
+  // the time lives on the card pwaNeedsYou builds and the facts/sentence accept
+  // the same trailing opts without rewording a time-free sentence.
+  brief_chain_24h: () => {
+    const NOW2 = new Date('2026-11-03T15:12:00');
+    const inp = {role: 'parent', canAssign: true, unassigned: [
+      {id: 'piano', title: "Kate's pickup", start: '2026-11-05T16:30:00', end: '2026-11-05T16:30:00', key: 'piano-key'}]};
+    const O = {use24h: true};
+    const needs = pwaNeedsYou(inp, NOW2, O);
+    const facts = pwaBriefFacts({rows: [], role: 'parent', isDriver: true, needs}, O);
+    return {why: needs[0].why, fact: facts.unusual.map(u => u.text),
+            sentence: pwaBriefSentence(facts, O),
+            plain_why: pwaNeedsYou(inp, NOW2)[0].why};
   },
   household_task_facts: () => {
     const card = (id, title, why) => ({id, kind: 'household_task', icon: '☑️', title, why,
@@ -130,7 +145,7 @@ _CACHE = {}
 def _out():
     if 'out' not in _CACHE:
         import json
-        _CACHE['out'] = run_node(pure_source('pwa_myday.js', WANTED) + '\n'
+        _CACHE['out'] = run_node(clock_source() + pure_source('pwa_myday.js', WANTED) + '\n'
                                  + PROBE % {'unusual': json.dumps(UNUSUAL)})
     return _CACHE['out']
 
@@ -213,7 +228,7 @@ def scenario_one_unusual_only():
 
 
 def scenario_numbers_survive():
-    """Counts are spelled out up to twelve; past that the digits ARE the
+    """Counts are spelled out up to 12; past that the digits ARE the
     count. No other number appears."""
     got, ran = _case('numbers_survive')
     if not ran:
@@ -221,8 +236,8 @@ def scenario_numbers_survive():
     s = got['three_two']
     check('Three' in s and 'two' in s, f"3 drives + 2 rides must read 'Three' and 'two', got {s!r}")
     check(not _digits(s), f"3 drives + 2 rides wrote a digit: {s!r}")
-    check('Twelve' in got['twelve'] and not _digits(got['twelve']),
-          f"12 drives must read 'Twelve' with no digit, got {got['twelve']!r}")
+    check(_digits(got['12']) == ['12'],
+          f"12 drives carry the number 12 (one cut-off everywhere: one..nine spelled, 10+ digits), got {got['12']!r}")
     check(_digits(got['thirteen']) == ['13'],
           f"13 drives must carry exactly the number 13, got {got['thirteen']!r}")
 
@@ -292,6 +307,22 @@ def scenario_status_without_a_person_has_no_undefined():
         check('undefined' not in texts[0], f"{source} status fact says 'undefined': {texts[0]!r}")
     check('undefined' not in got['built_sentence'],
           f"Argyle's sentence says 'undefined': {got['built_sentence']!r}")
+
+
+def scenario_brief_chain_honours_use24h():
+    """Needs-you card -> facts -> sentence with {use24h: true} passed as the
+    trailing opts of each: the card reads 'Thursday 16:30 · nobody yet', the
+    fact and sentence keep their time-free wording, nothing throws."""
+    got, ran = _case('brief_chain_24h')
+    if not ran:
+        return
+    check(got['why'] == 'Thursday 16:30 · nobody yet', f"use24h card why {got['why']!r}, expected 'Thursday 16:30 · nobody yet'")
+    check('PM' not in got['why'], f"a 24-hour card still says PM: {got['why']!r}")
+    check(got['plain_why'] == 'Thursday 4:30 PM · nobody yet',
+          f"without opts the card keeps 'Thursday 4:30 PM · nobody yet', got {got['plain_why']!r}")
+    check(got['fact'] == ["Kate's pickup Thursday still needs a driver."], f"needs_driver fact {got['fact']!r}")
+    check(got['sentence'] == "Nothing on the road today. Kate's pickup Thursday still needs a driver.",
+          f"brief sentence {got['sentence']!r}")
 
 
 def scenario_household_task_facts():

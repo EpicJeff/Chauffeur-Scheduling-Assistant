@@ -1,5 +1,5 @@
 /* Conversation summaries use the channel payload and the caller's display builders. */
-function pwaTimeLabel(ts, now) {
+function pwaTimeLabel(ts, now, opts = {}) {
     if (!Number.isFinite(ts)) return '';
     const date = new Date(ts * 1000);
     if (!Number.isFinite(date.getTime())) return '';
@@ -7,7 +7,7 @@ function pwaTimeLabel(ts, now) {
     // Compare local calendar days without daylight-saving time changing the gap.
     const day = value => Date.UTC(value.getFullYear(), value.getMonth(), value.getDate()) / 86400000;
     const daysAgo = day(today) - day(date);
-    if (daysAgo <= 0) return `${date.getHours() % 12 || 12}:${String(date.getMinutes()).padStart(2, '0')}`;
+    if (daysAgo <= 0) return pwaClock(date, opts);
     if (daysAgo === 1) return 'Yesterday';
     if (daysAgo >= 2 && daysAgo <= 6) return date.toLocaleDateString('en-US', {weekday: 'short'});
     return date.toLocaleDateString('en-US', date.getFullYear() === today.getFullYear()
@@ -31,7 +31,7 @@ function pwaConversationRows(channels, ctx) {
         const unread = Math.max(0, Math.trunc(Number(channel.unread) || 0));
         return {id: channel.id, kind: channel.kind, name: display.name, color: display.color,
             avatar: display.avatar, image: display.image || null,
-            time: channel.last_message ? pwaTimeLabel(channel.last_message.ts, ctx.now) : '',
+            time: channel.last_message ? pwaTimeLabel(channel.last_message.ts, ctx.now, {use24h:ctx.use24h}) : '',
             preview: pwaPreviewLine(channel.last_message, ctx), unread,
             unreadStyle: unread > 1 ? 'count' : unread === 1 ? 'dot' : 'none'};
     };
@@ -60,7 +60,8 @@ function pwaRenderConversations() {
     const list = document.getElementById('channel-list');
     if (!list) return;
     const groups = pwaConversationRows(channelsData, {meId: selectedMemberId, members: membersData,
-        now: Date.now(), argyleAllowed: pwaOrbAllowed(), display: channelDisplay, previewLabel: momentPreviewLabel});
+        now: Date.now(), use24h: typeof use24h !== 'undefined' && use24h,
+        argyleAllowed: pwaOrbAllowed(), display: channelDisplay, previewLabel: momentPreviewLabel});
     const focusedChannel = document.activeElement?.closest('#channel-list > [data-channel]')?.dataset.channel;
     list.replaceChildren();
     for (const [label, rows] of [['Pinned', groups.pinned], ['Chats', groups.chats]]) {

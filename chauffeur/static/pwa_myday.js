@@ -6,12 +6,11 @@ function pwaLocalIso(value) {
     const date = new Date(value);
     if (!Number.isFinite(date.getTime())) return '';
     const pad = n => String(n).padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    return `${pwaLocalDay(date)}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
-function pwaBriefTime(value) {
-    const date = new Date(value);
-    return `${date.getHours() % 12 || 12}:${String(date.getMinutes()).padStart(2, '0')} ${date.getHours() < 12 ? 'AM' : 'PM'}`;
+function pwaBriefTime(value, opts = {}) {
+    return pwaClockSuffix(value, opts);
 }
 
 function pwaNextThing(rows, now) {
@@ -42,14 +41,14 @@ function pwaRowsFromDom(container) {
     });
 }
 
-function pwaHeroNext(row, now) {
+function pwaHeroNext(row, now, opts = {}) {
     if (!row) return null;
     const drive = row.kind === 'drive';
     const duration = /\b(?:(\d+)\s*h(?:ours?)?\s*)?(?:(\d+(?:\.\d+)?)\s*m(?:in(?:s|utes)?)?\s*)?drive\b/i.exec(row.meta || '');
     const labels = {ride:'Details', event:'Details', session:'Open the session', routine:'Done', task:'Open'};
     const start = new Date(row.start), end = new Date(row.end), clock = new Date(now);
     return {start:row.start, end:row.end, title:row.title, location:row.place, kind:row.kind,
-        leave_at:drive ? row.start : null, leave_label:drive ? `Leave at ${pwaBriefTime(row.start)}` : null,
+        leave_at:drive ? row.start : null, leave_label:drive ? `Leave at ${pwaBriefTime(row.start, opts)}` : null,
         travel_mins:drive && duration && (duration[1] || duration[2]) ? Number(duration[1] || 0) * 60 + Number(duration[2] || 0) : null, driver:row.driver || null,
         live:start <= clock && clock <= end, minutes_until:Math.max(0, Math.ceil((start - clock) / 60000)),
         actions:drive ? [{label:'Start drive', run:row.primary}, {label:'Ask for cover', run:row.secondary}]
@@ -61,7 +60,7 @@ function pwaGreeting(hour, name) {
         first:String(name || '').trim().split(/\s+/)[0] || 'there'};
 }
 
-function pwaBriefFacts({rows = [], needs = []}) {
+function pwaBriefFacts({rows = [], needs = []}, opts = {}) {
     const drives = rows.filter(row => row.kind === 'drive').sort((a, b) => new Date(a.start) - new Date(b.start));
     const byEnd = rows.filter(row => Number.isFinite(new Date(row.end).getTime()))
         .sort((a, b) => new Date(b.end) - new Date(a.end));
@@ -98,13 +97,11 @@ function pwaBriefFacts({rows = [], needs = []}) {
         lastEnd:byEnd[0] || null, unusual};
 }
 
-const PWA_BRIEF_NUMBERS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
-
 function pwaBriefNumber(count) {
-    return PWA_BRIEF_NUMBERS[count] || String(count);
+    return pwaNumberWord(count);
 }
 
-function pwaBriefSentence(facts) {
+function pwaBriefSentence(facts, opts = {}) {
     let sentence = 'Nothing on the road today';
     if (facts.drives) {
         sentence = `${pwaBriefNumber(facts.drives)} ${facts.drives === 1 ? 'drive' : 'drives'} today`;
@@ -129,7 +126,7 @@ function pwaNeedDate(value) {
 
 const PWA_NEED_ICONS = {finding:'🔎', insight:'💡', thread:'🧵', mission:'🎯', project:'📋', program:'🎯'};
 
-function pwaNeedsYou(inputs, now) {
+function pwaNeedsYou(inputs, now, opts = {}) {
     const cards = [], clock = new Date(now);
     const list = value => Array.isArray(value) ? value : [];
     const add = (id, kind, icon, title, why, deadline, rank, open) =>
@@ -168,9 +165,10 @@ function pwaNeedsYou(inputs, now) {
             const base = String(event.id).replace(/_(dropoff|pickup)$/, '');
             if (seen.has(base)) continue;
             seen.add(base);
-            const key = event.key || encodeURIComponent(JSON.stringify({...event, timeStr:pwaBriefTime(event.start)}));
+            const key = event.key || encodeURIComponent(JSON.stringify({...event, timeStr:pwaBriefTime(event.start, opts)}));
+            const reason = event.isConflict ? event.conflictReason || 'every driver is blocked' : 'nobody yet';
             add(`needs_driver:${event.id}`, 'needs_driver', '🚗', `${event.title} needs a driver`,
-                `${start.toLocaleDateString('en-US', {weekday:'long'})} ${pwaBriefTime(start)} · nobody yet`, start, 1,
+                `${start.toLocaleDateString('en-US', {weekday:'long'})} ${pwaBriefTime(start, opts)} · ${reason}`, start, 1,
                 {fn:'openEventModal', args:[key]});
         }
     }
@@ -215,6 +213,13 @@ function pwaNeedsYou(inputs, now) {
     });
 }
 
+function pwaConflictOf(diagnosticsForEvent) {
+    const reasons = Object.values(diagnosticsForEvent || {});
+    if (!reasons.length || !reasons.every(r => r && r.type !== 'optimization')) return null;
+    const texts = [...new Set(reasons.map(r => r.text).filter(Boolean))];
+    return {conflictReason:texts.length === 1 ? texts[0] : null};
+}
+
 function pwaNeedsYouInputs() {
     const list = value => Array.isArray(value) ? value : [];
     const role = typeof currentMemberRole === 'function' ? currentMemberRole() : '';
@@ -226,6 +231,17 @@ function pwaNeedsYouInputs() {
     const rewards = list(typeof rewardsData !== 'undefined' ? rewardsData : null);
     const situations = list(typeof mindSituations !== 'undefined' ? mindSituations : null);
     const threads = list(typeof houseThreads !== 'undefined' ? houseThreads : null);
+    const unassigned = list(schedule.true_unassigned || schedule.unassigned).map(event =>
+        typeof event === 'object' ? event : list(schedule.events).find(e => e.id === event)).filter(Boolean);
+    const conflicts = new Map();
+    for (const event of unassigned) {
+        const base = String(event.id).replace(/_(dropoff|pickup)$/, '');
+        const leg = pwaConflictOf((schedule.diagnostics || {})[event.id]);
+        const previous = conflicts.get(base);
+        const isConflict = previous ? previous.isConflict && !!leg : !!leg;
+        conflicts.set(base, {isConflict,
+            conflictReason:isConflict ? previous?.conflictReason || leg?.conflictReason || null : null});
+    }
     return {role, requests:list(requests.waiting_on_me).map(r => ({...r, from_name:r.from_name || r.from})),
         reviews:{chores:chores.filter(c => c.state === 'done'),
             redemptions:redemptions.filter(r => !r.state || r.state === 'pending'),
@@ -243,8 +259,7 @@ function pwaNeedsYouInputs() {
         situations:situations.filter(s => s.group === 'now').map(s => ({...s,
             next_move:s.next_move || (s.next_step && (s.next_step.title || s.next_step.label)) || s.status_note || '',
             due_at:s.due_at == null ? s.due : s.due_at})),
-        unassigned:list(schedule.true_unassigned || schedule.unassigned).map(event =>
-            typeof event === 'object' ? event : list(schedule.events).find(e => e.id === event)).filter(Boolean),
+        unassigned:unassigned.map(event => ({...event, ...conflicts.get(String(event.id).replace(/_(dropoff|pickup)$/, ''))})),
         canReview:role === 'parent' && typeof pwaAllowed === 'function' && pwaAllowed('chores')
             && !(typeof houseRevealListsOnly !== 'undefined' && houseRevealListsOnly),
         canAssign:role === 'parent' || role === 'adult'};
@@ -253,6 +268,7 @@ function pwaNeedsYouInputs() {
 function pwaOpenNeed(card) {
     const open = card && card.open;
     if (!open) return;
+    if (open.anchor && typeof pwaPlanSuppressAutoScroll === 'function') pwaPlanSuppressAutoScroll();
     if (open.screen) {
         const opened = typeof window !== 'undefined' && typeof window.pwaOpenHouseScreen === 'function'
             && window.pwaOpenHouseScreen(open.screen, open.segment);
@@ -473,13 +489,14 @@ function pwaPaintBrief(cache, full = false, savedScrollTop, timelineBuilt = fals
     const previous = brief.querySelector('.pwa-brief-schedule');
     if (previous) previous.replaceWith(section);
     else brief.append(section);
-    window.pwaNeedCards = pwaNeedsYou(pwaNeedsYouInputs(), new Date());
+    const clockOpts = {use24h:typeof use24h !== 'undefined' && use24h};
+    window.pwaNeedCards = pwaNeedsYou(pwaNeedsYouInputs(), new Date(), clockOpts);
     brief.querySelector('.pwa-brief-needs')?.remove();
     const rows = pwaRowsFromDom(section.querySelector('.pwa-brief-day'));
     const sentence = brief.querySelector('.pwa-brief-sentence') || document.createElement('p');
     sentence.className = 'pwa-brief-sentence';
     sentence.textContent = pwaBriefSentence(pwaBriefFacts({rows, needs:window.pwaNeedCards,
-        role:currentMemberRole(), isDriver:!!selectedDriverId}));
+        role:currentMemberRole(), isDriver:!!selectedDriverId}, clockOpts), clockOpts);
     brief.querySelector('.pwa-brief-loading')?.remove();
     if (full && weather) brief.querySelector('[data-brief-weather]').outerHTML = `<div class="pwa-brief-weather">
         <div class="pwa-weather-icon">${mfEscape(weather.emoji || '')}</div>
@@ -491,7 +508,7 @@ function pwaPaintBrief(cache, full = false, savedScrollTop, timelineBuilt = fals
     const heroRows = isKeepingUpAdult() ? rows.filter(row => ['ride', 'session', 'routine', 'task'].includes(row.kind)) : rows;
     const clock = new Date(), row = mydayOffset === 0 ? pwaNextThing(heroRows, clock) : null;
     if (row) {
-        const next = pwaHeroNext(row, clock);
+        const next = pwaHeroNext(row, clock, clockOpts);
         if (row.kind === 'drive' && row.state === 'active') next.live = true;
         next.meta = row.meta;
         if (data.launch && row.kind === 'ride' && row.eventId === String((data.rides || [])[0]?.id))

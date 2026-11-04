@@ -460,12 +460,17 @@ def run():
                         page.wait_for_selector('#house-cards .pwa-house-card')
                         assert page.evaluate('currentView') == 'chores'
                         page.locator('#tab-family').click()
-                        page.wait_for_selector('#pane-events .pwa-agenda-row')
-                        assert page.locator('#pwa-page-heading h2').inner_text() == 'Family plan'
+                        # Slice 5: Plan draws each day as an hour timeline over the
+                        # rows (kept hidden in .pwa-plan-rows); the 34px "Plan" title
+                        # in #plan-head replaced the "Family plan" page heading and
+                        # its week strip replaced #pwa-date-strip.
+                        page.wait_for_selector('#pane-events .pwa-tl .pwa-ev')
+                        assert ' '.join(page.locator('#plan-head .pwa-plan-title').inner_text().split()) == 'Plan'
+                        assert not page.locator('#pwa-page-heading').is_visible()
                         if output: Path(output, 'adult-plan-light.png').write_bytes(page.screenshot())
-                        page.locator('#pwa-date-strip button').nth(1).click()
+                        page.locator('#plan-head .pwa-week-day').nth(1).click()
                         assert page.evaluate('activeDateIndex') == 1
-                        page.locator('#pwa-date-strip button').first.click()
+                        page.locator('#plan-head .pwa-week-day').first.click()
                         page.locator('#tab-messages').click()
                         # Slice 4: Signal's list, Pinned (Family first) then Chats.
                         page.wait_for_selector('#channel-list .pwa-conv-label', timeout=8000)

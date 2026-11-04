@@ -53,7 +53,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pwa_pure import check, pure_source, run_node  # noqa: E402
+from pwa_pure import check, clock_source, pure_source, run_node  # noqa: E402
 
 WANTED = ['pwaHouseholdCards', 'pwaHouseholdLead']
 
@@ -167,6 +167,11 @@ const CASES = {
   lists_in_eight: () => cards(inp({lists: LISTS, runs: {next: '2026-11-12'}})),
   lists_quiet: () => cards(inp({lists: LISTS_QUIET})),
   projects_window_thursday: () => cards(inp({projects: PROJECTS, programs: PROGRAMS, nextWindowFor: winFor(WIN_THU)})),
+  // slice 5 task 1: inputs.use24h words the window time as HH:mm
+  projects_window_thursday_24h: () => cards(inp({projects: PROJECTS, programs: PROGRAMS,
+    nextWindowFor: winFor(WIN_THU), use24h: true})),
+  projects_window_raw_24h: () => cards(inp({projects: PROJECTS, programs: PROGRAMS, use24h: true,
+    nextWindowFor: winFor({pg1: {date: '2026-11-05', time_start: '09:05', time_end: '10:00'}})})),
   projects_window_today: () => cards(inp({projects: PROJECTS, programs: PROGRAMS, nextWindowFor: winFor(WIN_TODAY)})),
   projects_window_raw: () => cards(inp({projects: PROJECTS, programs: PROGRAMS,
     nextWindowFor: winFor({pg1: {date: '2026-11-05', time_start: '16:30', time_end: '17:00'}})})),
@@ -204,7 +209,7 @@ _CACHE = {}
 
 def _out():
     if 'out' not in _CACHE:
-        _CACHE['out'] = run_node(pure_source('pwa_household.js', WANTED) + '\n' + PROBE)
+        _CACHE['out'] = run_node(clock_source() + pure_source('pwa_household.js', WANTED) + '\n' + PROBE)
     return _CACHE['out']
 
 
@@ -423,6 +428,20 @@ def scenario_projects_faces_and_next_window():
     raw = _by_id(_cards('projects_window_raw'))['projects']
     check(_texts(raw)[0] == 'Piano · ' + WD('2026-11-05') + ' 4:30',
           f"a raw practice-window row (date + time_start, the GET api/practice-windows shape) names the same window: {_texts(raw)!r}")
+
+
+def scenario_window_pill_honours_use24h():
+    """inputs.use24h true: 'Piano · Thursday 16:30' (raw row 09:05 reads
+    '09:05'); the 12-hour pin in the thursday scenario is untouched."""
+    got = _cards('projects_window_thursday_24h')
+    if got is None:
+        return
+    c = _by_id(got)['projects']
+    check(_texts(c)[0] == 'Piano · ' + WD('2026-11-05') + ' 16:30',
+          f"use24h window pill {_texts(c)!r}, expected 'Piano · {WD('2026-11-05')} 16:30'")
+    raw = _by_id(_cards('projects_window_raw_24h'))['projects']
+    check(_texts(raw)[0] == 'Piano · ' + WD('2026-11-05') + ' 09:05',
+          f"a raw window row with use24h reads {_texts(raw)!r}, expected 'Piano · {WD('2026-11-05')} 09:05'")
 
 
 def scenario_lead_sentences():

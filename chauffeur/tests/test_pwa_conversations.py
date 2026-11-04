@@ -35,7 +35,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pwa_pure import check, pure_source, run_node  # noqa: E402
+from pwa_pure import check, clock_source, pure_source, run_node  # noqa: E402
 
 WANTED = ['pwaTimeLabel', 'pwaPreviewLine', 'pwaConversationRows']
 
@@ -118,7 +118,22 @@ const labels = () => {
   };
 };
 
+// slice 5 task 1: pwaTimeLabel(ts, now, opts), opts.use24h words today's time as HH:mm
+const labels24 = () => {
+  const O = {use24h: true};
+  return {
+    morning: pwaTimeLabel(T(2026, 11, 4, 9, 40), NOW, O),
+    afternoon: pwaTimeLabel(T(2026, 11, 4, 16, 40), NOW, O),
+    after_midnight: pwaTimeLabel(T(2026, 11, 4, 0, 5), NOW, O),
+    afternoon_h12: pwaTimeLabel(T(2026, 11, 4, 16, 40), NOW, {use24h: false}),
+    afternoon_no_opts: pwaTimeLabel(T(2026, 11, 4, 16, 40), NOW),
+    yesterday: pwaTimeLabel(T(2026, 11, 3, 23, 50), NOW, O),
+    monday: pwaTimeLabel(T(2026, 11, 2, 10, 0), NOW, O),
+  };
+};
+
 const CASES = {
+  labels24,
   rows_full: () => { const r = rowsOf(PAYLOAD); return {pinned: r.pinned.map(brief), chats: r.chats.map(brief)}; },
   rows_full_shape: () => { const r = rowsOf(PAYLOAD);
     const all = r.pinned.concat(r.chats);
@@ -151,7 +166,7 @@ _CACHE = {}
 
 def _out():
     if 'out' not in _CACHE:
-        _CACHE['out'] = run_node(pure_source('pwa_messages.js', WANTED) + '\n' + PROBE)
+        _CACHE['out'] = run_node(clock_source() + pure_source('pwa_messages.js', WANTED) + '\n' + PROBE)
     return _CACHE['out']
 
 
@@ -247,6 +262,19 @@ def scenario_time_labels():
     }
     for name, want in exp.items():
         check(got[name] == want, f"{name}: got {got[name]!r}, expected {want!r}")
+
+
+def scenario_time_labels_honour_use24h():
+    """{use24h: true} words only today's clock time: 09:40, 16:40, 00:05;
+    Yesterday, the weekday and dates are unchanged; false/absent stays 4:40."""
+    got = _case('labels24')
+    if got is None:
+        return
+    exp = {'morning': '09:40', 'afternoon': '16:40', 'after_midnight': '00:05',
+           'afternoon_h12': '4:40', 'afternoon_no_opts': '4:40',
+           'yesterday': YEST, 'monday': MON}
+    for name, want in exp.items():
+        check(got[name] == want, f"use24h {name}: got {got[name]!r}, expected {want!r}")
 
 
 def scenario_preview_lines():

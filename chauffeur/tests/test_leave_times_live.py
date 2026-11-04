@@ -107,14 +107,18 @@ def scenario_one_margin_every_surface():
         if skip.count() and skip.first.is_visible():
             skip.first.click()
             page.wait_for_timeout(300)
+        # Since v2.499.752 an adult lands on My Day (setView('drives') maps
+        # there) and the brief ADOPTS the day pane's rows into #myday-content;
+        # the departure text now lives wherever the rows were adopted.
         page.evaluate("setView('drives')")
         page.wait_for_function(
-            "(document.getElementById('days-container') || {}).textContent"
-            " && document.getElementById('days-container').textContent.includes('Swim')",
+            "['myday-content', 'days-container'].some(id => ((document.getElementById(id) || {}).textContent || '').includes('Swim'))",
             timeout=20000)
         page.wait_for_timeout(500)
         drives = page.evaluate(
-            "() => { const t = new Date().toLocaleDateString('en-CA');"
+            "() => { const brief = document.getElementById('myday-content');"
+            " if (brief && brief.textContent.includes('Swim')) return [brief.textContent.replace(/\s+/g, ' ')];"
+            " const t = new Date().toLocaleDateString('en-CA');"
             " const p = document.getElementById('pane-' + currentDates.indexOf(t));"
             " return p ? [p.textContent.replace(/\s+/g, ' ')] : []; }")
         page.goto(served.url('dashboard_v2'), wait_until='networkidle')

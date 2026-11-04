@@ -95,6 +95,16 @@ def pure_source(filename, wanted):
     return '\n'.join(chunk for chunk, names in parsed if names & want)
 
 
+def clock_source():
+    """The shared clock (static/pwa_clock.js: pwaClock, pwaClockSuffix) as a
+    node prefix for the tests of the files that call it, or '' while the
+    file does not exist yet, so those tests keep failing on their own
+    expectations rather than on a missing module."""
+    if not os.path.exists(os.path.join(STATIC, 'pwa_clock.js')):
+        return ''
+    return pure_source('pwa_clock.js', ['pwaClock', 'pwaClockSuffix', 'pwaNumberWord', 'pwaLocalDay', 'pwaWeekday']) + '\n'
+
+
 def run_node(script):
     node = shutil.which('node')
     if not node:

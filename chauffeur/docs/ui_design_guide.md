@@ -319,6 +319,69 @@ handler and render exactly as before (their look is untouched).
 Screenshot proof lives in `tests/test_pwa_messages_live.py`
 (`PWA_REVIEW_OUTPUT=1` writes `tests/probe_shots/pwa_slice4/`).
 
+#### Plan, the week one day at a time (slice 5, v2.499.756)
+
+The adult Plan tab (`currentView === 'family'`) is a head above the day
+panes and an hour timeline inside each pane. `static/pwa_plan.js` owns it;
+kids (`kidplan`), helpers and guests are untouched.
+
+- **The rows are the truth.** `buildTimeline`'s Family branch keeps
+  building each day's rows (`renderFamilyDay` → `pwaEventRow` and the
+  practice / trip rows) with the slice-1 dataset contract plus
+  `data-color`, `data-cal` (calendar ids) and `data-drivers`; the list stays
+  in the pane inside `.pwa-plan-rows[hidden]`. `pwaRenderPlanDay(pane)`
+  reads those datasets and draws `.pwa-plan-allday` (band items),
+  `.pwa-tl` (`.pwa-hr[data-h]` 66px hours, `.pwa-ev` blocks in the row's
+  colour, `.pwa-leave` strips, `.pwa-now`); a block's tap runs the row's own
+  `data-primary`. Never a second data path to the schedule for blocks.
+- **The geometry is pure.** `pwaPlanGeometry(rows, {date, now, hourPx,
+  use24h})`: the hour range is 8 AM..8 PM stretched to the day's rows;
+  overlapping rows AND leave strips share one lane sweep (each sized by its
+  drawn end, so a strip never covers a block); past rows dim; rows crossing
+  midnight are clipped; the now line only on today and only inside the
+  range. `pwaLeaveStrips(sched, dateStr, opts)` reads the solver's stamped
+  legs on the schedule's edges (`initial_edges[driver][event]`,
+  `route_edges[driver][from]` + `to_event`, `final_edges[driver][event]`,
+  `legs[{depart, mins, from, to}]`): a strip starts at a leg leaving home or
+  an event, pickup / dropoff legs fold into it, event→…→home "heads home",
+  ghost drivers never appear, a keeping-up adult gets none. The lead
+  (`pwaPlanLead`) counts departures and timed non-drive rows ("Today is two
+  drives and five events.", "Wednesday is quiet.").
+- **The head.** `#plan-head` (before `#day-nav`): `h1.pwa-plan-title`
+  "Plan" with a `Today` button only off today, `.pwa-plan-lead`,
+  `.pwa-people` chips (`pwaPeopleChips`: Everyone first, household members
+  by first name, a chip's calendars = the passenger record's ∪ any calendar
+  whose metadata summary is the member's name; a chip FILTERS blocks on the
+  phone and never hides a row whose people cannot be resolved — no calendar
+  and no driver, or calendars no chip claims such as Family; `?viewer=` is
+  untouched; the lead counts everyone), `.pwa-week` (`pwaWeekStrip`:
+  seven days, the letter, the date circle, the weather glyph from
+  `GET /api/weather/daily` (none without HA), the count = the lead's count,
+  a `Proposed` dot from the proposals' dates). `#pwa-date-strip` is built
+  only for the driver Today; on Plan `#day-nav`'s arrows sit beside the
+  title (ids kept); swipe paging and range paging are unchanged. Plan opens
+  on today scrolled to the now line (a Needs-you anchor wins) and repaints
+  its timeline each minute and on return to the foreground, from data in
+  hand. The `#pwa-page-heading` entry for Plan is gone
+  for adults.
+- **Intake and Needs you sit above the timeline** on today's pane
+  (`pwaRefreshOverview` places `#proposals-container` and `#mind-container`
+  before `#pane-events` on Plan); `#house-threads` with them; the dated
+  status banner stays on other days. My Day's pane rules hold: the brief
+  rebuilds in its own mode before adopting, Plan redraws on return.
+- **One clock.** `static/pwa_clock.js` `pwaClock(value, {use24h})` /
+  `pwaClockSuffix` / `pwaNumberWord` serve My Day, Household, Messages and
+  Plan; page adapters pass `{use24h}` from the settings' `time_format_24h`;
+  pure functions never read the global. `renderThread` and `dayDivider`
+  keep the locale clock.
+- **Behind a pushed screen** `PwaNav.sync` makes `#pwa-covered`,
+  `body > header`, `#day-nav` and `#pwa-page-heading` inert.
+- **Never** compute a departure on the phone, filter on the server for a
+  chip, draw blocks from anything but the rows, or restyle the kid plan.
+
+Screenshot proof lives in `tests/test_pwa_plan_live.py`
+(`PWA_REVIEW_OUTPUT=1` writes `tests/probe_shots/pwa_slice5/`).
+
 Admin dialogs with a body that can grow (the schedule page's event dialog,
 `dashboard.html` `#event-modal`; the calendar's, `family_calendar.html`
 `#modal-content-container`) are chrome: a `flex flex-col max-h-[90vh]

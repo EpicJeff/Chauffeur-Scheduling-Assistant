@@ -578,8 +578,13 @@ def scenario_the_flags_reach_the_row_the_card_draws():
     # "NEEDS DRIVER" that blames the drivers for a passenger's double-booking.
     app = open(os.path.join(root, 'templates', 'app.html'),
                encoding='utf-8').read()
-    check('function conflictFor' in app and "r.type !== 'optimization'" in app,
-          "the Family tab no longer classifies unassignable events")
+    # Since v2.499.756 the rule lives once, in static/pwa_myday.js
+    # pwaConflictOf, shared by buildFamilyCards and My Day's pile
+    # (test_pwa_needs_you.scenario_conflict_rule_is_the_calendars runs it).
+    myday = open(os.path.join(root, 'static', 'pwa_myday.js'), encoding='utf-8').read()
+    check('function pwaConflictOf' in myday and "r.type !== 'optimization'" in myday
+          and 'pwaConflictOf(' in app,
+          "the Family tab no longer classifies unassignable events through the shared rule")
     check("conflictChip('CONFLICT')" in app
           and 'conflictChip(`${label}: Conflict`)' in app,
           "the Family tab's card or leg chips lost the conflict flavour")

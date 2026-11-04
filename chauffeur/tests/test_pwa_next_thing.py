@@ -38,8 +38,8 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pwa_pure import (STATIC, TEMPLATES, check, function_body, pure_source,  # noqa: E402
-                      read, run_node)
+from pwa_pure import (STATIC, TEMPLATES, check, clock_source, function_body,  # noqa: E402
+                      pure_source, read, run_node)
 
 WANTED = ['pwaNextThing', 'pwaHeroNext', 'pwaRowsFromDom']
 
@@ -102,6 +102,19 @@ const CASES = {
   drive_hero: () => Object.assign(hero(DRIVE), {expect_leave_ms: new Date(DRIVE.start).getTime()}),
   routine_hero: () => hero(row('routine', '2026-11-03T18:00:00', '2026-11-03T18:30:00', 'Brush teeth',
     {primary: "toggleRoutine('r-teeth', true)"})),
+  // slice 5 task 1: the trailing opts argument carries the 24-hour setting
+  drive_hero_24h: () => {
+    const at1630 = row('drive', '2026-11-03T16:30:00', '2026-11-03T16:48:00', 'Drop-off: Piano',
+      {place: 'Music School', meta: '18 min drive'});
+    const at0905 = row('drive', '2026-11-04T09:05:00', '2026-11-04T09:20:00', 'Drop-off: School');
+    return {
+      h24: pwaHeroNext(at1630, NOW, {use24h: true}).leave_label,
+      morning_h24: pwaHeroNext(at0905, NOW, {use24h: true}).leave_label,
+      h12_explicit: pwaHeroNext(at1630, NOW, {use24h: false}).leave_label,
+      h12_empty: pwaHeroNext(at1630, NOW, {}).leave_label,
+      h12_absent: pwaHeroNext(at1630, NOW).leave_label,
+    };
+  },
   kind_labels: () => {
     const labels = {};
     for (const kind of ['ride', 'event', 'session', 'routine', 'task']) {
@@ -154,7 +167,7 @@ _CACHE = {}
 
 def _out():
     if 'out' not in _CACHE:
-        _CACHE['out'] = run_node(pure_source('pwa_myday.js', WANTED) + '\n' + PROBE)
+        _CACHE['out'] = run_node(clock_source() + pure_source('pwa_myday.js', WANTED) + '\n' + PROBE)
     return _CACHE['out']
 
 
@@ -247,6 +260,18 @@ def scenario_drive_hero_has_two_actions():
     check(h['location'] == 'Aquatic Center', f"location {h['location']!r}, expected the row's place")
     check(h['travel_mins'] == 18, f"travel_mins {h['travel_mins']!r}, expected 18 from '18 min drive · the Highlander'")
     check(h['minutes_until'] == 28, f"minutes_until {h['minutes_until']!r}, 15:12 to 15:40 is 28")
+
+
+def scenario_drive_hero_honours_use24h():
+    """pwaHeroNext(row, now, {use24h: true}) words the leave time 'Leave at
+    16:30' (and '09:05'); false, {} or no opts keeps '4:30 PM'."""
+    got, ran = _case('drive_hero_24h')
+    if not ran:
+        return
+    check(got['h24'] == 'Leave at 16:30', f"use24h leave_label {got['h24']!r}, expected 'Leave at 16:30'")
+    check(got['morning_h24'] == 'Leave at 09:05', f"use24h morning leave_label {got['morning_h24']!r}, expected 'Leave at 09:05'")
+    for key in ('h12_explicit', 'h12_empty', 'h12_absent'):
+        check(got[key] == 'Leave at 4:30 PM', f"{key} leave_label {got[key]!r}, expected 'Leave at 4:30 PM'")
 
 
 def scenario_routine_hero_has_one_action():

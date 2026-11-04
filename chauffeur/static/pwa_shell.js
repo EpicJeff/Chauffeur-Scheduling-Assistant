@@ -226,6 +226,7 @@ function pwaSyncShell() {
     pwaChildSync();
     pwaSyncProfileColors();
     pwaSyncSky();
+    if (typeof pwaPlanSync === 'function') pwaPlanSync();
 }
 
 function pwaAllowed(view) {
@@ -366,9 +367,9 @@ function pwaRefreshOverview() {
         document.querySelectorAll('#days-container > div').forEach(pane => {
             const events = pane.querySelector('#pane-events');
             if (!events) return;
-            for (const id of ['proposals-container','mind-container']) {
+            for (const id of ['proposals-container','mind-container','house-threads']) {
                 const section = pane.querySelector('#'+id);
-                if (section) pane.append(section);
+                if (section) events.before(section);
             }
         });
         return;
@@ -464,7 +465,6 @@ function pwaPageHeading() {
     const hour = new Date().getHours();
     const names = {
         drives: [isToday ? `Your ${hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening'}` : 'Your day', isToday ? 'Your drives and commitments, in one place.' : formatted],
-        family: ['Family plan', 'Everyone’s day, with the details that matter.'],
         myday: ['Your day', 'Your commitments, with room to plan ahead.'],
         chores: ['Household', 'The work, the lists, and who’s doing what.'],
     };
@@ -487,8 +487,10 @@ function pwaPageHeading() {
         if (tab.dataset.adult) { tab.innerHTML = tab.dataset.original; tab.setAttribute('fill', 'currentColor'); tab.removeAttribute('stroke'); delete tab.dataset.adult; }
     }
     let strip = document.getElementById('pwa-date-strip');
+    if (currentView === 'family') { strip?.remove(); return; }
+    if (!strip && (!adult || currentView !== 'drives')) return;
     if (!strip) { strip = document.createElement('div'); strip.id = 'pwa-date-strip'; document.getElementById('day-nav').append(strip); }
-    strip.hidden = !adult || !['drives','family'].includes(currentView);
+    strip.hidden = !adult || currentView !== 'drives';
     if (!strip.hidden) {
         const signature = currentDates.join() + ':' + activeDateIndex;
         if (strip.dataset.signature !== signature) {
@@ -548,7 +550,7 @@ function pwaEventRow(event, start, past, badges, extras) {
     const key = encodeURIComponent(JSON.stringify(event)).replace(/'/g, "\\'");
     const allDay = event.timeStr === 'All Day' || !!event.all_day;
     const end = !allDay && event.end && new Date(event.end) > new Date(start) ? `<span>Until ${mfEscape(formatTime(event.end))}</span>` : '';
-    const attrs = `data-kind="event" data-all-day="${allDay ? '1' : '0'}" data-start="${mfEscape(pwaLocalIso(start))}" data-end="${mfEscape(pwaLocalIso(event.end || start))}" data-title="${mfEscape(event.title)}" data-place="${mfEscape(event.location || '')}" data-meta="${mfEscape(end ? 'Until ' + formatTime(event.end) : '')}" data-state="${past ? 'past' : 'upcoming'}" data-primary="${mfEscape(`openEventModal('${key}')`)}" data-leg-id="" data-event-id="${mfEscape(event.id || '')}"`;
+    const attrs = `data-kind="event" data-all-day="${allDay ? '1' : '0'}" data-start="${mfEscape(pwaLocalIso(start))}" data-end="${mfEscape(pwaLocalIso(event.end || start))}" data-title="${mfEscape(event.title)}" data-place="${mfEscape(event.location || '')}" data-meta="${mfEscape(end ? 'Until ' + formatTime(event.end) : '')}" data-state="${past ? 'past' : 'upcoming'}" data-primary="${mfEscape(`openEventModal('${key}')`)}" data-leg-id="" data-event-id="${mfEscape(event.id || '')}" data-color="${mfEscape(event.color || '#3B82F6')}" data-cal="${mfEscape((event.calendarIds || []).join(','))}" data-drivers="${mfEscape((event.driverIds || []).join(','))}"`;
     return pwaAgendaRow({time:allDay ? 'All day' : formatTime(start), title:event.title,
         meta: badges + (event.location ? `<span>${mfEscape(event.location.split(',')[0])}</span>` : '') + end,
         extras, action:`openEventModal('${key}')`, state:past ? 'Past' : '', attrs, cls:'pwa-event-row'});

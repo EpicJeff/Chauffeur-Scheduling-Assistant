@@ -20,10 +20,12 @@
         if (depth()) document.documentElement.dataset.pwaStack = String(depth());
         else delete document.documentElement.dataset.pwaStack;
         const covered = document.querySelector(typeof PWA_NAV_COVERED_ROOT === 'string' ? PWA_NAV_COVERED_ROOT : '#pwa-covered');
-        if (covered) {
-            covered.toggleAttribute('inert', depth() > 0);
-            if (depth()) covered.setAttribute('aria-hidden', 'true');
-            else covered.removeAttribute('aria-hidden');
+        const roots = new Set([covered, ...document.querySelectorAll('body > header, #day-nav, #pwa-page-heading, #plan-head')]);
+        for (const root of roots) {
+            if (!root) continue;
+            root.toggleAttribute('inert', depth() > 0);
+            if (depth()) root.setAttribute('aria-hidden', 'true');
+            else root.removeAttribute('aria-hidden');
         }
     }
 
