@@ -96,7 +96,19 @@
 
 ---
 
-### Task 5: Record it, gate it, ship it
+### Task 5: Projects & programs live in Household (one door)
+
+The user's ruling 2026-11-04 (supersedes the 2026-10-15 "Projects lives in More"): **Projects & programs live in Household for everyone who has a Household tab; More shows Projects and My programs only to people without one.** Library stays on More (a separate page, the catalogue). Sprout keeps its own spot (`#pwa-sprout-projects` / My things). Nothing anyone can reach today becomes unreachable.
+
+**Files:**
+- Modify: `chauffeur/static/pwa_shell.js` (`pwaFeatures`: the `projects` and `programs` items are offered only when the person has no Household door to them — adults whose Household draws the Projects & programs card (`pwaHouseholdCards(pwaHouseholdInputs())` includes `projects`) and kids of stage explorer / navigator / copilot whose House tab carries the new Projects section do NOT get them; lists-only adults (`houseRevealListsOnly`), kids whose House tab is lists-only, and anyone else with `pwaAllowed('projects')` but no Household keep them; `programs` for adults, when kept, opens `pwaOpenHouseScreen('projects', 'programs')` if possible, else today's route), `chauffeur/static/pwa_child_shell.js` (`pwaChildHouseTabs`: stages explorer / navigator / copilot (not sprout, not lists-only) gain a `['projects', 'Projects']` section; selecting it sets `#chores-container[data-child-section="projects"]` and ADOPTS `#projects-container` into the House view (dispatch `chf-projects-open` once; the node returns home when another section is chosen or the view changes) with the kid's own programs under it through `renderProgramsSection(programs, commitmentsById)` (the same programs `fetchMyPrograms` gives the kid's My Day); `phoneOpenRecord('project', …)` / `chfPwaOpenProjects()` for these kids open the House tab's Projects section), `chauffeur/static/pwa_child_shell.css` (the section in the kid skin), `chauffeur/static/pwa_household.js` (export a small `pwaHouseHasProjects()` the directory reads)
+- Test: `chauffeur/tests/test_pwa_drive_live.py` gains `projects_have_one_door` (or a new `tests/test_projects_one_door_live.py` — the Task 2 author decides): parent / household adult: More has no Projects and no My programs, Household's card opens Projects & programs; lists-only adult: More has Projects (and opens the page); navigator kid: House has a Projects section showing `[data-project-card]` and the kid's program, More has no Projects / My programs; sprout: unchanged (More's `#pwa-sprout-projects`); helper / guest: no Projects anywhere (as today). Adjust `tests/test_project_sheets_phone_live.py` `scenario_no_tab_and_no_admin_anchor_in_sheets` (it reaches Projects through More: move it to the Household card) and `scenario_a_project_opens_only_through_its_door` (the door rule for a kid now lands on the House section); `tests/test_projects_live.py` and `tests/pwa_child_checks.py` where they click More › Projects.
+
+- [ ] **Step 1: Write the failing live checks** (Claude). **Step 2: Implement** (Codex). **Step 3: Run** `python tests/test_projects_live.py && python tests/test_project_sheets_phone_live.py && python tests/test_pwa_household_live.py && python tests/test_pwa_adult_shell_live.py` and the new checks → green.
+
+---
+
+### Task 6: Record it, gate it, ship it
 
 **Files:**
 - Modify: `chauffeur/docs/ui_design_guide.md` (a "The drive, one screen two moments" section + the header change), `chauffeur/system_capabilities.md` (new top entry `v2.499.757`), `chauffeur/config.yaml` (→ `2.499.757`)
@@ -105,7 +117,7 @@
 - [ ] **Step 2: Gate** (from `chauffeur/`, `HA_BASE_URL` unset):
 
 ```bash
-python tests/test_pwa_drive.py && python tests/test_drive_sheet.py && python tests/test_pwa_needs_you.py && python tests/test_pwa_next_thing.py && python tests/test_pwa_nav.py && python tests/test_pwa_argyle.py && python tests/test_template_js.py && python tests/test_tailwind_build.py && python tests/test_auth.py && python tests/test_drive_arrival.py && python tests/test_attendance_override.py && python tests/test_pwa_drive_live.py && python tests/test_pwa_adult_shell_live.py && python tests/test_pwa_myday_live.py && python tests/test_pwa_plan_live.py && python tests/test_pwa_household_live.py && python tests/test_pwa_messages_live.py && python tests/test_pwa_argyle_live.py
+python tests/test_pwa_drive.py && python tests/test_drive_sheet.py && python tests/test_pwa_needs_you.py && python tests/test_pwa_next_thing.py && python tests/test_pwa_nav.py && python tests/test_pwa_argyle.py && python tests/test_template_js.py && python tests/test_tailwind_build.py && python tests/test_auth.py && python tests/test_drive_arrival.py && python tests/test_attendance_override.py && python tests/test_pwa_drive_live.py && python tests/test_pwa_adult_shell_live.py && python tests/test_pwa_myday_live.py && python tests/test_pwa_plan_live.py && python tests/test_pwa_household_live.py && python tests/test_pwa_messages_live.py && python tests/test_pwa_argyle_live.py && python tests/test_projects_live.py && python tests/test_project_sheets_phone_live.py
 ```
 
 - [ ] **Step 3: Commit** as one commit `feat(pwa): slice 6 of the reimagined PWA, the drive and the header (v2.499.757)` and push.
@@ -121,4 +133,5 @@ python tests/test_pwa_drive.py && python tests/test_drive_sheet.py && python tes
 5. **Packing joins My Day's pile** (the slice-1 carry-forward) as a card per event with unconfirmed prep, opening the drive screen; the drive screen's "Packed?" chips stay the place to tick.
 6. **The passenger's ride hero carries the ride row's own buttons** (Where? / Message / Add a moment), closing the slice-1 'Discuss' carry-forward; the dataset contract gains `data-actions` on ride rows only.
 7. **The header shrinks for adults** to the date line with the bell and the avatar (Profile); search, refresh, theme, switch person, notifications and the critter are reached through Profile and More (search leaving the header is an approved disposition). Kids' header unchanged.
-8. **Not this slice:** a full-screen map on the drive, a new cover/request flow, kid drive screens, device-only gesture checks.
+8. **Projects & programs have one door** (user ruling 2026-11-04): Household for anyone with a Household tab (kids explorer/navigator/copilot gain a Projects section in their House tab), More only for those without one (lists-only adults, Sprout's own spot); Library stays on More.
+9. **Not this slice:** More's new look and the light vocabulary pass on its destinations (slice 7), a full-screen map on the drive, a new cover/request flow, kid drive screens, device-only gesture checks.
