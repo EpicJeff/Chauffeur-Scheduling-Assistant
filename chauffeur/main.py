@@ -4409,6 +4409,7 @@ def nearby_gas_stations(limit: int = 6):
 
 class IcsFeedCreate(BaseModel):
     url: str
+    in_driving_schedule: Optional[bool] = None
     teams: List[str] = []
     calendar_id: str = ""            # required for calendar mode
     name: Optional[str] = None
@@ -4418,6 +4419,7 @@ class IcsFeedCreate(BaseModel):
     member_id: Optional[str] = None
 
 class IcsFeedUpdate(BaseModel):
+    in_driving_schedule: Optional[bool] = None
     name: Optional[str] = None
     calendar_id: Optional[str] = None
     enabled: Optional[bool] = None
@@ -4434,6 +4436,7 @@ def _public_ics_feed(f: dict) -> dict:
     A Canvas token is write-only: the page learns only that one is set."""
     out = {k: v for k, v in f.items() if k not in ('event_map', 'canvas_token')}
     out['teams'] = f.get('teams') or []
+    out['in_driving_schedule'] = f.get('in_driving_schedule') is not False
     out['canvas_token_set'] = bool(f.get('canvas_token'))
     from services import ics_sync
     out['syncing'] = ics_sync.is_syncing(f['id'])
@@ -4483,6 +4486,7 @@ def create_ics_feed(req: IcsFeedCreate, background_tasks: BackgroundTasks):
         'target_kind': target_kind,
         'member_id': req.member_id,
         'teams': _normalise_ics_teams(req.teams),
+        'in_driving_schedule': req.in_driving_schedule is not False,
         'created_at': datetime.now().astimezone().isoformat(),
     })
 
@@ -4517,6 +4521,10 @@ def update_ics_feed(feed_id: str, req: IcsFeedUpdate, background_tasks: Backgrou
         raise HTTPException(status_code=404, detail="Feed not found")
     updates = {}
     teams_changed = False
+    driving_changed = False
+    if req.in_driving_schedule is not None:
+        updates['in_driving_schedule'] = req.in_driving_schedule
+        driving_changed = req.in_driving_schedule != (feed.get('in_driving_schedule') is not False)
     if req.teams is not None:
         updates['teams'] = _normalise_ics_teams(req.teams)
         teams_changed = updates['teams'] != (feed.get('teams') or [])
@@ -4541,6 +4549,8 @@ def update_ics_feed(feed_id: str, req: IcsFeedUpdate, background_tasks: Backgrou
                     trigger_background_refresh()
 
         background_tasks.add_task(_resync)
+    if driving_changed:
+        background_tasks.add_task(trigger_background_refresh)
     return {"status": "updated"}
 
 class CanvasTokenRequest(BaseModel):
@@ -5217,16 +5227,15 @@ def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: B
     # event config, keyed by the new google id — a recurring series' instances
     # find it through their recurring_event_id fallback. This is what used to
     # need a second stop at the schedule inbox; with a config in place the
-    # event never lands there. No attendees picked -> no config, and the inbox
-    # stays the honest state for a ride nobody has claimed.
-    conf = {}
+    # event never lands there. Approval alone is a setup: without explicit
+    # attendees the usual calendar/rule matching still decides who goes.
+    conf = {'source': 'intake'}
     if req.passenger_ids:
         conf['passenger_ids'] = [str(x) for x in req.passenger_ids if str(x).strip()]
     if req.driver_ids:
         conf['driver_ids'] = [str(x) for x in req.driver_ids if str(x).strip()]
     conf = {k: v for k, v in conf.items() if v}
-    if conf:
-        storage.set_event_config(gid, conf)
+    storage.set_event_config(gid, conf)
 
     storage.update_proposal(proposal_id, {
         'status': 'approved', 'calendar_id': req.calendar_id,
@@ -14026,7 +14035,7 @@ def member_day(member_id: str, date: Optional[str] = None, request: Request = No
     for ev in sched.get('events', []):
         if not str(ev.get('start', '')).startswith(date_str):
             continue
-        if ev.get('event_type') in ('errand', 'practice') or ev.get('trip_suppressed'):
+        if ev.get('event_type') in ('errand', 'practice') or ev.get('trip_suppressed') or ev.get('ignored'):
             continue
         ev_id = str(ev.get('id', ''))
         parent_id = ev_id  # split-leg parent: suffix stripped, instance kept
@@ -20898,6 +20907,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         all_event_configs_docs = storage.event_configs_table.all()
     configs_by_google_id = {c['google_id']: c for c in all_event_configs_docs if 'google_id' in c}
 
+    feeds_by_id = {f['id']: f for f in storage.get_ics_feeds()}
     for e in all_fetched_events:
         original_calendar_ids = list(e.calendar_ids)
         e.original_calendar_ids = original_calendar_ids
@@ -20918,8 +20928,11 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             if config:
                 e.app_config = config
 
-        if config and config.get('is_ignored'):
-            continue
+        feed = feeds_by_id.get(e.ics_feed_id)
+        e.ignored = bool(config and config.get('is_ignored')) or (
+            feed is not None and feed.get('in_driving_schedule') is False
+            and (config or {}).get('is_ignored') is not False
+        )
             
         if config and config.get('location_override'):
             e.location = config.get('location_override')
@@ -20934,11 +20947,11 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
 
         # The line between "the family's calendar" and "the driving schedule".
         # Everything above this point is what the family SEES; everything below
-        # it is what the solver reasons about. A display-only event stops here:
+        # it is what the solver reasons about. Display-only and ignored events stop here:
         # it is in the UI payload, and it never reaches the solve set, the
         # inbox, or driver_events — where a 24-hour span would ban its owner
         # from every drive that day. See is_display_only_event().
-        if is_display_only_event(e):
+        if e.ignored or is_display_only_event(e):
             continue
 
         # 2. Check Passengers (Config -> Rules -> Calendar/Hashtags)
@@ -21043,10 +21056,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                         break
 
         # 4. Triage Logic
-        # Every event we haven't seen before (no config) goes to the inbox.
+        # A subscription approves its events; otherwise unseen events need triage.
         # Driver-only and person-only events bypass the inbox to avoid clutter —
         # neither is a ride waiting to be assigned.
-        if not config and not is_driver_only and not is_member_only:
+        if not config and feed is None and not is_driver_only and not is_member_only:
             e.needs_triage = True
 
         # 5. Append to events list if it's a passenger event AND has a location
@@ -21133,7 +21146,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     except Exception:
         _trip_members = []
     for e in all_events_for_ui.values():
-        if getattr(e, 'event_type', '') == 'background_trip':
+        if not e.ignored and getattr(e, 'event_type', '') == 'background_trip':
             applicable_entities = set()
             
             # Fetch explicitly configured attendees from trip metadata
@@ -21599,7 +21612,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         dup_groups = defaultdict(list)
         for e in all_events_for_ui.values():
             event_type = getattr(e, 'event_type', None)
-            if event_type in ('pickup', 'dropoff', 'background_trip'):
+            if e.ignored or event_type in ('pickup', 'dropoff', 'background_trip'):
                 continue
 
             date_str = e.start.strftime('%Y-%m-%d')

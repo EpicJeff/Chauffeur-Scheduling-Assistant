@@ -77,7 +77,9 @@ function _agRowFmtTime(d) {
 function _agRowBadgeHtml(props, extraBadgeHtml) {
     props = props || {};
     let badge = '';
-    if (props.tripSuppressed) {
+    if (props.ignored) {
+        badge = '<span class="text-[10px] font-bold text-gray-400 shrink-0">Calendar only</span>';
+    } else if (props.tripSuppressed) {
         badge = '<span class="text-[10px] font-bold text-gray-400 shrink-0">✈️ Trip conflict</span>';
     } else if (props.isConflict) {
         badge = '<span class="text-[10px] font-bold text-amber-400 shrink-0">⚠️ Conflict</span>';
@@ -125,7 +127,8 @@ function _agRowPassengerDots(passengers) {
 function agendaEventRow(ev, opts) {
     opts = opts || {};
     const props = ev.extendedProps || {};
-    const barColor = props.isUnassigned ? (props.isConflict ? '#f59e0b' : '#ef4444')
+    const barColor = props.ignored ? '#6B7280'
+        : props.isUnassigned ? (props.isConflict ? '#f59e0b' : '#ef4444')
         : (props.rawColor || ev.backgroundColor || '#3b82f6');
     const timeLabel = ev.allDay ? 'Entire day'
         : `${_agRowFmtTime(new Date(ev.start))}${ev.end ? ' – ' + _agRowFmtTime(new Date(ev.end)) : ''}`;
@@ -148,7 +151,7 @@ function agendaEventRow(ev, opts) {
     // is not happening" the agenda already draws.
     const isPast = !ev.allDay && ev.end && new Date(ev.end) < new Date();
     const row = document.createElement('div');
-    row.className = `agenda-event rounded-lg px-2.5 py-1.5 transition-colors flex flex-col gap-0.5${props.tripSuppressed ? ' opacity-50' : ((isPast || opts.canceled) ? ' opacity-45' : '')}${opts.tappable ? ' cursor-pointer' : ''}`;
+    row.className = `agenda-event rounded-lg px-2.5 py-1.5 transition-colors flex flex-col gap-0.5${(props.tripSuppressed || props.ignored) ? ' opacity-50' : ((isPast || opts.canceled) ? ' opacity-45' : '')}${opts.tappable ? ' cursor-pointer' : ''}`;
     row.style.borderLeft = `4px solid ${barColor}`;
     row.innerHTML = `
         <span class="text-[11px] font-semibold text-gray-400">${_agRowEsc(timeLabel)}</span>

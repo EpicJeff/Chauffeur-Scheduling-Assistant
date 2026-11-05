@@ -1124,6 +1124,7 @@
             const clicked = currentEventsMap[eventId];
             const ev = wholeEventForModal(clicked);
             if (!ev) return;
+            document.getElementById('ignore-event-btn').textContent = ev.ignored ? 'Undo Ignore' : 'Ignore Event';
 
             // A deal found for the PREVIOUS event must not linger onto this one.
             const dealResultEl = document.getElementById('deal-result');
@@ -1755,6 +1756,8 @@
         async function ignoreEvent() {
             const ev = currentEventsMap[activeEventId];
             if (!ev) return;
+            const ignore = !ev.ignored;
+            if (ignore && !await promptConfirm('Ignore Event', 'This event stays on the calendar but is never driven.', 'Ignore', 'Cancel')) return;
 
             const btn = document.getElementById('ignore-event-btn');
             const originalText = btn ? btn.innerHTML : 'Ignore Event';
@@ -1776,14 +1779,17 @@
                     localSolvingDates.add(ev.start.split('T')[0]);
                     renderSchedule(currentData);
                 }
-                await fetch(`api/events/config/${encodeURIComponent(googleId)}`, {
+                const res = await fetch(`api/events/config/${encodeURIComponent(googleId)}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ is_ignored: true })
+                    body: JSON.stringify({ is_ignored: ignore })
                 });
+                if (!res.ok) throw new Error('Could not save Ignore');
                 closeEventModal();
                 if (currentData) {
                     const removeEvent = (eId) => {
+                        const event = (currentData.events || []).find(e => e.id === eId);
+                        if (event) { event.ignored = ignore; event.needs_triage = false; }
                         if (currentData.assignments) delete currentData.assignments[eId];
                         if (currentData.ghost_assignments) delete currentData.ghost_assignments[eId];
                         if (currentData.unassigned) {
@@ -1797,14 +1803,8 @@
                     if (ev.recurring_event_id && scope === 'series') {
                         const instances = (currentData.events || []).filter(e => e.recurring_event_id === ev.recurring_event_id);
                         instances.forEach(inst => removeEvent(inst.id));
-                        if (currentData.events) {
-                            currentData.events = currentData.events.filter(e => e.recurring_event_id !== ev.recurring_event_id);
-                        }
                     } else {
                         removeEvent(ev.id);
-                        if (currentData.events) {
-                            currentData.events = currentData.events.filter(e => e.id !== ev.id);
-                        }
                     }
                     renderSchedule(currentData);
                 }

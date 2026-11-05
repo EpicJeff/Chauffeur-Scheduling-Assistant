@@ -31,6 +31,9 @@ class Event(BaseModel):
     visibility: Optional[str] = None
     calendar_ids: List[str]
     recurring_event_id: Optional[str] = None
+    ics_feed_id: Optional[str] = None
+    # Calendar presence only: no ride, triage card or driver commitment.
+    ignored: bool = False
     original_calendar_ids: List[str] = Field(default_factory=list)
     source_event_ids: List[str]
     all_day: bool = False

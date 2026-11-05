@@ -196,6 +196,7 @@ def resolve_passenger_double_bookings(events, passengers):
                   and not getattr(e, 'needs_triage', False)
                   and not getattr(e, 'all_day', False)
                   and not getattr(e, 'trip_suppressed', False)
+                  and not getattr(e, 'ignored', False)
                   and getattr(e, 'calendar_ids', None)
                   and getattr(e, 'location', None) and str(e.location).strip()]
     candidates.sort(key=lambda e: e.start)

@@ -66,7 +66,8 @@ def record_daily_stats(date_str: str = None) -> dict:
 
     day_events = {eid: e for eid, e in events.items()
                   if str(e.get('start', '')).startswith(date_str)
-                  and e.get('event_type') != 'errand' and not e.get('trip_suppressed')}
+                  and e.get('event_type') != 'errand' and not e.get('trip_suppressed')
+                  and not e.get('ignored')}
 
     drivers = {}
     for ev_id, d_id in (cache.get('assignments') or {}).items():
@@ -402,6 +403,7 @@ def build_household_briefing(target_date: datetime.date = None) -> dict:
     for ev_id, ev in events.items():
         if (ev.get('event_type') in ('errand', 'background_trip', 'project_hold')
                 or ev.get('trip_suppressed')
+                or ev.get('ignored')
                 or (ev.get('event_type') == 'practice' and not (ev.get('practice') or {}).get('program_id'))):
             continue
         if ev_id.endswith('_dropoff') or ev_id.endswith('_pickup'):

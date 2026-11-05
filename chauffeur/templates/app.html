@@ -9985,7 +9985,7 @@
                         isUnassigned: false,
                         isConflict: false,
                         conflictReason: null,
-                        suppressed: !!ev.trip_suppressed,
+                        suppressed: !!(ev.trip_suppressed || ev.ignored),
                         isErrand: false
                     };
                     cards.set(baseId, card);

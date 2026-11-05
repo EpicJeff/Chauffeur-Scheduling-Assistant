@@ -1475,7 +1475,10 @@ function _openEventDetails(inst, evObj) {
     }
 
     const banner = document.getElementById('modal-status-banner');
-    if (props.tripSuppressed) {
+    if (props.ignored) {
+        banner.className = 'rounded-lg p-3 text-sm font-bold flex items-center gap-2 bg-gray-500/20 text-gray-300 border border-gray-500/30 mb-4';
+        banner.textContent = 'Shown on the calendar, never driven.';
+    } else if (props.tripSuppressed) {
         banner.className = 'rounded-lg p-3 text-sm font-bold flex items-center gap-2 bg-gray-500/20 text-gray-300 border border-gray-500/30 mb-4';
         banner.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Ignored for the driving schedule \u2014 everyone attending is away on a trip during this event.';
     } else if (props.isConflict) {
@@ -1832,7 +1835,7 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                                     if (ev.event_type === 'practice') {
                                         color = (ev.practice || {}).color || PRACTICE_COLOR;
                                     }
-                                    if (ev.trip_suppressed) {
+                                    if (ev.trip_suppressed || ev.ignored) {
                                         color = '#6B7280'; // grayed: ignored for the driving schedule
                                     }
                                     
@@ -2006,6 +2009,7 @@ async function buildCalendarEvents(startStr, endStr, opts = {}) {
                                                 carSwap: carSwap,
                                                 isErrand: false,
                                                 tripSuppressed: !!ev.trip_suppressed,
+                                                ignored: !!ev.ignored,
                                                 // Carried onto the dialog's props so the
                                                 // panel's event details can say it too.
                                                 arriveBy: ev.arrive_by || null,

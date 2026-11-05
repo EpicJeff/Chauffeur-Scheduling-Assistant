@@ -529,7 +529,7 @@ def send_coverage_reports(now: datetime.datetime = None, lookahead_days: int = 4
 
         lines = []
         for ev in sorted(sched.get('events', []), key=lambda e: str(e.get('start', ''))):
-            if ev.get('event_type') in ('errand', 'background_trip') or ev.get('trip_suppressed'):
+            if ev.get('event_type') in ('errand', 'background_trip') or ev.get('trip_suppressed') or ev.get('ignored'):
                 continue
             ev_id = str(ev.get('id', ''))
             if ev_id.endswith('_dropoff') or ev_id.endswith('_pickup'):

@@ -198,6 +198,7 @@
             const ev = _calFindRawEvent(baseId);
             if (!ev) { showGlobalAlert('Could not load this event\'s data. Try refreshing.'); return; }
             calConfigEvent = ev;
+            document.getElementById('cal-ignore-btn').textContent = ev.ignored ? 'Undo Ignore' : 'Ignore Event';
             const data = window._schedData || {};
             const appConfig = ev.app_config || {};
             const calMeta = data.calendar_metadata || {};
@@ -354,16 +355,17 @@
         async function calIgnoreEvent() {
             const ev = calConfigEvent;
             if (!ev) return;
-            const proceed = await promptConfirm('Ignore Event', 'Hide this event from the driving schedule entirely?', 'Ignore', 'Cancel');
-            if (!proceed) return;
+            const ignore = !ev.ignored;
+            if (ignore && !await promptConfirm('Ignore Event', 'This event stays on the calendar but is never driven.', 'Ignore', 'Cancel')) return;
             try {
                 const googleId = await _calResolveGoogleId(ev);
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
-                await fetch(`${apiBase}api/events/config/${googleId}`, {
+                const res = await fetch(`${apiBase}api/events/config/${googleId}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ is_ignored: true })
+                    body: JSON.stringify({ is_ignored: ignore })
                 });
+                if (!res.ok) throw new Error('Could not save Ignore');
                 closeCalConfigModal();
                 if (window.calendar) window.calendar.refetchEvents();
             } catch (e) {

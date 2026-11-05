@@ -11,8 +11,10 @@ rides. Approval now carries all of it:
      keyed by the new google id (a recurring series' instances find it via
      their recurring_event_id fallback) — so the event never lands in the
      schedule inbox as "Needs Setup".
-  3. **No attendees -> no config.** The inbox stays the honest state for a
-     ride nobody has claimed; approval must not silently vouch for it.
+  3. **No attendees -> still a config, never the inbox.** The user's ruling
+     (2026-11-05): "anything that goes through intake should not need
+     triaging." Approval is the setup; with nobody picked, the calendar the
+     event was added to decides who rides, as for any configured event.
 
 Run from chauffeur/:  python tests/test_intake_approval.py
 """
@@ -128,22 +130,25 @@ def scenario_recurrence_matches_dtstarts_value_type():
           "and the proposal is untouched — nothing was inserted")
 
 
-def scenario_no_attendees_means_no_config():
-    """Approval without a who-rides pick must NOT vouch for the event: the
-    schedule inbox stays the honest state for a ride nobody has claimed."""
+def scenario_no_attendees_still_saves_a_setup():
+    """Approval without a who-rides pick still saves a setup, so the event
+    never lands in the schedule inbox (user ruling 2026-11-05). Nobody is
+    invented: the setup names no riders and no drivers, and the calendar the
+    event went on decides, as it does for any configured event."""
     import main
     _reset()
     pid = _proposal()
-    with mock.patch('services.calendar.insert_event', return_value='gid_bare'), \
-         mock.patch('services.calendar.get_calendar_timezone', return_value=None), \
-         mock.patch('services.maps.resolve_routable_location', side_effect=lambda x: x):
+    with mock.patch('services.calendar.insert_event', return_value='gid_bare'),          mock.patch('services.calendar.get_calendar_timezone', return_value=None),          mock.patch('services.maps.resolve_routable_location', side_effect=lambda x: x):
         res = main.approve_proposal(pid, main.ProposalApprove(calendar_id='cal1'),
                                     mock.MagicMock())
     check(res['status'] == 'approved', f"got {res}")
-    check(storage.get_event_config('gid_bare') is None,
-          "no attendees picked -> no event config written")
+    conf = storage.get_event_config('gid_bare')
+    check(conf is not None, "no attendees picked -> a setup is still written")
+    check(not conf.get('passenger_ids') and not conf.get('driver_ids'),
+          f"the setup must not invent riders or drivers: {conf}")
+    check(not conf.get('is_ignored'), f"the setup must not ignore the event: {conf}")
     with storage.db_lock:
-        check(len(storage.event_configs_table.all()) == 0, "nothing else either")
+        check(len(storage.event_configs_table.all()) == 1, "exactly one setup")
 
 
 def scenario_untouched_cards_round_trip_the_extraction():

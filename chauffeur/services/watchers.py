@@ -139,7 +139,7 @@ def _unassigned_findings(now: datetime.datetime):
     negotiated = 0
     for ev_id in cache.get('unassigned', []) or []:
         ev = events.get(str(ev_id))
-        if not ev or ev.get('trip_suppressed') or ev.get('event_type') == 'errand':
+        if not ev or ev.get('trip_suppressed') or ev.get('ignored') or ev.get('event_type') == 'errand':
             continue
         if str(ev_id) in covered:
             continue

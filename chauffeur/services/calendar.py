@@ -201,6 +201,7 @@ def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, 
                 group_key = (title.strip().lower(), start_dt, end_dt, loc_key)
                 
                 internal_id = f"{cal_id}::{e['id']}"
+                ics_feed_id = e.get('extendedProperties', {}).get('private', {}).get('ics_feed_id')
                 
                 if group_key not in grouped_events:
                     grouped_events[group_key] = {
@@ -219,6 +220,9 @@ def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, 
                         "event_type": e.get('extendedProperties', {}).get('private', {}).get('event_type') or "standard"
                     }
                 
+                # Preserve the subscription whichever duplicate arrived first.
+                if ics_feed_id:
+                    grouped_events[group_key]['ics_feed_id'] = ics_feed_id
                 # A public duplicate must not reopen a private source copy.
                 if e.get('visibility') in ('private', 'confidential'):
                     grouped_events[group_key]['visibility'] = 'private'
@@ -241,6 +245,7 @@ def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, 
             calendar_ids=g["calendar_ids"],
             source_event_ids=g["source_event_ids"],
             recurring_event_id=g.get("recurring_event_id"),
+            ics_feed_id=g.get("ics_feed_id"),
             all_day=g.get("all_day", False),
             event_type=g.get("event_type", "standard"),
             trip_id=g.get("trip_id"),
