@@ -727,7 +727,12 @@ def apply(ctx, evidence):
             greeting = f"Hi {member.get('name')}."
         refreshed = identity.VoiceContext(ctx.ha_instance_id, ctx.satellite_id, ctx.request_id,
                     row['generation'], row['level'], row['member_id'], row['expires_at'], ctx.service_revision, ctx.paired)
-        return replace(refreshed, fingerprint=vector, greeting=greeting)
+        # Listening continuity is stricter than retaining an identity: a long,
+        # uncertain sample spends the conversation cap even if the session stays.
+        recognized = bool(matched or (not usable and row.get('recognized') and row.get('member_id'))
+                          or (usable and row['level'] == 'verified' and anchor
+                              and score(vector, anchor) >= CONTINUITY and not contradiction))
+        return replace(refreshed, fingerprint=vector, greeting=greeting, recognized_this_turn=recognized)
 
 
 def delete(member_id, key=None):

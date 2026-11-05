@@ -482,6 +482,11 @@ ENTRIES: List[dict] = [
        'Pin which speaker Argyle announces through in a room; unpinned rooms '
        'pick the voice satellite, then whichever player is already on.',
        page='map', anchor='announce', ui_marker='announce-pin-select'),
+    _e('voice_conversation_mode', 'integrations', 'Conversation mode',
+       'Voice satellites keep listening after Argyle answers, so you can reply '
+       'without the wake word. Silence, a sign-off like thanks, or two turns '
+       'from a voice Argyle does not know end it.',
+       page='map', anchor='announce', ui_marker='voice-conversation-mode'),
 
     # --- AI
     _e('llm_provider', 'ai', 'Model provider',

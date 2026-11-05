@@ -2063,7 +2063,9 @@ def routines_page(request: Request):
 
 @app.get("/map")
 def family_map_page(request: Request):
-    return _page_or_board(request, "map", "map.html")
+    return _page_or_board(request, "map", "map.html", context={
+        'voice_conversation_mode': storage.get_settings().get('voice_conversation_mode', True) is not False,
+    })
 
 @app.get("/music")
 def music_page(request: Request):
@@ -3935,7 +3937,9 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
         speech = res.get('message', 'I did not understand that.')
         if ctx.greeting and not readback:
             speech = ctx.greeting + ' ' + speech
-        return _voice_response(speech, req.language, voice_identity.expects_reply(ctx))
+        from services import voice_conversation
+        keep_listening = voice_conversation.continue_conversation(ctx, req.text)
+        return _voice_response(speech, req.language, voice_identity.expects_reply(ctx) or keep_listening)
 
     def perform_and_speak():
         return _answer_in_room(perform(), req)

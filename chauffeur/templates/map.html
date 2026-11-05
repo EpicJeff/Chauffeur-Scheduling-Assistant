@@ -66,6 +66,14 @@
     {% call settings_drawer('map', 'Map') %}
     {% call settings_section('announce', 'Announcements') %}
     <div class="bg-gray-900 rounded-xl p-4 space-y-4">
+        <label class="flex items-start gap-3">
+            <input type="checkbox" id="voice-conversation-mode" class="w-4 h-4 mt-0.5 accent-blue-500"
+                {% if voice_conversation_mode is not sameas false %}checked{% endif %}>
+            <span>
+                <span class="text-xs font-semibold text-gray-200">Conversation mode</span>
+                <span class="block text-[11px] text-gray-500 mt-0.5">Voice satellites keep listening after Argyle answers, so you can reply without the wake word. Silence, a sign-off like thanks, or two turns from a voice Argyle does not know end it.</span>
+            </span>
+        </label>
         <!-- Argyle's voice, everywhere at once. Not a Chauffeur setting: the
              HA pipeline is the single source of truth every mouth reads, and
              this dropdown is a remote control that writes to it
@@ -123,6 +131,25 @@
                 });
             },
             room() { return this.rooms.find(r => r.id === this.el('announce-room').value); },
+            async saveConversationMode(checkbox) {
+                const value = checkbox.checked;
+                checkbox.disabled = true;
+                window.chfSettingsSaving();
+                try {
+                    const res = await fetch(apiBase + 'api/settings', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ voice_conversation_mode: value }),
+                    });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        throw new Error(err.detail || 'Could not save that just now.');
+                    }
+                    window.chfSettingsSaved(true);
+                } catch (e) {
+                    checkbox.checked = !value;
+                    window.chfSettingsSaved(false, e.message || 'Could not save that just now.');
+                } finally { checkbox.disabled = false; }
+            },
             // One speaker pin per room, in the Map drawer. Built once the rooms
             // are known; the drawer's markup is server-rendered, so these ids
             // exist by DOMContentLoaded.
@@ -225,6 +252,8 @@
         });
 
         document.addEventListener('DOMContentLoaded', () => {
+            const conversationMode = Announce.el('voice-conversation-mode');
+            if (conversationMode) conversationMode.onchange = () => Announce.saveConversationMode(conversationMode);
             initFamilyMap();
             startFamilyMapPolling();
             Announce.load();

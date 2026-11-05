@@ -95,6 +95,23 @@ def main():
             page.wait_for_selector(P + '[data-open]')
             check(_visible(page, P + ' #announce-voice-select'), "Argyle's voice is not in the Map drawer")
             check(_visible(page, P + ' #announce-pins-empty'), 'the no-rooms line is not shown')
+            # Conversation mode (2026-11-04): one household switch beside the
+            # announce settings, on by default, saving only itself.
+            check(_visible(page, P + ' #voice-conversation-mode'), 'conversation mode is not in the Map drawer')
+            check(page.is_checked(P + ' #voice-conversation-mode'), 'conversation mode is not on by default')
+            before = storage.get_settings()
+            page.uncheck(P + ' #voice-conversation-mode')
+            page.wait_for_selector(P + ' [data-settings-status]:has-text("Saved")')
+            check(_changed(before, storage.get_settings()) == {'voice_conversation_mode'},
+                  'the conversation switch saved more than itself')
+            check(storage.get_settings().get('voice_conversation_mode') is False, 'turning it off did not save False')
+            page.reload(wait_until='networkidle')
+            page.click('#page-settings-gear')
+            page.wait_for_selector(P + '[data-open]')
+            check(not page.is_checked(P + ' #voice-conversation-mode'), 'off did not survive a reload')
+            page.check(P + ' #voice-conversation-mode')
+            page.wait_for_timeout(600)
+            check(storage.get_settings().get('voice_conversation_mode') is True, 'turning it back on did not save True')
             _shot(page, 'map-empty-open-desktop')
 
             # Map, two rooms: a pin per room.

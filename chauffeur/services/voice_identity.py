@@ -91,6 +91,7 @@ class VoiceContext:
     paired: bool = False
     fingerprint: list | None = None
     greeting: str | None = None
+    recognized_this_turn: bool = False
 
     @property
     def scope_key(self):

@@ -1279,6 +1279,7 @@ class Settings(BaseModel):
     # overriding the satellite-first/playing-first pick. Only rooms the family
     # has pinned appear; everything else resolves automatically.
     announce_targets: Dict[str, str] = Field(default_factory=dict)
+    voice_conversation_mode: bool = True
     # Stages (load arc A4): the three ages where the kid bands change, stored
     # as CUTOFFS rather than four ranges — contiguous bands defined by cutoffs
     # cannot develop gaps or overlaps the way independently edited ranges can.

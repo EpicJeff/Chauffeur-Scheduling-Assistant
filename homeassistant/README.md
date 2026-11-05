@@ -999,6 +999,15 @@ to Home Assistant instead of to Argyle.
   follow-up turns, and the add-on threads history through the same conversation
   store as the chat widget (ids prefixed `voice-`, titled 🎙️). Follow-ups like
   "actually, make it Mom instead" work within a voice session.
+- Conversation mode (add-on v2.499.759): after the wake word a satellite keeps
+  listening after every answer, so you can reply without "Hey Argyle". It ends on
+  silence (HA's own no-speech timeout), on a sign-off said on its own ("thanks",
+  "that's all", "goodbye", "stop"), or after two turns in a row from a voice Argyle
+  does not recognize (the TV). A recognized voice keeps it going indefinitely; a
+  reply too short to identify inherits the speaker before it. Satellites without
+  voice recognition always use the two-turn cap. Off switch: Map drawer ›
+  Announcements › Conversation mode. No component update: it already passes
+  the flag whenever the installed Home Assistant supports continuing.
 - Voice runs with the admin toolset (no driver identity), same as the control
   center chat. Don't put this pipeline on a device you wouldn't hand admin chat.
 - If a family member's name ever collides with an exposed entity/area name,
