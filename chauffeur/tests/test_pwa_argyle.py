@@ -4,11 +4,6 @@ static/pwa_argyle.js, checked by RUNNING it.
 Two halves.
 
 PURE (node, no `document`, no `window`; extracted with tests/pwa_pure.py):
-  * `PWA_ARGYLE_HOLD_MS = 350`;
-  * `pwaArgyleGesture()` -> `{ down(t), up(t), cancel(), tick(t), state }`:
-    `up` before the threshold is 'tap'; `tick` at or after the threshold is
-    'hold-start' once; `up` after a hold is 'hold-end'; `cancel` returns to
-    idle so the next `up` is silent (null); times are plain ms numbers;
   * `pwaArgyleNewestReply(messages, afterId, argyleId)`: the last Argyle
     message after the message `afterId` (any Argyle message when afterId is
     null); null when there is none.
@@ -46,7 +41,7 @@ it would on the phone. Pinned (task-1-brief.md):
   * pwa_shell.css: the reduced-motion block names .pwa-argyle-glow and
     .pwa-argyle-wave, `.pwa-argyle` sits at z-index 300, the adult orb has
     touch-action none.
-  Final review (hold-to-talk), the ChauffeurPhoneVoice.start stub keeps
+  Voice host regression coverage, the ChauffeurPhoneVoice.start stub keeps
   `opts.host` as ctx.host:
   * a voice turn never draws an OLD Argyle reply: the transcript's own
     stream event leaves the bubble hidden and the status Thinking; the
@@ -84,7 +79,7 @@ TO_MESSAGES = 'full conversation in Messages'
 
 # --- pure half ---------------------------------------------------------------
 
-PURE_WANTED = ['pwaArgyleGesture', 'pwaArgyleNewestReply', 'PWA_ARGYLE_HOLD_MS']
+PURE_WANTED = ['pwaArgyleNewestReply']
 
 PURE_PROBE = r"""
 const out = {document_defined: typeof document !== 'undefined',
@@ -104,41 +99,6 @@ const pick = (msgs, after) => {
   const r = pwaArgyleNewestReply(msgs, after, 'argyle');
   return r === null ? null : (r === undefined ? '__undefined__' : r.id);
 };
-run('hold_ms', () => PWA_ARGYLE_HOLD_MS);
-run('tap_under_threshold', () => {
-  const g = pwaArgyleGesture();
-  g.down(0);
-  const tick100 = U(g.tick(100));
-  const up = U(g.up(200));
-  const tick400 = U(g.tick(400));
-  const up_again = U(g.up(500));
-  return {tick100, up, tick400, up_again};
-});
-run('hold_gesture', () => {
-  const g = pwaArgyleGesture();
-  g.down(0);
-  const tick349 = U(g.tick(349));
-  const tick350 = U(g.tick(350));
-  const tick400 = U(g.tick(400));
-  const tick800 = U(g.tick(800));
-  const up = U(g.up(900));
-  const tick1000 = U(g.tick(1000));
-  return {tick349, tick350, tick400, tick800, up, tick1000};
-});
-run('cancel_is_silent', () => {
-  const g = pwaArgyleGesture();
-  const up_without_down = U(g.up(50));
-  g.down(100); g.cancel();
-  const up_after_cancel = U(g.up(200));
-  const tick_after_cancel = U(g.tick(600));
-  g.down(1000);
-  const hold = U(g.tick(1350));
-  g.cancel();
-  const up_after_held_cancel = U(g.up(1900));
-  g.down(2000);
-  const fresh_tap = U(g.up(2100));
-  return {up_without_down, up_after_cancel, tick_after_cancel, hold, up_after_held_cancel, fresh_tap};
-});
 run('newest_reply_after_mine', () => ({after_m3: pick(MSGS, 'm3'), after_m1: pick(MSGS, 'm1')}));
 run('no_reply_yet', () => ({after_m3: pick(MSGS.slice(0, 3), 'm3'), after_m4: pick(MSGS, 'm4'),
                             empty: pick([], 'm3'), empty_null: pick([], null)}));
@@ -172,7 +132,7 @@ def _pure_case(name):
 
 
 def scenario_pure_is_pure():
-    """The gesture and the reply picker never reach for the page: node
+    """The reply picker never reach for the page: node
     defines neither `document` nor `window`, so a single touch throws."""
     out = _pure()
     if out is None:
@@ -181,43 +141,6 @@ def scenario_pure_is_pure():
     check(not out['document_defined'] and not out['window_defined'], "the probe leaked a document/window global")
     for name, got in out['cases'].items():
         check('error' not in got, f"{name} threw with no document/window:\n{got.get('error')}")
-
-
-def scenario_pure_tap_under_threshold():
-    v, ran = _pure_case('tap_under_threshold')
-    if not ran:
-        return
-    check(v['tick100'] is None, f"tick(100) before the 350 ms threshold is null, got {v['tick100']!r}")
-    check(v['up'] == 'tap', f"down(0) then up(200) is a 'tap', got {v['up']!r}")
-    check(v['tick400'] is None, f"a tick after the tap ended is null (no late hold-start), got {v['tick400']!r}")
-    check(v['up_again'] is None, f"a second up with no down is silent (null), got {v['up_again']!r}")
-
-
-def scenario_pure_hold_gesture():
-    ms, ran = _pure_case('hold_ms')
-    if not ran:
-        return
-    check(ms == 350, f"PWA_ARGYLE_HOLD_MS is 350, got {ms!r}")
-    v, _ = _pure_case('hold_gesture')
-    check(v['tick349'] is None, f"tick(349) is still under the threshold: null, got {v['tick349']!r}")
-    check(v['tick350'] == 'hold-start', f"tick(350) at the threshold is 'hold-start', got {v['tick350']!r}")
-    check(v['tick400'] is None and v['tick800'] is None,
-          f"'hold-start' fires once; later ticks are null, got {v['tick400']!r}, {v['tick800']!r}")
-    check(v['up'] == 'hold-end', f"up(900) after a hold is 'hold-end' (never 'tap'), got {v['up']!r}")
-    check(v['tick1000'] is None, f"a tick after the hold ended is null, got {v['tick1000']!r}")
-
-
-def scenario_pure_cancel_is_silent():
-    v, ran = _pure_case('cancel_is_silent')
-    if not ran:
-        return
-    check(v['up_without_down'] is None, f"an up with no down is null, got {v['up_without_down']!r}")
-    check(v['up_after_cancel'] is None, f"cancel then up is silent, no tap: got {v['up_after_cancel']!r}")
-    check(v['tick_after_cancel'] is None, f"cancel then tick past the threshold is null: got {v['tick_after_cancel']!r}")
-    check(v['hold'] == 'hold-start', f"a second press still holds: got {v['hold']!r}")
-    check(v['up_after_held_cancel'] is None,
-          f"cancel after a hold-start returns to idle: the next up is null, got {v['up_after_held_cancel']!r}")
-    check(v['fresh_tap'] == 'tap', f"the gesture is reusable after a cancel: a fresh down/up is a 'tap', got {v['fresh_tap']!r}")
 
 
 def scenario_pure_newest_reply_after_mine():
@@ -365,6 +288,7 @@ function snap(w) {
   const ov = d.getElementById('pwa-argyle-overlay');
   const input = q(w, 'form.pwa-argyle-bar input.pwa-argyle-input');
   const send = q(w, 'form.pwa-argyle-bar button.pwa-argyle-send');
+  const mic = q(w, 'form.pwa-argyle-bar button.pwa-argyle-mic');
   const status = q(w, '.pwa-argyle-status');
   const replyBody = q(w, '.pwa-argyle-reply .pwa-argyle-reply-body');
   const replyCard = q(w, '.pwa-argyle-reply .pwa-argyle-reply-card');
@@ -378,7 +302,7 @@ function snap(w) {
       dim: !!q(w, '.pwa-argyle-dim'), glow: !!q(w, '.pwa-argyle-glow'), ask: !!q(w, '.pwa-argyle-ask'),
       wave: !!q(w, '.pwa-argyle-ask .pwa-argyle-wave'), you: !!q(w, '.pwa-argyle-ask .pwa-argyle-you'),
       reply: !!q(w, '.pwa-argyle-reply'), replyBody: !!replyBody, replyCard: !!replyCard,
-      status: !!status, bar: !!q(w, 'form.pwa-argyle-bar'), input: !!input, send: !!send, hint: !!hint,
+      status: !!status, bar: !!q(w, 'form.pwa-argyle-bar'), input: !!input, mic: !!mic, send: !!send, hint: !!hint,
     },
     waveBars: ov ? ov.querySelectorAll('.pwa-argyle-wave i').length : 0,
     you: txt(q(w, '.pwa-argyle-you')),
@@ -393,6 +317,9 @@ function snap(w) {
     barHidden: hiddenish(q(w, 'form.pwa-argyle-bar')),
     inputFocused: !!input && d.activeElement === input,
     placeholder: input ? input.getAttribute('placeholder') : null,
+    micType: mic ? mic.getAttribute('type') : null,
+    micLabel: mic ? mic.getAttribute('aria-label') : null,
+    barOrder: Array.from(q(w, 'form.pwa-argyle-bar').children).map(n => n.className),
     sendType: send ? send.getAttribute('type') : null,
     sendIsOrb: send ? send.classList.contains('argyle-orb') : null,
     sendHtml: send ? send.innerHTML : null,
@@ -433,6 +360,34 @@ const msgPosts = ctx => ctx.calls.filter(c => c.method === 'POST' && /\/messages
 const API = ['open', 'close', 'isOpen', 'channelId', 'send', 'pull', 'onStream', 'setState', 'ensureChannel'];
 
 const RUN = {
+  async orb_tap_long_press_and_keyboard() {
+    const { w, ctx } = fresh();
+    w.currentMemberRole = () => 'parent'; w.scopeOf = () => 'all';
+    w.eval(fs.readFileSync(require('path').join(require('path').dirname(modPath), 'pwa_shell.js'), 'utf8'));
+    const opens = [];
+    w.PwaArgyle.open = opts => { opens.push(opts); };
+    w.pwaArgyleBindOrb();
+    const orb = w.document.getElementById('tab-argyle');
+    const pointer = name => {
+      const e = new w.Event(name, {bubbles: true});
+      Object.assign(e, {pointerId: 7, isPrimary: true, button: 0}); orb.dispatchEvent(e);
+    };
+    pointer('pointerdown'); pointer('pointerup');
+    orb.dispatchEvent(new w.MouseEvent('click', {detail: 1}));
+    const tap = opens.splice(0);
+    pointer('pointerdown'); await flush(700);
+    const beforeRelease = opens.length;
+    pointer('pointerup'); orb.dispatchEvent(new w.MouseEvent('click', {detail: 1}));
+    const longPress = opens.splice(0);
+    pointer('pointerdown'); pointer('pointercancel'); pointer('pointerup');
+    const cancelled = opens.splice(0);
+    for (const key of ['Enter', ' ']) orb.dispatchEvent(new w.KeyboardEvent('keydown', {key}));
+    orb.dispatchEvent(new w.MouseEvent('click', {detail: 0}));
+    const keyboard = opens.splice(0);
+    const menu = new w.Event('contextmenu', {cancelable: true}); orb.dispatchEvent(menu);
+    return {tap, beforeRelease, longPress, cancelled, keyboard, dones: ctx.dones,
+      menuPrevented: menu.defaultPrevented, errors: ctx.errors};
+  },
   async open_builds_chrome() {
     const { w, ctx } = fresh();
     const api = API.filter(k => typeof w.PwaArgyle[k] !== 'function');
@@ -587,6 +542,28 @@ const RUN = {
     w.PwaArgyle.send('');
     await flush();
     return { ...snap(w), msgPosts: msgPosts(ctx), errors: ctx.errors };
+  },
+  async mic_and_type_controls() {
+    const { w, ctx } = fresh();
+    await w.PwaArgyle.open({mode: 'type'});
+    const mic = q(w, '.pwa-argyle-mic'), input = q(w, '.pwa-argyle-input');
+    mic.click(); await flush();
+    ctx.host.status('Listening', 'listening');
+    const listening = {label: mic.getAttribute('aria-label'), disabled: mic.disabled,
+      focused: input === w.document.activeElement, starts: ctx.starts.length};
+    mic.click();
+    const dones = ctx.dones;
+    const stops = ctx.stops.length;
+    input.focus();
+    const typing = {focused: input === w.document.activeElement, stops: ctx.stops.length - stops,
+      state: w.document.getElementById('pwa-argyle-overlay').dataset.state};
+    w.PwaArgyle.setState('thinking');
+    const thinkingDisabled = mic.disabled;
+    w.PwaArgyle.setState('speaking');
+    const speakingDisabled = mic.disabled;
+    const menu = new w.Event('contextmenu', {cancelable: true}); mic.dispatchEvent(menu);
+    return {listening, dones, typing, thinkingDisabled, speakingDisabled,
+      menuPrevented: menu.defaultPrevented, errors: ctx.errors};
   },
   async voice_turn_never_draws_an_old_reply() {
     const { w, ctx } = fresh();
@@ -745,9 +722,9 @@ const RUN = {
 })();
 """
 
-CASES = ['open_builds_chrome', 'send_posts_to_the_dm', 'pull_draws_the_reply_and_card',
+CASES = ['orb_tap_long_press_and_keyboard', 'open_builds_chrome', 'send_posts_to_the_dm', 'pull_draws_the_reply_and_card',
          'closed_overlay_ignores_events', 'dismissals', 'refusal_shows_detail', 'send_ignores_empty',
-         'voice_turn_never_draws_an_old_reply', 'host_labels_are_the_overlays_own',
+         'mic_and_type_controls', 'voice_turn_never_draws_an_old_reply', 'host_labels_are_the_overlays_own',
          'swipe_ignores_a_scrolling_reply', 'dismiss_control_closes_and_returns_focus',
          'reply_refreshes_today_once']
 
@@ -804,6 +781,18 @@ def _posts(calls, url):
     return [c for c in calls if c['method'] == 'POST' and c['url'] == url]
 
 
+def scenario_orb_tap_long_press_and_keyboard():
+    r = _case('orb_tap_long_press_and_keyboard')
+    if r is None:
+        return
+    check(r['tap'] == [{'mode': 'talk'}] and r['longPress'] == [{'mode': 'talk'}],
+          f"tap and long press each open talk mode once, including the compatibility click: {r}")
+    check(r['beforeRelease'] == 0 and r['dones'] == 0, 'there is no hold action or send on release')
+    check(r['cancelled'] == [], 'a cancelled pointer never opens the overlay')
+    check(r['keyboard'] == [{'mode': 'type', 'keyboard': True}] * 3, 'Enter, Space and zero-detail click type')
+    check(r['menuPrevented'], 'the orb prevents context menus')
+
+
 def scenario_open_builds_chrome():
     r = _case('open_builds_chrome')
     if r is None:
@@ -819,6 +808,8 @@ def scenario_open_builds_chrome():
     check(r['hintFirstText'] == HINT, f"the hint opens with the text {HINT!r} before the button, got {r['hintFirstText']!r}")
     check(r['toMessages'] == TO_MESSAGES, f"button.pwa-argyle-to-messages reads {TO_MESSAGES!r}, got {r['toMessages']!r}")
     check(r['placeholder'] == 'Or type…', f"the input's placeholder is 'Or type…', got {r['placeholder']!r}")
+    check(r['micType'] == 'button' and r['micLabel'] == 'Talk to Argyle', 'the bar has an idle Talk to Argyle mic button')
+    check(r['barOrder'] == ['pwa-argyle-mic', 'pwa-argyle-input', 'pwa-argyle-send argyle-orb'], 'the bar order is mic, input, send')
     check(r['sendType'] == 'submit' and r['sendIsOrb'], f"the send button is type=submit with class argyle-orb: {r['sendType']!r} orb={r['sendIsOrb']}")
     check('<svg' in (r['sendHtml'] or ''), f"the send button carries ArgyleOrb.glyph(): {r['sendHtml']!r}")
     check(r['statusRole'] == 'status', f".pwa-argyle-status has role=status, got {r['statusRole']!r}")
@@ -960,8 +951,20 @@ def scenario_send_ignores_empty():
     check('Thinking' not in (r['status'] or ''), f"no Thinking for an empty send, got {r['status']!r}")
 
 
+def scenario_mic_and_type_controls():
+    r = _case('mic_and_type_controls')
+    if r is None:
+        return
+    check(r['listening'] == {'label': 'Send now', 'disabled': False, 'focused': False, 'starts': 1},
+          f"the mic starts one turn, shows Send now and lowers the keyboard: {r}")
+    check(r['dones'] == 1, 'a listening mic tap calls Done once')
+    check(r['typing'] == {'focused': True, 'stops': 1, 'state': 'idle'}, 'focusing the input stops voice')
+    check(r['thinkingDisabled'] and r['speakingDisabled'], 'the mic reflects busy voice states')
+    check(r['menuPrevented'], 'the mic prevents context menus')
+
+
 def scenario_voice_turn_never_draws_an_old_reply():
-    """A hold-to-talk turn has no POST of its own (the voice client posts the
+    """A voice turn has no POST of its own (the voice client posts the
     transcript), so the overlay never learns an anchor id. The transcript's
     own SSE must not draw the OLD Argyle reply above it ("Yes, 5pm."): the
     bubble waits for the reply this turn asked for."""
@@ -1084,10 +1087,16 @@ def scenario_reduced_motion_rule():
     check(root, "static/pwa_shell.css has no `.pwa-argyle { ... z-index: 300 }` rule "
                 "(above the tab bar and #pwa-stack, below _pwaModal 400)")
     orb = [body for sels, body in rules
-           if any('[data-audience="adult"]' in s and re.search(r'#tab-argyle$', s) for s in sels)
+           if any(re.search(r'#tab-argyle$', s) for s in sels)
            and re.search(r'touch-action:\s*none', body)]
     check(orb, "static/pwa_shell.css has no `[data-audience=\"adult\"] #tab-argyle { touch-action: none }` rule "
-               "(a held orb must not scroll or open the OS menu)")
+               "(the orb must not scroll or open the OS menu)")
+
+    for selector in ('#tab-argyle', '.pwa-argyle-mic'):
+        bodies = [body for sels, body in rules if selector in sels]
+        check(any(all(re.search(prop + r':\s*none', b) for prop in
+                      ('user-select', '-webkit-user-select', '-webkit-touch-callout')) for b in bodies),
+              f'{selector} prevents selection and the iOS callout')
 
 
 def scenario_focus_ring_follows_the_pill():
@@ -1110,12 +1119,10 @@ def scenario_focus_ring_follows_the_pill():
 
 SCENARIOS = [
     scenario_pure_is_pure,
-    scenario_pure_tap_under_threshold,
-    scenario_pure_hold_gesture,
-    scenario_pure_cancel_is_silent,
     scenario_pure_newest_reply_after_mine,
     scenario_pure_no_reply_yet,
     scenario_pure_first_open_takes_latest,
+    scenario_orb_tap_long_press_and_keyboard,
     scenario_open_builds_chrome,
     scenario_send_posts_to_the_dm,
     scenario_pull_draws_the_reply_and_card,
@@ -1123,6 +1130,7 @@ SCENARIOS = [
     scenario_dismissals,
     scenario_refusal_shows_detail,
     scenario_send_ignores_empty,
+    scenario_mic_and_type_controls,
     scenario_reduced_motion_rule,
     scenario_voice_turn_never_draws_an_old_reply,
     scenario_host_labels_are_the_overlays_own,

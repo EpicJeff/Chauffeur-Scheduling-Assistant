@@ -44,48 +44,35 @@ async function pwaOpenArgyle() {
 function pwaArgyleBindOrb() {
     const orb = document.getElementById('tab-argyle');
     if (!orb || pwaArgyleBindOrb.bound) return;
-    if (typeof pwaArgyleGesture !== 'function') return;
     pwaArgyleBindOrb.bound = true;
-    const g = pwaArgyleGesture();
-    let timer = null, pointer = null, handledAt = -Infinity;
-    const clear = () => { clearTimeout(timer); timer = null; };
-    const hold = () => {
-        if (g.tick(performance.now()) === 'hold-start') window.PwaArgyle.open({mode: 'talk'});
-    };
+    let pointer = null, handledAt = -Infinity;
     orb.addEventListener('pointerdown', event => {
         if (!pwaOrbAllowed() || pointer !== null || event.isPrimary === false || event.button > 0) return;
         pointer = event.pointerId;
-        g.down(performance.now());
-        // Keep the release on the orb even after the overlay hides it.
         // Synthetic pointer events have no active pointer to capture.
         try { orb.setPointerCapture(event.pointerId); } catch (_) { }
-        timer = setTimeout(hold, PWA_ARGYLE_HOLD_MS);
     });
     orb.addEventListener('pointerup', event => {
         if (pointer !== event.pointerId) return;
         handledAt = performance.now();
-        clear();
-        // A busy event loop can deliver release before the hold timer.
-        hold();
-        const action = g.up(performance.now());
         pointer = null;
-        if (action === 'tap') window.PwaArgyle.open({mode: 'type'});
-        else if (action === 'hold-end') window.PwaArgyle.done();
+        window.ChauffeurPhoneVoice?.unlockAudio?.();
+        window.PwaArgyle.open({mode: 'talk'});
     });
     const cancel = () => {
         if (pointer === null) return;
         handledAt = performance.now();
-        clear();
-        if (g.state === 'holding') window.PwaArgyle.done();
-        g.cancel(); pointer = null;
+        pointer = null;
     };
     orb.addEventListener('pointercancel', cancel);
     orb.addEventListener('pointerleave', cancel);
     orb.addEventListener('contextmenu', event => event.preventDefault());
     orb.addEventListener('click', event => {
         event.preventDefault(); event.stopPropagation();
-        if (pwaOrbAllowed() && (event.detail === 0 || performance.now() - handledAt >= 700))
-            window.PwaArgyle.open({mode: 'type', keyboard: event.detail === 0});
+        if (pwaOrbAllowed() && (event.detail === 0 || performance.now() - handledAt >= 700)) {
+            if (event.detail !== 0) window.ChauffeurPhoneVoice?.unlockAudio?.();
+            window.PwaArgyle.open({mode: event.detail === 0 ? 'type' : 'talk', keyboard: event.detail === 0});
+        }
     });
     orb.addEventListener('keydown', event => {
         if (pwaOrbAllowed() && (event.key === 'Enter' || event.key === ' ')) {

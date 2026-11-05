@@ -630,6 +630,10 @@ html[data-audience="adult"] .pwa-now > span { position: absolute; left: 0; top: 
 [data-audience="adult"] .pwa-argyle-input:focus-visible { outline: none; }
 [data-audience="adult"] .pwa-argyle-input::placeholder { color: #9b98ad; }
 [data-audience="adult"] .pwa-argyle-send { --argyle-orb-size: 40px; flex-shrink: 0; }
+[data-audience="adult"] .pwa-argyle-mic { width: 44px; height: 44px; flex-shrink: 0; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--pwa-ink-light, #1f1d2b); }
+[data-audience="adult"] .pwa-argyle[data-state="listening"] .pwa-argyle-mic { background: var(--pwa-accent); color: var(--pwa-ink-light, #1f1d2b); }
+[data-audience="adult"][data-theme="light"] .pwa-argyle[data-state="listening"] .pwa-argyle-mic { color: #fff; }
+[data-audience="adult"] .pwa-argyle-mic:disabled { opacity: .5; }
 [data-audience="adult"] .pwa-argyle-wave { display: flex; align-items: center; justify-content: center; gap: 4px; margin: 0 0 14px; }
 [data-audience="adult"] .pwa-argyle-wave i { width: 5px; height: 14px; border-radius: 3px; background: #fff; opacity: .9; }
 [data-audience="adult"] .pwa-argyle-wave i:nth-child(2) { height: 26px; animation-delay: -.15s; }
@@ -641,7 +645,7 @@ html[data-audience="adult"] .pwa-now > span { position: absolute; left: 0; top: 
 [data-audience="adult"] .pwa-argyle-status { text-align: center; color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,.4); font-size: 15px; }
 [data-audience="adult"] .pwa-argyle-hint { text-align: center; color: #fff; font-size: 13px; opacity: .85; margin-top: 10px; text-shadow: 0 1px 4px rgba(0,0,0,.4); }
 [data-audience="adult"] .pwa-argyle-to-messages { color: inherit; font: inherit; background: transparent; border: 0; padding: 0; text-decoration: underline; }
-[data-audience="adult"] #tab-argyle { touch-action: none; -webkit-touch-callout: none; user-select: none; }
+#tab-argyle, .pwa-argyle-mic { touch-action: none; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 @keyframes pwa-argyle-glow { from { opacity: .65; } to { opacity: 1; } }
 @keyframes pwa-argyle-wave { from { transform: scaleY(.5); } to { transform: scaleY(1); } }
 @keyframes pwa-argyle-enter { from { transform: translateY(24px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }

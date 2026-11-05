@@ -103,16 +103,15 @@ def main():
             done.click()
             page.wait_for_function("() => ChauffeurPhoneVoice.response?.reply.includes('Soccer')")
             page.get_by_text('Soccer is at four. Anything else?', exact=True).wait_for()
-            page.get_by_role('button', name='Tap to reply', exact=True).wait_for()
+            page.wait_for_function("() => ChauffeurPhoneVoice.state === 'listening'")
             check(SPOKEN[-1].startswith('Soccer'), 'Shared answer uses household TTS.')
             page.screenshot(path=os.path.join(shots, 'reply.png'))
 
-            page.get_by_role('button', name='Tap to reply', exact=True).click()
             page.wait_for_function("() => ChauffeurPhoneVoice.state === 'listening'")
             done.click()
             page.wait_for_function("() => ChauffeurPhoneVoice.response?.reply.includes('PRIVATE')")
             page.get_by_text('PRIVATE balance is 17.', exact=True).wait_for()
-            page.wait_for_function("() => ChauffeurPhoneVoice.state === 'idle'")
+            page.wait_for_function("() => ChauffeurPhoneVoice.state === 'listening'")
             check(SPOKEN[-1] == 'I put that on your screen.', 'Private answer stays display-only.')
 
             page.evaluate('window.denyMic = true; ChauffeurPhoneVoice.start()')

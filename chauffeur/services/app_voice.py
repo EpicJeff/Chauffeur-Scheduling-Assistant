@@ -166,7 +166,7 @@ def get(member, token, request_id, *, active=True):
 
 def run(turn, worker):
     from services.agent_tools_v2 import _post_chat_message
-    from services import triage
+    from services import triage, voice_conversation
     with _lock, storage.db_lock:
         turn.check()
         if turn.stage != 'ready':
@@ -199,8 +199,11 @@ def run(turn, worker):
     speech = reply[:1200] if eligible else DISPLAY_ONLY
     if turn.credential:
         speech = 'Use the PIN control on your screen.'
+    conversation_mode = storage.get_settings().get('voice_conversation_mode', True) is not False
+    keep_listening = not turn.credential and (not voice_conversation.is_sign_off(turn.transcript)
+                                             if conversation_mode else reply.rstrip().endswith('?'))
     turn.response = {'reply': reply, 'speech': speech, 'speech_safe': eligible,
-                     'continue_conversation': bool(not turn.credential and reply.rstrip().endswith('?')),
+                     'continue_conversation': bool(keep_listening),
                      'channel_id': turn.channel['id'], 'request_id': turn.id}
     turn.stage = 'complete'
     return turn.response

@@ -411,7 +411,7 @@
                     <input id="thread-input" type="text" autocomplete="off" placeholder="Message..."
                         oninput="pwaSyncCompose()"
                         class="flex-1 min-w-0 bg-gray-800 border border-gray-600 rounded-full px-4 py-2.5 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500">
-                    <button type="button" id="phone-voice-mic" onclick="ChauffeurPhoneVoice.start()" aria-label="Talk to Argyle"
+                    <button type="button" id="phone-voice-mic" onclick="ChauffeurPhoneVoice.unlockAudio(); ChauffeurPhoneVoice.start()" aria-label="Talk to Argyle"
                             style="display:none;min-width:44px;min-height:44px"
                             class="rounded-full bg-indigo-700 text-white px-2 shrink-0 items-center justify-center">
                         <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true">
@@ -431,7 +431,7 @@
                                 class="hidden rounded-lg bg-gray-700 px-3 py-3">Stop</button>
                         <button type="button" id="phone-voice-play" onclick="ChauffeurPhoneVoice.play()"
                                 class="hidden rounded-lg bg-indigo-700 text-white px-3 py-3">Play reply</button>
-                        <button type="button" id="phone-voice-reply" onclick="ChauffeurPhoneVoice.start()"
+                        <button type="button" id="phone-voice-reply" onclick="ChauffeurPhoneVoice.unlockAudio(); ChauffeurPhoneVoice.start()"
                                 class="hidden rounded-lg bg-blue-700 text-white px-3 py-3">Tap to reply</button>
                     </div>
                 </div>

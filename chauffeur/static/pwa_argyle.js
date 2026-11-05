@@ -1,24 +1,4 @@
 /* Argyle over the current screen; Messages remains the conversation record. */
-const PWA_ARGYLE_HOLD_MS = 350;
-function pwaArgyleGesture() {
-    let started = 0;
-    return {
-        state: 'idle',
-        down(t) { started = t; this.state = 'down'; },
-        tick(t) {
-            if (this.state !== 'down' || t - started < PWA_ARGYLE_HOLD_MS) return null;
-            this.state = 'holding';
-            return 'hold-start';
-        },
-        up(t) {
-            if (this.state === 'idle') return null;
-            const held = this.state === 'holding' || t - started >= PWA_ARGYLE_HOLD_MS;
-            this.state = 'idle';
-            return held ? 'hold-end' : 'tap';
-        },
-        cancel() { this.state = 'idle'; }
-    };
-}
 function pwaArgyleNewestReply(messages, afterId, argyleId) {
     const after = afterId == null ? -1 : messages.findIndex(m => m.id === afterId);
     // A bounded read may no longer contain our anchor. Never show an older reply.
@@ -55,6 +35,8 @@ function pwaArgyleNewestReply(messages, afterId, argyleId) {
             ? ({idle: '', starting: 'Starting microphone…', thinking: 'Thinking…', listening: 'Listening…', speaking: 'Speaking…', error: 'Could not reach Argyle'}[name] || '')
             : text;
         q('wave').hidden = name !== 'listening';
+        q('mic').setAttribute('aria-label', name === 'listening' ? 'Send now' : 'Talk to Argyle');
+        q('mic').disabled = ['starting', 'thinking', 'speaking'].includes(name);
     }
     function build() {
         if (overlay) return;
@@ -68,7 +50,10 @@ function pwaArgyleNewestReply(messages, afterId, argyleId) {
             + '<div class="pwa-argyle-you"></div><div class="pwa-argyle-reply" hidden>'
             + '<div class="pwa-argyle-reply-body"></div><div class="pwa-argyle-reply-card"></div></div>'
             + '<div class="pwa-argyle-status" role="status"></div>'
-            + '<form class="pwa-argyle-bar"><input class="pwa-argyle-input" placeholder="Or type…" aria-label="Ask Argyle" autocomplete="off">'
+            + '<form class="pwa-argyle-bar"><button class="pwa-argyle-mic" type="button" aria-label="Talk to Argyle">'
+            + '<svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true">'
+            + '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/></svg></button>'
+            + '<input class="pwa-argyle-input" placeholder="Or type…" aria-label="Ask Argyle" autocomplete="off">'
             + '<button class="pwa-argyle-send argyle-orb" type="submit" aria-label="Send to Argyle">'
             + (typeof ArgyleOrb !== 'undefined' ? ArgyleOrb.glyph() : '') + '</button></form>'
             + '<div class="pwa-argyle-hint">Swipe down to dismiss · <button type="button" class="pwa-argyle-to-messages">full conversation in Messages</button></div></div>';
@@ -86,6 +71,23 @@ function pwaArgyleNewestReply(messages, afterId, argyleId) {
             event.preventDefault();
             send(q('input').value);
         });
+        q('mic').addEventListener('contextmenu', event => event.preventDefault());
+        q('mic').addEventListener('click', () => {
+            if (state === 'listening') done();
+            else if (state === 'idle' || state === 'error') {
+                window.ChauffeurPhoneVoice?.unlockAudio?.();
+                startTalk();
+            }
+        });
+        const type = () => {
+            if (talkPending || voiceLive) turn++;
+            talkPending = false;
+            window.ChauffeurPhoneVoice?.stop(false);
+            voiceLive = false;
+            if (!sending && !refused) setState('idle');
+        };
+        q('input').addEventListener('pointerdown', type);
+        q('input').addEventListener('focus', type);
         q('to-messages').addEventListener('click', async () => {
             const owner = member;
             // Let our Back finish before setView clears any underlying pushed screen.
@@ -195,11 +197,28 @@ function pwaArgyleNewestReply(messages, afterId, argyleId) {
         if (!live(generation)) return;
         if (!channel) {
             talkPending = false;
+            window.ChauffeurPhoneVoice?.releaseAudioContext?.();
             return;
         }
         if (!talkPending) return;
-        if (!window.ChauffeurPhoneVoice) { talkPending = false; return; }
-        const request = turn;
+        await startTalk();
+    }
+    async function startTalk() {
+        if (!opened || refused || sending || !window.ChauffeurPhoneVoice) return;
+        q('input').blur();
+        talkPending = true;
+        setState('starting');
+        const generation = epoch, request = ++turn;
+        const currentVoice = () => live(generation) && request === turn;
+        const channel = id || await ensureChannel();
+        if (!channel) {
+            if (currentVoice()) {
+                talkPending = false;
+                window.ChauffeurPhoneVoice?.releaseAudioContext?.();
+            }
+            return;
+        }
+        if (!currentVoice() || !talkPending) return;
         voiceLive = true;
         async function anchorVoice(text) {
             try {
@@ -222,34 +241,29 @@ function pwaArgyleNewestReply(messages, afterId, argyleId) {
         talkPending = false;
         const host = {
             status(label, name) {
-                if (!live(generation)) return;
+                if (!currentVoice()) return;
                 if (name === 'idle') {
                     voiceLive = false;
                     setState('idle');
-                    if (!q('you').textContent) q('input').focus();
                 } else if (name === 'error') {
                     voiceLive = false;
                     setState('error', label);
-                } else setState(name);
+                } else { voiceLive = true; setState(name); }
             },
             transcript(text) {
-                if (!live(generation)) return;
+                if (!currentVoice()) return;
                 q('you').textContent = text;
                 anchorVoice(text);
             },
-            reply(text, meta) {
-                if (!live(generation)) return;
+            reply(text) {
+                if (!currentVoice()) return;
                 clearReply();
                 q('reply-body').textContent = text;
                 q('reply').hidden = false;
                 pull({voiceReply: true});
-                if (meta?.continue_conversation) {
-                    q('input').placeholder = 'Tap to reply…';
-                    q('input').focus();
-                }
             },
             channelId: () => channel,
-            isOpen: () => live(generation)
+            isOpen: currentVoice
         };
         await window.ChauffeurPhoneVoice.start({host});
         if (window.ChauffeurPhoneVoice.state === 'idle') voiceLive = false;
@@ -259,7 +273,7 @@ function pwaArgyleNewestReply(messages, afterId, argyleId) {
         if (talkPending) {
             // The DM is still being ensured; no voice turn exists to stop yet.
             talkPending = false;
-            if (state === 'starting') setState('error', 'Keep holding until Listening… appears, or type.');
+            if (state === 'starting') setState('idle');
             return;
         }
         window.ChauffeurPhoneVoice?.done();
@@ -269,7 +283,7 @@ function pwaArgyleNewestReply(messages, afterId, argyleId) {
         const returnFocus = restoreOrbFocus || overlay.contains(document.activeElement);
         opened = false; epoch++; turn++;
         clearTimeout(timer); timer = null;
-        if (voiceLive && typeof ChauffeurPhoneVoice !== 'undefined') ChauffeurPhoneVoice.stop(false);
+        window.ChauffeurPhoneVoice?.stop(false);
         voiceLive = false; talkPending = false; sending = false; streamPending = false;
         delete document.documentElement.dataset.pwaArgyle;
         fab();
@@ -342,7 +356,7 @@ function pwaArgyleNewestReply(messages, afterId, argyleId) {
             replyId = message.id;
             replyCard = card;
             clearTimeout(timer); timer = null;
-            if (state !== 'speaking') setState('idle');
+            if (!voiceLive) setState('idle');
             // A card answer rewrites the same message. Refresh each drawn card
             // state once, including replies pulled by the voice host.
             const refreshKey = message.id + '|' + card;

@@ -278,6 +278,36 @@ class PhoneTests(unittest.TestCase):
             self.assertNotIn(text, str(storage.get_channel_messages(row.channel['id'])))
             self.assertNotIn('1234', result['speech'])
 
+    # --- conversation mode on the phone (2026-11-04, approved in chat) --------
+    # The phone is the member's own signed-in device: every turn is them, so
+    # there is no unrecognized-voice cap. It keeps listening after every answer
+    # unless the words were a sign-off, the turn carried a credential, or the
+    # household switch is off (then only a question keeps it, as before).
+    def converse(self, heard, answer, settings=None):
+        if settings is not None:
+            base = storage.get_settings()
+            storage.get_settings = lambda: {**base, **settings}
+        row = self.turn(heard)
+        with patch.object(main, '_run_argyle_mention', return_value={'message': answer}):
+            return main.phone_voice_run(row.id, self.request())
+
+    def test_phone_keeps_listening_after_an_ordinary_answer(self):
+        self.assertTrue(self.converse('Calendar please', 'Soccer is at four.')['continue_conversation'])
+        self.assertTrue(self.converse('Add milk', 'Added milk. Anything else?')['continue_conversation'])
+
+    def test_phone_closes_on_a_sign_off(self):
+        for heard in ("That's all for now.", "No, I need you to stop. Don't listen anymore.", 'Thanks.'):
+            self.assertFalse(self.converse(heard, 'Alright, talk soon.')['continue_conversation'], heard)
+        self.assertTrue(self.converse('Thanks, and add eggs', 'Added eggs.')['continue_conversation'])
+
+    def test_phone_never_continues_a_credential_turn(self):
+        self.assertFalse(self.converse('My PIN is 1234', 'unused')['continue_conversation'])
+
+    def test_household_switch_off_restores_the_question_rule(self):
+        off = {'voice_conversation_mode': False}
+        self.assertFalse(self.converse('Calendar please', 'Soccer is at four.', off)['continue_conversation'])
+        self.assertTrue(self.converse('Add milk', 'Added milk. Anything else?', off)['continue_conversation'])
+
     def test_cancel_after_model_before_tool_does_not_mutate(self):
         row = self.turn('Add milk')
         def model(*args):

@@ -1,14 +1,14 @@
 """Argyle from anywhere, in the served PWA (slice 2, Task 3).
 
 The orb's tap opens a Siri-style overlay OVER the current screen (never
-through setView, so a pushed screen and the scroll survive); hold talks
+through setView, so a pushed screen and the scroll survive); a tap talks
 through ChauffeurPhoneVoice in host mode; text goes through the Argyle DM's
 own POST api/channels/{id}/messages and the reply is drawn when the thread
 learns of it (the SSE channel event -> PwaArgyle.onStream -> one messages
 read), with the reply's card drawn by renderCard so its buttons are the
 thread's buttons. Dismiss by Escape, backdrop, hardware Back, swipe down.
 The Ask Argyle popup, its FAB and its More entry are gone.
-Hold-to-talk review fixes: a bare click (screen-reader activation) opens type
+Keyboard access: a zero-detail click (screen-reader activation) opens type
 mode; talk mode shows the wave only once the voice turn says 'listening'
 (never for 'starting'); a backdrop click right after opening is ignored.
 
@@ -300,6 +300,7 @@ def boot(served, page, key, role, driver):
         page.locator('#pin-modal-skip').click()
     page.wait_for_selector('#screen-schedule:not(.hidden)')
     page.wait_for_function('membersData.length > 0')
+    page.evaluate(SPY)
     page.wait_for_timeout(300)
     assert page.evaluate('selectedMemberId') == key
     assert page.evaluate('currentMemberRole()') == role
@@ -345,14 +346,17 @@ def tap_opens_over_the_screen(page, key, calls, output):
     assert page.evaluate("document.getElementById('myday-container').scrollTop") == before
     assert page.evaluate('history.state && history.state.pwaOverlay') == 'argyle', page.evaluate('history.state')
     orb_hidden(page)
-    input_focused(page)
+    assert not page.locator('#pwa-argyle-overlay .pwa-argyle-input').evaluate('e => e === document.activeElement'), 'a talk tap raised the keyboard'
+    settle(page, 'window.__argyleStarts.length === 1')
+    assert page.evaluate('window.__argyleStarts.length') == 1, 'a tap did not start listening'
+    assert page.locator('#pwa-argyle-overlay .pwa-argyle-mic').get_attribute('aria-label') == 'Send now'
     assert page.locator('#pwa-argyle-overlay .pwa-argyle-input').get_attribute('placeholder') == 'Or type…'
     hint = norm(page.locator('#pwa-argyle-overlay .pwa-argyle-hint').inner_text())
     assert hint.startswith('Swipe down to dismiss') and 'full conversation in Messages' in hint, hint
     assert page.locator('#pwa-argyle-overlay .pwa-argyle-reply').is_visible() is False
     assert wait_until(page, lambda: calls['dm']), 'the overlay never ensured the Argyle DM'
     assert calls['dm'][-1] == {'member_id': key, 'other_member_id': 'argyle'}, calls['dm']
-    shot(output, 'argyle-overlay-type.png', page)
+    shot(output, 'argyle-overlay-tap.png', page)
 
 
 def type_and_reply(page, key, calls, output):
@@ -511,6 +515,7 @@ SPY = """() => {
     window.__argyleDone = 0;
     const v = window.ChauffeurPhoneVoice;
     v.start = function (opts) {
+        this.state = 'listening';
         window.__argyleStarts.push(opts || {});
         if (opts && opts.host && typeof opts.host.status === 'function')
             opts.host.status('Listening — press Done to send', 'listening');
@@ -522,9 +527,9 @@ SPY = """() => {
 POINTER = {'pointerId': 1, 'pointerType': 'touch', 'isPrimary': True}
 
 
-def hold_talks(page, output):
-    """Hold the orb past 350 ms: the overlay opens in talk mode and starts ONE
-    host-mode voice turn on the Argyle DM. A quick tap types, never talks."""
+def tap_and_long_press_talk(page, output):
+    """A long press and a quick tap each start ONE hosted voice turn;
+    releasing the orb never sends the recording."""
     page.evaluate(SPY)
     page.mouse.move(5, 5)
     orb = page.locator('#tab-argyle')
@@ -534,10 +539,10 @@ def hold_talks(page, output):
     assert_open(page, 'a 450 ms hold')
     settle(page, 'window.__argyleStarts.length > 0', 3000)
     starts = page.evaluate('window.__argyleStarts.length')
-    assert starts == 1, 'hold started %d voice turns' % starts
+    assert starts == 1, 'long press started %d voice turns' % starts
     assert page.evaluate("!!window.__argyleStarts[0].host"), 'the voice turn ran without the overlay as its host'
     assert page.evaluate("window.__argyleStarts[0].host.channelId()") == 'dm_argyle'
-    assert overlay(page).count() == 1, 'the hold opened a second overlay'
+    assert overlay(page).count() == 1, 'the long press opened a second overlay'
     wave = page.locator('#pwa-argyle-overlay .pwa-argyle-wave')
     settle(page, "!!document.querySelector('#pwa-argyle-overlay .pwa-argyle-wave') && document.querySelector('#pwa-argyle-overlay .pwa-argyle-wave').checkVisibility()")
     assert wave.is_visible(), 'talk mode shows no wave'
@@ -556,8 +561,9 @@ def hold_talks(page, output):
     orb.dispatch_event('pointerup', POINTER)
     assert_open(page, 'a quick tap')
     page.wait_for_timeout(400)
-    assert page.evaluate('window.__argyleStarts.length') == 1, 'a quick tap started a voice turn'
-    input_focused(page)
+    assert page.evaluate('window.__argyleStarts.length') == 2, 'a quick tap did not start its voice turn'
+    assert page.evaluate('window.__argyleDone') == 0, 'orb release sent the recording'
+    assert not page.locator('#pwa-argyle-overlay .pwa-argyle-input').evaluate('e => e === document.activeElement'), 'a talk tap raised the keyboard'
     page.keyboard.press('Escape')
     assert_closed(page, 'Escape after a quick tap')
 
@@ -581,20 +587,20 @@ def click_only_activation_opens_type_mode(page):
 
 # The phone's mic takes a moment: the voice turn says 'starting' at once and
 # 'listening' only when the recorder runs (static/app_voice.js; pinned in
-# tests/test_app_voice_host.py listening_only_once_recording). The early
-# release rule (done() before listening ends the turn) lives in app_voice
-# (early_release_cancels_the_turn); here the spy only counts done().
+# tests/test_app_voice_host.py listening_only_once_recording). Releasing the
+# orb has no Done action; the spy counts any accidental calls.
 SPY_STAGED = """() => {
     window.__argyleStarts = [];
     window.__argyleDone = 0;
     const v = window.ChauffeurPhoneVoice;
     v.start = function (opts) {
+        this.state = 'starting';
         window.__argyleStarts.push(opts || {});
         const host = opts && opts.host;
         if (host && typeof host.status === 'function') {
             host.status('Starting microphone…', 'starting');
             // The REAL thread labels (static/app_voice.js); the overlay draws its own words.
-            setTimeout(() => host.status('Listening — press Done when you finish.', 'listening'), 300);
+            setTimeout(() => { v.state = 'listening'; host.status('Listening — press Done when you finish.', 'listening'); }, 300);
         }
         return Promise.resolve();
     };
@@ -613,9 +619,9 @@ def talk_mode_waits_for_the_microphone(page):
     page.mouse.move(5, 5)
     orb = page.locator('#tab-argyle')
     orb.dispatch_event('pointerdown', POINTER)
-    page.wait_for_timeout(450)
+    page.wait_for_timeout(80)
     orb.dispatch_event('pointerup', POINTER)
-    assert_open(page, 'a 450 ms hold')
+    assert_open(page, 'a tap')
     settle(page, 'window.__argyleStarts.length > 0', 1000)
     assert page.evaluate('window.__argyleStarts.length') == 1, page.evaluate('window.__argyleStarts.length')
     wave = page.locator('#pwa-argyle-overlay .pwa-argyle-wave')
@@ -629,8 +635,8 @@ def talk_mode_waits_for_the_microphone(page):
     assert 'Listening' in status_text(page), status_text(page)
     assert status_text(page) == 'Listening…', \
         "the overlay drew the thread's label, not its own word 'Listening…': %r" % status_text(page)
-    assert page.evaluate('window.__argyleDone') == 1, \
-        'the release at pointerup called done() %d times' % page.evaluate('window.__argyleDone')
+    assert page.evaluate('window.__argyleDone') == 0, \
+        'pointerup must not call done(); got %d calls' % page.evaluate('window.__argyleDone')
     page.keyboard.press('Escape')
     assert_closed(page, 'Escape after a staged talk start')
 
@@ -721,23 +727,27 @@ def helper_refusal(page, calls):
     assert not page.locator('#pwa-argyle-overlay .pwa-argyle-bar').is_visible(), 'a refused member got an input bar'
     assert calls['dm'] and calls['dm'][-1] == {'member_id': 'helper_granted', 'other_member_id': 'argyle'}, calls['dm']
     assert not calls['messages_post'], calls['messages_post']
+    assert not calls['voice'], 'a refused helper started a voice turn'
+    assert not page.evaluate('window.__argyleStarts.length'), 'a refused helper started hosted voice'
     page.keyboard.press('Escape')
     assert_closed(page, 'Escape on a refusal')
-    # The hold path: a release after the refusal must not replace the server's
-    # words with "Keep holding…" (there is no input bar to type into).
+    # A long press is also a tap; the server's refusal must remain visible
+    # and no voice turn may be started.
     page.mouse.move(5, 5)
     orb = page.locator('#tab-argyle')
     orb.dispatch_event('pointerdown', POINTER)
     page.wait_for_timeout(450)
-    settle(page, "!!document.querySelector('#pwa-argyle-overlay .pwa-argyle-status.is-refused')")
     orb.dispatch_event('pointerup', POINTER)
+    settle(page, "!!document.querySelector('#pwa-argyle-overlay .pwa-argyle-status.is-refused')")
     page.wait_for_timeout(300)
     status = page.locator('#pwa-argyle-overlay .pwa-argyle-status')
     assert 'Requires chat.agent' in status.inner_text(), ('a release replaced the refusal', status.inner_text())
     assert 'is-refused' in (status.get_attribute('class') or ''), status.get_attribute('class')
     assert not page.locator('#pwa-argyle-overlay .pwa-argyle-bar').is_visible(), 'a refused member got an input bar after a hold'
     page.keyboard.press('Escape')
-    assert_closed(page, 'Escape on a refusal after a hold')
+    assert_closed(page, 'Escape on a refusal after a long press')
+    assert not calls['voice'], 'a refused helper started a voice turn after a long press'
+    assert not page.evaluate('window.__argyleStarts.length'), 'a refused helper started hosted voice after a long press'
 
 
 # --- the run ----------------------------------------------------------------
@@ -769,7 +779,7 @@ def run():
                     dismissals(page)
                     closed_overlay_ignores_events(page, key, calls)
                     to_messages(page, key, calls)
-                    hold_talks(page, output)
+                    tap_and_long_press_talk(page, output)
                     click_only_activation_opens_type_mode(page)
                     talk_mode_waits_for_the_microphone(page)
                     ghost_click_right_after_open_is_ignored(page)

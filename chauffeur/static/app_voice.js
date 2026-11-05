@@ -8,6 +8,21 @@
         audio: null, audioUrl: null, timer: null, watcher: null, controller: null,
         state: 'idle', token: '', response: null, submitRecording: false,
         timings: [], started: 0, ended: 0, anchor: '', host: null,
+        PAUSE_MS: 1200, NO_SPEECH_MS: 8000, SPEECH_RMS: 0.02,
+        audioContext: null, analyser: null, source: null, silenceTimer: null,
+        unlockAudio() {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContext) return;
+            try {
+                // Call in the gesture, before ensuring a DM or starting a turn.
+                if (!this.audioContext || this.audioContext.state === 'closed') this.audioContext = new AudioContext();
+                if (this.audioContext.state !== 'running') this.audioContext.resume?.()?.catch(() => {});
+            } catch (_) { /* Done and the recording cap work without Web Audio. */ }
+        },
+        releaseAudioContext() {
+            const context = this.audioContext; this.audioContext = null;
+            try { context?.close()?.catch(() => {}); } catch (_) {}
+        },
         visibility() {
             const channel = typeof threadChannel === 'undefined' ? null : threadChannel;
             if (el('mic')) el('mic').style.display = channel?.kind === 'dm'
@@ -15,7 +30,10 @@
         },
         status(label, state = 'idle') {
             this.state = state;
-            if (state === 'idle') { clearInterval(this.watcher); this.watcher = null; }
+            if (state === 'idle') {
+                clearInterval(this.watcher); this.watcher = null;
+                this.releaseAudioContext();
+            }
             if (this.host) { this.host.status(label, state); return; }
             el('panel')?.classList.remove('hidden');
             if (el('status')) el('status').textContent = label;
@@ -29,6 +47,7 @@
             }
         },
         fail(label, host = this.host) {
+            this.releaseAudioContext();
             if (host) {
                 this.generation++;
                 this.state = 'idle';
@@ -54,12 +73,15 @@
         },
         releaseCapture() {
             clearTimeout(this.timer); this.timer = null;
+            clearInterval(this.silenceTimer); this.silenceTimer = null;
+            try { this.source?.disconnect(); this.analyser?.disconnect(); } catch (_) {}
+            this.source = null; this.analyser = null;
             const r = this.recorder; this.recorder = null;
             if (r && r.state !== 'inactive') { try { r.stop(); } catch (_) {} }
             const recognition = this.recognition; this.recognition = null;
             if (recognition) { try { recognition.abort(); } catch (_) {} }
-            if (this.stream) this.stream.getTracks().forEach(t => t.stop());
-            this.stream = null;
+            const stream = this.stream; this.stream = null;
+            if (stream) stream.getTracks().forEach(t => t.stop());
         },
         releaseAudio() {
             if (this.audio) {
@@ -75,13 +97,14 @@
             fetch(this.url(turn.request_id + '/cancel'), {method: 'POST', keepalive: true,
                 headers: {'X-Member-Token': token}}).catch(() => {});
         },
-        stop(show = true) {
+        stop(show = true, {continuing = false} = {}) {
             const active = this.state !== 'idle' || this.stream || this.audio;
             this.generation++;
             clearInterval(this.watcher); this.watcher = null;
             this.submitRecording = false;
             this.controller?.abort(); this.controller = null;
             this.releaseCapture(); this.releaseAudio();
+            if (!continuing) this.releaseAudioContext();
             this.cancelServer(this.turn, this.token);
             this.turn = null; this.response = null;
             if (this.host) {
@@ -94,15 +117,22 @@
             else if (!show) { this.state = 'idle'; el('panel')?.classList.add('hidden'); }
         },
         async start(opts = {}) {
-            this.stop(false);
+            const response = opts.continuing ? this.response : null;
+            // Turn cleanup must keep the context the gesture just unlocked,
+            // including when the next turn has no user gesture of its own.
+            this.stop(false, {continuing: true});
+            this.response = response;
             if (!memberToken()) {
+                this.releaseAudioContext();
                 opts.host?.status('', 'idle');
                 showGlobalAlert('Sign in on your personal device to talk to Argyle.'); return;
             }
             if (!window.isSecureContext || window.self !== window.top) {
+                this.releaseAudioContext();
                 opts.host?.status('', 'idle');
                 showGlobalAlert('Open the secure Chauffeur app outside Home Assistant ingress for voice.'); return;
             }
+            if (!opts.continuing && (!this.audioContext || this.audioContext.state === 'closed')) this.unlockAudio();
             this.host = opts.host || null;
             this.token = memberToken();
             const generation = this.generation;
@@ -178,6 +208,7 @@
                 this.stop(); this.fail('Recording failed. Tap to try again or use text.', host);
             };
             recorder.onstop = () => {
+                if (this.recorder !== recorder) { chunks.length = 0; return; }
                 const submit = this.submitRecording && this.valid(generation);
                 this.submitRecording = false;
                 this.recorder = null;
@@ -189,6 +220,39 @@
             this.status('Listening — press Done when you finish.', 'listening');
             this.watch(generation);
             this.timer = setTimeout(() => this.done(), 14500);
+            this.detectSpeech(stream, generation);
+        },
+        detectSpeech(stream, generation) {
+            const context = this.audioContext;
+            if (!context || context.state === 'closed') return;
+            try {
+                this.source = context.createMediaStreamSource(stream);
+                this.analyser = context.createAnalyser();
+                this.source.connect(this.analyser);
+                const buf = new Float32Array(this.analyser.fftSize);
+                let opened = performance.now();
+                let lastSpeech = null;
+                if (context.state !== 'running') context.resume?.()?.catch(() => {});
+                this.silenceTimer = setInterval(() => {
+                    if (!this.valid(generation) || this.state !== 'listening' || this.stream !== stream) return;
+                    if (context.state !== 'running') {
+                        // A suspended analyser cannot distinguish speech from
+                        // silence. Give it a fresh window when audio resumes.
+                        opened = performance.now(); lastSpeech = null;
+                        return;
+                    }
+                    this.analyser.getFloatTimeDomainData(buf);
+                    const rms = Math.sqrt(buf.reduce((sum, value) => sum + value * value, 0) / buf.length);
+                    const now = performance.now();
+                    if (rms > this.SPEECH_RMS) lastSpeech = now;
+                    else if (lastSpeech !== null && now - lastSpeech >= this.PAUSE_MS) this.done();
+                    else if (lastSpeech === null && now - opened >= this.NO_SPEECH_MS) this.stop(false);
+                }, 50);
+            } catch (_) {
+                // Web Audio is optional; Done and the recording cap still work.
+                try { this.source?.disconnect(); this.analyser?.disconnect(); } catch (_) {}
+                this.source = null; this.analyser = null;
+            }
         },
         browser(generation) {
             const Recognizer = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -231,7 +295,7 @@
             if (this.state === 'starting') {
                 const host = this.host;
                 this.stop(false);
-                this.fail('Keep holding until Listening… appears, or type.', host);
+                this.fail('Microphone was still starting. Tap the microphone to try again, or type.', host);
                 return;
             }
             if (this.state !== 'listening') return;
@@ -278,6 +342,12 @@
             });
             if (currentView === 'messages') await refreshThread();
             if (!this.valid(generation)) return;
+            if (!data.speech) {
+                if (this.continueConversation(generation)) return;
+                this.status('Your answer is on screen. Tap the microphone for another request.');
+                this.host = null;
+                return;
+            }
             this.status('Reply ready. Preparing speech…', 'thinking');
             await this.play(timing);
         },
@@ -305,13 +375,15 @@
                 this.audio.onended = () => {
                     if (!this.valid(generation)) return;
                     this.releaseAudio();
-                    this.status(this.response?.continue_conversation ? 'Tap to reply.' : 'Tap the microphone for another request.');
+                    if (this.continueConversation(generation)) return;
+                    this.status('Tap the microphone for another request.');
                     if (this.host) { this.host = null; return; }
                     if (this.response?.continue_conversation) el('reply')?.classList.remove('hidden');
                 };
                 this.audio.onerror = () => {
                     if (!this.valid(generation)) return;
                     this.releaseAudio();
+                    if (this.continueConversation(generation)) return;
                     const hosted = !!this.host;
                     this.fail('Audio playback failed. Your answer is on screen.');
                     if (hosted) return;
@@ -322,6 +394,7 @@
             } catch (_) {
                 if (this.valid(generation)) {
                     this.releaseAudio();
+                    if (this.continueConversation(generation)) return;
                     const hosted = !!this.host;
                     this.fail(hosted ? 'Your answer is on screen. Speech is unavailable.'
                         : 'Your answer is on screen. Tap Play reply to hear it.');
@@ -330,6 +403,11 @@
                     if (this.response?.continue_conversation) el('reply')?.classList.remove('hidden');
                 }
             }
+        },
+        continueConversation(generation) {
+            if (!this.valid(generation) || !this.response?.continue_conversation) return false;
+            this.start({host: this.host, continuing: true});
+            return true;
         }
     };
     window.ChauffeurPhoneVoice = voice;

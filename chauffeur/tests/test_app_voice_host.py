@@ -16,10 +16,10 @@ Pinned shapes (static/app_voice.js sets window.ChauffeurPhoneVoice):
     and ends with `host.status('', 'idle')`; the host is cleared after it.
   * Without a host nothing changes (thread mode: setView + openChannel,
     `#phone-voice-status` written).
-  * Hold-to-talk review fixes: 'listening' reaches the host only once the
+  * Microphone startup regressions: 'listening' reaches the host only once the
     MediaRecorder has started ('starting' before it); `done()` before then
-    (an early release of the orb) ends the turn with a /cancel and a label
-    saying to keep holding, and the late microphone never records; `stop()`
+    (a premature Done call) ends the turn with a /cancel and a label
+    saying to tap the microphone again, and the late microphone never records; `stop()`
     from 'starting' clears the host as it does from 'listening'.
 
 The harness drives the HA recorder path, never the browser probe: the page URL
@@ -75,7 +75,8 @@ async function waitFor(pred, ms) {
   return pred();
 }
 
-function fresh({ threadDom = false, isOpen = () => true, deferGum = false } = {}) {
+function fresh({ threadDom = false, isOpen = () => true, deferGum = false,
+                 analyser = false, continuation = false, playback = 'ended', speech = false } = {}) {
   const errors = [];
   const vc = new VirtualConsole();
   vc.on('jsdomError', e => errors.push(String(e && e.message || e)));
@@ -97,7 +98,16 @@ function fresh({ threadDom = false, isOpen = () => true, deferGum = false } = {}
   w.showGlobalAlert = m => { log.alerts.push(String(m)); };
   w.SpeechRecognition = undefined;
   w.webkitSpeechRecognition = undefined;
-  const track = { stop() {}, addEventListener() {} };
+  log.micLevel = 0; log.trackStops = 0; log.contextCloses = 0; log.playing = false; log.overlap = false;
+  if (analyser) w.AudioContext = class {
+    constructor() { this.state = 'running'; log.contextCreates = (log.contextCreates || 0) + 1; }
+    createMediaStreamSource() { return {connect() {}, disconnect() {}}; }
+    createAnalyser() { return {fftSize: 2048, disconnect() {},
+      getFloatTimeDomainData(buf) { buf.fill(log.micLevel); }}; }
+    resume() { return Promise.resolve(); }
+    close() { this.state = 'closed'; log.contextCloses++; return Promise.resolve(); }
+  };
+  const track = { stop() { log.trackStops++; }, addEventListener() {} };
   const stream = { getTracks: () => [track] };
   // deferGum: getUserMedia stays pending until the case calls releaseGum(),
   // the window a real phone spends on the permission prompt / mic warm-up.
@@ -105,7 +115,8 @@ function fresh({ threadDom = false, isOpen = () => true, deferGum = false } = {}
   const gumGate = deferGum ? new Promise(r => { gumRelease = r; }) : null;
   const releaseGum = () => { if (gumRelease) gumRelease(); };
   Object.defineProperty(w.navigator, 'mediaDevices', { configurable: true,
-    value: { getUserMedia: async () => { log.gum++; if (gumGate) await gumGate; return stream; } } });
+    value: { getUserMedia: async () => { log.gum++; if (log.playing) log.overlap = true;
+      if (gumGate) await gumGate; return stream; } } });
   w.MediaRecorder = class {
     constructor(s, opts) {
       this.stream = s; this.mimeType = (opts && opts.mimeType) || 'audio/webm'; this.state = 'inactive';
@@ -125,11 +136,16 @@ function fresh({ threadDom = false, isOpen = () => true, deferGum = false } = {}
   w.Audio = class {
     constructor(s) { this._src = s; this.onplaying = null; this.onended = null; this.onerror = null; }
     set src(v) { this._src = v; } get src() { return this._src; }
-    pause() {}
+    pause() { log.playing = false; }
     play() {
+      if (playback === 'reject') return Promise.reject(new Error('Playback denied'));
       setTimeout(() => {
+        log.playing = true;
         if (this.onplaying) this.onplaying();
-        setTimeout(() => { if (this.onended) this.onended(); }, 20);
+        if (playback !== 'manual') setTimeout(() => {
+          log.playing = false;
+          if (this.onended) this.onended();
+        }, 20);
       }, 20);
       return Promise.resolve();
     }
@@ -140,7 +156,7 @@ function fresh({ threadDom = false, isOpen = () => true, deferGum = false } = {}
     start: { request_id: 'r1', channel: { id: 'dm_argyle', member_ids: ['parent', 'argyle'] } },
     audio: { transcript: TRANSCRIPT },
     text: { transcript: TRANSCRIPT },
-    run: { reply: REPLY, speech: false, speech_safe: false, continue_conversation: false,
+    run: { reply: REPLY, speech, speech_safe: !!speech, continue_conversation: continuation,
       channel_id: 'dm_argyle', request_id: 'r1' },
     cancel: { status: 'stopped' },
   };
@@ -289,7 +305,7 @@ const CASES = {
     const stateAtRelease = v.state;
     const cancelsBefore = kinds(env.log).filter(k => k === 'cancel').length;
     const t0 = Date.now();
-    v.done();          // the finger lifted before Listening… appeared
+    v.done();          // Done was called before Listening… appeared
     await waitFor(() => env.log.fetches.some(f => f.kind === 'cancel' && f.t >= t0), 900);
     const c = env.log.fetches.find(f => f.kind === 'cancel' && f.t >= t0);
     const hostAfterDone = env.log.host.slice();
@@ -300,7 +316,7 @@ const CASES = {
     v.stop(false);
     return r;
   },
-  async cancel_after_hold_start_ends_the_turn() {
+  async cancel_during_start_ends_the_turn() {
     const env = fresh({ deferGum: true });
     const v = env.w.ChauffeurPhoneVoice;
     v.start({ host: env.host });
@@ -317,6 +333,65 @@ const CASES = {
     await sleep(20);
     const hostAfterLaterStatus = env.log.host.slice();
     return summary(env, { stateAtStop, cancelsBefore, hostAfterStop, hostAfterLaterStatus });
+  },
+  async pause_sends_and_silence_does_not() {
+    const env = fresh({analyser: true});
+    const v = env.w.ChauffeurPhoneVoice;
+    v.PAUSE_MS = 100; v.NO_SPEECH_MS = 300;
+    await v.start({host: env.host});
+    await waitFor(() => v.state === 'idle', 1200);
+    const silent = {state: v.state, uploaded: kinds(env.log).includes('audio'),
+      released: !v.stream && !v.recorder && !v.audioContext && !v.silenceTimer,
+      cancelled: kinds(env.log).includes('cancel'), closed: env.log.contextCloses};
+    await v.start({host: env.host});
+    env.log.micLevel = v.SPEECH_RMS * 2;
+    await sleep(150);
+    env.log.micLevel = 0;
+    await waitFor(() => v.response && v.state === 'idle', 1500);
+    const r = summary(env, {silent, uploads: kinds(env.log).filter(k => k === 'audio').length,
+      state: v.state, closed: env.log.contextCloses, stops: env.log.trackStops});
+    v.stop(false); return r;
+  },
+  async continuation_waits_for_playback() {
+    const env = fresh({analyser: true, continuation: true, speech: 'The answer.', playback: 'manual'});
+    const v = env.w.ChauffeurPhoneVoice;
+    await v.start({host: env.host}); v.done();
+    await waitFor(() => v.state === 'speaking', 1500);
+    const context = v.audioContext;
+    const during = {state: v.state, starts: kinds(env.log).filter(k => k === 'start').length,
+      released: !v.stream && !v.recorder && !v.source && !v.analyser, contextHeld: !!context};
+    env.log.playing = false; v.audio.onended();
+    await waitFor(() => v.state === 'listening', 1500);
+    const r = summary(env, {during, state: v.state, overlap: env.log.overlap,
+      starts: kinds(env.log).filter(k => k === 'start').length, hostPreserved: v.host === env.host,
+      responsePreserved: v.response?.reply === REPLY, contextReused: context === v.audioContext,
+      contextCreates: env.log.contextCreates});
+    v.stop(false); return r;
+  },
+  async continuation_after_playback_failure_and_display_only() {
+    const results = [];
+    for (const speech of ['The answer.', false]) {
+      const env = fresh({continuation: true, speech, playback: 'reject'});
+      const v = env.w.ChauffeurPhoneVoice;
+      await v.start({host: env.host}); v.done();
+      await waitFor(() => kinds(env.log).filter(k => k === 'start').length === 2 && v.state === 'listening', 1500);
+      results.push(summary(env, {state: v.state, starts: kinds(env.log).filter(k => k === 'start').length,
+        hostPreserved: v.host === env.host}));
+      v.stop(false);
+    }
+    return {results};
+  },
+  async messages_continues_and_visibility_stops() {
+    const env = fresh({threadDom: true, analyser: true, continuation: true, speech: 'The answer.'});
+    const v = env.w.ChauffeurPhoneVoice;
+    await v.start(); v.done();
+    await waitFor(() => kinds(env.log).filter(k => k === 'start').length === 2 && v.state === 'listening', 1500);
+    const continued = {state: v.state, starts: kinds(env.log).filter(k => k === 'start').length};
+    Object.defineProperty(env.w.document, 'hidden', {configurable: true, value: true});
+    env.w.document.dispatchEvent(new env.w.Event('visibilitychange'));
+    await sleep(100);
+    return summary(env, {continued, state: v.state,
+      released: !v.stream && !v.recorder && !v.audioContext && !v.audio && !v.silenceTimer});
   },
 };
 
@@ -484,9 +559,8 @@ def scenario_listening_only_once_recording():
 
 
 def scenario_early_release_cancels_the_turn():
-    """Releasing the orb before Listening… appears (done() while the mic is
-    still pending) ends the turn: the server turn is cancelled, the host is
-    told to keep holding, and the late microphone never records."""
+    """Calling Done before Listening appears cancels safely; the late
+    microphone never records and the recovery label requires no hold."""
     r = _case('early_release_cancels_the_turn')
     if r is None:
         return
@@ -500,17 +574,17 @@ def scenario_early_release_cancels_the_turn():
     label, state = st[-1][1] or '', st[-1][2]
     check(state == 'error' or (state == 'idle' and label.strip()),
           f"the host's last status is an error (or idle with a label), not a live turn: {st[-1]}; all {st}")
-    check('hold' in label.lower(),
-          f"the host's last label tells the person to keep holding (Keep holding until Listening… appears, or type.): {label!r}")
+    check('tap the microphone' in label.lower() and 'hold' not in label.lower(),
+          f"the host's last label tells the person to tap the microphone again: {label!r}")
     check('start' not in r['recorder'], f"the late microphone never started a recorder: {r['recorder']}")
     check('audio' not in r['fetchKinds'], f"no audio was posted after an early release: {r['fetchKinds']}")
     check(r['stateAtEnd'] == 'idle', f"the turn is idle after the early release: {r['stateAtEnd']!r}")
 
 
-def scenario_cancel_after_hold_start_ends_the_turn():
+def scenario_cancel_during_start_ends_the_turn():
     """stop(false) while the mic is still starting (the overlay closed during
-    the hold) cancels the server turn and clears the host, as from listening."""
-    r = _case('cancel_after_hold_start_ends_the_turn')
+    startup) cancels the server turn and clears the host, as from listening."""
+    r = _case('cancel_during_start_ends_the_turn')
     if r is None:
         return
     check(r['stateAtStop'] in ('starting', 'listening'),
@@ -527,6 +601,47 @@ def scenario_cancel_after_hold_start_ends_the_turn():
     check('audio' not in r['fetchKinds'], f"no audio was posted after stop: {r['fetchKinds']}")
 
 
+def scenario_pause_sends_and_silence_does_not():
+    r = _case('pause_sends_and_silence_does_not')
+    if r is None:
+        return
+    check(r['silent'] == {'state': 'idle', 'uploaded': False, 'released': True, 'cancelled': True, 'closed': 1},
+          f"no speech cancels without uploading and closes Web Audio: {r['silent']}")
+    check(r['uploads'] == 1 and r['state'] == 'idle', f"a pause after speech sends exactly once: {r}")
+    check(r['closed'] == 2 and r['stops'] == 2, f"both captures release their context and tracks: {r}")
+
+
+def scenario_continuation_waits_for_playback():
+    r = _case('continuation_waits_for_playback')
+    if r is None:
+        return
+    check(r['during'] == {'state': 'speaking', 'starts': 1, 'released': True, 'contextHeld': True},
+          f"the microphone stays closed until playback ends: {r['during']}")
+    check(r['state'] == 'listening' and r['starts'] == 2 and not r['overlap'],
+          f"playback ending starts exactly one fresh turn with no recording overlap: {r}")
+    check(r['hostPreserved'] and r['responsePreserved'], 'the next turn keeps its host and displayed reply')
+    check(r['contextReused'] and r['contextCreates'] == 1, 'follow-up turns reuse the unlocked context')
+
+
+def scenario_continuation_after_playback_failure_and_display_only():
+    r = _case('continuation_after_playback_failure_and_display_only')
+    if r is None:
+        return
+    for item in r['results']:
+        check(not item['errors'] and item['state'] == 'listening' and item['starts'] == 2 and item['hostPreserved'],
+              f"failed speech and display-only replies both continue through the same host: {item}")
+    check('speech' in r['results'][0]['fetchKinds'], 'the failed-playback case attempts speech')
+    check('speech' not in r['results'][1]['fetchKinds'], 'a response without speech continues once displayed')
+
+
+def scenario_messages_continues_and_visibility_stops():
+    r = _case('messages_continues_and_visibility_stops')
+    if r is None:
+        return
+    check(r['continued'] == {'state': 'listening', 'starts': 2}, f"Messages automatically continues: {r}")
+    check(r['state'] == 'idle' and r['released'], f"leaving the app releases capture and playback: {r}")
+
+
 SCENARIOS = [
     scenario_host_mode_never_switches_views,
     scenario_transcript_and_reply_reach_the_host,
@@ -536,7 +651,11 @@ SCENARIOS = [
     scenario_thread_mode_unchanged,
     scenario_listening_only_once_recording,
     scenario_early_release_cancels_the_turn,
-    scenario_cancel_after_hold_start_ends_the_turn,
+    scenario_cancel_during_start_ends_the_turn,
+    scenario_pause_sends_and_silence_does_not,
+    scenario_continuation_waits_for_playback,
+    scenario_continuation_after_playback_failure_and_display_only,
+    scenario_messages_continues_and_visibility_stops,
 ]
 
 if __name__ == "__main__":
