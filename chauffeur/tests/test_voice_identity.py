@@ -84,12 +84,14 @@ class VoiceIdentityTests(unittest.TestCase):
             self.assertIsNone(voice.normalize_pin(phrase))
 
     def test_named_is_not_verified_and_exact_names_only(self):
+        # A near-miss name names nobody; since 2026-11-04 an "It's ..." that
+        # names no member is an ordinary sentence for Argyle ("it's raining").
+        self.assertIsNone(voice.intercept("It's Jef", self.context()))
+        self.assertEqual(self.context().level, 'unknown')
         voice.intercept("It's Jeff", self.context())
         ctx = self.context()
         self.assertEqual(ctx.level, 'named')
         self.assertIsNone(ctx.verified_member())
-        voice.intercept("It's Jef", self.context())
-        self.assertEqual(self.context().level, 'unknown')
 
     def test_ambiguous_alias_accepts_full_name_on_next_turn(self):
         storage.update_member('jeff', {'name': 'Jeff Wilson', 'voice_aliases': ['Dad']})

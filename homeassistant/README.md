@@ -392,10 +392,32 @@ voice_assistant:
         timeout: 60s
     - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
     - script.execute: control_leds
-  # Same for the failure path — upstream lights the error phase and relies on
-  # that same unreachable code in on_end to clear it. The delay lets the error
-  # actually be seen first.
+  # The failure path. First, any error ends a conversation and returns to
+  # the wake word (below). Then the LED: upstream lights the error phase and
+  # relies on that same unreachable code in on_end to clear it. The delay lets
+  # the error actually be seen first.
   on_error:
+    # Conversation mode (add-on v2.499.759+) depends on this. ESPHome keeps a
+    # reply's continue_conversation flag until the next reply or a STOP, and a
+    # continuous stream restarts on its own after every error -- so a silent
+    # follow-up turn ("stt-no-text-recognized") came straight back as another
+    # speech-to-text turn with no wake stage, forever (office, 2026-11-04: four
+    # silent turns in a row, the TV ducked on every one). Stopping clears the
+    # flag; re-arming the wake stage and restarting the stream puts the device
+    # back to waiting for "Hey Argyle". The two wake-engine codes already stop
+    # the assistant on purpose, and restarting them would retry in a tight loop.
+    - if:
+        condition:
+          lambda: return code != "wake-provider-missing" && code != "wake-engine-missing";
+        then:
+          - voice_assistant.stop:
+          - wait_until:
+              condition:
+                not:
+                  voice_assistant.is_running:
+              timeout: 3s
+          - lambda: id(va).set_use_wake_word(true);
+          - voice_assistant.start_continuous:
     - delay: 2s
     - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
     - script.execute: control_leds
@@ -1008,6 +1030,10 @@ to Home Assistant instead of to Argyle.
   voice recognition always use the two-turn cap. Off switch: Map drawer ›
   Announcements › Conversation mode. No component update: it already passes
   the flag whenever the installed Home Assistant supports continuing.
+  **Every satellite also needs the `on_error` rule in the device config above**
+  (reflash from ESPHome Builder): without it a silent follow-up turn reopens the
+  mic with no wake word, forever, because a continuous stream restarts after
+  every error and ESPHome keeps the keep-listening flag until a stop.
 - Voice runs with the admin toolset (no driver identity), same as the control
   center chat. Don't put this pipeline on a device you wouldn't hand admin chat.
 - If a family member's name ever collides with an exposed entity/area name,

@@ -465,13 +465,16 @@ def intercept(text: str, ctx: VoiceContext, language='en') -> dict | None:
             return None
         if not name_match and not (row and row.get('name_pending')):
             return None
+        name = ' '.join((name_match.group(1) if name_match else low).rstrip('.!?').split()).casefold()
+        matches = [m for m in storage.get_all_members() if _active(m) and name in voice_names(m)]
+        # An ordinary "I'm ..." sentence is not an unsolicited introduction.
+        if not matches and not (row and row.get('name_pending')):
+            return None
         if not ctx.paired or not row:
             return {'status': 'identity', 'message': 'Ask a parent to enable voice identity for this satellite on their phone.'}
         pending_prepare = row.get('pending_prepare') if row.get('level') == 'unknown' else None
         pending_pin = row.get('pin_pending') if row.get('level') == 'unknown' else False
         _sessions[key] = row = _new_session(row.get('device_id'))
-        name = ' '.join((name_match.group(1) if name_match else low).rstrip('.!?').split()).casefold()
-        matches = [m for m in storage.get_all_members() if _active(m) and name in voice_names(m)]
         if len(matches) != 1:
             row.update(name_pending=True, pin_pending=bool(pending_pin), pending_prepare=pending_prepare)
             return {'status': 'identity', 'message': 'Which family member? Say the full name.'}

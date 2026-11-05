@@ -40,7 +40,18 @@ from services import storage, voice_identity as voice, voice_fingerprint as fp
 KITCHEN = 'assist_satellite.kitchen'
 BEDROOM = 'assist_satellite.bedroom'
 SIGN_OFFS = ('thanks', 'Thanks.', 'thank you', 'Thank you!', "that's all", 'goodbye', 'bye',
-             'never mind', 'Stop.', 'cancel')
+             'never mind', 'Stop.', 'cancel',
+             # Heard on the office satellite, 2026-11-04, and their close cousins: a
+             # sign-off is every part of the utterance closing or filler.
+             "That's all for now.", "No, I need you to stop. Don't listen anymore.",
+             'Stop listening.', 'You can stop listening now.', "Okay, that's it.", "I'm done, thanks.",
+             'No thanks.', 'No, thank you.', 'Thank you, Argyle.', 'Thanks so much!', 'Go to sleep.',
+             "We're done here.", 'Nothing else.', "That'll be all.", 'Alright, goodbye.',
+             'Good night, Argyle.', "Yes, that's all, thank you.")
+NOT_SIGN_OFFS = ('thanks, and also add milk to the list', 'stop the music in the kitchen',
+                 'cancel my dentist appointment on friday', "I'm done with the dishes, what's next?",
+                 "that's all the milk we have?", "don't listen to him, add eggs",
+                 'no, I said Tuesday', 'thank you for the reminder, what about Friday?')
 
 
 def vector(index=0):
@@ -191,9 +202,28 @@ class ConversationModeTests(unittest.TestCase):
 
     def test_a_sign_off_inside_a_longer_request_keeps_going(self):
         self.enroll()
-        self.assertTrue(self.say('thanks, and also add milk to the list', self.JEFF))
-        self.assertTrue(self.say('stop the music in the kitchen', self.JEFF))
-        self.assertTrue(self.say('cancel my dentist appointment on friday', self.JEFF))
+        for phrase in NOT_SIGN_OFFS:
+            self.assertTrue(self.say(phrase, self.JEFF), phrase)
+
+    def test_ordinary_sentences_that_start_like_a_name_reach_argyle(self):
+        # "I'm done...", "it's raining" were name introductions ("Which family
+        # member?") before 2026-11-04; only a family member's name is one.
+        self.enroll()
+        for phrase in ("I'm done with the dishes, what's next?", "It's raining, should we leave early?",
+                       'This is great, add it to the list', "I'm running late for practice"):
+            calls = self.agent.call_count
+            self.assertTrue(self.say(phrase, self.JEFF), phrase)
+            self.assertEqual(self.agent.call_count, calls + 1, 'Argyle answers ' + phrase)
+        self.enroll(recognition=False, identity=False)
+        calls = self.agent.call_count
+        self.say("I'm hungry, what's for dinner?")
+        self.assertEqual(self.agent.call_count, calls + 1, 'identity off: still an ordinary sentence')
+
+    def test_a_real_name_is_still_an_introduction(self):
+        self.enroll(recognition=False)
+        calls = self.agent.call_count
+        self.assertTrue(self.say("It's Jeff"))
+        self.assertEqual(self.agent.call_count, calls, 'a name introduction is identity, not the model')
 
     # --- no recognition ---------------------------------------------------
     def test_a_satellite_without_recognition_always_uses_the_cap(self):

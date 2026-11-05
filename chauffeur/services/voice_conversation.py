@@ -9,8 +9,13 @@ from services import storage
 CAP = 2
 GAP_SECONDS = 30
 SIGN_OFFS = frozenset({
-    'thanks', 'thank you', "that's all", 'that is all', 'goodbye', 'bye',
-    'never mind', 'nevermind', 'stop', 'cancel',
+    'thanks', 'thank you', 'thanks so much', 'thank you so much', 'thanks a lot',
+    'no thanks', 'no thank you', "that's all", 'that is all', "that's it",
+    "that'll be all", 'that will be all', "i'm done", 'i am done', "we're done",
+    'we are done', 'all done', 'nothing else', 'goodbye', 'bye', 'bye bye',
+    'good night', 'goodnight', 'never mind', 'nevermind', 'stop', 'cancel',
+    'stop listening', 'you can stop listening', 'you can stop', 'i need you to stop',
+    "don't listen", 'go to sleep', 'go away', 'be quiet', "that's enough",
 })
 _lock = threading.Lock()
 _turns = {}
@@ -27,9 +32,24 @@ def _trim(text):
 
 
 def is_sign_off(text):
-    phrase = _trim(text.lower().replace('\u2019', "'"))
-    phrase = _trim(re.sub(r'\bargyle$', '', phrase))
-    return phrase in SIGN_OFFS
+    text = text.lower().replace('\u2018', "'").replace('\u2019', "'")
+    found = False
+    for part in re.split(r'[.!?;,]', text):
+        phrase = _trim(part)
+        # Check exact closings first, including "no thanks" / "no thank you".
+        while phrase and phrase not in SIGN_OFFS:
+            stripped = re.sub(
+                r'^(?:no|ok|okay|alright|all right|well|so|yes|yeah|hey argyle|argyle)(?:\s+|$)',
+                '', phrase)
+            stripped = re.sub(
+                r'(?:^|\s+)(?:for now|now|here|please|argyle|anymore|then)$', '', stripped)
+            stripped = _trim(stripped)
+            if stripped == phrase:
+                return False
+            phrase = stripped
+        if phrase:
+            found = True
+    return found
 
 
 def continue_conversation(ctx, text):
