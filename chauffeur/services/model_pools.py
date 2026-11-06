@@ -446,7 +446,7 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
                    background: bool = None, workflow: str = None,
                    strict_json: bool = False, max_output_tokens: int = None,
                    attempts: list = None, total_timeout_s: float = None, thinking_level: str = None, response_schema: dict = None,
-                   *, paid_ok: bool = True) -> dict:
+                   *, paid_ok: bool = True, usage: list = None) -> dict:
     """JSON call with one HTTP attempt per candidate and persistent admission.
 
     Background work tries one candidate, then defers; foreground work may try
@@ -463,6 +463,10 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
     report what a stage really cost rather than guessing from `max_models`
     (the house photo pipeline writes it into its own notes). Nothing else
     changes; an admission deferral, which sends nothing, is not recorded.
+
+    `usage` collects tokens and estimation inputs per dispatched request,
+    including failures. Missing token counts are None. When collecting usage,
+    max_models bounds the whole call, including any paid fallback chain.
     """
     from services import llm_budget
     background = tier in ('background', 'mind') if background is None else background
@@ -477,7 +481,7 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
         return _call_chain(tier, api_key, system_prompt, user_prompt, temperature, timeout_s,
                            gemma_timeout_s, max_models, settings, images, background, workflow,
                            strict_json, max_output_tokens, attempts, total_timeout_s,
-                           thinking_level, response_schema, paid_ok=paid_ok)
+                           thinking_level, response_schema, paid_ok=paid_ok, usage=usage)
     # Background: the workflow pause is held until the whole call has failed,
     # so a fall-through to a sibling Gemma model is not blocked by the pause
     # its own first attempt would otherwise have written.
@@ -485,7 +489,7 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
         res = _call_chain(tier, api_key, system_prompt, user_prompt, temperature, timeout_s,
                           gemma_timeout_s, max_models, settings, images, background, workflow,
                           strict_json, max_output_tokens, attempts, total_timeout_s,
-                          thinking_level, response_schema, paid_ok=paid_ok)
+                          thinking_level, response_schema, paid_ok=paid_ok, usage=usage)
     if isinstance(res, dict) and res.get('error'):
         llm_budget.apply_held_pauses(held)   # no-op when nothing failed on the wire
     return res
@@ -494,23 +498,25 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
 def _call_chain(tier, api_key, system_prompt, user_prompt, temperature, timeout_s,
                 gemma_timeout_s, max_models, settings, images, background, workflow,
                 strict_json, max_output_tokens, attempts, total_timeout_s,
-                thinking_level, response_schema, *, paid_ok: bool = True):
+                thinking_level, response_schema, *, paid_ok: bool = True, usage: list = None):
     if settings is None and not background and tier in ('interactive', 'vision', 'heavy'):
         from services.storage import get_settings
         settings = get_settings()
     deadline = None if total_timeout_s is None else time.monotonic() + total_timeout_s
+    usage_start = len(usage) if usage is not None else 0
     return with_paid_fallback(tier, api_key, settings, background,
         lambda key, paid: _call_candidates(
             tier, key, system_prompt, user_prompt, temperature, timeout_s,
-            gemma_timeout_s, max_models, settings, images, background, workflow,
+            gemma_timeout_s, (max_models - (len(usage) - usage_start) if usage is not None else max_models),
+            settings, images, background, workflow,
             strict_json, max_output_tokens, attempts, deadline,
-            thinking_level, response_schema, paid), paid_ok=paid_ok)
+            thinking_level, response_schema, paid, usage=usage), paid_ok=paid_ok)
 
 
 def _call_candidates(tier, api_key, system_prompt, user_prompt, temperature, timeout_s,
                      gemma_timeout_s, max_models, settings, images, background, workflow,
                      strict_json, max_output_tokens, attempts, deadline,
-                     thinking_level, response_schema, paid):
+                     thinking_level, response_schema, paid, usage: list = None):
     from services import llm as _llm
     from services import llm_budget
     last_err = "no models available"
@@ -524,7 +530,10 @@ def _call_candidates(tier, api_key, system_prompt, user_prompt, temperature, tim
     # the Lite pool's daily allowance is shared with interactive chat.
     bg_limit = 1
     for model in models_for(tier, settings, paid=paid):
-        if launched >= (bg_limit if background else max_models):
+        limit = bg_limit if background else max_models
+        if usage is not None:
+            limit = min(limit, max_models)
+        if launched >= limit:
             break
         if background and launched and not is_gemma(model):
             break
@@ -539,16 +548,20 @@ def _call_candidates(tier, api_key, system_prompt, user_prompt, temperature, tim
             from services import paid_fallback
             if not paid_fallback.count_call(settings):
                 return {'error': 'Paid fallback inactive or daily cap reached', 'transient': True}
+        metrics = {} if usage is not None else None
+        dispatched = True
         try:
             with llm_budget.request_scope(workflow, background), llm_budget.record_attempts(attempts):
                 res = _llm.call_model(model, api_key, system_prompt,
                                       user_prompt, temperature=temperature, timeout_s=t,
                                       images=images, transient_retries=0,
                                       strict_json=strict_json,
+                                      **({'metrics': metrics} if usage is not None else {}),
                                       **({"response_schema": response_schema} if response_schema is not None else {}),
                                       max_output_tokens=max_output_tokens,
                                       **({"thinking_level": thinking_level} if thinking_level is not None else {}))
         except llm_budget.Deferred as e:
+            dispatched = False
             # Only the workflow's own backoff stops a background call. A
             # penalised or used-up MODEL is a reason to try the next one,
             # not to stall the whole workflow until that model recovers.
@@ -562,6 +575,7 @@ def _call_candidates(tier, api_key, system_prompt, user_prompt, temperature, tim
             transient = True
             continue
         except budget_guard.BudgetExhausted:
+            dispatched = False
             raise
         except Exception as e:
             launched += 1
@@ -576,6 +590,16 @@ def _call_candidates(tier, api_key, system_prompt, user_prompt, temperature, tim
                               else 'trying the other Gemma model' if launched < bg_limit
                               else 'deferring background work'))
             continue
+        finally:
+            if usage is not None and dispatched:
+                has_tokens = any(k in metrics for k in ('promptTokenCount', 'candidatesTokenCount', 'thoughtsTokenCount'))
+                usage.append({'model': model,
+                              'input_tokens': metrics.get('promptTokenCount', 0) if has_tokens else None,
+                              'output_tokens': ((metrics.get('candidatesTokenCount') or 0)
+                                                + (metrics.get('thoughtsTokenCount') or 0)) if has_tokens else None,
+                              'images': len(images or []),
+                              'prompt_chars': len(system_prompt) + len(user_prompt),
+                              'max_output_tokens': max_output_tokens if max_output_tokens is not None else 0})
         launched += 1
         if isinstance(res, dict) and res.get("error") and "429" in str(res["error"]):
             last_err = str(res["error"])

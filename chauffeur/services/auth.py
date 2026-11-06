@@ -447,6 +447,8 @@ RULES = [
     ('PUT', '/api/house/twin/plan', PARENTS, None),
     ('POST', '/api/house/twin/revert', PARENTS, None),
     ('GET', '/api/house/twin/fixes', PARENTS, None),
+    ('GET', '/api/house/twin/cost', PARENTS, None),
+    ('POST', '/api/house/twin/cost/ack', PARENTS, None),
     # The facade generator (spec 2026-09-15 §3.2): reads are family-safe
     # (a wall builds from the active facade); every write is a parent's.
     ('GET', '/api/house/facades', WALL_OR_SERVICE, None),

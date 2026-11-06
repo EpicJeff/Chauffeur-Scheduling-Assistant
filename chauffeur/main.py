@@ -7337,6 +7337,23 @@ def house_twin_fixes_api():
     return {'fixes': twin_store.fixes()}
 
 
+@app.get("/api/house/twin/cost")
+def house_twin_cost_api():
+    from services import twin_cost
+    return {'total': twin_cost.total(), 'entries': twin_cost.entries(),
+            'blocking': twin_cost.blocking_checkpoint()}
+
+
+@app.post("/api/house/twin/cost/ack")
+def house_twin_cost_ack(body: dict = Body(default={})):
+    from services import twin_cost
+    try:
+        twin_cost.acknowledge(body.get('checkpoint'))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {'total': twin_cost.total(), 'blocking': twin_cost.blocking_checkpoint()}
+
+
 @app.get("/api/study/state")
 def study_state(request: Request = None):
     """The Study's one read. Same person-gate as the mind endpoints —
