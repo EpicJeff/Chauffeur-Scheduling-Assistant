@@ -7272,6 +7272,71 @@ def house_facade_delete(fid: str):
     return {'status': 'ok', 'active': _hf.active_bundle()['id']}
 
 
+@app.get("/api/house/twin")
+def house_twin_api():
+    from services import twin_store
+    return {'plan': twin_store.current(), 'rounds': twin_store.rounds(),
+            'kit_id': 'modern_farmhouse'}
+
+
+@app.post("/api/house/twin/sources")
+def house_twin_source_upload(kind: str = Form(...), file: UploadFile = File(...)):
+    from services import twin_store
+    limit = 40 * 1024 * 1024
+    data = bytearray()
+    while True:
+        chunk = file.file.read(min(1024 * 1024, limit + 1 - len(data)))
+        if not chunk:
+            break
+        data.extend(chunk)
+        if len(data) > limit:
+            raise HTTPException(status_code=413, detail='Source too large (40 MB maximum).')
+    try:
+        source_id = twin_store.save_source(kind, file.filename, bytes(data),
+                                           content_type=file.content_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return next(s for s in twin_store.sources() if s['id'] == source_id)
+
+
+@app.get("/api/house/twin/sources")
+def house_twin_sources_api():
+    from services import twin_store
+    return {'sources': twin_store.sources()}
+
+
+@app.put("/api/house/twin/plan")
+def house_twin_plan_save(body: dict = Body(default={})):
+    from services import twin_store
+    try:
+        round_id = twin_store.save_hand_edit(body.get('plan'), body.get('reason'), body.get('base'))
+    except twin_store.StaleRound as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {'round': round_id}
+
+
+@app.post("/api/house/twin/revert")
+def house_twin_revert(body: dict = Body(default={})):
+    from services import twin_store
+    round_id = body.get('round')
+    if type(round_id) is not int:
+        raise HTTPException(status_code=400, detail='A round id is required.')
+    try:
+        return {'round': twin_store.revert(round_id)}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail='No such twin round.') from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/house/twin/fixes")
+def house_twin_fixes_api():
+    from services import twin_store
+    return {'fixes': twin_store.fixes()}
+
+
 @app.get("/api/study/state")
 def study_state(request: Request = None):
     """The Study's one read. Same person-gate as the mind endpoints —

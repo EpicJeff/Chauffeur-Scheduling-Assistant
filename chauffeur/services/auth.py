@@ -441,6 +441,12 @@ RULES = [
     # The Home: the dollhouse (H1) — same family-safe-by-construction read.
     (ANY, '/api/house/state', WALL_OR_SERVICE, None),
     ('GET', '/api/house/neighborhood', WALL_OR_SERVICE, None),
+    ('GET', '/api/house/twin', WALL_OR_SERVICE, None),
+    ('POST', '/api/house/twin/sources', PARENTS, None),
+    ('GET', '/api/house/twin/sources', PARENTS, None),
+    ('PUT', '/api/house/twin/plan', PARENTS, None),
+    ('POST', '/api/house/twin/revert', PARENTS, None),
+    ('GET', '/api/house/twin/fixes', PARENTS, None),
     # The facade generator (spec 2026-09-15 §3.2): reads are family-safe
     # (a wall builds from the active facade); every write is a parent's.
     ('GET', '/api/house/facades', WALL_OR_SERVICE, None),
