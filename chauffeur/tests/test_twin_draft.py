@@ -213,6 +213,55 @@ def scenario_rooms_are_named_with_or_without_ha():
     check(all(r['name'] for r in ts.current()['buildings'][0]['rooms']), 'every room has a name without HA')
 
 
+def scenario_stages_get_real_timeouts_and_their_own_images():
+    drawing, plot, photo = _fresh()
+    m = Model()
+    _run(m, drawings=[{'id': drawing, 'pages': [1]}], photos=[photo], site={'id': plot, 'pages': [1]})
+    by = {c['stage']: c for c in m.calls}
+    check((by['building'].get('timeout_s') or 0) >= 300, f'building timeout {by["building"].get("timeout_s")}')
+    check((by['finishes'].get('timeout_s') or 0) >= 180 and (by['site'].get('timeout_s') or 0) >= 180,
+          'finishes and site timeouts >= 180 s')
+    check(all(i['mime'] == 'image/png' for i in by['building']['images']), 'building reads drawing pages')
+    check(all(i['mime'] == 'image/jpeg' for i in by['finishes']['images']), 'finishes reads the photos')
+    check(all(i['mime'] == 'image/png' for i in by['site']['images']), 'site reads the plot pages')
+
+
+def scenario_stages_with_nothing_to_read_are_skipped():
+    drawing, plot, photo = _fresh()
+    m = Model()
+    result, notes, err = _run(m, drawings=[{'id': drawing, 'pages': [1]}], photos=[], site=None)
+    check(err is None and [c['stage'] for c in m.calls] == ['building'],
+          f'no paid call for a stage with no images: {[c["stage"] for c in m.calls]}')
+    plan = ts.current()
+    check(plan['materials']['siding']['id'] == KIT['materials']['siding']['asset'], 'kit finishes without photos')
+    check(not plan['site'].get('pool') and not plan['site'].get('hardscape'), 'no invented site without a plot plan')
+    check(any('finishes' in n for n in notes) and any('site' in n for n in notes), notes)
+    drawing, plot, photo = _fresh()
+    m = Model()
+    result, notes, err = _run(m, drawings=[], photos=[photo], site={'id': plot, 'pages': [1]})
+    check(result is None and err and m.calls == [], 'no drawing pages: refused before any call')
+
+
+def scenario_blank_rooms_get_descriptive_names_not_random_ha_areas():
+    from services import ha_api
+    drawing, plot, photo = _fresh()
+    f = _fixture()
+    rooms = f['buildings'][0]['rooms']
+    rooms[0]['name'] = 'Sitting'
+    rooms[2]['name'] = ''
+    orig = ha_api.get_area_registry
+    ha_api.get_area_registry = lambda *a, **k: [{'area_id': 'k', 'name': 'Kitchen'}, {'area_id': 'g', 'name': 'Garage'}]
+    try:
+        m = Model({'building': {'buildings': f['buildings']}})
+        _run(m, drawings=[{'id': drawing, 'pages': [1]}], photos=[photo], site={'id': plot, 'pages': [1]})
+    finally:
+        ha_api.get_area_registry = orig
+    names = [r['name'] for r in ts.current()['buildings'][0]['rooms']]
+    check(names[0] == 'Sitting', names)
+    check(names[2] and names[2] not in ('Kitchen', 'Garage'), f'a blank room is not handed an unrelated HA area: {names}')
+    check(len(names) == len(set(names)), f'names are unique: {names}')
+
+
 def scenario_no_key_is_an_error_not_a_call():
     drawing, plot, photo = _fresh(key=False)
     m = Model()
@@ -239,6 +288,9 @@ if __name__ == '__main__':
                scenario_finishes_outside_the_kit_are_replaced,
                scenario_checkpoint_stops_before_the_next_stage,
                scenario_rooms_are_named_with_or_without_ha,
+               scenario_stages_get_real_timeouts_and_their_own_images,
+               scenario_stages_with_nothing_to_read_are_skipped,
+               scenario_blank_rooms_get_descriptive_names_not_random_ha_areas,
                scenario_no_key_is_an_error_not_a_call,
                scenario_unknown_sources_are_refused,
                scenario_draft_route_and_tier):

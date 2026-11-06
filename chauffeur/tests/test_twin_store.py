@@ -312,7 +312,7 @@ def scenario_junk_plans_are_400s_once_a_plan_exists():
     _fresh()
     c = _client()
     c.put('/api/house/twin/plan', json={'plan': _plan(), 'reason': 'seed'})
-    for junk in (None, [], 'x', {'site': 'junk'}, {'site': [1]}, {'site': None}):
+    for junk in (None, [], 'x', {'site': 'junk'}, {'site': [1]}, {'site': None}, {'site': {'planting': 5}}):
         r = c.put('/api/house/twin/plan', json={'plan': junk, 'reason': 'junk'})
         check(r.status_code == 400, f'{junk!r} with a current round -> {r.status_code}')
 

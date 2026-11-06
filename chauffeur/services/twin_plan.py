@@ -250,6 +250,9 @@ def record_compose_overrides(before: dict, after: dict) -> dict:
             or not isinstance(before.get('site', {}), dict)
             or not isinstance(after.get('site', {}), dict)):
         return after
+    if any(not isinstance(plan.get('site', {}).get(name, []), list)
+           for plan in (before, after) for name in ('planting', 'beds', 'edges')):
+        return after
     result = deepcopy(after)
     site = result.setdefault('site', {})
     overrides = _compose_overrides(before.get('site', {}).get('compose_overrides'), [])

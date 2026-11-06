@@ -1,6 +1,7 @@
 """Three metered, resumable foreground calls to draft a household twin."""
 from copy import deepcopy
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -36,7 +37,9 @@ Each building uses this schema (optional details may be omitted):
   "roof": {"main":{"kind":"gable", "ridge_axis":"y", "x0":0, "x1":30,
                    "y0":0, "y1":20, "pitch":11, "plate":10, "overhang":1},
            "extensions":[{"kind":"shed_continuation", "side":"x1", "to_x":37,
-                          "pitch":3, "overhang":1}]},
+                          "pitch":3, "overhang":1},
+                         {"kind":"awning", "wall":"front", "x0":17, "x1":30,
+                          "depth":4, "pitch":2, "eave":9, "brackets":3}]},
   "porch": {"polygon":[[30,0],[37,0],[37,20],[30,20]], "floor":0.5,
             "columns":[{"at":[36,1], "size":0.667}]},
   "fixtures": [{"kind":"counter", "level":"L1", "rect":[1,1,5,3], "height":3}],
@@ -77,6 +80,7 @@ the plot plan. Do not invent planting or furnishings; composition adds those.
 """ + _RULES
 
 _LOCK = threading.Lock()
+logger = logging.getLogger(__name__)
 
 
 def _save(path, value):
@@ -117,6 +121,8 @@ def _images(drawings, photos, site):
     for stage, selected in images.items():
         if len(selected) > 16:
             raise ValueError(f'The {stage} stage accepts at most 16 pages or photos.')
+    if not images['building']:
+        raise ValueError('A twin draft needs at least one drawing page.')
     return images
 
 
@@ -139,8 +145,10 @@ def _stage(stage, root, key, prompt, user, images, run, settings):
         answer = model_pools.call_pool_json(
             'twin', key, prompt, user, images=images, strict_json=True,
             max_models=1, max_output_tokens=16384 if stage == 'building' else 8192,
+            timeout_s=300 if stage == 'building' else 180,
             usage=usage, settings=settings)
     except Exception as exc:
+        logger.exception('Twin draft %s %s stage failed', run, stage)
         answer = {'error': str(exc)}
     finally:
         twin_cost.record(stage, usage, run)
@@ -215,27 +223,38 @@ def draft(drawings: list[dict], photos: list[str], site: dict | None,
                           images['building'], run, settings)
         if 'error' in building:
             return None, notes, f"building failed: {building['error']}"
-        finishes = _stage('finishes', root, key, FINISHES_PROMPT,
-                          'Match these photos using the kit material roles and defaults: '
-                          + json.dumps(kit['materials']) + '\nAllowed asset IDs: '
-                          + json.dumps(sorted({v['asset'] for v in kit['materials'].values()})),
-                          images['finishes'], run, settings)
-        site_answer = _stage('site', root, key, SITE_PROMPT,
-                             'Read these plot plan pages. Buildings (local geometry): '
-                             + json.dumps(building['buildings']), images['site'], run, settings)
+        if images['finishes']:
+            finishes = _stage('finishes', root, key, FINISHES_PROMPT,
+                              'Match these photos using the kit material roles and defaults: '
+                              + json.dumps(kit['materials']) + '\nAllowed asset IDs: '
+                              + json.dumps(sorted({v['asset'] for v in kit['materials'].values()})),
+                              images['finishes'], run, settings)
+        else:
+            finishes = {'materials': {}}
+            notes.append('Skipped finishes: no photos; using kit defaults.')
+        if images['site']:
+            site_answer = _stage('site', root, key, SITE_PROMPT,
+                                 'Read these plot plan pages. Buildings (local geometry): '
+                                 + json.dumps(building['buildings']), images['site'], run, settings)
+        else:
+            site_answer = {'site': {}}
+            notes.append('Skipped site: no plot pages; using an empty site.')
         site_data = {}
         if 'error' in site_answer:
             notes.append(f"site failed; using an empty site: {site_answer['error']}")
         else:
             site_data.update(site_answer['site'])
+        positions = site_data.pop('building_positions', {})
         plan, normalized_notes = twin_plan.normalize({
             'units': 'ft', 'buildings': building['buildings'],
             'materials': _materials(finishes, kit, notes), 'site': site_data})
         notes.extend(normalized_notes)
-        names = iter(metadata['area_names'])
-        room_number = 0
-        positions = site_data.get('building_positions', {})
+        reserved_names = {room['name'].strip().casefold()
+                          for building in plan['buildings'] for room in building['rooms']
+                          if isinstance(room.get('name'), str) and room['name'].strip()}
+        used_names, room_numbers = set(), {}
         for building in plan['buildings']:
+            levels = {level['id']: level for level in building['levels']}
             position = positions.get(building.get('id')) if isinstance(positions, dict) else None
             if position is not None:
                 if (isinstance(position, list) and len(position) == 2
@@ -244,9 +263,23 @@ def draft(drawings: list[dict], photos: list[str], site: dict | None,
                 else:
                     notes.append(f"Ignored invalid site position for {building.get('id')}.")
             for room in building['rooms']:
-                room_number += 1
-                if not isinstance(room.get('name'), str) or not room['name'].strip():
-                    room['name'] = next(names, f'Room {room_number}')
+                name = room.get('name')
+                name = name.strip() if isinstance(name, str) else ''
+                if not name or name.casefold() in used_names:
+                    level = levels[room['level']]
+                    level_name = level.get('name')
+                    level_name = (level_name.strip() if isinstance(level_name, str)
+                                  and level_name.strip() else level['id'])
+                    stem = f'{level_name} room'
+                    number = room_numbers.get(stem.casefold(), 0) + 1
+                    while f'{stem} {number}'.casefold() in reserved_names | used_names:
+                        number += 1
+                    room_numbers[stem.casefold()] = number
+                    if name:
+                        notes.append(f'Renamed duplicate room {name} to {stem} {number}.')
+                    name = f'{stem} {number}'
+                room['name'] = name
+                used_names.add(name.casefold())
         plan, composed_notes = twin_compose.compose(plan, kit, seed=1)
         notes.extend(composed_notes)
         cost = math.fsum(entry['usd'] for entry in twin_cost.entries() if entry.get('run') == run)
@@ -257,6 +290,7 @@ def draft(drawings: list[dict], photos: list[str], site: dict | None,
         exc.run = run
         raise
     except Exception as exc:
+        logger.exception('Twin draft %s failed', run)
         return None, notes, str(exc)
     finally:
         _LOCK.release()
