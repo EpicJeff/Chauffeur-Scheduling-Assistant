@@ -244,6 +244,7 @@ RULES = [
     (ANY, '/drive_setup', ANYONE, None),
     (ANY, '/kitchen', ANYONE, None),
     (ANY, '/house', ANYONE, None),
+    (ANY, '/house/twin', ANYONE, None),
     # Missions: public redirect to Projects; mission APIs remain gated below.
     (ANY, '/missions', ANYONE, None),
     # Study (task 2): same admin-page shape as Mind — a shell anyone can

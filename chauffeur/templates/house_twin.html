@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>House preview</title>
+  {% include 'ha_theme.html' %}
+  <script>window.chfBase = "../";</script>
+  <script>
+    // Resolve against the page, preserving the Home Assistant ingress prefix.
+    window.twinManifest = {{ twin_manifest | tojson }};
+    const twinBase = window.chfBase;
+    // Existing nav and sign-in components use the shared precompiled sheet.
+    // The preview controls below add no Tailwind utility classes.
+    for (const path of [{{ 'static/tailwind.css' | ver | tojson }}, {{ 'static/vendor/fonts/inter/inter.css' | ver | tojson }}]) {
+      const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = twinBase + path;
+      document.head.appendChild(link);
+    }
+    const twinImports = {
+      'three': twinBase + {{ 'static/vendor/three-r187/three.module.js' | ver | tojson }},
+      'three/addons/': twinBase + 'static/vendor/three-r187/addons/',
+      '@dgreenheck/ez-tree': twinBase + {{ 'static/vendor/ez-tree/ez-tree.es.js' | ver | tojson }}
+    };
+    {% for name in ['twin_generator', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view'] %}
+    twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
+    {% endfor %}
+    const twinMap = document.createElement('script'); twinMap.type = 'importmap';
+    twinMap.textContent = JSON.stringify({ imports: twinImports }); document.head.appendChild(twinMap);
+    document.addEventListener('DOMContentLoaded', () => {
+      const twinAlpine = document.createElement('script');
+      twinAlpine.src = twinBase + {{ 'static/vendor/alpine.min.js' | ver | tojson }};
+      document.head.appendChild(twinAlpine);
+    });
+  </script>
+  <style>
+    /* House's full-bleed scene and parchment controls (house.html:40-86). */
+    html, body { margin:0; height:100%; overflow:hidden; }
+    #twin-canvas, #twin-canvas canvas { position:absolute; inset:0; width:100%; height:100%; display:block; }
+    #twin-canvas canvas { touch-action:none; }
+    #twin-controls { position:fixed; left:16px; top:86px; right:16px; z-index:46; display:flex; flex-wrap:wrap; gap:8px; pointer-events:none; font:600 13px system-ui; }
+    #twin-controls fieldset { margin:0; padding:4px; display:flex; flex-wrap:wrap; gap:4px; border:1px solid rgba(227,211,171,.45); border-radius:16px; background:rgba(28,23,16,.82); color:#f0e6cf; pointer-events:auto; }
+    #twin-controls legend { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+    #twin-controls button { border:1px solid transparent; border-radius:999px; padding:6px 11px; min-height:44px; background:transparent; color:inherit; font:inherit; cursor:pointer; }
+    #twin-controls button[aria-pressed="true"] { background:rgba(227,211,171,.2); border-color:rgba(227,211,171,.45); }
+    #twin-controls button:hover, #twin-controls button:focus-visible { background:rgba(54,43,29,.94); outline:2px solid #e3d3ab; outline-offset:2px; }
+    #twin-tier, #twin-status { padding:8px 12px; border:1px solid rgba(227,211,171,.45); border-radius:8px; background:rgba(28,23,16,.9); color:#f0e6cf; font:13px/1.4 system-ui; }
+    #twin-tier { position:fixed; right:16px; bottom:calc(var(--panel-shelf-h, 0px) + 16px); z-index:46; }
+    #twin-status { position:fixed; left:16px; bottom:calc(var(--panel-shelf-h, 0px) + 16px); z-index:46; max-width:calc(100vw - 120px); }
+    [hidden] { display:none !important; }
+  </style>
+</head>
+<body>
+  {# Keep the same nav/auth gate as house.html. Its old one-segment static
+     markup needs the same extra climb as this page's own module URLs. #}
+  {% set twin_nav %}{% include 'nav.html' %}{% endset %}
+  {% autoescape false %}{{ twin_nav | replace('src="static/', 'src="../static/') | replace('href="static/', 'href="../static/') }}{% endautoescape %}
+  <main id="twin-canvas" aria-label="Interactive house preview"></main>
+  <div id="twin-controls" aria-label="House preview controls">
+    <fieldset><legend>View</legend><div id="twin-views"></div></fieldset>
+    <fieldset><legend>Time</legend><button type="button" data-time="day">Day</button><button type="button" data-time="night">Night</button></fieldset>
+    <fieldset><legend>Camera</legend><button type="button" data-camera="front">Front</button><button type="button" data-camera="porch">Porch</button><button type="button" data-camera="rear">Rear</button><button type="button" data-camera="top">Top</button></fieldset>
+  </div>
+  <output id="twin-tier" aria-label="Render tier">Loading</output>
+  <p id="twin-status" role="status">Loading the house preview…</p>
+  <div id="twin-parent-tools"></div>
+  <script>
+    // nav.html owns auth and navigation. Correct its one-segment page links
+    // here too, before its DOMContentLoaded propagation reads them.
+    document.querySelectorAll('a[href]').forEach(link => {
+      const href = link.getAttribute('href');
+      if (href && !/^(?:[a-z]+:|\/|#|\.\.\/)/i.test(href)) link.setAttribute('href', window.chfBase + href);
+    });
+  </script>
+  <script type="module">
+    import(window.chfBase + {{ 'static/twin/twin_view.js' | ver | tojson }}).catch(() => {
+      document.getElementById('twin-status').textContent = 'The house preview could not load.';
+    });
+  </script>
+</body>
+</html>

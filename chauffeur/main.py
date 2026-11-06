@@ -1953,6 +1953,14 @@ def kitchen_page(request: Request):
     (docs/superpowers/specs/2026-09-06-kitchen-design.md)."""
     return templates.TemplateResponse(request=request, name="kitchen.html")
 
+@app.get("/house/twin")
+def house_twin_page(request: Request):
+    """Hidden plan-driven preview; the existing House remains the front door."""
+    from services import twin_library
+    return templates.TemplateResponse(request=request, name="house_twin.html",
+                                      context={"twin_manifest": twin_library.manifest()})
+
+
 @app.get("/house")
 def house_page(request: Request):
     """The Home: the dollhouse the panel lives in (spec

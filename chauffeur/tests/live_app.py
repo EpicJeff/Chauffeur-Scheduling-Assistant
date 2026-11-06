@@ -73,15 +73,16 @@ def live_app(seed=None, boot_timeout=50.0):
         Alpine and logged, so a broken button looks exactly like a button
         nobody pressed — every scenario here asserts the list is empty.
         """
-        def __init__(self, page_kw=None):
+        def __init__(self, page_kw=None, launch_args=None):
             self._pw = None
             self._b = None
             self._page_kw = dict(page_kw or {})
+            self._launch_args = launch_args
             self.errors = []
 
         def __enter__(self):
             self._pw = sync_playwright().start()
-            self._b = self._pw.chromium.launch()
+            self._b = self._pw.chromium.launch(args=self._launch_args)
             page = self._b.new_page(viewport={'width': 1400, 'height': 1000},
                                     **self._page_kw)
             page.on('pageerror', lambda e: self.errors.append(str(e)))
@@ -104,12 +105,12 @@ def live_app(seed=None, boot_timeout=50.0):
     )
     holder = {}
 
-    def browser(**page_kw):
+    def browser(*, launch_args: list[str] | None = None, **page_kw):
         """A page, plus its error record. Keywords ride straight through to
         Playwright's `new_page` (`has_touch=True` for a touch surface --
         the wall panel is one, and a gesture handler that only works under
         a mouse is a handler that does not ship)."""
-        holder['b'] = _Browser(page_kw)
+        holder['b'] = _Browser(page_kw, launch_args)
         return holder['b']
 
     handle.browser = browser

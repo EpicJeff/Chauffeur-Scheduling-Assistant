@@ -12,6 +12,7 @@ from services import twin_store
 
 _ROOT = Path(__file__).resolve().parent.parent
 _LOCK = threading.Lock()
+_ASSET_LOCKS: dict[str, threading.Lock] = {}
 _urlopen = urlopen
 
 
@@ -32,12 +33,18 @@ def kit(kit_id: str) -> dict:
 
 def ensure(asset_id: str) -> str:
     """Return the complete asset directory; failed downloads publish nothing."""
-    asset = manifest()[asset_id]
+    assets = manifest()
+    asset = assets[asset_id]
     library = Path(twin_store.DATA_DIR) / 'library'
     target = library / asset_id
-    # Sync routes run in worker threads. A second caller must wait for the
-    # first download rather than fetching the same files again.
+    # Published directories are complete (atomic rename below). Cached reads
+    # never wait for an unrelated asset's download or even the lock registry.
+    if target.is_dir():
+        return str(target)
     with _LOCK:
+        asset_lock = _ASSET_LOCKS.setdefault(asset_id, threading.Lock())
+    # Sync routes run in worker threads: serialize only the same asset.
+    with asset_lock:
         if target.is_dir():
             return str(target)
         try:
