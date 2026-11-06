@@ -3,9 +3,12 @@ import base64
 from contextlib import closing
 import io
 import math
+import threading
 
 import pypdfium2 as pdfium
 from PIL import Image
+
+_RENDER_LOCK = threading.Lock()  # PDFium forbids simultaneous calls across threads.
 
 
 def render_pages(pdf: bytes, dpi: int = 150, max_side: int = 2048,
@@ -15,7 +18,7 @@ def render_pages(pdf: bytes, dpi: int = 150, max_side: int = 2048,
                       for v in (dpi, max_side, max_pages)):
         raise ValueError('A readable PDF and positive render limits are required.')
     try:
-        with closing(pdfium.PdfDocument(pdf)) as doc:
+        with _RENDER_LOCK, closing(pdfium.PdfDocument(pdf)) as doc:
             if not len(doc):
                 raise ValueError('The drawing has no pages.')
             pages = []
