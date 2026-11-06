@@ -102,9 +102,10 @@ def scenario_diff_paths_names_leaves():
 - Produces:
   - `twin_pdf.render_pages(pdf: bytes, dpi: int = 150, max_side: int = 2048, max_pages: int = 16) -> list[dict]`, each `{'page': int (1-based), 'mime': 'image/png', 'b64': str}`.
   - `twin_store.DATA_DIR`: `os.path.join(os.path.dirname(storage.DB_PATH), 'twin')`. Plans per round live in `DATA_DIR/rounds/<n>.json`; the settings key `house_twin` holds `{current: int|None, rounds: [{id, kind, created, note, cost, run}], fixes: [...], sources: [...]}`.
-  - `current() -> dict | None`, `rounds() -> list[dict]`, `push_round(plan: dict, kind: str, note: str = '', cost: float | None = None, run: str | None = None) -> int` (kind in `'draft', 'director', 'hand', 'revert'`), `revert(round_id: int) -> dict` (pushes a `'revert'` round copying that plan), `save_hand_edit(plan: dict, reason: str) -> int` (normalises, logs one fix per `diff_paths` entry, pushes a `'hand'` round), `fixes() -> list[{path, before, after, reason, round, at}]`.
+  - `current() -> dict | None`, `current_id() -> int | None`, `rounds() -> list[dict]` (each row also carries `stale: bool`), `push_round(plan: dict, kind: str, note: str = '', cost: float | None = None, run: str | None = None, base: int | None = None) -> int` (kind in `'draft', 'director', 'hand', 'revert'`). When `base` is given and is not `current_id()`, the round is saved with `stale: True` and the current pointer does NOT move: a delayed model result never overwrites newer work; it stays in the list for review. `revert(round_id: int) -> dict` (pushes a `'revert'` round copying that plan), `save_hand_edit(plan: dict, reason: str, base: int | None = None) -> int` (normalises, logs one fix per `diff_paths` entry, pushes a `'hand'` round; raises `StaleRound` when `base` is stale), `fixes() -> list[{path, before, after, reason, round, at}]`.
+  - One module-level `threading.Lock` serialises every mutation: round id allocation, the round file write (temp file then rename), the settings row and the fix log.
   - `save_source(kind: str, filename: str, data: bytes) -> str` (kind in `'drawing', 'photo'`; drawings are rendered to pages once at upload), `sources() -> list[{id, kind, filename, pages}]`, `source_images(source_id: str, pages: list[int] | None = None) -> list[{'mime','b64'}]`.
-  - Routes: `GET /api/house/twin` -> `{plan, rounds, kit_id}` (WALL_OR_SERVICE); `POST /api/house/twin/sources` multipart `kind`, `file` -> source row (PARENTS); `GET /api/house/twin/sources` (PARENTS); `PUT /api/house/twin/plan` body `{plan, reason}` -> `{round}` (PARENTS); `POST /api/house/twin/revert` body `{round}` (PARENTS); `GET /api/house/twin/fixes` (PARENTS).
+  - Routes: `GET /api/house/twin` -> `{plan, rounds, kit_id}` (WALL_OR_SERVICE); `POST /api/house/twin/sources` multipart `kind`, `file` -> source row (PARENTS); `GET /api/house/twin/sources` (PARENTS); `PUT /api/house/twin/plan` body `{plan, reason, base}` -> `{round}`, 409 when `base` is stale (PARENTS); `POST /api/house/twin/revert` body `{round}` (PARENTS); `GET /api/house/twin/fixes` (PARENTS).
 
 - [ ] **Step 1: Write the failing tests.** Use `CHAUFFEUR_DATA_DIR` set to a temp dir before imports, and FastAPI `TestClient` against `main.app` as an authenticated parent (see how `tests/test_house_facade.py` `scenario_routes_and_template` authenticates).
 
@@ -139,6 +140,8 @@ def scenario_an_unparseable_upload_is_a_400_not_a_500():
 **Interfaces:**
 - Produces:
   - `model_pools.call_pool_json(..., usage: list = None)`: when a list is passed, each provider request appends `{'model': str, 'input_tokens': int, 'output_tokens': int}` from the request's metrics (`promptTokenCount`; `candidatesTokenCount` plus `thoughtsTokenCount` when present). Existing callers are unchanged.
+  - Every twin model call passes `max_models=1`, so one `call_pool_json` is at most one provider request and the checkpoint is checked before every request (Codex review: a pool can otherwise launch a second billed candidate after the first crossed a checkpoint).
+  - A dispatched request whose usage never came back (timeout after send, decode failure) still appends a usage entry with `input_tokens` and `output_tokens` set to `None`; `record` costs it conservatively: input estimated as 1,600 tokens per image plus prompt characters / 4, output as the call's `max_output_tokens`, both at the highest rate. So usage entries carry `images: int`, `prompt_chars: int`, `max_output_tokens: int`, and ledger entries carry `basis: 'reported' | 'estimated'`.
   - `twin_cost.PRICES: dict[str, tuple[float, float]]` (USD per million input and output tokens, keyed by the prefixed model id `model_pools` returns). Fill from each provider's pricing page on the day of implementation, with that date in a comment.
   - `twin_cost.CHECKPOINTS = (10.0, 25.0, 50.0)`, `ROUND_CAP = 5`.
   - `price(model: str, input_tokens: int, output_tokens: int) -> tuple[float, bool]` (`bool` = priced; unpriced models use the highest rate in `PRICES` for each side).
@@ -160,6 +163,8 @@ def scenario_checkpoints_block_until_acknowledged():
     # record usage worth $10.01 -> require_clear raises with checkpoint 10.0; acknowledge(10.0) -> clear; $25.01 -> blocks at 25.0
 def scenario_a_round_that_crosses_a_checkpoint_is_kept():
     # total $9.80, record a $0.60 round -> entries saved, total $10.40, blocking == 10.0
+def scenario_missing_usage_is_costed_conservatively():
+    # a usage entry with None tokens, images=2, prompt_chars=4000, max_output_tokens=8192 -> basis 'estimated', usd at the highest rates for 4200 in / 8192 out
 def scenario_call_pool_json_reports_usage():
     # stub llm.call_model to fill metrics; usage list gets one entry per provider request, including a failed first candidate
 def scenario_cost_routes():
@@ -214,7 +219,8 @@ def scenario_missing_asset_falls_back():
 
 **Interfaces:**
 - Consumes: plan from Task 1, kit from Task 4.
-- Produces: `compose(plan: dict, kit: dict, seed: int = 1) -> tuple[dict, list[str]]`. Every item it adds to `site.beds`, `site.planting` and `site.edges` carries `"by": "compose"`; a rerun first removes only `by == "compose"` items. Uses `random.Random(seed)`.
+- Modify also: `chauffeur/services/twin_plan.py`: the schema gains `site.compose_overrides: {removed: [id], moved: {id: [x, y]}}` (default empty), and `record_compose_overrides(before: dict, after: dict) -> dict` returns `after` with overrides updated (a compose id present before and absent after joins `removed`; a compose item whose `at` changed joins `moved`). `twin_store.save_hand_edit` calls it; Task 8 wires `merge_director`.
+- Produces: `compose(plan: dict, kit: dict, seed: int = 1) -> tuple[dict, list[str]]`. Every item it adds to `site.beds`, `site.planting` and `site.edges` carries `"by": "compose"` and a stable `"id"` of the form `cmp-<rule>-<n>` (same plan, kit and seed give the same ids). A rerun first removes only `by == "compose"` items, regenerates, then applies `site.compose_overrides`: ids in `removed` are not re-added, ids in `moved` take the stored position. Uses `random.Random(seed)`.
   - Foundation beds `foundation_bed_depth_ft` deep along each exterior wall, except where hardscape, a porch or another bed already touches the wall, and broken around doors (`sill == 0`) by `door_clearance_ft`.
   - Shrubs in each bed at `shrub_spacing_ft`, in consecutive groups of one preset whose size is drawn from `group_sizes`, heights within `shrub_height_ft`.
   - A backdrop tree line inside `site.lot` along every lot edge at least `backdrop_min_building_ft` from any building: `backdrop_rows` rows `backdrop_row_gap_ft` apart, spacing `backdrop_spacing_ft ± backdrop_jitter_ft`, heights within `backdrop_height_ft`.
@@ -229,6 +235,8 @@ def scenario_compose_is_deterministic():
     check(a == b, 'same seed, same yard')
 def scenario_compose_is_idempotent_and_keeps_foreign_items():
     # add a hand planting without 'by'; compose twice -> hand item present once, compose items identical to a single run
+def scenario_removed_and_moved_compose_items_survive_recompose():
+    # delete one compose shrub and move another (record_compose_overrides), recompose -> the deleted id stays gone, the moved one keeps its new 'at'
 def scenario_beds_hug_the_walls_and_skip_doors():
     # every compose bed touches an exterior wall, depth == 5, no bed within 3 ft of a sill-0 opening
 def scenario_shrub_groups_are_odd():
@@ -261,7 +269,8 @@ def scenario_backdrop_lines_far_edges_only():
     1. `'building'`: drawing pages, giving `buildings` (walls, openings, rooms, stairs, roof, porch, fixtures, lights from an electrical sheet). Rooms the drawings leave unnamed take HA area names when HA is reachable (passed in the prompt as a list); with no HA, they get descriptive names.
     2. `'finishes'`: photos plus the kit's material roles and allowed assets, giving `materials` (asset ids from the kit only, colours as hex).
     3. `'site'`: the plot plan pages, giving `site.lot`, hardscape, pool, fire pit, and building positions on the lot.
-  - Then `normalize`, `compose`, `push_round(plan, 'draft', note, cost, run)`.
+  - Each completed stage's result is persisted under the run (`DATA_DIR/runs/<run>/<stage>.json`) before the next stage starts. `draft(..., run=<id>)` with an existing run skips stages already stored, so a draft stopped at a checkpoint resumes after acknowledgement without paying for finished stages again. The signature becomes `draft(drawings, photos, site, kit_id='modern_farmhouse', run: str | None = None)`; the route body takes an optional `run` and the 409 body returns it.
+  - Then `normalize`, `compose`, `push_round(plan, 'draft', note, cost, run, base=<current id when the draft started>)`.
   - Prompts are module constants (`BUILDING_PROMPT`, `FINISHES_PROMPT`, `SITE_PROMPT`) stating the schema fragment each call must return, feet, the axes rule, and "return only what the drawings show; omit what you cannot read".
   - Route: `POST /api/house/twin/draft` body `{drawings, photos, site, kit}` -> `{result, notes}`; 409 with `{checkpoint, total}` on `CheckpointReached`; 409 while a draft is already running (PARENTS).
 
@@ -276,7 +285,11 @@ def scenario_a_partial_model_answer_still_drafts():
 def scenario_finishes_outside_the_kit_are_replaced():
     # model names an asset not in the kit -> kit default for that role, with a note
 def scenario_checkpoint_stops_before_the_next_stage():
-    # ledger at $9.99, building stage costs $0.02 -> finishes stage never called, route answers 409 {checkpoint: 10.0}
+    # ledger at $9.99, building stage costs $0.02 -> finishes stage never called, route answers 409 {checkpoint: 10.0, total, run}
+def scenario_a_stopped_draft_resumes_without_repaying():
+    # after the 409, acknowledge(10.0) and draft(run=<same>) -> the building stub is NOT called again; finishes and site are; one draft round
+def scenario_each_stage_is_one_provider_request():
+    # call_pool_json is called with max_models=1 for every stage
 def scenario_no_ha_still_names_rooms():
     # ha_api raises -> draft succeeds, rooms named
 def scenario_draft_route_runs_through_the_app():
@@ -294,20 +307,20 @@ def scenario_draft_route_runs_through_the_app():
 **Files:**
 - Create: `chauffeur/static/vendor/three-r187/` (`three.module.js`, `three.core.js`, and only the addons used: `controls/OrbitControls.js`, `loaders/GLTFLoader.js`, `loaders/HDRLoader.js`, `utils/BufferGeometryUtils.js`, `lights/RectAreaLightUniformsLib.js` and its `RectAreaLightTexturesLib.js`), `chauffeur/static/vendor/ez-tree/ez-tree.es.js` (1.1.0, MIT, licence file beside it)
 - Create: `chauffeur/static/twin/twin_generator.js`, `twin_yard.js`, `twin_tiers.js`, `twin_library.js`, `twin_view.js`; `chauffeur/templates/house_twin.html`
-- Modify: `chauffeur/main.py` (`GET /house/twin`), `chauffeur/services/auth.py` (`(ANY, '/house/twin', ANYONE, None)`, as `/house`)
+- Modify: `chauffeur/main.py` (`GET /house/twin`), `chauffeur/services/auth.py` (`(ANY, '/house/twin', ANYONE, None)`, as `/house`), `chauffeur/tests/live_app.py` (`browser()` gains a `launch_args: list[str] | None = None` keyword passed to `chromium.launch(args=...)`; existing callers unchanged)
 - Test: `chauffeur/tests/test_twin_view_live.py` (uses `tests/live_app.py` `live_app`, as `tests/test_house_facade_live.py` does; Chromium launched with `--use-angle=gl --enable-gpu --ignore-gpu-blocklist`, memory `house-render-headroom`)
 
 **Interfaces:**
 - Consumes: `GET /api/house/twin`, `GET /api/house/twin/kit/{id}`, library route.
 - Produces:
   - `twin_tiers.js`: `export const TIERS = { low: {...}, high: {...} }` and `export function pickTier(search: URLSearchParams, gl: WebGL2RenderingContext) -> 'low' | 'high'` (`?tier=` wins; otherwise `low` when the renderer string names a VideoCore/V3D GPU or `navigator.hardwareConcurrency <= 4`). Low: pixel ratio 1, no antialias, no shadow map, trees as two crossed alpha cards baked once per preset, shrubs at most 300 leaves, no room rect lights in daylight, budget **≤ 120 draw calls and ≤ 200k triangles** at the front camera. High: pixel ratio `min(devicePixelRatio, 2)`, antialias, one 4096 sun shadow, full EZ-Tree plants, rect lights at night.
-  - `twin_library.js`: `export function libUrl(assetId, name)` (built on `base()`), `export function kitMaterial(role, kit, tier) -> THREE.Material` (falls back to a plain `MeshStandardMaterial` in the kit colour when a texture fails).
+  - `twin_library.js`: `export function libUrl(assetId, name)` (built on `base()`, then passed through `window.chfAuthUrl` when it exists, because loader image requests bypass nav.html's fetch wrapper; house_twin.html includes nav.html's auth helpers as house.html does), `export function kitMaterial(role, kit, tier) -> THREE.Material` (falls back to a plain `MeshStandardMaterial` in the kit colour when a texture fails).
   - `twin_generator.js`: `export function buildTwin(plan, kit, tier) -> { root, groups: { site, roof, gableFull, gableCut, lights, levels: { [levelId]: THREE.Group } }, roomLights }`. Ports the spike's wall, opening, gable, roof (pitch change, awning), stair, porch and fixture builders, with the spike's merge helper, upstairs walls clipped under the roof, and cut gables for floor views. All static geometry merged per material.
   - `twin_yard.js`: `export async function buildYard(plan, kit, tier) -> { group, triangles }` (EZ-Tree presets by seed, scaled to `height`; library models; beds; fence; edge grass along `site.edges` as instanced blades in High, omitted in Low).
   - `twin_view.js`: `export async function mountTwin(el, { plan, kit, tier }) -> view` with `view.setView('ext' | levelId)`, `view.setTime('day' | 'night')`, `view.setCamera('front' | 'porch' | 'rear' | 'top')`, `view.capture(names: string[], width = 1280, height = 800) -> Promise<string[]>` (PNG data URLs), `view.stats() -> { drawCalls, triangles, tier }`, `view.rebuild(plan)`, `view.dispose()`; sets `window.__twin = view`.
   - `house_twin.html`: full-bleed canvas, the view/time/camera chips, a tier badge, and the parent tools sheet (Task 8 fills it); loads modules via an import map pointing at the vendored files.
 
-- [ ] **Step 1: Write the failing live tests** (seed the fixture through `PUT /api/house/twin/plan`, library route stubbed to serve two tiny local textures).
+- [ ] **Step 1: Write the failing live tests.** Seed the fixture **after `twin_compose.compose(plan, kit, seed=1)`**, so the budget includes the composed yard, through `PUT /api/house/twin/plan`; library textures stubbed small, EZ-Tree plants real; print the renderer string.
 
 ```python
 def scenario_page_boots_and_draws_the_pool_house():
@@ -322,6 +335,10 @@ def scenario_night_lights_rooms():
     # setTime('night') at High: roomLights visible count == plan lights count
 def scenario_capture_returns_pngs():
     # capture(['front','top']) -> two data:image/png URLs of the requested size
+def scenario_library_urls_carry_auth_under_enforcement():
+    # auth_enforce on, local grace off, a paired panel device token -> library texture requests answer 200, none 401 (a separate live file if harness.py must not be imported under enforcement, memory auth-flip-aftermath)
+def scenario_low_budget_holds_in_floor_views_too():
+    # ?tier=low: setView('L1') and setView('L2') at the top camera also within 120 draw calls / 200k triangles
 def scenario_page_draws_with_the_library_offline():
     # library route returns 404 for everything -> page still boots, materials fall back to kit colours
 ```
@@ -344,7 +361,7 @@ def scenario_page_draws_with_the_library_offline():
 - Consumes: `twin_store`, `twin_cost`, `twin_plan.merge_director`, `twin_library.kit`, `view.capture`, `view.rebuild`.
 - Produces:
   - `critique(run: str, renders: list[str], cameras: list[str]) -> tuple[dict | None, str | None]`: `result = {round, critique, done, plan, cost}`. The prompt carries the kit's `style_guide`, the household's photo sources (at most 4), the renders labelled by camera, the current `site` and `materials` JSON, and the kit's allowed assets and presets. The model returns `{critique, done, site, materials}`. Rounds per `run` are capped at `ROUND_CAP`; the sixth answers `'round cap reached'`. Compose is **not** rerun after a director round.
-  - Route: `POST /api/house/twin/critique` body `{run, renders: [base64 png], cameras}` -> `{result}`; 409 `{checkpoint, total}` on a checkpoint; 409 `'round cap reached'`; 409 while a round is in flight (PARENTS).
+  - Route: `POST /api/house/twin/critique` body `{run, renders: [base64 png], cameras, base}` -> `{result}` (the round is pushed with `base`; a stale result is kept as a stale round, the response says `stale: true`, and the client stops the loop and tells the person); 409 `{checkpoint, total}` on a checkpoint; 409 `'round cap reached'`; 409 while a round is in flight (PARENTS).
   - `twin_director.js`: `export async function runDirector(view, { run, cameras = ['front','porch','rear','top'], onRound })`: capture, POST, `view.rebuild(result.plan)`, report critique and running cost, loop until `done`, the cap, or a checkpoint. On a checkpoint it shows `promptConfirm('Spent $X so far', 'Continue to the next checkpoint?', 'Continue', 'Stop')`, posts `/api/house/twin/cost/ack` and continues only on Continue.
   - Tools sheet (parents only; hidden for a panel device): upload drawings and photos; pick pages per drawing; Draft; Run art director; the rounds list with Revert; the running cost; a plan JSON editor (save goes to `PUT /api/house/twin/plan` with a required reason, so every hand fix is logged).
 
@@ -355,6 +372,8 @@ def scenario_page_draws_with_the_library_offline():
 def scenario_a_round_changes_only_site_and_materials():
 def scenario_director_rounds_do_not_rerun_compose():
     # director removes a compose shrub -> next round's plan still lacks it
+def scenario_a_revert_during_a_critique_wins():
+    # critique based on round 2; a revert to round 1 lands first -> the critique's round is saved stale, current stays the revert
 def scenario_round_cap_is_five_per_run():
 def scenario_checkpoint_blocks_a_round():
 def scenario_assets_outside_the_kit_are_refused():
