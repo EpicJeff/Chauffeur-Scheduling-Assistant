@@ -308,6 +308,15 @@ def scenario_bad_requests_are_400s_not_500s():
     check(r.status_code == 200 and r.json()['plan'] is None, 'empty twin is a 200 with no plan')
 
 
+def scenario_junk_plans_are_400s_once_a_plan_exists():
+    _fresh()
+    c = _client()
+    c.put('/api/house/twin/plan', json={'plan': _plan(), 'reason': 'seed'})
+    for junk in (None, [], 'x', {'site': 'junk'}, {'site': [1]}, {'site': None}):
+        r = c.put('/api/house/twin/plan', json={'plan': junk, 'reason': 'junk'})
+        check(r.status_code == 400, f'{junk!r} with a current round -> {r.status_code}')
+
+
 def scenario_uploads_over_40mb_are_413():
     c = _client()
     r = c.post('/api/house/twin/sources', data={'kind': 'photo'},
@@ -341,6 +350,7 @@ if __name__ == '__main__':
                scenario_rendering_a_drawing_does_not_block_reads,
                scenario_routes_round_trip_through_the_app,
                scenario_bad_requests_are_400s_not_500s,
+               scenario_junk_plans_are_400s_once_a_plan_exists,
                scenario_uploads_over_40mb_are_413,
                scenario_auth_rules_are_declared):
         fn()

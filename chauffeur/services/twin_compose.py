@@ -174,7 +174,7 @@ def compose(plan: dict, kit: dict, seed: int = 1) -> tuple[dict, list[str]]:
     """Return a composed copy, retaining foreign items and recorded edits.
 
     Plans are normalized Task 1 plans, kits supply the composition rule values.
-    Explicit moved positions win over placement rules, including clearances.
+    Recorded moves apply where current lot and obstacle clearances permit.
     """
     result, notes, rng = deepcopy(plan), [], Random(seed)
     site, rules = result['site'], kit['composition']
@@ -241,10 +241,15 @@ def compose(plan: dict, kit: dict, seed: int = 1) -> tuple[dict, list[str]]:
     obstacles = footprint + hardscape
     occupied = list(site['planting'])
 
-    def placeable(at, kind):
+    def clear_ground(at):
         if not _inside(at, lot) or any(_inside(at, p) for p in obstacles):
             return False
         if pool and _poly_distance(at, pool) < rules['pool_clearance_ft'] + _EPS:
+            return False
+        return True
+
+    def placeable(at, kind):
+        if not clear_ground(at):
             return False
         for plant in occupied:
             if 'at' not in plant:
@@ -332,6 +337,11 @@ def compose(plan: dict, kit: dict, seed: int = 1) -> tuple[dict, list[str]]:
             if entry['id'] in removed:
                 continue
             if 'at' in entry and entry['id'] in moved:
-                entry['at'] = deepcopy(moved[entry['id']])
+                target = moved[entry['id']]
+                if clear_ground(target):
+                    entry['at'] = deepcopy(target)
+                else:
+                    notes.append(f"Skipped move for {entry['id']}: outside the lot or blocked "
+                                 'by a building, porch, hardscape or pool clearance.')
             site[name].append(entry)
     return result, notes

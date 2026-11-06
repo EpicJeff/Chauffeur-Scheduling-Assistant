@@ -246,6 +246,10 @@ def record_compose_overrides(before: dict, after: dict) -> dict:
     Existing overrides from either snapshot survive subsequent edits. Geometry
     without an ``at`` (beds and edges) supports deletion, but not translation.
     """
+    if (not isinstance(before, dict) or not isinstance(after, dict)
+            or not isinstance(before.get('site', {}), dict)
+            or not isinstance(after.get('site', {}), dict)):
+        return after
     result = deepcopy(after)
     site = result.setdefault('site', {})
     overrides = _compose_overrides(before.get('site', {}).get('compose_overrides'), [])

@@ -123,6 +123,19 @@ def scenario_removed_and_moved_compose_items_survive_recompose():
     check(ids[moved]['at'] == new_at, 'a moved compose shrub keeps its new place')
 
 
+def scenario_a_move_that_lands_in_the_pool_is_not_applied():
+    p, _ = tcm.compose(_plan(), KIT, seed=3)
+    shrub = [i for i in _ours(p['site']['planting']) if i['kind'] == 'shrub'][0]
+    target = [10.0, -20.0]                                  # inside the pool (x 2..36, y -28..-12)
+    p['site']['compose_overrides'] = {'removed': [], 'moved': {shrub['id']: target}}
+    again, notes = tcm.compose(p, KIT, seed=3)
+    placed = {i.get('id'): i for i in again['site']['planting']}[shrub['id']]
+    check(placed['at'] != target, 'a move into the pool is not applied')
+    check(any(shrub['id'] in n for n in notes), f'and the person is told: {notes}')
+    check(again['site']['compose_overrides']['moved'].get(shrub['id']) == target,
+          'the override stays recorded, so it applies again if the pool moves away')
+
+
 def scenario_beds_hug_the_walls_and_skip_doors():
     p, _ = tcm.compose(_plan(), KIT, seed=1)
     beds = _ours(p['site']['beds'])
@@ -225,6 +238,7 @@ if __name__ == '__main__':
                scenario_compose_does_not_mutate_its_input,
                scenario_compose_is_idempotent_and_keeps_foreign_items,
                scenario_removed_and_moved_compose_items_survive_recompose,
+               scenario_a_move_that_lands_in_the_pool_is_not_applied,
                scenario_beds_hug_the_walls_and_skip_doors,
                scenario_shrubs_sit_in_beds_in_odd_groups,
                scenario_nothing_lands_where_it_cannot,
