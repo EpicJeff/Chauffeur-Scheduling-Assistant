@@ -192,6 +192,59 @@ def scenario_sources_store_pages_and_photos():
         raise AssertionError('an unreadable drawing raises ValueError')
 
 
+def _img_bytes(fmt, frames=1):
+    from PIL import Image
+    buf = io.BytesIO()
+    ims = [Image.new('RGB', (8, 8), (i * 40, 90, 120)) for i in range(frames)]
+    if frames > 1:
+        ims[0].save(buf, format=fmt, save_all=True, append_images=ims[1:])
+    else:
+        ims[0].save(buf, format=fmt)
+    return buf.getvalue()
+
+
+def scenario_photos_are_checked_by_content_not_name():
+    _fresh()
+    png_as_jpg = ts.save_source('photo', 'dusk.jpg', _img_bytes('PNG'))
+    check(ts.source_images(png_as_jpg)[0]['mime'] == 'image/png', 'PNG bytes named .jpg are stored as PNG')
+    mpo = ts.save_source('photo', 'phone.jpg', _img_bytes('MPO', frames=2))
+    check(ts.source_images(mpo)[0]['mime'] == 'image/jpeg', 'a multi-picture (MPO) phone JPEG is accepted as JPEG')
+    for bad, name in ((b'not an image', 'x.jpg'), (_img_bytes('GIF'), 'x.png')):
+        try:
+            ts.save_source('photo', name, bad)
+        except ValueError:
+            continue
+        raise AssertionError(f'{name} with non-JPEG/PNG content raises ValueError')
+
+
+def scenario_rendering_a_drawing_does_not_block_reads():
+    import threading
+    import time
+    _fresh()
+    ts.push_round(_plan(), 'draft')
+    entered, release = threading.Event(), threading.Event()
+    orig = twin_pdf.render_pages
+
+    def slow(data, *a, **k):
+        entered.set()
+        release.wait(10)
+        return orig(data, *a, **k)
+    ts.twin_pdf.render_pages = slow
+    try:
+        t = threading.Thread(target=lambda: ts.save_source('drawing', 'big.pdf', _pdf(1)))
+        t.start()
+        check(entered.wait(10), 'render started')
+        t0 = time.monotonic()
+        check(ts.current() is not None and ts.rounds(), 'reads answer while a drawing renders')
+        check(time.monotonic() - t0 < 1.0, 'and answer promptly')
+        release.set()
+        t.join(10)
+    finally:
+        ts.twin_pdf.render_pages = orig
+        release.set()
+    check(len(ts.sources()) == 1, 'the upload still completes')
+
+
 def scenario_routes_round_trip_through_the_app():
     _fresh()
     c = _client()
@@ -270,6 +323,8 @@ if __name__ == '__main__':
                scenario_concurrent_pushes_get_unique_ids,
                scenario_hand_edits_log_each_changed_leaf,
                scenario_sources_store_pages_and_photos,
+               scenario_photos_are_checked_by_content_not_name,
+               scenario_rendering_a_drawing_does_not_block_reads,
                scenario_routes_round_trip_through_the_app,
                scenario_bad_requests_are_400s_not_500s,
                scenario_uploads_over_40mb_are_413,

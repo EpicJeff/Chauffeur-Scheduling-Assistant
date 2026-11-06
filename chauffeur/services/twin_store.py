@@ -19,7 +19,8 @@ from services import storage, twin_pdf, twin_plan
 DATA_DIR = os.path.join(os.path.dirname(storage.DB_PATH), 'twin')
 _LOCK = threading.Lock()
 _KINDS = {'draft', 'director', 'hand', 'revert'}
-_PHOTO_MIMES = {'JPEG': 'image/jpeg', 'PNG': 'image/png'}
+# Pillow identifies multi-picture phone JPEGs as MPO.
+_PHOTO_MIMES = {'JPEG': 'image/jpeg', 'MPO': 'image/jpeg', 'PNG': 'image/png'}
 
 
 class StaleRound(Exception):
