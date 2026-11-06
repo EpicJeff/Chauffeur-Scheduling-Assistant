@@ -504,13 +504,23 @@ def _call_chain(tier, api_key, system_prompt, user_prompt, temperature, timeout_
         settings = get_settings()
     deadline = None if total_timeout_s is None else time.monotonic() + total_timeout_s
     usage_start = len(usage) if usage is not None else 0
-    return with_paid_fallback(tier, api_key, settings, background,
-        lambda key, paid: _call_candidates(
+    previous_result = None
+
+    def call_chain(key, paid):
+        nonlocal previous_result
+        remaining = max_models - (len(usage) - usage_start) if usage is not None else max_models
+        # A spent shared budget must preserve the failure that used it up.
+        if usage is not None and remaining <= 0 and previous_result is not None:
+            return previous_result
+        previous_result = _call_candidates(
             tier, key, system_prompt, user_prompt, temperature, timeout_s,
-            gemma_timeout_s, (max_models - (len(usage) - usage_start) if usage is not None else max_models),
+            gemma_timeout_s, remaining,
             settings, images, background, workflow,
             strict_json, max_output_tokens, attempts, deadline,
-            thinking_level, response_schema, paid, usage=usage), paid_ok=paid_ok)
+            thinking_level, response_schema, paid, usage=usage)
+        return previous_result
+
+    return with_paid_fallback(tier, api_key, settings, background, call_chain, paid_ok=paid_ok)
 
 
 def _call_candidates(tier, api_key, system_prompt, user_prompt, temperature, timeout_s,
@@ -592,11 +602,11 @@ def _call_candidates(tier, api_key, system_prompt, user_prompt, temperature, tim
             continue
         finally:
             if usage is not None and dispatched:
-                has_tokens = any(k in metrics for k in ('promptTokenCount', 'candidatesTokenCount', 'thoughtsTokenCount'))
                 usage.append({'model': model,
-                              'input_tokens': metrics.get('promptTokenCount', 0) if has_tokens else None,
+                              'input_tokens': metrics.get('promptTokenCount'),
                               'output_tokens': ((metrics.get('candidatesTokenCount') or 0)
-                                                + (metrics.get('thoughtsTokenCount') or 0)) if has_tokens else None,
+                                                + (metrics.get('thoughtsTokenCount') or 0))
+                                               if metrics.get('candidatesTokenCount') is not None else None,
                               'images': len(images or []),
                               'prompt_chars': len(system_prompt) + len(user_prompt),
                               'max_output_tokens': max_output_tokens if max_output_tokens is not None else 0})

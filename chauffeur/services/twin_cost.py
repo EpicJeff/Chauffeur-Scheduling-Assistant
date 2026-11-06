@@ -12,6 +12,7 @@ from services import storage
 
 CHECKPOINTS = (10.0, 25.0, 50.0)
 ROUND_CAP = 5
+UNKNOWN_OUTPUT_TOKENS = 65536
 
 # USD per million input/output tokens, checked 2026-11-06.
 PRICES: dict[str, tuple[float, float]] = {
@@ -95,7 +96,7 @@ def record(stage: str, usage: list[dict], run: str | None = None) -> list[dict]:
         estimated = inp is None or out is None
         if estimated:
             inp = 1600 * (request.get('images') or 0) + math.ceil((request.get('prompt_chars') or 0) / 4)
-            out = request.get('max_output_tokens') or 0
+            out = request.get('max_output_tokens') or UNKNOWN_OUTPUT_TOKENS
             hi_in, hi_out = _highest_rates()
             usd, priced = (inp * hi_in + out * hi_out) / 1_000_000, False
         else:
@@ -118,6 +119,8 @@ def acknowledge(checkpoint: float) -> None:
         raise ValueError('Checkpoint must be one of $10, $25 or $50.')
     with storage.db_lock:
         row = _state()
+        if checkpoint > _total(row):
+            raise ValueError('Checkpoint has not been reached yet.')
         if checkpoint not in row['acknowledged']:
             row['acknowledged'].append(checkpoint)
             storage.patch_settings({'house_twin_cost': row})

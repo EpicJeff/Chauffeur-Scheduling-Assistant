@@ -170,6 +170,94 @@ def scenario_call_pool_json_reports_usage():
         llm.call_model = orig
 
 
+def scenario_unreached_checkpoints_cannot_be_acknowledged():
+    _fresh()
+    k = _known()
+    tc.record('building', [_usage(k, int(M / tc.PRICES[k][0] * 0.4), 0)])
+    for cp in (10.0, 25.0, 50.0):
+        try:
+            tc.acknowledge(cp)
+        except ValueError:
+            continue
+        raise AssertionError(f'acknowledging {cp} at $0.40 must raise: it would disarm the gate ahead of time')
+    tc.record('building', [_usage(k, int(M / tc.PRICES[k][0] * 12), 0)])
+    tc.acknowledge(10.0)
+    check(tc.blocking_checkpoint() is None, 'a reached checkpoint can be acknowledged')
+    try:
+        tc.acknowledge(25.0)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('25 is not reached yet at ~$12.40')
+
+
+def scenario_no_output_limit_is_costed_at_a_ceiling():
+    _fresh()
+    hi_in, hi_out = _hi()
+    e = tc.record('site', [_usage(_known(), None, None, images=0, prompt_chars=400, max_out=0)])[0]
+    check(e['basis'] == 'estimated' and _close(e['usd'], 100 / M * hi_in + tc.UNKNOWN_OUTPUT_TOKENS / M * hi_out),
+          (e, tc.UNKNOWN_OUTPUT_TOKENS))
+    check(tc.UNKNOWN_OUTPUT_TOKENS >= 32768, 'a real ceiling, not zero')
+
+
+def _paid_fallback_stubs(model_pools, state):
+    from services import paid_fallback
+    saved = (model_pools.api_key_for_pool, paid_fallback.status, paid_fallback.note_throttle, paid_fallback.count_call)
+    model_pools.api_key_for_pool = lambda pool, settings: 'paid-key'
+    paid_fallback.status = lambda settings, now=None: {'active': state['active'], 'configured': True,
+                                                       'used_today': 0, 'cap': 100}
+    paid_fallback.note_throttle = lambda settings, now=None: state.update(active=True)
+    paid_fallback.count_call = lambda settings, now=None: True
+
+    def restore():
+        (model_pools.api_key_for_pool, paid_fallback.status,
+         paid_fallback.note_throttle, paid_fallback.count_call) = saved
+    return restore
+
+
+def scenario_one_request_cap_holds_across_the_paid_fallback():
+    from services import llm, model_pools
+    calls = []
+    orig = llm.call_model
+
+    def failing(model_id, *a, **kw):
+        calls.append(model_id)
+        raise RuntimeError('503 upstream')
+    llm.call_model = failing
+    restore = _paid_fallback_stubs(model_pools, {'active': False})
+    try:
+        usage = []
+        res = model_pools.call_pool_json('vision', 'k', 's', 'u', max_models=1,
+                                         settings={'llm_gemini_api_key': 'k', 'llm_paid_fallback_mode': 'auto'},
+                                         max_output_tokens=1024, usage=usage)
+    finally:
+        restore()
+        llm.call_model = orig
+    check(len(calls) == 1 and len(usage) == 1, f'one billed request at most, even with paid fallback: {calls}')
+    check('503' in str(res.get('error')) and res.get('transient') is True,
+          f'the real error and its transient flag survive the spent budget: {res}')
+
+
+def scenario_partial_metrics_are_estimated_not_zero():
+    from services import llm, model_pools
+    orig = llm.call_model
+
+    def half(model_id, *a, **kw):
+        kw['metrics'].update({'candidatesTokenCount': 300})       # no promptTokenCount came back
+        return {'ok': 1}
+    llm.call_model = half
+    try:
+        usage = []
+        model_pools.call_pool_json('vision', 'k', 's', 'u', max_models=1,
+                                   settings={'llm_gemini_api_key': 'k'}, max_output_tokens=1024, usage=usage)
+    finally:
+        llm.call_model = orig
+    check(usage and usage[0]['input_tokens'] is None, f'missing prompt count stays unknown: {usage}')
+    _fresh()
+    e = tc.record('x', usage)[0]
+    check(e['basis'] == 'estimated', e)
+
+
 def scenario_cost_routes():
     _fresh()
     from fastapi.testclient import TestClient
@@ -198,6 +286,10 @@ if __name__ == '__main__':
                scenario_a_jump_over_two_checkpoints_blocks_at_the_lower,
                scenario_a_round_that_crosses_a_checkpoint_is_kept,
                scenario_call_pool_json_reports_usage,
+               scenario_unreached_checkpoints_cannot_be_acknowledged,
+               scenario_no_output_limit_is_costed_at_a_ceiling,
+               scenario_one_request_cap_holds_across_the_paid_fallback,
+               scenario_partial_metrics_are_estimated_not_zero,
                scenario_cost_routes):
         fn()
         print('  ok ', fn.__name__)
