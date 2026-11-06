@@ -130,12 +130,13 @@ TIER_CHAINS = {
     'vision': ['flash', 'lite'],
     'browse': ['cu'],
     'house_photo': ['flash'],  # architecture must not silently fall back to Lite
-    # Missions (services/missions.py). 'mission' is the ONLY tier that touches
-    # the pro pool and it never falls back to a free pool — a mission pauses
+    # Missions (services/missions.py) and twin drafts are the only tiers that
+    # touch the pro pool and never fall back to a free pool — a mission pauses
     # rather than silently degrading. 'mission_flash' exists for benchmarking
     # the same mission on the free flash chain (pure flash: no lite/gemma, so
     # the comparison measures the model, not the fallback).
     'mission': ['pro'],
+    'twin': ['pro'],
     'mission_flash': ['flash'],
 }
 

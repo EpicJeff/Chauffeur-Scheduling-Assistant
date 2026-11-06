@@ -7379,6 +7379,22 @@ def house_twin_cost_ack(body: dict = Body(default={})):
     return {'total': twin_cost.total(), 'blocking': twin_cost.blocking_checkpoint()}
 
 
+@app.post("/api/house/twin/draft")
+def house_twin_draft(body: dict = Body(default={})):
+    from services import twin_cost, twin_draft
+    try:
+        result, notes, error = twin_draft.draft(
+            body.get('drawings', []), body.get('photos', []), body.get('site'),
+            kit_id=body.get('kit', 'modern_farmhouse'), run=body.get('run'))
+    except twin_cost.CheckpointReached as exc:
+        raise HTTPException(status_code=409, detail={
+            'checkpoint': exc.checkpoint, 'total': exc.total, 'run': exc.run}) from exc
+    if error:
+        raise HTTPException(status_code=409 if error == 'a draft is already running' else 400,
+                            detail=error)
+    return {'result': result, 'notes': notes}
+
+
 @app.get("/api/study/state")
 def study_state(request: Request = None):
     """The Study's one read. Same person-gate as the mind endpoints —
