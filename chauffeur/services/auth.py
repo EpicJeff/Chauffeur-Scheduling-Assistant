@@ -442,6 +442,8 @@ RULES = [
     (ANY, '/api/house/state', WALL_OR_SERVICE, None),
     ('GET', '/api/house/neighborhood', WALL_OR_SERVICE, None),
     ('GET', '/api/house/twin', WALL_OR_SERVICE, None),
+    ('GET', '/api/house/twin/library/{asset_id}/{name:path}', WALL_OR_SERVICE, None),
+    ('GET', '/api/house/twin/kit/{kit_id}', WALL_OR_SERVICE, None),
     ('POST', '/api/house/twin/sources', PARENTS, None),
     ('GET', '/api/house/twin/sources', PARENTS, None),
     ('PUT', '/api/house/twin/plan', PARENTS, None),

@@ -7279,6 +7279,31 @@ def house_twin_api():
             'kit_id': 'modern_farmhouse'}
 
 
+@app.get("/api/house/twin/library/{asset_id}/{name:path}")
+def house_twin_library_file(asset_id: str, name: str):
+    from services import twin_library
+    asset = twin_library.manifest().get(asset_id)
+    if asset is None or name not in asset['files']:
+        raise HTTPException(status_code=404, detail='No such twin asset file.')
+    try:
+        directory = twin_library.ensure(asset_id)
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail='Twin asset unavailable.') from exc
+    path = os.path.join(directory, name)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail='Twin asset unavailable.')
+    return FileResponse(path)
+
+
+@app.get("/api/house/twin/kit/{kit_id}")
+def house_twin_kit_api(kit_id: str):
+    from services import twin_library
+    try:
+        return twin_library.kit(kit_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail='No such twin kit.') from exc
+
+
 @app.post("/api/house/twin/sources")
 def house_twin_source_upload(kind: str = Form(...), file: UploadFile = File(...)):
     from services import twin_store

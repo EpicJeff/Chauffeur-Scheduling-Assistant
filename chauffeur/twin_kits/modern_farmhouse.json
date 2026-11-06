@@ -1,0 +1,117 @@
+{
+  "id": "modern_farmhouse",
+  "materials": {
+    "siding": {
+      "asset": "board_and_batten",
+      "color": "#c3c6c2"
+    },
+    "trim": {
+      "asset": "painted_trim",
+      "color": "#f4f3ef"
+    },
+    "window_frame": {
+      "asset": "painted_trim",
+      "color": "#f4f3ef"
+    },
+    "roof": {
+      "asset": "standing_seam",
+      "color": "#3a2e27"
+    },
+    "porch_ceiling": {
+      "asset": "beadboard",
+      "color": "#f4f3ef"
+    },
+    "base": {
+      "asset": "stacked_stone_wall",
+      "color": "#d8d2c6"
+    },
+    "door": {
+      "asset": "mocha_oak_veneer",
+      "color": "#4a2a1c"
+    },
+    "floor": {
+      "asset": "wood_floor",
+      "color": "#a4835f"
+    },
+    "interior_wall": {
+      "asset": "white_plaster_02",
+      "color": "#f4f1ea"
+    },
+    "paving": {
+      "asset": "stone_tiles",
+      "color": "#e3d8c8"
+    },
+    "lawn": {
+      "asset": "leafy_grass",
+      "color": "#5d7a3e"
+    },
+    "mulch": {
+      "asset": "yellow_flower_mulch",
+      "color": "#6e5a48"
+    },
+    "fence": {
+      "asset": "wood_planks",
+      "color": "#a8927c"
+    },
+    "counter": {
+      "asset": "granite_tile",
+      "color": "#2e2f31"
+    },
+    "stainless": {
+      "asset": "metal_plate",
+      "color": "#b8bcc0"
+    },
+    "patio_concrete": {
+      "asset": "concrete_floor_02",
+      "color": "#cfc8bc"
+    }
+  },
+  "shrubs": [
+    "Bush 1",
+    "Bush 2",
+    "Bush 3"
+  ],
+  "backdrop_trees": [
+    "Pine Large",
+    "Pine Medium",
+    "Oak Large",
+    "Ash Large"
+  ],
+  "specimen_trees": [
+    "Oak Medium",
+    "Aspen Medium",
+    "Ash Medium"
+  ],
+  "furniture": {
+    "table_set": "outdoor_table_chair_set_01",
+    "rocker": "Rockingchair_01",
+    "lounger": "mid_century_lounge_chair",
+    "planter": "planter_box_01",
+    "potted_plant": "potted_plant_02",
+    "sconce": "wooden_lantern_01"
+  },
+  "composition": {
+    "foundation_bed_depth_ft": 5,
+    "shrub_spacing_ft": 3.5,
+    "shrub_height_ft": [
+      3,
+      4.5
+    ],
+    "group_sizes": [
+      3,
+      5
+    ],
+    "door_clearance_ft": 3,
+    "pool_clearance_ft": 2,
+    "backdrop_min_building_ft": 25,
+    "backdrop_spacing_ft": 16,
+    "backdrop_jitter_ft": 4,
+    "backdrop_rows": 2,
+    "backdrop_row_gap_ft": 10,
+    "backdrop_height_ft": [
+      45,
+      70
+    ]
+  },
+  "style_guide": "Judge the render as a believable modern-farmhouse pool house and yard in North Carolina. Build landscape depth with a backdrop tree line, mid-height shrubs and groundcover at edges. Use odd-numbered groups of three or five with natural spacing and variation. Allow no bare expanses of lawn or paving; compose planted beds and furniture to give each area purpose while preserving door and pool clearances. Soften edges where lawn meets paving or beds with layered planting. Nothing may look toy-like or cartoonish: judge realistic scale, texture, foliage and restrained colour. Finishes must match the household's photos: light grey board-and-batten, white trim and windows, stained mahogany doors, a dark bronze standing-seam roof, travertine paving, stacked stone walls, and a raised pool with spa. Use the kit's stone_tiles tinted to the photo colour as the travertine substitute. Change only site and materials, never the building: preserve its footprint, roof geometry, openings and proportions. Choose only assets and EZ-Tree presets from this kit, and respect every composition value."
+}
