@@ -2,6 +2,7 @@
 import base64
 from copy import deepcopy
 from datetime import datetime, timezone
+import io
 import json
 import os
 from pathlib import Path
@@ -11,12 +12,14 @@ import tempfile
 import threading
 import uuid
 
+from PIL import Image
+
 from services import storage, twin_pdf, twin_plan
 
 DATA_DIR = os.path.join(os.path.dirname(storage.DB_PATH), 'twin')
 _LOCK = threading.Lock()
 _KINDS = {'draft', 'director', 'hand', 'revert'}
-_PHOTO_MIMES = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png'}
+_PHOTO_MIMES = {'JPEG': 'image/jpeg', 'PNG': 'image/png'}
 
 
 class StaleRound(Exception):
@@ -148,32 +151,38 @@ def fixes() -> list[dict]:
 
 
 def save_source(kind: str, filename: str, data: bytes, *, content_type: str | None = None) -> str:
-    """Keep original bytes; PDF page images are rendered only during upload."""
+    """Verify photos and render drawings before locking their storage writes."""
+    if kind not in ('drawing', 'photo'):
+        raise ValueError('A source must be a drawing or photo.')
+    if not data:
+        raise ValueError('The source is empty.')
+    if not isinstance(filename, str) or not filename.strip():
+        raise ValueError('The source needs a filename.')
+    if kind == 'drawing':
+        pages = [(f"{page['page']}.png", base64.b64decode(page['b64']))
+                 for page in twin_pdf.render_pages(data)]
+        mime, suffix = 'application/pdf', '.pdf'
+    else:
+        try:
+            with Image.open(io.BytesIO(data)) as image:
+                mime = _PHOTO_MIMES.get(image.format)
+                if mime is None:
+                    raise ValueError('Photos must be JPEG or PNG images.')
+                image.verify()
+        except (OSError, SyntaxError, ValueError, Image.DecompressionBombError) as exc:
+            raise ValueError('Photos must be readable JPEG or PNG images.') from exc
+        suffix = '.png' if mime == 'image/png' else '.jpg'
+        pages = []
+    source_id = uuid.uuid4().hex
+    record = {'id': source_id, 'kind': kind, 'filename': filename,
+              'pages': len(pages) if kind == 'drawing' else 1, 'mime': mime}
     with _LOCK:
-        if kind not in ('drawing', 'photo'):
-            raise ValueError('A source must be a drawing or photo.')
-        if not data:
-            raise ValueError('The source is empty.')
-        if not isinstance(filename, str) or not filename.strip():
-            raise ValueError('The source needs a filename.')
-        if kind == 'drawing':
-            images = twin_pdf.render_pages(data)
-            mime, suffix = 'application/pdf', '.pdf'
-        else:
-            mime = _PHOTO_MIMES.get(Path(filename).suffix.lower()) or content_type
-            if mime not in _PHOTO_MIMES.values():
-                raise ValueError('Photos must be JPEG or PNG images.')
-            suffix = '.png' if mime == 'image/png' else '.jpg'
-            images = []
-        source_id = uuid.uuid4().hex
         root = Path(DATA_DIR) / 'sources' / source_id
         root.mkdir(parents=True)
         try:
             (root / ('original' + suffix)).write_bytes(data)
-            for image in images:
-                (root / f"{image['page']}.png").write_bytes(base64.b64decode(image['b64']))
-            record = {'id': source_id, 'kind': kind, 'filename': filename,
-                      'pages': len(images) if kind == 'drawing' else 1, 'mime': mime}
+            for name, png in pages:
+                (root / name).write_bytes(png)
             row = _state()
             row['sources'].append(record)
             _save(row)
