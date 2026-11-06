@@ -108,6 +108,8 @@ def _opening_error(opening, walls, main):
     width, sill, head = (opening.get(key) for key in ('width', 'sill', 'head'))
     if not all(_number(value) for value in (width, sill, head)):
         return 'width, sill and head must be finite numbers'
+    if sill < 0:
+        return 'sill must not be negative'
     if width <= 0 or sill >= head:
         return 'width must be positive and sill must be below head'
     if ('wall' in opening) == ('gable' in opening):
@@ -119,16 +121,17 @@ def _opening_error(opening, walls, main):
         at = opening.get('at')
         length = hypot(wall['to'][0] - wall['from'][0],
                        wall['to'][1] - wall['from'][1])
-        if not _number(at) or at - width / 2 < 0 or at + width / 2 > length:
+        if not _number(at) or at - width / 2 < -1e-6 or at + width / 2 > length + 1e-6:
             return 'outside the wall span'
-        if head > wall['height']:
+        if head > wall['height'] + 1e-6:
             return 'head is above the wall height'
     else:
         if opening['gable'] not in ('front', 'rear'):
             return 'unknown gable (expected front or rear)'
         x, x0, x1 = opening.get('x'), main.get('x0'), main.get('x1')
         if (not all(_number(value) for value in (x, x0, x1))
-                or x0 >= x1 or x - width / 2 < x0 or x + width / 2 > x1):
+                or x0 >= x1 or x - width / 2 < x0 - 1e-6
+                or x + width / 2 > x1 + 1e-6):
             return 'outside the roof gable span'
     return None
 
@@ -197,12 +200,77 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
     if not buildings:
         raise ValueError('Twin plan must contain at least one usable building.')
     site = raw.get('site')
+    if 'site' in raw and not isinstance(site, dict):
+        notes.append('Coerced invalid site to an empty object.')
     site = site if isinstance(site, dict) else {}
     for name in ('beds', 'planting', 'furniture', 'edges', 'hardscape'):
-        site[name] = _items(site, name, notes)
+        items = _items(site, name, notes)
+        site[name] = []
+        for index, item in enumerate(items):
+            if isinstance(item, dict):
+                site[name].append(item)
+            else:
+                notes.append(f'Dropped invalid {name} entry {index}; expected an object.')
     site.setdefault('fence', None)
-    return {'schema': SCHEMA, 'units': 'ft', 'materials': raw.get('materials', {}),
+    site['compose_overrides'] = _compose_overrides(site.get('compose_overrides'), notes)
+    materials = raw.get('materials', {})
+    if not isinstance(materials, dict):
+        notes.append('Coerced invalid materials to an empty object.')
+        materials = {}
+    return {'schema': SCHEMA, 'units': 'ft', 'materials': materials,
             'buildings': buildings, 'site': site}, notes
+
+
+def _compose_overrides(value, notes):
+    if value is None:
+        return {'removed': [], 'moved': {}}
+    if not isinstance(value, dict):
+        notes.append('Coerced invalid compose_overrides to an empty object.')
+        return {'removed': [], 'moved': {}}
+    removed, moved = value.get('removed', []), value.get('moved', {})
+    valid_removed = []
+    if isinstance(removed, list):
+        for item_id in removed:
+            if isinstance(item_id, str) and item_id not in valid_removed:
+                valid_removed.append(item_id)
+    valid_moved = {key: list(at) for key, at in moved.items()
+                   if isinstance(key, str) and _point(at)} if isinstance(moved, dict) else {}
+    if removed != valid_removed or moved != valid_moved:
+        notes.append('Dropped invalid or duplicate compose_overrides entries.')
+    return {'removed': valid_removed, 'moved': valid_moved}
+
+
+def record_compose_overrides(before: dict, after: dict) -> dict:
+    """Copy an edit and remember removed and repositioned compose items.
+
+    Existing overrides from either snapshot survive subsequent edits. Geometry
+    without an ``at`` (beds and edges) supports deletion, but not translation.
+    """
+    result = deepcopy(after)
+    site = result.setdefault('site', {})
+    overrides = _compose_overrides(before.get('site', {}).get('compose_overrides'), [])
+    latest = _compose_overrides(site.get('compose_overrides'), [])
+    for item_id in latest['removed']:
+        if item_id not in overrides['removed']:
+            overrides['removed'].append(item_id)
+    overrides['moved'].update(latest['moved'])
+
+    def composed(plan):
+        return {item['id']: item for name in ('beds', 'planting', 'edges')
+                for item in plan.get('site', {}).get(name, [])
+                if isinstance(item, dict) and item.get('by') == 'compose'
+                and isinstance(item.get('id'), str)}
+
+    old, new = composed(before), composed(result)
+    for item_id, item in old.items():
+        if item_id not in new:
+            if item_id not in overrides['removed']:
+                overrides['removed'].append(item_id)
+            overrides['moved'].pop(item_id, None)
+        elif _point(new[item_id].get('at')) and new[item_id]['at'] != item.get('at'):
+            overrides['moved'][item_id] = list(new[item_id]['at'])
+    site['compose_overrides'] = overrides
+    return result
 
 
 def merge_director(plan: dict, revised: dict) -> tuple[dict, list[str]]:

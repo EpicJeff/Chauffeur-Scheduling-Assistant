@@ -156,6 +156,33 @@ def scenario_diff_paths_names_leaves():
     check(tp.diff_paths(a, copy.deepcopy(a)) == [], 'no change, no paths')
 
 
+def scenario_model_shaped_junk_is_coerced_not_crashed():
+    raw = _fixture()
+    raw['materials'] = None
+    raw['site']['planting'] = ['not a dict', {'kind': 'shrub', 'preset': 'Bush 1', 'at': [60, -60], 'height': 3, 'seed': 1}]
+    raw['site']['beds'] = 'nope'
+    plan, notes = tp.normalize(raw)
+    check(plan['materials'] == {} and any('materials' in n for n in notes), 'materials=None becomes {} with a note')
+    check(len(plan['site']['planting']) == 1 and any('planting' in n for n in notes), 'non-dict planting dropped')
+    check(plan['site']['beds'] == [] and any('beds' in n for n in notes), 'a non-list bed field becomes []')
+
+
+def scenario_openings_that_exactly_fill_a_wall_survive():
+    raw = _fixture()
+    walls = raw['buildings'][0]['walls']
+    walls.append({'id': 'diag', 'level': 'L1', 'from': [0.1, 0.3], 'to': [3.1, 4.3], 'height': 9})
+    # length is 5.0 up to float error; a 5 ft opening centred at 2.5 fills it exactly
+    raw['buildings'][0]['openings'].append({'wall': 'diag', 'kind': 'passage', 'at': 2.5, 'width': 5.0,
+                                            'sill': 0, 'head': 7})
+    raw['buildings'][0]['openings'].append({'wall': 'left', 'kind': 'window', 'at': 5, 'width': 2,
+                                            'sill': -1, 'head': 4})
+    plan, notes = tp.normalize(raw)
+    ops = plan['buildings'][0]['openings']
+    check(any(o.get('wall') == 'diag' for o in ops), f'an exact fit is kept (float tolerance): {notes}')
+    check(not any(o.get('wall') == 'left' and o['sill'] == -1 for o in ops) and any('sill' in n for n in notes),
+          'a negative sill is dropped with a note')
+
+
 if __name__ == '__main__':
     for fn in (scenario_the_fixture_normalizes_clean,
                scenario_levels_are_sorted_by_elevation,
@@ -167,6 +194,8 @@ if __name__ == '__main__':
                scenario_caps_stop_runaway_lists,
                scenario_units_must_be_feet,
                scenario_merge_director_never_touches_buildings,
-               scenario_diff_paths_names_leaves):
+               scenario_diff_paths_names_leaves,
+               scenario_model_shaped_junk_is_coerced_not_crashed,
+               scenario_openings_that_exactly_fill_a_wall_survive):
         fn()
         print('  ok ', fn.__name__)

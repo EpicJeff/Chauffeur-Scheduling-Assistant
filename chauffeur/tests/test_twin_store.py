@@ -171,6 +171,19 @@ def scenario_hand_edits_log_each_changed_leaf():
     check(ts.rounds()[-1]['kind'] == 'hand' and ts.current()['materials']['siding']['color'] == '#222222', 'hand round current')
 
 
+def scenario_hand_edits_record_compose_overrides():
+    from services import twin_compose, twin_library
+    _fresh()
+    plan, _ = twin_compose.compose(_plan(), twin_library.kit('modern_farmhouse'), seed=2)
+    rid = ts.push_round(plan, 'draft')
+    shrubs = [i for i in plan['site']['planting'] if i.get('by') == 'compose' and i['kind'] == 'shrub']
+    edited = copy.deepcopy(plan)
+    edited['site']['planting'] = [i for i in edited['site']['planting'] if i.get('id') != shrubs[0]['id']]
+    ts.save_hand_edit(edited, 'that shrub blocks the hose bib', base=rid)
+    ov = ts.current()['site']['compose_overrides']
+    check(shrubs[0]['id'] in ov['removed'], f'a hand deletion of a compose item is remembered: {ov}')
+
+
 def scenario_sources_store_pages_and_photos():
     _fresh()
     sid = ts.save_source('drawing', 'pool house.pdf', _pdf(3))
@@ -322,6 +335,7 @@ if __name__ == '__main__':
                scenario_a_stale_round_never_moves_current,
                scenario_concurrent_pushes_get_unique_ids,
                scenario_hand_edits_log_each_changed_leaf,
+               scenario_hand_edits_record_compose_overrides,
                scenario_sources_store_pages_and_photos,
                scenario_photos_are_checked_by_content_not_name,
                scenario_rendering_a_drawing_does_not_block_reads,

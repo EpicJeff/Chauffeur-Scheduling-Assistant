@@ -135,8 +135,10 @@ def save_hand_edit(plan: dict, reason: str, base: int | None = None) -> int:
         row = _state()
         if base is not None and base != row['current']:
             raise StaleRound('The twin has changed. Reload it before saving this edit.')
-        plan, _ = twin_plan.normalize(plan)
         before = _read_round(row, row['current']) if row['current'] is not None else None
+        if before is not None:
+            plan = twin_plan.record_compose_overrides(before, plan)
+        plan, _ = twin_plan.normalize(plan)
         # The first save establishes the plan; it corrects no previous leaves.
         changes = [] if before is None else [
             {'path': path, 'before': _leaf(before, path), 'after': _leaf(plan, path),
