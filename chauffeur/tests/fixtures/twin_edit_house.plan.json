@@ -1,0 +1,313 @@
+{
+ "schema": "chauffeur.twin.plan/2",
+ "units": "ft",
+ "materials": {},
+ "site": {
+  "lot": [
+   [
+    -20,
+    -20
+   ],
+   [
+    80,
+    -20
+   ],
+   [
+    80,
+    80
+   ],
+   [
+    -20,
+    80
+   ]
+  ]
+ },
+ "buildings": [
+  {
+   "id": "house",
+   "name": "Main house",
+   "position": [
+    0,
+    0
+   ],
+   "rotation": 0,
+   "base": 0,
+   "levels": [
+    {
+     "id": "L1",
+     "name": "Main floor",
+     "elevation": 0,
+     "ceiling": 9
+    },
+    {
+     "id": "L2",
+     "name": "Upper floor",
+     "elevation": 10,
+     "ceiling": 8
+    }
+   ],
+   "walls": [
+    {
+     "id": "wall-1",
+     "level": "L1",
+     "from": [
+      0,
+      0
+     ],
+     "to": [
+      40,
+      0
+     ],
+     "height": 9,
+     "thickness": 0.5,
+     "exterior": true,
+     "state": "settled",
+     "src": {
+      "sheet": "sheetA",
+      "page": 1,
+      "step": "walls:L1:main"
+     }
+    },
+    {
+     "id": "wall-2",
+     "level": "L1",
+     "from": [
+      40,
+      0
+     ],
+     "to": [
+      40,
+      30
+     ],
+     "height": 9,
+     "thickness": 0.5,
+     "exterior": true,
+     "state": "settled",
+     "src": {
+      "sheet": "sheetA",
+      "page": 1,
+      "step": "walls:L1:main"
+     }
+    },
+    {
+     "id": "wall-3",
+     "level": "L1",
+     "from": [
+      40,
+      30
+     ],
+     "to": [
+      0,
+      30
+     ],
+     "height": 9,
+     "thickness": 0.5,
+     "exterior": true,
+     "state": "settled",
+     "src": {
+      "sheet": "sheetA",
+      "page": 1,
+      "step": "walls:L1:main"
+     }
+    },
+    {
+     "id": "wall-4",
+     "level": "L1",
+     "from": [
+      0,
+      30
+     ],
+     "to": [
+      0,
+      0
+     ],
+     "height": 9,
+     "thickness": 0.5,
+     "exterior": true,
+     "state": "settled",
+     "src": {
+      "sheet": "sheetA",
+      "page": 1,
+      "step": "walls:L1:main"
+     }
+    },
+    {
+     "id": "wall-5",
+     "level": "L2",
+     "from": [
+      5,
+      5
+     ],
+     "to": [
+      35,
+      5
+     ],
+     "height": 9,
+     "thickness": 0.5,
+     "exterior": true,
+     "state": "settled",
+     "src": {
+      "sheet": "sheetB",
+      "page": 2,
+      "step": "walls:L2:upper"
+     }
+    },
+    {
+     "id": "wall-6",
+     "level": "L2",
+     "from": [
+      35,
+      5
+     ],
+     "to": [
+      35,
+      25
+     ],
+     "height": 9,
+     "thickness": 0.5,
+     "exterior": true,
+     "state": "settled",
+     "src": {
+      "sheet": "sheetB",
+      "page": 2,
+      "step": "walls:L2:upper"
+     }
+    },
+    {
+     "id": "wall-7",
+     "level": "L2",
+     "from": [
+      35,
+      25
+     ],
+     "to": [
+      5,
+      25
+     ],
+     "height": 9,
+     "thickness": 0.5,
+     "exterior": true,
+     "state": "settled",
+     "src": {
+      "sheet": "sheetB",
+      "page": 2,
+      "step": "walls:L2:upper"
+     }
+    },
+    {
+     "id": "wall-8",
+     "level": "L2",
+     "from": [
+      5,
+      25
+     ],
+     "to": [
+      5,
+      5
+     ],
+     "height": 9,
+     "thickness": 0.5,
+     "exterior": true,
+     "state": "settled",
+     "src": {
+      "sheet": "sheetB",
+      "page": 2,
+      "step": "walls:L2:upper"
+     }
+    }
+   ],
+   "openings": [
+    {
+     "id": "opening-1",
+     "wall": "wall-1",
+     "kind": "window",
+     "at": 10,
+     "width": 3,
+     "sill": 2,
+     "head": 7,
+     "state": "settled",
+     "src": {
+      "sheet": "sheetA",
+      "page": 1,
+      "step": "openings:L1"
+     }
+    },
+    {
+     "id": "opening-2",
+     "wall": "wall-3",
+     "kind": "door",
+     "at": 20,
+     "width": 3,
+     "sill": 0,
+     "head": 6.67,
+     "state": "ghost",
+     "src": {
+      "sheet": "sheetA",
+      "page": 1,
+      "step": "openings:L1"
+     },
+     "confidence": 0.4,
+     "why": "hard to read"
+    }
+   ],
+   "rooms": [
+    {
+     "id": "room-1",
+     "name": "Kitchen",
+     "level": "L1",
+     "polygon": [
+      [
+       0,
+       0
+      ],
+      [
+       20,
+       0
+      ],
+      [
+       20,
+       30
+      ],
+      [
+       0,
+       30
+      ]
+     ],
+     "state": "settled",
+     "src": {
+      "sheet": "sheetA",
+      "page": 1,
+      "step": "rooms:L1"
+     }
+    }
+   ],
+   "stairs": [],
+   "roof": {
+    "sections": [
+     {
+      "id": "roof-1",
+      "kind": "hip",
+      "rect": [
+       0,
+       0,
+       40,
+       30
+      ],
+      "ridge": "x",
+      "pitch": 6,
+      "plate": 18,
+      "overhang": 1,
+      "pitch_source": "default",
+      "state": "settled",
+      "src": {
+       "sheet": "sheetC",
+       "page": 3,
+       "step": "roof"
+      }
+     }
+    ],
+    "extensions": []
+   }
+  }
+ ]
+}

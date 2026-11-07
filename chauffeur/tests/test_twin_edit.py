@@ -1,0 +1,218 @@
+"""Hand edits for the house editor (spec docs/superpowers/specs/
+2026-11-07-house-editor-design.md sections 6, 7.3; plan
+docs/superpowers/plans/2026-11-07-house-editor-slice-1.md Task 9 and its
+review amendment): one set of edit operations shared by the editor's cards,
+plan view, pauses and Argyle's house_design tool. Every changed piece is
+marked as the person's, deletions leave tombstones, and a registration change
+moves every piece read from that sheet.
+
+Run from chauffeur/:  python tests/test_twin_edit.py
+"""
+import copy
+import json
+import os
+import shutil
+import sys
+import tempfile
+
+os.environ.setdefault('CHAUFFEUR_DATA_DIR', tempfile.mkdtemp(prefix='chauffeur_twin_edit_'))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from services import storage  # noqa: E402
+from services import twin_edit  # noqa: E402
+from services import twin_plan as tp  # noqa: E402
+from services import twin_register as tr  # noqa: E402
+from services import twin_store as ts  # noqa: E402
+
+FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures', 'twin_edit_house.plan.json')
+
+
+def check(cond, msg):
+    # Local on purpose: tests/harness.py stubs storage.get_settings.
+    if not cond:
+        raise AssertionError(msg)
+
+
+def close(a, b, tol=1e-6):
+    return len(a) == len(b) and all(abs(x - y) <= tol for x, y in zip(a, b))
+
+
+def expect_value_error(fn):
+    try:
+        fn()
+    except ValueError:
+        return
+    raise AssertionError('expected ValueError')
+
+
+def house():
+    with open(FIXTURE, encoding='utf-8') as f:
+        return tp.normalize(json.load(f))[0]
+
+
+def piece(plan, pid):
+    b = plan['buildings'][0]
+    for kind in ('walls', 'openings', 'rooms', 'stairs'):
+        for item in b.get(kind) or []:
+            if item.get('id') == pid:
+                return item
+    for s in b['roof']['sections']:
+        if s['id'] == pid:
+            return s
+    return None
+
+
+def walls(plan, level):
+    return [w for w in plan['buildings'][0]['walls'] if w['level'] == level]
+
+
+def _seed():
+    storage.patch_settings({'house_twin': None})
+    shutil.rmtree(ts.DATA_DIR, ignore_errors=True)
+    ts.push_round(house(), 'build')
+
+
+def scenario_editable_fields_are_pinned():
+    check(twin_edit.EDITABLE == {
+        'wall': ('height', 'thickness', 'exterior'),
+        'opening': ('width', 'sill', 'head', 'kind', 'panels', 'at'),
+        'room': ('name', 'ha_area'),
+        'roof': ('kind', 'pitch', 'plate', 'overhang', 'ridge', 'low_side'),
+        'building': ('name', 'position', 'rotation', 'base'),
+        'level': ('name', 'elevation', 'ceiling')}, twin_edit.EDITABLE)
+
+
+def scenario_set_pitch_marks_the_person():
+    before = house()
+    plan, summary = twin_edit.apply(before, {'op': 'set', 'piece': 'roof-1', 'field': 'pitch', 'value': 8})
+    s = piece(plan, 'roof-1')
+    check(s['pitch'] == 8 and s['pitch_source'] == 'person' and s['src']['person'] is True, s)
+    check(s['src'].get('sheet') == 'sheetC', 'provenance kept alongside the person mark')
+    check(piece(before, 'roof-1')['pitch'] == 6, 'apply never mutates its input')
+    check(summary.startswith('Set ') and 'pitch' in summary.lower(), summary)
+
+
+def scenario_unknown_field_or_piece_is_refused():
+    expect_value_error(lambda: twin_edit.apply(house(), {'op': 'set', 'piece': 'wall-1', 'field': 'from', 'value': [0, 0]}))
+    expect_value_error(lambda: twin_edit.apply(house(), {'op': 'set', 'piece': 'wall-99', 'field': 'height', 'value': 9}))
+    expect_value_error(lambda: twin_edit.apply(house(), {'op': 'teleport', 'piece': 'wall-1'}))
+    expect_value_error(lambda: twin_edit.apply(house(), {'op': 'set', 'piece': 'wall-1', 'field': 'height', 'value': -3}))
+
+
+def scenario_move_wall_and_room_and_section():
+    plan, _ = twin_edit.apply(house(), {'op': 'move', 'piece': 'wall-2', 'by': [1, 0]})
+    w = piece(plan, 'wall-2')
+    check(w['from'] == [41, 0] and w['to'] == [41, 30] and w['src']['person'] is True, w)
+    plan, _ = twin_edit.apply(house(), {'op': 'move', 'piece': 'room-1', 'by': [0, 2]})
+    check(piece(plan, 'room-1')['polygon'][0] == [0, 2], piece(plan, 'room-1'))
+    plan, _ = twin_edit.apply(house(), {'op': 'move', 'piece': 'roof-1', 'by': [-1, 0]})
+    check(piece(plan, 'roof-1')['rect'] == [-1, 0, 39, 30], piece(plan, 'roof-1'))
+
+
+def scenario_move_slides_an_opening_along_its_wall():
+    plan, summary = twin_edit.apply(house(), {'op': 'move', 'piece': 'opening-1', 'by': [2, 5]})
+    check(piece(plan, 'opening-1')['at'] == 12, 'projected onto the wall: only the along-wall part counts')
+    plan, _ = twin_edit.apply(house(), {'op': 'move', 'piece': 'opening-1', 'by': [100, 0]})
+    o = piece(plan, 'opening-1')
+    check(o['at'] + o['width'] / 2 <= 40, 'an opening never slides off its wall')
+
+
+def scenario_rotate_building_and_accept_ghosts():
+    plan, summary = twin_edit.apply(house(), {'op': 'rotate', 'building': 'house', 'to': 90})
+    check(plan['buildings'][0]['rotation'] == 90 and 'turned' in summary.lower(), summary)
+    plan, _ = twin_edit.apply(house(), {'op': 'accept', 'pieces': ['opening-2']})
+    check(piece(plan, 'opening-2')['state'] == 'settled', piece(plan, 'opening-2'))
+
+
+def scenario_add_wall_and_opening():
+    plan, _ = twin_edit.apply(house(), {'op': 'add_wall', 'building': 'house', 'level': 'L1',
+                                        'from': [20, 0], 'to': [20, 30]})
+    added = [w for w in walls(plan, 'L1') if w['from'] == [20, 0]]
+    check(len(added) == 1 and added[0]['src'] == {'person': True} and added[0]['state'] == 'settled', added)
+    wid = added[0]['id']
+    plan, _ = twin_edit.apply(plan, {'op': 'add_opening', 'wall': wid, 'at': 15, 'kind': 'door', 'width': 3})
+    check(any(o['wall'] == wid and o['kind'] == 'door' for o in plan['buildings'][0]['openings']), 'door added')
+
+
+def scenario_registration_moves_every_piece_from_that_sheet():
+    before = house()
+    old = tr.make(0.05, origin_px=(100, 100))
+    new = dict(old, offset=[old['offset'][0] + 1.0, old['offset'][1]])
+    plan, _ = twin_edit.apply(before, {'op': 'registration', 'source': 'sheetB', 'page': 2, 'level': 'L2',
+                                       'reg': new, 'from_reg': old})
+    for w in walls(plan, 'L2'):
+        b = piece(before, w['id'])
+        check(close(w['from'], [b['from'][0] + 1, b['from'][1]], 1e-6) and close(w['to'], [b['to'][0] + 1, b['to'][1]], 1e-6),
+              w['id'])
+    check(walls(plan, 'L1') == walls(before, 'L1'), 'other sheets untouched')
+
+
+def scenario_save_logs_fixes_and_a_plain_summary():
+    _seed()
+    out = twin_edit.save({'op': 'set', 'piece': 'opening-1', 'field': 'width', 'value': 4}, 'p1')
+    check(out['summary'].startswith('Set ') and "4'-0\"" in out['summary'], out)
+    check(ts.current_id() == out['round'] and ts.rounds()[-1]['kind'] == 'edit', ts.rounds()[-1])
+    check(ts.fixes()[-1]['round'] == out['round'], ts.fixes())
+    check(piece(ts.current(), 'opening-1')['width'] == 4, 'saved')
+
+
+def scenario_delete_leaves_a_tombstone():
+    _seed()
+    out = twin_edit.save({'op': 'delete', 'piece': 'wall-5'}, 'p1')
+    check(piece(ts.current(), 'wall-5') is None, 'deleted')
+    t = ts.tombstones()[-1]
+    check(t['kind'] == 'wall' and t['level'] == 'L2' and t['src']['step'] == 'walls:L2:upper', t)
+    check(t['geometry']['from'] == [5, 5] and t['geometry']['to'] == [35, 5], t)
+    check('Removed' in out['summary'] or 'Deleted' in out['summary'], out)
+
+
+def scenario_registration_save_updates_the_store():
+    import io as _io
+    import pypdfium2 as pdfium
+    storage.patch_settings({'house_twin': None})
+    shutil.rmtree(ts.DATA_DIR, ignore_errors=True)
+    doc = pdfium.PdfDocument.new()
+    for _ in range(2):
+        doc.new_page(1224, 792)
+    buf = _io.BytesIO()
+    doc.save(buf)
+    sid = ts.save_source('drawing', 'upper.pdf', buf.getvalue())
+    plan = json.loads(json.dumps(house()).replace('"sheetB"', json.dumps(sid)))
+    ts.push_round(plan, 'build')
+    ts.set_registration(sid, 2, 'L2', tr.make(0.05, origin_px=(100, 100)))
+    new = tr.make(0.05, origin_px=(100, 100), offset=(1.0, 0))
+    twin_edit.save({'op': 'registration', 'source': sid, 'page': 2, 'level': 'L2', 'reg': new}, 'p1')
+    check(ts.registration(sid, 2, 'L2')['offset'] == [1.0, 0], ts.registration(sid, 2, 'L2'))
+    check(piece(ts.current(), 'wall-5')['from'] == [6, 5], 'pieces moved with it')
+
+
+def scenario_an_id_shared_by_two_buildings_needs_the_building():
+    # Review finding (Task 1): ids are unique per building only; an edit that
+    # names a piece two buildings share must say which building.
+    two = house()
+    other = copy.deepcopy(two['buildings'][0])
+    other['id'] = 'garage'
+    two['buildings'].append(other)
+    two, _ = tp.normalize(two)
+    expect_value_error(lambda: twin_edit.apply(two, {'op': 'set', 'piece': 'wall-1', 'field': 'height', 'value': 10}))
+    plan, _ = twin_edit.apply(two, {'op': 'set', 'building': 'garage', 'piece': 'wall-1', 'field': 'height', 'value': 10})
+    garage = next(b for b in plan['buildings'] if b['id'] == 'garage')
+    house_b = next(b for b in plan['buildings'] if b['id'] == 'house')
+    check(garage['walls'][0]['height'] == 10 and house_b['walls'][0]['height'] == 9, 'only the named building')
+
+
+if __name__ == '__main__':
+    for fn in (scenario_editable_fields_are_pinned,
+               scenario_set_pitch_marks_the_person,
+               scenario_unknown_field_or_piece_is_refused,
+               scenario_move_wall_and_room_and_section,
+               scenario_move_slides_an_opening_along_its_wall,
+               scenario_rotate_building_and_accept_ghosts,
+               scenario_add_wall_and_opening,
+               scenario_registration_moves_every_piece_from_that_sheet,
+               scenario_save_logs_fixes_and_a_plain_summary,
+               scenario_delete_leaves_a_tombstone,
+               scenario_registration_save_updates_the_store,
+               scenario_an_id_shared_by_two_buildings_needs_the_building):
+        fn()
+        print('  ok ', fn.__name__)
