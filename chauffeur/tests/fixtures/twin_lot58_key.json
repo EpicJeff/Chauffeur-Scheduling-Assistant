@@ -1,0 +1,98 @@
+{
+ "note": "Hand-read answer key for Reference Plans Lot 58 (Westpark Designs), Claude 2026-11-07. Plan feet, origin at the front-left of the 70'-0\" overall dimension, x right, y toward the rear. Read at about 1 ft accuracy from sheet 1 at 1.6x; used to score the Task 12 model comparison, never as a test of geometry code.",
+ "sheet1_page": 1,
+ "sheet2_page": 2,
+ "roof_page": 3,
+ "overall": {
+  "width_ft": 70.0,
+  "depth_ft": 65.333
+ },
+ "l1_outline_ft": [
+  [
+   0.0,
+   14.52
+  ],
+  [
+   0.0,
+   54.15
+  ],
+  [
+   14.67,
+   54.15
+  ],
+  [
+   14.67,
+   66.31
+  ],
+  [
+   33.51,
+   66.31
+  ],
+  [
+   33.51,
+   59.25
+  ],
+  [
+   43.71,
+   59.25
+  ],
+  [
+   43.71,
+   65.53
+  ],
+  [
+   59.01,
+   65.53
+  ],
+  [
+   59.01,
+   41.98
+  ],
+  [
+   70.0,
+   41.98
+  ],
+  [
+   70.0,
+   22.13
+  ],
+  [
+   59.01,
+   22.13
+  ],
+  [
+   59.01,
+   0.0
+  ],
+  [
+   37.04,
+   0.0
+  ],
+  [
+   37.04,
+   13.34
+  ],
+  [
+   14.67,
+   13.34
+  ],
+  [
+   14.67,
+   14.52
+  ]
+ ],
+ "l1_exterior_walls_min": 16,
+ "l1_walls_min": 30,
+ "roof": {
+  "sections_min": 5,
+  "sections_max": 9,
+  "kinds_present": [
+   "hip",
+   "gable"
+  ]
+ },
+ "upper_overall": {
+  "width_ft": 59.0,
+  "note": "sheet 2 top dimension 59'-0\" over the upper floor and its dashed lower outline"
+ }
+}
