@@ -264,6 +264,22 @@ def scenario_summaries_use_plain_labels_not_ids():
     check('ha_area' not in summary, summary)
 
 
+def scenario_turning_about_the_middle_is_one_edit():
+    # Review finding: a turn sent as a move plus a rotate could leave the house
+    # displaced if the second half was refused; one atomic op keeps the middle put.
+    before = house()
+    b = before['buildings'][0]
+    xs = [p[0] for w in b['walls'] for p in (w['from'], w['to'])]
+    ys = [p[1] for w in b['walls'] for p in (w['from'], w['to'])]
+    centre = [(min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2]
+    plan, summary = twin_edit.apply(before, {'op': 'rotate', 'building': 'house', 'to': 90, 'about': centre})
+    after = plan['buildings'][0]
+    check(after['rotation'] == 90 and 'Turned' in summary, (after['rotation'], summary))
+    world_before = tr.to_world(b, centre)
+    world_after = tr.to_world(after, centre)
+    check(close(world_before, world_after, 1e-6), (world_before, world_after))
+
+
 if __name__ == '__main__':
     for fn in (scenario_editable_fields_are_pinned,
                scenario_set_pitch_marks_the_person,
@@ -281,6 +297,7 @@ if __name__ == '__main__':
                scenario_deleting_a_wall_tombstones_what_goes_with_it,
                scenario_gable_openings_follow_their_section,
                scenario_registration_needs_one_on_file,
-               scenario_summaries_use_plain_labels_not_ids):
+               scenario_summaries_use_plain_labels_not_ids,
+               scenario_turning_about_the_middle_is_one_edit):
         fn()
         print('  ok ', fn.__name__)

@@ -18,7 +18,7 @@
       'three/addons/': window.chfBase + 'static/vendor/three-r187/addons/',
       '@dgreenheck/ez-tree': window.chfBase + {{ 'static/vendor/ez-tree/ez-tree.es.js' | ver | tojson }}
     };
-    {% for name in ['twin_generator', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'twin_roof', 'twin_ground', 'editor/editor', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/cards', 'editor/snap', 'editor/plan_view', 'editor/pauses', 'editor/timeline', 'editor/words'] %}
+    {% for name in ['twin_generator', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'twin_roof', 'twin_ground', 'twin_director', 'editor/editor', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/cards', 'editor/snap', 'editor/plan_view', 'editor/pauses', 'editor/timeline', 'editor/words'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     const map = document.createElement('script'); map.type = 'importmap';
@@ -43,6 +43,11 @@
       <details id="editor-menu">
         <summary aria-label="House menu">Menu</summary>
         <div><button id="editor-manage-sources" type="button">Drawings and photos</button>
+          <button id="menu-upload" type="button">Upload more</button>
+          <button id="menu-director" type="button" disabled>Art director</button>
+          <button id="menu-advanced" type="button" disabled>Advanced: edit the plan file</button>
+          <button id="menu-start-over" type="button" disabled>Start over</button>
+          <button id="menu-reset-spend" type="button" disabled>Reset spend total</button>
           <a href="{{ _up }}house/twin">House preview</a></div>
       </details>
     </header>
@@ -78,6 +83,18 @@
     <aside id="editor-agent" aria-label="Argyle">
       <header><h2>Argyle</h2><span id="editor-source-count">Drawings and photos</span></header>
       <div id="editor-panel-scroll">
+        <section id="editor-advanced" aria-labelledby="advanced-title" hidden>
+          <h3 id="advanced-title">Advanced: edit the plan file</h3>
+          <p>Changes need a reason, recorded with each fix.</p>
+          <form id="advanced-form">
+            <label for="advanced-plan">Current plan JSON</label>
+            <textarea id="advanced-plan" spellcheck="false" required></textarea>
+            <label for="advanced-reason">Reason (required)</label>
+            <input id="advanced-reason" type="text" required>
+            <div class="editor-actions"><button id="advanced-save" type="submit">Save plan</button>
+              <button id="advanced-close" type="button">Close plan file</button></div>
+          </form>
+        </section>
         <section id="editor-upload" aria-labelledby="editor-upload-title">
           <h3 id="editor-upload-title">Start with your drawings</h3>
           <p>Add PDF drawings and JPEG or PNG photos. Check what each page shows, then build your house.</p>

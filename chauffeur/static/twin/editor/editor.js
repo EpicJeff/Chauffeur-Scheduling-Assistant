@@ -1,4 +1,5 @@
 import { mountTwin } from '../twin_view.js';
+import { runDirector } from '../twin_director.js';
 import { request, createPolling, idleInterval, buildInterval, checkpoint, plain, report, active, session } from './api.js';
 import { createPanel } from './panel.js';
 import { createSceneTools } from './scene_tools.js';
@@ -16,12 +17,18 @@ export async function boot() {
   let currentBuild = null, ghostBuild = null, renderedGhosts = 0, lastScene = '';
   let uploadsBusy = false, rolesBusy = false, building = false, resuming = false;
   let sourcesOpen = false;
+  let menuBusy = false, directing = false, advancedBase = null;
   let tools = null, planView = null, pauses = null, timeline = null, previewing = false, lastSummary = '';
   const lifecycle = new AbortController();
   const listen = (node, type, handler) => node.addEventListener(type, handler, { signal: lifecycle.signal });
   const ghosts = new Map(), prompted = new Set();
   const panel = createPanel({ afterSay: async () => { await polling.pollNow(true); } });
-  const canEdit = () => !previewing && !session.signedOut;
+  const canEdit = () => !previewing && !session.signedOut && !menuBusy && !directing;
+  const currentRound = () => [...snapshot.rounds].reverse().find(row => !row.stale)?.id ?? null;
+  function summary(text) {
+    lastSummary = text;
+    panel.message(text);
+  }
   async function edit(change) {
     if (!canEdit()) throw new Error('Use Back to now before changing your house.');
     let result;
@@ -37,10 +44,15 @@ export async function boot() {
 
   function setStatus(text) { el('editor-status').textContent = plain(text); }
   function syncBuildButton() {
-    el('editor-build').disabled = previewing || !hooks.ready || !confirmed || uploadsBusy || rolesBusy || building || resuming || active(currentBuild);
+    el('editor-build').disabled = !canEdit() || !hooks.ready || !confirmed || uploadsBusy || rolesBusy || building || resuming || active(currentBuild);
     el('editor-check-step').hidden = previewing || currentBuild?.state !== 'paused' || !pauses?.dismissed();
     el('editor-resume').hidden = previewing || !['stopped', 'checkpoint'].includes(currentBuild?.state);
-    el('editor-resume').disabled = !hooks.ready || building || resuming || session.signedOut;
+    el('editor-resume').disabled = !canEdit() || !hooks.ready || building || resuming;
+    const busy = !canEdit() || !hooks.ready || uploadsBusy || rolesBusy || building || resuming || active(currentBuild);
+    for (const id of ['menu-director', 'menu-advanced', 'menu-start-over', 'menu-reset-spend']) el(id).disabled = busy;
+    el('menu-director').disabled ||= !snapshot.plan?.buildings?.length;
+    el('advanced-save').disabled = busy;
+    panel.readOnly(!canEdit());
   }
   function cost(value) { el('editor-cost').textContent = `$${Number(value || 0).toFixed(2)}`; }
   function countGhosts(plan) {
@@ -287,6 +299,113 @@ export async function boot() {
     el('editor-menu').open = false;
     if (!el('editor-upload').hidden) el('editor-source-files').focus();
   });
+  listen(el('menu-upload'), 'click', () => {
+    sourcesOpen = true; el('editor-upload').hidden = false;
+    el('editor-menu').open = false;
+    el('editor-source-files').focus();
+  });
+  listen(el('menu-director'), 'click', async () => {
+    if (!canEdit() || active(currentBuild) || !view || !snapshot.plan?.buildings?.length) return;
+    directing = true; syncBuildButton(); timeline?.sync(); el('editor-menu').open = false;
+    panel.message('Starting art director. Comparing four views with your photos, up to five rounds.');
+    try {
+      await polling.pollNow(true);
+      await runDirector(view, {
+        base: currentRound(), signal: lifecycle.signal,
+        critique: body => request('critique', 'POST', body, 'twin'),
+        log: text => panel.message(text),
+        onRound: async () => { await polling.pollNow(true); },
+      });
+    } catch (error) {
+      panel.message(error.cancelled ? 'Art director stopped at the spending checkpoint.' : error.message);
+      report(error);
+    } finally {
+      directing = false;
+      await polling.pollNow(true).catch(report);
+      syncBuildButton(); timeline?.sync();
+    }
+  });
+  listen(el('menu-advanced'), 'click', async () => {
+    if (!canEdit() || active(currentBuild)) return;
+    menuBusy = true; syncBuildButton(); el('editor-menu').open = false;
+    try {
+      await polling.pollNow(true);
+      el('advanced-plan').value = JSON.stringify(snapshot.plan || emptyPlan(), null, 2);
+      el('advanced-reason').value = ''; advancedBase = currentRound();
+      el('editor-advanced').hidden = false;
+      el('advanced-plan').focus();
+    } catch (error) { report(error); }
+    finally { menuBusy = false; syncBuildButton(); }
+  });
+  listen(el('advanced-close'), 'click', () => {
+    el('editor-advanced').hidden = true;
+    el('editor-menu').querySelector('summary').focus();
+  });
+  listen(el('advanced-form'), 'submit', async event => {
+    event.preventDefault();
+    if (!canEdit() || active(currentBuild)) return;
+    const reason = el('advanced-reason').value.trim();
+    if (!reason) { report(new Error('Give a reason for this hand edit before saving.')); return; }
+    let plan;
+    try { plan = JSON.parse(el('advanced-plan').value); }
+    catch { report(new Error('The plan must be valid JSON.')); return; }
+    menuBusy = true; syncBuildButton();
+    try {
+      await request('plan', 'PUT', { plan, reason, base: advancedBase }, 'twin');
+      await polling.pollNow(true);
+      advancedBase = currentRound();
+      el('advanced-plan').value = JSON.stringify(snapshot.plan, null, 2);
+      el('advanced-reason').value = '';
+      summary('Plan saved. Your reason was recorded with each fix.');
+    } catch (error) {
+      if (error.status === 409) {
+        try {
+          if (await window.promptConfirm('Plan changed elsewhere',
+            'Reload it? Your unsaved text will be replaced.', 'Reload', 'Keep editing')) {
+            await polling.pollNow(true);
+            advancedBase = currentRound();
+            el('advanced-plan').value = JSON.stringify(snapshot.plan || emptyPlan(), null, 2);
+          }
+        } catch (failure) { report(failure); }
+      } else report(error);
+    } finally { menuBusy = false; syncBuildButton(); }
+  });
+  listen(el('menu-reset-spend'), 'click', async () => {
+    if (!canEdit() || active(currentBuild)) return;
+    menuBusy = true; syncBuildButton(); el('editor-menu').open = false;
+    try {
+      await polling.pollNow(true);
+      const confirm = await window.promptInput('Reset spend total?',
+        `The current total is $${Number(snapshot.cost?.total || 0).toFixed(2)}. Type reset to clear it. This cannot be undone.`,
+        { placeholder: 'reset', okText: 'Reset' });
+      if (confirm === null) return;
+      if (confirm !== 'reset') { report(new Error('Type reset to reset the spend total.')); return; }
+      await request('cost/reset', 'POST', { confirm });
+      await polling.pollNow(true);
+      summary('Spend total reset.');
+    } catch (error) { report(error); }
+    finally { menuBusy = false; syncBuildButton(); }
+  });
+  listen(el('menu-start-over'), 'click', async () => {
+    if (!canEdit() || active(currentBuild)) return;
+    menuBusy = true; syncBuildButton(); el('editor-menu').open = false;
+    try {
+      if (!await window.promptConfirm('Start over?',
+        'This clears the house, its history and the uploaded drawings and photos. The spend total stays.',
+        'Start over', 'Keep it')) return;
+      await request('start-over', 'POST', {});
+      currentBuild = null; ghostBuild = null; ghosts.clear(); prompted.clear();
+      panel.reset(); tools?.select(null); pauses?.dismiss(); planView?.leavePlan();
+      el('editor-advanced').hidden = true; advancedBase = null; sourcesOpen = false;
+      el('editor-upload-status').textContent = '';
+      await polling.pollNow(true);
+      await loadSheets();
+      await timeline?.now();
+      summary('House cleared. The spend total stays.');
+      setStatus('Add drawings to begin');
+    } catch (error) { report(error); }
+    finally { menuBusy = false; syncBuildButton(); }
+  });
   listen(el('editor-check-step'), 'click', () => {
     tools?.select(null); planView?.leavePlan(); pauses?.show();
   });
@@ -296,7 +415,7 @@ export async function boot() {
     pollNow: () => polling.pollNow(true).catch(report), idleInterval, buildInterval,
     followBuild: id => { polling.follow(id).catch(report); },
     currentInterval: polling.currentInterval, signOutNotices: () => session.notices, polling: polling.polling,
-    isEmpty: () => sheets.sources.length === 0,
+    isEmpty: () => !snapshot.plan?.buildings?.length && sheets.sources.length === 0,
   });
   const signedOut = () => { polling.stop(); setStatus('Home Assistant signed the tab out'); };
   const foreground = () => { if (!document.hidden) polling.resume().catch(report); else polling.stop(); };
@@ -345,6 +464,7 @@ export async function boot() {
       floorChanged: planView.floorChanged, leavePlan: planView.leavePlan, cancel: planView.cancel,
     });
     timeline = createTimeline({ getState: () => snapshot, render: renderScene, signal: lifecycle.signal,
+      canScrub: () => !menuBusy && !directing,
       log(summary) { const line = document.createElement('li'); line.textContent = summary; el('editor-log').append(line); lastSummary = summary; },
       onPreview(value) {
         previewing = value; tools.select(null); pauses.dismiss(); panel.readOnly(value);

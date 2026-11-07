@@ -59,8 +59,9 @@ export async function request(path, method = 'GET', body, area = 'editor') {
     }
     // Only these routes check spend before doing any work. A conversation
     // can reach a checkpoint AFTER applying edits, so it must never replay.
-    if (response.status === 409 && data?.detail?.checkpoint && area === 'editor'
-        && ['build', 'sheets/suggest'].includes(path)) {
+    if (response.status === 409 && data?.detail?.checkpoint
+        && ((area === 'editor' && ['build', 'sheets/suggest'].includes(path))
+          || (area === 'twin' && path === 'critique'))) {
       if (await checkpoint(data.detail)) continue;
       throw Object.assign(new Error('Stopped at the spending checkpoint.'), { cancelled: true });
     }

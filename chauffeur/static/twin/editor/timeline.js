@@ -1,6 +1,6 @@
 import { request, report } from './api.js';
 
-export function createTimeline({ getState, render, onPreview, log, signal }) {
+export function createTimeline({ getState, render, onPreview, log, signal, canScrub = () => true }) {
   const el = id => document.getElementById(id), slider = el('editor-scrub');
   let preview = null, index = null, version = 0, busy = false, loading = false, justReturned = false, currentBuild = null, scrubTimer = null;
   const rounds = () => (getState().rounds || []).filter(row => row.kind !== 'start_over');
@@ -26,7 +26,7 @@ export function createTimeline({ getState, render, onPreview, log, signal }) {
         button.addEventListener('click', () => scrubTo(i).catch(report)); marks.append(button);
       });
     }
-    slider.max = Math.max(0, rows.length - 1); slider.disabled = !rows.length || busy;
+    slider.max = Math.max(0, rows.length - 1); slider.disabled = !rows.length || busy || !canScrub();
     if (index === null && !loading) slider.value = slider.max;
     const steps = currentBuild?.steps || [], done = steps.filter(s => s.status === 'done').length;
     el('editor-progress').max = steps.length || 1; el('editor-progress').value = done;
@@ -41,6 +41,7 @@ export function createTimeline({ getState, render, onPreview, log, signal }) {
     if (preview) el('time-chip').textContent = `Looking at step ${index + 1}`;
   }
   async function scrubTo(i) {
+    if (!canScrub()) return;
     clearTimeout(scrubTimer);
     const rows = rounds(); i = Math.max(0, Math.min(rows.length - 1, Math.round(i)));
     if (!rows[i]) return;
@@ -59,6 +60,7 @@ export function createTimeline({ getState, render, onPreview, log, signal }) {
     ++version; preview = null; index = null; loading = false; justReturned = false; onPreview(false); await render(); sync();
   }
   slider.addEventListener('input', () => {
+    if (!canScrub()) return;
     const i = Number(slider.value);
     clearTimeout(scrubTimer); ++version; loading = true; onPreview(true); sync();
     scrubTimer = setTimeout(() => scrubTo(i).catch(report), 120);
