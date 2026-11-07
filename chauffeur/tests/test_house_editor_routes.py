@@ -189,6 +189,10 @@ def scenario_edit_returns_summary_and_plan():
         bad = c.post('/api/house/editor/edit', headers=PARENT,
                      json={'edit': {'op': 'set', 'piece': 'wall-1', 'field': 'from', 'value': [0, 0]}})
         check(bad.status_code == 400, bad.text)
+        # Re-review: the person is told what to change, not a generic line.
+        gone = c.post('/api/house/editor/edit', headers=PARENT,
+                      json={'edit': {'op': 'set', 'piece': 'no-such-wall', 'field': 'height', 'value': 9}})
+        check(gone.status_code == 400 and gone.json()['detail'] == 'Unknown piece no-such-wall.', gone.text)
 
 
 def scenario_state_and_rounds():

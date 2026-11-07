@@ -7463,9 +7463,13 @@ def _house_editor_call(operation, *args, lookup=False, **kwargs):
         logger.warning('House editor %s refused: %s', getattr(operation, '__name__', 'request'), exc, exc_info=True)
         busy = str(exc) == 'A build is already running.'
         stopping = str(exc).startswith(('Stop the build', 'The build is still stopping'))
+        text = str(exc).strip()
+        # Validators speak to people ('Unknown piece wall-3.', 'Confirm floor page
+        # roles ...'); anything that reads like a path or a dump stays generic.
+        plain = 0 < len(text) <= 160 and not re.search(r'[\[\]{}_=<>|]|Traceback', text)
         message = ('A build is already running.' if busy else
                    'Stop the build and wait for its current read to finish before trying again.' if stopping else
-                   'This house change needs checking. Check the values and try again.')
+                   text if plain else 'This house change needs checking. Check the values and try again.')
         raise HTTPException(status_code=409 if busy or stopping else 400, detail=message) from exc
     except Exception as exc:
         logger.exception('House editor request failed')

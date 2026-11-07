@@ -152,8 +152,10 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
   async function accept() {
     if (!pause) return;
     if (pause.kind === 'scale_outline' && pause.dimension_ft > 0) {
-      const dimension = parseLength(el('pause-dimension').value);
-      if (dimension <= 0) throw new Error('Use a dimension greater than zero.');
+      const typed = parseLength(el('pause-dimension').value);
+      if (typed <= 0) throw new Error('Use a dimension greater than zero.');
+      // The field shows the read length rounded to an inch; leaving it as shown is no change.
+      const dimension = typed === parseLength(feetInches(pause.dimension_ft)) ? pause.dimension_ft : typed;
       // Apply only the change since the last edit; retries cannot multiply it.
       const ratio = dimension / pause.dimension_ft;
       if (Math.abs(ratio - 1) > 1e-9) {
