@@ -18,7 +18,7 @@
       'three/addons/': window.chfBase + 'static/vendor/three-r187/addons/',
       '@dgreenheck/ez-tree': window.chfBase + {{ 'static/vendor/ez-tree/ez-tree.es.js' | ver | tojson }}
     };
-    {% for name in ['twin_generator', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'twin_roof', 'twin_ground', 'editor/editor', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/cards', 'editor/snap', 'editor/plan_view', 'editor/pauses', 'editor/timeline'] %}
+    {% for name in ['twin_generator', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'twin_roof', 'twin_ground', 'editor/editor', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/cards', 'editor/snap', 'editor/plan_view', 'editor/pauses', 'editor/timeline', 'editor/words'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     const map = document.createElement('script'); map.type = 'importmap';
@@ -65,7 +65,7 @@
     </section>
     <aside id="piece-card" aria-label="Selected piece" hidden></aside>
     <aside id="pause-card" aria-label="Check this step" hidden>
-      <h3 id="pause-title">Check this outline</h3><p id="pause-reason"></p>
+      <h3 id="pause-title">Check this outline</h3><p id="pause-reason" class="pause-why"></p>
       <div><button id="pause-accept" type="button">Looks right</button><button id="pause-drag" type="button">Drag</button>
         <button id="pause-pin" type="button">Pin 2 points</button><button id="pause-reread" type="button">Re-read</button></div>
       <label id="pause-turn-label" hidden>Turn in degrees<input id="pause-turn" type="number" step="1"></label>

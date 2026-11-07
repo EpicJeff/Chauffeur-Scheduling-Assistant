@@ -76,9 +76,44 @@ def _mark(piece):
     piece['src'] = {'person': True, **{k: src[k] for k in ('sheet', 'page') if k in src}}
 
 
-def _label(kind, piece):
-    return piece.get('name') or (piece.get('kind', 'opening') if kind == 'opening'
-                                 else piece.get('id', kind))
+FIELD_LABELS = {
+    'ha_area': 'Home Assistant area', 'low_side': 'Low side', 'at': 'Distance along the wall',
+    'sill': 'Height above floor', 'head': 'Top of opening', 'plate': 'Wall height under the roof',
+    'base': 'Height above ground', 'elevation': 'Height above ground',
+}
+
+
+def _label(kind, piece, building=None):
+    """Plain identity shared by edit summaries and the editor's About prompt."""
+    if piece.get('name'):
+        return f'the {piece["name"]}'
+    building = building or {}
+    level_id = piece.get('level')
+    if kind == 'opening':
+        wall = next((w for w in building.get('walls', []) if w['id'] == piece.get('wall')), {})
+        section = next((s for s in building.get('roof', {}).get('sections', []) if s['id'] == piece.get('section')), {})
+        level_id = wall.get('level', section.get('level', level_id))
+    level = next((l for l in building.get('levels', []) if l['id'] == level_id), {})
+    floor = level.get('name') or 'floor'
+    if kind == 'wall':
+        points = [p for w in building.get('walls', []) for p in (w['from'], w['to'])]
+        if piece.get('exterior') and points:
+            x0, y0 = [min(p[i] for p in points) for i in (0, 1)]
+            x1, y1 = [max(p[i] for p in points) for i in (0, 1)]
+            a, b = piece['from'], piece['to']
+            side = ('front' if max(abs(p[1] - y0) for p in (a, b)) < .1 else
+                    'back' if max(abs(p[1] - y1) for p in (a, b)) < .1 else
+                    'left' if max(abs(p[0] - x0) for p in (a, b)) < .1 else
+                    'right' if max(abs(p[0] - x1) for p in (a, b)) < .1 else None)
+            if side:
+                return f'the {floor} {side} wall'
+        return f'a {floor} wall'
+    if kind == 'opening':
+        name = {'slider': 'sliding door', 'bifold': 'folding door', 'garage': 'garage door',
+                'passage': 'open passage'}.get(piece.get('kind'), piece.get('kind', 'opening'))
+        return f'a {floor} {name}'
+    return {'roof': 'a roof section', 'building': 'the house', 'level': 'the floor',
+            'room': 'a room', 'stair': 'a staircase', 'fixture': 'a fixture', 'light': 'a light'}.get(kind, 'a piece')
 
 
 def _wall(building, opening):
@@ -289,10 +324,19 @@ def _register(plan, edit):
             _opening_valid(building, piece)
             if piece != original or id(piece) in moved_openings:
                 _mark(piece)
-    return f'Updated registration for {source} page {page} on {level}'
+    floor = next((l for b in plan['buildings'] if edit.get('building') in (None, b['id'])
+                  for l in b['levels'] if l['id'] == level), {})
+    return f'Lined up the drawing for {floor.get("name") or "the floor"}'
 
 
 def _value_words(field, value):
+    if field == 'ridge':
+        return {'x': 'left to right', 'y': 'front to back'}.get(value, value)
+    if field == 'low_side':
+        return {'x0': 'left', 'x1': 'right', 'y0': 'front', 'y1': 'back'}.get(value, value)
+    if field == 'kind':
+        return {'slider': 'sliding door', 'bifold': 'folding door', 'passage': 'open passage',
+                'garage': 'garage door', 'shed': 'one slope'}.get(value, value)
     if field == 'rotation':
         return f'{value:g}°'
     if field == 'pitch':
@@ -340,7 +384,7 @@ def apply(plan, edit):
                                   'exterior': False, 'state': 'settled', 'src': {'person': True}})
         if len(building['walls']) > twin_plan.CAPS['walls']:
             raise ValueError('The building has too many walls.')
-        summary = f'Added a wall on {level.get("name", level["id"])}'
+        summary = f'Added a wall on {level.get("name") or "the floor"}'
     elif op == 'add_opening':
         _, wall, building, _ = _find(result, edit.get('wall'), scope, 'wall')
         _wall_length(wall)
@@ -357,16 +401,18 @@ def apply(plan, edit):
         building['openings'].append(piece)
         if len(building['openings']) > twin_plan.CAPS['openings']:
             raise ValueError('The building has too many openings.')
-        summary = f'Added a {kind} to {wall["id"]}'
+        name = {'slider': 'sliding door', 'bifold': 'folding door', 'garage': 'garage door', 'passage': 'passage'}.get(kind, kind)
+        summary = f'Added a {name} to {_label("wall", wall, building)}'
     elif op in ('set', 'move', 'rotate', 'delete'):
         pid = scope if op == 'rotate' else edit.get('piece')
         kind, piece, building, owner = _find(result, pid, scope,
                                              'building' if op == 'rotate' else None)
-        label = _label(kind, piece)
+        label = _label(kind, piece, building)
         if op == 'set':
             field = edit.get('field')
             _set(kind, piece, building, field, edit.get('value'))
-            summary = f'Set the {label} {field} to {_value_words(field, piece[field])}'
+            field_label = FIELD_LABELS.get(field, field.capitalize()).lower()
+            summary = f'Set {label}\'s {field_label} to {_value_words(field, piece[field])}'
         elif op == 'rotate':
             _set(kind, piece, building, 'rotation', edit.get('to'))
             summary = f'Turned {label} to {piece["rotation"]:g}°'

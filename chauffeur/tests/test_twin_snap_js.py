@@ -73,6 +73,24 @@ def scenario_rotation_snaps_to_quarter_turns_within_seven_degrees():
     check(r[:3] == [90, 90, 180] and r[3] == 47 and r[4] == 0, r)
 
 
+def scenario_lengths_parse_the_way_people_type_them():
+    d = tempfile.mkdtemp(prefix='twin_cards_js_')
+    shutil.copy(os.path.join(ROOT, 'static', 'twin', 'editor', 'cards.js'), os.path.join(d, 'cards.mjs'))
+    driver = os.path.join(d, 'driver.mjs')
+    with open(driver, 'w', encoding='utf-8') as f:
+        f.write("""import { parseLength } from './cards.mjs';
+const inputs = JSON.parse(process.argv[2]);
+console.log(JSON.stringify(inputs.map(i => { try { return parseLength(i); } catch (e) { return null; } })));""")
+    cases = ["5'6\"", '5.5', '66in', '5ft', '5 ft 6 in', "11'-0\"", '0x1A', '1e3', '', 'nonsense', 'Infinity']
+    out = subprocess.run([shutil.which('node'), driver, json.dumps(cases)], capture_output=True, text=True,
+                         timeout=60, cwd=d)
+    if out.returncode != 0:
+        raise AssertionError(out.stderr[-2000:])
+    got = json.loads(out.stdout.strip().splitlines()[-1])
+    check(close(got[:6], [5.5, 5.5, 5.5, 5, 5.5, 11]), got)
+    check(got[6:] == [None] * 5, ('refused', got[6:]))
+
+
 if __name__ == '__main__':
     if not shutil.which('node'):
         print('  ..  skipped (node not available)')
@@ -80,6 +98,7 @@ if __name__ == '__main__':
         for fn in (scenario_points_snap_to_endpoints_then_lines_then_grid,
                    scenario_reach_and_grid_are_options,
                    scenario_angles_snap_to_right_angles_within_seven_degrees,
-                   scenario_rotation_snaps_to_quarter_turns_within_seven_degrees):
+                   scenario_rotation_snaps_to_quarter_turns_within_seven_degrees,
+                   scenario_lengths_parse_the_way_people_type_them):
             fn()
             print('  ok ', fn.__name__)

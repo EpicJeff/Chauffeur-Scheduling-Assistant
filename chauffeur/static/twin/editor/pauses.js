@@ -1,5 +1,6 @@
 import { request, report, checkpoint } from './api.js';
 import { snapRotation } from './snap.js';
+import { pauseWords, sheetMaster } from './words.js';
 
 const rotate = (p, degrees) => {
   const a = degrees * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
@@ -22,10 +23,11 @@ export function fromTwoPoints(aPx, bPx, aFt, bFt) {
   return { scale: feet / pixels, angle, origin_px: [...aPx], offset: [...aFt] };
 }
 
-export function createPauses({ view, getBuild, getGhost, getSheets, refresh, canEdit, signal }) {
+export function createPauses({ view, getBuild, getGhost, getSheets, refresh, preview, visibilityChanged, canEdit, signal }) {
   const el = id => document.getElementById(id), host = el('pause-card'), canvas = view.renderer3.domElement;
   let key = null, pause = null, step = null, buildId = null, floorKey = null;
-  let mode = null, pins = [], drag = null, busy = false, lastAnswer = null, dismissed = false, imageSize = null;
+  let mode = null, pins = [], drag = null, busy = false, lastAnswer = null, dismissed = false, masterSize = null;
+  let original = null, adjusted = false, referenceKey = null, lastPin = null;
   let costBuild = null, costSeq = 0, cumulativeCost = 0, pendingCost = null;
   const stepCosts = new Map();
   function readCosts(build) {
@@ -47,8 +49,9 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, can
   }
   function instruction() {
     el('pause-instruction').textContent = mode === 'pin'
-      ? ['Tap a point on the blue outline.', 'Tap where that point belongs on the drawing.', 'Tap a second point on the blue outline, farther away.', 'Tap where the second point belongs on the drawing.'][pins.length]
-      : mode === 'drag' ? 'Drag the blue outline along the floor, then let go to keep its new place.' : '';
+      ? ['Tap a point on the blue outline, then its matching spot on the floor below.', 'Tap where that point belongs on the floor below.', 'Tap a second point on the blue outline, farther away.', 'Tap where the second point belongs on the floor below.'][pins.length]
+      : mode === 'drag' ? 'Drag the blue outline along the floor. Choose Looks right when it is in place.'
+        : adjusted ? 'This is a preview. Choose Looks right to keep it.' : '';
   }
   function disable(value) { busy = value; host.querySelectorAll('button, input').forEach(b => { b.disabled = value || !canEdit(); }); }
   async function answer(decision) {
@@ -57,7 +60,7 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, can
     const payload = { step: pause.step, decision };
     try {
       await request(`build/${encodeURIComponent(buildId)}/answer`, 'POST', payload);
-      lastAnswer = payload; mode = null; pins = []; host.hidden = true; await refresh();
+      lastAnswer = payload; mode = null; pins = []; host.hidden = true; visibilityChanged?.(); await refresh();
     } finally { disable(false); }
   }
   async function showSheet() {
@@ -66,24 +69,26 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, can
     const frame = view.plan.buildings.find(b => b.levels.some(l => `${b.id}:${l.id}` === floorKey));
     if (!frame || !pause?.registration) return;
     const levelId = frame.levels.find(l => `${frame.id}:${l.id}` === floorKey).id;
-    view.setSheet({ url, reg: pause.registration, buildingId: frame.id, levelId });
-    const version = key;
-    const image = new Image();
-    image.onload = () => { if (version === key) imageSize = [image.naturalWidth, image.naturalHeight]; };
-    image.src = url;
+    masterSize = sheetMaster(getSheets(), step.source, step.page);
+    view.setSheet({ url, reg: original.registration, masterSize, buildingId: frame.id, levelId });
   }
   function sync() {
     const build = getBuild(), next = build?.state === 'paused' && build.pause;
     readCosts(build);
-    if (!next) { host.hidden = true; pause = null; key = null; mode = null; return; }
+    if (!next) { stopDrag(); clearPins(); host.hidden = true; pause = null; original = null; key = null; mode = null; visibilityChanged?.(); return; }
     // Seq may advance for unrelated events; only a new pause or a re-read reframes.
-    const identity = `${build.id}:${next.step}:${JSON.stringify(next.registration)}`;
+    const identity = `${build.id}:${next.step}:${JSON.stringify(next.registration || next.transform)}`;
     if (identity !== key) {
-      key = identity; pause = next; buildId = build.id; dismissed = false; mode = null; pins = []; imageSize = null;
+      key = identity; original = structuredClone(next); pause = structuredClone(next); adjusted = false;
+      buildId = build.id; dismissed = false; mode = null; pins = []; masterSize = null; lastPin = null;
       step = build.steps.find(s => s.id === pause.step);
       const preview = view.plan.buildings.find(b => b.id === `editor-preview:${pause.step}`);
       const owner = getSheets().page_roles.find(r => r.source === step?.source && r.page === step?.page)?.building || 'house';
       floorKey = preview ? `${preview.id}:${preview.levels[0].id}` : `${owner}:${step?.level || view.plan.buildings.find(b => b.id === owner)?.levels[0]?.id}`;
+      const house = view.plan.buildings.find(b => b.id === owner);
+      const elevation = preview?.levels[0].elevation ?? house?.levels.find(l => l.id === step?.level)?.elevation ?? Infinity;
+      const below = house?.levels.filter(l => l.elevation < elevation - .1).sort((a, b) => b.elevation - a.elevation)[0];
+      referenceKey = below ? `${owner}:${below.id}` : floorKey;
       if (view.groups?.levels[floorKey]) {
         view.setView(floorKey);
         const otherKeys = view.plan.buildings.filter(b => b.id === owner).flatMap(b => b.levels
@@ -92,11 +97,10 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, can
         showSheet().catch(report);
       }
       el('pause-title').textContent = step?.label || 'Check this outline';
-      const confidence = Number(pause.confidence);
-      el('pause-reason').textContent = `${pause.why || 'Does this outline match your drawing?'} ${confidence >= .8 ? 'Sure' : confidence >= .5 ? 'Fairly sure' : 'Unsure'}.`;
+      el('pause-reason').textContent = pauseWords(pause);
       el('pause-turn-label').hidden = pause.kind !== 'lot_placement';
       el('pause-turn').value = pause.transform?.rotation || 0;
-      el('pause-pin').hidden = pause.kind === 'lot_placement';
+      el('pause-pin').hidden = pause.kind !== 'level_registration';
       instruction();
     }
     step = build.steps.find(s => s.id === pause.step);
@@ -104,19 +108,45 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, can
     el('pause-reread').textContent = Number.isFinite(lastCost) ? `Re-read · last $${lastCost.toFixed(2)}` : 'Re-read · last cost $— (unavailable)';
     el('pause-reread').title = 'Reads this drawing again and adds to the running cost.';
     host.hidden = dismissed || !canEdit();
-    disable(busy); anchor();
+    disable(busy); anchor(); visibilityChanged?.();
   }
   function anchor() {
     if (host.hidden || !floorKey) return;
-    const outline = getGhost(pause?.step)?.piece?.outline || getGhost(pause?.step)?.piece?.lot;
+    const pointsToAnchor = outline();
     const rect = canvas.getBoundingClientRect();
-    const points = outline?.map(p => view.screenOfFloor(...p, floorKey)).filter(Boolean) || [];
+    const points = pointsToAnchor.map(p => view.screenOfFloor(...p, floorKey)).filter(Boolean);
     const right = points.length ? Math.max(...points.map(p => p[0])) + 18 : rect.right - 310;
     const top = points.length ? Math.min(...points.map(p => p[1])) : rect.top + 160;
     host.style.left = `${Math.max(rect.left + 84, Math.min(rect.right - host.offsetWidth - 18, right))}px`;
     host.style.top = `${Math.max(rect.top + 84, Math.min(rect.bottom - host.offsetHeight - 130, top))}px`;
   }
-  el('pause-accept').addEventListener('click', () => answer({ accept: true }).catch(report), { signal });
+  function changed() {
+    adjusted = true; instruction(); preview?.();
+  }
+  function outline() {
+    const points = getGhost(pause?.step)?.piece?.outline || getGhost(pause?.step)?.piece?.lot || [];
+    return pause?.registration && original?.registration
+      ? points.map(p => applyRegistration(pause.registration, invertRegistration(original.registration, p))) : points;
+  }
+  function shift(by) {
+    if (pause.kind === 'lot_placement') pause.transform.position = pause.transform.position.map((v, i) => v + by[i]);
+    else pause.registration.offset = pause.registration.offset.map((v, i) => v + by[i]);
+    changed();
+  }
+  function clearPins() {
+    pins = []; el('editor-pin-marks').replaceChildren(); delete host.dataset.pinning;
+    el('pause-pin').setAttribute('aria-pressed', 'false');
+  }
+  function stopDrag() {
+    if (!drag) return;
+    const start = drag; drag = null; view.controls.enabled = start.enabled;
+    if (canvas.hasPointerCapture(start.pointerId)) canvas.releasePointerCapture(start.pointerId);
+    el('editor-drag-outline').setAttribute('points', '');
+  }
+  signal.addEventListener('abort', stopDrag, { once: true });
+  el('pause-accept').addEventListener('click', () => answer(adjusted
+    ? pause.kind === 'lot_placement' ? { transform: pause.transform } : { registration: pause.registration }
+    : { accept: true }).catch(report), { signal });
   el('pause-pin').addEventListener('click', () => {
     mode = 'pin'; pins = []; el('editor-pin-marks').replaceChildren(); instruction(); el('pause-pin').setAttribute('aria-pressed', 'true');
     // Keep the card away from the four point targets while pinning.
@@ -124,14 +154,25 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, can
   }, { signal });
   el('pause-drag').addEventListener('click', () => { mode = 'drag'; pins = []; instruction(); }, { signal });
   el('pause-cancel').addEventListener('click', () => {
-    mode = null; pins = []; instruction(); el('editor-pin-marks').replaceChildren(); delete host.dataset.pinning; el('pause-pin').setAttribute('aria-pressed', 'false');
+    stopDrag(); mode = null; clearPins(); pause = structuredClone(original); adjusted = false; lastPin = null;
+    el('pause-turn').value = pause.transform?.rotation || 0; instruction(); preview?.();
   }, { signal });
   el('pause-turn').addEventListener('change', () => {
     const angle = Number(el('pause-turn').value);
-    if (Number.isFinite(angle)) answer({ transform: { ...pause.transform, rotation: snapRotation(angle) } }).catch(report);
+    if (el('pause-turn').value.trim() && Number.isFinite(angle) && pause?.transform) {
+      const owner = getSheets().page_roles.find(r => r.source === step.source && r.page === step.page)?.building || 'house';
+      const house = view.plan.buildings.find(b => b.id === owner);
+      const points = house?.walls.flatMap(w => [w.from, w.to]) || [];
+      if (!points.length) points.push(...(house?.levels[0]?.outline || []));
+      const centre = points.length ? [0, 1].map(i => (Math.min(...points.map(p => p[i])) + Math.max(...points.map(p => p[i]))) / 2) : [0, 0];
+      const before = rotate(centre, pause.transform.rotation || 0), after = rotate(centre, snapRotation(angle));
+      pause.transform.position = pause.transform.position.map((v, i) => v + before[i] - after[i]);
+      pause.transform.rotation = snapRotation(angle); changed();
+    } else report(new Error('Use a finite number of degrees.'));
   }, { signal });
   el('pause-reread').addEventListener('click', async () => {
     if (busy || !canEdit()) return;
+    if (!await window.promptConfirm('Re-read this drawing?', `${el('pause-reread').textContent}. Reading again adds to the running cost.`, 'Re-read', 'Cancel')) return;
     disable(true);
     try {
       await request(`build/${encodeURIComponent(buildId)}/reread`, 'POST', { step: pause.step });
@@ -141,77 +182,83 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, can
       else report(error);
     } finally { disable(false); }
   }, { signal });
-  const marker = point => {
-    const p = view.screenOfFloor(...point, floorKey); if (!p) return;
+  const marker = (point, key) => {
+    const p = view.screenOfFloor(...point, key); if (!p) return;
     const dot = document.createElement('span'); dot.className = 'editor-pin-dot'; dot.textContent = String(pins.length);
     dot.style.left = `${p[0]}px`; dot.style.top = `${p[1]}px`; el('editor-pin-marks').append(dot);
   };
   return {
-    sync, anchor, lastAnswer: () => lastAnswer,
-    show() { key = null; dismissed = false; sync(); },
+    sync, anchor, lastAnswer: () => lastAnswer, clearLastAnswer() { lastAnswer = null; },
+    current: () => pause, sheetMaster: () => masterSize, pinCheck: () => lastPin,
+    dismissed: () => dismissed,
+    show() { dismissed = false; sync(); },
     resume() { dismissed = false; sync(); },
-    dismiss() { dismissed = true; host.hidden = true; mode = null; pins = []; el('editor-pin-marks').replaceChildren(); delete host.dataset.pinning; },
+    dismiss() { stopDrag(); dismissed = true; host.hidden = true; mode = null; clearPins(); visibilityChanged?.(); },
+    dragPauseGhost(dx, dy) {
+      if (!pause || busy || !canEdit()) return;
+      const p = outline()[0] || [0, 0], screen = view.screenOfFloor(...p, floorKey); if (!screen) return;
+      const a = view.floorAt(...screen, floorKey), b = view.floorAt(screen[0] + dx, screen[1] + dy, floorKey);
+      if (a && b) shift(b.map((v, i) => v - a[i]));
+    },
     screenOfGhostUV(u, v) {
-      const outline = getGhost(pause?.step)?.piece?.outline || getGhost(pause?.step)?.piece?.lot || [[0, 0], [70, 65]];
-      const xs = outline.map(p => p[0]), ys = outline.map(p => p[1]);
+      const points = outline().length ? outline() : [[0, 0], [70, 65]];
+      const xs = points.map(p => p[0]), ys = points.map(p => p[1]);
       return view.screenOfFloor(Math.min(...xs) + u * (Math.max(...xs) - Math.min(...xs)), Math.max(...ys) - v * (Math.max(...ys) - Math.min(...ys)), floorKey);
     },
     screenOfSheetUV(u, v) {
       if (!pause) return null;
-      const size = imageSize || [2048, 2048];
-      return view.screenOfFloor(...applyRegistration(pause.registration, [u * size[0], v * size[1]]), floorKey);
+      if (!masterSize) return null;
+      return view.screenOfFloor(...applyRegistration(original.registration, [u * masterSize[0], v * masterSize[1]]), referenceKey);
     },
     pointerDown(event) {
       if (!mode || !pause || busy || !canEdit()) return false;
-      const point = view.floorAt(event.clientX, event.clientY, floorKey); if (!point) return true;
+      if (drag) return true;
+      const targetKey = mode === 'pin' && pins.length % 2 ? referenceKey : floorKey;
+      const point = view.floorAt(event.clientX, event.clientY, targetKey); if (!point) return true;
       if (mode === 'pin') {
         pins.push(pins.length % 2 === 0 ? invertRegistration(pause.registration, point) : point);
-        marker(point);
+        marker(point, targetKey);
         if (pins.length === 4) {
           try {
             const registration = fromTwoPoints(pins[0], pins[2], pins[1], pins[3]);
-            mode = null; el('editor-pin-marks').replaceChildren(); delete host.dataset.pinning;
-            answer({ registration }).catch(report);
+            const landed = applyRegistration(registration, pins[2]);
+            lastPin = { error_ft: Math.hypot(landed[0] - pins[3][0], landed[1] - pins[3][1]) };
+            pause.registration = registration; mode = null; clearPins(); changed();
           } catch (error) { pins = []; instruction(); report(error); }
         } else instruction();
       } else {
-        drag = { point, enabled: view.controls.enabled }; view.controls.enabled = false;
+        drag = { point, pointerId: event.pointerId, enabled: view.controls.enabled }; view.controls.enabled = false;
         canvas.setPointerCapture(event.pointerId);
       }
       return true;
     },
     pointerMove(event) {
-      if (!drag) return false;
+      if (!drag || event.pointerId !== drag.pointerId) return false;
       const point = view.floorAt(event.clientX, event.clientY, floorKey);
       if (point) {
-        el('pause-instruction').textContent = 'Let go to keep this place.';
-        let outline = getGhost(pause.step)?.piece?.outline || getGhost(pause.step)?.piece?.lot || [];
+        el('pause-instruction').textContent = 'Let go to preview this place, then choose Looks right.';
+        let points = outline();
         if (pause.kind === 'lot_placement') {
           const owner = getSheets().page_roles.find(r => r.source === step.source && r.page === step.page)?.building || 'house';
           const building = view.plan.buildings.find(b => b.id === owner);
-          outline = (building?.levels[0]?.outline || building?.walls.flatMap(w => [w.from, w.to]) || []).map(p => {
+          points = (building?.levels[0]?.outline || building?.walls.flatMap(w => [w.from, w.to]) || []).map(p => {
             const point = rotate(p, pause.transform.rotation); return point.map((v, i) => v + pause.transform.position[i]);
           });
         }
         const by = point.map((v, i) => v - drag.point[i]);
-        el('editor-drag-outline').setAttribute('points', outline.map(p => view.screenOfFloor(p[0] + by[0], p[1] + by[1], floorKey))
+        el('editor-drag-outline').setAttribute('points', points.map(p => view.screenOfFloor(p[0] + by[0], p[1] + by[1], floorKey))
           .filter(Boolean).map(p => p.join(',')).join(' '));
       }
       return true;
     },
     pointerUp(event, cancel) {
-      if (!drag) return false;
-      el('editor-drag-outline').setAttribute('points', '');
-      const start = drag; drag = null; view.controls.enabled = start.enabled;
-      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+      if (!drag || event.pointerId !== drag.pointerId) return false;
+      const start = drag; stopDrag();
       const point = view.floorAt(event.clientX, event.clientY, floorKey);
       if (cancel || !point) { instruction(); return true; }
       const by = point.map((v, i) => v - start.point[i]);
       if (Math.hypot(...by) < .01) return true;
-      const decision = pause.kind === 'lot_placement'
-        ? { transform: { ...pause.transform, position: pause.transform.position.map((v, i) => v + by[i]) } }
-        : { registration: { ...pause.registration, offset: pause.registration.offset.map((v, i) => v + by[i]) } };
-      answer(decision).catch(report); return true;
+      shift(by); return true;
     },
   };
 }

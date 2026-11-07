@@ -9,6 +9,7 @@ services.twin_reads.read, so a Build streams ghosts with no spend.
 Run from chauffeur/:  python tests/test_house_editor_live.py
 """
 import json
+import re
 import os
 import sys
 import tempfile
@@ -122,6 +123,8 @@ def scenario_build_streams_ghosts_and_log_lines():
         check(time.time() - start < 30, 'first ghost within 30 s')
         st = page.evaluate('window.__editor.build()')
         check(st and st['state'] == 'paused' and st['pause']['kind'] == 'scale_outline', st)
+        page.wait_for_selector('#pause-card', state='visible', timeout=10000)
+        check(not page.locator('#pause-pin').is_visible(), 'no Pin 2 points when nothing fixed exists yet')
         r = _api(page, 'POST', f"build/{st['id']}/answer", {'step': 'outline:L1', 'decision': {'accept': True}})
         check(r['status'] == 200, r)
         page.wait_for_function(
@@ -320,7 +323,7 @@ def scenario_cameras_floors_and_sheet():
         _open(page, s)
         for name in ('Top', 'Front', 'Back', 'Orbit'):
             page.get_by_role('button', name=name, exact=True).click()
-        page.locator('#editor-floors').get_by_role('button', name='Main floor').click()
+        page.locator('#editor-floors').get_by_role('button', name='Main floor', exact=True).click()
         vis = page.evaluate('window.__twin.levelVisibility()')
         check(vis.get('house:L1') and not vis.get('house:L2', False), vis)
         page.click('#rail-sheet')
@@ -366,17 +369,31 @@ def scenario_pause_card_shows_its_reason_cost_and_pins():
         page.wait_for_selector('#pause-card', state='visible', timeout=20000)
         text = page.inner_text('#pause-card')
         check('stamp' in text.lower() or 'sure' in text.lower(), text)
+        reason = page.inner_text('#pause-card .pause-why')
+        check(reason[:1].isupper() and reason.rstrip().endswith('.'), ('a sentence', reason))
+        check(not page.locator('#editor-check-step').is_visible(), 'one way to check the step, not two')
+        sheet = page.evaluate('window.__twin.sheetInfo()')
+        reg = page.evaluate('window.__editor.pause().registration')
+        master = page.evaluate('window.__editor.sheetMaster()')
+        check(abs(sheet['widthFt'] - master[0] * reg['scale']) < 0.5, ('underlay at the registered scale', sheet, master, reg))
         check('$' in page.inner_text('#pause-reread'), 'the re-read shows its cost')
         page.screenshot(path=os.path.join(tempfile.gettempdir(), 'house_editor_pause.png'))
         page.click('#pause-pin')
+        check('floor below' in page.inner_text('#pause-card').lower(), 'level pins point at the floor below, not the moving sheet')
         for gx, gy, sx, sy in ((0.3, 0.2, 0.31, 0.2), (0.6, 0.7, 0.61, 0.7)):
             a = page.evaluate("([u, v]) => window.__editor.screenOfGhostUV(u, v)", [gx, gy])
             page.mouse.click(*a)
             b = page.evaluate("([u, v]) => window.__editor.screenOfSheetUV(u, v)", [sx, sy])
             page.mouse.click(*b)
+        check(page.evaluate('window.__editor.lastAnswer()') in (None, {}) or
+              not page.evaluate('window.__editor.lastAnswer() && window.__editor.lastAnswer().step === "registration:L2"'),
+              'pins only preview until Looks right')
+        landed = page.evaluate('window.__editor.pinCheck()')
+        page.click('#pause-accept')
         page.wait_for_function("() => window.__editor.lastAnswer() && window.__editor.lastAnswer().decision.registration",
                                timeout=10000)
         check(page.evaluate('window.__editor.lastAnswer().decision.registration.scale') > 0, 'a registration was sent')
+        check(landed and landed['error_ft'] < 0.05, ('the second pin lands where it was put', landed))
 
 
 def scenario_timeline_previews_and_returns_without_rewriting_history():
@@ -622,6 +639,107 @@ def scenario_a_stopped_build_can_be_resumed():
         check(resumes == [1], 'Resume asks the server to continue the stopped build')
 
 
+# ---- Tasks 14-17 review ----
+
+def scenario_a_real_mouse_drag_moves_a_wall_without_turning_the_view():
+    s = _serve()
+    if s is None:
+        return
+    with s.browser(launch_args=GPU_ARGS) as page:
+        page.set_viewport_size({'width': 1600, 'height': 900})
+        _signed_in(page)
+        _open(page, s)
+        page.get_by_role('button', name='Top', exact=True).click()
+        page.click('#rail-move')
+        wall = _first(_plan(page), 'walls')
+        x, y = page.evaluate("([p, b]) => window.__twin.screenOf(p, b)", [wall['id'], 'house'])
+        camera = page.evaluate('window.__twin.cameraState()')
+        page.mouse.move(x, y)
+        page.mouse.down()
+        for step in range(1, 9):
+            page.mouse.move(x + step * 6, y)
+        page.mouse.up()
+        page.wait_for_function("() => (window.__editor.lastSummary() || '').startsWith('Moved')", timeout=10000)
+        moved = _piece(_plan(page), wall['id'])
+        check(moved['from'] != wall['from'], 'the wall moved')
+        after = page.evaluate('window.__twin.cameraState()')
+        check(all(abs(a - b) < 1e-3 for a, b in zip(camera['position'], after['position'])), 'the view did not orbit')
+        summary = page.evaluate('window.__editor.lastSummary()')
+        check(not re.search(r'wall[:-][0-9a-f]{4,}|wall-\d', summary), ('plain words, no ids', summary))
+
+
+def scenario_turning_keeps_the_house_in_place():
+    s = _serve()
+    if s is None:
+        return
+    with s.browser(launch_args=GPU_ARGS) as page:
+        _signed_in(page)
+        _open(page, s)
+        before = page.evaluate("() => window.__editor.buildingCentre('house')")
+        page.evaluate("([b, deg]) => window.__editor.rotateBuilding(b, deg)", ['house', 90])
+        page.wait_for_function("() => (window.__editor.lastSummary() || '').startsWith('Turned')", timeout=10000)
+        after = page.evaluate("() => window.__editor.buildingCentre('house')")
+        check(abs(before[0] - after[0]) < 1.0 and abs(before[1] - after[1]) < 1.0, ('turns about its middle', before, after))
+        page.evaluate("([b, deg]) => window.__editor.rotateBuilding(b, deg)", ['house', 0])
+        page.wait_for_function("() => (window.__editor.lastSummary() || '').startsWith('Turned')", timeout=10000)
+
+
+def scenario_a_card_save_keeps_what_is_typed_elsewhere():
+    s = _serve()
+    if s is None:
+        return
+    with s.browser(launch_args=GPU_ARGS) as page:
+        page.set_viewport_size({'width': 1600, 'height': 900})
+        _signed_in(page)
+        _open(page, s)
+        wall = _first(_plan(page), 'walls')
+        page.evaluate("([p, b]) => window.__editor.clickPiece(p, b)", [wall['id'], 'house'])
+        page.wait_for_selector('#piece-card', state='visible', timeout=10000)
+        page.locator('#piece-card').get_by_label('Thickness', exact=True).fill("0'-8\"")
+        _card_set(page, 'Height', "10'-6\"")
+        page.wait_for_function("() => (window.__editor.lastSummary() || '').startsWith('Set ')", timeout=10000)
+        check(page.locator('#piece-card').get_by_label('Thickness', exact=True).input_value() == "0'-8\"",
+              'half-typed text survives another field saving')
+
+
+def scenario_pause_adjustments_wait_for_looks_right():
+    # Drag at a pause only previews; nothing is answered (a paid step) until Looks right.
+    s = _serve()
+    if s is None:
+        return
+    with s.browser(launch_args=GPU_ARGS) as page:
+        page.set_viewport_size({'width': 1600, 'height': 900})
+        _signed_in(page)
+        _open(page, s)
+        if not page.locator('#pause-card').is_visible():
+            return       # the build moved past its pauses in an earlier scenario
+        page.evaluate("() => window.__editor.clearLastAnswer()")
+        page.click('#pause-drag')
+        page.evaluate("() => window.__editor.dragPauseGhost(30, 0)")
+        page.wait_for_timeout(800)
+        check(page.evaluate('window.__editor.lastAnswer()') is None, 'a drag only previews')
+        page.click('#pause-accept')
+        page.wait_for_function('() => window.__editor.lastAnswer() !== null', timeout=10000)
+        check(page.evaluate('window.__editor.lastAnswer().decision.registration || window.__editor.lastAnswer().decision.transform'),
+              'Looks right sends the adjusted placement')
+
+
+def scenario_return_here_leaves_preview():
+    s = _serve()
+    if s is None:
+        return
+    with s.browser(launch_args=GPU_ARGS) as page:
+        _signed_in(page)
+        _open(page, s)
+        n = page.evaluate('window.__editor.roundCount()')
+        page.evaluate("(i) => window.__editor.scrubTo(i)", n - 1)
+        check(page.locator('#time-return').is_disabled(), 'nothing to return to at the newest step')
+        page.evaluate("(i) => window.__editor.scrubTo(i)", 1)
+        page.click('#time-return')
+        page.wait_for_function("(n) => window.__editor.roundCount() === n + 1", arg=n, timeout=10000)
+        check(not page.locator('#time-chip').is_visible(), 'back to the present after returning')
+
+
 if __name__ == '__main__':
     for fn in (scenario_signed_out_sees_the_sign_in,
                scenario_shell_matches_the_mockup_regions,
@@ -642,6 +760,11 @@ if __name__ == '__main__':
                scenario_plan_view_is_flat_and_adds_walls_and_windows,
                scenario_pause_card_shows_its_reason_cost_and_pins,
                scenario_timeline_previews_and_returns_without_rewriting_history,
+               scenario_a_real_mouse_drag_moves_a_wall_without_turning_the_view,
+               scenario_turning_keeps_the_house_in_place,
+               scenario_a_card_save_keeps_what_is_typed_elsewhere,
+               scenario_pause_adjustments_wait_for_looks_right,
+               scenario_return_here_leaves_preview,
                scenario_director_runs_from_the_editor,
                scenario_advanced_plan_editor_round_trips,
                scenario_reset_spend_needs_the_word_reset,

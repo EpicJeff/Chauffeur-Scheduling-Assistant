@@ -1,4 +1,5 @@
 import { request, checkpoint, plain, report } from './api.js';
+import { pauseWords } from './words.js';
 
 export function createPanel({ afterSay }) {
   const log = document.getElementById('editor-log');
@@ -65,9 +66,10 @@ export function createPanel({ afterSay }) {
   replies();
   return {
     message, say, replies,
-    focusSelection(item) {
+    clearSelection() { selection = null; },
+    focusSelection(item, label) {
       selection = item;
-      input.value = `About ${item.pieceId} in ${item.buildingId}: `;
+      input.value = `About ${label}: `;
       input.focus(); input.setSelectionRange(input.value.length, input.value.length);
     },
     readOnly(value) {
@@ -106,8 +108,9 @@ export function createPanel({ afterSay }) {
         const pause = build.pause, key = `${build.id}:${pause.step}:${pause.why}:${pause.confidence}`;
         if (!pauses.has(key)) {
           pauses.add(key);
-          const confidence = Number(pause.confidence);
-          message(`${pause.why || 'Please check this step.'} ${confidence >= .8 ? 'I am sure.' : confidence >= .5 ? 'I am fairly sure.' : 'I am unsure.'} Does the blue outline match the drawing? You can tell me what to move, or use Looks right, Drag or Pin 2 points beside it.`);
+          message(`${pauseWords(pause)} ${pause.kind === 'level_registration' ? 'Does the blue outline line up with the floor below? Use Drag or Pin 2 points to adjust it, then Looks right.'
+            : pause.kind === 'lot_placement' ? 'Is the house in the right place? Drag or turn it, then choose Looks right.'
+              : 'Does the blue outline match your drawing? Use Drag to slide it, then Looks right.'}`);
           replies(['Keep going', 'What needs checking?']);
         }
       }

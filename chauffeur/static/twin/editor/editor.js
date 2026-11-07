@@ -3,7 +3,7 @@ import { request, createPolling, idleInterval, buildInterval, checkpoint, plain,
 import { createPanel } from './panel.js';
 import { createSceneTools } from './scene_tools.js';
 import { createPlanView } from './plan_view.js';
-import { createPauses } from './pauses.js';
+import { createPauses, applyRegistration, invertRegistration } from './pauses.js';
 import { createTimeline } from './timeline.js';
 
 const el = id => document.getElementById(id);
@@ -24,9 +24,12 @@ export async function boot() {
   const canEdit = () => !previewing && !session.signedOut;
   async function edit(change) {
     if (!canEdit()) throw new Error('Use Back to now before changing your house.');
-    const result = await request('edit', 'POST', { edit: change });
-    snapshot = await request('state');
-    const line = document.createElement('li'); line.textContent = plain(result.summary); el('editor-log').append(line);
+    let result;
+    for (const op of Array.isArray(change) ? change : [change]) {
+      result = await request('edit', 'POST', { edit: op });
+      const line = document.createElement('li'); line.textContent = plain(result.summary); el('editor-log').append(line);
+    }
+    [snapshot, sheets] = await Promise.all([request('state'), request('sheets')]);
     await renderScene(); timeline?.sync(currentBuild);
     lastSummary = result.summary;
     return result;
@@ -35,7 +38,7 @@ export async function boot() {
   function setStatus(text) { el('editor-status').textContent = plain(text); }
   function syncBuildButton() {
     el('editor-build').disabled = previewing || !hooks.ready || !confirmed || uploadsBusy || rolesBusy || building || resuming || active(currentBuild);
-    el('editor-check-step').hidden = previewing || currentBuild?.state !== 'paused';
+    el('editor-check-step').hidden = previewing || currentBuild?.state !== 'paused' || !pauses?.dismissed();
     el('editor-resume').hidden = previewing || !['stopped', 'checkpoint'].includes(currentBuild?.state);
     el('editor-resume').disabled = !hooks.ready || building || resuming || session.signedOut;
   }
@@ -47,7 +50,8 @@ export async function boot() {
   }
   function previewPlan() {
     const plan = structuredClone(snapshot.plan || emptyPlan());
-    const pause = currentBuild?.pause;
+    const savedPause = currentBuild?.pause;
+    const pause = savedPause && pauses?.current()?.step === savedPause.step ? pauses.current() : savedPause;
     if (pause?.kind === 'lot_placement' && pause.transform) {
       const step = currentBuild.steps.find(s => s.id === pause.step);
       const owner = sheets.page_roles.find(row => row.source === step?.source && row.page === step?.page)?.building || 'house';
@@ -57,8 +61,10 @@ export async function boot() {
     // Outlines awaiting a person's approval live in events, never in saved
     // rounds. Give each one a temporary floor using the existing scene builder.
     for (const [stepId, event] of ghosts) {
-      const outline = event.piece?.outline || event.piece?.lot;
+      let outline = event.piece?.outline || event.piece?.lot;
       if (!outline?.length) continue;
+      if (pause?.step === stepId && pause.registration && savedPause?.registration)
+        outline = outline.map(p => applyRegistration(pause.registration, invertRegistration(savedPause.registration, p)));
       if (event.piece.lot) plan.site.lot = outline;
       const step = currentBuild?.steps.find(item => item.id === stepId);
       const owner = sheets.page_roles.find(row => row.source === step?.source && row.page === step?.page);
@@ -164,13 +170,13 @@ export async function boot() {
       panel.events(build); drawTimeline(build); syncBuildButton();
       const step = build.steps.find(step => step.status === 'running' || step.status === 'paused');
       setStatus(build.state === 'running' ? `Argyle is building${step ? ' · ' + step.label : ''}`
-        : build.state === 'paused' ? 'Check this step with Argyle'
+        : build.state === 'paused' ? 'Argyle is waiting for you'
           : build.state === 'done' ? 'House ready' : build.state === 'checkpoint' ? 'Spending checkpoint' : 'Build stopped');
       // Each new event batch can carry saved pieces, temporary outlines or
       // new costs. Read their owning state before rebuilding the scene.
       if (build.events?.length) {
         await polling.refreshState();
-        sheets.registrations = (await request('sheets')).registrations;
+        sheets = await request('sheets');
       }
       if (build.state === 'checkpoint') {
         const detail = [...(build.events || [])].reverse().find(event => event.type === 'checkpoint')
@@ -325,12 +331,13 @@ export async function boot() {
     await loadSheets();
     const kit = await request('kit/modern_farmhouse', 'GET', undefined, 'twin');
     view = await mountTwin(el('editor-scene'), { plan: emptyPlan(), kit, preserveCamera: true });
-    const onInteract = () => pauses?.dismiss();
+    const onInteract = () => { pauses?.dismiss(); syncBuildButton(); };
     tools = createSceneTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getSheets: () => sheets,
       edit, panel, canEdit, signal: lifecycle.signal, onInteract });
     planView = createPlanView({ view, tools, edit, canEdit, signal: lifecycle.signal, onInteract });
     pauses = createPauses({ view, getBuild: () => currentBuild, getGhost: step => ghosts.get(step),
-      getSheets: () => sheets, refresh: () => polling.pollNow(true), canEdit, signal: lifecycle.signal });
+      getSheets: () => sheets, refresh: () => polling.pollNow(true), preview: () => renderScene().catch(report),
+      visibilityChanged: syncBuildButton, canEdit, signal: lifecycle.signal });
     tools.delegate({
       pointerDown: event => pauses.pointerDown(event) || planView.pointerDown(event),
       pointerMove: event => pauses.pointerMove(event),
@@ -338,6 +345,7 @@ export async function boot() {
       floorChanged: planView.floorChanged, leavePlan: planView.leavePlan, cancel: planView.cancel,
     });
     timeline = createTimeline({ getState: () => snapshot, render: renderScene, signal: lifecycle.signal,
+      log(summary) { const line = document.createElement('li'); line.textContent = summary; el('editor-log').append(line); lastSummary = summary; },
       onPreview(value) {
         previewing = value; tools.select(null); pauses.dismiss(); panel.readOnly(value);
         tools.refreshCard(); syncBuildButton();
@@ -352,6 +360,8 @@ export async function boot() {
       cameraKind: view.cameraKind, screenOfFloor: view.screenOfFloor,
       screenOfGhostUV: pauses.screenOfGhostUV, screenOfSheetUV: pauses.screenOfSheetUV,
       lastAnswer: pauses.lastAnswer, scrubTo: timeline.scrubTo, roundCount: timeline.roundCount,
+      pause: pauses.current, sheetMaster: pauses.sheetMaster, pinCheck: pauses.pinCheck,
+      buildingCentre: tools.buildingCentre, clearLastAnswer: pauses.clearLastAnswer, dragPauseGhost: pauses.dragPauseGhost,
     });
     // The editor uses the mockup's dark work surface; the shared preview keeps
     // its own daylight sky, with the same renderer and lighting.

@@ -68,8 +68,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #editor-message::placeholder { color: var(--editor-muted); font-size: 12px; }
 #editor-time { position: absolute; left: 14px; right: calc(var(--editor-side) + 28px); bottom: 14px; padding: 10px 16px; border: 1px solid var(--editor-line); border-radius: 16px; background: var(--editor-panel); color: var(--editor-muted); font-size: 11px; }
 #editor-time-labels, #editor-time > div:last-child { display: flex; justify-content: space-between; gap: 8px; }
-#editor-time-labels { overflow-x: auto; }
-#editor-time-labels span { flex-shrink: 0; }
+#editor-time-labels { position: relative; height: 52px; margin: 0 8px; }
 #editor-progress { display: block; width: 100%; height: 8px; margin: 8px 0; border: 0; border-radius: 10px; accent-color: #18af84; overflow: hidden; }
 #editor-progress::-webkit-progress-bar { background: #293849; }
 #editor-progress::-webkit-progress-value { background: linear-gradient(90deg, #16a45f, #10b2e0); }
@@ -101,12 +100,16 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 .editor-pin-dot { width: 28px; height: 28px; border-radius: 50%; padding: 2px; text-align: center; transform: translate(-50%, -50%); background: #ef8a26; color: #101820; border-color: #ffbf75; }
 .editor-floor-row { display: flex; align-items: center; gap: 4px; background: var(--editor-panel); border-radius: 10px; }
 #editor-floors .editor-floor-row button { flex: 1; min-width: 0; font-size: 12px; }
-#editor-floors input { appearance: auto; min-height: 44px; width: 44px; flex-shrink: 0; margin: 0; padding: 0; accent-color: var(--editor-accent); }
+#editor-floors .editor-floor-row [data-floor-visible] { flex: 0 0 36px; padding: 6px; display: grid; place-items: center; }
+#editor-floors [data-floor-visible][aria-pressed="false"] { opacity: .5; }
 #editor-time { z-index: 3; }
-#editor-time-labels button { min-width: 72px; max-width: 170px; min-height: 44px; padding: 5px 8px; font-size: 11px; border: 0; border-top: 3px solid #18af84; border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#editor-time-labels button[data-kind="edit"], #editor-time-labels button[data-kind="hand"] { border-top-color: #52ccff; }
-#editor-time-labels button[data-kind="revert"] { border-top-color: #c5a1ff; }
-#editor-time-labels button[data-kind="director"] { border-top-color: #f5ba57; }
+#editor-time-labels button { --mark: #18af84; position: absolute; bottom: 0; transform: translateX(-50%); width: 16px; min-height: 44px; padding: 0; border: 0; border-radius: 0; background: transparent; }
+#editor-time-labels button::after { content: ''; position: absolute; width: 4px; height: 9px; left: 6px; bottom: 0; background: var(--mark); border-radius: 2px; }
+#editor-time-labels button span { position: absolute; left: 8px; bottom: 16px; width: max-content; max-width: 90px; white-space: normal; text-align: left; font-size: 10px; line-height: 12px; }
+#editor-time-labels button:last-child span { left: auto; right: 8px; text-align: right; }
+#editor-time-labels button[data-kind="edit"], #editor-time-labels button[data-kind="hand"] { --mark: #52ccff; }
+#editor-time-labels button[data-kind="revert"] { --mark: #c5a1ff; }
+#editor-time-labels button[data-kind="director"] { --mark: #f5ba57; }
 #editor-progress { height: 4px; margin: 4px 0; }
 #editor-scrub { display: block; padding: 0; border: 0; width: 100%; min-height: 30px; height: 30px; accent-color: var(--editor-accent); background: transparent; cursor: ew-resize; }
 #time-chip { position: absolute; top: 80px; left: 96px; padding: 10px 14px; border: 1px solid #c5a1ff; border-radius: 24px; background: var(--editor-panel); z-index: 4; }
@@ -122,7 +125,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
   #editor-rail { left: 8px; top: 100px; transform: none; max-height: calc(52% - 160px); overflow: auto; }
   #editor-floors { right: 8px; top: 100px; max-height: calc(52% - 160px); overflow: auto; }
   #editor-time { left: 8px; right: 8px; bottom: 49%; padding: 6px 10px; }
-  #editor-time-labels { display: none; }
+  #editor-time-labels { height: 44px; }
   #editor-cameras { left: 76px; bottom: calc(49% + 96px); }
   #editor-cameras button { padding: 5px 8px; }
   #piece-card { top: 86px; right: 8px; width: min(280px, calc(100vw - 86px)); max-height: calc(52dvh - 150px); }

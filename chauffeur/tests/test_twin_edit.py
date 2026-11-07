@@ -246,6 +246,24 @@ def scenario_registration_needs_one_on_file():
         raise AssertionError('no registration on file must refuse')
 
 
+def scenario_summaries_use_plain_labels_not_ids():
+    plan = house()
+    b = plan['buildings'][0]
+    b['walls'][0]['id'] = 'wall:0650fff600eb48258bbc641401b772e9'
+    for o in b['openings']:
+        if o['wall'] == 'wall-1':
+            o['wall'] = b['walls'][0]['id']
+    plan, _ = tp.normalize(plan)
+    _, summary = twin_edit.apply(plan, {'op': 'set', 'piece': b['walls'][0]['id'], 'field': 'height', 'value': 10})
+    check('0650fff6' not in summary and 'wall:' not in summary, summary)
+    check('Main floor' in summary and 'wall' in summary, summary)
+    _, summary = twin_edit.apply(plan, {'op': 'add_opening', 'wall': b['walls'][0]['id'], 'at': 20, 'kind': 'window',
+                                        'width': 3})
+    check('0650fff6' not in summary and 'wall:' not in summary, summary)
+    _, summary = twin_edit.apply(house(), {'op': 'set', 'piece': 'room-1', 'field': 'ha_area', 'value': 'kitchen'})
+    check('ha_area' not in summary, summary)
+
+
 if __name__ == '__main__':
     for fn in (scenario_editable_fields_are_pinned,
                scenario_set_pitch_marks_the_person,
@@ -262,6 +280,7 @@ if __name__ == '__main__':
                scenario_llm_sized_numbers_are_refused_not_crashes,
                scenario_deleting_a_wall_tombstones_what_goes_with_it,
                scenario_gable_openings_follow_their_section,
-               scenario_registration_needs_one_on_file):
+               scenario_registration_needs_one_on_file,
+               scenario_summaries_use_plain_labels_not_ids):
         fn()
         print('  ok ', fn.__name__)

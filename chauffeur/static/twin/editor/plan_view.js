@@ -2,7 +2,7 @@ import { report } from './api.js';
 import { snapPoint, snapAngle } from './snap.js';
 
 export function createPlanView({ view, tools, edit, canEdit, signal, onInteract }) {
-  let active = false, adding = null, first = null;
+  let active = false, adding = null, first = null, parentView = null;
   const el = id => document.getElementById(id);
   const note = text => { el('plan-note').textContent = text; };
   function floorChanged() {
@@ -20,13 +20,15 @@ export function createPlanView({ view, tools, edit, canEdit, signal, onInteract 
   function leavePlan() {
     if (!active) return;
     active = false; cancel(); el('plan-tools').hidden = true; el('rail-plan').setAttribute('aria-pressed', 'false');
-    view.setView(tools.floor()?.key || 'ext'); view.setCamera('orbit');
+    if (parentView) view.restoreView(parentView);
+    parentView = null;
   }
   el('rail-plan').disabled = false;
   el('rail-plan').addEventListener('click', () => {
     onInteract?.();
     if (active) { leavePlan(); return; }
     if (!tools.floor()) return;
+    parentView = view.saveView();
     active = true; el('rail-plan').setAttribute('aria-pressed', 'true'); el('plan-tools').hidden = false;
     cancel(); floorChanged();
   }, { signal });
@@ -48,8 +50,9 @@ export function createPlanView({ view, tools, edit, canEdit, signal, onInteract 
         const point = snapPoint(p, walls);
         if (!first) { first = point; note('Now tap the other end. Walls line up with nearby walls and right angles.'); }
         else {
-          const start = first, end = snapAngle(start, point); first = null;
-          if (Math.hypot(end[0] - start[0], end[1] - start[1]) < .1) { note('Choose two different places for the wall ends.'); return true; }
+          const endpoint = walls.flatMap(w => [w.from, w.to]).some(q => Math.hypot(q[0] - point[0], q[1] - point[1]) < 1e-6);
+          const start = first, end = endpoint ? point : snapAngle(start, point); first = null;
+          if (Math.hypot(end[0] - start[0], end[1] - start[1]) < .5) { note('A wall must be at least 6 inches long. Tap two places farther apart.'); return true; }
           edit({ op: 'add_wall', building: building.id, level: level.id, from: start, to: end }).then(cancel).catch(report);
         }
       } else {

@@ -7463,10 +7463,29 @@ def _house_editor_call(operation, *args, lookup=False, **kwargs):
 
 @app.get('/api/house/editor/sheets')
 def house_editor_sheets():
-    from services import twin_store
+    from pathlib import Path
+    from PIL import Image
+    from services import twin_store, twin_edit
     with twin_store.LIFECYCLE:
-        return {'sources': twin_store.sources(), 'page_roles': twin_store.page_roles(),
-                'registrations': twin_store.registrations()}
+        sources, roles, registrations = twin_store.sources(), twin_store.page_roles(), twin_store.registrations()
+        plan = twin_store.current()
+    # Reading existing PNG headers is cheap. Legacy sources can backfill their
+    # master outside the lifecycle lock, as the crop reader already does.
+    pages = []
+    for source in sources:
+        if source['kind'] != 'drawing':
+            continue
+        for page in range(1, source['pages'] + 1):
+            path = Path(twin_store.DATA_DIR) / 'sources' / source['id'] / f'master-{page}.png'
+            with (Image.open(path) if path.is_file() else twin_store._master_image(source['id'], page)) as image:
+                pages.append({'source': source['id'], 'page': page, 'master_size': list(image.size)})
+    sizes = {(p['source'], p['page']): p['master_size'] for p in pages}
+    for row in [*roles, *registrations]:
+        row['master_size'] = sizes.get((row['source'], row['page']))
+    labels = [{'building': b['id'], 'piece': p['id'], 'label': twin_edit._label(k, p, b)}
+              for k, p, b, _ in twin_edit._entries(plan) if 'id' in p] if plan else []
+    return {'sources': sources, 'pages': pages, 'page_roles': roles, 'registrations': registrations,
+            'piece_labels': labels, 'field_labels': twin_edit.FIELD_LABELS}
 
 
 @app.post('/api/house/editor/sheets/suggest')

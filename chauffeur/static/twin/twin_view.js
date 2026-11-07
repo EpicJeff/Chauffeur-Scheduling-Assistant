@@ -122,6 +122,17 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
     ready: false, scene, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
     groups: null, roomLights: [], plan,
     cameraKind() { return camera.isOrthographicCamera ? 'orthographic-top' : 'perspective'; },
+    saveView() {
+      return { camera, position: camera.position.clone(), quaternion: camera.quaternion.clone(), target: controls.target.clone(),
+        zoom: camera.zoom, state: { ...state }, levels: visibleLevels && [...visibleLevels],
+        faint: [...new Set([...faded.keys()].map(o => { for (let p = o; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey; }).filter(Boolean))] };
+    },
+    restoreView(saved) {
+      camera = saved.camera; view.camera = camera; controls.object = camera; controls.enableRotate = !camera.isOrthographicCamera;
+      view.setView(saved.state.view); view.showLevels(saved.levels, { faint: saved.faint });
+      Object.assign(state, saved.state); camera.position.copy(saved.position); controls.target.copy(saved.target);
+      camera.zoom = saved.zoom; controls.update(); camera.quaternion.copy(saved.quaternion); camera.updateProjectionMatrix(); render();
+    },
     screenOfFloor: projectFloor,
     floorAt(clientX, clientY, key) {
       const frame = floorFrame(key); if (!frame) return null;
@@ -193,13 +204,15 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       if (!level || !parent || !(spec.reg?.scale > 0)) return;
       const version = sheetRevision;
       const elevation = groundAt(plan, ...(building.position || [0, 0])) + (building.base || 0) + level.elevation;
-      sheet = { ready: false, object: null, elevationFt: elevation, widthFt: 0, depthFt: 0 };
+      sheet = { ready: false, object: null, elevationFt: elevation,
+        widthFt: (spec.masterSize?.[0] || 0) * spec.reg.scale, depthFt: (spec.masterSize?.[1] || 0) * spec.reg.scale };
       new THREE.TextureLoader().load(spec.url, texture => {
         if (disposed || version !== sheetRevision) { texture.dispose(); return; }
         const width = texture.image.naturalWidth || texture.image.width, height = texture.image.naturalHeight || texture.image.height;
+        const master = spec.masterSize || [width, height], ratio = [master[0] / width, master[1] / height];
         const reg = spec.reg, angle = (reg.angle || 0) * Math.PI / 180, c = Math.cos(angle), s = Math.sin(angle);
         const at = (x, y) => {
-          const u = (x - reg.origin_px[0]) * reg.scale, v = (reg.origin_px[1] - y) * reg.scale;
+          const u = (x * ratio[0] - reg.origin_px[0]) * reg.scale, v = (reg.origin_px[1] - y * ratio[1]) * reg.scale;
           return [c * u - s * v + reg.offset[0], 0.015, -(s * u + c * v + reg.offset[1])];
         };
         const geometry = new THREE.BufferGeometry();
@@ -211,7 +224,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
         const object = new THREE.Mesh(geometry, material);
         Object.assign(object.userData, { pieceId: `${building.id}:sheet:${level.id}`, kind: 'sheet', buildingId: building.id });
         object.renderOrder = 1;
-        sheet = { ready: true, object, elevationFt: elevation, widthFt: width * reg.scale, depthFt: height * reg.scale }; attachSheet(); render();
+        sheet = { ready: true, object, elevationFt: elevation, widthFt: master[0] * reg.scale, depthFt: master[1] * reg.scale }; attachSheet(); render();
       }, undefined, () => { if (version === sheetRevision) { sheet = null; render(); } });
     },
     setView(id) {

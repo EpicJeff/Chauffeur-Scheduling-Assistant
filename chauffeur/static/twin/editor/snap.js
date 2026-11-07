@@ -1,7 +1,8 @@
 // Building-local feet. Endpoint priority is intentional, even when a line is nearer.
-export function snapPoint(p, walls = [], { grid = 0.5, reach = 1.0 } = {}) {
+export function snapPoint(p, walls = [], { grid = 0.5, reach = 1.0, exclude = [] } = {}) {
   const distance = q => Math.hypot(q[0] - p[0], q[1] - p[1]);
-  const nearest = points => points.filter(q => distance(q) <= reach).sort((a, b) => distance(a) - distance(b))[0];
+  const nearest = points => points.filter(q => !exclude.some(e => Math.hypot(e[0] - q[0], e[1] - q[1]) < 1e-6)
+    && distance(q) <= reach).sort((a, b) => distance(a) - distance(b))[0];
   const endpoint = nearest(walls.flatMap(w => [w.from, w.to]));
   if (endpoint) return [...endpoint];
   const line = nearest(walls.map(w => {
