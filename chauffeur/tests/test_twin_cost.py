@@ -5,6 +5,7 @@ model_pools.call_pool_json (spec docs/superpowers/specs/
 
 Run from chauffeur/:  python tests/test_twin_cost.py
 """
+import math
 import os
 import sys
 import tempfile
@@ -81,10 +82,13 @@ def scenario_unpriced_models_cost_at_the_highest_rate():
 
 def scenario_missing_usage_is_costed_conservatively():
     _fresh()
-    hi_in, hi_out = _hi()
-    e = tc.record('finishes', [_usage(_known(), None, None, images=2, prompt_chars=4000, max_out=8192)])[0]
+    # A known model is estimated at its own rates (final review I5); the
+    # highest table rate is for models the table does not know.
+    k = _known()
+    k_in, k_out = tc.PRICES[k]
+    e = tc.record('finishes', [_usage(k, None, None, images=2, prompt_chars=4000, max_out=8192)])[0]
     check(e['basis'] == 'estimated', e)
-    want = (2 * 1600 + 4000 / 4) / M * hi_in + 8192 / M * hi_out
+    want = (2 * 1600 + 4000 / 4) / M * k_in + 8192 / M * k_out
     check(_close(e['usd'], want), (e['usd'], want))
 
 
@@ -194,9 +198,10 @@ def scenario_unreached_checkpoints_cannot_be_acknowledged():
 
 def scenario_no_output_limit_is_costed_at_a_ceiling():
     _fresh()
-    hi_in, hi_out = _hi()
-    e = tc.record('site', [_usage(_known(), None, None, images=0, prompt_chars=400, max_out=0)])[0]
-    check(e['basis'] == 'estimated' and _close(e['usd'], 100 / M * hi_in + tc.UNKNOWN_OUTPUT_TOKENS / M * hi_out),
+    k = _known()
+    k_in, k_out = tc.PRICES[k]
+    e = tc.record('site', [_usage(k, None, None, images=0, prompt_chars=400, max_out=0)])[0]
+    check(e['basis'] == 'estimated' and _close(e['usd'], 100 / M * k_in + tc.UNKNOWN_OUTPUT_TOKENS / M * k_out),
           (e, tc.UNKNOWN_OUTPUT_TOKENS))
     check(tc.UNKNOWN_OUTPUT_TOKENS >= 32768, 'a real ceiling, not zero')
 
@@ -299,8 +304,23 @@ def scenario_cost_routes():
     check(auth.resolve('POST', '/api/house/twin/cost/ack') == auth.PARENTS, 'ack is parents only')
 
 
+def scenario_refused_requests_are_not_charged_and_estimates_use_the_models_own_rate():
+    # Final review I5: an HTTP error (429/529 overload) is not billed; a timeout is
+    # estimated at that model's own price, not the highest rate in the table.
+    _fresh()
+    k = _known()
+    e = tc.record('conversation', [dict(_usage(k, None, None, images=0, prompt_chars=4000, max_out=2048),
+                                        http_status=529)])[0]
+    check(e['usd'] == 0 and e['basis'] == 'refused', e)
+    e = tc.record('conversation', [_usage(k, None, None, images=0, prompt_chars=4000, max_out=2048)])[0]
+    est_in = math.ceil(4000 / 4)
+    want, _ = tc.price(k, est_in, 2048)
+    check(abs(e['usd'] - want) < 1e-9 and e['basis'] == 'estimated', (e, want))
+
+
 if __name__ == '__main__':
-    for fn in (scenario_constants,
+    for fn in (scenario_refused_requests_are_not_charged_and_estimates_use_the_models_own_rate,
+               scenario_constants,
                scenario_price_and_record,
                scenario_unpriced_models_cost_at_the_highest_rate,
                scenario_missing_usage_is_costed_conservatively,

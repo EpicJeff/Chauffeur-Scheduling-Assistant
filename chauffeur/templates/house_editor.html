@@ -40,6 +40,7 @@
       <output id="editor-cost" aria-label="Total spent">$0.00</output>
       <button id="editor-check-step" type="button" hidden>Check this step</button>
       <button id="editor-resume" type="button" hidden>Resume</button>
+      <button id="editor-stop" type="button" aria-label="Stop build" hidden>Stop</button>
       <details id="editor-menu">
         <summary aria-label="House menu">Menu</summary>
         <div><button id="editor-manage-sources" type="button">Drawings and photos</button>
@@ -52,7 +53,7 @@
       </details>
     </header>
     <nav id="editor-rail" aria-label="House tools">
-      {% for tool, label in [('select', 'Select'), ('move', 'Move'), ('rotate', 'Turn'), ('pin', 'Pin'), ('measure', 'Ruler'), ('sheet', 'Sheet'), ('cut', 'Cut'), ('plan', 'Plan')] %}
+      {% for tool, label in [('select', 'Select'), ('move', 'Move'), ('rotate', 'Turn'), ('sheet', 'Sheet'), ('plan', 'Plan')] %}
       <button id="rail-{{ tool }}" type="button" aria-pressed="{{ 'true' if tool == 'select' else 'false' }}" {% if tool != 'select' %}disabled{% endif %}>{{ label }}</button>
       {% endfor %}
     </nav>
@@ -71,6 +72,8 @@
     <aside id="piece-card" aria-label="Selected piece" hidden></aside>
     <aside id="pause-card" aria-label="Check this step" hidden>
       <h3 id="pause-title">Check this outline</h3><p id="pause-reason" class="pause-why"></p>
+      <p id="pause-size"></p>
+      <label id="pause-dimension-label" hidden>Known width in feet and inches<input id="pause-dimension" type="text"></label>
       <div><button id="pause-accept" type="button">Looks right</button><button id="pause-drag" type="button">Drag</button>
         <button id="pause-pin" type="button">Pin 2 points</button><button id="pause-reread" type="button">Re-read</button></div>
       <label id="pause-turn-label" hidden>Turn in degrees<input id="pause-turn" type="number" step="1"></label>
@@ -102,6 +105,8 @@
           <input id="editor-source-files" type="file" accept="application/pdf,image/jpeg,image/png" multiple>
           <p id="editor-upload-status" role="status"></p>
           <div id="editor-pages"></div>
+          <label for="editor-build-target">Building to build</label>
+          <select id="editor-build-target"><option value="house">Main house</option><option value="pool_house">Pool house</option></select>
           <div class="editor-actions">
             <button id="editor-suggest-roles" type="button" disabled>Suggest page roles</button>
             <button id="editor-confirm-roles" type="button" disabled>Confirm pages</button>

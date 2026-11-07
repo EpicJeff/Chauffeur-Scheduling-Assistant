@@ -298,6 +298,24 @@ def scenario_a_truncated_master_is_rendered_again():
     check(ts.crop(sid, 1, [0, 0, 1, 1])['master'] == [5100, 3300], 'recovered by re-rendering')
 
 
+def scenario_revert_waits_for_a_running_build():
+    # Final review I9: Return here during a build would pull settled pieces out from under it.
+    _fresh()
+    rid = ts.push_round(_plan(), 'build')
+    ts.push_round(_plan(), 'edit')
+    previous = ts.build_running
+    ts.build_running = lambda: True
+    try:
+        try:
+            ts.revert(rid)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('revert must wait for the build')
+    finally:
+        ts.build_running = previous
+
+
 if __name__ == '__main__':
     for fn in (scenario_crop_is_full_resolution,
                scenario_old_sources_render_masters_lazily,
@@ -313,6 +331,7 @@ if __name__ == '__main__':
                scenario_a_late_push_round_cannot_resurrect_the_house,
                scenario_a_draft_running_through_a_start_over_publishes_nothing,
                scenario_start_over_clears_the_row_before_the_files,
-               scenario_a_truncated_master_is_rendered_again):
+               scenario_a_truncated_master_is_rendered_again,
+               scenario_revert_waits_for_a_running_build):
         fn()
         print('  ok ', fn.__name__)

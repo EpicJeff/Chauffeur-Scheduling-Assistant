@@ -1146,8 +1146,11 @@ async def deletion_maintenance_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from services import twin_build
-    twin_build.recover()
+    try:
+        from services import twin_build
+        twin_build.recover()
+    except Exception:
+        logger.exception('Twin build recovery failed; continuing app startup')
     from services import planned
     from services import library_scripts; library_scripts.clear_jobs()
     planned.reconcile()
@@ -7457,8 +7460,16 @@ def _house_editor_call(operation, *args, lookup=False, **kwargs):
             raise HTTPException(status_code=404, detail='No such build or round.') from exc
         raise
     except ValueError as exc:
-        busy = str(exc) in ('A build is already running.', 'Stop the build before starting over.')
-        raise HTTPException(status_code=409 if busy else 400, detail=str(exc)) from exc
+        logger.warning('House editor %s refused: %s', getattr(operation, '__name__', 'request'), exc, exc_info=True)
+        busy = str(exc) == 'A build is already running.'
+        stopping = str(exc).startswith(('Stop the build', 'The build is still stopping'))
+        message = ('A build is already running.' if busy else
+                   'Stop the build and wait for its current read to finish before trying again.' if stopping else
+                   'This house change needs checking. Check the values and try again.')
+        raise HTTPException(status_code=409 if busy or stopping else 400, detail=message) from exc
+    except Exception as exc:
+        logger.exception('House editor request failed')
+        raise HTTPException(status_code=500, detail='The house could not finish this request. Please try again.') from exc
 
 
 @app.get('/api/house/editor/sheets')
@@ -7467,16 +7478,14 @@ def house_editor_sheets():
     with twin_store.LIFECYCLE:
         sources, roles, registrations = twin_store.sources(), twin_store.page_roles(), twin_store.registrations()
         plan = twin_store.current()
-    # Validate cached masters and backfill legacy/corrupt images outside the
-    # lifecycle lock. One unreadable page must not disable the editor.
+    # Inspect headers only. Crops render legacy masters lazily when needed.
     pages = []
     for source in sources:
         if source['kind'] != 'drawing':
             continue
         for page in range(1, source['pages'] + 1):
             try:
-                with twin_store._master_image(source['id'], page) as image:
-                    master_size = list(image.size)
+                master_size = twin_store.master_size(source['id'], page)
             except Exception:
                 master_size = None
             pages.append({'source': source['id'], 'page': page, 'master_size': master_size})
@@ -7522,7 +7531,8 @@ def house_editor_suggest_roles(body: dict = Body(default={})):
     if generation != twin_store.generation():
         raise HTTPException(status_code=409, detail='The house was started over.')
     if result.get('error'):
-        raise HTTPException(status_code=400, detail=result['error'])
+        logger.warning('Twin page suggestions failed: %s', result['error'])
+        raise HTTPException(status_code=400, detail='The suggested pages could not be read. Set their roles by hand.')
     fragment, problems = twin_reads.parse('sheet_roles', result)
     rows = fragment.get('pages', [])
     if problems or any(row['page'] > source['pages'] for row in rows):
@@ -7547,7 +7557,9 @@ def house_editor_sheet_image(source_id: str, page: int):
     except ValueError as exc:
         missing = str(exc) in ('The source does not exist.',
                                'Source page numbers are 1-based and must exist.')
-        raise HTTPException(status_code=404 if missing else 400, detail=str(exc)) from exc
+        logger.warning('House editor sheet %s page %s could not open: %s', source_id, page, exc)
+        raise HTTPException(status_code=404 if missing else 400,
+                            detail='No such sheet page.' if missing else 'This drawing could not be opened.') from exc
     return Response(content=data, media_type='image/png')
 
 
@@ -7604,6 +7616,31 @@ def house_editor_edit(request: Request, body: dict = Body(default={})):
         return {**result, 'plan': twin_store.current()}
 
 
+# The shared router has no per-turn model-options argument. Keep this adapter
+# scoped to the editor's context: other concurrent conversations pass through.
+from contextvars import ContextVar
+_house_editor_output_limit = ContextVar('house_editor_output_limit', default=None)
+_house_editor_model_lock = _notif_threading.Lock()
+
+
+def _house_editor_bound_models(router):
+    from functools import wraps
+    with _house_editor_model_lock:
+        if getattr(router.call_model, '_house_editor_bound', False):
+            return
+        original = router.call_model
+
+        @wraps(original)
+        def bounded(*args, **kwargs):
+            limit = _house_editor_output_limit.get()
+            if limit is not None:
+                kwargs['max_output_tokens'] = min(kwargs.get('max_output_tokens') or limit, limit)
+            return original(*args, **kwargs)
+
+        bounded._house_editor_bound = True
+        router.call_model = bounded
+
+
 @app.post('/api/house/editor/say')
 def house_editor_say(request: Request, body: dict = Body(default={})):
     from services import agent_router, agent_tools_v2, llm, twin_cost
@@ -7629,11 +7666,16 @@ def house_editor_say(request: Request, body: dict = Body(default={})):
         def record_request(row):
             spend.extend(twin_cost.record('conversation', [row]))
 
-        with llm.collect_usage(before=twin_cost.require_clear, after=record_request):
-            result = agent_router.process_agent_request(
-                message, context={'house_editor': {**status, 'selection': selection}},
-                history=history, source='house_editor', acting_member=parent,
-                focus_key='house_editor:' + (status['build'] or 'idle'))
+        _house_editor_bound_models(agent_router)
+        token = _house_editor_output_limit.set(4096)
+        try:
+            with llm.collect_usage(before=twin_cost.require_clear, after=record_request):
+                result = agent_router.process_agent_request(
+                    message, context={'house_editor': {**status, 'selection': selection}},
+                    history=history, source='house_editor', acting_member=parent,
+                    focus_key='house_editor:' + (status['build'] or 'idle'))
+        finally:
+            _house_editor_output_limit.reset(token)
         summary = result.get('house_design_summary', [])
         return {'reply': result.get('message', ''), 'changed': bool(summary),
                 'summary': summary, 'cost': sum(row['usd'] for row in spend)}
@@ -7643,6 +7685,11 @@ def house_editor_say(request: Request, body: dict = Body(default={})):
             'checkpoint': exc.checkpoint, 'total': exc.total,
             'changed': bool(summary), 'summary': summary,
             'cost': sum(row['usd'] for row in spend)}) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception('House editor conversation failed')
+        raise HTTPException(status_code=500, detail='Argyle could not finish this turn. Please try again.') from exc
 
 
 @app.post('/api/house/editor/start-over')

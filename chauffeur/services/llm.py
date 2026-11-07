@@ -70,6 +70,9 @@ def _request_json(req, timeout_s):
             row['input_tokens'] = data.get('prompt_eval_count')
             row['output_tokens'] = data.get('eval_count')
         return data
+    except urllib.error.HTTPError as exc:
+        row['http_status'] = exc.code
+        raise
     except llm_budget.Deferred:
         # Local admission failures did not reach the provider.
         dispatched = False

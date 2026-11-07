@@ -1,7 +1,7 @@
 import { request, checkpoint, plain, report } from './api.js';
 import { pauseWords } from './words.js';
 
-export function createPanel({ afterSay }) {
+export function createPanel({ afterSay, acceptPause }) {
   const log = document.getElementById('editor-log');
   const messages = document.getElementById('editor-messages');
   const scroll = document.getElementById('editor-panel-scroll');
@@ -27,6 +27,7 @@ export function createPanel({ afterSay }) {
     quick.querySelectorAll('button').forEach(button => { button.disabled = true; });
     message(text, 'you'); input.value = '';
     try {
+      if (text.toLowerCase() === 'keep going' && await acceptPause?.()) return;
       const result = await request('say', 'POST', { message: text, history: history.slice(-20), selection: selection?.pieceId || null });
       history.push({ role: 'user', content: text }, { role: 'assistant', content: result.reply || '' });
       message(result.reply || 'Done.');

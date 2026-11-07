@@ -15,14 +15,18 @@ export async function boot() {
   let view = null, snapshot = { plan: null, rounds: [], cost: {}, build: null };
   let sheets = { sources: [], page_roles: [] }, rows = [], confirmed = false;
   let currentBuild = null, ghostBuild = null, renderedGhosts = 0, lastScene = '';
-  let uploadsBusy = false, rolesBusy = false, building = false, resuming = false;
+  let uploadsBusy = false, rolesBusy = false, building = false, resuming = false, stopping = false, assignmentsChanged = false;
   let sourcesOpen = false;
   let menuBusy = false, directing = false, advancedBase = null;
   let tools = null, planView = null, pauses = null, timeline = null, previewing = false, lastSummary = '';
   const lifecycle = new AbortController();
   const listen = (node, type, handler) => node.addEventListener(type, handler, { signal: lifecycle.signal });
   const ghosts = new Map(), prompted = new Set();
-  const panel = createPanel({ afterSay: async () => { await polling.pollNow(true); } });
+  const panel = createPanel({ afterSay: async () => { await polling.pollNow(true); },
+    acceptPause: async () => {
+      if (currentBuild?.state !== 'paused' || !currentBuild.pause) return false;
+      await pauses?.accept(); return true;
+    } });
   const canEdit = () => !previewing && !session.signedOut && !menuBusy && !directing;
   const currentRound = () => [...snapshot.rounds].reverse().find(row => !row.stale)?.id ?? null;
   function summary(text) {
@@ -48,8 +52,12 @@ export async function boot() {
     el('editor-check-step').hidden = previewing || currentBuild?.state !== 'paused' || !pauses?.dismissed();
     el('editor-resume').hidden = previewing || !['stopped', 'checkpoint'].includes(currentBuild?.state);
     el('editor-resume').disabled = !canEdit() || !hooks.ready || building || resuming;
+    el('editor-stop').hidden = previewing || !active(currentBuild);
+    el('editor-stop').disabled = !canEdit() || stopping;
     const busy = !canEdit() || !hooks.ready || uploadsBusy || rolesBusy || building || resuming || active(currentBuild);
     for (const id of ['menu-director', 'menu-advanced', 'menu-start-over', 'menu-reset-spend']) el(id).disabled = busy;
+    el('menu-start-over').disabled = !canEdit() || !hooks.ready || uploadsBusy || rolesBusy || building || resuming
+      || currentBuild?.state === 'running';
     el('menu-director').disabled ||= !snapshot.plan?.buildings?.length;
     el('advanced-save').disabled = busy;
     panel.readOnly(!canEdit());
@@ -129,12 +137,22 @@ export async function boot() {
         const option = document.createElement('option'); option.value = value; option.textContent = label; select.append(option);
       }
       select.value = row.role;
+      const buildingLabel = document.createElement('label'); buildingLabel.textContent = 'Building';
+      const buildingSelect = document.createElement('select'); buildingSelect.dataset.pageBuilding = '';
+      for (const [value, label] of [['house', 'Main house'], ['pool_house', 'Pool house']]) {
+        const option = document.createElement('option'); option.value = value; option.textContent = label; buildingSelect.append(option);
+      }
+      buildingSelect.value = row.building || 'house';
+      buildingSelect.addEventListener('change', () => {
+        row.building = buildingSelect.value; assignmentsChanged = true; syncBuildButton();
+      });
+      buildingLabel.append(buildingSelect);
       const levelLabel = document.createElement('label'); levelLabel.textContent = 'Level name';
       const input = document.createElement('input'); input.type = 'text'; input.maxLength = 80;
       input.value = row.level || ''; input.placeholder = 'For example, Main floor';
       select.addEventListener('change', () => { row.role = select.value; confirmed = false; syncBuildButton(); });
       input.addEventListener('input', () => { row.level = input.value.trim() || null; confirmed = false; syncBuildButton(); });
-      roleLabel.append(select); levelLabel.append(input); group.append(legend, thumbnail, roleLabel, levelLabel);
+      roleLabel.append(select); levelLabel.append(input); group.append(legend, thumbnail, roleLabel, levelLabel, buildingLabel);
       if (row.box) { const crop = document.createElement('p'); crop.textContent = 'One part of this page'; group.append(crop); }
       host.append(group);
     }
@@ -256,6 +274,7 @@ export async function boot() {
     rolesBusy = true; drawPages();
     try {
       const result = await request('sheets/roles', 'PUT', { rows });
+      assignmentsChanged = false;
       sheets.page_roles = result.page_roles;
       confirmed = result.page_roles.some(row => row.role === 'floor');
       el('editor-upload-status').textContent = confirmed ? 'Pages confirmed. You can build now.' : 'Choose at least one floor page to build.';
@@ -269,8 +288,13 @@ export async function boot() {
     try {
       if (snapshot.plan?.buildings?.length && !await window.promptConfirm('Build your house again?',
         'This reads the drawings again and adds to the running cost. Continue?', 'Build again', 'Cancel')) return;
+      if (assignmentsChanged) {
+        const saved = await request('sheets/roles', 'PUT', { rows });
+        sheets.page_roles = saved.page_roles; assignmentsChanged = false;
+      }
       const result = await request('build', 'POST', {
-        building: { id: 'house', name: 'Main house' },
+        building: { id: el('editor-build-target').value,
+          name: el('editor-build-target').selectedOptions[0].textContent },
         photos: sheets.sources.filter(source => source.kind === 'photo').map(source => source.id),
       });
       el('editor-upload').hidden = true;
@@ -292,6 +316,15 @@ export async function boot() {
       await polling.follow(id);
     } catch (error) { report(error); }
     finally { resuming = false; syncBuildButton(); }
+  });
+  listen(el('editor-stop'), 'click', async () => {
+    if (!canEdit() || stopping || !active(currentBuild)) return;
+    stopping = true; syncBuildButton();
+    try {
+      await request(`build/${encodeURIComponent(currentBuild.id)}/stop`, 'POST', {});
+      await polling.follow(currentBuild.id);
+    } catch (error) { report(error); }
+    finally { stopping = false; syncBuildButton(); }
   });
   listen(el('editor-manage-sources'), 'click', () => {
     el('editor-upload').hidden = !el('editor-upload').hidden;
@@ -387,7 +420,7 @@ export async function boot() {
     finally { menuBusy = false; syncBuildButton(); }
   });
   listen(el('menu-start-over'), 'click', async () => {
-    if (!canEdit() || active(currentBuild)) return;
+    if (!canEdit() || currentBuild?.state === 'running') return;
     menuBusy = true; syncBuildButton(); el('editor-menu').open = false;
     try {
       if (!await window.promptConfirm('Start over?',

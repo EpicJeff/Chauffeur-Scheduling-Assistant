@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import struct
 import tempfile
 import threading
 import uuid
@@ -23,6 +24,7 @@ _LOCK = threading.RLock()
 LIFECYCLE = threading.RLock()
 _MASTER_LOCKS = weakref.WeakValueDictionary()  # Only active page readers retain locks.
 build_running = lambda: False  # Task 8 supplies the build runner's predicate.
+stop_builds_for_start_over = lambda: None
 _KINDS = {'draft', 'director', 'hand', 'revert', 'build', 'edit', 'start_over'}
 _PAGE_ROLES = {'floor', 'roof', 'plot', 'elevation', 'other', 'skip'}
 # Pillow identifies multi-picture phone JPEGs as MPO.
@@ -58,6 +60,7 @@ def generation() -> int:
 def start_over() -> None:
     """Clear the house and its files, retaining spend and panel measurements."""
     with LIFECYCLE, _LOCK:
+        stop_builds_for_start_over()
         if build_running():
             raise ValueError('Stop the build before starting over.')
         next_generation = _state()['generation'] + 1
@@ -209,10 +212,16 @@ def update_current(mutator, kind, note='', step=None, cost=None, generation=None
         return _append_round(row, plan, kind, note=note, cost=cost, step=step)
 
 
-def revert(round_id: int) -> int:
+def revert(round_id: int, generation=None) -> int:
     """Copy a historical plan into a new current round and return its int id."""
     with _LOCK:
+        expected = _state()['generation'] if generation is None else generation
+    with LIFECYCLE, _LOCK:
         row = _state()
+        if expected != row['generation']:
+            raise StaleGeneration('The house was started over. Discard this result.')
+        if build_running():
+            raise ValueError('Stop the build before returning to an earlier house.')
         return _append_round(row, _read_round(row, round_id), 'revert')
 
 
@@ -442,6 +451,22 @@ def page_image(source_id, page) -> bytes:
         if source['kind'] != 'drawing':
             raise ValueError('A sheet must be a drawing source.')
         return (Path(DATA_DIR) / 'sources' / source['id'] / f'{page}.png').read_bytes()
+
+
+def master_size(source_id, page):
+    """Read only the PNG signature and IHDR; legacy masters stay lazy."""
+    with _LOCK:
+        source = _source_page(_state(), source_id, page)
+        target = Path(DATA_DIR) / 'sources' / source['id'] / f'master-{page}.png'
+        try:
+            with target.open('rb') as file:
+                header = file.read(24)
+            if len(header) != 24 or header[:16] != b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR':
+                return None
+            width, height = struct.unpack('>II', header[16:24])
+            return [width, height] if 0 < width <= 7200 and 0 < height <= 7200 else None
+        except OSError:
+            return None
 
 
 def _master_image(source_id, page) -> Image.Image:

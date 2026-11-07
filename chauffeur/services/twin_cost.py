@@ -120,17 +120,20 @@ def record(stage: str, usage: list[dict], run: str | None = None) -> list[dict]:
     added = []
     for request in usage:
         inp, out = request.get('input_tokens'), request.get('output_tokens')
+        refused = isinstance(request.get('http_status'), int) and request['http_status'] >= 400
         estimated = inp is None or out is None
-        if estimated:
-            inp = 1600 * (request.get('images') or 0) + math.ceil((request.get('prompt_chars') or 0) / 4)
-            out = request.get('max_output_tokens') or UNKNOWN_OUTPUT_TOKENS
-            hi_in, hi_out = _highest_rates()
-            usd, priced = (inp * hi_in + out * hi_out) / 1_000_000, False
+        if refused:
+            inp, out, usd, priced = inp or 0, out or 0, 0, request['model'] in PRICES
         else:
+            if estimated:
+                if inp is None:
+                    inp = 1600 * (request.get('images') or 0) + math.ceil((request.get('prompt_chars') or 0) / 4)
+                if out is None:
+                    out = request.get('max_output_tokens') or UNKNOWN_OUTPUT_TOKENS
             usd, priced = price(request['model'], inp, out)
         added.append({'stage': stage, 'model': request['model'],
                       'input_tokens': inp, 'output_tokens': out, 'usd': usd,
-                      'priced': priced, 'basis': 'estimated' if estimated else 'reported',
+                      'priced': priced, 'basis': 'refused' if refused else 'estimated' if estimated else 'reported',
                       'run': run, 'at': datetime.now(timezone.utc).isoformat()})
     if added:
         # Serialize read/merge/write with the same lock used by patch_settings.

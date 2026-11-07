@@ -1,4 +1,4 @@
-import { request, report } from './api.js';
+import { request, report, active } from './api.js';
 
 export function createTimeline({ getState, render, onPreview, log, signal, canScrub = () => true }) {
   const el = id => document.getElementById(id), slider = el('editor-scrub');
@@ -37,7 +37,7 @@ export function createTimeline({ getState, render, onPreview, log, signal, canSc
       : rows.length ? 'Drag back to see an earlier house.' : 'Your build will appear here, one step at a time.';
     el('time-chip').hidden = !preview;
     el('time-actions').hidden = !preview && !justReturned;
-    el('time-return').disabled = busy || loading || !preview || index === rows.length - 1;
+    el('time-return').disabled = busy || loading || active(currentBuild) || !preview || index === rows.length - 1;
     if (preview) el('time-chip').textContent = `Looking at step ${index + 1}`;
   }
   async function scrubTo(i) {
@@ -69,7 +69,7 @@ export function createTimeline({ getState, render, onPreview, log, signal, canSc
   signal.addEventListener('abort', () => { clearTimeout(scrubTimer); ++version; }, { once: true });
   el('time-now').addEventListener('click', () => now().catch(report), { signal });
   el('time-return').addEventListener('click', async () => {
-    if (busy || loading || index === null || index === rounds().length - 1) return;
+    if (busy || loading || active(currentBuild) || index === null || index === rounds().length - 1) return;
     const round = rounds()[index]; if (!round) return;
     busy = true; sync();
     try {

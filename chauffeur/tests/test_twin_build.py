@@ -85,6 +85,10 @@ class Reader:
         self.outline_reads = 0
         self.shift_wings_after_first = False   # a reread draws the same wings a little differently (~0.4 ft)
         self.error_once_at = None             # a step whose first read fails (timeout)
+        self.roof_two_sections = False         # one section over the two-storey core, one over a one-storey wing
+        self.plot_house_name = 'house'
+        self.no_lower_outline = False          # a bonus crop with no dashed floor below
+        self.jitter = 0.0                      # a second build reads every wall a little differently
         self.wings_l2 = wings_l2
         self.walls_extra = walls_extra or []
         self.checkpoint_at, self.crash_at, self.block_at = checkpoint_at, crash_at, block_at
@@ -118,6 +122,9 @@ class Reader:
             if step == self.isolated_walls_for:
                 walls = [{'from': [0.3 + 0.1 * i, 0.5], 'to': [0.32 + 0.1 * i, 0.5], 'exterior': False}
                          for i in range(4)]
+            if self.jitter:
+                walls = [{**w, 'from': [w['from'][0] + self.jitter, w['from'][1]],
+                          'to': [w['to'][0] + self.jitter, w['to'][1]]} for w in walls]
             walls = walls + copy.deepcopy(self.walls_extra)
             if self.reverse_walls:
                 walls = list(reversed(walls))
@@ -126,10 +133,24 @@ class Reader:
             answer = fixture('plot')
             answer.pop('street_edge', None)
             return answer
+        if kind == 'registration' and self.no_lower_outline:
+            return {'dimension': DIM, 'outline': [[0.3, 0.2], [0.6, 0.2], [0.6, 0.7], [0.3, 0.7]],
+                    'wings': [{'name': 'upper', 'box': [0.3, 0.2, 0.6, 0.7]}], 'confidence': 0.5,
+                    'why': 'no dashed floor below on this part of the sheet'}
         if kind == 'registration':
             return {'dimension': DIM, 'lower_outline': L1, 'outline': [[0.3, 0.2], [0.6, 0.2], [0.6, 0.7], [0.3, 0.7]],
                     'wings': self.wings_l2 or [{'name': 'upper', 'box': [0.3, 0.2, 0.6, 0.7]}],
                     'confidence': 0.7, 'why': 'the stamp covers a corner'}
+        if kind == 'roof' and self.roof_two_sections:
+            return {'outline': [[0.19, 0.09], [0.71, 0.09], [0.71, 0.83], [0.19, 0.83]], 'confidence': 0.7,
+                    'sections': [{'kind': 'hip', 'box': [0.29, 0.19, 0.61, 0.71], 'ridge': 'y', 'low_side': None},
+                                 {'kind': 'gable', 'box': [0.62, 0.5, 0.71, 0.83], 'ridge': 'y', 'low_side': None}]}
+        if kind == 'plot' and self.plot_house_name != 'house':
+            answer = fixture('plot')
+            for b in answer['buildings']:
+                if b['name'] == 'house':
+                    b['name'] = self.plot_house_name
+            return answer
         if kind == 'roof':
             return {'outline': [[0.19, 0.09], [0.71, 0.09], [0.71, 0.83], [0.19, 0.83]], 'confidence': 0.7,
                     'sections': [{'kind': 'hip', 'box': [0.19, 0.09, 0.71, 0.83], 'ridge': 'y', 'low_side': None}]}
@@ -581,6 +602,127 @@ def scenario_no_new_build_while_a_stopped_read_is_in_flight():
             t.join(10)
 
 
+# ---- final whole-branch review ----
+
+def _full(b, limit=12):
+    for _ in range(limit):
+        st = tb.status(b)
+        if st['state'] != 'paused':
+            return st
+        tb.answer(b, st['pause']['step'], {'accept': True})
+    return tb.status(b)
+
+
+def _top(level):
+    return level['elevation'] + level['ceiling']
+
+
+def scenario_roof_plates_sit_on_the_walls_beneath_them():
+    # C1: every section used the top floor's ceiling, so one-storey wings got floating roofs.
+    _fresh()
+    _, _, photo = _sources()
+    reader = Reader()
+    reader.roof_two_sections = True
+    b = tb.start(_inputs(photo), reader=reader, inline=True)
+    _full(b)
+    house = ts.current()['buildings'][0]
+    levels = sorted(house['levels'], key=lambda l: l['elevation'])
+    sections = house['roof']['sections']
+    check(len(sections) == 2, sections)
+    plates = sorted(sec['plate'] for sec in sections)
+    check(abs(plates[0] - _top(levels[0])) < 0.5 and abs(plates[1] - _top(levels[1])) < 0.5,
+          ('wing on the main floor, core on the upper floor', plates, [_top(l) for l in levels]))
+
+
+def scenario_the_lot_lies_behind_the_street():
+    # I2: the lot must sit at +y from its street edge so the Front camera sees the front.
+    _fresh()
+    _, _, photo = _sources()
+    b = tb.start(_inputs(photo), reader=Reader(), inline=True)
+    _full(b)
+    lot = ts.current()['site']['lot']
+    check(min(p[1] for p in lot) > -1.0, ('the lot runs back from the street at y=0', lot))
+
+
+def scenario_the_house_is_found_on_the_plot_by_shape_when_named_otherwise():
+    # I3: a plot plan that calls the house "Proposed residence" still places it.
+    _fresh()
+    _, _, photo = _sources()
+    b = tb.start(_inputs(photo), reader=Reader(), inline=True)
+    _full(b)
+    named = ts.current()['buildings'][0]
+    _fresh()
+    _, _, photo = _sources()
+    reader = Reader()
+    reader.plot_house_name = 'Proposed residence'
+    b = tb.start(_inputs(photo), reader=reader, inline=True)
+    _full(b)
+    other = ts.current()['buildings'][0]
+    check(close(other['position'], named['position'], 0.5) and abs(other['rotation'] - named['rotation']) < 1,
+          (named['position'], other['position']))
+
+
+def scenario_the_pitch_read_sees_each_section_in_words():
+    # I4: opaque ids alone leave the model guessing which section a photo shows.
+    _fresh()
+    _, _, photo = _sources()
+    reader = Reader()
+    b = tb.start(_inputs(photo), reader=reader, inline=True)
+    _full(b)
+    pitch = next(c for c in reader.calls if c['kind'] == 'pitch')
+    sections = pitch['context']['sections']
+    check(sections and all(isinstance(x, dict) and x.get('kind') and x.get('where') and x.get('id') for x in sections),
+          sections)
+
+
+def scenario_building_again_replaces_what_the_model_drew():
+    # I7: a second build must not leave the first build's walls beside the new ones.
+    _fresh()
+    _, _, photo = _sources()
+    b = tb.start(_inputs(photo), reader=Reader(), inline=True)
+    _full(b)
+    first = len(_walls(ts.current(), 'L1'))
+    reader = Reader()
+    reader.jitter = 0.02
+    b2 = tb.start(_inputs(photo), reader=reader, inline=True)
+    _full(b2)
+    check(len(_walls(ts.current(), 'L1')) == first, (first, len(_walls(ts.current(), 'L1'))))
+
+
+def scenario_a_registration_without_a_floor_below_pauses_for_the_person():
+    # I8: a crop with no dashed floor below falls back to a level_registration pause, never a dead end.
+    _fresh()
+    _, _, photo = _sources()
+    reader = Reader()
+    reader.no_lower_outline = True
+    b = tb.start(_inputs(photo), reader=reader, inline=True)
+    tb.answer(b, 'outline:L1', {'accept': True})
+    st = tb.status(b)
+    check(st['state'] == 'paused' and st['pause']['kind'] == 'level_registration', (st['state'], st.get('pause')))
+    check(st['pause'].get('registration') and st['pause'].get('why'), st['pause'])
+
+
+def scenario_start_over_stops_a_paused_build():
+    # I1: a paused build (no read in flight) must not block Start over.
+    _fresh()
+    _, _, photo = _sources()
+    b = tb.start(_inputs(photo), reader=Reader(), inline=True)
+    check(tb.status(b)['state'] == 'paused', tb.status(b)['state'])
+    ts.start_over()
+    check(ts.current() is None, 'cleared')
+
+
+def scenario_a_corrupt_build_file_never_stops_the_app():
+    # I10: recover() runs at app start; one bad state.json must not take the family app down.
+    _fresh()
+    root = os.path.join(ts.DATA_DIR, 'builds', 'broken')
+    os.makedirs(root, exist_ok=True)
+    with open(os.path.join(root, 'state.json'), 'w', encoding='utf-8') as f:
+        f.write('{not json')
+    tb._forget()
+    tb.recover()
+
+
 if __name__ == '__main__':
     for fn in (scenario_main_house_step_order,
                scenario_first_pause_and_wings_expand_after_the_outline,
@@ -605,6 +747,14 @@ if __name__ == '__main__':
                scenario_registration_pause_reports_fit_quality_and_rejects_junk,
                scenario_replayed_walls_keep_the_crop_they_were_read_from,
                scenario_a_failed_read_is_retried_on_resume,
-               scenario_no_new_build_while_a_stopped_read_is_in_flight):
+               scenario_no_new_build_while_a_stopped_read_is_in_flight,
+               scenario_roof_plates_sit_on_the_walls_beneath_them,
+               scenario_the_lot_lies_behind_the_street,
+               scenario_the_house_is_found_on_the_plot_by_shape_when_named_otherwise,
+               scenario_the_pitch_read_sees_each_section_in_words,
+               scenario_building_again_replaces_what_the_model_drew,
+               scenario_a_registration_without_a_floor_below_pauses_for_the_person,
+               scenario_start_over_stops_a_paused_build,
+               scenario_a_corrupt_build_file_never_stops_the_app):
         fn()
         print('  ok ', fn.__name__)

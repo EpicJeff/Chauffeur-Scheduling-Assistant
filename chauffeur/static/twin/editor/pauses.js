@@ -1,5 +1,6 @@
 import { request, report, checkpoint } from './api.js';
 import { snapRotation } from './snap.js';
+import { feetInches, parseLength } from './cards.js';
 import { pauseWords, sheetMaster, localCentre, turnPlacement } from './words.js';
 
 const rotate = (p, degrees) => {
@@ -98,6 +99,10 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
       }
       el('pause-title').textContent = step?.label || 'Check this outline';
       el('pause-reason').textContent = pauseWords(pause);
+      el('pause-size').textContent = pause.size_ft?.length === 2
+        ? `${feetInches(pause.size_ft[0])} by ${feetInches(pause.size_ft[1])}` : '';
+      el('pause-dimension-label').hidden = pause.kind !== 'scale_outline' || !(pause.dimension_ft > 0);
+      el('pause-dimension').value = pause.dimension_ft > 0 ? feetInches(pause.dimension_ft) : '';
       el('pause-turn-label').hidden = pause.kind !== 'lot_placement';
       el('pause-turn').value = pause.transform?.rotation || 0;
       el('pause-pin').hidden = pause.kind !== 'level_registration';
@@ -144,9 +149,22 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
     el('editor-drag-outline').setAttribute('points', '');
   }
   signal.addEventListener('abort', stopDrag, { once: true });
-  el('pause-accept').addEventListener('click', () => answer(adjusted
-    ? pause.kind === 'lot_placement' ? { transform: pause.transform } : { registration: pause.registration }
-    : { accept: true }).catch(report), { signal });
+  async function accept() {
+    if (!pause) return;
+    if (pause.kind === 'scale_outline' && pause.dimension_ft > 0) {
+      const dimension = parseLength(el('pause-dimension').value);
+      if (dimension <= 0) throw new Error('Use a dimension greater than zero.');
+      // Apply only the change since the last edit; retries cannot multiply it.
+      const ratio = dimension / pause.dimension_ft;
+      if (Math.abs(ratio - 1) > 1e-9) {
+        pause.registration.scale *= ratio;
+        pause.dimension_ft = dimension; adjusted = true;
+      }
+    }
+    await answer(adjusted ? pause.kind === 'lot_placement'
+      ? { transform: pause.transform } : { registration: pause.registration } : { accept: true });
+  }
+  el('pause-accept').addEventListener('click', () => accept().catch(report), { signal });
   el('pause-pin').addEventListener('click', () => {
     mode = 'pin'; pins = []; el('editor-pin-marks').replaceChildren(); instruction(); el('pause-pin').setAttribute('aria-pressed', 'true');
     // Keep the card away from the four point targets while pinning.
@@ -184,7 +202,7 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
     dot.style.left = `${p[0]}px`; dot.style.top = `${p[1]}px`; el('editor-pin-marks').append(dot);
   };
   return {
-    sync, anchor, lastAnswer: () => lastAnswer, clearLastAnswer() { lastAnswer = null; },
+    sync, anchor, accept, lastAnswer: () => lastAnswer, clearLastAnswer() { lastAnswer = null; },
     current: () => pause, sheetMaster: () => masterSize, pinCheck: () => lastPin,
     dismissed: () => dismissed,
     show() { dismissed = false; sync(); },

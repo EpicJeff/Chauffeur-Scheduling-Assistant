@@ -40,7 +40,7 @@ export function findPiece(plan, pieceId, buildingId) {
 
 export function createCards({ getPlan, getLabel, getFieldLabels = () => ({}), edit, ask, canEdit, select }) {
   const host = document.getElementById('piece-card');
-  let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null;
+  let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null;
   const title = ({ kind, piece }) => kind === 'opening' ? (piece.kind === 'window' ? 'Window' : 'Door')
     : piece.name || (kind === 'roof' ? 'Roof section' : kind[0].toUpperCase() + kind.slice(1));
   const display = (field, value) => lengths.has(field) ? feetInches(value || 0)
@@ -51,6 +51,7 @@ export function createCards({ getPlan, getLabel, getFieldLabels = () => ({}), ed
     host.hidden = !record;
     if (record && selection?.pieceId === next.pieceId && selection?.buildingId === next.buildingId) {
       headingNode.textContent = title(record);
+      if (pitchNote) pitchNote.hidden = record.piece.pitch_source !== 'photos';
       if (acceptButton) acceptButton.hidden = record.piece.state !== 'ghost';
       host.querySelectorAll('button').forEach(b => { b.disabled = !canEdit(); });
       // A save or poll refreshes clean values without replacing anyone's input.
@@ -65,12 +66,16 @@ export function createCards({ getPlan, getLabel, getFieldLabels = () => ({}), ed
       }
       return;
     }
-    selection = next; host.replaceChildren(); inputs = new Map(); acceptButton = null;
+    selection = next; host.replaceChildren(); inputs = new Map(); acceptButton = null; pitchNote = null;
     if (!record) return;
     const { piece, kind, building } = record;
     const heading = headingNode = document.createElement('h3'); heading.textContent = title(record);
     const close = button('Close', () => select(null)); close.setAttribute('aria-label', 'Close piece card');
     host.append(heading, close);
+    if (kind === 'roof') {
+      pitchNote = document.createElement('p'); pitchNote.textContent = 'Estimated from photos';
+      pitchNote.hidden = piece.pitch_source !== 'photos'; host.append(pitchNote);
+    }
     const form = document.createElement('form'); form.addEventListener('submit', event => event.preventDefault()); host.append(form);
     const more = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'More'; more.append(summary);
     for (const field of fields[kind] || []) {

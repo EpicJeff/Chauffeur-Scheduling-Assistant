@@ -2,7 +2,7 @@
 import json
 import re
 
-from services import model_pools, storage, twin_cost
+from services import llm, model_pools, storage, twin_cost
 from services.twin_draft import FINISHES_PROMPT
 
 
@@ -302,7 +302,8 @@ def parse(kind, answer):
             'width_ft': positive, 'sill_ft': v.numeric, 'head_ft': positive}),
         'rooms': lambda x, p: v.fields(x, p, {'name': v.text, 'polygon': v.polygon}),
         'sections': section,
-        'pitches': lambda x, p: v.fields(x, p, {'section': v.text, 'pitch': v.numeric},
+        # A reader may echo the section context object instead of just its id.
+        'pitches': lambda x, p: v.fields(x, p, {'section': lambda x, p: v.text(x.get('id') if isinstance(x, dict) else x, p), 'pitch': v.numeric},
                                         {'confidence': confidence, 'why': v.text}),
         'buildings': lambda x, p: v.fields(x, p, {'name': v.text, 'outline': v.polygon}),
         'hardscape': lambda x, p: v.fields(x, p, {'kind': v.text, 'polygon': v.polygon}),
@@ -323,7 +324,7 @@ def parse(kind, answer):
         path = kind + '.' + name
         if name not in answer:
             # Wings and individual site features are optional.
-            if name != 'wings' and kind != 'site':
+            if name != 'wings' and kind != 'site' and not (kind == 'registration' and name == 'lower_outline'):
                 v.bad(path, 'missing field')
             continue
         value = answer[name]
@@ -360,8 +361,7 @@ def parse(kind, answer):
 
 def _usable(kind, fragment, problems):
     if kind in ('outline', 'registration'):
-        return (bool(fragment.get('outline')) and bool(fragment.get('dimension'))
-                and (kind != 'registration' or bool(fragment.get('lower_outline'))))
+        return bool(fragment.get('outline')) and bool(fragment.get('dimension'))
     if kind == 'roof':
         return bool(fragment.get('outline')) and bool(fragment.get('sections'))
     if kind == 'plot':
@@ -391,19 +391,23 @@ def read(kind, images, context, *, run, step):
     except (TypeError, ValueError, OverflowError) as exc:
         return {'error': str(exc)}
     usage = []
+    provider_usage = []
     twin_cost.require_clear()
     try:
-        answer = model_pools.call_pool_json(
-            'twin', key, PROMPTS[kind], user_prompt, images=images,
-            strict_json=True, max_models=1, thinking_level='low',
-            max_output_tokens=MAX_OUTPUT[kind], timeout_s=120,
-            usage=usage, settings=settings)
+        # Prefer HTTP-attempt rows: the pool's compatibility usage rows omit
+        # HTTP refusal status. Keep that fallback for mocked/older providers.
+        with llm.collect_usage() as provider_usage:
+            answer = model_pools.call_pool_json(
+                'twin', key, PROMPTS[kind], user_prompt, images=images,
+                strict_json=True, max_models=1, thinking_level='low',
+                max_output_tokens=MAX_OUTPUT[kind], timeout_s=120,
+                usage=usage, settings=settings)
     except twin_cost.CheckpointReached:
         raise
     except Exception as exc:
         return {'error': str(exc)}
     finally:
-        twin_cost.record(f'step:{kind}', usage, run)
+        twin_cost.record(f'step:{kind}', provider_usage or usage, run)
     if isinstance(answer, dict) and 'error' in answer:
         return {'error': str(answer['error'])}
     fragment, problems = parse(kind, answer)

@@ -125,6 +125,9 @@ def scenario_build_streams_ghosts_and_log_lines():
         check(st and st['state'] == 'paused' and st['pause']['kind'] == 'scale_outline', st)
         page.wait_for_selector('#pause-card', state='visible', timeout=10000)
         check(not page.locator('#pause-pin').is_visible(), 'no Pin 2 points when nothing fixed exists yet')
+        card = page.inner_text('#pause-card')
+        check("70'-0\"" in card and "65'-4\"" in card, ('the card shows what was read', card))
+        check(page.locator('#editor-stop').is_visible(), 'a paused build can be stopped')
         r = _api(page, 'POST', f"build/{st['id']}/answer", {'step': 'outline:L1', 'decision': {'accept': True}})
         check(r['status'] == 200, r)
         page.wait_for_function(
@@ -396,10 +399,22 @@ def scenario_pause_card_shows_its_reason_cost_and_pins():
         check(landed and landed['error_ft'] < 0.05, ('the second pin lands where it was put', landed))
 
 
+def _stop_builds():
+    # Return here is disabled while any build is active (final review I9);
+    # earlier scenarios can leave one paused in this shared server.
+    from services import twin_build
+    for bid in list(getattr(twin_build, '_BUILDS', {}) or {}):
+        try:
+            twin_build.stop(bid)
+        except Exception:
+            pass
+
+
 def scenario_timeline_previews_and_returns_without_rewriting_history():
     s = _serve()
     if s is None:
         return
+    _stop_builds()
     with s.browser(launch_args=GPU_ARGS) as page:
         page.set_viewport_size({'width': 1600, 'height': 900})
         _signed_in(page)
@@ -728,6 +743,7 @@ def scenario_return_here_leaves_preview():
     s = _serve()
     if s is None:
         return
+    _stop_builds()
     with s.browser(launch_args=GPU_ARGS) as page:
         _signed_in(page)
         _open(page, s)
@@ -824,6 +840,66 @@ def scenario_editor_refusals_are_plain_and_change_nothing():
     check(len(twin_store.rounds()) == rounds and twin_store.current_id() == current, 'Keep it and refusals change nothing')
 
 
+# ---- final whole-branch review ----
+
+def scenario_the_known_width_can_be_typed_at_the_first_pause():
+    s = _serve()
+    if s is None:
+        return
+    with s.browser(launch_args=GPU_ARGS) as page:
+        page.set_viewport_size({'width': 1600, 'height': 900})
+        _signed_in(page)
+        _open(page, s)
+        page.route('**/api/house/editor/build/b-scale**', lambda route: route.fulfill(
+            status=200, headers={'Content-Type': 'application/json'}, body=json.dumps({
+                'id': 'b-scale', 'state': 'paused', 'steps': [{'id': 'outline:L1', 'status': 'paused', 'label': 'Main floor outline'}],
+                'events': [], 'seq': 0, 'cost': 0.1,
+                'pause': {'kind': 'scale_outline', 'step': 'outline:L1', 'why': 'Read 70 ft.', 'confidence': 0.8,
+                          'dimension_ft': 70.0, 'size_ft': [70.0, 65.333],
+                          'registration': {'scale': 0.02745, 'angle': 0, 'origin_px': [1020, 3000], 'offset': [0, 0]}}}))
+            if route.request.method == 'GET' else route.fulfill(
+                status=200, headers={'Content-Type': 'application/json'}, body='{"id": "b-scale", "state": "running"}'))
+        page.evaluate("() => window.__editor.followBuild('b-scale')")
+        page.wait_for_selector('#pause-dimension', state='visible', timeout=10000)
+        page.fill('#pause-dimension', "71'-0\"")
+        page.click('#pause-accept')
+        page.wait_for_function('() => window.__editor.lastAnswer() !== null', timeout=10000)
+        reg = page.evaluate('window.__editor.lastAnswer().decision.registration')
+        check(abs(reg['scale'] - 0.02745 * 71 / 70) < 1e-6, ('the typed width rescales the drawing', reg))
+
+
+def scenario_each_page_belongs_to_a_building_and_build_builds_that_one():
+    s = _serve()
+    if s is None:
+        return
+    posts = []
+    from services import twin_build
+    for bid in list(getattr(twin_build, '_BUILDS', {}) or {}):
+        try:
+            twin_build.stop(bid)
+        except Exception:
+            pass
+    with s.browser(launch_args=GPU_ARGS) as page:
+        page.set_viewport_size({'width': 1600, 'height': 900})
+        _signed_in(page)
+        _open(page, s)
+        page.route('**/api/house/editor/build', lambda route: (posts.append(json.loads(route.request.post_data)),
+                                                               route.fulfill(status=200, body=json.dumps({'id': 'b-pool'}),
+                                                                             headers={'Content-Type': 'application/json'})))
+        page.click('#editor-menu')
+        page.click('#menu-upload')
+        selects = page.locator('[data-page-building]')
+        check(selects.count() >= 1, 'every page row says which building it shows')
+        selects.first.select_option('pool_house')
+        page.select_option('#editor-build-target', 'pool_house')
+        page.evaluate("() => document.querySelector('#editor-build').click()")
+        again = page.get_by_role('button', name='Build again', exact=True)
+        if again.count():
+            again.click()
+        page.wait_for_timeout(1500)
+    check(posts and posts[-1]['building']['id'] == 'pool_house', posts)
+
+
 if __name__ == '__main__':
     for fn in (scenario_signed_out_sees_the_sign_in,
                scenario_shell_matches_the_mockup_regions,
@@ -855,6 +931,8 @@ if __name__ == '__main__':
                scenario_advanced_plan_editor_round_trips,
                scenario_reset_spend_needs_the_word_reset,
                scenario_start_over_clears_the_house_and_keeps_the_spend,
-               scenario_empty_state_uploads_and_suggests_roles):
+               scenario_the_known_width_can_be_typed_at_the_first_pause,
+               scenario_empty_state_uploads_and_suggests_roles,
+               scenario_each_page_belongs_to_a_building_and_build_builds_that_one):
         fn()
         print('  ok ', fn.__name__)

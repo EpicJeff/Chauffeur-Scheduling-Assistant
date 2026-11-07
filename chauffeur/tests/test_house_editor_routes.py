@@ -151,8 +151,6 @@ def scenario_build_runs_through_the_api():
         check(st['pause']['kind'] == 'scale_outline', st)
         again = c.post('/api/house/editor/build', headers=PARENT, json=engine_tests._inputs(photo))
         check(again.status_code == 409 and 'already running' in again.json()['detail'], again.text)
-        busy = c.post('/api/house/editor/start-over', headers=PARENT, json={})
-        check(busy.status_code == 409, busy.text)
         r = c.post(f'/api/house/editor/build/{bid}/answer', headers=PARENT,
                    json={'step': 'outline:L1', 'decision': {'accept': True}})
         check(r.status_code == 200, r.text)
@@ -166,7 +164,12 @@ def scenario_build_runs_through_the_api():
         r = c.post(f'/api/house/editor/build/{bid}/reread', headers=PARENT, json={'step': 'walls:L1:main'})
         check(r.status_code == 200, r.text)
         check(c.get('/api/house/editor/build/nope', headers=PARENT).status_code == 404, 'unknown build')
-        tb.stop(bid)
+        st = _wait(lambda: c.get(f'/api/house/editor/build/{bid}', headers=PARENT).json(),
+                   lambda s: s['state'] == 'paused')
+        # Final review I1: Start over stops a paused build instead of refusing.
+        r = c.post('/api/house/editor/start-over', headers=PARENT, json={})
+        check(r.status_code == 200 and ts.current() is None, r.text)
+        check(not tb.running(), 'the paused build was stopped')
 
 
 def scenario_edit_returns_summary_and_plan():
