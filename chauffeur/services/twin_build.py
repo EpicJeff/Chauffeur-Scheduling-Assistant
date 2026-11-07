@@ -1,10 +1,9 @@
 """Restartable, piece-by-piece house builds from cropped drawing reads.
 
-The lifecycle lock covers publication, never a reader call. Every publication
-checks both the house generation and the worker ticket, including cache writes.
+The lifecycle lock covers publication, never a reader call. A stopped worker
+can cache its paid answer, but only the active worker may publish plan changes.
 """
 from copy import deepcopy
-import hashlib
 import json
 import math
 import os
@@ -37,8 +36,6 @@ def _step(kind, row=None, level=None, pause=None, name=None):
 def plan_steps(page_roles, photos, plot):
     """Static skeleton; wing steps are inserted only after an accepted read."""
     steps = []
-    if not page_roles:
-        return [_step('sheet_roles')]
     floors = [r for r in page_roles if r['role'] == 'floor']
     for index, row in enumerate(floors):
         level = f'L{index + 1}'
@@ -89,6 +86,7 @@ def _get(bid):
             raise KeyError(bid) from None
     build = _BUILDS[bid]
     if build['generation'] != twin_store.generation():
+        _BUILDS.pop(bid, None)
         raise twin_store.StaleGeneration('The house was started over.')
     return build
 
@@ -117,14 +115,15 @@ def running():
 
 def status(build_id, since=0):
     with twin_store.LIFECYCLE, _LOCK:
-        build = deepcopy(_get(build_id))
-    return {key: ([e for e in build[key] if e['seq'] > since] if key == 'events' else build[key])
-            for key in ('id', 'state', 'steps', 'events', 'seq', 'pause', 'cost')}
+        build = _get(build_id)
+        return deepcopy({key: ([e for e in build[key] if e['seq'] > since]
+                               if key == 'events' else build[key])
+                         for key in ('id', 'state', 'steps', 'events', 'seq', 'pause', 'cost')})
 
 
 def _launch(build, reader, inline):
     ticket = uuid.uuid4().hex
-    _WORKERS[build['id']] = {'reader': reader, 'inline': inline, 'ticket': ticket}
+    _WORKERS[build['id']] = {'reader': reader, 'inline': inline, 'ticket': ticket, 'busy': True}
     build['state'] = 'running'
     _save(build)
     return ticket
@@ -147,6 +146,13 @@ def start(inputs, *, reader=None, inline=False):
         if not re.fullmatch(r'[A-Za-z0-9_.:-]{1,64}', building['id']):
             raise ValueError('A building needs a valid id.')
         roles = [r for r in twin_store.page_roles() if r.get('building', 'house') == building['id']]
+        if not any(r['role'] == 'floor' for r in roles):
+            raise ValueError('Confirm floor page roles for this building before building.')
+        photos = {s['id'] for s in twin_store.sources() if s['kind'] == 'photo'}
+        photo_ids = inputs.get('photos', [])
+        if (not isinstance(photo_ids, list)
+                or any(not isinstance(source, str) or source not in photos for source in photo_ids)):
+            raise ValueError('Every photo id must name an existing photo source.')
         plot = [r for r in twin_store.page_roles() if r['role'] == 'plot']
         bid = uuid.uuid4().hex
         current = twin_store.current()
@@ -163,8 +169,6 @@ def start(inputs, *, reader=None, inline=False):
 def stop(build_id):
     with twin_store.LIFECYCLE, _LOCK:
         build = _get(build_id)
-        if build_id in _WORKERS:
-            _WORKERS[build_id]['ticket'] = None
         if build['state'] != 'done':
             build['state'] = 'stopped'
             _save(build)
@@ -179,6 +183,8 @@ def resume(build_id, *, reader=None, inline=None):
         if any(b['id'] != build_id and b['state'] in _ACTIVE for b in _BUILDS.values()):
             raise ValueError('A build is already running.')
         runtime = _WORKERS.get(build_id, {})
+        if runtime.get('busy'):
+            raise ValueError('The build is still stopping; wait for its read to return.')
         reader = reader or runtime.get('reader') or twin_reads.read
         inline = runtime.get('inline', False) if inline is None else inline
         ticket = _launch(build, reader, inline)
@@ -189,7 +195,10 @@ def resume(build_id, *, reader=None, inline=None):
 def recover():
     with twin_store.LIFECYCLE, _LOCK:
         for path in (Path(twin_store.DATA_DIR) / 'builds').glob('*/state.json'):
-            build = _get(path.parent.name)
+            try:
+                build = _get(path.parent.name)
+            except twin_store.StaleGeneration:
+                continue
             if build['state'] == 'running':
                 build['state'] = 'stopped'
                 _save(build)
@@ -285,9 +294,7 @@ def _nearest(point, a, b):
 
 
 def _piece(build, step, piece_kind, index, **fields):
-    identity = f"{piece_kind}:{step['id']}:{index}"
-    if len(identity) > 64:
-        identity = f"{piece_kind}:{hashlib.sha256(identity.encode()).hexdigest()[:48]}"
+    identity = f'{piece_kind}:{uuid.uuid4().hex}'
     return {'id': identity, 'state': 'ghost', 'src': {'sheet': step['source'] or '',
             'page': step['page'] or 1, 'step': step['id']}, **fields}
 
@@ -297,14 +304,25 @@ def _geometry(piece, kind, house):
         wall = next((w for w in house['walls'] if w['id'] == piece.get('wall')), None)
         if wall:
             length = math.dist(wall['from'], wall['to'])
+            if piece.get('state') == 'ghost' and 'position' in piece:
+                center = piece['position']
+                return {key: [center[i] + (wall['to'][i] - wall['from'][i]) / length * d for i in (0, 1)]
+                        for key, d in (('from', -piece['width'] / 2), ('to', piece['width'] / 2))}
             return {key: [wall['from'][i] + (wall['to'][i] - wall['from'][i]) / length * d for i in (0, 1)]
                     for key, d in (('from', piece['at'] - piece['width'] / 2), ('to', piece['at'] + piece['width'] / 2))}
     return {key: piece[key] for key in ('from', 'to', 'polygon', 'rect', 'position', 'at', 'points', 'polyline') if key in piece}
 
 
-def _near_geometry(a, b):
+def _near_geometry(a, b, kind=None):
     if a.keys() != b.keys() or not a:
         return False
+    if kind == 'opening' and 'from' in a:
+        return math.dist([(a['from'][i] + a['to'][i]) / 2 for i in (0, 1)],
+                         [(b['from'][i] + b['to'][i]) / 2 for i in (0, 1)]) <= 1
+    if kind == 'room' and 'polygon' in a:
+        return math.dist(_centroid(a['polygon']), _centroid(b['polygon'])) <= 1
+    if kind == 'roof' and 'rect' in a:
+        return all(math.dist(x, y) <= 1 for x, y in zip(_corners(a['rect']), _corners(b['rect'])))
     if 'from' in a:
         return all(_nearest(a[key], b['from'], b['to'])[0] <= 1 for key in ('from', 'to'))
     if 'at' in a or 'position' in a:
@@ -325,20 +343,110 @@ def _deleted(piece, kind, house, build):
         level = next((w['level'] for w in house['walls'] if w['id'] == piece.get('wall')), None)
     src = piece.get('src', {})
     return any(t['kind'] == kind and t['level'] == level
-               and (t['src'].get('step') == src.get('step')
-                    or (t['src'].get('person') and t['src'].get('sheet') == src.get('sheet')))
-               and _near_geometry(_geometry(piece, kind, house), t['geometry']) for t in twin_store.tombstones())
+               and t['src'].get('sheet') == src.get('sheet')
+               and t['src'].get('page') == src.get('page')
+               and _near_geometry(_geometry(piece, kind, house), t['geometry'], kind) for t in twin_store.tombstones())
 
 
-def _merge_list(existing, incoming, kind, house, build):
-    by_id = {p['id']: p for p in existing}
+def _centroid(points):
+    edges = list(zip(points, points[1:] + points[:1]))
+    area2 = sum(a[0] * b[1] - b[0] * a[1] for a, b in edges)
+    if abs(area2) < 1e-9:
+        return [sum(p[i] for p in points) / len(points) for i in (0, 1)]
+    return [sum((a[i] + b[i]) * (a[0] * b[1] - b[0] * a[1])
+                for a, b in edges) / (3 * area2) for i in (0, 1)]
+
+
+def _matches(a, b, kind, house, *, original=False):
+    def level(p):
+        if kind == 'opening':
+            return next((w['level'] for w in house['walls'] if w['id'] == p.get('wall')), None)
+        return p.get('level')
+    if level(a) != level(b) or (kind == 'site' and a.get('kind') != b.get('kind')):
+        return False
+    ga, gb = _geometry(a, kind, house), _geometry(b, kind, house)
+    if original:
+        gb = b.get('read_geometry') or gb
+    if kind == 'wall':
+        return any(math.dist(ga['from'], x) <= 1 and math.dist(ga['to'], y) <= 1
+                   for x, y in ((gb['from'], gb['to']), (gb['to'], gb['from'])))
+    if kind == 'opening':
+        if 'from' not in ga or 'from' not in gb:
+            return False
+        return math.dist([(ga['from'][i] + ga['to'][i]) / 2 for i in (0, 1)],
+                         [(gb['from'][i] + gb['to'][i]) / 2 for i in (0, 1)]) <= 1
+    if kind == 'room':
+        return math.dist(_centroid(ga['polygon']), _centroid(gb['polygon'])) <= 1
+    if kind == 'roof':
+        return all(math.dist(x, y) <= 1 for x, y in zip(_corners(ga['rect']), _corners(gb['rect'])))
+    return _near_geometry(ga, gb)
+
+
+def _merge_list(existing, incoming, kind, house, build, step=None):
+    protected_walls = {o.get('wall') for o in house['openings'] if o.get('src', {}).get('person')}
+    def protected(p):
+        return p.get('src', {}).get('person') or (kind == 'wall' and p['id'] in protected_walls)
+    merged = list(existing)
+    kept = set()
     for piece in incoming:
-        old = by_id.get(piece['id'])
-        if old and old.get('src', {}).get('person'):
+        if _deleted(piece, kind, house, build):
             continue
-        if not _deleted(piece, kind, house, build):
-            by_id[piece['id']] = deepcopy(piece)
-    return list(by_id.values())
+        old = next((p for p in sorted(merged, key=lambda p: not protected(p))
+                    if (_matches(piece, p, kind, house)
+                        or (protected(p) and _matches(piece, p, kind, house, original=True)))), None)
+        # Keep the extraction geometry when a later hand edit moves a piece.
+        # A reread must not duplicate it back at its former location.
+        piece['read_geometry'] = _geometry(piece, kind, house)
+        if old:
+            piece['id'] = old['id']
+            kept.add(old['id'])
+            if not protected(old):
+                merged[merged.index(old)] = deepcopy(piece)
+        else:
+            # UUIDs also avoid IDs of removed pieces and tombstones.
+            used = {p['id'] for p in merged}
+            while piece['id'] in used:
+                piece['id'] = f'{kind}:{uuid.uuid4().hex}'
+            kept.add(piece['id'])
+            merged.append(deepcopy(piece))
+    if step and step.get('reread'):
+        removed = {step['id'], *step.get('removed_steps', [])}
+        merged = [p for p in merged if protected(p) or p['id'] in kept
+                  or p.get('src', {}).get('step') not in removed]
+    return merged
+
+
+def _ghost(build, step, piece, why=''):
+    geometry = {k: deepcopy(piece[k]) for k in
+                ('id', 'level', 'from', 'to', 'wall', 'at', 'position', 'polygon', 'rect', 'outline', 'lot') if k in piece}
+    if piece.get('state') == 'ghost' and 'position' in geometry:
+        geometry.pop('wall', None)
+        geometry.pop('at', None)
+    _event(build, 'ghost', step=step['id'], piece=geometry, why=why)
+
+
+def _reattach(house, old_house, ghosts):
+    for opening in house['openings']:
+        if opening.get('src', {}).get('person'):
+            continue
+        old_wall = next((w for w in old_house['walls'] if w['id'] == opening.get('wall')), None)
+        if old_wall is None:
+            continue
+        wall = next((w for w in house['walls'] if w['id'] == old_wall['id']), None)
+        if wall and wall['from'] == old_wall['from'] and wall['to'] == old_wall['to']:
+            continue
+        geometry = _geometry(opening, 'opening', old_house)
+        point = [(geometry['from'][i] + geometry['to'][i]) / 2 for i in (0, 1)]
+        walls = [w for w in house['walls'] if w['level'] == old_wall['level']]
+        hit = min(((*_nearest(point, w['from'], w['to']), w) for w in walls),
+                  key=lambda h: h[0], default=None)
+        if hit and hit[0] <= 1:
+            opening.update(wall=hit[2]['id'], at=hit[1])
+            if hit[2].get('state') == 'ghost':
+                opening.update(state='ghost', why='The nearest wall is still a ghost.')
+        else:
+            opening.update(state='ghost', why='No replacement wall is within 1 ft of this opening.')
+            ghosts.append({**opening, 'at': point})
 
 
 def _spend(build):
@@ -352,7 +460,8 @@ def _images_context(build, step):
     plan = twin_store.current()
     if plan:
         house = _house(_base(plan, build), build)
-        context['settled'] = deepcopy(house)
+        context['settled'] = {'outline': deepcopy(next((l.get('outline', []) for l in house['levels']
+                                                       if l['id'] == step['level']), []))}
         context['sections'] = [s['id'] for s in house['roof']['sections']]
     if step['kind'] in ('pitch', 'finishes'):
         images = [image for source in build['inputs'].get('photos', []) for image in twin_store.source_images(source)]
@@ -365,35 +474,11 @@ def _images_context(build, step):
 def _obtain(build, step, reader, ticket):
     path = _cache_path(build, step)
     if path.is_file():
-        return json.loads(path.read_text(encoding='utf-8'))
-    if step['kind'] == 'sheet_roles':
-        rows, all_problems = [], []
-        for source in twin_store.sources():
-            if source['kind'] != 'drawing':
-                continue
-            substep = {**step, 'id': f"sheet_roles:{source['id']}"}
-            subpath = _cache_path(build, substep)
-            if subpath.is_file():
-                result = json.loads(subpath.read_text(encoding='utf-8'))
-            else:
-                twin_cost.require_clear()
-                raw = reader('sheet_roles', twin_store.source_images(source['id']),
-                             {'source': source['id'], 'box': _FULL}, run=build['id'], step=substep['id'])
-                fragment, problems = twin_reads.parse('sheet_roles', raw)
-                if isinstance(raw, dict):
-                    problems = list(raw.get('problems') or []) + problems
-                if isinstance(raw, dict) and raw.get('error'):
-                    raise ValueError(raw['error'])
-                result = {'fragment': fragment, 'problems': problems}
-                with twin_store.LIFECYCLE, _LOCK:
-                    if not _live(build, ticket):
-                        return None
-                    _atomic(subpath, result)
-            rows.extend({**r, 'source': source['id'], 'building': build['inputs']['building']['id']}
-                        for r in result['fragment'].get('pages', []))
-            all_problems.extend(result['problems'])
-        result = {'fragment': {'roles': rows}, 'problems': all_problems}
-    elif step['kind'] == 'compose':
+        result = json.loads(path.read_text(encoding='utf-8'))
+        if step.get('replay') and result.get('crop'):
+            _, _, result['crop'] = _images_context(build, step)
+        return result
+    if step['kind'] == 'compose':
         result = {'fragment': {}, 'problems': []}
     else:
         images, context, crop = _images_context(build, step)
@@ -402,11 +487,16 @@ def _obtain(build, step, reader, ticket):
         fragment, problems = twin_reads.parse(step['kind'], raw)
         if isinstance(raw, dict):
             problems = list(raw.get('problems') or []) + problems
-            if raw.get('error'):
-                raise ValueError(raw['error'])
-        result = {'fragment': fragment, 'problems': problems, 'crop': crop}
+        result = {'fragment': fragment, 'problems': problems, 'crop': crop,
+                  'error': raw.get('error') if isinstance(raw, dict) else None}
+        if step['kind'] == 'walls' and isinstance(raw, dict) and isinstance(raw.get('walls'), list):
+            result['wall_count'] = len(raw['walls'])
     with twin_store.LIFECYCLE, _LOCK:
-        if not _live(build, ticket):
+        # A stop does not throw away a paid read. Resume waits until this
+        # worker exits; only a new generation or worker can invalidate it.
+        if (build['generation'] != twin_store.generation()
+                or _BUILDS.get(build['id']) is not build
+                or _WORKERS.get(build['id'], {}).get('ticket') != ticket):
             return None
         _atomic(path, result)
     return result
@@ -417,15 +507,21 @@ def _registration(build, step, result, plan):
     scale = _dimension(crop, fragment['dimension'])
     pixels = [twin_store.crop_to_master(crop, p) for p in fragment['outline']]
     reg = twin_register.make(scale, origin_px=[min(p[0] for p in pixels), max(p[1] for p in pixels)])
+    rms = 0.0
     if step['kind'] == 'registration':
         below = f"L{int(step['level'][1:]) - 1}"
-        reg, _ = _fit(reg, [_map(crop, reg, p) for p in fragment['lower_outline']], _outline(plan, build, below))
-    return reg
+        reg, rms = _fit(reg, [_map(crop, reg, p) for p in fragment['lower_outline']], _outline(plan, build, below))
+    return reg, rms
 
 
 def _plot_registration(crop, fragment):
     scale = _dimension(crop, fragment['scale'])
-    a, b = (twin_store.crop_to_master(crop, fragment['lot'][i]) for i in fragment['street_edge'])
+    lot = [twin_store.crop_to_master(crop, p) for p in fragment['lot']]
+    edge = fragment.get('street_edge')
+    if edge is None:
+        i = max(range(len(lot)), key=lambda i: math.dist(lot[i], lot[(i + 1) % len(lot)]))
+        edge = [i, (i + 1) % len(lot)]
+    a, b = (lot[i] for i in edge)
     return twin_register.from_two_points(a, b, [0, 0], [math.dist(a, b) * scale, 0])
 
 
@@ -435,9 +531,11 @@ def _pause(build, step, result):
     pause = {'kind': step['pause'], 'step': step['id'], 'why': fragment.get('why', ''),
              'confidence': fragment.get('confidence', 0)}
     if step['kind'] in ('outline', 'registration'):
-        pause['registration'] = _registration(build, step, result, plan)
+        pause['registration'], pause['rms'] = _registration(build, step, result, plan)
     else:
         reg = _plot_registration(result['crop'], fragment)
+        if not fragment.get('street_edge'):
+            pause['why'] = (pause['why'] + ' The street edge was guessed from the longest lot edge.').strip()
         house = _house(plan, build)
         transform = {'position': house['position'], 'rotation': house['rotation']}
         if not build['existing']:
@@ -455,6 +553,10 @@ def _pause(build, step, result):
     build['pause'] = pause
     build['state'] = 'paused'
     step['status'] = 'paused'
+    reg = pause['registration']
+    key = 'outline' if step['level'] else 'lot'
+    _ghost(build, step, {'id': step['level'] or step['id'], key:
+                         [_map(result['crop'], reg, p) for p in fragment[key]]}, pause['why'])
     _event(build, 'pause', **pause)
 
 
@@ -463,6 +565,7 @@ def _expand(build, step, result):
         return
     parent = result['crop']['box']
     wings = result['fragment'].get('wings') or [{'name': 'main', 'box': _FULL}]
+    previous = {s['id']: s for s in build['steps'] if s['kind'] == 'walls' and s['level'] == step['level']}
     children, used = [], set()
     for index, wing in enumerate(wings):
         name = re.sub(r'[^A-Za-z0-9_.-]', '-', wing['name'])[:24] or 'main'
@@ -477,7 +580,13 @@ def _expand(build, step, result):
         child = _step('walls', {**step, 'box': master_box, 'level': step['level_name']}, step['level'],
                       name=f"{step['level_name']} {wing['name']} walls")
         child['id'] += ':' + name
+        if child['id'] in previous:
+            child.update(reread=True, replay=True)
         children.append(child)
+    build['steps'][:] = [s for s in build['steps'] if s['id'] not in previous]
+    obsolete = set(previous) - {s['id'] for s in children}
+    if obsolete:
+        children[-1].update(reread=True, removed_steps=sorted(obsolete))
     index = build['steps'].index(step)
     build['steps'][index + 1:index + 1] = children
     step['expanded'] = True
@@ -487,31 +596,11 @@ def _settle(build, step, result, decision=None):
     """Merge against the latest round while LIFECYCLE and the module lock are held."""
     fragment, crop = result['fragment'], result.get('crop')
     kind = step['kind']
-    if kind == 'sheet_roles':
-        rows = fragment['roles']
-        if not any(r['role'] == 'floor' for r in rows):
-            raise ValueError('No floor sheets were identified. Confirm the drawing roles first.')
-        twin_store.set_page_roles(twin_store.page_roles() + rows)
-        build['steps'].extend(plan_steps(rows, build['inputs'].get('photos', []), [r for r in rows if r['role'] == 'plot']))
-        return
     notes, settled, ghosts = [], [], []
 
     def mutate(current):
         plan = _base(current, build)
         house = _house(plan, build)
-        if step.get('reread'):
-            # Replace atomically with the new pieces: removing walls in a
-            # separate round would also discard a person's dependent openings.
-            removed_steps = set(step.get('removed_steps', [])) | {step['id']}
-            collections = [house[k] for k in ('walls', 'openings', 'rooms')]
-            collections += [house['roof']['sections']]
-            collections += [plan['site'][k] for k in ('hardscape', 'edges', 'planting', 'beds', 'furniture')]
-            for pieces in collections:
-                pieces[:] = [p for p in pieces if p.get('src', {}).get('person')
-                             or p.get('src', {}).get('step') not in removed_steps]
-            for name in ('pool', 'fire_pit'):
-                if (plan['site'].get(name) or {}).get('src', {}).get('step') in removed_steps:
-                    plan['site'][name] = None
         level = next((l for l in house['levels'] if l['id'] == step['level']), None)
         reg = twin_store.registration(step['source'], step['page'], step['level']) if crop else None
         if kind in ('outline', 'registration'):
@@ -544,24 +633,55 @@ def _settle(build, step, result, decision=None):
             for wall in pending:
                 wall['why'] = ('; '.join(result['problems']) + '; ' if result['problems'] else '') + 'Wall ends are more than 2 ft from the outline or a settled wall.'
                 ghosts.append(wall)
-            house['walls'] = _merge_list(house['walls'], incoming, 'wall', house, build)
+            old_house = deepcopy(house)
+            house['walls'] = _merge_list(house['walls'], incoming, 'wall', house, build, step)
+            _reattach(house, old_house, ghosts)
         elif kind == 'openings':
             incoming = []
-            walls = [w for w in house['walls'] if w['level'] == step['level'] and w.get('state') != 'ghost']
+            walls = [w for w in house['walls'] if w['level'] == step['level']]
             for i, opening in enumerate(fragment.get('openings', [])):
-                if not walls:
-                    notes.append('Opening stays a ghost: no settled wall on this floor.')
-                    continue
                 point = _map(crop, reg, opening['at'])
+                if not walls:
+                    ghosts.append(_piece(build, step, 'opening', i, at=point,
+                                         why='There is no wall on this floor.'))
+                    continue
                 distance, at, wall = min(((*_nearest(point, w['from'], w['to']), w) for w in walls), key=lambda hit: hit[0])
-                incoming.append(_piece(build, step, 'opening', i, kind=opening['kind'], wall=wall['id'], at=at,
-                                       width=opening['width_ft'], sill=opening['sill_ft'], head=opening['head_ft'], state='settled'))
-            house['openings'] = _merge_list(house['openings'], incoming, 'opening', house, build)
+                piece = _piece(build, step, 'opening', i, kind=opening['kind'], wall=wall['id'], at=at,
+                               width=opening['width_ft'], sill=opening['sill_ft'], head=opening['head_ft'])
+                settled_distance = min((_nearest(point, w['from'], w['to'])[0] for w in walls
+                                        if w.get('state') != 'ghost'), default=math.inf)
+                if distance > 2 or settled_distance > 2:
+                    piece['why'] = 'This opening is more than 2 ft from any settled wall.'
+                    # Keep the read centre; it has not been snapped to this wall.
+                    piece['position'] = point
+                elif wall.get('state') == 'ghost':
+                    piece['why'] = 'The nearest wall is still a ghost.'
+                else:
+                    piece['state'] = 'settled'
+                reason = twin_plan._opening_error(piece, {w['id']: w for w in walls}, {})
+                if reason:
+                    piece.update(state='ghost', why=piece.get('why') or f'This opening needs checking: {reason}.')
+                if piece['state'] == 'ghost':
+                    piece['position'] = point
+                    # The plan format requires a valid wall reference even for
+                    # ghosts. Keep the unsnapped centre in position; wall/at
+                    # are only a valid carrier until a person resolves it.
+                    if reason:
+                        carriers = [w for w in walls if math.dist(w['from'], w['to']) >= piece['width']
+                                    and w['height'] >= piece['head']]
+                        if carriers:
+                            _, at, carrier = min(((*_nearest(point, w['from'], w['to']), w) for w in carriers),
+                                                 key=lambda hit: hit[0])
+                            piece.update(wall=carrier['id'], at=max(piece['width'] / 2,
+                                         min(math.dist(carrier['from'], carrier['to']) - piece['width'] / 2, at)))
+                    ghosts.append(piece)
+                incoming.append(piece)
+            house['openings'] = _merge_list(house['openings'], incoming, 'opening', house, build, step)
         elif kind == 'rooms':
             incoming = [_piece(build, step, 'room', i, level=step['level'], name=r['name'] or f"{level['name']} room {i + 1}",
                                polygon=[_map(crop, reg, p) for p in r['polygon']], state='settled')
                         for i, r in enumerate(fragment.get('rooms', []))]
-            house['rooms'] = _merge_list(house['rooms'], incoming, 'room', house, build)
+            house['rooms'] = _merge_list(house['rooms'], incoming, 'room', house, build, step)
             notes.append(f"{level['name']}: {sum(w['level'] == step['level'] for w in house['walls'])} walls, "
                          f"{sum(o.get('wall') in {w['id'] for w in house['walls'] if w['level'] == step['level']} for o in house['openings'])} openings, "
                          f"{sum(r['level'] == step['level'] for r in house['rooms'])} rooms")
@@ -588,7 +708,7 @@ def _settle(build, step, result, decision=None):
                 incoming.append(_piece(build, step, 'roof', i, kind=section['kind'], rect=_bounds(points), ridge=ridge,
                                        low_side=side, plate=max(l['elevation'] + l['ceiling'] for l in house['levels']),
                                        pitch=6, pitch_source='default', state='settled'))
-            house['roof']['sections'] = _merge_list(house['roof']['sections'], incoming, 'roof', house, build)
+            house['roof']['sections'] = _merge_list(house['roof']['sections'], incoming, 'roof', house, build, step)
         elif kind == 'pitch':
             for pitch in fragment.get('pitches', []):
                 for section in house['roof']['sections']:
@@ -606,19 +726,24 @@ def _settle(build, step, result, decision=None):
             reg = twin_store.registration(step['source'], step['page'], None)
             site = plan['site']
             for name in ('pool', 'fire_pit'):
+                old = site.get(name)
                 if name in fragment:
                     raw = fragment[name]
                     fields = ({'polygon': [_map(crop, reg, p) for p in raw['polygon']], 'depth': raw.get('depth_ft', 5)}
                               if name == 'pool' else {'at': _map(crop, reg, raw['at']), 'radius': raw['radius_ft']})
                     piece = _piece(build, step, 'site', name, **fields, state='settled')
-                    if not (site.get(name) or {}).get('src', {}).get('person') and not _deleted(piece, 'site', house, build):
-                        site[name] = piece
+                    if not (old or {}).get('src', {}).get('person'):
+                        pieces = _merge_list([old] if old else [], [piece], 'site', house, build, step)
+                        site[name] = pieces[-1] if pieces else None
+                elif (step.get('reread') and old and not old.get('src', {}).get('person')
+                      and old.get('src', {}).get('step') == step['id']):
+                    site[name] = None
             incoming = [_piece(build, step, 'site', i, kind=h['kind'], polygon=[_map(crop, reg, p) for p in h['polygon']], state='settled')
                         for i, h in enumerate(fragment.get('hardscape', []))]
-            site['hardscape'] = _merge_list(site['hardscape'], incoming, 'site', house, build)
+            site['hardscape'] = _merge_list(site['hardscape'], incoming, 'site', house, build, step)
             incoming = [_piece(build, step, 'site', f'edge-{i}', points=[_map(crop, reg, w[p]) for p in ('from', 'to')],
                                height=w['height_ft'], state='settled') for i, w in enumerate(fragment.get('retaining_walls', []))]
-            site['edges'] = _merge_list(site['edges'], incoming, 'site', house, build)
+            site['edges'] = _merge_list(site['edges'], incoming, 'site', house, build, step)
         elif kind == 'finishes':
             materials = twin_draft._materials({'materials': fragment.get('materials', {})}, twin_library.kit('modern_farmhouse'), notes)
             plan['materials'].update({k: v for k, v in materials.items()
@@ -639,11 +764,18 @@ def _settle(build, step, result, decision=None):
         collections = [house['walls'], house['openings'], house['rooms'], house['roof']['sections']]
         generated = [p for pieces in collections for p in pieces if p.get('src', {}).get('step') == step['id']]
         for piece in generated:
+            if not piece.get('src', {}).get('person'):
+                _ghost(build, step, piece, piece.get('why', ''))
             if 'confidence' in fragment:
-                piece['confidence'] = fragment['confidence']
+                if not piece.get('src', {}).get('person'):
+                    piece['confidence'] = fragment['confidence']
         normalized, problems = twin_plan.normalize(plan)
         notes.extend(problems)
         target = _house(normalized, build)
+        if kind == 'walls' and result.get('wall_count', len(incoming)):
+            settled_ids = {w['id'] for w in target['walls'] if w.get('state') != 'ghost'}
+            if sum(w['id'] in settled_ids for w in incoming) < result.get('wall_count', len(incoming)) / 2:
+                _event(build, 'question', step=step['id'], text='Fewer than half of these walls could settle. Please check the walls.')
         for collection in (target['walls'], target['openings'], target['rooms'], target['roof']['sections']):
             settled.extend(p for p in collection if p.get('src', {}).get('step') == step['id'] and p.get('state') != 'ghost')
         kept = {p['id'] for collection in (target['walls'], target['openings'], target['rooms'], target['roof']['sections']) for p in collection}
@@ -666,11 +798,12 @@ def _settle(build, step, result, decision=None):
     if kind in ('outline', 'registration'):
         _expand(build, step, result)
     step.pop('reread', None)
+    step.pop('replay', None)
     step.pop('removed_steps', None)
     for note in notes:
         _event(build, 'log', step=step['id'], text=note)
-    for ghost in ghosts:
-        _event(build, 'ghost', step=step['id'], piece=ghost, why=ghost['why'])
+    for ghost in {p['id']: p for p in ghosts}.values():
+        _ghost(build, step, ghost, ghost['why'])
         _event(build, 'log', step=step['id'], text=ghost['why'])
     _event(build, 'settled', step=step['id'], pieces=settled)
 
@@ -681,23 +814,44 @@ def answer(build_id, step_id, decision):
         if build['state'] != 'paused' or build['pause']['step'] != step_id:
             raise ValueError('This step is not waiting for an answer.')
         step = next(s for s in build['steps'] if s['id'] == step_id)
+        if not isinstance(decision, dict) or len(decision) != 1:
+            raise ValueError('Accept the step or provide its registration or placement.')
         decision = deepcopy(decision)
         if 'registration' in decision:
             if step['kind'] not in ('outline', 'registration'):
                 raise ValueError('This step needs a placement decision.')
-            reg = decision['registration']
-            twin_register.make(reg['scale'], reg['angle'], reg['origin_px'], reg['offset'])
-            if not all(math.isfinite(v) for v in [reg['angle'], *reg['origin_px'], *reg['offset']]):
-                raise ValueError('Registration must be finite.')
+            try:
+                reg = decision['registration']
+                if not isinstance(reg, dict):
+                    raise ValueError()
+                origin, offset = reg.get('origin_px', [0, 0]), reg.get('offset', [0, 0])
+                if (not isinstance(origin, (list, tuple)) or len(origin) != 2
+                        or not isinstance(offset, (list, tuple)) or len(offset) != 2
+                        or not all(type(v) in (int, float) and math.isfinite(v)
+                                   for v in [reg['scale'], reg.get('angle', 0), *origin, *offset])):
+                    raise ValueError()
+                decision['registration'] = twin_register.make(reg['scale'], reg.get('angle', 0), origin, offset)
+            except (KeyError, TypeError, ValueError, OverflowError):
+                raise ValueError('Registration needs a positive scale, angle and two-number origin and offset.') from None
         elif 'transform' in decision:
             transform = decision['transform']
-            if (step['kind'] != 'plot' or len(transform['position']) != 2
-                    or not all(type(v) in (int, float) and math.isfinite(v) for v in [*transform['position'], transform['rotation']])):
+            if (step['kind'] != 'plot' or not isinstance(transform, dict)
+                    or not isinstance(transform.get('position'), (list, tuple)) or len(transform['position']) != 2
+                    or not all(type(v) in (int, float) and -1e308 <= v <= 1e308
+                               for v in [*transform['position'], transform.get('rotation')])):
                 raise ValueError('Placement needs a position and rotation.')
+            decision['transform'] = {'position': list(transform['position']), 'rotation': transform['rotation']}
         elif decision.get('accept') is not True:
             raise ValueError('Accept the step or provide its registration or placement.')
-        result = json.loads(_cache_path(build, step).read_text(encoding='utf-8'))
-        _settle(build, step, result, decision)
+        try:
+            result = json.loads(_cache_path(build, step).read_text(encoding='utf-8'))
+            _settle(build, step, result, decision)
+        except twin_store.StaleGeneration:
+            raise
+        except Exception as exc:
+            _event(build, 'question', step=step['id'], text=f'Please check this step: {exc}')
+            _save(build)
+            return status(build_id)
         step['status'] = 'done'
         build['pause'] = None
         runtime = _WORKERS.get(build_id, {})
@@ -716,14 +870,18 @@ def reread(build_id, step_id, *, reader=None, inline=None):
             raise ValueError('Unknown build step.')
         if build['state'] == 'running':
             raise ValueError('Stop the build before rereading a step.')
+        if _WORKERS.get(build_id, {}).get('busy'):
+            raise ValueError('The build is still stopping; wait for its read to return.')
         step['reread'] = True
         if step['kind'] in ('outline', 'registration'):
-            children = [s for s in build['steps'] if s['kind'] == 'walls' and s['level'] == step['level']]
-            step['removed_steps'] = [s['id'] for s in children]
-            for child in children:
-                _cache_path(build, child).unlink(missing_ok=True)
-                build['steps'].remove(child)
-            step.pop('expanded', None)
+            # Reproject cached crop coordinates through the accepted registration.
+            # Higher registrations depend on the outline immediately below them.
+            first = int(step['level'][1:])
+            for dependent in build['steps']:
+                if dependent['level'] and int(dependent['level'][1:]) >= first:
+                    dependent.update(status='pending', reread=True, replay=True)
+                    if dependent['kind'] in ('outline', 'registration'):
+                        dependent.pop('expanded', None)
         _cache_path(build, step).unlink(missing_ok=True)
         step['status'] = 'pending'
         build['pause'] = None
@@ -747,6 +905,7 @@ def _run(build, ticket, reader):
                 step['status'] = 'running'
                 _event(build, 'stage', step=step['id'], label=step['label'])
                 _save(build)
+            result = None
             result = _obtain(build, step, reader, ticket)
             with twin_store.LIFECYCLE, _LOCK:
                 if not _live(build, ticket) or result is None:
@@ -754,7 +913,8 @@ def _run(build, ticket, reader):
                 _spend(build)
                 for problem in result['problems']:
                     _event(build, 'log', step=step['id'], text=problem)
-                _event(build, 'ghost', step=step['id'], fragment=result['fragment'], why='; '.join(result['problems']))
+                if result.get('error'):
+                    raise ValueError(result['error'])
                 if step['pause']:
                     _pause(build, step, result)
                     _save(build)
@@ -776,9 +936,21 @@ def _run(build, ticket, reader):
         with twin_store.LIFECYCLE, _LOCK:
             if _live(build, ticket):
                 _spend(build)
-                build['state'] = 'failed'
-                _event(build, 'error', step=step['id'], text=str(exc))
+                cached = _cache_path(build, step).is_file()
+                build['state'] = 'stopped' if cached else 'failed'
+                step['status'] = 'pending'
+                _event(build, 'question' if cached else 'error', step=step['id'], text=str(exc))
+                if cached and step['pause'] and isinstance(result, dict) and not result.get('error'):
+                    try:
+                        _pause(build, step, result)
+                    except Exception:
+                        pass
                 _save(build)
+    finally:
+        with twin_store.LIFECYCLE, _LOCK:
+            runtime = _WORKERS.get(build['id'], {})
+            if runtime.get('ticket') == ticket:
+                runtime['busy'] = False
 
 
 twin_store.build_running = running

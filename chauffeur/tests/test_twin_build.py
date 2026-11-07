@@ -79,6 +79,9 @@ class Reader:
 
     def __init__(self, wings_l2=None, walls_extra=None, checkpoint_at=None, crash_at=None, block_at=None):
         self.calls = []
+        self.reverse_walls = False          # a reread that returns the same walls in another order
+        self.isolated_walls_for = None      # a walls step whose walls are all tiny and unconnected
+        self.plot_no_street = False
         self.wings_l2 = wings_l2
         self.walls_extra = walls_extra or []
         self.checkpoint_at, self.crash_at, self.block_at = checkpoint_at, crash_at, block_at
@@ -101,7 +104,17 @@ class Reader:
         if kind == 'walls':
             walls = [{'from': [0, 0], 'to': [1, 0], 'exterior': True}, {'from': [1, 0], 'to': [1, 1], 'exterior': True},
                      {'from': [1, 1], 'to': [0, 1], 'exterior': True}, {'from': [0, 1], 'to': [0, 0], 'exterior': True}]
-            return {'walls': walls + copy.deepcopy(self.walls_extra), 'confidence': 0.8, 'why': ''}
+            if step == self.isolated_walls_for:
+                walls = [{'from': [0.3 + 0.1 * i, 0.5], 'to': [0.32 + 0.1 * i, 0.5], 'exterior': False}
+                         for i in range(4)]
+            walls = walls + copy.deepcopy(self.walls_extra)
+            if self.reverse_walls:
+                walls = list(reversed(walls))
+            return {'walls': walls, 'confidence': 0.8, 'why': ''}
+        if kind == 'plot' and self.plot_no_street:
+            answer = fixture('plot')
+            answer.pop('street_edge', None)
+            return answer
         if kind == 'registration':
             return {'dimension': DIM, 'lower_outline': L1, 'outline': [[0.3, 0.2], [0.6, 0.2], [0.6, 0.7], [0.3, 0.7]],
                     'wings': self.wings_l2 or [{'name': 'upper', 'box': [0.3, 0.2, 0.6, 0.7]}],
@@ -356,12 +369,149 @@ def scenario_start_over_discards_a_late_result():
     tb.stop(b)
     ts.start_over()
     reader.release.set()
-    deadline = time.time() + 10
-    while time.time() < deadline and tb.running():
-        time.sleep(0.05)
-    time.sleep(0.2)
+    for t in threading.enumerate():
+        if t.name.startswith('twin-build-'):
+            t.join(10)
     check(ts.current() is None and ts.rounds() == [], 'nothing written after start over')
     check(not os.path.exists(os.path.join(ts.DATA_DIR, 'builds', b)), 'no build state recreated')
+
+
+def _run_to(b, step_id, limit=20):
+    for _ in range(limit):
+        st = tb.status(b)
+        if st['state'] != 'paused' or st['pause']['step'] == step_id:
+            return st
+        tb.answer(b, st['pause']['step'], {'accept': True})
+    return tb.status(b)
+
+
+def _same_geometry(a, b, tol=0.1):
+    return all(abs(x - y) <= tol for x, y in zip(a['from'] + a['to'], b['from'] + b['to']))
+
+
+def scenario_reread_in_another_order_keeps_person_edits_without_duplicates():
+    _fresh()
+    _, _, photo = _sources()
+    reader = Reader()
+    b = tb.start(_inputs(photo), reader=reader, inline=True)
+    tb.answer(b, 'outline:L1', {'accept': True})
+    mine = [w for w in _walls(ts.current(), 'L1') if w.get('src', {}).get('step') == 'walls:L1:main']
+    edited = mine[1]
+    twin_edit.save({'op': 'set', 'piece': edited['id'], 'field': 'height', 'value': 11}, 'p1')
+    reader.reverse_walls = True
+    tb.reread(b, 'walls:L1:main', reader=reader, inline=True)
+    after = _walls(ts.current(), 'L1')
+    check(next(w for w in after if w['id'] == edited['id'])['height'] == 11, 'the person edit survives')
+    for i, w in enumerate(after):
+        for other in after[i + 1:]:
+            flipped = {'from': other['to'], 'to': other['from']}
+            check(not _same_geometry(w, other) and not _same_geometry(w, flipped), ('duplicate wall', w['id'], other['id']))
+    ours = [w for w in after if w.get('src', {}).get('step') == 'walls:L1:main' or w['id'] == edited['id']]
+    check(len(ours) == len(mine), 'same walls, no more, no fewer')
+
+
+def scenario_outline_reread_resettles_openings_and_rooms_without_paying():
+    _fresh()
+    _, _, photo = _sources()
+    reader = Reader()
+    b = tb.start(_inputs(photo), reader=reader, inline=True)
+    st = _run_to(b, 'registration:L2')
+    check(st['pause']['step'] == 'registration:L2', st['pause'])
+    openings_before = len(ts.current()['buildings'][0]['openings'])
+    before = len(reader.calls)
+    tb.reread(b, 'outline:L1', reader=reader, inline=True)
+    st = _run_to(b, 'registration:L2')
+    again = [c['step'] for c in reader.calls[before:]]
+    check('openings:L1' not in again and 'rooms:L1' not in again, again)
+    check(again.count('outline:L1') == 1, 'the reread itself pays exactly once')
+    plan = ts.current()
+    check(len(plan['buildings'][0]['openings']) == openings_before and openings_before > 0, 'openings re-settled')
+    check(plan['buildings'][0]['rooms'], 'rooms re-settled')
+
+
+def scenario_far_openings_stay_ghosts_and_a_thin_walls_step_asks():
+    _fresh()
+    _, _, photo = _sources()
+    reader = Reader()
+    reader.isolated_walls_for = 'walls:L1:main'
+    b = tb.start(_inputs(photo), reader=reader, inline=True)
+    _run_to(b, 'registration:L2')
+    events = tb.status(b)['events']
+    check(any(e['type'] == 'question' and 'wall' in e['text'].lower() for e in events), 'a thin walls step asks')
+    openings = ts.current()['buildings'][0]['openings']
+    ghosts = [o for o in openings if o.get('state') == 'ghost']
+    check(ghosts and all(o.get('why') for o in ghosts), openings)
+
+
+def scenario_plot_without_a_street_edge_pauses_instead_of_failing():
+    _fresh()
+    _, _, photo = _sources()
+    reader = Reader()
+    reader.plot_no_street = True
+    b = tb.start(_inputs(photo), reader=reader, inline=True)
+    st = _run_to(b, 'plot')
+    check(st['state'] == 'paused' and st['pause']['kind'] == 'lot_placement', st['state'])
+    check('street' in st['pause']['why'].lower(), st['pause'])
+
+
+def scenario_resume_waits_for_a_stopping_read_and_keeps_its_answer():
+    _fresh()
+    _, _, photo = _sources()
+    reader = Reader(block_at='outline:L1')
+    b = tb.start(_inputs(photo), reader=reader, inline=False)
+    check(reader.blocked.wait(10), 'worker reached the read')
+    tb.stop(b)
+    try:
+        tb.resume(b, reader=reader, inline=True)
+    except ValueError as exc:
+        check('stopping' in str(exc).lower(), exc)
+    else:
+        raise AssertionError('resume must wait while a stopped read is still in flight')
+    reader.release.set()
+    for t in threading.enumerate():
+        if t.name.startswith('twin-build-'):
+            t.join(10)
+    reader.block_at = None
+    tb.resume(b, reader=reader, inline=True)
+    check([c['step'] for c in reader.calls].count('outline:L1') == 1, 'the paid answer was kept, not read twice')
+    check(tb.status(b)['pause']['kind'] == 'scale_outline', tb.status(b)['pause'])
+
+
+def scenario_roles_must_be_confirmed_first():
+    _fresh()
+    ts.save_source('drawing', 'lot58.pdf', _pdf(1))
+    photo = ts.save_source('photo', 'front.jpg', _jpeg())
+    try:
+        tb.start(_inputs(photo), reader=Reader(), inline=True)
+    except ValueError as exc:
+        check('page' in str(exc).lower(), exc)
+    else:
+        raise AssertionError('no confirmed page roles: nothing to build')
+    sheet = next(x['id'] for x in ts.sources() if x['kind'] == 'drawing')
+    ts.set_page_roles([{'source': sheet, 'page': 1, 'role': 'floor', 'level': 'Ground', 'box': None,
+                        'building': 'pool_house'}])
+    try:
+        tb.start(_inputs(photo), reader=Reader(), inline=True)
+    except ValueError as exc:
+        check('page' in str(exc).lower(), exc)
+    else:
+        raise AssertionError('pages marked for another building do not build this one')
+
+
+def scenario_registration_pause_reports_fit_quality_and_rejects_junk():
+    _fresh()
+    _, _, photo = _sources()
+    b = tb.start(_inputs(photo), reader=Reader(), inline=True)
+    tb.answer(b, 'outline:L1', {'accept': True})
+    st = tb.status(b)
+    check(isinstance(st['pause'].get('rms'), (int, float)), st['pause'])
+    for junk in ({'registration': {'scale': 'big'}}, {'transform': 5}, {'registration': None}, {}):
+        try:
+            tb.answer(b, 'registration:L2', junk)
+        except ValueError:
+            continue
+        raise AssertionError(f'junk answer accepted: {junk}')
+    check(tb.status(b)['state'] == 'paused', 'still waiting for a real answer')
 
 
 if __name__ == '__main__':
@@ -378,6 +528,13 @@ if __name__ == '__main__':
                scenario_reread_does_not_resurrect_a_deleted_wall,
                scenario_registration_answer_moves_the_level,
                scenario_one_build_at_a_time,
-               scenario_start_over_discards_a_late_result):
+               scenario_start_over_discards_a_late_result,
+               scenario_reread_in_another_order_keeps_person_edits_without_duplicates,
+               scenario_outline_reread_resettles_openings_and_rooms_without_paying,
+               scenario_far_openings_stay_ghosts_and_a_thin_walls_step_asks,
+               scenario_plot_without_a_street_edge_pauses_instead_of_failing,
+               scenario_resume_waits_for_a_stopping_read_and_keeps_its_answer,
+               scenario_roles_must_be_confirmed_first,
+               scenario_registration_pause_reports_fit_quality_and_rejects_junk):
         fn()
         print('  ok ', fn.__name__)
