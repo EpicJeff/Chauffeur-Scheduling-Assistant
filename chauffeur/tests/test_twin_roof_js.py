@@ -90,7 +90,20 @@ if (job.cover) {
       if (h !== null && cz > h + 0.01) gableAbove++;
     }
   }
-  console.log(JSON.stringify({triangles: n, sectionOf: mesh.section.length, maxError, buried, uncovered, gableAbove}));
+  const area = (q, i) => {
+    const ax = q[i*9+3]-q[i*9], ay = q[i*9+4]-q[i*9+1], az = q[i*9+5]-q[i*9+2];
+    const bx = q[i*9+6]-q[i*9], by = q[i*9+7]-q[i*9+1], bz = q[i*9+8]-q[i*9+2];
+    const cx = ay*bz-az*by, cy = az*bx-ax*bz, cz = ax*by-ay*bx;
+    return [Math.hypot(cx, cy, cz) / 2, cz];
+  };
+  let downward = 0;
+  for (let i = 0; i < n; i++) if (area(p, i)[1] <= 0) downward++;
+  const gableAreas = (mesh.gables || []).map(g => {
+    let a = 0; for (let i = 0; i < g.positions.length / 9; i++) a += area(g.positions, i)[0]; return a;
+  });
+  const gableTriangles = (mesh.gables || []).reduce((t, g) => t + g.positions.length / 9, 0);
+  console.log(JSON.stringify({triangles: n, sectionOf: mesh.section.length, maxError, buried, uncovered, gableAbove,
+                              downward, gableAreas, gableTriangles}));
 }
 """
 
@@ -169,6 +182,24 @@ def scenario_nothing_hides_under_another_section(js):
         check(r['buried'] == 0 and r['gableAbove'] == 0, (name, r))
 
 
+def scenario_gable_ends_exist_and_face_out(js):
+    # Review finding: gableAbove == 0 passes when no gable ends are produced.
+    r = js.mesh([GABLE_X])
+    check(r['gableTriangles'] == 2 and abs(sum(r['gableAreas']) - 200) < 1e-3, r)   # two ends of 20 x 10 / 2
+    flat_over = {'kind': 'flat', 'rect': [-5, -5, 3, 25], 'pitch': 0, 'plate': 12, 'overhang': 0}
+    gable = {'kind': 'gable', 'rect': [0, 0, 40, 20], 'ridge': 'x', 'pitch': 12, 'plate': 10, 'overhang': 0}
+    r = js.mesh([gable, flat_over])
+    check(abs(sum(r['gableAreas']) - (100 + 64)) < 1e-3, r)   # far end whole (100); near end only above z=12: 8 high x 16 wide / 2 = 64
+
+
+def scenario_every_roof_triangle_faces_up(js):
+    with open(LOT58, encoding='utf-8') as f:
+        lot58 = json.load(f)['sections']
+    for name, sections in (('hip', [HIP]), ('cross', [HIP, CROSS]), ('shed', [SHED]), ('lot58', lot58)):
+        r = js.mesh(sections)
+        check(r['downward'] == 0, (name, r))
+
+
 if __name__ == '__main__':
     if not shutil.which('node'):
         print('  ..  skipped (node not available)')
@@ -180,6 +211,8 @@ if __name__ == '__main__':
                    scenario_envelope_makes_the_valley,
                    scenario_every_triangle_lies_on_the_envelope,
                    scenario_the_roof_has_no_holes,
-                   scenario_nothing_hides_under_another_section):
+                   scenario_nothing_hides_under_another_section,
+                   scenario_gable_ends_exist_and_face_out,
+                   scenario_every_roof_triangle_faces_up):
             fn(js)
             print('  ok ', fn.__name__)
