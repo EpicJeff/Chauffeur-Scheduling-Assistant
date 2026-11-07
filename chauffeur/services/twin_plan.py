@@ -23,6 +23,14 @@ def _point(value):
             and all(_number(v) for v in value))
 
 
+def _polygon(value):
+    return isinstance(value, list) and len(value) >= 3 and all(_point(p) for p in value)
+
+
+def _numeric_fields(item, names):
+    return all(name not in item or _number(item[name]) for name in names)
+
+
 def _items(owner, name, notes):
     items = owner.get(name, [])
     if not isinstance(items, list):
@@ -43,6 +51,9 @@ def _levels(building, notes):
     levels = {}
     for index, level in enumerate(_items(building, 'levels', notes)):
         name = level.get('id', index) if isinstance(level, dict) else index
+        if isinstance(level, dict) and 'ceiling' not in level:
+            level['ceiling'] = 9
+            notes.append(f'Level {name}: defaulted missing ceiling to 9 feet.')
         if (not isinstance(level, dict)
                 or not isinstance(level.get('id'), str) or not level['id']
                 or level['id'] in levels
@@ -89,16 +100,38 @@ def _walls(building, levels, notes):
 
 def _roof(building, notes):
     roof = building.get('roof')
-    if not isinstance(roof, dict):
+    if roof is None:
         return {}
-    main = roof.get('main')
-    if not isinstance(main, dict):
+    main = roof.get('main') if isinstance(roof, dict) else None
+    if (not isinstance(main, dict)
+            or not all(_number(main.get(k)) for k in ('x0', 'x1', 'y0', 'y1', 'plate', 'overhang'))
+            or main['x0'] >= main['x1'] or main['y0'] >= main['y1']):
+        building['roof'] = None
+        notes.append('Dropped roof main and extensions: invalid roof bounds, plate or overhang.')
         return {}
     pitch = main.get('pitch')
     if not _number(pitch) or not 0 < pitch <= 24:
         main['pitch'] = max(1, min(24, pitch)) if _number(pitch) else 1
         notes.append(f"Building {building.get('id', 'unnamed')} roof pitch clamped "
                      f"to {main['pitch']}.")
+    extensions = []
+    for index, extension in enumerate(_items(roof, 'extensions', notes)):
+        valid = isinstance(extension, dict)
+        if valid and extension.get('kind') == 'shed_continuation':
+            valid = (all(_number(extension.get(k)) for k in ('to_x', 'pitch'))
+                     and extension['to_x'] > main['x1']
+                     and _numeric_fields(extension, ('overhang',)))
+        elif valid and extension.get('kind') == 'awning':
+            valid = (all(_number(extension.get(k)) for k in ('x0', 'x1', 'depth', 'pitch', 'eave'))
+                     and extension['x0'] < extension['x1'] and extension['depth'] > 0
+                     and _numeric_fields(extension, ('brackets',)))
+        else:
+            valid = False
+        if valid and 0 < extension['pitch'] <= 24:
+            extensions.append(extension)
+        else:
+            notes.append(f'Dropped roof extension {index}: malformed extension.')
+    roof['extensions'] = extensions
     return main
 
 
@@ -139,6 +172,10 @@ def _opening_error(opening, walls, main):
 def _openings(building, walls, main, notes):
     openings = []
     for index, opening in enumerate(_items(building, 'openings', notes)):
+        if (isinstance(opening, dict) and opening.get('kind') in ('door', 'slider', 'passage')
+                and 'sill' not in opening):
+            opening['sill'] = 0
+            notes.append(f'Opening {index}: defaulted missing sill to 0 feet.')
         reason = _opening_error(opening, walls, main)
         if reason:
             name = (opening.get('wall', opening.get('gable', index))
@@ -170,6 +207,80 @@ def _rooms(building, levels, notes):
     building['rooms'] = rooms
 
 
+def _details(building, levels, notes):
+    porch = building.get('porch')
+    if porch is not None:
+        if (not isinstance(porch, dict) or not _polygon(porch.get('polygon'))
+                or not _numeric_fields(porch, ('floor',))):
+            building['porch'] = None
+            notes.append('Dropped porch: invalid polygon or floor.')
+        else:
+            porch.setdefault('floor', 0)
+            columns = []
+            for index, column in enumerate(_items(porch, 'columns', notes)):
+                if (isinstance(column, dict) and _point(column.get('at'))
+                        and _number(column.get('size')) and column['size'] > 0):
+                    columns.append(column)
+                else:
+                    notes.append(f'Dropped porch column {index}: invalid at or size.')
+            porch['columns'] = columns
+    for name in ('stairs', 'fixtures', 'lights'):
+        valid_items = []
+        for index, item in enumerate(_items(building, name, notes)):
+            valid = isinstance(item, dict)
+            if valid and name == 'stairs':
+                valid = (_point(item.get('from')) and _point(item.get('to'))
+                         and all(_number(item.get(k)) and item[k] > 0 for k in ('width', 'risers'))
+                         and _number(item.get('rise_to'))
+                         and _lookup(levels, item.get('level')) is not None)
+            elif valid and name == 'lights':
+                valid = _point(item.get('at')) and _lookup(levels, item.get('level')) is not None
+            elif valid:
+                rect = item.get('rect')
+                valid = (isinstance(rect, (list, tuple)) and len(rect) == 4
+                         and all(_number(v) for v in rect)
+                         and _lookup(levels, item.get('level')) is not None
+                         and _numeric_fields(item, ('height', 'z0')))
+            if valid:
+                valid_items.append(item)
+            else:
+                notes.append(f'Dropped {name} entry {index}: invalid coordinates, dimensions or level.')
+        building[name] = valid_items
+
+
+def _site(site, notes):
+    if site.get('lot') is not None and not _polygon(site['lot']):
+        site['lot'] = None
+        notes.append('Dropped site lot: invalid polygon.')
+    pool = site.get('pool')
+    if pool is not None and (not isinstance(pool, dict) or not _polygon(pool.get('polygon'))
+                             or not _numeric_fields(pool, ('depth', 'coping'))):
+        site['pool'] = None
+        notes.append('Dropped site pool: invalid polygon or dimensions.')
+    fire = site.get('fire_pit')
+    if fire is not None and (not isinstance(fire, dict) or not _point(fire.get('at'))
+                             or not _number(fire.get('radius')) or fire['radius'] <= 0):
+        site['fire_pit'] = None
+        notes.append('Dropped site fire_pit: invalid at or radius.')
+    for name in ('beds', 'planting', 'furniture', 'edges', 'hardscape'):
+        kept = []
+        for index, item in enumerate(_items(site, name, notes)):
+            valid = isinstance(item, dict)
+            if valid and name in ('beds', 'hardscape'):
+                valid = _polygon(item.get('polygon')) and _numeric_fields(item, ('height', 'elevation'))
+            elif valid and name == 'edges':
+                points = item.get('points', item.get('polyline'))
+                valid = isinstance(points, list) and len(points) >= 2 and all(_point(p) for p in points)
+            elif valid:
+                valid = (_point(item.get('at'))
+                         and _numeric_fields(item, ('height', 'rotation', 'scale', 'elevation', 'seed')))
+            if valid:
+                kept.append(item)
+            else:
+                notes.append(f'Dropped {name} entry {index}: invalid coordinates or dimensions.')
+        site[name] = kept
+
+
 def normalize(raw: dict) -> tuple[dict, list[str]]:
     """Copy a plan, default optional lists, and drop invalid geometry with notes.
 
@@ -190,12 +301,14 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
         if not levels:
             notes.append(f"Dropped building {building.get('id', index)}: no valid levels.")
             continue
+        if 'position' in building and not _point(building['position']):
+            building['position'] = [0, 0]
+            notes.append(f"Building {building.get('id', index)}: defaulted invalid position to [0, 0].")
         walls = _walls(building, levels, notes)
         main = _roof(building, notes)
         _openings(building, walls, main, notes)
         _rooms(building, levels, notes)
-        for name in ('stairs', 'fixtures', 'lights'):
-            building[name] = _items(building, name, notes)
+        _details(building, levels, notes)
         buildings.append(building)
     if not buildings:
         raise ValueError('Twin plan must contain at least one usable building.')
@@ -203,14 +316,7 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
     if 'site' in raw and not isinstance(site, dict):
         notes.append('Coerced invalid site to an empty object.')
     site = site if isinstance(site, dict) else {}
-    for name in ('beds', 'planting', 'furniture', 'edges', 'hardscape'):
-        items = _items(site, name, notes)
-        site[name] = []
-        for index, item in enumerate(items):
-            if isinstance(item, dict):
-                site[name].append(item)
-            else:
-                notes.append(f'Dropped invalid {name} entry {index}; expected an object.')
+    _site(site, notes)
     site.setdefault('fence', None)
     site['compose_overrides'] = _compose_overrides(site.get('compose_overrides'), notes)
     materials = raw.get('materials', {})
@@ -290,12 +396,17 @@ def overlay_director(plan: dict, revised: dict) -> tuple[dict, list[str]]:
             continue
         value = revised[name]
         if value is None or value == []:
-            merged[name] = {}
+            notes.append(f'Kept empty top-level {name} unchanged.')
         elif isinstance(value, dict):
             for key in plan.get(name, {}):
                 if key not in value:
                     notes.append(f'Kept omitted {name}.{key} unchanged.')
-            merged[name].update(deepcopy(value))
+            for key, item in value.items():
+                if name == 'site' and key in ('lot', 'pool'):
+                    if item != plan.get('site', {}).get(key):
+                        notes.append(f'Kept site.{key} unchanged; the director cannot change plot-plan facts.')
+                else:
+                    merged[name][key] = deepcopy(item)
         else:
             notes.append(f'Kept invalid {name} unchanged; expected an object or null.')
     # Normalize explicit list deletions before recording compose removals.
@@ -315,19 +426,17 @@ def merge_director(plan: dict, revised: dict) -> tuple[dict, list[str]]:
 
 
 def diff_paths(a: dict, b: dict) -> list[str]:
-    """Return sorted changed leaf paths, including added and removed leaves."""
+    """Return changed leaves using stable list identities and numeric values."""
     missing = object()
     paths = set()
 
-    def leaves(value, path):
-        if isinstance(value, dict) and value:
-            for key, child in value.items():
-                leaves(child, f'{path}.{key}' if path else key)
-        elif isinstance(value, list) and value:
-            for index, child in enumerate(value):
-                leaves(child, f'{path}[{index}]')
-        elif value is not missing:
-            paths.add(path)
+    def indexed(items):
+        result = {}
+        for index, item in enumerate(items):
+            field = next((k for k in ('id', 'name') if isinstance(item, dict) and k in item), None)
+            key = f'{field}={item[field]}' if field else str(index)
+            result[key] = item
+        return result
 
     def walk(left, right, path):
         if isinstance(left, dict) and isinstance(right, dict):
@@ -335,13 +444,12 @@ def diff_paths(a: dict, b: dict) -> list[str]:
                 walk(left.get(key, missing), right.get(key, missing),
                      f'{path}.{key}' if path else key)
         elif isinstance(left, list) and isinstance(right, list):
-            for index in range(max(len(left), len(right))):
-                walk(left[index] if index < len(left) else missing,
-                     right[index] if index < len(right) else missing,
-                     f'{path}[{index}]')
-        elif type(left) is not type(right) or left != right:
-            leaves(left, path)
-            leaves(right, path)
+            old, new = indexed(left), indexed(right)
+            for key in old.keys() | new.keys():
+                walk(old.get(key, missing), new.get(key, missing), f'{path}[{key}]')
+        elif not (_number(left) and _number(right) and left == right):
+            if type(left) is not type(right) or left != right:
+                paths.add(path)
 
     walk(a, b, '')
     return sorted(paths)

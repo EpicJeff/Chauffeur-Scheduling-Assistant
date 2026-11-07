@@ -49,7 +49,8 @@ def _close(a, b):
 
 
 def scenario_constants():
-    check(tc.CHECKPOINTS == (10.0, 25.0, 50.0), tc.CHECKPOINTS)
+    check(tc.CHECKPOINTS == (10.0, 20.0, 30.0, 40.0), tc.CHECKPOINTS)
+    check(tc.HARD_STOP == 50.0, tc.HARD_STOP)
     check(tc.ROUND_CAP == 5, tc.ROUND_CAP)
     check(len(tc.PRICES) >= 3 and all(len(v) == 2 and v[0] > 0 and v[1] > 0 for v in tc.PRICES.values()),
           'a price table with positive input and output rates')
@@ -105,11 +106,11 @@ def scenario_checkpoints_block_until_acknowledged():
     tc.acknowledge(10.0)
     check(tc.blocking_checkpoint() is None, 'acknowledged')
     tc.require_clear()
-    tc.record('site', [_usage(k, int(per_dollar_in * 15.5), 0)])
-    check(tc.blocking_checkpoint() == 25.0, tc.blocking_checkpoint())
-    tc.acknowledge(25.0)
-    tc.record('site', [_usage(k, int(per_dollar_in * 26), 0)])
-    check(tc.blocking_checkpoint() == 50.0, 'a jump past $50 blocks at 50')
+    tc.record('site', [_usage(k, int(per_dollar_in * 10.5), 0)])
+    check(tc.blocking_checkpoint() == 20.0, tc.blocking_checkpoint())
+    tc.acknowledge(20.0)
+    tc.record('site', [_usage(k, int(per_dollar_in * 25), 0)])
+    check(tc.blocking_checkpoint() == 30.0, 'a jump past $40 blocks at 30 first')
 
 
 def scenario_a_jump_over_two_checkpoints_blocks_at_the_lower():
@@ -118,7 +119,7 @@ def scenario_a_jump_over_two_checkpoints_blocks_at_the_lower():
     tc.record('building', [_usage(k, int(M / tc.PRICES[k][0] * 30), 0)])
     check(tc.blocking_checkpoint() == 10.0, 'the smallest unacknowledged checkpoint first')
     tc.acknowledge(10.0)
-    check(tc.blocking_checkpoint() == 25.0, 'then the next')
+    check(tc.blocking_checkpoint() == 20.0, 'then the next')
 
 
 def scenario_a_round_that_crosses_a_checkpoint_is_kept():
@@ -174,7 +175,7 @@ def scenario_unreached_checkpoints_cannot_be_acknowledged():
     _fresh()
     k = _known()
     tc.record('building', [_usage(k, int(M / tc.PRICES[k][0] * 0.4), 0)])
-    for cp in (10.0, 25.0, 50.0):
+    for cp in (10.0, 20.0, 30.0, 40.0, 50.0):
         try:
             tc.acknowledge(cp)
         except ValueError:
@@ -184,11 +185,11 @@ def scenario_unreached_checkpoints_cannot_be_acknowledged():
     tc.acknowledge(10.0)
     check(tc.blocking_checkpoint() is None, 'a reached checkpoint can be acknowledged')
     try:
-        tc.acknowledge(25.0)
+        tc.acknowledge(20.0)
     except ValueError:
         pass
     else:
-        raise AssertionError('25 is not reached yet at ~$12.40')
+        raise AssertionError('20 is not reached yet at ~$12.40')
 
 
 def scenario_no_output_limit_is_costed_at_a_ceiling():
@@ -258,6 +259,27 @@ def scenario_partial_metrics_are_estimated_not_zero():
     check(e['basis'] == 'estimated', e)
 
 
+def scenario_the_hard_stop_cannot_be_acknowledged():
+    _fresh()
+    k = _known()
+    tc.record('building', [_usage(k, int(M / tc.PRICES[k][0] * 51), 0)])
+    for cp in tc.CHECKPOINTS:
+        tc.acknowledge(cp)
+    try:
+        tc.require_clear()
+    except tc.CheckpointReached as e:
+        check(e.checkpoint == 50.0, e.checkpoint)
+    else:
+        raise AssertionError('past $50 nothing runs')
+    try:
+        tc.acknowledge(50.0)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('the $50 stop cannot be acknowledged')
+    check(tc.blocking_checkpoint() == 50.0, 'and it keeps blocking')
+
+
 def scenario_cost_routes():
     _fresh()
     from fastapi.testclient import TestClient
@@ -290,6 +312,7 @@ if __name__ == '__main__':
                scenario_no_output_limit_is_costed_at_a_ceiling,
                scenario_one_request_cap_holds_across_the_paid_fallback,
                scenario_partial_metrics_are_estimated_not_zero,
+               scenario_the_hard_stop_cannot_be_acknowledged,
                scenario_cost_routes):
         fn()
         print('  ok ', fn.__name__)

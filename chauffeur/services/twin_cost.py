@@ -10,7 +10,8 @@ import math
 
 from services import storage
 
-CHECKPOINTS = (10.0, 25.0, 50.0)
+CHECKPOINTS = (10.0, 20.0, 30.0, 40.0)
+HARD_STOP = 50.0
 ROUND_CAP = 5
 UNKNOWN_OUTPUT_TOKENS = 65536
 
@@ -38,8 +39,11 @@ class CheckpointReached(RuntimeError):
     def __init__(self, checkpoint: float, total: float):
         self.checkpoint = checkpoint
         self.total = total
-        super().__init__(f'Twin cost ${total:.2f} reached the ${checkpoint:g} checkpoint; '
-                         'a parent must acknowledge before another request.')
+        message = (f'Twin cost ${total:.2f} reached the ${HARD_STOP:g} hard stop; no more requests are allowed.'
+                   if checkpoint == HARD_STOP else
+                   f'Twin cost ${total:.2f} reached the ${checkpoint:g} checkpoint; '
+                   'a parent must acknowledge before another request.')
+        super().__init__(message)
 
 
 def _highest_rates():
@@ -73,6 +77,8 @@ def total() -> float:
 
 
 def _blocking(row, spent):
+    if spent >= HARD_STOP:
+        return HARD_STOP
     return next((c for c in CHECKPOINTS if c <= spent and c not in row['acknowledged']), None)
 
 
@@ -116,7 +122,8 @@ def record(stage: str, usage: list[dict], run: str | None = None) -> list[dict]:
 
 def acknowledge(checkpoint: float) -> None:
     if checkpoint not in CHECKPOINTS:
-        raise ValueError('Checkpoint must be one of $10, $25 or $50.')
+        raise ValueError('Only the $10, $20, $30 and $40 checkpoints can be acknowledged; '
+                         'the $50 hard stop cannot be acknowledged.')
     with storage.db_lock:
         row = _state()
         if checkpoint > _total(row):

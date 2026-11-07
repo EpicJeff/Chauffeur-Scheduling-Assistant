@@ -29,6 +29,12 @@ async function meteredPost(path, body) {
     try { return await request(path, 'POST', body); }
     catch (error) {
       if (error.status !== 409 || !error.detail?.checkpoint) throw error;
+      if (Number(error.detail.checkpoint) >= 50) {
+        await window.promptConfirm('House twin hard stop reached',
+          `Spent $${Number(error.detail.total).toFixed(2)}. The $50 hard stop was reached; no more model requests are allowed.`,
+          [{ text: 'Close' }]);
+        return null;
+      }
       const go = await window.promptConfirm(`Spent $${Number(error.detail.total).toFixed(2)} so far`,
         'Continue to the next checkpoint?', 'Continue', 'Stop');
       if (!go) return null;
@@ -123,14 +129,18 @@ export function initTwinTools() {
         check.type = 'checkbox'; check.checked = true; check.dataset.photo = source.id;
         label.append(check, ' Use this photo'); group.appendChild(label);
       } else {
+        const kept = document.createElement('p');
+        kept.textContent = `${source.pages} of ${source.total_pages ?? source.pages} pages kept`;
+        group.appendChild(kept);
         for (let page = 1; page <= source.pages; page++) {
-          const label = document.createElement('label'), check = document.createElement('input');
-          check.type = 'checkbox'; check.checked = true; check.dataset.page = page;
-          label.append(check, ` Page ${page} `); group.appendChild(label);
+          const label = document.createElement('label'), role = document.createElement('select');
+          role.dataset.pageRole = ''; role.dataset.page = page;
+          for (const [value, text] of [['building', 'Building'], ['plot', 'Plot plan'], ['skip', 'Skip']]) {
+            const option = document.createElement('option'); option.value = value; option.textContent = text;
+            role.appendChild(option);
+          }
+          label.append(`Page ${page} `, role); group.appendChild(label);
         }
-        const label = document.createElement('label'), plot = document.createElement('input');
-        plot.type = 'radio'; plot.name = 'twin-plot'; plot.value = source.id;
-        label.append(plot, ' Use selected pages as the plot plan'); group.appendChild(label);
       }
       host.appendChild(group);
     }
@@ -210,24 +220,24 @@ export function initTwinTools() {
     try {
       const drawings = []; let site = null;
       for (const group of document.querySelectorAll('#twin-sources [data-kind="drawing"]')) {
-        const pages = [...group.querySelectorAll('[data-page]:checked')].map(check => Number(check.dataset.page));
-        if (!pages.length) continue;
-        const selected = { id: group.dataset.sourceId, pages };
-        if (group.querySelector('[name="twin-plot"]:checked')) site = selected;
-        else drawings.push(selected);
+        const roles = [...group.querySelectorAll('select[data-page-role]')];
+        const pages = roles.filter(role => role.value === 'building').map(role => Number(role.dataset.page));
+        const plotPages = roles.filter(role => role.value === 'plot').map(role => Number(role.dataset.page));
+        if (pages.length) drawings.push({ id: group.dataset.sourceId, pages });
+        if (plotPages.length) {
+          if (site) throw new Error('All plot plan pages must come from one drawing source.');
+          site = { id: group.dataset.sourceId, pages: plotPages };
+        }
       }
       if (!drawings.length) throw new Error('Select at least one building drawing page.');
       const photos = [...document.querySelectorAll('#twin-sources [data-photo]:checked')].map(check => check.dataset.photo);
       log('Drafting the house…');
-      const response = await meteredPost('/draft', { drawings, photos, site, run: runId() });
+      const response = await meteredPost('/draft', { drawings, photos, site });
       if (!response) { log('Draft stopped at the spend checkpoint.'); return; }
       log(`Draft saved. Cost: $${Number(response.result.cost).toFixed(2)}\n${(response.notes || []).join('\n')}`);
       await rebuildCurrent();
     } catch (error) { log(error.message); tell(error); }
     finally { drafting = false; button.disabled = false; }
-  });
-  document.getElementById('twin-no-plot').addEventListener('click', () => {
-    sheet.querySelectorAll('[name="twin-plot"]').forEach(input => { input.checked = false; });
   });
   // Parents-only reads start when the tools sheet opens.
 }

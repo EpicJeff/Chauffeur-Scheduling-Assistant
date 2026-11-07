@@ -36,7 +36,7 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
   let twin = null, disposed = false, revision = 0, sky = null, environment = null, environmentTarget = null;
   const state = { view: 'ext', time: 'day', camera: 'front' };
   let bounds = { x: 19, y: 11, span: 38 };
-  let lastStats = { drawCalls: 0, triangles: 0, tier };
+  let lastStats = { drawCalls: 0, triangles: 0, tier, fps: 0 };
   let probeRun = null, fps = 0, fpsFrames = 0, fpsSince = performance.now();
   function render() {
     if (disposed) return;
@@ -128,6 +128,8 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
           probeRun = {
             resolve, reject, start: performance.now(), previous: performance.now(),
             exterior: seconds * 1000, floor: Math.max(1, Math.min(5, seconds / 4)) * 1000,
+            floorIds: Object.keys(twin.groups.levels)
+              .sort((a, b) => twin.levelElevations[a] - twin.levelElevations[b]).slice(0, 2),
             angle: Math.atan2(offset.z, offset.x), radius: Math.hypot(offset.x, offset.z), height: offset.y,
             stage: 'ext', frames: 0, samples: [], drawCalls: 0, triangles: 0,
           };
@@ -209,9 +211,11 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
     }
     renderer3.setAnimationLoop(() => {
       const now = performance.now(), run = probeRun;
+      try {
       if (run) {
         const elapsed = now - run.start;
-        const stage = elapsed < run.exterior ? 'ext' : elapsed < run.exterior + run.floor ? 'L1' : 'L2';
+        const floorIndex = Math.min(run.floorIds.length - 1, Math.floor((elapsed - run.exterior) / run.floor));
+        const stage = elapsed < run.exterior ? 'ext' : run.floorIds[floorIndex];
         if (stage !== run.stage) { view.setView(stage); view.setCamera('top'); run.stage = stage; }
         if (stage === 'ext') {
           const angle = run.angle + elapsed / run.exterior * Math.PI * 2;
@@ -232,7 +236,7 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
         run.drawCalls = Math.max(run.drawCalls, lastStats.drawCalls);
         run.triangles = Math.max(run.triangles, lastStats.triangles);
         const elapsed = now - run.start;
-        if (elapsed >= run.exterior + 2 * run.floor) {
+        if (elapsed >= run.exterior + run.floorIds.length * run.floor) {
           run.samples.sort((a, b) => a - b); probeRun = null;
           run.resolve({
             tier, fpsAvg: run.frames * 1000 / elapsed,
@@ -241,6 +245,11 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
             gpu: view.renderer, ua: navigator.userAgent, at: new Date().toISOString(),
           });
         }
+      }
+      } catch (error) {
+        if (!run) throw error;
+        probeRun = null;
+        run.reject(error); // runProbe's finally restores the camera, view and controls.
       }
     });
     view.ready = true;

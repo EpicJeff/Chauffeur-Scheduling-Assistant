@@ -178,6 +178,43 @@ def scenario_hand_edit_requires_a_reason_and_logs_fixes():
     check(any(f['path'] == 'materials.trim.color' and f['reason'] == 'trim is a warmer white' for f in fixes), fixes)
 
 
+def scenario_each_drawing_page_takes_a_role():
+    s = _serve()
+    if s is None:
+        return
+    import io as _io
+    import pypdfium2 as pdfium
+    from services import twin_store
+    doc = pdfium.PdfDocument.new()
+    for _ in range(3):
+        doc.new_page(612, 792)
+    buf = _io.BytesIO()
+    doc.save(buf)
+    sid = twin_store.save_source('drawing', 'combined set.pdf', buf.getvalue())
+    posts = []
+
+    def draft(route):
+        posts.append(json.loads(route.request.post_data or '{}'))
+        route.fulfill(status=409, content_type='application/json',
+                      body=json.dumps({'detail': {'checkpoint': 10.0, 'total': 10.1, 'run': 'z'}}))
+    with s.browser(launch_args=GPU_ARGS) as page:
+        page.route('**/api/house/twin/draft', draft)
+        _open(page, s)
+        group = f'#twin-sources [data-kind="drawing"][data-source-id="{sid}"]'
+        page.wait_for_selector(group + ' select[data-page-role][data-page="3"]', timeout=30000)
+        page.select_option(group + ' select[data-page-role][data-page="1"]', 'plot')
+        page.select_option(group + ' select[data-page-role][data-page="2"]', 'building')
+        page.select_option(group + ' select[data-page-role][data-page="3"]', 'skip')
+        page.click('#twin-draft')
+        page.wait_for_function('() => !document.querySelector("#cc-confirm-modal").classList.contains("hidden")',
+                               timeout=30000)
+        page.click('#cc-confirm-cancel-btn')
+    body = posts[0]
+    check(body['site'] == {'id': sid, 'pages': [1]}, body.get('site'))
+    check({'id': sid, 'pages': [2]} in body['drawings'], body.get('drawings'))
+    check(not any(3 in d['pages'] for d in body['drawings'] if d['id'] == sid), 'a skipped page is not sent')
+
+
 def scenario_revert_from_the_rounds_list():
     s = _serve()
     if s is None:
@@ -198,6 +235,7 @@ if __name__ == '__main__':
                scenario_checkpoint_asks_with_promptconfirm_not_a_browser_dialog,
                scenario_stopping_at_a_checkpoint_spends_nothing_more,
                scenario_hand_edit_requires_a_reason_and_logs_fixes,
+               scenario_each_drawing_page_takes_a_role,
                scenario_revert_from_the_rounds_list):
         fn()
         print('  ok ', fn.__name__)

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>House preview</title>
   {% include 'ha_theme.html' %}
-  <script>window.chfBase = "../";</script>
+  <script>window.chfBase = location.pathname.endsWith('/house/twin/') ? '../../' : '../';</script>
   <script>
     // Resolve against the page, preserving the Home Assistant ingress prefix.
     window.twinManifest = {{ twin_manifest | tojson }};
@@ -104,9 +104,8 @@
               <label for="twin-source-files">Files</label><input id="twin-source-files" type="file" accept="application/pdf,image/jpeg,image/png" multiple>
               <button id="twin-source-send" type="submit">Upload</button>
             </form>
-            <p>Choose pages from each drawing. A plot plan is optional.</p>
+            <p>Mark each page as Building, Plot plan or Skip. A plot plan is optional; its pages must come from one drawing.</p>
             <div id="twin-sources"></div>
-            <button id="twin-no-plot" type="button">No plot plan</button>
             <button id="twin-draft" type="button">Draft</button>
           </section>
           <section aria-labelledby="twin-director-title">

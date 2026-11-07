@@ -117,8 +117,11 @@ def scenario_three_stages_build_one_round():
     for c in m.calls:
         check(c['tier'] == 'twin' and c['key'] == 'paid-k', (c['tier'], c['key']))
         check(c.get('max_models') == 1, 'one provider request per stage')
-        check(c.get('strict_json') is True and (c.get('max_output_tokens') or 0) >= 4096, c.get('max_output_tokens'))
+        check(c.get('strict_json') is True and (c.get('max_output_tokens') or 0) >= 8192, c.get('max_output_tokens'))
+        check(c.get('thinking_level') == 'low', f'thinking held low so it cannot eat the output budget: {c.get("thinking_level")}')
         check(isinstance(c.get('usage'), list), 'usage collected')
+    check(m.calls[0]['max_output_tokens'] >= 65536, 'the building stage has room for a whole house')
+    check(result.get('stale') is False, 'a draft result says whether it landed stale')
     check(len(m.calls[0]['images']) == 2 and len(m.calls[1]['images']) == 1 and len(m.calls[2]['images']) == 1,
           'chosen drawing pages, the photo, the plot page')
     plan = ts.current()
@@ -262,6 +265,55 @@ def scenario_blank_rooms_get_descriptive_names_not_random_ha_areas():
     check(len(names) == len(set(names)), f'names are unique: {names}')
 
 
+def scenario_an_unusable_building_stops_before_paying_for_more():
+    drawing, plot, photo = _fresh()
+    m = Model({'building': {'buildings': []}})
+    result, notes, err = _run(m, drawings=[{'id': drawing, 'pages': [1]}], photos=[photo], site={'id': plot, 'pages': [1]})
+    check(result is None and err and 'building' in err.lower(), err)
+    check([c['stage'] for c in m.calls] == ['building'], 'finishes and site are never paid for')
+
+
+def scenario_odd_shapes_in_a_paid_answer_do_not_crash_the_draft():
+    drawing, plot, photo = _fresh()
+    f = _fixture()
+    f['buildings'][0]['porch']['polygon'] = [{'x': 31, 'y': 0}, {'x': 38, 'y': 0}, {'x': 38, 'y': 22}]
+    site = {k: f['site'][k] for k in ('lot', 'hardscape', 'fire_pit')}
+    site['pool'] = {'polygon': 'abc'}
+    m = Model({'building': {'buildings': f['buildings']}, 'site': {'site': site}})
+    result, notes, err = _run(m, drawings=[{'id': drawing, 'pages': [1]}], photos=[photo], site={'id': plot, 'pages': [1]})
+    check(err is None and result, err)
+    check(any('porch' in n for n in notes) and any('pool' in n for n in notes), notes)
+
+
+def scenario_requests_over_the_size_budget_are_refused_before_paying():
+    drawing, plot, photo = _fresh()
+    m = Model()
+    orig = td.MAX_REQUEST_B64
+    td.MAX_REQUEST_B64 = 100
+    try:
+        result, notes, err = _run(m, drawings=[{'id': drawing, 'pages': [1]}], photos=[photo], site={'id': plot, 'pages': [1]})
+    finally:
+        td.MAX_REQUEST_B64 = orig
+    check(result is None and err and m.calls == [], (err, len(m.calls)))
+    check(td.MAX_REQUEST_B64 <= 18 * 1024 * 1024, td.MAX_REQUEST_B64)
+
+
+def scenario_a_stopped_draft_resumes_without_its_run_id():
+    drawing, plot, photo = _fresh()
+    tc.record('earlier', [{'model': PRICED, 'input_tokens': 999_000, 'output_tokens': 0,
+                           'images': 0, 'prompt_chars': 0, 'max_output_tokens': 0}])
+    m = Model(tokens=2000)
+    kw = dict(drawings=[{'id': drawing, 'pages': [1]}], photos=[photo], site={'id': plot, 'pages': [1]})
+    try:
+        _run(m, **kw)
+    except tc.CheckpointReached:
+        pass
+    tc.acknowledge(10.0)
+    result, notes, err = _run(m, **kw)                     # same inputs, no run id
+    check(err is None, err)
+    check([c['stage'] for c in m.calls] == ['building', 'finishes', 'site'], [c['stage'] for c in m.calls])
+
+
 def scenario_no_key_is_an_error_not_a_call():
     drawing, plot, photo = _fresh(key=False)
     m = Model()
@@ -291,6 +343,10 @@ if __name__ == '__main__':
                scenario_stages_get_real_timeouts_and_their_own_images,
                scenario_stages_with_nothing_to_read_are_skipped,
                scenario_blank_rooms_get_descriptive_names_not_random_ha_areas,
+               scenario_an_unusable_building_stops_before_paying_for_more,
+               scenario_odd_shapes_in_a_paid_answer_do_not_crash_the_draft,
+               scenario_requests_over_the_size_budget_are_refused_before_paying,
+               scenario_a_stopped_draft_resumes_without_its_run_id,
                scenario_no_key_is_an_error_not_a_call,
                scenario_unknown_sources_are_refused,
                scenario_draft_route_and_tier):

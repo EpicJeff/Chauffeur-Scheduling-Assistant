@@ -1,5 +1,6 @@
 """File-backed twin rounds and sources, with metadata in household settings."""
 import base64
+from contextlib import closing
 from copy import deepcopy
 from datetime import datetime, timezone
 import io
@@ -13,7 +14,7 @@ import tempfile
 import threading
 import uuid
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 from services import storage, twin_pdf, twin_plan
 
@@ -146,12 +147,28 @@ def revert(round_id: int) -> int:
 
 def _leaf(plan, path):
     value = plan
-    for key, index in re.findall(r'([^.[\]]+)|\[(\d+)\]', path):
+    for key, selector in re.findall(r'([^.[\]]+)|\[([^\]]+)\]', path):
         try:
-            value = value[int(index)] if index else value[key]
-        except (KeyError, IndexError, TypeError):
+            if not selector:
+                value = value[key]
+            elif selector.startswith(('id=', 'name=')):
+                field, selected = selector.split('=', 1)
+                value = next(item for item in value if isinstance(item, dict)
+                             and field in item and str(item[field]) == selected)
+            else:
+                value = value[int(selector)]
+        except (KeyError, IndexError, TypeError, ValueError, StopIteration):
             return None
     return deepcopy(value)
+
+
+def _fix_kind(path):
+    if path.startswith('site.compose_overrides'):
+        return None
+    if path.startswith('site.'):
+        feature = path[5:].split('.', 1)[0].split('[', 1)[0]
+        return 'extraction' if feature in ('lot', 'hardscape', 'pool', 'fire_pit') else 'yard'
+    return 'extraction'
 
 
 def save_hand_edit(plan: dict, reason: str, base: int | None = None) -> int:
@@ -165,13 +182,16 @@ def save_hand_edit(plan: dict, reason: str, base: int | None = None) -> int:
         before = _read_round(row, row['current']) if row['current'] is not None else None
         if before is not None:
             plan = twin_plan.record_compose_overrides(before, plan)
-        plan, _ = twin_plan.normalize(plan)
         # The first save establishes the plan; it corrects no previous leaves.
+        # Log the person's edits before normalization drops dependent geometry
+        # (e.g. an opening on a removed wall) and shifts positional list items.
         changes = [] if before is None else [
-            {'path': path, 'before': _leaf(before, path), 'after': _leaf(plan, path),
+            {'path': path, 'kind': _fix_kind(path), 'before': _leaf(before, path), 'after': _leaf(plan, path),
              'reason': reason}
             for path in twin_plan.diff_paths(before, plan)
+            if _fix_kind(path) is not None
         ]
+        plan, _ = twin_plan.normalize(plan)
         return _append_round(row, plan, 'hand', note=reason, base=base, changes=changes)
 
 
@@ -192,6 +212,8 @@ def save_source(kind: str, filename: str, data: bytes, *, content_type: str | No
         pages = [(f"{page['page']}.png", base64.b64decode(page['b64']))
                  for page in twin_pdf.render_pages(data)]
         mime, suffix = 'application/pdf', '.pdf'
+        with twin_pdf._RENDER_LOCK, closing(twin_pdf.pdfium.PdfDocument(data)) as document:
+            total_pages = len(document)
     else:
         try:
             with Image.open(io.BytesIO(data)) as image:
@@ -199,6 +221,12 @@ def save_source(kind: str, filename: str, data: bytes, *, content_type: str | No
                 if mime is None:
                     raise ValueError('Photos must be JPEG or PNG images.')
                 image.verify()
+            with Image.open(io.BytesIO(data)) as image:
+                upright = ImageOps.exif_transpose(image)
+                upright.thumbnail((2048, 2048), Image.Resampling.LANCZOS)
+                with io.BytesIO() as output:
+                    upright.convert('RGB').save(output, format='JPEG', quality=88)
+                    derivative = output.getvalue()
         except (OSError, SyntaxError, ValueError, Image.DecompressionBombError) as exc:
             raise ValueError('Photos must be readable JPEG or PNG images.') from exc
         suffix = '.png' if mime == 'image/png' else '.jpg'
@@ -206,11 +234,15 @@ def save_source(kind: str, filename: str, data: bytes, *, content_type: str | No
     source_id = uuid.uuid4().hex
     record = {'id': source_id, 'kind': kind, 'filename': filename,
               'pages': len(pages) if kind == 'drawing' else 1, 'mime': mime}
+    if kind == 'drawing':
+        record['total_pages'] = total_pages
     with _LOCK:
         root = Path(DATA_DIR) / 'sources' / source_id
         root.mkdir(parents=True)
         try:
             (root / ('original' + suffix)).write_bytes(data)
+            if kind == 'photo':
+                (root / 'model.jpg').write_bytes(derivative)
             for name, png in pages:
                 (root / name).write_bytes(png)
             row = _state()
@@ -242,7 +274,9 @@ def source_images(source_id: str, pages: list[int] | None = None) -> list[dict]:
             if source['kind'] == 'drawing':
                 path, mime = root / f'{page}.png', 'image/png'
             else:
-                mime = source['mime']
-                path = root / ('original.png' if mime == 'image/png' else 'original.jpg')
+                path, mime = root / 'model.jpg', 'image/jpeg'
+                if not path.is_file():  # Sources uploaded before model derivatives existed.
+                    mime = source['mime']
+                    path = root / ('original.png' if mime == 'image/png' else 'original.jpg')
             images.append({'mime': mime, 'b64': base64.b64encode(path.read_bytes()).decode('ascii')})
         return images

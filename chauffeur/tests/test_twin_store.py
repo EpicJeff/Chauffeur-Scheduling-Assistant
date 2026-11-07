@@ -164,7 +164,8 @@ def scenario_hand_edits_log_each_changed_leaf():
     b['buildings'][0]['walls'][2]['height'] = 9.5
     rid = ts.save_hand_edit(b, 'drawing says 9-6 at the rear')
     fixes = ts.fixes()
-    check(sorted(f['path'] for f in fixes) == ['buildings[0].walls[2].height', 'materials.siding.color'], fixes)
+    check(sorted(f['path'] for f in fixes) == ['buildings[id=pool_house].walls[id=rear].height', 'materials.siding.color'], fixes)
+    check(all(f['kind'] == 'extraction' for f in fixes), 'building and material fixes are extraction misses')
     wall = [f for f in fixes if f['path'].endswith('height')][0]
     check(wall['before'] == a['buildings'][0]['walls'][2]['height'] and wall['after'] == 9.5, wall)
     check(all(f['reason'] == 'drawing says 9-6 at the rear' and f['round'] == rid for f in fixes), fixes)
@@ -182,6 +183,64 @@ def scenario_hand_edits_record_compose_overrides():
     ts.save_hand_edit(edited, 'that shrub blocks the hose bib', base=rid)
     ov = ts.current()['site']['compose_overrides']
     check(shrubs[0]['id'] in ov['removed'], f'a hand deletion of a compose item is remembered: {ov}')
+
+
+def _js_round_trip(obj):
+    # JSON.stringify/parse in the browser turns 6.0 into 6
+    if isinstance(obj, float) and obj.is_integer():
+        return int(obj)
+    if isinstance(obj, dict):
+        return {k: _js_round_trip(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_js_round_trip(v) for v in obj]
+    return obj
+
+
+def scenario_an_unchanged_editor_save_logs_nothing():
+    _fresh()
+    rid = ts.push_round(_plan(), 'draft')
+    ts.save_hand_edit(_js_round_trip(ts.current()), 'no change', base=rid)
+    check(ts.fixes() == [], f'the editor round trip is not an extraction miss: {len(ts.fixes())} fixes')
+
+
+def scenario_deleting_one_item_logs_one_fix():
+    from services import twin_compose, twin_library
+    _fresh()
+    plan, _ = twin_compose.compose(_plan(), twin_library.kit('modern_farmhouse'), seed=2)
+    rid = ts.push_round(plan, 'draft')
+    edited = copy.deepcopy(plan)
+    edited['buildings'][0]['walls'] = [w for w in edited['buildings'][0]['walls'] if w['id'] != 'stair_wall']
+    shrub = next(i for i in edited['site']['planting'] if i.get('by') == 'compose')
+    edited['site']['planting'] = [i for i in edited['site']['planting'] if i is not shrub]
+    ts.save_hand_edit(edited, 'no stair wall; drop a shrub', base=rid)
+    fixes = ts.fixes()
+    check(len(fixes) == 2, f'one fix per deleted item: {[f["path"] for f in fixes]}')
+    wall = next(f for f in fixes if 'walls' in f['path'])
+    plant = next(f for f in fixes if 'planting' in f['path'])
+    check(wall['kind'] == 'extraction' and wall['after'] is None and wall['before']['id'] == 'stair_wall', wall)
+    check(plant['kind'] == 'yard', 'yard edits are not counted as extraction misses')
+    check(not any('compose_overrides' in f['path'] for f in fixes), 'derived override bookkeeping is not a fix')
+
+
+def scenario_photos_are_stored_upright_and_model_sized():
+    from PIL import Image
+    _fresh()
+    im = Image.new('RGB', (4000, 3000), (120, 130, 140))
+    exif = im.getexif()
+    exif[0x0112] = 6                                  # rotate 90: shown portrait
+    buf = io.BytesIO()
+    im.save(buf, format='JPEG', exif=exif.tobytes())
+    sid = ts.save_source('photo', 'phone.jpg', buf.getvalue())
+    out = ts.source_images(sid)[0]
+    w, h = _png_size(out['b64'])
+    check(out['mime'] == 'image/jpeg' and max(w, h) <= 2048 and h > w, f'upright, at most 2048 px: {w}x{h}')
+
+
+def scenario_long_drawing_sets_report_what_was_kept():
+    _fresh()
+    sid = ts.save_source('drawing', 'big set.pdf', _pdf(20))
+    row = next(s for s in ts.sources() if s['id'] == sid)
+    check(row['pages'] == 16 and row['total_pages'] == 20, row)
 
 
 def scenario_sources_store_pages_and_photos():
@@ -219,7 +278,7 @@ def _img_bytes(fmt, frames=1):
 def scenario_photos_are_checked_by_content_not_name():
     _fresh()
     png_as_jpg = ts.save_source('photo', 'dusk.jpg', _img_bytes('PNG'))
-    check(ts.source_images(png_as_jpg)[0]['mime'] == 'image/png', 'PNG bytes named .jpg are stored as PNG')
+    check(ts.source_images(png_as_jpg)[0]['mime'] == 'image/jpeg', 'PNG bytes named .jpg are accepted and stored as the JPEG model copy')
     mpo = ts.save_source('photo', 'phone.jpg', _img_bytes('MPO', frames=2))
     check(ts.source_images(mpo)[0]['mime'] == 'image/jpeg', 'a multi-picture (MPO) phone JPEG is accepted as JPEG')
     for bad, name in ((b'not an image', 'x.jpg'), (_img_bytes('GIF'), 'x.png')):
@@ -344,6 +403,10 @@ if __name__ == '__main__':
                scenario_a_stale_round_never_moves_current,
                scenario_concurrent_pushes_get_unique_ids,
                scenario_hand_edits_log_each_changed_leaf,
+               scenario_an_unchanged_editor_save_logs_nothing,
+               scenario_deleting_one_item_logs_one_fix,
+               scenario_photos_are_stored_upright_and_model_sized,
+               scenario_long_drawing_sets_report_what_was_kept,
                scenario_hand_edits_record_compose_overrides,
                scenario_sources_store_pages_and_photos,
                scenario_photos_are_checked_by_content_not_name,

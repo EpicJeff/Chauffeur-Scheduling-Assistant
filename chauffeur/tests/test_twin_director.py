@@ -121,7 +121,8 @@ def scenario_the_call_carries_brief_photos_and_renders():
     c = critic.calls[0]
     check(c['tier'] == 'twin' and c['key'] == 'paid-k' and c.get('max_models') == 1 and c.get('strict_json') is True,
           (c['tier'], c.get('max_models')))
-    check((c.get('max_output_tokens') or 0) >= 8192 and (c.get('timeout_s') or 0) >= 180, (c.get('max_output_tokens'), c.get('timeout_s')))
+    check((c.get('max_output_tokens') or 0) >= 32768 and (c.get('timeout_s') or 0) >= 180, (c.get('max_output_tokens'), c.get('timeout_s')))
+    check(c.get('thinking_level') == 'low', c.get('thinking_level'))
     check(isinstance(c.get('usage'), list), 'usage collected')
     imgs = c['images']
     check(sum(1 for i in imgs if i['mime'] == 'image/jpeg') == 4, 'at most four household photos')
@@ -253,6 +254,46 @@ def scenario_a_second_concurrent_critique_is_refused():
     check(out['first'][1] is None, out['first'])
 
 
+def scenario_a_top_level_null_changes_nothing():
+    rid, plan = _fresh()
+    before = copy.deepcopy(ts.current())
+    for empty, run in ((None, 'null-none'), ([], 'null-empty')):
+        result, err = _run(Critic(lambda site, mats, e=empty: (e, e)), run=run)
+        check(err is None and result, err)
+        cur = ts.current()
+        check(cur['site']['lot'] == before['site']['lot'] and cur['site']['pool'] == before['site']['pool']
+              and cur['materials'] == before['materials'] and not cur['site']['compose_overrides']['removed'],
+              f'site/materials of {empty!r} keep the yard')
+        check(any('unchanged' in n for n in result.get('notes', [])), result.get('notes'))
+
+
+def scenario_the_director_cannot_move_the_lot_or_the_pool():
+    _fresh()
+    before = copy.deepcopy(ts.current()['site'])
+
+    def move(site, mats):
+        site['lot'] = [[0, 0], [10, 0], [10, 10]]
+        site['pool']['polygon'] = [[50, 50], [60, 50], [60, 60], [50, 60]]
+        return site, mats
+    result, err = _run(Critic(move))
+    cur = ts.current()['site']
+    check(cur['lot'] == before['lot'] and cur['pool'] == before['pool'], 'plot-plan facts stay put')
+    notes = ' '.join(result.get('notes', []))
+    check('lot' in notes and 'pool' in notes, notes)
+
+
+def scenario_director_requests_over_the_size_budget_are_refused():
+    _fresh()
+    critic = Critic()
+    orig = tdir.MAX_REQUEST_B64
+    tdir.MAX_REQUEST_B64 = 100
+    try:
+        result, err = _run(critic)
+    finally:
+        tdir.MAX_REQUEST_B64 = orig
+    check(result is None and err and critic.calls == [], err)
+
+
 def scenario_round_cap_is_five_per_run():
     _fresh()
     critic = Critic()
@@ -332,6 +373,9 @@ if __name__ == '__main__':
                scenario_director_colours_are_validated,
                scenario_a_failed_model_call_is_still_costed,
                scenario_a_second_concurrent_critique_is_refused,
+               scenario_a_top_level_null_changes_nothing,
+               scenario_the_director_cannot_move_the_lot_or_the_pool,
+               scenario_director_requests_over_the_size_budget_are_refused,
                scenario_round_cap_is_five_per_run,
                scenario_checkpoint_blocks_a_round,
                scenario_a_revert_during_a_critique_wins,

@@ -151,8 +151,16 @@ def scenario_diff_paths_names_leaves():
     b = copy.deepcopy(a)
     b['materials']['siding']['color'] = '#000000'
     b['buildings'][0]['walls'][2]['height'] = 9.5
-    check(tp.diff_paths(a, b) == ['buildings[0].walls[2].height', 'materials.siding.color'],
+    check(tp.diff_paths(a, b) == ['buildings[id=pool_house].walls[id=rear].height', 'materials.siding.color'],
           tp.diff_paths(a, b))
+    c = copy.deepcopy(a)
+    c['buildings'][0]['walls'][2]['height'] = float(int(10)) if False else c['buildings'][0]['walls'][2]['height']
+    check(tp.diff_paths(a, json.loads(json.dumps(a).replace('.0,', ',').replace('.0}', '}').replace('.0]', ']'))) == [],
+          'numbers compare by value: 6.0 equals 6 (the editor round trip)')
+    d = copy.deepcopy(a)
+    d['buildings'][0]['walls'] = [w for w in d['buildings'][0]['walls'] if w['id'] != 'stair_wall']
+    check(tp.diff_paths(a, d) == ['buildings[id=pool_house].walls[id=stair_wall]'],
+          f'a removed id-bearing item is one path, and later items do not shift: {tp.diff_paths(a, d)}')
     check(tp.diff_paths(a, copy.deepcopy(a)) == [], 'no change, no paths')
 
 
@@ -183,6 +191,44 @@ def scenario_openings_that_exactly_fill_a_wall_survive():
           'a negative sill is dropped with a note')
 
 
+def scenario_every_part_of_a_partial_answer_is_validated():
+    raw = _fixture()
+    b = raw['buildings'][0]
+    b['porch']['polygon'] = [{'x': 31, 'y': 0}, {'x': 38, 'y': 0}, {'x': 38, 'y': 22}]
+    b['porch']['columns'].append({'size': 0.667})
+    b['stairs'].append({'level': 'L1', 'from': [1, 1], 'width': 3})
+    b['lights'].append({'room': 'Sitting', 'kind': 'recessed', 'level': 'L1'})
+    b['fixtures'].append({'kind': 'counter', 'level': 'L1', 'height': 3})
+    raw['site']['lot'] = 'the back yard'
+    raw['site']['hardscape'].append({'kind': 'patio', 'polygon': 'abc'})
+    raw['site']['pool'] = {'polygon': [[1, 2], 'x'], 'depth': 5}
+    raw['site']['fire_pit'] = {'radius': 3}
+    plan, notes = tp.normalize(raw)
+    nb = plan['buildings'][0]
+    check(nb.get('porch') is None and any('porch' in n for n in notes), 'a porch with an unreadable polygon is dropped with a note')
+    check(len(nb['stairs']) == 1 and any('stair' in n for n in notes), 'a stair without "to" is dropped')
+    check(all('at' in l for l in nb['lights']) and any('light' in n for n in notes), 'a light without "at" is dropped')
+    check(all('rect' in f for f in nb['fixtures']), 'a fixture without a rect is dropped')
+    s = plan['site']
+    check(s['lot'] is None and s['pool'] is None and s['fire_pit'] is None, (s['lot'], s['pool'], s['fire_pit']))
+    check(all(isinstance(h.get('polygon'), list) for h in s['hardscape']), 'unreadable hardscape dropped')
+    for word in ('lot', 'pool', 'fire', 'hardscape'):
+        check(any(word in n for n in notes), f'a note mentions {word}: {notes}')
+
+
+def scenario_missing_fields_default_with_notes():
+    raw = _fixture()
+    b = raw['buildings'][0]
+    del b['levels'][1]['ceiling']
+    door = next(o for o in b['openings'] if o.get('kind') == 'door')
+    del door['sill']
+    plan, notes = tp.normalize(raw)
+    nb = plan['buildings'][0]
+    check(nb['levels'][1]['ceiling'] == 9, 'a level without a ceiling defaults to 9 ft, the building survives')
+    check(any(o.get('kind') == 'door' and o['sill'] == 0 for o in nb['openings']), 'a door without a sill sits at 0')
+    check(any('ceiling' in n for n in notes) and any('sill' in n for n in notes), notes)
+
+
 if __name__ == '__main__':
     for fn in (scenario_the_fixture_normalizes_clean,
                scenario_levels_are_sorted_by_elevation,
@@ -196,6 +242,8 @@ if __name__ == '__main__':
                scenario_merge_director_never_touches_buildings,
                scenario_diff_paths_names_leaves,
                scenario_model_shaped_junk_is_coerced_not_crashed,
-               scenario_openings_that_exactly_fill_a_wall_survive):
+               scenario_openings_that_exactly_fill_a_wall_survive,
+               scenario_every_part_of_a_partial_answer_is_validated,
+               scenario_missing_fields_default_with_notes):
         fn()
         print('  ok ', fn.__name__)

@@ -18,8 +18,10 @@ DIRECTOR_PROMPT = """Act as the household's architectural art director. Compare
 the labelled renders with the household photos and the kit's style guide.
 Return JSON only: {"critique": "specific assessment and changes", "done": false,
 "site": {...}, "materials": {...}}. Preserve schema, IDs and compose provenance.
-Omitted site keys and material roles are unchanged; only explicit [] or null
-deletes. Material values must be {"id":"kit_asset", "color":"#rrggbb"}.
+Top-level site or materials that is omitted, null or [] means unchanged.
+Inside those objects, omitted keys/roles are unchanged; explicit [] or null
+deletes that key/role. Never change site.lot or site.pool: those are plot-plan
+facts and must remain unchanged. Material values must be {"id":"kit_asset", "color":"#rrggbb"}.
 All distances are
 feet. Change only site and materials, never buildings, openings or roof geometry.
 Use only the supplied kit's material IDs, plant presets and furniture assets.
@@ -29,6 +31,7 @@ Set done true when the render meets the brief without further changes.
 
 _LOCK = threading.Lock()
 logger = logging.getLogger(__name__)
+MAX_REQUEST_B64 = 18 * 1024 * 1024
 
 
 def _validate(run, renders, cameras, base):
@@ -143,12 +146,15 @@ def critique(run: str, renders: list[str], cameras: list[str], base: int | None 
                 + '\nCurrent site: ' + json.dumps(current['site'])
                 + '\nCurrent materials: ' + json.dumps(current['materials']))
         images.extend({'mime': 'image/png', 'b64': render} for render in renders)
+        if sum(len(image['b64']) for image in images) > MAX_REQUEST_B64:
+            return None, 'The art director exceeds the 18 MiB image base64 budget.'
         usage = []
         twin_cost.require_clear()
         try:
             answer = model_pools.call_pool_json(
                 'twin', key, DIRECTOR_PROMPT, user, images=images, strict_json=True,
-                max_models=1, max_output_tokens=16384, timeout_s=180, usage=usage)
+                max_models=1, thinking_level='low', max_output_tokens=32768,
+                timeout_s=180, usage=usage)
         finally:
             entries = twin_cost.record('director', usage, run)
         if not isinstance(answer, dict):

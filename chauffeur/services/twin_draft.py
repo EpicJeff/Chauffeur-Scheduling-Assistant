@@ -81,6 +81,7 @@ the plot plan. Do not invent planting or furnishings; composition adds those.
 
 _LOCK = threading.Lock()
 logger = logging.getLogger(__name__)
+MAX_REQUEST_B64 = 18 * 1024 * 1024
 
 
 def _save(path, value):
@@ -121,9 +122,15 @@ def _images(drawings, photos, site):
     for stage, selected in images.items():
         if len(selected) > 16:
             raise ValueError(f'The {stage} stage accepts at most 16 pages or photos.')
+        _check_image_budget(stage, selected)
     if not images['building']:
         raise ValueError('A twin draft needs at least one drawing page.')
     return images
+
+
+def _check_image_budget(stage, images):
+    if sum(len(image['b64']) for image in images) > MAX_REQUEST_B64:
+        raise ValueError(f'The {stage} stage exceeds the 18 MiB image base64 budget.')
 
 
 def _area_names():
@@ -139,12 +146,14 @@ def _stage(stage, root, key, prompt, user, images, run, settings):
     target = root / f'{stage}.json'
     if target.is_file():
         return json.loads(target.read_text(encoding='utf-8'))
+    _check_image_budget(stage, images)
     usage = []
     twin_cost.require_clear()
     try:
         answer = model_pools.call_pool_json(
             'twin', key, prompt, user, images=images, strict_json=True,
-            max_models=1, max_output_tokens=16384 if stage == 'building' else 8192,
+            max_models=1, thinking_level='low',
+            max_output_tokens={'building': 65536, 'finishes': 8192, 'site': 16384}[stage],
             timeout_s=300 if stage == 'building' else 180,
             usage=usage, settings=settings)
     except Exception as exc:
@@ -187,6 +196,19 @@ def _materials(answer, kit, notes):
     return defaults
 
 
+def _unfinished_run(inputs):
+    finished = {row.get('run') for row in twin_store.rounds() if row['kind'] == 'draft'}
+    runs = Path(twin_store.DATA_DIR) / 'runs'
+    if runs.is_dir():
+        for path in sorted(runs.glob('*/run.json'), key=lambda p: p.stat().st_mtime, reverse=True):
+            if path.parent.name in finished:
+                continue
+            metadata = json.loads(path.read_text(encoding='utf-8'))
+            if metadata.get('inputs') == inputs:
+                return path.parent.name
+    return None
+
+
 def draft(drawings: list[dict], photos: list[str], site: dict | None,
           kit_id: str = 'modern_farmhouse', run: str | None = None
           ) -> tuple[dict | None, list[str], str | None]:
@@ -195,8 +217,9 @@ def draft(drawings: list[dict], photos: list[str], site: dict | None,
         return None, notes, 'a draft is already running'
     try:
         base = twin_store.current_id()
+        inputs = {'drawings': drawings, 'photos': photos, 'site': site, 'kit': kit_id}
         if run is None:
-            run = uuid.uuid4().hex
+            run = _unfinished_run(inputs) or uuid.uuid4().hex
         if not isinstance(run, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', run):
             raise ValueError('Invalid twin draft run id.')
         settings = storage.get_settings()
@@ -208,7 +231,6 @@ def draft(drawings: list[dict], photos: list[str], site: dict | None,
         root = Path(twin_store.DATA_DIR) / 'runs' / run
         root.mkdir(parents=True, exist_ok=True)
         metadata_path = root / 'run.json'
-        inputs = {'drawings': drawings, 'photos': photos, 'site': site, 'kit': kit_id}
         if metadata_path.is_file():
             metadata = json.loads(metadata_path.read_text(encoding='utf-8'))
             if metadata['inputs'] != inputs:
@@ -223,6 +245,13 @@ def draft(drawings: list[dict], photos: list[str], site: dict | None,
                           images['building'], run, settings)
         if 'error' in building:
             return None, notes, f"building failed: {building['error']}"
+        try:
+            building_plan, building_notes = twin_plan.normalize({
+                'units': 'ft', 'buildings': building['buildings']})
+        except ValueError as exc:
+            return None, notes, f'building failed: {exc}'
+        building = {'buildings': building_plan['buildings']}
+        notes.extend(building_notes)
         if images['finishes']:
             finishes = _stage('finishes', root, key, FINISHES_PROMPT,
                               'Match these photos using the kit material roles and defaults: '
@@ -285,7 +314,9 @@ def draft(drawings: list[dict], photos: list[str], site: dict | None,
         cost = math.fsum(entry['usd'] for entry in twin_cost.entries() if entry.get('run') == run)
         round_id = twin_store.push_round(plan, 'draft', '\n'.join(notes), cost=cost,
                                          run=run, base=metadata['base'])
-        return {'round': round_id, 'plan': plan, 'cost': cost, 'run': run}, notes, None
+        saved = next(row for row in twin_store.rounds() if row['id'] == round_id)
+        return {'round': round_id, 'plan': plan, 'cost': cost, 'run': run,
+                'stale': saved['stale']}, notes, None
     except twin_cost.CheckpointReached as exc:
         exc.run = run
         raise
