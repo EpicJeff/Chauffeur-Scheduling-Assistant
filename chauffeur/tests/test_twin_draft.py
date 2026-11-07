@@ -273,6 +273,19 @@ def scenario_an_unusable_building_stops_before_paying_for_more():
     check([c['stage'] for c in m.calls] == ['building'], 'finishes and site are never paid for')
 
 
+def scenario_an_unusable_building_read_can_be_retried():
+    drawing, plot, photo = _fresh()
+    kw = dict(drawings=[{'id': drawing, 'pages': [1]}], photos=[photo], site={'id': plot, 'pages': [1]})
+    bad = Model({'building': {'buildings': []}})
+    result, notes, err = _run(bad, **kw)
+    check(result is None and err, 'the unusable read fails')
+    good = Model()
+    result, notes, err = _run(good, **kw)                    # same inputs, no run id
+    check(err is None and result, f'a second press of Draft gets a fresh read: {err}')
+    check([c['stage'] for c in good.calls] == ['building', 'finishes', 'site'],
+          f'the building stage is asked again, not replayed from cache: {[c["stage"] for c in good.calls]}')
+
+
 def scenario_odd_shapes_in_a_paid_answer_do_not_crash_the_draft():
     drawing, plot, photo = _fresh()
     f = _fixture()
@@ -344,6 +357,7 @@ if __name__ == '__main__':
                scenario_stages_with_nothing_to_read_are_skipped,
                scenario_blank_rooms_get_descriptive_names_not_random_ha_areas,
                scenario_an_unusable_building_stops_before_paying_for_more,
+               scenario_an_unusable_building_read_can_be_retried,
                scenario_odd_shapes_in_a_paid_answer_do_not_crash_the_draft,
                scenario_requests_over_the_size_budget_are_refused_before_paying,
                scenario_a_stopped_draft_resumes_without_its_run_id,

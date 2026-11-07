@@ -249,6 +249,8 @@ def draft(drawings: list[dict], photos: list[str], site: dict | None,
             building_plan, building_notes = twin_plan.normalize({
                 'units': 'ft', 'buildings': building['buildings']})
         except ValueError as exc:
+            # An unusable read must not be replayed on the next draft attempt.
+            (root / 'building.json').unlink(missing_ok=True)
             return None, notes, f'building failed: {exc}'
         building = {'buildings': building_plan['buildings']}
         notes.extend(building_notes)
