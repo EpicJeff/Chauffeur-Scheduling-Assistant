@@ -294,6 +294,25 @@ def scenario_rebuilds_do_not_leak():
         check(last['g'] <= first['g'] and last['t'] <= first['t'], f'geometries/textures flat across rebuilds: {first} -> {last}')
 
 
+def scenario_probe_posts_a_result():
+    s = _serve()
+    if s is None:
+        return
+    from services import auth
+    check(auth.resolve('POST', '/api/house/twin/perf') == auth.WALL_OR_SERVICE, 'a panel may post its own numbers')
+    check(auth.resolve('GET', '/api/house/twin/perf') == auth.PARENTS, 'reading them is for parents')
+    with s.browser(launch_args=GPU_ARGS) as page:
+        page.goto(s.url('house/twin?tier=low&probe=1&probe_s=3&hud=1'))
+        page.wait_for_function('window.__twinProbe && window.__twinProbe.posted === true', timeout=90000)
+        check(page.is_visible('#twin-hud'), 'the hud shows fps and draw calls')
+        res = page.request.get(s.url('api/house/twin/perf')).json()
+    rows = res.get('results', [])
+    check(len(rows) >= 1, res)
+    r = rows[-1]
+    check(r['tier'] == 'low' and r['fpsAvg'] > 0 and r['fpsP5'] > 0 and r['drawCalls'] > 0 and r['triangles'] > 0
+          and r['gpu'] and r['ua'] and r['at'], r)
+
+
 def scenario_library_urls_carry_the_device_token():
     s = _serve()
     if s is None:
@@ -338,6 +357,7 @@ if __name__ == '__main__':
                scenario_ground_reaches_beyond_the_lot,
                scenario_no_requests_go_one_level_too_deep,
                scenario_rebuilds_do_not_leak,
+               scenario_probe_posts_a_result,
                scenario_library_urls_carry_the_device_token,
                scenario_page_draws_with_the_library_offline):
         fn()

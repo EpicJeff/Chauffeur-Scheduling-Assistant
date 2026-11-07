@@ -7303,6 +7303,21 @@ def house_twin_library_file(asset_id: str, name: str):
     return FileResponse(path)
 
 
+@app.post("/api/house/twin/perf")
+def house_twin_perf_post(body: dict = Body(...)):
+    from services import twin_store
+    try:
+        return twin_store.save_perf(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/house/twin/perf")
+def house_twin_perf_get():
+    from services import twin_store
+    return {'results': twin_store.perf_results()}
+
+
 @app.get("/api/house/twin/kit/{kit_id}")
 def house_twin_kit_api(kit_id: str):
     from services import twin_library

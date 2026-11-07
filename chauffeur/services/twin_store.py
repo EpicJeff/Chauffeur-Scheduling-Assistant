@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import io
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -37,6 +38,32 @@ def _state():
 
 def _save(row):
     storage.patch_settings({'house_twin': row})
+
+
+def perf_results() -> list[dict]:
+    """Panel measurements, oldest first, independent of plan revisions."""
+    with _LOCK:
+        return deepcopy(storage.get_settings().get('house_twin_perf') or [])
+
+
+def save_perf(body: dict) -> dict:
+    record = {}
+    for key in ('tier', 'gpu', 'ua', 'at'):
+        value = body.get(key)
+        if not isinstance(value, str) or len(value) > 300:
+            raise ValueError(f'{key} must be a string of at most 300 characters.')
+        record[key] = value
+    if record['tier'] not in ('low', 'high'):
+        raise ValueError('tier must be low or high.')
+    for key in ('fpsAvg', 'fpsP5', 'drawCalls', 'triangles'):
+        value = body.get(key)
+        if type(value) not in (int, float) or value < 0 or (type(value) is float and not math.isfinite(value)):
+            raise ValueError(f'{key} must be a finite non-negative number.')
+        record[key] = value
+    with _LOCK:
+        rows = storage.get_settings().get('house_twin_perf') or []
+        storage.patch_settings({'house_twin_perf': [*rows, record][-20:]})
+    return record
 
 
 def _read_round(row, round_id):

@@ -37,11 +37,12 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
   const state = { view: 'ext', time: 'day', camera: 'front' };
   let bounds = { x: 19, y: 11, span: 38 };
   let lastStats = { drawCalls: 0, triangles: 0, tier };
+  let probeRun = null, fps = 0, fpsFrames = 0, fpsSince = performance.now();
   function render() {
     if (disposed) return;
     renderer3.info.reset();
     renderer3.render(scene, camera);
-    lastStats = { drawCalls: renderer3.info.render.calls, triangles: renderer3.info.render.triangles, tier };
+    lastStats = { drawCalls: renderer3.info.render.calls, triangles: renderer3.info.render.triangles, tier, fps };
   }
   function resize() {
     const width = Math.max(1, el.clientWidth), height = Math.max(1, el.clientHeight);
@@ -111,6 +112,35 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
       }
     },
     stats() { return { ...lastStats }; },
+    async runProbe(seconds = 20) {
+      if (disposed || !view.ready) throw new Error('The twin is not ready.');
+      if (probeRun) throw new Error('A performance probe is already running.');
+      if (!Number.isFinite(seconds) || seconds <= 0) throw new Error('Probe seconds must be a positive finite number.');
+      const previous = {
+        view: state.view, name: state.camera, position: camera.position.clone(),
+        quaternion: camera.quaternion.clone(), target: controls.target.clone(), enabled: controls.enabled,
+      };
+      try {
+        controls.enabled = false;
+        view.setView('ext'); view.setCamera('front');
+        const offset = camera.position.clone().sub(controls.target);
+        return await new Promise((resolve, reject) => {
+          probeRun = {
+            resolve, reject, start: performance.now(), previous: performance.now(),
+            exterior: seconds * 1000, floor: Math.max(1, Math.min(5, seconds / 4)) * 1000,
+            angle: Math.atan2(offset.z, offset.x), radius: Math.hypot(offset.x, offset.z), height: offset.y,
+            stage: 'ext', frames: 0, samples: [], drawCalls: 0, triangles: 0,
+          };
+        });
+      } finally {
+        controls.enabled = previous.enabled;
+        if (!disposed) {
+          view.setView(previous.view);
+          camera.position.copy(previous.position); controls.target.copy(previous.target); controls.update();
+          camera.quaternion.copy(previous.quaternion); state.camera = previous.name; render();
+        }
+      }
+    },
     async rebuild(nextPlan) {
       const version = ++revision; view.ready = false;
       const next = buildTwin(nextPlan, kit, tier);
@@ -137,6 +167,9 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
     dispose() {
       if (disposed) return;
       disposed = true; ++revision; view.ready = false;
+      if (probeRun) {
+        probeRun.reject(new Error('The twin was disposed during the probe.')); probeRun = null;
+      }
       renderer3.setAnimationLoop(null); observer.disconnect(); controls.dispose();
       if (twin) { scene.remove(twin.root); release(twin); }
       sky?.dispose(); environmentTarget?.dispose(); sun.shadow.dispose();
@@ -174,7 +207,42 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
       finally { pmrem?.dispose(); }
       view.setTime(state.time);
     }
-    renderer3.setAnimationLoop(() => { controls.update(); render(); });
+    renderer3.setAnimationLoop(() => {
+      const now = performance.now(), run = probeRun;
+      if (run) {
+        const elapsed = now - run.start;
+        const stage = elapsed < run.exterior ? 'ext' : elapsed < run.exterior + run.floor ? 'L1' : 'L2';
+        if (stage !== run.stage) { view.setView(stage); view.setCamera('top'); run.stage = stage; }
+        if (stage === 'ext') {
+          const angle = run.angle + elapsed / run.exterior * Math.PI * 2;
+          camera.position.set(controls.target.x + Math.cos(angle) * run.radius,
+            controls.target.y + run.height, controls.target.z + Math.sin(angle) * run.radius);
+        }
+      }
+      controls.update(); render();
+      ++fpsFrames;
+      if (now - fpsSince >= 500) {
+        fps = fpsFrames * 1000 / (now - fpsSince); fpsFrames = 0; fpsSince = now;
+        lastStats.fps = fps;
+      }
+      if (run) {
+        const delta = now - run.previous;
+        if (delta > 0) { ++run.frames; run.samples.push(1000 / delta); }
+        run.previous = now;
+        run.drawCalls = Math.max(run.drawCalls, lastStats.drawCalls);
+        run.triangles = Math.max(run.triangles, lastStats.triangles);
+        const elapsed = now - run.start;
+        if (elapsed >= run.exterior + 2 * run.floor) {
+          run.samples.sort((a, b) => a - b); probeRun = null;
+          run.resolve({
+            tier, fpsAvg: run.frames * 1000 / elapsed,
+            fpsP5: run.samples[Math.max(0, Math.ceil(run.samples.length * 0.05) - 1)] || 0,
+            drawCalls: run.drawCalls, triangles: run.triangles,
+            gpu: view.renderer, ua: navigator.userAgent, at: new Date().toISOString(),
+          });
+        }
+      }
+    });
     view.ready = true;
   } catch (error) { view.dispose(); throw error; }
   return view;
@@ -213,7 +281,27 @@ async function boot() {
     document.getElementById('twin-controls').addEventListener('click', click);
     host.addEventListener('twinrebuilt', () => { syncViews(); sync(); });
     sync(); status.hidden = true;
-    window.addEventListener('pagehide', () => view.dispose(), { once: true });
+    const hud = document.getElementById('twin-hud');
+    const hudTimer = hud ? setInterval(() => {
+      const stats = view.stats(); hud.textContent = `${stats.fps.toFixed(1)} fps · ${stats.drawCalls} draw calls`;
+    }, 500) : null;
+    window.addEventListener('pagehide', () => { clearInterval(hudTimer); view.dispose(); }, { once: true });
+    const query = new URLSearchParams(location.search);
+    if (query.get('probe') === '1') {
+      let result;
+      try {
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        result = await view.runProbe(query.has('probe_s') ? Number(query.get('probe_s')) : 20);
+        const posted = await fetch(base() + 'api/house/twin/perf', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(result),
+        });
+        if (!posted.ok) throw new Error(`Could not save the performance probe (HTTP ${posted.status}).`);
+        window.__twinProbe = { ...result, posted: true };
+      } catch (error) {
+        window.__twinProbe = { ...result, posted: false, error: error.message || 'The performance probe failed.' };
+        status.textContent = window.__twinProbe.error; status.hidden = false;
+      } finally { sync(); }
+    }
   } catch (error) { status.textContent = error.message || 'The house preview could not load.'; }
 }
 if (typeof document !== 'undefined') boot();

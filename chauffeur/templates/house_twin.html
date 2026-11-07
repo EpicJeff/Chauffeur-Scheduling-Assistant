@@ -43,7 +43,8 @@
     #twin-controls button { border:1px solid transparent; border-radius:999px; padding:6px 11px; min-height:44px; background:transparent; color:inherit; font:inherit; cursor:pointer; }
     #twin-controls button[aria-pressed="true"] { background:rgba(227,211,171,.2); border-color:rgba(227,211,171,.45); }
     #twin-controls button:hover, #twin-controls button:focus-visible { background:rgba(54,43,29,.94); outline:2px solid #e3d3ab; outline-offset:2px; }
-    #twin-tier, #twin-status { padding:8px 12px; border:1px solid rgba(227,211,171,.45); border-radius:8px; background:rgba(28,23,16,.9); color:#f0e6cf; font:13px/1.4 system-ui; }
+    #twin-tier, #twin-status, #twin-hud { padding:8px 12px; border:1px solid rgba(227,211,171,.45); border-radius:8px; background:rgba(28,23,16,.9); color:#f0e6cf; font:13px/1.4 system-ui; }
+    #twin-hud { position:fixed; right:16px; bottom:calc(var(--panel-shelf-h, 0px) + 64px); z-index:46; pointer-events:none; }
     #twin-tier { position:fixed; right:16px; bottom:calc(var(--panel-shelf-h, 0px) + 16px); z-index:46; }
     #twin-status { position:fixed; left:16px; bottom:calc(var(--panel-shelf-h, 0px) + 16px); z-index:46; max-width:calc(100vw - 120px); }
     /* Drawer geometry: components/settings_drawer.html:35-46; controls use
@@ -85,6 +86,9 @@
     {% endif %}
   </div>
   <output id="twin-tier" aria-label="Render tier">Loading</output>
+  {% if request.query_params.get('hud') == '1' %}
+  <output id="twin-hud" aria-label="Live render performance">Measuring fps and draw calls</output>
+  {% endif %}
   <p id="twin-status" role="status">Loading the house preview…</p>
   {% if request.query_params.get('panel') != 'true' and request.query_params.get('kiosk') != 'true' %}
   <div id="twin-parent-tools">
