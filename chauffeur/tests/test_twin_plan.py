@@ -30,11 +30,11 @@ def _raises(fn, exc):
 
 def scenario_the_fixture_normalizes_clean():
     plan, notes = tp.normalize(_fixture())
-    check(plan['schema'] == tp.SCHEMA == 'chauffeur.twin.plan/1', plan.get('schema'))
+    check(plan['schema'] == tp.SCHEMA == 'chauffeur.twin.plan/2', plan.get('schema'))
     check(notes == [], f'the hand-checked fixture is clean: {notes}')
     b = plan['buildings'][0]
     check([l['id'] for l in b['levels']] == ['L1', 'L2'], 'levels kept')
-    check(b['roof']['main']['pitch'] == 11, 'pitch kept')
+    check(b['roof']['sections'][0]['pitch'] == 11, 'pitch kept')
     check(len(b['walls']) == 13 and len(b['openings']) == 12, 'nothing dropped')
 
 
@@ -105,17 +105,17 @@ def scenario_roof_pitch_is_bounded():
     raw = _fixture()
     raw['buildings'][0]['roof']['main']['pitch'] = 0
     plan, notes = tp.normalize(raw)
-    check(plan['buildings'][0]['roof']['main']['pitch'] == 1 and any('pitch' in n for n in notes),
+    check(plan['buildings'][0]['roof']['sections'][0]['pitch'] == 1 and any('pitch' in n for n in notes),
           'a zero pitch is clamped to 1 with a note')
     raw['buildings'][0]['roof']['main']['pitch'] = 30
     plan, notes = tp.normalize(raw)
-    check(plan['buildings'][0]['roof']['main']['pitch'] == 24 and any('pitch' in n for n in notes),
+    check(plan['buildings'][0]['roof']['sections'][0]['pitch'] == 24 and any('pitch' in n for n in notes),
           'a 30:12 pitch is clamped to 24 with a note')
 
 
 def scenario_caps_stop_runaway_lists():
     check(tp.CAPS == {'walls': 400, 'openings': 400, 'rooms': 120, 'planting': 300,
-                      'furniture': 120, 'beds': 60}, tp.CAPS)
+                      'furniture': 120, 'beds': 60, 'roof_sections': 40, 'terraces': 40}, tp.CAPS)
     raw = _fixture()
     raw['site']['planting'] = [{'kind': 'shrub', 'preset': 'Bush 1', 'at': [50 + i % 20, -50 - i // 20],
                                 'height': 3, 'seed': i} for i in range(500)]

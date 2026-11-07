@@ -222,6 +222,8 @@ def scenario_world_rotation_and_feet_inches():
 
 ### Task 3: Roof surfaces
 
+> **Amendment (Codex adversarial review, 2026-11-07):** subtract from face A only the region where B's ACTUAL FACE POLYGON (its active domain) is higher, never B's whole footprint; the test gains `scenario_the_roof_has_no_holes` (sampled coverage, plus the point (16, 18) on HIP+CROSS).
+
 **Files:**
 - Create: `chauffeur/static/twin/twin_roof.js` (ES module, no imports, plan feet, z up)
 - Test: `chauffeur/tests/test_twin_roof_js.py`, which runs a node script against the module the same way P0's node-run tests do (see `tests/test_nav_runtime.py` for spawning node)
@@ -290,6 +292,8 @@ def scenario_no_triangle_hides_under_another_section():
 
 ### Task 4: Generator v2 (sections, rotation, base, ground, ghosts, picking)
 
+> **Amendment (review):** (a) merged settled meshes cannot carry per-piece identity, so picking uses a separate, never-rendered pick layer (one simple proxy per piece carrying `userData.pieceId`, raycast on its own layer); the live test selects two settled walls that share one merged material. (b) Scene keys for levels are namespaced `${buildingId}:${levelId}` everywhere (`groups.levels`, `levelElevations`, `showLevels`, cutaways, lighting, the P0 view buttons) so two buildings never share an `L1`; the live test seeds two buildings. (c) `services/twin_compose.py` uses `twin_register.to_world` for every footprint, porch, foundation bed and clearance check so planting follows a rotated building; `tests/test_twin_compose.py` gains `scenario_rotated_building_moves_its_beds` (P0 fixture at rotation 0 and 90: obstacle polygons differ by the rotation).
+
 **Files:**
 - Create: `chauffeur/static/twin/twin_ground.js`
 - Modify: `chauffeur/static/twin/twin_generator.js`, `chauffeur/static/twin/twin_view.js`, `chauffeur/static/twin/twin_yard.js`
@@ -354,6 +358,8 @@ def scenario_sheet_underlay_sits_on_its_level():
 ---
 
 ### Task 5: Sheets, crops, page roles, registrations, start over, ledger reset
+
+> **Amendment (review):** (a) Every persisted-plan read normalizes: `current()`, `_read_round`, `revert`, and every route that returns a plan; the test writes an untouched v1 round to disk and asserts `current()` and a revert both return `chauffeur.twin.plan/2` with roof sections. (b) One lifecycle protocol: `twin_store.LIFECYCLE` (an `RLock`) and `twin_store.generation()` (an int in the `house_twin` row). `start_over()` takes the lock, refuses while `build_running()`, and bumps the generation; `update_current(..., generation=None)` refuses with `StaleGeneration` when a given generation is no longer current, so a late worker result can never write after a start over. (c) Deletion tombstones: `add_tombstone(piece: dict)` / `tombstones() -> list` in the `house_twin` row (kind, level, geometry, `src.step`); cleared by `start_over()`.
 
 **Files:**
 - Modify: `chauffeur/services/twin_store.py`, `chauffeur/services/twin_pdf.py`, `chauffeur/services/twin_cost.py`
@@ -425,6 +431,8 @@ def scenario_ledger_reset_is_recorded():
 ---
 
 ### Task 6: Usage collector for every model request
+
+> **Amendment (review):** the collector gates as well as counts: `llm.collect_usage(before=None, after=None)` calls `before()` immediately before each provider request (raising stops that request) and `after(row)` immediately after it, including failures; callers pass `twin_cost.require_clear` and a one-row `twin_cost.record`, so a checkpoint stops the very next request inside a multi-round agent turn. Residual: concurrent callers may each have one request in flight across a boundary. Model ids in tests are real: a bare Gemini id, `anthropic:claude-sonnet-5-5`, `openai:gpt-6.1`; each provider test asserts the dispatched endpoint and wire model.
 
 **Files:**
 - Modify: `chauffeur/services/llm.py`
@@ -531,6 +539,8 @@ def scenario_checkpoint_propagates():
 ---
 
 ### Task 8: The build engine
+
+> **Amendment (review):** (a) Child boxes (wings from an outline or registration read) are crop-normalised; the engine composes them through the parent crop into master-normalised boxes before calling `twin_store.crop`; test `scenario_nested_wing_crop_is_composed` (a Bonus role box [0.05,0.2,0.4,0.8] and a wing box [0.5,0.5,1,1] inside it crop master box [0.225,0.5,0.4,0.8]). (b) The engine holds `twin_store.LIFECYCLE` for start, stop, resume and every merge, and passes its generation to `update_current`; test `scenario_start_over_discards_a_late_result` (a blocked reader returns after start over; nothing is written). (c) Merges skip any new piece from the same step whose geometry lies within 1 ft of a tombstone; test `scenario_reread_does_not_resurrect_a_deleted_wall`.
 
 **Files:**
 - Create: `chauffeur/services/twin_build.py`
@@ -641,6 +651,8 @@ def scenario_registration_answer_moves_the_level():
 ---
 
 ### Task 9: Hand edits
+
+> **Amendment (review):** `delete` records a tombstone (`twin_store.add_tombstone`) with the piece's kind, level, geometry and `src.step`, so a reread cannot bring it back (Task 8 honours it).
 
 **Files:**
 - Create: `chauffeur/services/twin_edit.py`
@@ -757,6 +769,8 @@ def scenario_page_renders_for_anyone_and_gates_on_parent():
 ---
 
 ### Task 11: Argyle's `house_design` tool and the editor conversation
+
+> **Amendment (review):** the router's dispatch loop uses explicit branches, so `services/agent_router.py` gets an explicit `house_design` branch that calls `execute_tool('house_design', args, actor=acting_member, focus_key=focus_key)`; the test runs a real `process_agent_request` turn with a stubbed model that emits a `house_design` edit call and asserts the plan changed. The say endpoint passes `before=twin_cost.require_clear` and a per-request `after` to `llm.collect_usage` (Task 6 amendment) instead of one check and one record per turn.
 
 **Files:**
 - Modify: `chauffeur/services/agent_tools_v2.py` (schema, handler, `REGISTRY_EXCEPTIONS['house_design'] = 'The house editor never runs from a mission.'`), `chauffeur/services/agent_router.py` (one system-prompt paragraph when `source == 'house_editor'`), `chauffeur/main.py`, `chauffeur/services/auth.py`
@@ -1038,6 +1052,8 @@ def scenario_return_here_appends_a_revert():
 ---
 
 ### Task 18: Finishing steps, art director in the editor, retire P0's tools sheet
+
+> **Amendment (review):** P0's JSON plan editor is not removed: it moves into the editor's menu as **Advanced: edit the plan file** (same reason-required save, same fixes log) until hand operations for site pieces and materials exist; only the tools sheet on `/house/twin` is retired. Test: the editor menu exposes it and a save round-trips.
 
 **Files:**
 - Modify: `chauffeur/services/twin_build.py` (`finishes` via `twin_reads.read('finishes', ...)`; `compose` via `twin_compose.compose`), `chauffeur/services/twin_director.py` (v2 plans), `chauffeur/static/twin/twin_director.js` (keep the capture-and-critique loop; remove `initTwinTools` and the sheet UI), `chauffeur/templates/house_twin.html` (remove the tools sheet markup and its script), `chauffeur/static/twin/editor/editor.js` (an **Art director** button in the panel's menu, **Start over**, **Reset spend total**, **Upload more**)

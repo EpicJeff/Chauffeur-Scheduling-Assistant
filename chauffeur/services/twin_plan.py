@@ -6,11 +6,12 @@ units or a plan without a usable building prevent normalization altogether.
 
 from copy import deepcopy
 from math import hypot, isfinite
+import re
 
 
-SCHEMA = 'chauffeur.twin.plan/1'
+SCHEMA = 'chauffeur.twin.plan/2'
 CAPS = {'walls': 400, 'openings': 400, 'rooms': 120, 'planting': 300,
-        'furniture': 120, 'beds': 60}
+        'furniture': 120, 'beds': 60, 'roof_sections': 40, 'terraces': 40}
 
 
 def _number(value):
@@ -31,12 +32,12 @@ def _numeric_fields(item, names):
     return all(name not in item or _number(item[name]) for name in names)
 
 
-def _items(owner, name, notes):
+def _items(owner, name, notes, cap_name=None):
     items = owner.get(name, [])
     if not isinstance(items, list):
         notes.append(f'Dropped invalid {name} list; expected a list.')
         return []
-    cap = CAPS.get(name)
+    cap = CAPS.get(cap_name or name)
     if cap is not None and len(items) > cap:
         notes.append(f'Dropped {len(items) - cap} items from {name}; the cap is {cap}.')
         return items[:cap]
@@ -45,6 +46,51 @@ def _items(owner, name, notes):
 
 def _lookup(items, key):
     return items.get(key) if isinstance(key, str) else None
+
+
+def _piece_meta(items, kind, notes):
+    """Reserve supplied identities before silently filling gaps, per kind."""
+    def valid_id(value):
+        return isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_.:-]{1,64}', value)
+
+    pieces = [item for item in items if isinstance(item, dict)]
+    reserved = {item['id'] for item in pieces if valid_id(item.get('id'))}
+    used = set()
+    n = 1
+    for item in pieces:
+        item_id = item.get('id')
+        if not valid_id(item_id) or item_id in used:
+            while f'{kind}-{n}' in reserved or f'{kind}-{n}' in used:
+                n += 1
+            item_id = item['id'] = f'{kind}-{n}'
+        used.add(item_id)
+        # An absent state means settled; do not turn an unchanged save into edits.
+        if 'state' in item and item['state'] not in ('ghost', 'settled'):
+            notes.append(f'{kind} {item_id}: dropped invalid state; absent means settled.')
+            del item['state']
+        if 'src' in item:
+            src = item.pop('src')
+            if isinstance(src, dict) and src.get('person') is True:
+                item['src'] = {'person': True}
+                for key, value_type in (('sheet', str), ('page', int)):
+                    if type(src.get(key)) is value_type:
+                        item['src'][key] = src[key]
+            elif (isinstance(src, dict) and isinstance(src.get('sheet'), str)
+                  and type(src.get('page')) is int and isinstance(src.get('step'), str)):
+                item['src'] = {key: src[key] for key in ('sheet', 'page', 'step')}
+            else:
+                notes.append(f'{kind} {item_id}: dropped invalid src.')
+        if 'confidence' in item and (not _number(item['confidence'])
+                                        or not 0 <= item['confidence'] <= 1):
+            del item['confidence']
+            notes.append(f'{kind} {item_id}: dropped invalid confidence.')
+        if 'why' in item:
+            if not isinstance(item['why'], str):
+                del item['why']
+                notes.append(f'{kind} {item_id}: dropped invalid why.')
+            elif len(item['why']) > 200:
+                item['why'] = item['why'][:200]
+                notes.append(f'{kind} {item_id}: shortened why to 200 characters.')
 
 
 def _levels(building, notes):
@@ -68,7 +114,9 @@ def _levels(building, notes):
 
 def _walls(building, levels, notes):
     walls = {}
-    for index, wall in enumerate(_items(building, 'walls', notes)):
+    items = _items(building, 'walls', notes)
+    _piece_meta(items, 'wall', notes)
+    for index, wall in enumerate(items):
         name = wall.get('id', index) if isinstance(wall, dict) else index
         reason = None
         if (not isinstance(wall, dict)
@@ -101,25 +149,85 @@ def _walls(building, levels, notes):
 def _roof(building, notes):
     roof = building.get('roof')
     if roof is None:
+        building['roof'] = {'sections': [], 'extensions': []}
         return {}
-    main = roof.get('main') if isinstance(roof, dict) else None
-    if (not isinstance(main, dict)
-            or not all(_number(main.get(k)) for k in ('x0', 'x1', 'y0', 'y1', 'plate', 'overhang'))
-            or main['x0'] >= main['x1'] or main['y0'] >= main['y1']):
-        building['roof'] = None
-        notes.append('Dropped roof main and extensions: invalid roof bounds, plate or overhang.')
+    if not isinstance(roof, dict):
+        building['roof'] = {'sections': [], 'extensions': []}
+        notes.append('Dropped invalid roof; expected an object.')
         return {}
-    pitch = main.get('pitch')
-    if not _number(pitch) or not 0 < pitch <= 24:
-        main['pitch'] = max(1, min(24, pitch)) if _number(pitch) else 1
-        notes.append(f"Building {building.get('id', 'unnamed')} roof pitch clamped "
-                     f"to {main['pitch']}.")
+    migrating = 'sections' not in roof and 'main' in roof
+    if migrating:
+        main = roof['main']
+        roof['sections'] = ([{
+            'id': 'roof-main', 'kind': main.get('kind', 'gable'),
+            'rect': [main.get(k) for k in ('x0', 'y0', 'x1', 'y1')],
+            'ridge': main.get('ridge_axis'), 'pitch': main.get('pitch'),
+            'plate': main.get('plate'), 'overhang': main.get('overhang', 1),
+            'pitch_source': 'drawn',
+        }] if isinstance(main, dict) else [])
+        if not isinstance(main, dict):
+            notes.append('Dropped invalid roof main and extensions.')
+        # P0 gable coordinates and extension geometry stay unchanged.
+        openings = building.get('openings', [])
+        if isinstance(openings, list):
+            for opening in openings:
+                if isinstance(opening, dict) and 'gable' in opening:
+                    opening['section'] = 'roof-main'
+
+    def pitch_value(value, name):
+        if not _number(value) or not 1 <= value <= 24:
+            value = max(1, min(24, value)) if _number(value) else 1
+            notes.append(f'Roof section {name}: pitch clamped to {value}.')
+        return value
+
+    sections = {}
+    items = _items(roof, 'sections', notes, 'roof_sections')
+    _piece_meta(items, 'roof', notes)
+    sides = ('x0', 'x1', 'y0', 'y1')
+    for index, section in enumerate(items):
+        name = section.get('id', index) if isinstance(section, dict) else index
+        rect = section.get('rect') if isinstance(section, dict) else None
+        if (not isinstance(section, dict)
+                or not isinstance(rect, (list, tuple)) or len(rect) != 4
+                or not all(_number(v) for v in rect)
+                or rect[0] >= rect[2] or rect[1] >= rect[3]
+                or not _number(section.get('plate')) or section['plate'] <= 0
+                or section.get('kind') not in ('hip', 'gable', 'shed', 'flat')
+                or (section['kind'] in ('hip', 'gable') and section.get('ridge') not in ('x', 'y'))
+                or (section['kind'] == 'shed' and section.get('low_side') not in sides)):
+            notes.append(f'Dropped roof section {name}: invalid bounds, kind, direction or plate.')
+            continue
+        section['pitch'] = 0 if section['kind'] == 'flat' else pitch_value(section.get('pitch'), name)
+        if 'pitches' in section:
+            pitches = section.pop('pitches')
+            if isinstance(pitches, dict):
+                section['pitches'] = {side: (0 if section['kind'] == 'flat'
+                                           else pitch_value(value, f'{name}.{side}'))
+                                      for side, value in pitches.items() if side in sides}
+                if any(side not in sides for side in pitches):
+                    notes.append(f'Roof section {name}: dropped unknown pitch sides.')
+            else:
+                notes.append(f'Roof section {name}: dropped invalid pitches.')
+        overhang = section.get('overhang', 1)
+        if not _number(overhang) or not 0 <= overhang <= 4:
+            overhang = max(0, min(4, overhang)) if _number(overhang) else 1
+            notes.append(f'Roof section {name}: overhang clamped to {overhang}.')
+        section['overhang'] = overhang
+        if section.get('pitch_source', 'default') not in ('drawn', 'photos', 'person', 'default'):
+            notes.append(f'Roof section {name}: defaulted invalid pitch_source.')
+            section['pitch_source'] = 'default'
+        section.setdefault('pitch_source', 'default')
+        section['rect'] = list(rect)
+        sections[section['id']] = section
     extensions = []
     for index, extension in enumerate(_items(roof, 'extensions', notes)):
-        valid = isinstance(extension, dict)
+        if migrating and isinstance(extension, dict):
+            extension['section'] = 'roof-main'
+        section = _lookup(sections, extension.get('section')) if isinstance(extension, dict) else None
+        valid = section is not None
         if valid and extension.get('kind') == 'shed_continuation':
             valid = (all(_number(extension.get(k)) for k in ('to_x', 'pitch'))
-                     and extension['to_x'] > main['x1']
+                     and extension['to_x'] > section['rect'][2]
                      and _numeric_fields(extension, ('overhang',)))
         elif valid and extension.get('kind') == 'awning':
             valid = (all(_number(extension.get(k)) for k in ('x0', 'x1', 'depth', 'pitch', 'eave'))
@@ -131,11 +239,11 @@ def _roof(building, notes):
             extensions.append(extension)
         else:
             notes.append(f'Dropped roof extension {index}: malformed extension.')
-    roof['extensions'] = extensions
-    return main
+    building['roof'] = {'sections': list(sections.values()), 'extensions': extensions}
+    return sections
 
 
-def _opening_error(opening, walls, main):
+def _opening_error(opening, walls, sections):
     if not isinstance(opening, dict):
         return 'invalid opening data'
     width, sill, head = (opening.get(key) for key in ('width', 'sill', 'head'))
@@ -161,7 +269,10 @@ def _opening_error(opening, walls, main):
     else:
         if opening['gable'] not in ('front', 'rear'):
             return 'unknown gable (expected front or rear)'
-        x, x0, x1 = opening.get('x'), main.get('x0'), main.get('x1')
+        section = _lookup(sections, opening.get('section'))
+        if section is None or section['kind'] != 'gable':
+            return 'unknown gable section'
+        x, x0, x1 = opening.get('x'), section['rect'][0], section['rect'][2]
         if (not all(_number(value) for value in (x, x0, x1))
                 or x0 >= x1 or x - width / 2 < x0 - 1e-6
                 or x + width / 2 > x1 + 1e-6):
@@ -169,20 +280,21 @@ def _opening_error(opening, walls, main):
     return None
 
 
-def _openings(building, walls, main, notes):
+def _openings(building, walls, sections, notes):
     openings = []
     for index, opening in enumerate(_items(building, 'openings', notes)):
         if (isinstance(opening, dict) and opening.get('kind') in ('door', 'slider', 'passage')
                 and 'sill' not in opening):
             opening['sill'] = 0
             notes.append(f'Opening {index}: defaulted missing sill to 0 feet.')
-        reason = _opening_error(opening, walls, main)
+        reason = _opening_error(opening, walls, sections)
         if reason:
             name = (opening.get('wall', opening.get('gable', index))
                     if isinstance(opening, dict) else index)
             notes.append(f'Dropped opening on {name}: {reason}.')
         else:
             openings.append(opening)
+    _piece_meta(openings, 'opening', notes)
     building['openings'] = openings
 
 
@@ -204,6 +316,7 @@ def _rooms(building, levels, notes):
             notes.append(f'Dropped room {name}: {reason}.')
         else:
             rooms.append(room)
+    _piece_meta(rooms, 'room', notes)
     building['rooms'] = rooms
 
 
@@ -245,6 +358,8 @@ def _details(building, levels, notes):
                 valid_items.append(item)
             else:
                 notes.append(f'Dropped {name} entry {index}: invalid coordinates, dimensions or level.')
+        if name == 'stairs':
+            _piece_meta(valid_items, 'stair', notes)
         building[name] = valid_items
 
 
@@ -254,31 +369,42 @@ def _site(site, notes):
         notes.append('Dropped site lot: invalid polygon.')
     pool = site.get('pool')
     if pool is not None and (not isinstance(pool, dict) or not _polygon(pool.get('polygon'))
-                             or not _numeric_fields(pool, ('depth', 'coping'))):
+                             or not _numeric_fields(pool, ('depth', 'coping', 'elevation'))):
         site['pool'] = None
         notes.append('Dropped site pool: invalid polygon or dimensions.')
     fire = site.get('fire_pit')
     if fire is not None and (not isinstance(fire, dict) or not _point(fire.get('at'))
-                             or not _number(fire.get('radius')) or fire['radius'] <= 0):
+                             or not _number(fire.get('radius')) or fire['radius'] <= 0
+                             or not _numeric_fields(fire, ('elevation',))):
         site['fire_pit'] = None
         notes.append('Dropped site fire_pit: invalid at or radius.')
-    for name in ('beds', 'planting', 'furniture', 'edges', 'hardscape'):
+    for name in ('beds', 'planting', 'furniture', 'edges', 'hardscape', 'terraces'):
         kept = []
         for index, item in enumerate(_items(site, name, notes)):
             valid = isinstance(item, dict)
-            if valid and name in ('beds', 'hardscape'):
+            if valid and name == 'terraces':
+                valid = (_polygon(item.get('polygon')) and _number(item.get('height'))
+                         and -50 <= item['height'] <= 50 and _numeric_fields(item, ('elevation',)))
+            elif valid and name in ('beds', 'hardscape'):
                 valid = _polygon(item.get('polygon')) and _numeric_fields(item, ('height', 'elevation'))
             elif valid and name == 'edges':
                 points = item.get('points', item.get('polyline'))
-                valid = isinstance(points, list) and len(points) >= 2 and all(_point(p) for p in points)
+                valid = (isinstance(points, list) and len(points) >= 2 and all(_point(p) for p in points)
+                         and _numeric_fields(item, ('elevation',)))
             elif valid:
                 valid = (_point(item.get('at'))
                          and _numeric_fields(item, ('height', 'rotation', 'scale', 'elevation', 'seed')))
             if valid:
                 kept.append(item)
             else:
-                notes.append(f'Dropped {name} entry {index}: invalid coordinates or dimensions.')
+                label = item.get('id', index) if isinstance(item, dict) else index
+                notes.append(f'Dropped {name} entry {label}: invalid coordinates or dimensions.')
         site[name] = kept
+    pieces = [item for name in ('pool', 'fire_pit', 'fence')
+              if isinstance((item := site.get(name)), dict)]
+    pieces.extend(item for name in ('beds', 'planting', 'furniture', 'edges', 'hardscape', 'terraces')
+                  for item in site[name])
+    _piece_meta(pieces, 'site', notes)
 
 
 def normalize(raw: dict) -> tuple[dict, list[str]]:
@@ -304,9 +430,20 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
         if 'position' in building and not _point(building['position']):
             building['position'] = [0, 0]
             notes.append(f"Building {building.get('id', index)}: defaulted invalid position to [0, 0].")
+        building.setdefault('position', [0, 0])
+        rotation = building.get('rotation', 0)
+        if not _number(rotation):
+            rotation = 0
+            notes.append(f"Building {building.get('id', index)}: defaulted invalid rotation to 0.")
+        building['rotation'] = rotation % 360
+        base = building.get('base', 0)
+        if not _number(base) or not -50 <= base <= 50:
+            base = 0
+            notes.append(f"Building {building.get('id', index)}: defaulted invalid base to 0.")
+        building['base'] = base
         walls = _walls(building, levels, notes)
-        main = _roof(building, notes)
-        _openings(building, walls, main, notes)
+        sections = _roof(building, notes)
+        _openings(building, walls, sections, notes)
         _rooms(building, levels, notes)
         _details(building, levels, notes)
         buildings.append(building)

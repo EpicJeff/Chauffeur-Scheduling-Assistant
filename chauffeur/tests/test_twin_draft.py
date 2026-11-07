@@ -126,7 +126,7 @@ def scenario_three_stages_build_one_round():
           'chosen drawing pages, the photo, the plot page')
     plan = ts.current()
     check(plan == result['plan'] and isinstance(result['round'], int), 'the draft round is current')
-    check(plan['buildings'][0]['roof']['main']['pitch'] == 11 and plan['materials']['siding']['id'] == 'board_and_batten',
+    check(plan['buildings'][0]['roof']['sections'][0]['pitch'] == 11 and plan['materials']['siding']['id'] == 'board_and_batten',
           'building and finishes from the model')
     check(any(i.get('by') == 'compose' for i in plan['site']['planting']), 'the yard was composed')
     check(ts.rounds()[-1]['kind'] == 'draft' and ts.rounds()[-1]['run'] == result['run'], ts.rounds()[-1])
