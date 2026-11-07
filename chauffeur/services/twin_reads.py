@@ -259,7 +259,7 @@ def parse(kind, answer):
         if len(v.problems) != before:
             return None
         out = {'page': number, 'role': role, 'level': None if value.get('level') is None else level, 'box': box}
-        if 'elsewhere' in value:
+        if value.get('elsewhere') is not None:
             elsewhere = v.text(value['elsewhere'], path + '.elsewhere')
             if elsewhere is not None:
                 out['elsewhere'] = elsewhere

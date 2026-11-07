@@ -451,6 +451,67 @@ def scenario_move_page_route():
         check(ts.page_roles() == before, 'a refused move changes nothing')
 
 
+def scenario_move_region_route():
+    _fresh()
+    _setup()
+    sheets = ts.save_source('drawing', 'regions.pdf', engine_tests._pdf(1))
+    ts.add_building('Garage', 'garage')
+    original = [
+        {'source': sheets, 'page': 1, 'role': 'floor', 'level': 'Main floor',
+         'box': [0, 0, 0.5, 1], 'building': 'house'},
+        {'source': sheets, 'page': 1, 'role': 'floor', 'level': 'Upper floor',
+         'box': [0.5, 0, 1, 1], 'building': 'house'}]
+    ts.set_page_roles(original)
+    c = _client()
+    with _enforced():
+        before = ts.page_roles()
+        bad = c.post('/api/house/editor/place/pages/move', headers=PARENT,
+                     json={'source': sheets, 'page': 1, 'part': 'garage', 'region': -1})
+        check(bad.status_code == 400 and _plain(bad.json()['detail']), bad.text)
+        check(ts.page_roles() == before, 'a negative region changes nothing')
+
+        r = c.post('/api/house/editor/place/pages/move', headers=PARENT,
+                   json={'source': sheets, 'page': 1, 'part': 'garage', 'region': 1})
+        check(r.status_code == 200, r.text)
+        second = {**original[1], 'building': 'garage'}
+        check(r.json()['page_roles'] == [second], r.json())
+        check(_rows_for(ts.page_roles(), sheets, 1) == [original[0], second],
+              ('region one moves only the second row', ts.page_roles()))
+
+        ts.set_page_roles(original)
+        r = c.post('/api/house/editor/place/pages/move', headers=PARENT,
+                   json={'source': sheets, 'page': 1, 'part': 'garage'})
+        check(r.status_code == 200, r.text)
+        expected = [{**row, 'building': 'garage'} for row in original]
+        check(r.json()['page_roles'] == expected, r.json())
+        check(_rows_for(ts.page_roles(), sheets, 1) == expected,
+              ('omitting region moves both rows', ts.page_roles()))
+
+
+def scenario_suggest_null_elsewhere():
+    _fresh()
+    _setup()
+    sheets = ts.save_source('drawing', 'house.pdf', engine_tests._pdf(1))
+    c = _client()
+    page = {'page': 1, 'role': 'floor', 'level': 'Main', 'box': None}
+    for elsewhere in (None, 7):
+        reader = SheetReader([{**page, 'elsewhere': elsewhere}])
+        with _enforced(), patch.object(twin_reads, 'read', reader):
+            r = c.post('/api/house/editor/sheets/suggest', headers=PARENT, json={'source': sheets})
+        check(r.status_code == 200, (elsewhere, r.text))
+        check(r.json()['rows'] == [{**page, 'source': sheets, 'building': 'house'}],
+              ('the row stays without elsewhere or a hint', elsewhere, r.json()))
+        check(len(reader.calls) == 1 and ts.page_roles() == [],
+              'suggestions read once and stay unsaved')
+
+    # Problems in required fields must still refuse the suggestion.
+    reader = SheetReader([{**page, 'role': 'attic', 'elsewhere': 7}])
+    with _enforced(), patch.object(twin_reads, 'read', reader):
+        bad = c.post('/api/house/editor/sheets/suggest', headers=PARENT, json={'source': sheets})
+    check(bad.status_code == 400 and _plain(bad.json()['detail']), bad.text)
+    check(ts.page_roles() == [], 'a refused suggestion saves nothing')
+
+
 def scenario_suggest_hint():
     _fresh()
     _setup()
@@ -532,6 +593,8 @@ if __name__ == '__main__':
                scenario_upload_with_part,
                scenario_photo_parts_route,
                scenario_move_page_route,
+               scenario_move_region_route,
+               scenario_suggest_null_elsewhere,
                scenario_suggest_hint):
         try:
             fn()

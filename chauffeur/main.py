@@ -7609,6 +7609,8 @@ def _house_editor_suggest_roles(body):
         raise HTTPException(status_code=400, detail='The suggested pages could not be read. Set their roles by hand.')
     fragment, problems = twin_reads.parse('sheet_roles', result)
     rows = fragment.get('pages', [])
+    # An invalid optional hint must not discard an otherwise usable paid read.
+    problems = [problem for problem in problems if not problem.partition(':')[0].endswith('.elsewhere')]
     if problems or any(row['page'] > source['pages'] for row in rows):
         raise HTTPException(status_code=400, detail='The suggested pages could not be read. Set their roles by hand.')
     allowed_roles = twin_place.LOT_ROLES if part_id == twin_place.LOT else twin_place.BUILDING_ROLES

@@ -213,6 +213,9 @@ def scenario_sheet_roles_elsewhere():
     frag, problems = twin_reads.parse('sheet_roles', {'pages': [page]})
     check(problems == [] and frag['pages'] == [page], (frag, problems))
     check(frag['pages'][0]['role'] == 'survey' and frag['pages'][0]['elsewhere'] == 'garage', frag)
+    frag, problems = twin_reads.parse('sheet_roles', {'pages': [{**page, 'elsewhere': None}]})
+    check(problems == [] and frag['pages'] == [{k: v for k, v in page.items() if k != 'elsewhere'}],
+          ('null elsewhere is absent, with no problem or output key', frag, problems))
     for role in ('floor', 'roof', 'plot', 'survey', 'landscape', 'elevation', 'other'):
         frag, problems = twin_reads.parse('sheet_roles', {'pages': [{'page': 1, 'role': role, 'level': None,
                                                                      'box': None}]})
