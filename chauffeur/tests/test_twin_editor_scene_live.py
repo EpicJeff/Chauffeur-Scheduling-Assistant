@@ -174,6 +174,71 @@ def scenario_no_transmission_and_hooks_need_the_test_flag():
     check(not p0view._unexpected(s.errors()), s.errors())
 
 
+OWNED_GABLE = {
+    'schema': 'chauffeur.twin.plan/2', 'units': 'ft', 'materials': {}, 'site': {'lot': [[-20, -20], [50, -20], [50, 40], [-20, 40]]},
+    'buildings': [{'id': 'shed', 'name': 'Shed', 'position': [0, 0], 'rotation': 0, 'base': 0,
+                   'levels': [{'id': 'L1', 'name': 'Ground', 'elevation': 0, 'ceiling': 9}],
+                   'walls': [{'id': 'w-front', 'level': 'L1', 'from': [0, 0], 'to': [30, 0], 'height': 9, 'thickness': 0.5, 'exterior': True},
+                             {'id': 'w-right', 'level': 'L1', 'from': [30, 0], 'to': [30, 20], 'height': 9, 'thickness': 0.5, 'exterior': True},
+                             {'id': 'w-rear', 'level': 'L1', 'from': [30, 20], 'to': [0, 20], 'height': 9, 'thickness': 0.5, 'exterior': True},
+                             {'id': 'w-left', 'level': 'L1', 'from': [0, 20], 'to': [0, 0], 'height': 9, 'thickness': 0.5, 'exterior': True}],
+                   'openings': [], 'rooms': [], 'stairs': [],
+                   'roof': {'sections': [{'id': 'r1', 'kind': 'gable', 'rect': [0, 0, 30, 20], 'ridge': 'x',
+                                          'pitch': 12, 'plate': 9, 'overhang': 0}], 'extensions': []}}]}
+
+
+def scenario_ids_are_per_building_in_the_scene():
+    # Review finding: the registry was keyed by bare id, but ids are unique per building only.
+    s = _serve()
+    if s is None:
+        return
+    with s.browser(launch_args=GPU_ARGS) as page:
+        _open(page, s)
+        a = page.evaluate("() => window.__twin.worldBox('opening-1', 'house')")
+        b = page.evaluate("() => window.__twin.worldBox('opening-1', 'pool_house')")
+        check(a and b and a != b, (a, b))
+        check(page.evaluate("() => window.__twin.worldBox('opening-1')") is None, 'an ambiguous bare id resolves to nothing')
+        ids = page.evaluate("() => window.__twin.pieceIds('pool_house')")
+        check(not ({'light', 'fixture', 'stair'} & {i.split(':')[-1] for i in ids}), ids[:20])
+        check(len([i for i in ids if i.startswith('light')]) >= 7, 'one piece per light, not one for all')
+
+
+def scenario_a_ghost_costs_at_most_two_draw_calls():
+    s = _serve()
+    if s is None:
+        return
+    with s.browser(launch_args=GPU_ARGS) as page:
+        _open(page, s)
+        g = page.evaluate("() => window.__twin.pieceInfo('wall-ghost-1', 'house')")
+        check(g['drawCalls'] <= 2 and g['polygonOffset'] is True, g)
+
+
+def scenario_a_wall_that_owns_a_gable_rises_to_the_roof():
+    s = _serve()
+    if s is None:
+        return
+    with s.browser(launch_args=GPU_ARGS) as page:
+        _open(page, s)
+        page.evaluate("(plan) => window.__twin.rebuild(plan)", OWNED_GABLE)
+        left = page.evaluate("() => window.__twin.worldBox('w-left', 'shed')")
+        front = page.evaluate("() => window.__twin.worldBox('w-front', 'shed')")
+        check(left['max'][2] > 18.5, f'the gable end wall fills the gable: {left}')
+        check(front['max'][2] < 9.5, f'an eave wall stops at its height: {front}')
+
+
+def scenario_secondary_gables_get_no_ground_posts():
+    # Review finding: P0's gable trim (corner posts from the ground to the plate)
+    # was drawn for every exposed gable, so an upper front gable sprouted posts
+    # through both floors.
+    s = _serve()
+    if s is None:
+        return
+    with s.browser(launch_args=GPU_ARGS) as page:
+        _open(page, s)
+        box = page.evaluate("() => window.__twin.worldBox('r-front-gable', 'house')")
+        check(box['min'][2] > 10, box)
+
+
 if __name__ == '__main__':
     for fn in (scenario_roof_sections_draw_on_the_envelope,
                scenario_ghosts_are_translucent_and_unmerged,
@@ -181,6 +246,10 @@ if __name__ == '__main__':
                scenario_rotation_turns_the_building,
                scenario_level_keys_are_namespaced_per_building,
                scenario_sheet_underlay_sits_on_its_level,
-               scenario_no_transmission_and_hooks_need_the_test_flag):
+               scenario_no_transmission_and_hooks_need_the_test_flag,
+               scenario_ids_are_per_building_in_the_scene,
+               scenario_a_ghost_costs_at_most_two_draw_calls,
+               scenario_a_wall_that_owns_a_gable_rises_to_the_roof,
+               scenario_secondary_gables_get_no_ground_posts):
         fn()
         print('  ok ', fn.__name__)

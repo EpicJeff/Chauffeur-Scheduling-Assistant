@@ -119,9 +119,54 @@ function footprints(walls) {
   return out;
 }
 
+// One render mesh and one dashed line per ghost, even when wall openings or
+// roof seams split it into many primitives. Domain index ranges retain floor
+// and full/cut gable visibility without splitting the ghost into more draws.
+function batchGhost(root, objects, material, edgeMaterial) {
+  const sources = objects.slice(), geometries = [], edges = [], domains = new Map();
+  let vertex = 0, edgeVertex = 0;
+  for (const source of sources) {
+    const geometry = source.geometry.index ? source.geometry.toNonIndexed() : source.geometry.clone();
+    geometry.clearGroups();
+    const edge = new THREE.EdgesGeometry(source.geometry);
+    geometries.push(geometry); edges.push(edge);
+    if (!domains.has(source.parent)) domains.set(source.parent, { faces: [], edges: [] });
+    const domain = domains.get(source.parent);
+    for (let i = 0; i < geometry.attributes.position.count; i++) domain.faces.push(vertex++);
+    for (let i = 0; i < edge.attributes.position.count; i++) domain.edges.push(edgeVertex++);
+  }
+  const geometry = mergeGeometries(geometries), edgeGeometry = mergeGeometries(edges);
+  geometries.forEach(g => g.dispose()); edges.forEach(g => g.dispose());
+  const group = new THREE.Group(), parent = sources[0].parent;
+  group.position.copy(parent.position); group.quaternion.copy(parent.quaternion); root.add(group);
+  const mesh = addMesh(group, geometry, material), line = new THREE.LineSegments(edgeGeometry, edgeMaterial);
+  Object.assign(mesh.userData, sources[0].userData); Object.assign(line.userData, mesh.userData);
+  line.computeLineDistances(); group.add(line);
+  // Retain the GPU index buffers when changing floors or gable cutaways.
+  geometry.setIndex(new THREE.Uint32BufferAttribute(new Uint32Array(vertex), 1));
+  edgeGeometry.setIndex(new THREE.Uint32BufferAttribute(new Uint32Array(edgeVertex), 1));
+  sources.forEach(o => { o.removeFromParent(); o.geometry.dispose(); });
+  objects.splice(0, objects.length, mesh, line);
+  let previous = null;
+  return () => {
+    const shown = [...domains].filter(([domain]) => {
+      for (let o = domain; o; o = o.parent) if (!o.visible) return false;
+      return true;
+    });
+    const signature = shown.map(([domain]) => domain.uuid).join(':');
+    if (signature === previous) return;
+    previous = signature; group.visible = shown.length > 0;
+    for (const [target, key] of [[geometry, 'faces'], [edgeGeometry, 'edges']]) {
+      let count = 0;
+      for (const [, ranges] of shown) { target.index.array.set(ranges[key], count); count += ranges[key].length; }
+      target.index.needsUpdate = true; target.setDrawRange(0, count);
+    }
+  };
+}
+
 export function buildTwin(plan, kit, tier) {
   const root = new THREE.Group(); root.scale.setScalar(FT);
-  const pieces = new Map(), pieceBounds = new Map(), pickObjects = [], roofSurfaces = new Map(), mergeGroups = [];
+  const pieces = new Map(), pieceBounds = new Map(), pickObjects = new Map(), roofSurfaces = new Map(), mergeGroups = [], ghostBatches = [];
   const groups = { site: new THREE.Group(), roof: new THREE.Group(), gableFull: new THREE.Group(), gableCut: new THREE.Group(), lights: new THREE.Group(), levels: {} };
   for (const [id, group] of Object.entries(groups)) if (group.isGroup) { group.name = id; root.add(group); }
   const materialKit = { ...kit, materials: { ...kit.materials } };
@@ -144,7 +189,7 @@ export function buildTwin(plan, kit, tier) {
   };
   const glass = plain('glass', '#b9d7db', { transparent: true, opacity: 0.26, roughness: 0.1, depthWrite: false });
   const fixture = plain('fixture', '#fff4e0', { emissive: '#ffd59a', emissiveIntensity: 0 });
-  const ghost = plain('ghost', '#38bdf8', { opacity: 0.35, transparent: true, depthWrite: false });
+  const ghost = plain('ghost', '#38bdf8', { opacity: 0.35, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
   const ghostEdges = new THREE.LineDashedMaterial({ color: '#38bdf8', dashSize: 0.4, gapSize: 0.25, transparent: true, opacity: 0.8, depthWrite: false });
   const pickMaterial = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
   const roomLights = [], levelElevations = {};
@@ -175,33 +220,30 @@ export function buildTwin(plan, kit, tier) {
     const envelope = roofMesh(sections);
     let activePiece = null;
     const records = new Map();
-    const use = (piece, kind, fallback) => { activePiece = { pieceId: piece.id || `${b.id}:${fallback}`, kind, buildingId: b.id, ghost: piece.state === 'ghost' }; };
+    const use = (piece, kind, fallback) => { activePiece = { pieceId: piece.id || fallback, kind, buildingId: b.id, ghost: piece.state === 'ghost' }; };
     const mesh = (group, geometry, material) => {
-      const data = activePiece || { pieceId: `${b.id}:structure`, kind: 'building', buildingId: b.id };
+      const data = activePiece || { pieceId: 'structure', kind: 'building', buildingId: b.id };
+      const key = `${b.id}:${data.pieceId}`;
       const object = addMesh(group, geometry, data.ghost ? ghost : material);
       Object.assign(object.userData, data);
-      if (!pieces.has(data.pieceId)) pieces.set(data.pieceId, []);
-      const objects = pieces.get(data.pieceId); objects.push(object);
+      if (!pieces.has(key)) pieces.set(key, []);
+      const objects = pieces.get(key); objects.push(object);
       // Non-enumerable: this back-reference is used only while merging.
       Object.defineProperty(object.userData, 'pieceObjects', { value: objects });
-      if (!records.has(data.pieceId)) records.set(data.pieceId, { data, group, box: new THREE.Box3() });
-      geometry.computeBoundingBox(); records.get(data.pieceId).box.union(geometry.boundingBox);
-      if (data.ghost) {
-        const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geometry), ghostEdges);
-        Object.assign(edges.userData, data); edges.computeLineDistances(); group.add(edges);
-      }
+      if (!records.has(key)) records.set(key, { data, group, box: new THREE.Box3() });
+      geometry.computeBoundingBox(); records.get(key).box.union(geometry.boundingBox);
       return object;
     };
     const center = b.walls.length ? b.walls.reduce((a, w) => [a[0] + w.from[0] / b.walls.length, a[1] + w.from[1] / b.walls.length], [0, 0]) : [0, 0];
     const roofHeight = (x, y) => heightAt(sections, x, y) ?? Infinity;
-    function wall(group, from, to, elevation, thickness, top, holes, exterior, role = null) {
+    function wall(group, from, to, elevation, thickness, top, holes, exterior, role = null, clipRoof = true) {
       const { matrix, length, z } = wallBasis(from, to, elevation);
       if (!length) return;
       const samples = Array.from({ length: 17 }, (_, i) => length * i / 16);
       // Include every envelope face boundary crossed by this wall. Uniform
       // samples alone can bridge a narrow valley and put siding above it.
       const dx = to[0] - from[0], dy = to[1] - from[1], positions = envelope.positions;
-      for (let i = 0; i < positions.length; i += 9) for (let j = 0; j < 3; j++) {
+      for (let i = 0; clipRoof && i < positions.length; i += 9) for (let j = 0; j < 3; j++) {
         const a = i + j * 3, c = i + ((j + 1) % 3) * 3;
         const ex = positions[c] - positions[a], ey = positions[c + 1] - positions[a + 1], denominator = dx * ey - dy * ex;
         if (Math.abs(denominator) < 1e-8) continue;
@@ -268,13 +310,37 @@ export function buildTwin(plan, kit, tier) {
       activePiece = wallPiece;
     }
     const opening = (o, at = o.at) => ({ ...o, u0: at - o.width / 2, u1: at + o.width / 2, v0: o.sill, v1: o.head });
+    const ownsGable = (w, section, end) => {
+      const axis = section.ridge === 'y' ? 1 : 0, other = 1 - axis;
+      return w.state !== 'ghost' && w.level === ordered.at(-1).id &&
+        Math.abs(w.from[axis] - end) < 1e-4 && Math.abs(w.to[axis] - end) < 1e-4 &&
+        Math.max(w.from[other], w.to[other]) > section.rect[other] && Math.min(w.from[other], w.to[other]) < section.rect[other + 2];
+    };
     for (const w of b.walls) {
       const l = levels[w.level]; if (!l) continue;
       use(w, 'wall', w.id);
       const length = Math.hypot(w.to[0] - w.from[0], w.to[1] - w.from[1]);
-      const top = u => Math.min(w.height, w.level === first.id ? Infinity : roofHeight(w.from[0] + (w.to[0] - w.from[0]) * u / length, w.from[1] + (w.to[1] - w.from[1]) * u / length) - l.elevation - 0.08);
-      wall(local[w.level], w.from, w.to, l.elevation, w.thickness, top, (b.openings || []).filter(o => o.wall === w.id).map(o => opening(o)), w.exterior);
-      if (w.exterior && l.elevation > 0 && w.level === first.id) wall(local[w.level], w.from, w.to, 0, w.thickness + 0.12, () => l.elevation, [], false, 'base');
+      const gables = sections.filter(s => s.kind === 'gable').flatMap(section => {
+        const axis = section.ridge === 'y' ? 1 : 0;
+        return [section.rect[axis], section.rect[axis + 2]].filter(end => ownsGable(w, section, end)).map(end => ({ section, end, axis }));
+      });
+      const clipRoof = gables.length > 0 || w.level !== first.id;
+      const top = u => {
+        const height = clipRoof ? roofHeight(w.from[0] + (w.to[0] - w.from[0]) * u / length, w.from[1] + (w.to[1] - w.from[1]) * u / length) - l.elevation - 0.08 : Infinity;
+        return gables.length && Number.isFinite(height) ? height : Math.min(w.height, height);
+      };
+      const holes = (b.openings || []).filter(o => o.wall === w.id).map(o => opening(o));
+      for (const { section, end, axis } of gables) for (const o of b.openings || []) {
+        if (o.section !== section.id || o.gable !== (end === section.rect[axis] ? 'front' : 'rear')) continue;
+        // Gable sill/head are relative to the plate. Project its span onto
+        // the owning wall, including reversed and partial wall segments.
+        const other = 1 - axis, direction = (w.to[other] - w.from[other]) / length;
+        const at = (o.x - w.from[other]) / direction;
+        if (at + o.width / 2 <= 0 || at - o.width / 2 >= length) continue;
+        holes.push(opening({ ...o, sill: o.sill + section.plate - l.elevation, head: o.head + section.plate - l.elevation }, at));
+      }
+      wall(local[w.level], w.from, w.to, l.elevation, w.thickness, top, holes, w.exterior, null, clipRoof);
+      if (w.exterior && l.elevation > 0 && w.level === first.id) wall(local[w.level], w.from, w.to, 0, w.thickness + 0.12, () => l.elevation, [], false, 'base', false);
     }
     const roofGeometry = positions => {
       const geometry = new THREE.BufferGeometry(), mapped = [], uv = [];
@@ -324,21 +390,19 @@ export function buildTwin(plan, kit, tier) {
     }
     for (const gable of envelope.gables) {
       const section = sections[gable.section], [x0, y0, x1, y1] = section.rect;
-      const alongX = section.ridge !== 'y', topLevel = ordered.at(-1);
+      const alongX = section.ridge !== 'y';
       use(section, 'roof', `roof:${gable.section}`);
       for (const end of (alongX ? [x0, x1] : [y0, y1])) {
-        const axis = alongX ? 0 : 1, other = 1 - axis;
+        const axis = alongX ? 0 : 1;
         // Walls own gable fill wherever a top-level wall already follows it.
-        const owned = b.walls.some(w => w.level === topLevel.id &&
-          Math.abs(w.from[axis] - end) < 0.75 && Math.abs(w.to[axis] - end) < 0.75 &&
-          Math.max(w.from[other], w.to[other]) > section.rect[other] && Math.min(w.from[other], w.to[other]) < section.rect[other + 2]);
+        const owned = b.walls.some(w => ownsGable(w, section, end));
         if (owned) continue;
         const endPositions = [];
         for (let i = 0; i < gable.positions.length; i += 9) if (Math.abs(gable.positions[i + axis] - end) < 1e-4) endPositions.push(...gable.positions.slice(i, i + 9));
         if (!endPositions.length) continue;
         const front = end === (alongX ? x0 : y0);
         // Retain P0's gable plate and corner trim on the supporting floor.
-        if (!alongX) {
+        if (!alongX && section.id === 'roof-main' && b.roof?.extensions?.some(e => e.section === section.id && ['shed_continuation', 'awning'].includes(e.kind))) {
           mesh(local[first.id], boxRect(x0 - 0.35, end - 0.35, x1 + 0.35, end + 0.35, section.plate - 0.65, section.plate), mat('trim'));
           for (const x of [x0, x1]) mesh(local[first.id], boxRect(x - 0.3, end - 0.3, x + 0.3, end + 0.3, first.elevation, section.plate - 0.65), mat('trim'));
         }
@@ -370,9 +434,9 @@ export function buildTwin(plan, kit, tier) {
         }
       }
     }
-    for (const [index, extension] of (b.roof?.extensions || []).entries()) {
+    for (const extension of b.roof?.extensions || []) {
       const section = sections.find(s => s.id === extension.section); if (!section) continue;
-      use(section, 'roof', `roof:${index}`);
+      use(section, 'roof', `roof:${sections.indexOf(section)}`);
       const [x0, y0, x1, y1] = section.rect, oh = section.overhang || 0;
       const roofPlane = (a, c, start, end) => {
         const angle = Math.atan2(c[1] - a[1], c[0] - a[0]), length = Math.hypot(c[0] - a[0], c[1] - a[1]);
@@ -393,7 +457,7 @@ export function buildTwin(plan, kit, tier) {
     }
     const outlines = footprints(b.walls.filter(w => w.level === first.id));
     for (const l of ordered) {
-      use({ ...l, id: `${b.id}:floor:${l.id}` }, 'floor', `floor:${l.id}`);
+      use({ ...l, id: `floor:${l.id}` }, 'floor', `floor:${l.id}`);
       const polys = outlines.length ? outlines : (b.rooms || []).filter(r => r.level === l.id).map(r => r.polygon);
       const holes = (b.stairs || []).filter(s => s.rise_to >= l.elevation && l.elevation > first.elevation).map(s => {
         const dx = s.to[0] - s.from[0], dy = s.to[1] - s.from[1], length = Math.hypot(dx, dy), nx = -dy / length * s.width / 2, ny = dx / length * s.width / 2;
@@ -427,16 +491,16 @@ export function buildTwin(plan, kit, tier) {
         }
       }
     }
-    for (const s of b.stairs || []) {
-      use(s, 'stair', 'stair');
+    for (const [index, s] of (b.stairs || []).entries()) {
+      use(s, 'stair', `stair:${index}`);
       const l = levels[s.level] || first, dx = s.to[0] - s.from[0], dy = s.to[1] - s.from[1], length = Math.hypot(dx, dy), angle = Math.atan2(dy, dx);
       for (let i = 0; i < s.risers; i++) {
         const run = length / s.risers, height = (s.rise_to - l.elevation) * (i + 1) / s.risers;
         mesh(local[l.id], boxGeometry(run, height, s.width).rotateY(angle).translate(s.from[0] + dx * (i + 0.5) / s.risers, l.elevation + height / 2, -s.from[1] - dy * (i + 0.5) / s.risers), mat('floor'));
       }
     }
-    for (const f of b.fixtures || []) {
-      use(f, 'fixture', 'fixture');
+    for (const [index, f] of (b.fixtures || []).entries()) {
+      use(f, 'fixture', `fixture:${index}`);
       const l = levels[f.level]; if (!l || !f.rect) continue;
       const g = local[l.id], [x0, y0, x1, y1] = f.rect, z = l.elevation + (f.z0 || 0), h = f.height || 1;
       const box = (a, c, d, e, lo, hi, m) => mesh(g, boxRect(a, c, d, e, lo, hi), m);
@@ -457,8 +521,8 @@ export function buildTwin(plan, kit, tier) {
         box(x0, y0, x1, y1, z, z + h, m);
       }
     }
-    for (const l of b.lights || []) {
-      use(l, 'light', 'light');
+    for (const [index, l] of (b.lights || []).entries()) {
+      use(l, 'light', `light:${index}`);
       const level = levels[l.level] || first;
       const y = l.room === 'Porch' ? level.elevation + level.ceiling - 2 : Math.min(level.elevation + level.ceiling - 0.25, roofHeight(...l.at) - 0.5);
       const size = l.kind === 'recessed' ? 0.6 : 1.4;
@@ -470,9 +534,9 @@ export function buildTwin(plan, kit, tier) {
     }
     // Proxies retain identity after settled render meshes are merged. Their
     // layer is never enabled on a rendering camera (including shadow cameras).
-    for (const { data, group, box } of records.values()) {
+    for (const [key, { data, group, box }] of records) {
       if (box.isEmpty()) continue;
-      pieceBounds.set(data.pieceId, { box: box.clone(), group });
+      pieceBounds.set(key, { box: box.clone(), group, data });
       const size = box.getSize(new THREE.Vector3()), center = box.getCenter(new THREE.Vector3());
       const wall = b.walls.find(w => w.id === data.pieceId);
       let geometry;
@@ -480,20 +544,23 @@ export function buildTwin(plan, kit, tier) {
         const basis = wallBasis(wall.from, wall.to, box.min.y);
         geometry = boxGeometry(basis.length, size.y, wall.thickness + 0.2).translate(basis.length / 2, size.y / 2, 0).applyMatrix4(basis.matrix);
       } else if (data.kind === 'roof') {
-        const index = sections.findIndex(s => s.id === data.pieceId), positions = [];
+        const index = sections.findIndex((s, i) => (s.id || `roof:${i}`) === data.pieceId), positions = [];
         for (let t = 0; t < envelope.section.length; t++) if (envelope.section[t] === index) positions.push(...envelope.positions.slice(t * 9, t * 9 + 9));
         geometry = roofGeometry(positions);
       } else geometry = boxGeometry(Math.max(0.01, size.x), Math.max(0.01, size.y), Math.max(0.01, size.z)).translate(...center.toArray());
       const proxy = new THREE.Mesh(geometry, pickMaterial);
       Object.assign(proxy.userData, data); proxy.layers.set(PICK_LAYER);
-      group.add(proxy); pickObjects.push(proxy);
+      group.add(proxy); pickObjects.set(key, proxy);
     }
+    for (const [key, { data }] of records) if (data.ghost) ghostBatches.push(batchGhost(root, pieces.get(key), ghost, ghostEdges));
   }
   // Merge within independently switchable domains, never across a floor cut.
   for (const g of mergeGroups) mergeStatic(g);
   groups.gableCut.visible = false;
+  const updateGhosts = () => ghostBatches.forEach(update => update());
+  updateGhosts();
   const ready = Promise.all([...materials.values()].map(m => m.userData.ready));
   // These two shared materials may have no objects in a settled-only plan.
   materials.set('ghostEdges', ghostEdges); materials.set('pick', pickMaterial);
-  return { root, groups, pieces, pieceBounds, pickObjects, roofSurfaces, roomLights, levelElevations, materials, ready };
+  return { root, groups, pieces, pieceBounds, pickObjects, roofSurfaces, roomLights, levelElevations, materials, ready, updateGhosts };
 }
