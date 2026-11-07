@@ -1,6 +1,8 @@
 import json
 import urllib.request
 import urllib.error
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import List, Tuple, Dict
 from models.schemas import Rule, PriorityRule
 from services import budget_guard, llm_budget
@@ -11,6 +13,84 @@ OPENAI_URL = 'https://api.openai.com/v1/responses'
 OPENAI_MODELS_URL = 'https://api.openai.com/v1/models'
 DEFAULT_MAX_OUTPUT = 8192
 _EFFORT = {'low': 'low', 'medium': 'medium', 'high': 'high'}
+_usage_collectors = ContextVar('llm_usage_collectors', default=())
+_usage_request = ContextVar('llm_usage_request', default=None)
+
+
+@contextmanager
+def collect_usage(before=None, after=None):
+    """Gate and collect each call_model HTTP attempt in this context.
+
+    Nested collectors all receive rows. A rejected gate produces no row;
+    after(row) runs for successful requests and transport failures alike.
+    """
+    rows = []
+    token = _usage_collectors.set(_usage_collectors.get() + ((rows, before, after),))
+    try:
+        yield rows
+    finally:
+        _usage_collectors.reset(token)
+
+
+class _UsageHookError(Exception):
+    """Carry callback exceptions through the provider error handlers intact."""
+
+
+def _request_json(req, timeout_s):
+    collectors = _usage_collectors.get()
+    request = _usage_request.get()
+    if not collectors or request is None:
+        with llm_budget.urlopen(req, timeout=timeout_s) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+
+    provider, inputs = request
+    for _, before, _ in collectors:
+        if before is not None:
+            try:
+                before()
+            except Exception as exc:
+                raise _UsageHookError() from exc
+    row = dict(inputs, input_tokens=None, output_tokens=None)
+    dispatched = True
+    try:
+        with llm_budget.urlopen(req, timeout=timeout_s) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+        if provider == 'gemini':
+            usage = data.get('usageMetadata') or {}
+            row['input_tokens'] = usage.get('promptTokenCount')
+            output = usage.get('candidatesTokenCount')
+            thoughts = usage.get('thoughtsTokenCount')
+            if output is not None or thoughts is not None:
+                row['output_tokens'] = (output or 0) + (thoughts or 0)
+        elif provider in ('anthropic', 'openai'):
+            usage = data.get('usage') or {}
+            row['input_tokens'] = usage.get('input_tokens')
+            row['output_tokens'] = usage.get('output_tokens')
+        elif provider == 'ollama':
+            row['input_tokens'] = data.get('prompt_eval_count')
+            row['output_tokens'] = data.get('eval_count')
+        return data
+    except llm_budget.Deferred:
+        # Local admission failures did not reach the provider.
+        dispatched = False
+        raise
+    finally:
+        if dispatched:
+            # Populate every collector before invoking user callbacks, and run
+            # every after hook even if one fails (accounting must not be lost).
+            deliveries = [(rows, after, row.copy()) for rows, _, after in collectors]
+            for rows, _, collected in deliveries:
+                rows.append(collected)
+            hook_error = None
+            for _, after, collected in deliveries:
+                if after is not None:
+                    try:
+                        after(collected)
+                    except Exception as exc:
+                        if hook_error is None:
+                            hook_error = exc
+            if hook_error is not None:
+                raise _UsageHookError() from hook_error
 
 
 def effort_for(bare_model: str, thinking_level, is_pro: bool) -> str:
@@ -29,8 +109,7 @@ def _send_with_retries(req, timeout_s, transient_retries, model, label, metrics)
     try:
         for attempt in range(transient_retries + 1):
             try:
-                with llm_budget.urlopen(req, timeout=timeout_s) as resp:
-                    return json.loads(resp.read().decode('utf-8'))
+                return _request_json(req, timeout_s)
             except urllib.error.HTTPError as e:
                 if e.code in (500, 502, 503, 504) and attempt < transient_retries:
                     import time
@@ -40,7 +119,7 @@ def _send_with_retries(req, timeout_s, transient_retries, model, label, metrics)
                     time.sleep(wait_s)
                     continue
                 raise
-    except llm_budget.Deferred:
+    except (llm_budget.Deferred, _UsageHookError):
         raise
     except urllib.error.HTTPError as e:
         error_body = e.read().decode('utf-8')
@@ -146,7 +225,20 @@ def call_model(model_id: str, api_key: str, system_prompt: str, user_prompt: str
     budget_guard.charge()
     from services import model_pools
     prov, bare = model_pools.split_model(model_id)
-    return _call_llm_json(prov, '', api_key, bare, system_prompt, user_prompt, text=text, **kw)
+    if not _usage_collectors.get():
+        return _call_llm_json(prov, '', api_key, bare, system_prompt, user_prompt, text=text, **kw)
+    token = _usage_request.set((prov, {
+        'model': model_id,
+        'images': len(kw.get('images') or []),
+        'prompt_chars': len(system_prompt) + len(user_prompt),
+        'max_output_tokens': kw.get('max_output_tokens') if kw.get('max_output_tokens') is not None else 0,
+    }))
+    try:
+        return _call_llm_json(prov, '', api_key, bare, system_prompt, user_prompt, text=text, **kw)
+    except _UsageHookError as exc:
+        raise exc.__cause__ from None
+    finally:
+        _usage_request.reset(token)
 
 
 def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.1, tools: list = None, timeout_s: int = 180, images: list = None, metrics: dict = None, max_output_tokens: int = None, transient_retries: int = 2, thinking_level: str = None, strict_json: bool = False, response_schema: dict = None, use_system_instruction: bool = False, text: bool = False) -> dict:
@@ -186,24 +278,25 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
                 headers={"Content-Type": "application/json"},
                 method="POST"
             )
-            with llm_budget.urlopen(req, timeout=timeout_s) as resp:
-                data = json.loads(resp.read().decode('utf-8'))
+            data = _request_json(req, timeout_s)
 
-                # Check if it returned a tool call
-                message = data.get('message', {})
-                if 'tool_calls' in message:
-                    tool_calls = []
-                    for tc in message['tool_calls']:
-                        if 'function' in tc:
-                            tool_calls.append({
-                                'name': tc['function']['name'],
-                                'arguments': tc['function']['arguments']
-                            })
-                    return {"tool_calls": tool_calls, "message": ""}
-                
-                raw_response = message.get('content', '')
-                if text:
-                    return {'text': raw_response.strip()}
+            # Check if it returned a tool call
+            message = data.get('message', {})
+            if 'tool_calls' in message:
+                tool_calls = []
+                for tc in message['tool_calls']:
+                    if 'function' in tc:
+                        tool_calls.append({
+                            'name': tc['function']['name'],
+                            'arguments': tc['function']['arguments']
+                        })
+                return {"tool_calls": tool_calls, "message": ""}
+
+            raw_response = message.get('content', '')
+            if text:
+                return {'text': raw_response.strip()}
+        except _UsageHookError:
+            raise
         except Exception as e:
             raise RuntimeError(f"Ollama request failed: {str(e)}")
             
@@ -259,8 +352,7 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
             data = None
             for attempt in range(transient_retries + 1):
                 try:
-                    with llm_budget.urlopen(req, timeout=timeout_s) as resp:
-                        data = json.loads(resp.read().decode('utf-8'))
+                    data = _request_json(req, timeout_s)
                     break
                 except urllib.error.HTTPError as e:
                     if e.code in (500, 502, 503, 504) and attempt < transient_retries:
@@ -303,7 +395,7 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
                     return {'text': raw_response.strip()}
             except (KeyError, IndexError, TypeError):
                 raise RuntimeError("Unexpected response format from Gemini API")
-        except llm_budget.Deferred:
+        except (llm_budget.Deferred, _UsageHookError):
             raise
         except urllib.error.HTTPError as e:
             error_body = e.read().decode('utf-8')
