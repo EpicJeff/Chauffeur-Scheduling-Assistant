@@ -265,6 +265,19 @@ def scenario_rotated_building_moves_its_beds():
             check(not _inside(item['at'], turned_footprint), f'planted inside the turned house: {item}')
 
 
+def scenario_compose_without_buildings():
+    # Slice 1b-i Task 4: a lot build composes a yard before any building exists.
+    p = _plan()
+    p['buildings'] = []
+    a, notes = tcm.compose(p, KIT, seed=1)
+    b, _ = tcm.compose(p, KIT, seed=1)
+    check(a == b, 'deterministic with no buildings')
+    check(a['buildings'] == [], 'composing never adds a building')
+    check(not _ours(a['site']['beds']), 'no foundation beds without walls')
+    trees = _ours(a['site']['planting'])
+    check(trees and all(_inside(t['at'], a['site']['lot']) for t in trees), ('the yard is planted on the lot', len(trees)))
+
+
 if __name__ == '__main__':
     for fn in (scenario_rotated_building_moves_its_beds,
                scenario_compose_is_deterministic,
@@ -277,6 +290,7 @@ if __name__ == '__main__':
                scenario_shrubs_sit_in_beds_in_odd_groups,
                scenario_nothing_lands_where_it_cannot,
                scenario_backdrop_lines_far_edges_only,
-               scenario_edges_follow_the_lawn):
+               scenario_edges_follow_the_lawn,
+               scenario_compose_without_buildings):
         fn()
         print('  ok ', fn.__name__)

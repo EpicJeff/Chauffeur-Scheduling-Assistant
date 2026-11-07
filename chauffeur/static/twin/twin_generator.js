@@ -169,19 +169,17 @@ export function buildTwin(plan, kit, tier) {
   const pieces = new Map(), pieceBounds = new Map(), pickObjects = new Map(), roofSurfaces = new Map(), mergeGroups = [], ghostBatches = [];
   const groups = { site: new THREE.Group(), roof: new THREE.Group(), gableFull: new THREE.Group(), gableCut: new THREE.Group(), lights: new THREE.Group(), levels: {} };
   for (const [id, group] of Object.entries(groups)) if (group.isGroup) { group.name = id; root.add(group); }
-  const materialKit = { ...kit, materials: { ...kit.materials } };
-  for (const [role, ref] of Object.entries(plan.materials || {})) {
-    const known = kit.manifest || window.twinManifest || {};
-    // Old normalized plans can carry semantic ids (wood_plank, mahogany).
-    // Resolve those through the role in the kit; actual asset ids win.
-    materialKit.materials[role] = { ...kit.materials?.[role], color: ref.color || kit.materials?.[role]?.color,
-      asset: known[ref.id] ? ref.id : kit.materials?.[role]?.asset };
-  }
-  const materials = new Map();
-  const mat = role => {
-    if (!materials.has(role)) materials.set(role, kitMaterial(role, materialKit, tier));
-    return materials.get(role);
+  const materialKitFor = refs => {
+    const materialKit = { ...kit, materials: { ...kit.materials } };
+    for (const [role, ref] of Object.entries(refs || {})) {
+      const known = kit.manifest || window.twinManifest || {};
+      // Semantic ids resolve through the kit's role; actual asset ids win.
+      materialKit.materials[role] = { ...kit.materials?.[role], color: ref.color || kit.materials?.[role]?.color,
+        asset: known[ref.id] ? ref.id : kit.materials?.[role]?.asset };
+    }
+    return materialKit;
   };
+  const materials = new Map();
   const plain = (name, color, extra = {}) => {
     const key = name + color;
     if (!materials.has(key)) materials.set(key, new THREE.MeshStandardMaterial({ name, color, roughness: 0.8, ...extra }));
@@ -194,6 +192,12 @@ export function buildTwin(plan, kit, tier) {
   const pickMaterial = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
   const roomLights = [], levelElevations = {};
   for (const b of plan.buildings || []) {
+    const materialKit = materialKitFor({ ...plan.materials, ...b.materials });
+    const mat = role => {
+      const key = Object.hasOwn(b.materials || {}, role) ? JSON.stringify([b.id, role]) : role;
+      if (!materials.has(key)) materials.set(key, kitMaterial(role, materialKit, tier));
+      return materials.get(key);
+    };
     const levels = Object.fromEntries(b.levels.map(l => [l.id, l]));
     const ordered = [...b.levels].sort((a, c) => a.elevation - c.elevation), first = ordered[0];
     if (!first) continue;
@@ -559,6 +563,8 @@ export function buildTwin(plan, kit, tier) {
   groups.gableCut.visible = false;
   const updateGhosts = () => ghostBatches.forEach(update => update());
   updateGhosts();
+  // The view's supplementary room meshes still use the plan's floor role.
+  if (plan.buildings?.length && !materials.has('floor')) materials.set('floor', kitMaterial('floor', materialKitFor(plan.materials), tier));
   const ready = Promise.all([...materials.values()].map(m => m.userData.ready));
   // These two shared materials may have no objects in a settled-only plan.
   materials.set('ghostEdges', ghostEdges); materials.set('pick', pickMaterial);

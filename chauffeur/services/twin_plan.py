@@ -1,7 +1,7 @@
 """Pure validation and normalization of the twin's source plan, in feet.
 
 Recoverable omissions and invalid items produce English notes. Only unsupported
-units or a plan without a usable building prevent normalization altogether.
+units or a plan without a usable building or lot prevent normalization altogether.
 """
 
 from copy import deepcopy
@@ -451,13 +451,13 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
         _rooms(building, levels, notes)
         _details(building, levels, notes)
         buildings.append(building)
-    if not buildings:
-        raise ValueError('Twin plan must contain at least one usable building.')
     site = raw.get('site')
     if 'site' in raw and not isinstance(site, dict):
         notes.append('Coerced invalid site to an empty object.')
     site = site if isinstance(site, dict) else {}
     _site(site, notes)
+    if not buildings and not _polygon(site.get('lot')):
+        raise ValueError('Twin plan must contain at least one usable building.')
     site.setdefault('fence', None)
     site['compose_overrides'] = _compose_overrides(site.get('compose_overrides'), notes)
     materials = raw.get('materials', {})
