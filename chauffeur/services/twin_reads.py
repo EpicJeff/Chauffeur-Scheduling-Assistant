@@ -20,8 +20,25 @@ from 0 to 1 within the supplied cropped image, never page or world coordinates.
 Boxes are [u0,v0,u1,v1]. Physical lengths are feet unless named thickness_in
 (inches); roof pitch is rise per 12. Context supplies settled pieces and IDs.
 The example numbers explain the schema; they are not evidence about this house.
-return only what the drawings show; omit what you cannot read
+Read only what the drawings show. For uncertain required fields, give the best
+reading with lower confidence and explain the uncertainty in why when available,
+rather than omitting required fields. Omit optional features that are absent.
 Return only the requested JSON fragment, with no prose or Markdown.
+"""
+_DIMENSION_RULES = """
+dimension.a and dimension.b (scale.a and scale.b for a plot) are the two endpoints
+of the drawn dimension line in crop coordinates; feet is its stated length in
+feet, not a coordinate or the distance between arbitrary footprint corners.
+Architect notation: 70'-0" means 70.0 ft; 65'-4" means 65.333 ft;
+150.20' means 150.2 ft. Convert inches to feet by dividing by 12.
+"""
+_FLOOR_RULES = """
+On a floor sheet, dashed lines show another floor and must never be traced as
+this floor's outline. In registration, return the dashed lower floor as
+lower_outline and the current upper floor as outline, both in this crop.
+A wing is the tight bounding box of one projecting mass of this floor's
+footprint, such as a garage or side wing. Boxes must not overlap more than
+needed; the whole house is not a wing unless its footprint is a plain rectangle.
 """
 _DIMENSION = '"dimension":{"a":[0.1,0.9],"b":[0.9,0.9],"feet":70.0}'
 _OUTLINE = '"outline":[[0.1,0.1],[0.9,0.1],[0.9,0.9],[0.1,0.9]]'
@@ -34,7 +51,8 @@ null; box is null for the full page. Return
 {"pages":[{"page":1,"role":"floor","level":"Main floor","box":null}]}.''',
     'outline': 'Read one floor footprint and a readable dimension to set scale. '
                'Trace the outline with at least three points; name visible wings. '
-               'Return {' + _DIMENSION + ',' + _OUTLINE + ',' + _WINGS
+               + _DIMENSION_RULES + _FLOOR_RULES
+               + 'Return {' + _DIMENSION + ',' + _OUTLINE + ',' + _WINGS
                + ',"confidence":0.8,"why":""}.',
     'walls': '''Read walls in the cropped region, using the settled outline in
 context. Return {"walls":[{"from":[0.1,0.1],"to":[0.9,0.1],
@@ -50,24 +68,35 @@ visible names; leave an unreadable name blank. Return
     'registration': 'Read this upper floor, its dimension and the lower-floor '
                     'outline visible on this sheet, using context to identify '
                     'the floors. Both outlines use this crop, not settled world '
-                    'coordinates. Return {' + _DIMENSION + ','
+                    'coordinates. ' + _DIMENSION_RULES + _FLOOR_RULES
+                    + 'Return {' + _DIMENSION + ','
                     '"lower_outline":[[0.1,0.1],[0.9,0.1],[0.9,0.9]],'
                     + _OUTLINE + ',' + _WINGS + ',"confidence":0.8,"why":""}.',
     'roof': 'Read the roof perimeter and individual sections. Section kind is '
-            'hip, gable or shed; ridge is x (image horizontal) or y (image '
-            'vertical); low_side is null except for shed, where it is '
-            'x0, x1, y0 or y1. Return {' + _OUTLINE + ',"sections":['
+            "hip, gable or shed. ridge 'x' means the ridge line runs along x "
+            "(image horizontal); ridge 'y' means it runs along y (image vertical). "
+            'low_side is null except for shed, where it names the eave edge '
+            'the shed slopes down toward: x0 = left edge of the section box, '
+            'x1 = right edge, y0 = top edge, y1 = bottom edge in image terms. '
+            'Return {' + _OUTLINE + ',"sections":['
             '{"kind":"hip","box":[0.1,0.1,0.9,0.9],"ridge":"x",'
             '"low_side":null}],"confidence":0.8}.',
     'pitch': '''Estimate pitches from photos for the section IDs in context.
 Do not invent section IDs. Pitch is numeric rise per 12. Return
 {"pitches":[{"section":"roof-3","pitch":8,"confidence":0.6,"why":""}]}.''',
     'plot': '''Read the plot's scale dimension, lot perimeter, buildings and
-street edge. street_edge contains two zero-based indices into lot. Return
+street edge. street_edge is two adjacent zero-based lot indices [i,j] naming
+the lot edge along the street (the last and first vertices are adjacent too).
+Identify it from street labels or the drawn road. The sheet may be rotated:
+the street may be on the right edge, not the bottom. Obtain scale from a drawn
+dimension or the printed scale, such as 1"=30'. When using a printed scale,
+choose a measurable line segment in the crop as scale.a/b and derive its feet
+from that scale, accounting for the drawing's printed size and scan resolution;
+do not treat crop fractions as paper inches. Return
 {"scale":{"a":[0.1,0.1],"b":[0.1,0.9],"feet":150.2},
 "lot":[[0.1,0.1],[0.9,0.1],[0.9,0.9],[0.1,0.9]],"street_edge":[0,1],
 "buildings":[{"name":"house","outline":[[0.3,0.3],[0.6,0.3],[0.6,0.6]]}],
-"confidence":0.8}.''',
+"confidence":0.8}.''' + _DIMENSION_RULES,
     'site': '''Read only visible site features; omit absent features. Do not
 invent planting or furnishings. Return {"pool":{"polygon":[[0.1,0.1],
 [0.3,0.1],[0.3,0.4]],"depth_ft":5},"hardscape":[{"kind":"patio",
@@ -310,15 +339,15 @@ def parse(kind, answer):
             parsed = v.fields(value, path, {'polygon': v.polygon}, {'depth_ft': positive})
         elif name == 'fire_pit':
             parsed = v.fields(value, path, {'at': v.point, 'radius_ft': positive})
-        else:  # street_edge indexes the original lot, never a shifted vertex.
+        else:  # Clamping keeps indices; dropping a vertex shifts them.
             parsed = None
             lot = answer.get('lot')
             if (isinstance(value, list) and len(value) == 2 and isinstance(lot, list)
                     and all(type(i) is int and 0 <= i < len(lot) for i in value)
-                    and value[0] != value[1] and out.get('lot') == lot):
+                    and value[0] != value[1] and len(out.get('lot', [])) == len(lot)):
                 parsed = list(value)
             else:
-                v.bad(path, 'expected two distinct indices into the unchanged lot')
+                v.bad(path, 'expected two distinct indices into a lot with no dropped vertices')
         if parsed is not None:
             out[name] = parsed
     for name, validate in (('confidence', confidence), ('why', v.text)):
@@ -348,8 +377,13 @@ def read(kind, images, context, *, run, step):
     """Make exactly one provider request, recording its usage even on failure."""
     if not isinstance(kind, str) or kind not in KINDS:
         return {'error': 'Unknown twin read kind.'}
-    settings = storage.get_settings()
-    _, key = model_pools.credentials('twin', settings)
+    try:
+        settings = storage.get_settings()
+        _, key = model_pools.credentials('twin', settings)
+    except twin_cost.CheckpointReached:
+        raise
+    except Exception as exc:
+        return {'error': str(exc)}
     if not key:
         return {'error': 'No model key is configured for twin reads.'}
     try:
@@ -375,4 +409,6 @@ def read(kind, images, context, *, run, step):
     fragment, problems = parse(kind, answer)
     if not _usable(kind, fragment, problems):
         return {'error': '; '.join(problems) or f'{kind} returned no usable fragment.'}
+    if problems:
+        fragment['problems'] = problems
     return fragment

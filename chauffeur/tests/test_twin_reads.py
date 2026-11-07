@@ -162,6 +162,50 @@ def scenario_finishes_prompt_moved_from_p0():
     check(twin_reads.PROMPTS['finishes'] == twin_draft.FINISHES_PROMPT, 'one finishes prompt, shared')
 
 
+def scenario_a_partial_read_reports_its_problems():
+    # Review finding: dropped items must not vanish silently; the engine turns them into ghost reasons.
+    _fresh()
+    answer = {'walls': [{'from': [0.1, 0.1], 'to': [1.4, 0.1], 'exterior': True},
+                        {'from': [0.1, 0.1], 'to': [0.9, 0.1], 'exterior': True}]}
+    with Pool(answer=answer):
+        out = twin_reads.read('walls', [img()], {}, run='r1', step='walls:L1:main')
+    check(len(out['walls']) == 1 and any('outside' in p for p in out['problems']), out)
+    with Pool(answer=fixture('walls')):
+        out = twin_reads.read('walls', [img()], {}, run='r1', step='walls:L1:main')
+    check('problems' not in out, 'a clean read carries no problems key')
+
+
+def scenario_checkpoint_inside_the_pool_call_is_recorded_once():
+    _fresh()
+    before = len(tc.entries())
+    with Pool(raises=tc.CheckpointReached(10.0, 10.2)):
+        try:
+            twin_reads.read('walls', [img()], {}, run='r', step='s')
+        except tc.CheckpointReached:
+            pass
+        else:
+            raise AssertionError('must propagate')
+    check(len(tc.entries()) == before + 1, 'the request that crossed it is still recorded once')
+
+
+def scenario_lot_on_the_crop_border_keeps_its_street_edge():
+    frag, problems = twin_reads.parse('plot', {**fixture('plot'),
+                                              'lot': [[0.0, 0.0], [1.03, 0.0], [1.03, 1.0], [0.0, 1.0]],
+                                              'street_edge': [1, 2]})
+    check(frag.get('street_edge') == [1, 2], (frag, problems))
+
+
+def scenario_prompts_define_the_terms_models_get_wrong():
+    p = twin_reads.PROMPTS
+    for kind in ('outline', 'registration', 'plot'):
+        check('dimension line' in p[kind] or 'scale' in p[kind], kind)
+    check("70'-0\"" in p['outline'] and 'endpoints' in p['outline'], 'architect notation and endpoints')
+    check('dashed' in p['outline'] and 'dashed' in p['registration'], 'dashed lines are another floor')
+    check('bounding box' in p['outline'], 'a wing box is a tight bounding box')
+    check('runs along' in p['roof'] and 'low_side' in p['roof'] and 'slopes down' in p['roof'], 'ridge and shed terms')
+    check('street' in p['plot'] and 'adjacent' in p['plot'], 'street_edge is two adjacent lot indices')
+
+
 if __name__ == '__main__':
     for fn in (scenario_kinds_and_output_caps_are_pinned,
                scenario_each_kind_parses_its_fixture,
@@ -172,6 +216,10 @@ if __name__ == '__main__':
                scenario_unparseable_answer_is_an_error_with_cost,
                scenario_checkpoint_propagates_before_spend,
                scenario_no_key_no_spend,
-               scenario_finishes_prompt_moved_from_p0):
+               scenario_finishes_prompt_moved_from_p0,
+               scenario_a_partial_read_reports_its_problems,
+               scenario_checkpoint_inside_the_pool_call_is_recorded_once,
+               scenario_lot_on_the_crop_border_keeps_its_street_edge,
+               scenario_prompts_define_the_terms_models_get_wrong):
         fn()
         print('  ok ', fn.__name__)
