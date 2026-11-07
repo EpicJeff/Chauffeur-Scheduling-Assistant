@@ -8,6 +8,7 @@ recovery of an interrupted build at app start.
 
 Run from chauffeur/:  python tests/test_house_editor_routes.py
 """
+import copy
 import io
 import json
 import os
@@ -44,6 +45,11 @@ EDITOR_API = [
     ('POST', '/api/house/editor/cost/reset'),
     ('GET', '/api/house/editor/state'),
     ('GET', '/api/house/twin/rounds/1'),
+    ('POST', '/api/house/editor/place/buildings'),
+    ('PATCH', '/api/house/editor/place/buildings/garage'),
+    ('DELETE', '/api/house/editor/place/buildings/garage'),
+    ('POST', '/api/house/editor/place/pages/move'),
+    ('PUT', '/api/house/editor/place/photos/abc'),
 ]
 
 
@@ -283,7 +289,234 @@ def scenario_twin_page_has_no_tools_sheet_but_links_to_the_editor():
     check('house/editor' not in panel, 'no editor link on a wall panel')
 
 
+# Slice 1b-i Task 2 (plan docs/superpowers/plans/2026-11-07-house-editor-slice-1b-i.md):
+# the place routes, uploads to a part, moving a page, tagging a photo and the
+# page hints on suggested roles.
+KIND_IDS = ['main_house', 'garage', 'adu', 'pool_house', 'shed', 'greenhouse', 'barn', 'studio', 'workshop',
+            'other']
+KIND_LABELS = ['Main house', 'Garage', 'ADU or guest house', 'Pool house', 'Shed', 'Greenhouse', 'Barn',
+               'Studio or office', 'Workshop', 'Other']
+PLACE_ROLES = {'building': ['floor', 'roof', 'elevation', 'other', 'skip'],
+               'lot': ['plot', 'survey', 'landscape', 'other', 'skip']}
+ROW_KEYS = ('source', 'page', 'role', 'level', 'box', 'building')
+
+
+def _plain(detail):
+    # Global constraint: errors that reach a person are plain sentences.
+    return isinstance(detail, str) and 0 < len(detail) <= 160 and not any(ch in detail for ch in '[]{}_=<>|')
+
+
+def _png():
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new('RGB', (64, 48), (120, 140, 160)).save(buf, format='PNG')
+    return buf.getvalue()
+
+
+class SheetReader:
+    """Stands in for twin_reads.read on the suggest route; records each call."""
+
+    def __init__(self, pages):
+        self.pages, self.calls = pages, []
+
+    def __call__(self, kind, images, context, *, run, step):
+        self.calls.append({'kind': kind, 'images': len(images), 'context': copy.deepcopy(context)})
+        return {'pages': copy.deepcopy(self.pages)}
+
+
+def _rows_for(rows, source, page):
+    return [row for row in rows if row['source'] == source and row['page'] == page]
+
+
+def scenario_place_crud():
+    _fresh()
+    _setup()
+    c = _client()
+    with _enforced():
+        r = c.post('/api/house/editor/place/buildings', headers=PARENT, json={'name': 'Garage', 'kind': 'garage'})
+        check(r.status_code == 200, r.text)
+        body = r.json()
+        b = body['building']
+        check(b['id'] == 'garage' and b['name'] == 'Garage' and b['kind'] == 'garage', body)
+        check(body['summary'] == 'Added Garage.', body)
+        check([x['id'] for x in ts.place()['buildings']] == ['garage'], ts.place())
+
+        dup = c.post('/api/house/editor/place/buildings', headers=PARENT, json={'name': 'Garage', 'kind': 'garage'})
+        check(dup.status_code == 400 and dup.json()['detail'] == 'There is already a building called Garage.',
+              dup.text)
+        check(len(ts.place()['buildings']) == 1, 'a refused add changes nothing')
+        odd = c.post('/api/house/editor/place/buildings', headers=PARENT, json={'name': 'Folly', 'kind': 'castle'})
+        check(odd.status_code == 400 and odd.json()['detail'].startswith('Choose a kind'), odd.text)
+
+        got = c.get('/api/house/editor/sheets', headers=PARENT)
+        check(got.status_code == 200, got.text)
+        got = got.json()
+        place = got['place']
+        check([x['id'] for x in place['buildings']] == ['garage'] and {'lot', 'photo_tags'} <= set(place), place)
+        check([k['label'] for k in got['kinds']] == KIND_LABELS, got['kinds'])
+        check([k['id'] for k in got['kinds']] == KIND_IDS, got['kinds'])
+        check(got['roles'] == PLACE_ROLES, got['roles'])
+        check(isinstance(got.get('estimates'), dict), ('estimates is an object (Task 3 fills it)', got.get('estimates')))
+        check({'sources', 'pages', 'page_roles', 'registrations', 'piece_labels', 'field_labels'} <= set(got),
+              'slice 1 keys stay')
+
+        r = c.patch('/api/house/editor/place/buildings/garage', headers=PARENT, json={'shell': {'storeys': 2}})
+        check(r.status_code == 200, r.text)
+        b = r.json()['building']
+        check(b['id'] == 'garage' and b['shell']['storeys'] == 2 and b['shell_from'] == 'person', b)
+        check(b['shell']['wall_height'] == 9 and b['shell']['roof'] == 'gable', ('a partial shell keeps the rest', b))
+        check(r.json()['summary'] == 'Updated Garage.', r.json())
+        check(ts.place()['buildings'][0]['shell']['storeys'] == 2, 'the change is saved')
+
+        bad = c.patch('/api/house/editor/place/buildings/garage', headers=PARENT, json={'shell': {'storeys': 0}})
+        check(bad.status_code == 400 and _plain(bad.json()['detail']), bad.text)
+        check(ts.place()['buildings'][0]['shell']['storeys'] == 2, 'a refused change changes nothing')
+        missing = c.patch('/api/house/editor/place/buildings/nope', headers=PARENT, json={'name': 'Nope'})
+        check(missing.status_code in (400, 404), ('an unknown building is refused, never a 500', missing.text))
+
+        r = c.delete('/api/house/editor/place/buildings/garage', headers=PARENT)
+        check(r.status_code == 200, r.text)
+        check(r.json()['status'] == 'ok' and r.json()['summary'] == 'Removed Garage.', r.json())
+        check(ts.place()['buildings'] == [], ts.place())
+
+
+def scenario_upload_with_part():
+    _fresh()
+    _setup()
+    c = _client()
+    with _enforced():
+        r = c.post('/api/house/twin/sources', headers=PARENT, data={'kind': 'drawing', 'part': 'lot'},
+                   files={'file': ('plot.pdf', engine_tests._pdf(1), 'application/pdf')})
+        check(r.status_code == 200 and r.json()['part'] == 'lot', r.text)
+        r = c.post('/api/house/twin/sources', headers=PARENT, data={'kind': 'photo', 'part': 'lot'},
+                   files={'file': ('yard.png', _png(), 'image/png')})
+        check(r.status_code == 200 and r.json()['part'] == 'lot', r.text)
+        photo = r.json()['id']
+        check(ts.photos_for('lot') == [photo], ts.photos_for('lot'))
+
+        before = len(ts.sources())
+        bad = c.post('/api/house/twin/sources', headers=PARENT, data={'kind': 'drawing', 'part': 'nope'},
+                     files={'file': ('x.pdf', engine_tests._pdf(1), 'application/pdf')})
+        check(bad.status_code == 400 and _plain(bad.json()['detail']), bad.text)
+        check(len(ts.sources()) == before, 'a refused upload saves nothing')
+
+        # Controller ruling R3: a drawing with no part (slice 1 callers) goes to house.
+        legacy = c.post('/api/house/twin/sources', headers=PARENT, data={'kind': 'drawing'},
+                        files={'file': ('lot58.pdf', engine_tests._pdf(1), 'application/pdf')})
+        check(legacy.status_code == 200 and legacy.json()['part'] == 'house', legacy.text)
+        check('house' in [x['id'] for x in ts.place()['buildings']], 'a legacy drawing adds Main house')
+
+
+def scenario_photo_parts_route():
+    _fresh()
+    _setup()
+    ts.add_building('Garage', 'garage')
+    photo = ts.save_source('photo', 'front.png', _png(), part='lot')
+    c = _client()
+    with _enforced():
+        r = c.put(f'/api/house/editor/place/photos/{photo}', headers=PARENT, json={'parts': ['lot', 'garage']})
+        check(r.status_code == 200 and sorted(r.json()['parts']) == ['garage', 'lot'], r.text)
+        check(photo in ts.photos_for('garage') and photo in ts.photos_for('lot'), 'tags saved')
+        bad = c.put(f'/api/house/editor/place/photos/{photo}', headers=PARENT, json={'parts': ['nope']})
+        check(bad.status_code == 400 and _plain(bad.json()['detail']), bad.text)
+        check(photo in ts.photos_for('garage'), 'a refused tag change changes nothing')
+        gone = c.put('/api/house/editor/place/photos/nope', headers=PARENT, json={'parts': ['lot']})
+        check(gone.status_code in (400, 404), ('an unknown photo is refused, never a 500', gone.text))
+
+
+def scenario_move_page_route():
+    _fresh()
+    _setup()
+    sheets = ts.save_source('drawing', 'lot58.pdf', engine_tests._pdf(2))   # no part: goes to house
+    ts.set_page_roles([{'source': sheets, 'page': 1, 'role': 'floor', 'level': 'Main floor', 'box': None,
+                        'building': 'house'},
+                       {'source': sheets, 'page': 2, 'role': 'roof', 'level': None, 'box': None,
+                        'building': 'house'}])
+    c = _client()
+    with _enforced():
+        r = c.post('/api/house/editor/place/pages/move', headers=PARENT,
+                   json={'source': sheets, 'page': 1, 'part': 'lot'})
+        check(r.status_code == 200, r.text)
+        for rows in (r.json()['page_roles'], ts.page_roles()):
+            moved = _rows_for(rows, sheets, 1)
+            check(len(moved) == 1 and moved[0]['building'] == 'lot' and moved[0]['role'] == 'other'
+                  and moved[0]['level'] is None, ('a floor page moved to the lot becomes Other', moved))
+        stay = _rows_for(ts.page_roles(), sheets, 2)
+        check(len(stay) == 1 and stay[0]['role'] == 'roof' and stay[0]['building'] == 'house', stay)
+
+        before = ts.page_roles()
+        bad = c.post('/api/house/editor/place/pages/move', headers=PARENT,
+                     json={'source': sheets, 'page': 2, 'part': 'nope'})
+        check(bad.status_code == 400 and _plain(bad.json()['detail']), bad.text)
+        check(ts.page_roles() == before, 'a refused move changes nothing')
+
+
+def scenario_suggest_hint():
+    _fresh()
+    _setup()
+    sheets = ts.save_source('drawing', 'house.pdf', engine_tests._pdf(5))   # no part: goes to house
+    check(next(s for s in ts.sources() if s['id'] == sheets)['part'] == 'house', 'the source belongs to house')
+    ts.add_building('Garage', 'garage')
+    reader = SheetReader([
+        {'page': 1, 'role': 'floor', 'level': 'Main', 'box': None, 'elsewhere': 'garage'},
+        {'page': 2, 'role': 'floor', 'level': 'Upper', 'box': None, 'elsewhere': 'nope'},    # unknown part
+        {'page': 3, 'role': 'roof', 'level': None, 'box': None, 'elsewhere': 'house'},      # its own part
+        {'page': 4, 'role': 'plot', 'level': None, 'box': None},                            # R4: lot role
+        {'page': 5, 'role': 'survey', 'level': None, 'box': None}])                         # R4: lot role
+    c = _client()
+    with _enforced(), patch.object(twin_reads, 'read', reader):
+        r = c.post('/api/house/editor/sheets/suggest', headers=PARENT, json={'source': sheets})
+        check(r.status_code == 200, r.text)
+        got = r.json()['rows']
+        rows = {row['page']: row for row in got}
+        check(len(got) == 5 and sorted(rows) == [1, 2, 3, 4, 5], got)
+        check(all(row['source'] == sheets and row['building'] == 'house' for row in got), got)
+        one = rows[1]
+        check(one['role'] == 'floor' and one['level'] == 'Main', one)
+        check(one['elsewhere'] == 'garage' and one['hint'] == 'Page 1 looks like the Garage.', one)
+        for page in (2, 3):
+            check(rows[page].get('elsewhere') is None and rows[page].get('hint') is None,
+                  ('an elsewhere naming an unknown part or the source\'s own part is dropped', rows[page]))
+        check(rows[2]['role'] == 'floor' and rows[3]['role'] == 'roof', (rows[2], rows[3]))
+        check(rows[4]['role'] == 'other' and rows[5]['role'] == 'other',
+              ('R4: a lot role suggested for a building source becomes other', rows[4], rows[5]))
+
+        check([call['kind'] for call in reader.calls] == ['sheet_roles'], reader.calls)
+        ctx = reader.calls[0]['context']
+        check(ctx['source'] == sheets and ctx['pages'] == 5, ctx)
+        check(ctx['part'] == {'id': 'house', 'name': 'Main house', 'kind': 'main_house'}, ctx['part'])
+        parts = {p['id']: p for p in ctx['parts']}
+        check(parts.get('garage') == {'id': 'garage', 'name': 'Garage', 'kind': 'garage'}
+              and parts.get('house') == {'id': 'house', 'name': 'Main house', 'kind': 'main_house'}, ctx['parts'])
+        check(ts.page_roles() == [], 'suggestions are not saved until the person confirms them')
+        # Every suggested row is valid for its part: confirming them as offered saves.
+        put = c.put('/api/house/editor/sheets/roles', headers=PARENT,
+                    json={'rows': [{k: row[k] for k in ROW_KEYS} for row in got]})
+        check(put.status_code == 200 and len(_rows_for(ts.page_roles(), sheets, 4)) == 1, put.text)
+
+    plot = ts.save_source('drawing', 'plot.pdf', engine_tests._pdf(3), part='lot')
+    reader = SheetReader([
+        {'page': 1, 'role': 'floor', 'level': 'Main', 'box': None},
+        {'page': 2, 'role': 'plot', 'level': None, 'box': None},
+        {'page': 3, 'role': 'elevation', 'level': None, 'box': None}])
+    with _enforced(), patch.object(twin_reads, 'read', reader):
+        r = c.post('/api/house/editor/sheets/suggest', headers=PARENT, json={'source': plot})
+        check(r.status_code == 200, r.text)
+        got = r.json()['rows']
+        rows = {row['page']: row for row in got}
+        check(len(got) == 3 and all(row['building'] == 'lot' for row in got), got)
+        check(rows[1]['role'] == 'other' and rows[1]['level'] is None,
+              ('a floor suggestion for a lot source becomes other and its level clears', rows[1]))
+        check(rows[2]['role'] == 'plot', rows[2])
+        check(rows[3]['role'] == 'other', ('R4: a building role suggested for a lot source becomes other', rows[3]))
+        check(reader.calls[0]['context']['part']['id'] == 'lot', reader.calls[0]['context'])
+        put = c.put('/api/house/editor/sheets/roles', headers=PARENT,
+                    json={'rows': [{k: row[k] for k in ROW_KEYS} for row in got]})
+        check(put.status_code == 200, put.text)
+
+
 if __name__ == '__main__':
+    failed = []
     for fn in (scenario_every_editor_route_is_parents_only,
                scenario_page_renders_for_anyone,
                scenario_sheets_roles_and_page_images,
@@ -294,6 +527,19 @@ if __name__ == '__main__':
                scenario_app_start_recovers_an_interrupted_build,
                scenario_suggest_roles_reads_once_and_saves_nothing,
                scenario_a_build_from_before_a_start_over_is_gone,
-               scenario_twin_page_has_no_tools_sheet_but_links_to_the_editor):
-        fn()
-        print('  ok ', fn.__name__)
+               scenario_twin_page_has_no_tools_sheet_but_links_to_the_editor,
+               scenario_place_crud,
+               scenario_upload_with_part,
+               scenario_photo_parts_route,
+               scenario_move_page_route,
+               scenario_suggest_hint):
+        try:
+            fn()
+        except Exception as exc:
+            failed.append(fn.__name__)
+            print('  FAIL', fn.__name__, '-', type(exc).__name__, exc)
+        else:
+            print('  ok ', fn.__name__)
+    if failed:
+        print('FAILED:', ', '.join(failed))
+        sys.exit(1)

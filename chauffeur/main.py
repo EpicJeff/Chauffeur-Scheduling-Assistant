@@ -7340,7 +7340,12 @@ def house_twin_kit_api(kit_id: str):
 
 
 @app.post("/api/house/twin/sources")
-def house_twin_source_upload(kind: str = Form(...), file: UploadFile = File(...)):
+def house_twin_source_upload(kind: str = Form(...), file: UploadFile = File(...),
+                             part: str | None = Form(None)):
+    return _house_editor_call(_house_twin_source_upload, kind, file, part)
+
+
+def _house_twin_source_upload(kind, file, part):
     from services import twin_store
     limit = 40 * 1024 * 1024
     data = bytearray()
@@ -7351,11 +7356,8 @@ def house_twin_source_upload(kind: str = Form(...), file: UploadFile = File(...)
         data.extend(chunk)
         if len(data) > limit:
             raise HTTPException(status_code=413, detail='Source too large (40 MB maximum).')
-    try:
-        source_id = twin_store.save_source(kind, file.filename, bytes(data),
-                                           content_type=file.content_type)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    source_id = twin_store.save_source(kind, file.filename, bytes(data),
+                                       content_type=file.content_type, part=part)
     return next(s for s in twin_store.sources() if s['id'] == source_id)
 
 
@@ -7450,6 +7452,8 @@ def _house_editor_call(operation, *args, lookup=False, **kwargs):
     from services import twin_cost, twin_store
     try:
         return operation(*args, **kwargs)
+    except HTTPException:
+        raise
     except twin_cost.CheckpointReached as exc:
         raise HTTPException(status_code=409, detail={
             'checkpoint': exc.checkpoint, 'total': exc.total}) from exc
@@ -7478,10 +7482,15 @@ def _house_editor_call(operation, *args, lookup=False, **kwargs):
 
 @app.get('/api/house/editor/sheets')
 def house_editor_sheets():
-    from services import twin_store, twin_edit
+    return _house_editor_call(_house_editor_sheets)
+
+
+def _house_editor_sheets():
+    from services import twin_store, twin_edit, twin_place
     with twin_store.LIFECYCLE:
         sources, roles, registrations = twin_store.sources(), twin_store.page_roles(), twin_store.registrations()
         plan = twin_store.current()
+        place = twin_store.place()
     # Inspect headers only. Crops render legacy masters lazily when needed.
     pages = []
     for source in sources:
@@ -7499,15 +7508,69 @@ def house_editor_sheets():
     labels = [{'building': b['id'], 'piece': p['id'], 'label': twin_edit._label(k, p, b)}
               for k, p, b, _ in twin_edit._entries(plan) if 'id' in p] if plan else []
     return {'sources': sources, 'pages': pages, 'page_roles': roles, 'registrations': registrations,
-            'piece_labels': labels, 'field_labels': twin_edit.FIELD_LABELS}
+            'piece_labels': labels, 'field_labels': twin_edit.FIELD_LABELS,
+            'place': place, 'kinds': [{'id': key, 'label': label} for key, label in twin_place.KINDS.items()],
+            'roles': {'building': twin_place.BUILDING_ROLES, 'lot': twin_place.LOT_ROLES},
+            'estimates': {}}
+
+
+@app.post('/api/house/editor/place/buildings')
+def house_editor_add_building(body: dict = Body(default={})):
+    from services import twin_store
+    building = _house_editor_call(twin_store.add_building, body.get('name'), body.get('kind'))
+    return {'building': building, 'summary': f'Added {building["name"]}.'}
+
+
+@app.patch('/api/house/editor/place/buildings/{bid}')
+def house_editor_update_building(bid: str, body: dict = Body(default={})):
+    from services import twin_store
+    building = _house_editor_call(twin_store.update_building, bid, body)
+    return {'building': building, 'summary': f'Updated {building["name"]}.'}
+
+
+@app.delete('/api/house/editor/place/buildings/{bid}')
+def house_editor_remove_building(bid: str):
+    def remove():
+        from services import twin_store
+        with twin_store.LIFECYCLE:
+            building = next((b for b in twin_store.place()['buildings'] if b['id'] == bid), None)
+            if building is None:
+                raise ValueError('Choose a building in your place.')
+            twin_store.remove_building(bid)
+        return {'status': 'ok', 'summary': f'Removed {building["name"]}.'}
+
+    return _house_editor_call(remove)
+
+
+@app.post('/api/house/editor/place/pages/move')
+def house_editor_move_page(body: dict = Body(default={})):
+    def move():
+        from services import twin_store as ts
+        source, page, part = body.get('source'), body.get('page'), body.get('part')
+        region = body.get('region')
+        if region is not None and (type(region) is not int or region < 0):
+            raise ValueError('Choose a page region by its number, starting at zero.')
+        return {'page_roles': ts.move_page(source, page, part, **({'region': region} if region is not None else {}))}
+
+    return _house_editor_call(move)
+
+
+@app.put('/api/house/editor/place/photos/{source_id}')
+def house_editor_photo_parts(source_id: str, body: dict = Body(default={})):
+    from services import twin_store
+    return {'parts': _house_editor_call(twin_store.set_photo_tags, source_id, body.get('parts'))}
 
 
 @app.post('/api/house/editor/sheets/suggest')
 def house_editor_suggest_roles(body: dict = Body(default={})):
+    return _house_editor_call(_house_editor_suggest_roles, body)
+
+
+def _house_editor_suggest_roles(body):
     from base64 import b64encode
     from io import BytesIO
     from PIL import Image
-    from services import twin_reads, twin_store
+    from services import twin_reads, twin_store, twin_place
     source_id = body.get('source')
     images = []
     with twin_store.LIFECYCLE:
@@ -7518,6 +7581,13 @@ def house_editor_suggest_roles(body: dict = Body(default={})):
         confirmed = [row for row in twin_store.page_roles() if row['source'] == source_id]
         if confirmed:
             return {'rows': confirmed}
+        parts = [{key: b[key] for key in ('id', 'name', 'kind')}
+                 for b in twin_store.place()['buildings']]
+        parts.append({'id': twin_place.LOT, 'name': 'Lot', 'kind': 'lot'})
+        part_id = source.get('part') or 'house'  # Legacy drawing uploads belong to the main house.
+        part = next((p for p in parts if p['id'] == part_id), None)
+        if part is None:
+            raise ValueError('Choose a part of your place.')
         pages = [_house_editor_call(twin_store.page_image, source_id, page)
                  for page in range(1, source['pages'] + 1)]
     # Snapshot source bytes while the generation is protected; resizing and
@@ -7530,7 +7600,7 @@ def house_editor_suggest_roles(body: dict = Body(default={})):
     if generation != twin_store.generation():
         raise HTTPException(status_code=409, detail='The house was started over.')
     result = _house_editor_call(twin_reads.read, 'sheet_roles', images,
-                                {'source': source_id, 'pages': source['pages']},
+                                {'source': source_id, 'pages': source['pages'], 'part': part, 'parts': parts},
                                 run='suggest', step='sheet_roles')
     if generation != twin_store.generation():
         raise HTTPException(status_code=409, detail='The house was started over.')
@@ -7541,7 +7611,17 @@ def house_editor_suggest_roles(body: dict = Body(default={})):
     rows = fragment.get('pages', [])
     if problems or any(row['page'] > source['pages'] for row in rows):
         raise HTTPException(status_code=400, detail='The suggested pages could not be read. Set their roles by hand.')
-    return {'rows': [{**row, 'source': source_id, 'building': 'house'} for row in rows]}
+    allowed_roles = twin_place.LOT_ROLES if part_id == twin_place.LOT else twin_place.BUILDING_ROLES
+    by_id = {p['id']: p for p in parts}
+    for row in rows:
+        row.update(source=source_id, building=part_id)
+        if row['role'] not in allowed_roles:
+            row['role'], row['level'] = 'other', None
+        elsewhere = row.pop('elsewhere', None)
+        if elsewhere in by_id and elsewhere != part_id:
+            row['elsewhere'] = elsewhere
+            row['hint'] = f'Page {row["page"]} looks like the {by_id[elsewhere]["name"]}.'
+    return {'rows': rows}
 
 
 @app.put('/api/house/editor/sheets/roles')

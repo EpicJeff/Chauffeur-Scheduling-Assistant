@@ -46,8 +46,10 @@ _WINGS = '"wings":[{"name":"garage","box":[0.6,0.5,0.9,0.9]}]'
 PROMPTS = {
     'sheet_roles': '''Sort drawing sheets by visible content. Mixed sheets may
 have multiple entries for one page, with a crop box for each region. Page is
-one-based; role is floor, roof, plot, elevation or other; level is a name or
-null; box is null for the full page. Return
+one-based; role is floor, roof, plot, survey, landscape, elevation or other;
+level is a name or null; box is null for the full page. Context lists the
+source's part and all parts of the place. Only when a page clearly shows
+another listed part, include optional elsewhere with that part's id. Return
 {"pages":[{"page":1,"role":"floor","level":"Main floor","box":null}]}.''',
     'outline': 'Read one floor footprint and a readable dimension to set scale. '
                'Trace the outline with at least three points; name visible wings. '
@@ -250,12 +252,18 @@ def parse(kind, answer):
         number = value.get('page')
         if type(number) is not int or number < 1:
             v.bad(path + '.page', 'expected a positive page integer')
-        role = v.choice(value.get('role'), path + '.role', ('floor', 'roof', 'plot', 'elevation', 'other'))
+        role = v.choice(value.get('role'), path + '.role',
+                        ('floor', 'roof', 'plot', 'survey', 'landscape', 'elevation', 'other'))
         level = nullable_text(value.get('level'), path + '.level')
         box = nullable_box(value.get('box'), path + '.box')
         if len(v.problems) != before:
             return None
-        return {'page': number, 'role': role, 'level': None if value.get('level') is None else level, 'box': box}
+        out = {'page': number, 'role': role, 'level': None if value.get('level') is None else level, 'box': box}
+        if 'elsewhere' in value:
+            elsewhere = v.text(value['elsewhere'], path + '.elsewhere')
+            if elsewhere is not None:
+                out['elsewhere'] = elsewhere
+        return out
 
     def wall(value, path):
         def boolean(value, path):

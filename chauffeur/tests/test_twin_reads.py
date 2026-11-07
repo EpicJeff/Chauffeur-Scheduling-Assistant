@@ -206,6 +206,35 @@ def scenario_prompts_define_the_terms_models_get_wrong():
     check('street' in p['plot'] and 'adjacent' in p['plot'], 'street_edge is two adjacent lot indices')
 
 
+def scenario_sheet_roles_elsewhere():
+    # Slice 1b-i Task 2: page roles cover both a building's and the lot's
+    # pages, and a page may name another listed part it clearly shows.
+    page = {'page': 1, 'role': 'survey', 'level': None, 'box': None, 'elsewhere': 'garage'}
+    frag, problems = twin_reads.parse('sheet_roles', {'pages': [page]})
+    check(problems == [] and frag['pages'] == [page], (frag, problems))
+    check(frag['pages'][0]['role'] == 'survey' and frag['pages'][0]['elsewhere'] == 'garage', frag)
+    for role in ('floor', 'roof', 'plot', 'survey', 'landscape', 'elevation', 'other'):
+        frag, problems = twin_reads.parse('sheet_roles', {'pages': [{'page': 1, 'role': role, 'level': None,
+                                                                     'box': None}]})
+        check(problems == [] and frag['pages'][0]['role'] == role and 'elsewhere' not in frag['pages'][0],
+              (role, frag, problems))
+    for role in ('skip', 'attic'):
+        frag, problems = twin_reads.parse('sheet_roles', {'pages': [{'page': 1, 'role': role, 'level': None,
+                                                                     'box': None}]})
+        check(problems and frag['pages'] == [], ("skip is the person's choice, never the model's", role, frag))
+    # A non-text elsewhere is a problem that drops only that field.
+    frag, problems = twin_reads.parse('sheet_roles', {'pages': [
+        {'page': 1, 'role': 'floor', 'level': 'Main floor', 'box': None, 'elsewhere': 7},
+        {'page': 2, 'role': 'landscape', 'level': None, 'box': None, 'elsewhere': 'lot'}]})
+    check(frag['pages'] == [{'page': 1, 'role': 'floor', 'level': 'Main floor', 'box': None},
+                            {'page': 2, 'role': 'landscape', 'level': None, 'box': None, 'elsewhere': 'lot'}],
+          (frag, problems))
+    check(len(problems) == 1 and 'elsewhere' in problems[0], problems)
+    prompt = twin_reads.PROMPTS['sheet_roles']
+    for word in ('survey', 'landscape', 'elsewhere'):
+        check(word in prompt, ('the sheet_roles prompt names', word))
+
+
 if __name__ == '__main__':
     for fn in (scenario_kinds_and_output_caps_are_pinned,
                scenario_each_kind_parses_its_fixture,
@@ -220,6 +249,7 @@ if __name__ == '__main__':
                scenario_a_partial_read_reports_its_problems,
                scenario_checkpoint_inside_the_pool_call_is_recorded_once,
                scenario_lot_on_the_crop_border_keeps_its_street_edge,
-               scenario_prompts_define_the_terms_models_get_wrong):
+               scenario_prompts_define_the_terms_models_get_wrong,
+               scenario_sheet_roles_elsewhere):
         fn()
         print('  ok ', fn.__name__)
