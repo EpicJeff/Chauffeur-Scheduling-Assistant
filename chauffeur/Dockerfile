@@ -24,6 +24,14 @@ RUN (python -m playwright install --with-deps chromium \
          && apt-get update && apt-get install -y --no-install-recommends chromium xvfb)) \
     ; rm -rf /var/lib/apt/lists/*
 
+# Packages added after 2.499.762 get their own layer, AFTER the heavy ones:
+# editing requirements.txt invalidates the pip and Chromium layers above, and
+# a full rebuild re-downloads ~60 packages and Chromium from the HA box, whose
+# network has stalled mid-download (2.499.763's first build died on a 15 s
+# read timeout). Add new packages here, with a longer timeout and retries.
+COPY requirements-twin.txt .
+RUN pip install --no-cache-dir --timeout 120 --retries 10 -r requirements-twin.txt
+
 COPY . .
 
 RUN chmod a+x /app/run.sh

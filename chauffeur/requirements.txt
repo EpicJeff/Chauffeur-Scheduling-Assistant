@@ -1,8 +1,6 @@
 fastapi
 uvicorn
 python-multipart
-pypdfium2
-Pillow
 pydantic
 networkx
 google-api-python-client
