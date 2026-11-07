@@ -9475,26 +9475,25 @@ REGISTRY_EXCEPTIONS = {
 }
 
 
+def _house_design_building_summary(building) -> str:
+    levels = ', '.join(level.get('name') or level['id'] for level in building['levels'])
+    roofs = ', '.join(f"{section['id']} ({section['kind']}, {section['pitch']:g} in 12)"
+                      for section in building['roof']['sections']) or 'none'
+    return (
+        f"{building.get('name') or building['id']}: levels {levels or 'none'}; "
+        f"{len(building['walls'])} walls, {len(building['openings'])} openings, "
+        f"{len(building['rooms'])} rooms. Roof sections: {roofs}.")
+
+
 def house_design_status() -> dict:
     """Small editor context, with the same latest-build rule as the hand path."""
-    import os
     from services import twin_build, twin_store
     with twin_store.LIFECYCLE, twin_build._LOCK:
-        builds = [bid for bid, build in twin_build._BUILDS.items()
-                  if build['generation'] == twin_store.generation()]
-        latest = max(builds, key=lambda bid: os.stat(os.path.join(
-            twin_store.DATA_DIR, 'builds', bid, 'state.json')).st_mtime_ns, default=None)
+        latest = twin_build.latest()
         build = twin_build.status(latest) if latest else None
         plan = twin_store.current()
-        summaries = []
-        for building in (plan or {}).get('buildings', []):
-            levels = ', '.join(level.get('name') or level['id'] for level in building['levels'])
-            roofs = ', '.join(f"{section['id']} ({section['kind']}, {section['pitch']:g} in 12)"
-                              for section in building['roof']['sections']) or 'none'
-            summaries.append(
-                f"{building.get('name') or building['id']}: levels {levels or 'none'}; "
-                f"{len(building['walls'])} walls, {len(building['openings'])} openings, "
-                f"{len(building['rooms'])} rooms. Roof sections: {roofs}.")
+        summaries = [_house_design_building_summary(building)
+                     for building in (plan or {}).get('buildings', [])]
         pause = (build or {}).get('pause')
         pause_words = (f"{pause['step']}: {pause.get('why') or pause['kind'].replace('_', ' ')}"
                        if pause else None)
@@ -9525,10 +9524,12 @@ def handle_house_design(args: dict, actor=None) -> dict:
             if plan is None:
                 raise ValueError('Build a house before describing a piece.')
             kind, piece, building, _ = twin_edit._find(plan, params.piece, params.building)
+            if kind == 'building':
+                return {'status': 'ok', 'summary': _house_design_building_summary(building)}
 
             def words(field, value):
                 if isinstance(value, bool):
-                    return 'yes' if value else 'no'
+                    return twin_edit._value_words(field, value)
                 if isinstance(value, (int, float)):
                     if field in ('pitch', 'rotation'):
                         return str(twin_edit._value_words(field, value))
@@ -9537,7 +9538,10 @@ def handle_house_design(args: dict, actor=None) -> dict:
                                  'outline', 'polygon', 'rect', 'plate', 'overhang',
                                  'rise_to', 'points', 'polyline', 'x', 'y', 'size',
                                  'length', 'depth', 'radius'):
-                        return twin_register.feet_inches(value)
+                        return (twin_register.feet_inches(value) if field == 'position'
+                                else twin_edit._value_words(field, value))
+                    if field == 'panels':
+                        return twin_edit._value_words(field, value)
                     return str(value)
                 if isinstance(value, list):
                     return ', '.join(words(field, item) for item in value)

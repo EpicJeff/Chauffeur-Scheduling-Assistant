@@ -523,10 +523,8 @@ sending or claiming, and never pass from_member/member_name for them.
         declared = {tool['name'] for tool in tools}
         tools = tools + [tool for tool in get_admin_tools() if tool['name'] not in declared]
     if source == 'house_editor':
-        from services.agent_tools_v2 import TOOL_SCHEMAS
-        schema = TOOL_SCHEMAS['house_design']
-        tools = tools + [{'name': 'house_design', 'description': schema['description'],
-                          'parameters': schema}]
+        from services.agent_tools_v2 import _flat_tool
+        tools = tools + [_flat_tool('house_design')]
         system_prompt += (
             "\nYou are designing the household's house in the house editor. "
             "Read and edit it through house_design; edits use the same operations as the editor. "
@@ -660,7 +658,12 @@ sending or claiming, and never pass from_member/member_name for them.
                               "a DIFFERENT lookup or action is essential. Do not repeat completed calls.")
             
         call_start = _time.time()
-        llm_response = call_gemma_with_fallback(turn_prompt, tools, current_system_prompt)
+        try:
+            llm_response = call_gemma_with_fallback(turn_prompt, tools, current_system_prompt)
+        except CheckpointReached as exc:
+            if source == 'house_editor':
+                exc.house_design_summary = list(house_design_summary)
+            raise
         llm_calls += 1
         logger.info(f"[agent-timing] LLM call {llm_calls} ({llm_response.get('_model', 'unknown-model')}) "
                     f"took {_time.time() - call_start:.1f}s")
@@ -1542,7 +1545,9 @@ sending or claiming, and never pass from_member/member_name for them.
                         schedule_dirty = True
                     if isinstance(res, dict) and res.get("message"):
                         agent_message = res["message"]
-            except CheckpointReached:
+            except CheckpointReached as exc:
+                if source == 'house_editor':
+                    exc.house_design_summary = list(house_design_summary)
                 raise
             except Exception as e:
                 res = {"error": str(e)}

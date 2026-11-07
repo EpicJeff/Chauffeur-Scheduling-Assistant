@@ -117,6 +117,22 @@ def running():
         return any(b['state'] in _ACTIVE for b in _BUILDS.values())
 
 
+def latest():
+    """Return the current generation's most recently saved build id, if any."""
+    with twin_store.LIFECYCLE, _LOCK:
+        generation = twin_store.generation()
+        saved = []
+        for bid, build in _BUILDS.items():
+            if build['generation'] != generation:
+                continue
+            try:
+                modified = (_root(bid) / 'state.json').stat().st_mtime_ns
+            except FileNotFoundError:
+                continue
+            saved.append((modified, bid))
+        return max(saved)[1] if saved else None
+
+
 def status(build_id, since=0):
     with twin_store.LIFECYCLE, _LOCK:
         build = _get(build_id)
