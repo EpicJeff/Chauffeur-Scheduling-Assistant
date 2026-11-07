@@ -7482,14 +7482,20 @@ def house_editor_suggest_roles(body: dict = Body(default={})):
         if source is None or source['kind'] != 'drawing':
             raise HTTPException(status_code=400, detail='Choose an existing drawing source.')
         generation = twin_store.generation()
-        for page in range(1, source['pages'] + 1):
-            # Suggestions use small in-memory thumbnails, without creating
-            # master-image caches or changing the saved page roles.
-            png = _house_editor_call(twin_store.page_image, source_id, page)
-            with Image.open(BytesIO(png)) as image, BytesIO() as output:
-                image.thumbnail((768, 768), Image.Resampling.LANCZOS)
-                image.save(output, format='PNG')
-                images.append({'mime': 'image/png', 'b64': b64encode(output.getvalue()).decode('ascii')})
+        confirmed = [row for row in twin_store.page_roles() if row['source'] == source_id]
+        if confirmed:
+            return {'rows': confirmed}
+        pages = [_house_editor_call(twin_store.page_image, source_id, page)
+                 for page in range(1, source['pages'] + 1)]
+    # Snapshot source bytes while the generation is protected; resizing and
+    # the paid reader must never hold the house lifecycle lock.
+    for png in pages:
+        with Image.open(BytesIO(png)) as image, BytesIO() as output:
+            image.thumbnail((768, 768), Image.Resampling.LANCZOS)
+            image.save(output, format='PNG')
+            images.append({'mime': 'image/png', 'b64': b64encode(output.getvalue()).decode('ascii')})
+    if generation != twin_store.generation():
+        raise HTTPException(status_code=409, detail='The house was started over.')
     result = _house_editor_call(twin_reads.read, 'sheet_roles', images,
                                 {'source': source_id, 'pages': source['pages']},
                                 run='suggest', step='sheet_roles')
@@ -7527,12 +7533,13 @@ def house_editor_sheet_image(source_id: str, page: int):
 
 @app.post('/api/house/editor/build')
 def house_editor_build(body: dict = Body(default={})):
-    from services import twin_build
+    from services import twin_build, twin_cost
     if not isinstance(body.get('building'), dict) or not isinstance(body['building'].get('id'), str):
         raise HTTPException(status_code=400, detail='A building needs a valid id.')
     if not isinstance(body.get('photos', []), list) or any(
             not isinstance(source, str) for source in body.get('photos', [])):
         raise HTTPException(status_code=400, detail='Photos must be a list of source ids.')
+    _house_editor_call(twin_cost.require_clear)
     return {'id': _house_editor_call(twin_build.start, body)}
 
 

@@ -1,14 +1,14 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
-import { buildTwin, FT, PICK_LAYER } from './twin_generator.js';
+import { buildTwin, FT, PICK_LAYER, polygon, mergeStatic } from './twin_generator.js';
 import { heightAt } from './twin_roof.js';
 import { groundAt } from './twin_ground.js';
 import { buildYard } from './twin_yard.js';
 import { base, loadSky, disposeObject } from './twin_library.js';
 import { TIERS, pickTier, rendererName } from './twin_tiers.js';
 
-export async function mountTwin(el, { plan, kit, tier } = {}) {
+export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } = {}) {
   const probe = document.createElement('canvas').getContext('webgl2');
   if (!probe) throw new Error('This screen needs WebGL 2 to show the house.');
   tier = new URLSearchParams(location.search).get('tier') || tier;
@@ -38,6 +38,8 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
   let twin = null, disposed = false, revision = 0, sky = null, environment = null, environmentTarget = null;
   const state = { view: 'ext', time: 'day', camera: 'front' };
   let bounds = { x: 19, y: 11, span: 38 };
+  let framed = false, cameraMoved = false;
+  controls.addEventListener('start', () => { cameraMoved = true; });
   let lastStats = { drawCalls: 0, triangles: 0, tier, fps: 0 };
   let probeRun = null, fps = 0, fpsFrames = 0, fpsSince = performance.now();
   let visibleLevels = null, sheet = null, sheetSpec = null, sheetRevision = 0;
@@ -251,7 +253,61 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
     async rebuild(nextPlan) {
       const version = ++revision; view.ready = false;
       const next = buildTwin(nextPlan, kit, tier);
+      const extras = new Map();
       try {
+        // The generator's structural floors cover room polygons; unattached
+        // ghost openings cannot go through its wall-hole builder. Keep those
+        // saved pieces visible and identifiable while the house is incomplete.
+        for (const building of nextPlan.buildings || []) {
+          for (const [kind, pieces] of [['room', building.rooms || []], ['opening', building.openings || []]]) {
+            for (const piece of pieces) {
+              const key = `${building.id}:${piece.id}`;
+              if (next.pieces.has(key)) continue;
+              const level = building.levels.find(l => l.id === piece.level);
+              const group = next.groups.levels[`${building.id}:${piece.level}`]?.children.find(g => g.userData.buildingId === building.id);
+              if (!level || !group || (kind === 'opening' && !piece.position)) continue;
+              if (!extras.has(group)) { const extra = new THREE.Group(); group.add(extra); extras.set(group, extra); }
+              const renderGroup = extras.get(group);
+              const ghost = piece.state === 'ghost', data = { pieceId: piece.id, buildingId: building.id, kind, ghost };
+              const material = next.materials.get(ghost ? 'ghost#38bdf8' : 'floor');
+              const objects = [];
+              const add = geometry => {
+                const mesh = new THREE.Mesh(geometry, material);
+                Object.assign(mesh.userData, data, { pieceObjects: objects }); renderGroup.add(mesh); objects.push(mesh);
+                if (ghost) {
+                  const edge = new THREE.LineSegments(new THREE.EdgesGeometry(geometry), next.materials.get('ghostEdges'));
+                  edge.computeLineDistances(); Object.assign(edge.userData, data); renderGroup.add(edge); objects.push(edge);
+                }
+              };
+              if (kind === 'room') {
+                const first = Math.min(...building.levels.map(l => l.elevation));
+                const holes = (building.stairs || []).filter(s => s.rise_to >= level.elevation && level.elevation > first).map(s => {
+                  const dx = s.to[0] - s.from[0], dy = s.to[1] - s.from[1], length = Math.hypot(dx, dy);
+                  const nx = -dy / length * s.width / 2, ny = dx / length * s.width / 2;
+                  return [[s.from[0] + nx, s.from[1] + ny], [s.to[0] + nx, s.to[1] + ny], [s.to[0] - nx, s.to[1] - ny], [s.from[0] - nx, s.from[1] - ny]];
+                });
+                const inside = p => {
+                  const poly = piece.polygon; let inside = false;
+                  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) if ((poly[i][1] > p[1]) !== (poly[j][1] > p[1]) && p[0] < (poly[j][0] - poly[i][0]) * (p[1] - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) inside = !inside;
+                  return inside;
+                };
+                add(polygon(piece.polygon, level.elevation + .012, level.elevation + .012, holes.filter(h => h.every(inside))));
+              } else {
+                const [x, y] = piece.position, height = piece.head - piece.sill;
+                const wall = building.walls.find(w => w.id === piece.wall);
+                const angle = wall ? Math.atan2(wall.to[1] - wall.from[1], wall.to[0] - wall.from[0]) : 0;
+                add(new THREE.BoxGeometry(piece.width, height, .08).rotateY(angle)
+                  .translate(x, level.elevation + piece.sill + height / 2, -y));
+              }
+              next.pieces.set(key, objects);
+              const geometry = objects[0].geometry; geometry.computeBoundingBox();
+              next.pieceBounds.set(key, { box: geometry.boundingBox.clone(), group, data });
+              const proxy = new THREE.Mesh(geometry.clone(), next.materials.get('pick'));
+              Object.assign(proxy.userData, data); proxy.layers.set(PICK_LAYER); group.add(proxy); next.pickObjects.set(key, proxy);
+            }
+          }
+        }
+        for (const group of extras.values()) mergeStatic(group);
         const yard = await buildYard(nextPlan, kit, tier); next.groups.site.add(yard.group); await next.ready;
       } catch (error) { release(next); throw error; }
       if (disposed || version !== revision) { release(next); return; }
@@ -285,7 +341,9 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
       sun.target.position.set(bounds.x * FT, 0, -bounds.y * FT);
       const reach = Math.max(bounds.span * FT, 20);
       Object.assign(sun.shadow.camera, { left: -reach, right: reach, top: reach, bottom: -reach, near: 0.5, far: reach * 6 }); sun.shadow.camera.updateProjectionMatrix();
-      view.setView(twin.groups.levels[state.view] ? state.view : 'ext'); view.setTime(state.time); view.setCamera(state.camera);
+      view.setView(twin.groups.levels[state.view] ? state.view : 'ext'); view.setTime(state.time);
+      if (!(preserveCamera && (framed || cameraMoved))) view.setCamera(state.camera);
+      if (points.length) framed = true;
       if (levelsToRestore) view.showLevels(levelsToRestore);
       attachSheet();
       view.ready = true;
@@ -318,6 +376,10 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
     twin.root.traverse(o => { for (const m of o.material ? [].concat(o.material) : []) if (m.name === 'fixture') m.emissiveIntensity = night ? 2 : 0; });
   }
   if (new URLSearchParams(location.search).get('test') === '1') Object.assign(view, {
+    cameraState() { return { position: camera.position.toArray(), target: controls.target.toArray() }; },
+    setCameraState({ position, target }) {
+      cameraMoved = true; camera.position.fromArray(position); controls.target.fromArray(target); controls.update(); render();
+    },
     roofStats(buildingId) {
       let triangles = 0, maxError = 0;
       for (const [id, roof] of twin?.roofSurfaces || []) {

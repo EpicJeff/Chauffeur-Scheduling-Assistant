@@ -170,8 +170,8 @@ function adminGate() {
     // revoked, somebody else's), so ask again instead of leaving a refused
     // page with no door. Only a page that is 'in' has anything to lose.
     refused() {
-      if (this.state !== 'in' || !window.chfAdminSession()) return;
-      this.error = 'Your sign-in no longer works here. Sign in again.';
+      if (this.state !== 'in') return;
+      this.error = window.chfAdminSession() ? 'Your sign-in no longer works here. Sign in again.' : '';
       this.state = 'sign-in';
     },
 
@@ -184,9 +184,13 @@ function adminGate() {
         this.parents = (d.parents || []);
         if (!d.claimed && d.may_claim) { this.state = 'first-run'; return; }
         // Nobody holds a password yet and this is not the ingress first run:
-        // there is no account to sign in to, so the overlay would be a wall
-        // with no door. The server's own guard still answers.
-        if (!d.claimed) { this.state = 'in'; return; }
+        // usually there is no account to sign in to. An explicit person-tier
+        // refusal still needs the sign-in door, including one before init.
+        if (!d.claimed) {
+          this.state = 'in';
+          if (window.__chfAdminRefused) this.refused();
+          return;
+        }
         // Carry an admin session from before the keys were split: a PWA token
         // that belongs to a PARENT is the one this page was using. Anybody
         // else's is left alone, which is the whole point of the split.
@@ -207,6 +211,7 @@ function adminGate() {
         // Never trap somebody out of their own admin page because a status
         // call failed — enforcement lives on the server, not on this overlay.
         this.state = 'in';
+        if (window.__chfAdminRefused) this.refused();
       }
     },
 

@@ -1,5 +1,5 @@
 import { mountTwin } from '../twin_view.js';
-import { request, createPolling, idleInterval, buildInterval, checkpoint, plain, report } from './api.js';
+import { request, createPolling, idleInterval, buildInterval, checkpoint, plain, report, active, session } from './api.js';
 import { createPanel } from './panel.js';
 
 const el = id => document.getElementById(id);
@@ -11,12 +11,15 @@ export async function boot() {
   let sheets = { sources: [], page_roles: [] }, rows = [], confirmed = false;
   let currentBuild = null, ghostBuild = null, renderedGhosts = 0, lastScene = '';
   let uploadsBusy = false, rolesBusy = false, building = false;
+  let sourcesOpen = false;
+  const lifecycle = new AbortController();
+  const listen = (node, type, handler) => node.addEventListener(type, handler, { signal: lifecycle.signal });
   const ghosts = new Map(), prompted = new Set();
   const panel = createPanel({ afterSay: async () => { await polling.pollNow(true); } });
 
   function setStatus(text) { el('editor-status').textContent = plain(text); }
   function syncBuildButton() {
-    el('editor-build').disabled = !confirmed || uploadsBusy || rolesBusy || building || currentBuild?.state === 'running';
+    el('editor-build').disabled = !hooks.ready || !confirmed || uploadsBusy || rolesBusy || building || active(currentBuild);
   }
   function cost(value) { el('editor-cost').textContent = `$${Number(value || 0).toFixed(2)}`; }
   function countGhosts(plan) {
@@ -29,8 +32,9 @@ export async function boot() {
     // Outlines awaiting a person's approval live in events, never in saved
     // rounds. Give each one a temporary floor using the existing scene builder.
     for (const [stepId, event] of ghosts) {
-      const outline = event.piece?.outline;
+      const outline = event.piece?.outline || event.piece?.lot;
       if (!outline?.length) continue;
+      if (event.piece.lot) plan.site.lot = outline;
       const step = currentBuild?.steps.find(item => item.id === stepId);
       const owner = sheets.page_roles.find(row => row.source === step?.source && row.page === step?.page);
       const house = plan.buildings.find(item => item.id === (owner?.building || 'house'));
@@ -38,7 +42,8 @@ export async function boot() {
       const elevation = level?.elevation ?? Math.max(0, Number((step?.level || 'L1').slice(1)) - 1) * 9;
       plan.buildings.push({
         id: `editor-preview:${stepId}`, name: step?.label || 'Floor outline',
-        position: house?.position || [0, 0], rotation: house?.rotation || 0, base: house?.base || 0,
+        position: event.piece.lot ? [0, 0] : house?.position || [0, 0],
+        rotation: event.piece.lot ? 0 : house?.rotation || 0, base: event.piece.lot ? 0 : house?.base || 0,
         levels: [{ id: 'preview', name: 'Outline', elevation: elevation + .04, ceiling: 9, state: 'ghost' }],
         walls: [], openings: [], rooms: [{ id: 'outline', level: 'preview', polygon: outline }],
         roof: { sections: [] },
@@ -57,6 +62,7 @@ export async function boot() {
     drawFloors();
   }
   function drawFloors() {
+    const focused = document.activeElement?.dataset.floor;
     const host = el('editor-floors'); host.replaceChildren();
     const title = document.createElement('span'); title.textContent = 'Floors'; host.append(title);
     const levels = (snapshot.plan?.buildings || []).flatMap(house => house.levels.map(level => ({ house, level })));
@@ -70,15 +76,22 @@ export async function boot() {
     for (const { house, level } of levels.reverse()) {
       const button = document.createElement('button'); button.type = 'button';
       const key = `${house.id}:${level.id}`;
+      button.dataset.floor = key;
       button.textContent = plain(level.name || level.id);
       button.setAttribute('aria-pressed', String(view?.state.view === key));
       button.addEventListener('click', () => { view?.setView(key); drawFloors(); }); host.append(button);
+      if (focused === key) button.focus({ preventScroll: true });
     }
   }
   function drawTimeline(build) {
     const steps = build?.steps || [], done = steps.filter(step => step.status === 'done').length;
     el('editor-progress').max = steps.length || 1; el('editor-progress').value = done;
     el('editor-step-count').textContent = steps.length ? `${done} of ${steps.length} steps` : '0 steps';
+    const labels = el('editor-time-labels'); labels.replaceChildren();
+    for (const step of steps) {
+      const label = document.createElement('span'); label.textContent = step.label;
+      labels.append(label);
+    }
     el('editor-time-note').textContent = build?.state === 'paused' ? 'Argyle is waiting for you to check this step.'
       : build?.state === 'done' ? 'Your house is ready to explore.' : 'Your build will appear here, one step at a time.';
   }
@@ -87,7 +100,11 @@ export async function boot() {
     for (const [index, row] of rows.entries()) {
       const source = sheets.sources.find(source => source.id === row.source);
       const group = document.createElement('fieldset'); group.className = 'editor-page';
-      const legend = document.createElement('legend'); legend.textContent = plain(`${source?.filename || 'Drawing'} · page ${row.page}`);
+      const legend = document.createElement('legend'); legend.textContent = `${source?.filename || 'Drawing'} · page ${row.page}`;
+      const thumbnail = document.createElement('img'); thumbnail.alt = `Page ${row.page} of ${source?.filename || 'drawing'}`;
+      thumbnail.loading = 'lazy';
+      const url = (window.chfBase ?? '../') + `api/house/editor/sheets/${encodeURIComponent(row.source)}/${row.page}.png`;
+      thumbnail.src = window.chfAuthUrl ? window.chfAuthUrl(url) : url;
       const roleLabel = document.createElement('label'); roleLabel.textContent = 'This page shows';
       const select = document.createElement('select'); select.dataset.pageRole = ''; select.id = `editor-role-${index}`;
       for (const [value, label] of [['floor', 'Floor'], ['roof', 'Roof'], ['plot', 'Lot'], ['elevation', 'Outside view'], ['other', 'Other'], ['skip', 'Skip']]) {
@@ -99,11 +116,12 @@ export async function boot() {
       input.value = row.level || ''; input.placeholder = 'For example, Main floor';
       select.addEventListener('change', () => { row.role = select.value; confirmed = false; syncBuildButton(); });
       input.addEventListener('input', () => { row.level = input.value.trim() || null; confirmed = false; syncBuildButton(); });
-      roleLabel.append(select); levelLabel.append(input); group.append(legend, roleLabel, levelLabel);
+      roleLabel.append(select); levelLabel.append(input); group.append(legend, thumbnail, roleLabel, levelLabel);
       if (row.box) { const crop = document.createElement('p'); crop.textContent = 'One part of this page'; group.append(crop); }
       host.append(group);
     }
-    el('editor-suggest-roles').disabled = rolesBusy || uploadsBusy || !sheets.sources.some(source => source.kind === 'drawing');
+    el('editor-suggest-roles').disabled = rolesBusy || uploadsBusy || !sheets.sources.some(source =>
+      source.kind === 'drawing' && !sheets.page_roles.some(row => row.source === source.id));
     el('editor-confirm-roles').disabled = rolesBusy || uploadsBusy || !rows.length;
     syncBuildButton();
   }
@@ -120,8 +138,9 @@ export async function boot() {
     }
     rows.push(...missing);
     confirmed = missing.length === 0 && rows.some(row => row.role === 'floor');
-    el('editor-upload').hidden = sheets.sources.length > 0 && confirmed;
-    el('editor-source-count').textContent = `${sheets.sources.filter(source => source.kind === 'drawing').reduce((n, source) => n + source.pages, 0)} sheets · ${sheets.sources.filter(source => source.kind === 'photo').length} photos`;
+    el('editor-upload').hidden = !!snapshot.build && !sourcesOpen;
+    const photos = sheets.sources.filter(source => source.kind === 'photo').length;
+    el('editor-source-count').textContent = `${sheets.sources.filter(source => source.kind === 'drawing').reduce((n, source) => n + source.pages, 0)} sheets · ${photos} ${photos === 1 ? 'photo' : 'photos'}`;
     drawPages();
   }
   const polling = createPolling({
@@ -131,7 +150,8 @@ export async function boot() {
         await loadSheets();
       }
       snapshot = state; cost(state.cost?.total);
-      await renderScene(); syncBuildButton();
+      el('editor-upload').hidden = !!state.build && !sourcesOpen;
+      syncBuildButton();
       if (!currentBuild) setStatus(confirmed ? 'Ready to build' : 'Add drawings to begin');
     },
     async onBuild(build) {
@@ -149,40 +169,58 @@ export async function boot() {
       // Each new event batch can carry saved pieces, temporary outlines or
       // new costs. Read their owning state before rebuilding the scene.
       if (build.events?.length) await polling.refreshState();
-      else await renderScene();
       if (build.state === 'checkpoint') {
         const detail = [...(build.events || [])].reverse().find(event => event.type === 'checkpoint')
-          || { checkpoint: snapshot.cost?.blocking, total: snapshot.cost?.total };
+          || { checkpoint: build.checkpoint || snapshot.cost?.blocking, total: build.total ?? snapshot.cost?.total };
         const key = `${build.id}:${detail.checkpoint}`;
         if (detail.checkpoint && !prompted.has(key)) {
-          prompted.add(key);
-          if (await checkpoint(detail)) await request(`build/${build.id}/resume`, 'POST', {});
+          if (await checkpoint(detail)) {
+            await request(`build/${build.id}/resume`, 'POST', {});
+            prompted.add(key);
+            build.state = 'running';
+            setStatus('Argyle is building');
+          } else {
+            await request(`build/${build.id}/stop`, 'POST', {});
+            build.state = 'stopped';
+            setStatus('Build stopped');
+          }
+          syncBuildButton();
         }
       }
     },
-    onError(error) { if (!error.shown && !error.cancelled) setStatus(error.message || 'Connection paused. Trying again…'); },
+    onTick: renderScene,
+    onError(error) {
+      if (error.signedOut) setStatus('Home Assistant signed the tab out');
+      else if (!error.shown && !error.cancelled) setStatus(error.message || 'Connection paused. Trying again…');
+    },
   });
 
-  el('editor-source-files').addEventListener('change', async event => {
+  listen(el('editor-source-files'), 'change', async event => {
     if (uploadsBusy) return;
     uploadsBusy = true; drawPages();
     try {
+      const rejected = [];
       for (const file of event.target.files) {
-        if (!['application/pdf', 'image/jpeg', 'image/png'].includes(file.type)) throw new Error('Choose a PDF, JPEG or PNG file.');
+        if (!['application/pdf', 'image/jpeg', 'image/png'].includes(file.type)) { rejected.push(`${file.name}: choose a PDF, JPEG or PNG file.`); continue; }
         el('editor-upload-status').textContent = plain(`Uploading ${file.name}…`);
         const data = new FormData(); data.append('kind', file.type === 'application/pdf' ? 'drawing' : 'photo'); data.append('file', file);
-        await request('sources', 'POST', data, 'twin');
+        try { await request('sources', 'POST', data, 'twin'); }
+        catch (error) { rejected.push(`${file.name}: ${error.message}`); if (error.signedOut) break; }
       }
-      await loadSheets();
-      el('editor-upload-status').textContent = 'Check each page, then confirm.';
+      if (rejected.length) report(new Error(rejected.join('\n')));
+      el('editor-upload-status').textContent = rejected.length ? rejected.join('\n') : 'Check each page, then confirm.';
     } catch (error) { report(error); }
-    finally { uploadsBusy = false; event.target.value = ''; drawPages(); }
+    finally {
+      await loadSheets().catch(report);
+      uploadsBusy = false; event.target.value = ''; drawPages();
+    }
   });
-  el('editor-suggest-roles').addEventListener('click', async () => {
+  listen(el('editor-suggest-roles'), 'click', async () => {
     rolesBusy = true; drawPages();
     try {
       // Suggestions remain local until the person confirms the complete list.
-      for (const source of sheets.sources.filter(source => source.kind === 'drawing')) {
+      for (const source of sheets.sources.filter(source => source.kind === 'drawing'
+        && !sheets.page_roles.some(row => row.source === source.id))) {
         const result = await request('sheets/suggest', 'POST', { source: source.id });
         const suggestedPages = new Set(result.rows.map(row => row.page));
         rows = rows.filter(row => row.source !== source.id || !suggestedPages.has(row.page)).concat(result.rows);
@@ -192,7 +230,7 @@ export async function boot() {
     } catch (error) { report(error); }
     finally { rolesBusy = false; drawPages(); await polling.pollNow(true).catch(report); }
   });
-  el('editor-confirm-roles').addEventListener('click', async () => {
+  listen(el('editor-confirm-roles'), 'click', async () => {
     rolesBusy = true; drawPages();
     try {
       const result = await request('sheets/roles', 'PUT', { rows });
@@ -203,20 +241,25 @@ export async function boot() {
     } catch (error) { report(error); }
     finally { rolesBusy = false; drawPages(); }
   });
-  el('editor-build').addEventListener('click', async () => {
+  listen(el('editor-build'), 'click', async () => {
+    if (building || active(currentBuild) || !confirmed) return;
     building = true; syncBuildButton();
     try {
+      if (snapshot.plan?.buildings?.length && !await window.promptConfirm('Build your house again?',
+        'This reads the drawings again and adds to the running cost. Continue?', 'Build again', 'Cancel')) return;
       const result = await request('build', 'POST', {
         building: { id: 'house', name: 'Main house' },
         photos: sheets.sources.filter(source => source.kind === 'photo').map(source => source.id),
       });
       el('editor-upload').hidden = true;
+      sourcesOpen = false;
       await polling.follow(result.id);
     } catch (error) { report(error); }
     finally { building = false; syncBuildButton(); }
   });
-  el('editor-manage-sources').addEventListener('click', () => {
+  listen(el('editor-manage-sources'), 'click', () => {
     el('editor-upload').hidden = !el('editor-upload').hidden;
+    sourcesOpen = !el('editor-upload').hidden;
     el('editor-menu').open = false;
     if (!el('editor-upload').hidden) el('editor-source-files').focus();
   });
@@ -224,21 +267,53 @@ export async function boot() {
   if (new URLSearchParams(location.search).get('test') === '1') Object.assign(hooks, {
     ghostCount: () => renderedGhosts, build: () => currentBuild,
     pollNow: () => polling.pollNow(true).catch(report), idleInterval, buildInterval,
+    followBuild: id => { polling.follow(id).catch(report); },
+    currentInterval: polling.currentInterval, signOutNotices: () => session.notices, polling: polling.polling,
     isEmpty: () => sheets.sources.length === 0,
   });
-  window.addEventListener('pagehide', () => { polling.stop(); view?.dispose(); }, { once: true });
+  const signedOut = () => { polling.stop(); setStatus('Home Assistant signed the tab out'); };
+  const foreground = () => { if (!document.hidden) polling.resume().catch(report); else polling.stop(); };
+  window.addEventListener('editor-signed-out', signedOut);
+  document.addEventListener('visibilitychange', foreground);
+  window.addEventListener('focus', foreground);
+  // A successful answer in this tab should be reflected immediately, even
+  // when the paused build is on its one-minute idle cadence.
+  const originalFetch = window.fetch;
+  const watchAnswers = async (input, init) => {
+    const response = await originalFetch(input, init);
+    const url = typeof input === 'string' ? input : input.url;
+    if (response.ok && /\/api\/house\/editor\/build\/[^/]+\/(answer|reread)$/.test(url)
+        && (init?.method || input?.method || 'GET').toUpperCase() === 'POST' && currentBuild) {
+      polling.follow(currentBuild.id).catch(report);
+    }
+    return response;
+  };
+  window.fetch = watchAnswers;
+  window.addEventListener('pagehide', () => {
+    polling.stop(); view?.dispose(); lifecycle.abort(); panel.dispose();
+    window.removeEventListener('editor-signed-out', signedOut);
+    document.removeEventListener('visibilitychange', foreground);
+    window.removeEventListener('focus', foreground);
+    if (window.fetch === watchAnswers) window.fetch = originalFetch;
+  }, { once: true });
+  const restore = event => {
+    if (event.persisted) { window.removeEventListener('pageshow', restore); boot(); }
+  };
+  window.addEventListener('pageshow', restore);
   try {
     await loadSheets();
     const kit = await request('kit/modern_farmhouse', 'GET', undefined, 'twin');
-    view = await mountTwin(el('editor-scene'), { plan: emptyPlan(), kit });
+    view = await mountTwin(el('editor-scene'), { plan: emptyPlan(), kit, preserveCamera: true });
     // The editor uses the mockup's dark work surface; the shared preview keeps
     // its own daylight sky, with the same renderer and lighting.
     view.scene.background?.set?.('#171e27');
-    await polling.start();
+    await polling.resume();
     view.scene.background?.set?.('#171e27');
     hooks.ready = true;
+    syncBuildButton();
   } catch (error) {
-    setStatus(error.status === 401 || error.status === 403 ? 'Sign in to edit your house' : 'Could not open the house. Reload to try again.');
+    setStatus(error.signedOut ? 'Home Assistant signed the tab out'
+      : error.status === 401 || error.status === 403 ? 'Sign in to edit your house' : 'Could not open the house. Reload to try again.');
     if (error.status !== 401 && error.status !== 403) report(error);
   }
 }

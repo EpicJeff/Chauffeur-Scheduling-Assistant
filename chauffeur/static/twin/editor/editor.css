@@ -1,6 +1,8 @@
 /* Full-bleed placement: house_twin.html. Dark panels: the approved editor
    mockup; shared thin scrollbars: panel_skin.html. Keep admin overlays free. */
 html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+/* Keep the shared dialogs; only its competing command dock is hidden. */
+#chat-overlay-container { display: none !important; }
 #editor-chrome #top-nav-bar, #editor-chrome #panel-shelf,
 #editor-chrome #panel-shelf-flyout { display: none !important; }
 .editor-shell { --editor-panel: rgba(21, 27, 34, .96); --editor-line: #2b3847; --editor-muted: #a0afc1; --editor-accent: #52ccff; --editor-side: 364px; position: fixed; inset: 0; background: #171e27; color: #dce4ef; font: 13px/1.5 Inter, system-ui, sans-serif; }
@@ -38,7 +40,13 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #editor-agent > header { display: flex; gap: 12px; justify-content: space-between; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--editor-line); }
 #editor-source-count { font-size: 12px; color: var(--editor-muted); }
 #editor-panel-scroll { flex: 1; min-height: 0; overflow: auto; padding: 14px; }
-.editor-shell * { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.2) transparent; }
+/* panel_skin.html's scroll treatment, scoped to this admin work surface. */
+.editor-shell * { scrollbar-color: color-mix(in srgb, var(--panel-fg, #dce4ef) 28%, transparent) transparent; }
+.editor-shell ::-webkit-scrollbar { width: 12px; height: 12px; }
+.editor-shell ::-webkit-scrollbar-track { background: transparent; }
+.editor-shell ::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--panel-fg, #dce4ef) 28%, transparent); background-clip: padding-box; border: 3px solid transparent; border-radius: 999px; }
+.editor-shell ::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--panel-fg, #dce4ef) 46%, transparent); background-clip: padding-box; }
+.editor-page img { display: block; width: 100%; max-height: 140px; object-fit: contain; background: white; border-radius: 6px; }
 #editor-upload { border: 1px solid var(--editor-line); border-radius: 12px; padding: 12px; margin-bottom: 14px; }
 #editor-upload p { color: var(--editor-muted); margin: 8px 0; }
 #editor-upload input[type="file"] { width: 100%; font-size: 12px; padding: 6px; margin-top: 6px; }
@@ -60,6 +68,8 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #editor-message::placeholder { color: var(--editor-muted); font-size: 12px; }
 #editor-time { position: absolute; left: 14px; right: calc(var(--editor-side) + 28px); bottom: 14px; padding: 10px 16px; border: 1px solid var(--editor-line); border-radius: 16px; background: var(--editor-panel); color: var(--editor-muted); font-size: 11px; }
 #editor-time-labels, #editor-time > div:last-child { display: flex; justify-content: space-between; gap: 8px; }
+#editor-time-labels { overflow-x: auto; }
+#editor-time-labels span { flex-shrink: 0; }
 #editor-progress { display: block; width: 100%; height: 8px; margin: 8px 0; border: 0; border-radius: 10px; accent-color: #18af84; overflow: hidden; }
 #editor-progress::-webkit-progress-bar { background: #293849; }
 #editor-progress::-webkit-progress-value { background: linear-gradient(90deg, #16a45f, #10b2e0); }

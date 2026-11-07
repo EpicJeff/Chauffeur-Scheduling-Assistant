@@ -2,8 +2,8 @@
 export const idleInterval = 60000;
 export const buildInterval = 1000;
 const signedOut = 'Home Assistant signed this tab out. Open any Chauffeur admin page from the Home Assistant sidebar, then come back here.';
-export const plain = value => String(value ?? '').replace(/mesh(?:es)?/gi, 'shape')
-  .replace(/extrud\w*/gi, 'build').replace(/gizmo/gi, 'tool').replace(/vertex/gi, 'point');
+export const plain = value => String(value ?? '');
+export const session = { signedOut: false, notices: 0, noticeShown: false };
 let checkpointPrompt = null;
 
 export function report(error) {
@@ -40,11 +40,27 @@ export async function request(path, method = 'GET', body, area = 'editor') {
     catch {
       const error = new Error(response.status === 401 ? signedOut : 'The house could not answer. Try again.');
       error.status = response.status;
-      if (response.status === 401) { window.showGlobalAlert(signedOut); error.shown = true; }
+      if (response.status === 401) {
+        if (!session.signedOut) {
+          session.signedOut = true;
+          window.dispatchEvent(new CustomEvent('editor-signed-out'));
+          if (!session.noticeShown) {
+            session.noticeShown = true; ++session.notices;
+            window.showGlobalAlert(signedOut);
+          }
+        }
+        error.shown = true; error.signedOut = true;
+      }
       throw error;
     }
-    if (response.ok) return data;
-    if (response.status === 409 && data?.detail?.checkpoint) {
+    if (response.ok) {
+      if (area === 'editor' && path === 'state') session.noticeShown = false;
+      return data;
+    }
+    // Only these routes check spend before doing any work. A conversation
+    // can reach a checkpoint AFTER applying edits, so it must never replay.
+    if (response.status === 409 && data?.detail?.checkpoint && area === 'editor'
+        && ['build', 'sheets/suggest'].includes(path)) {
       if (await checkpoint(data.detail)) continue;
       throw Object.assign(new Error('Stopped at the spending checkpoint.'), { cancelled: true });
     }
@@ -54,13 +70,16 @@ export async function request(path, method = 'GET', body, area = 'editor') {
   }
 }
 
-export const active = build => ['running', 'paused', 'checkpoint'].includes(build?.state);
+export const active = build => ['running', 'paused', 'checkpoint', 'stopped'].includes(build?.state);
 
-export function createPolling({ onState, onBuild, onError }) {
+export function createPolling({ onState, onBuild, onTick, onError }) {
   let build = null, seq = 0, timer = null, pending = null, stopped = false;
+  const interval = () => build?.state === 'running' ? buildInterval : idleInterval;
+  const enabled = () => !stopped && !session.signedOut && !document.hidden;
   const schedule = () => {
     clearTimeout(timer);
-    if (!stopped) timer = setTimeout(() => pollNow().catch(onError), active(build) ? buildInterval : idleInterval);
+    timer = null;
+    if (enabled()) timer = setTimeout(() => pollNow().catch(onError), interval());
   };
   async function readBuild(id) {
     if (id !== build?.id) { build = null; seq = 0; }
@@ -85,23 +104,35 @@ export function createPolling({ onState, onBuild, onError }) {
     await onState(state);
     return state;
   }
-  function pollNow(forceState = false) {
+  function run(work) {
     if (pending) return pending;
+    if (!enabled()) return Promise.resolve();
     clearTimeout(timer);
-    pending = (async () => {
-      if (active(build) && !forceState) {
+    timer = null;
+    pending = (async () => { await work(); await onTick?.(); })()
+      .finally(() => { pending = null; schedule(); });
+    return pending;
+  }
+  function pollNow(forceState = false) {
+    return run(async () => {
+      if (build?.state === 'running' && !forceState) {
         await readBuild(build.id);
       } else {
         const state = await readState();
         if (state.build) await readBuild(state.build);
       }
-    })().finally(() => { pending = null; schedule(); });
-    return pending;
+    });
   }
   return {
     start: () => pollNow(true), pollNow,
-    async follow(id) { await pending; await readBuild(id); schedule(); },
+    async follow(id) {
+      while (pending) await pending;
+      return run(() => readBuild(id));
+    },
     refreshState: readState,
     stop() { stopped = true; clearTimeout(timer); },
+    resume() { stopped = false; session.signedOut = false; return pollNow(true); },
+    currentInterval: interval,
+    polling: enabled,
   };
 }

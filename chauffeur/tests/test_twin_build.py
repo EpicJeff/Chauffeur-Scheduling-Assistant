@@ -238,6 +238,8 @@ def scenario_full_build_finishes_with_three_pause_kinds():
     check(plan['buildings'][0]['roof']['sections'][0]['pitch'] == 8, 'pitch from the photos')
     check(plan['buildings'][0]['roof']['sections'][0]['pitch_source'] == 'photos', 'marked as estimated')
     check(not tb.running(), 'idle when done')
+    check(plan['materials'] and plan['materials'].get('siding'), 'finishes from the photos')
+    check(any(i.get('by') == 'compose' for i in plan['site'].get('planting') or []), 'the yard was composed')
 
 
 def scenario_lot_placement_answer_moves_and_turns_the_building():

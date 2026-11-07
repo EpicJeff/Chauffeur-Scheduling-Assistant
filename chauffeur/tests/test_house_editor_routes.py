@@ -237,6 +237,45 @@ def scenario_app_start_recovers_an_interrupted_build():
     check(tb.status(b)['state'] == 'stopped', tb.status(b)['state'])
 
 
+def scenario_suggest_roles_reads_once_and_saves_nothing():
+    # Task 8 review ruling: the engine never runs sheet_roles; the editor asks
+    # for suggestions before Build and the person confirms them.
+    _fresh()
+    _setup()
+    sheets = ts.save_source('drawing', 'lot58.pdf', engine_tests._pdf(3))
+    reader = engine_tests.Reader()
+    c = _client()
+    with _enforced(), patch.object(twin_reads, 'read', reader):
+        r = c.post('/api/house/editor/sheets/suggest', headers=PARENT, json={'source': sheets})
+    check(r.status_code == 200, r.text)
+    rows = r.json()['rows']
+    check(rows and all(row['source'] == sheets for row in rows), rows)
+    check([c['kind'] for c in reader.calls] == ['sheet_roles'], reader.calls)
+    check(ts.page_roles() == [], 'suggestions are not saved until the person confirms them')
+
+
+def scenario_a_build_from_before_a_start_over_is_gone():
+    _fresh()
+    _setup()
+    _, _, photo = engine_tests._sources()
+    b = tb.start(engine_tests._inputs(photo), reader=engine_tests.Reader(), inline=True)
+    tb.stop(b)          # paused inline: stopping it frees the house for a start over
+    ts.start_over()
+    c = _client()
+    with _enforced():
+        r = c.get(f'/api/house/editor/build/{b}', headers=PARENT)
+    check(r.status_code in (404, 409), (r.status_code, r.text))
+
+
+def scenario_twin_page_has_no_tools_sheet_but_links_to_the_editor():
+    _setup()
+    c = _client()
+    html = c.get('/house/twin').text
+    check('twin-tools-sheet' not in html and 'house/editor' in html, 'retired with a way forward')
+    panel = c.get('/house/twin?panel=true&kiosk=true').text
+    check('house/editor' not in panel, 'no editor link on a wall panel')
+
+
 if __name__ == '__main__':
     for fn in (scenario_every_editor_route_is_parents_only,
                scenario_page_renders_for_anyone,
@@ -245,6 +284,9 @@ if __name__ == '__main__':
                scenario_edit_returns_summary_and_plan,
                scenario_state_and_rounds,
                scenario_start_over_and_reset_need_intent,
-               scenario_app_start_recovers_an_interrupted_build):
+               scenario_app_start_recovers_an_interrupted_build,
+               scenario_suggest_roles_reads_once_and_saves_nothing,
+               scenario_a_build_from_before_a_start_over_is_gone,
+               scenario_twin_page_has_no_tools_sheet_but_links_to_the_editor):
         fn()
         print('  ok ', fn.__name__)

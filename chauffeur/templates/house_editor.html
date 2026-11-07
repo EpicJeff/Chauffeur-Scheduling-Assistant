@@ -35,10 +35,9 @@
   <main class="editor-shell" aria-label="House editor">
     <div id="editor-scene" aria-label="Interactive house preview"></div>
     <header id="editor-top">
-      <h1>House designer</h1>
+      <h1>House editor</h1>
       <output id="editor-status" role="status">Opening your house…</output>
       <output id="editor-cost" aria-label="Total spent">$0.00</output>
-      <button id="editor-build" type="button" disabled>Build</button>
       <details id="editor-menu">
         <summary aria-label="House menu">Menu</summary>
         <div><button id="editor-manage-sources" type="button">Drawings and photos</button>
@@ -64,6 +63,7 @@
           <div class="editor-actions">
             <button id="editor-suggest-roles" type="button" disabled>Suggest page roles</button>
             <button id="editor-confirm-roles" type="button" disabled>Confirm pages</button>
+            <button id="editor-build" type="button" disabled>Build</button>
           </div>
         </section>
         <ol id="editor-log" aria-label="Build steps" aria-live="polite"></ol>
@@ -72,12 +72,12 @@
       <div id="editor-quick-replies" aria-label="Quick replies"></div>
       <form id="editor-say">
         <label class="editor-sr-only" for="editor-message">Message Argyle</label>
-        <input id="editor-message" type="text" placeholder="Talk to Argyle, or drag in the scene" maxlength="4000" autocomplete="off" required>
+        <input id="editor-message" type="text" placeholder="Talk to Argyle" maxlength="4000" autocomplete="off" required>
         <button type="submit" aria-label="Send to Argyle">Send</button>
       </form>
     </aside>
     <footer id="editor-time" aria-label="Build timeline">
-      <div id="editor-time-labels"><span>Sheets</span><span>Main floor</span><span>Upper</span><span>Roof</span><span>Lot</span><span>Finishes</span></div>
+      <div id="editor-time-labels"></div>
       <progress id="editor-progress" max="1" value="0" aria-label="Build progress"></progress>
       <div><span id="editor-time-note">Your build will appear here, one step at a time.</span><output id="editor-step-count">0 steps</output></div>
     </footer>

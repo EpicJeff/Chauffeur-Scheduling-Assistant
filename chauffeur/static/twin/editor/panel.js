@@ -1,4 +1,4 @@
-import { request, plain, report } from './api.js';
+import { request, checkpoint, plain, report } from './api.js';
 
 export function createPanel({ afterSay }) {
   const log = document.getElementById('editor-log');
@@ -10,6 +10,7 @@ export function createPanel({ afterSay }) {
   const send = form.querySelector('button');
   const history = [];
   const seen = new Set();
+  const reasons = new Map(), pauses = new Set();
   let buildId = null, busy = false;
 
   function message(text, speaker = 'argyle') {
@@ -28,18 +29,31 @@ export function createPanel({ afterSay }) {
       const result = await request('say', 'POST', { message: text, history: history.slice(-20) });
       history.push({ role: 'user', content: text }, { role: 'assistant', content: result.reply || '' });
       message(result.reply || 'Done.');
-      await afterSay(result);
+      await afterSay(result).catch(report);
     } catch (error) {
+      if (error.status === 409 && error.detail?.checkpoint) {
+        const summary = error.detail.summary;
+        const reply = Array.isArray(summary) && summary.length ? summary.join('\n')
+          : 'The spending checkpoint stopped this turn.';
+        history.push({ role: 'user', content: text }, { role: 'assistant', content: reply });
+        message(reply);
+        try {
+          await checkpoint(error.detail);
+          await afterSay(error.detail);
+        } catch (failure) { report(failure); }
+        return;
+      }
       if (!error.cancelled) {
         input.value = text;
-        if (!error.shown) message(error.message || 'Could not reach Argyle. Try again.');
+        report(error);
       }
     } finally {
       busy = false; send.disabled = false;
       quick.querySelectorAll('button').forEach(button => { button.disabled = false; });
     }
   }
-  form.addEventListener('submit', event => { event.preventDefault(); say(input.value).catch(report); });
+  const submit = event => { event.preventDefault(); say(input.value).catch(report); };
+  form.addEventListener('submit', submit);
   function replies(labels = ['Keep going', 'What needs checking?']) {
     quick.replaceChildren();
     labels.forEach(label => {
@@ -51,16 +65,44 @@ export function createPanel({ afterSay }) {
   replies();
   return {
     message, say, replies,
+    dispose() { form.removeEventListener('submit', submit); },
     events(build) {
-      if (buildId !== build.id) { seen.clear(); log.replaceChildren(); buildId = build.id; }
+      if (buildId !== build.id) { seen.clear(); reasons.clear(); pauses.clear(); log.replaceChildren(); buildId = build.id; }
       for (const event of build.events || []) {
         if (seen.has(event.seq)) continue;
         seen.add(event.seq);
-        if (event.type === 'log') {
+        if (event.type === 'ghost' && event.why) {
+          const name = event.piece?.id?.split(':')[0];
+          const kind = ['wall', 'opening', 'room'].includes(name) ? name : 'piece';
+          const reason = event.why.replace(/^This opening is /i, '').replace(/^Wall ends are /i, '').replace(/\.$/, '');
+          const key = `${event.step}:${kind}:${reason}`;
+          let row = reasons.get(key);
+          if (!row) {
+            const node = document.createElement('li'); log.append(node);
+            row = { node, ids: new Set() }; reasons.set(key, row);
+          }
+          row.ids.add(event.piece.id);
+          const n = row.ids.size;
+          row.node.textContent = `${n} ${kind}${n === 1 ? '' : 's'} ${n === 1 ? 'needs' : 'need'} checking: ${reason}`;
+        } else if (event.type === 'log') {
+          // The engine also emits each ghost's reason as a log event. Its
+          // per-step summary above owns that copy, across poll batches too.
+          const reason = (event.text || '').replace(/^This opening is /i, '').replace(/^Wall ends are /i, '').replace(/\.$/, '');
+          if ([...reasons.keys()].some(key => key.startsWith(`${event.step}:`) && key.endsWith(`:${reason}`))) continue;
           const line = document.createElement('li'); line.textContent = plain(event.text); log.append(line);
-        } else if (event.type === 'question' || event.type === 'error') message(event.text);
+        } else if (event.type === 'question') message(event.text);
+        else if (event.type === 'error') report(new Error(event.text));
+      }
+      if (build.state === 'paused' && build.pause) {
+        const pause = build.pause, key = `${build.id}:${pause.step}:${pause.why}:${pause.confidence}`;
+        if (!pauses.has(key)) {
+          pauses.add(key);
+          const confidence = Number(pause.confidence);
+          message(`${pause.why || 'Please check this step.'} ${confidence >= .8 ? 'I am fairly sure.' : confidence >= .5 ? 'I am somewhat sure.' : 'I am not sure yet.'}`);
+          replies(['Keep going', 'What needs checking?']);
+        }
       }
     },
-    reset() { seen.clear(); log.replaceChildren(); messages.replaceChildren(); history.length = 0; buildId = null; },
+    reset() { seen.clear(); reasons.clear(); pauses.clear(); log.replaceChildren(); messages.replaceChildren(); history.length = 0; buildId = null; },
   };
 }
