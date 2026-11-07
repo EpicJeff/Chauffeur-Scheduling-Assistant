@@ -529,6 +529,17 @@ def save(edit, actor_id, reason=''):
             edit['reg'] = _registration(edit.get('reg'))
             twin_store._source_page(twin_store._state(), edit.get('source'), edit.get('page'))
         after, summary = apply(before, edit)
+        place_row = None
+        if edit.get('op') == 'set' and edit.get('field') == 'name':
+            kind, piece, building, _ = _find(after, edit.get('piece'), edit.get('building'))
+            if kind == 'building':
+                # Validate the registry name before publishing, and carry the
+                # private snapshot into this same edit's metadata save.
+                place_row = twin_store._state()
+                record = twin_store._update_place_building(place_row, building['id'], {'name': piece['name']})
+                piece['name'] = record['name']
+                old_name = next(b['name'] for b in before['buildings'] if b['id'] == building['id'])
+                summary = f'Renamed {old_name} to {piece["name"]}'
         tombstones = ([_tombstone(*entry) for entry in _removed(before, after)]
                       if edit.get('op') == 'delete' else [])
         changes = [{'path': path, 'kind': twin_store._fix_kind(path),
@@ -540,6 +551,8 @@ def save(edit, actor_id, reason=''):
             lambda current: after, 'edit', note=summary,
             step={'id': f'edit:{uuid.uuid4().hex}', 'label': summary})
         row = twin_store._state()
+        if place_row is not None:
+            row['place'], row['page_roles'] = place_row['place'], place_row['page_roles']
         at = next(r['created'] for r in row['rounds'] if r['id'] == round_id)
         row['fixes'].extend({**change, 'round': round_id, 'at': at} for change in changes)
         twin_store._save(row)

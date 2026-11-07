@@ -17,7 +17,7 @@ import weakref
 
 from PIL import Image, ImageOps
 
-from services import storage, twin_pdf, twin_plan
+from services import storage, twin_pdf, twin_plan, twin_place
 
 DATA_DIR = os.path.join(os.path.dirname(storage.DB_PATH), 'twin')
 _LOCK = threading.RLock()
@@ -26,7 +26,7 @@ _MASTER_LOCKS = weakref.WeakValueDictionary()  # Only active page readers retain
 build_running = lambda: False  # Task 8 supplies the build runner's predicate.
 stop_builds_for_start_over = lambda: None
 _KINDS = {'draft', 'director', 'hand', 'revert', 'build', 'edit', 'start_over'}
-_PAGE_ROLES = {'floor', 'roof', 'plot', 'elevation', 'other', 'skip'}
+_PAGE_ROLES = set(twin_place.BUILDING_ROLES) | set(twin_place.LOT_ROLES)
 # Pillow identifies multi-picture phone JPEGs as MPO.
 _PHOTO_MIMES = {'JPEG': 'image/jpeg', 'MPO': 'image/jpeg', 'PNG': 'image/png'}
 
@@ -52,6 +52,198 @@ def _save(row):
     storage.patch_settings({'house_twin': row})
 
 
+def _place(row):
+    """Migrate a private state snapshot; caller holds _LOCK and saves on success."""
+    if 'place' not in row:
+        plan = _read_round(row, row['current']) if row['current'] is not None else None
+        row['place'] = twin_place.migrate(row, plan)
+        for page in row['page_roles']:
+            if page['role'] == 'plot':
+                page['building'] = twin_place.LOT
+            else:
+                page.setdefault('building', 'house')
+    return row['place']
+
+
+def _place_state():
+    row = _state()
+    if 'place' not in row:
+        _place(row)
+        _save(row)
+    return row
+
+
+def place() -> dict:
+    with _LOCK:
+        return deepcopy(_place_state()['place'])
+
+
+def _check_part(place, part):
+    if not isinstance(part, str) or (
+            part != twin_place.LOT and not any(b['id'] == part for b in place['buildings'])):
+        raise ValueError('Choose a part of your place.')
+
+
+def _building_name(place, name, bid=None):
+    if not isinstance(name, str) or not name.strip() or len(name.strip()) > 100:
+        raise ValueError('Give the building a name of at most 100 characters.')
+    name = name.strip()
+    if any(b['id'] != bid and b['name'].casefold() == name.casefold() for b in place['buildings']):
+        raise ValueError(f'There is already a building called {name}.')
+    return name
+
+
+def _check_building_kind(kind):
+    if not isinstance(kind, str) or kind not in twin_place.KINDS:
+        raise ValueError('Choose a kind of building.')
+
+
+def _add_building(place, bid, name, kind):
+    building = {'id': bid, 'name': name, 'kind': kind, 'footprint': None,
+                'footprint_from': None, 'shell': twin_place.shell_for(kind), 'shell_from': 'default'}
+    place['buildings'].append(building)
+    return building
+
+
+def _legacy_house(place):
+    if not any(b['id'] == 'house' for b in place['buildings']):
+        _add_building(place, 'house', 'Main house', 'main_house')
+
+
+def add_building(name: str, kind: str) -> dict:
+    with _LOCK:
+        row = _state()
+        registry = _place(row)
+        name = _building_name(registry, name)
+        _check_building_kind(kind)
+        bid = twin_place.new_id(name, {b['id'] for b in registry['buildings']})
+        building = _add_building(registry, bid, name, kind)
+        _save(row)
+        return deepcopy(building)
+
+
+def _update_place_building(row, bid, fields):
+    """Validate and update only the private snapshot, shared with hand edits."""
+    registry = _place(row)
+    building = next((b for b in registry['buildings'] if b['id'] == bid), None)
+    if building is None:
+        raise ValueError('Choose a building in your place.')
+    allowed = {'name', 'kind', 'shell', 'shell_from', 'footprint', 'footprint_from'}
+    if not isinstance(fields, dict) or fields.keys() - allowed:
+        raise ValueError('Choose a building detail to change.')
+    checked = deepcopy(building)
+    if 'name' in fields:
+        checked['name'] = _building_name(registry, fields['name'], bid)
+    if 'kind' in fields:
+        _check_building_kind(fields['kind'])
+        checked['kind'] = fields['kind']
+    if 'shell' in fields:
+        if not isinstance(fields['shell'], dict):
+            raise ValueError('A shell needs its dimensions and roof shape.')
+        checked['shell'] = twin_place.check_shell({**building['shell'], **fields['shell']})
+        checked['shell_from'] = fields.get('shell_from', 'person')
+    if 'shell_from' in fields and ('shell' not in fields or fields['shell_from'] not in ('person', 'photos')):
+        raise ValueError('Shell dimensions must come from a person or photos.')
+    if 'footprint' in fields:
+        checked['footprint'] = twin_place.check_footprint(fields['footprint'])
+    if 'footprint_from' in fields:
+        if fields['footprint_from'] not in ('plot', 'typed', 'drawn'):
+            raise ValueError('A footprint must come from a plot, typed points or a drawing.')
+        checked['footprint_from'] = fields['footprint_from']
+    building.update(checked)
+    return building
+
+
+def update_building(bid: str, fields: dict) -> dict:
+    with LIFECYCLE, _LOCK:
+        row = _state()
+        registry = _place(row)
+        old = next((deepcopy(b) for b in registry['buildings'] if b['id'] == bid), None)
+        building = _update_place_building(row, bid, fields)
+        plan = _read_round(row, row['current']) if row['current'] is not None else None
+        if (plan is not None and any(b['id'] == bid for b in plan['buildings'])
+                and any(old[key] != building[key] for key in ('name', 'kind'))):
+            def rename(current):
+                target = next(b for b in current['buildings'] if b['id'] == bid)
+                target['name'] = building['name']
+                if 'kind' in fields:
+                    target['kind'] = building['kind']
+                return current
+
+            update_current(rename, kind='edit', note=f'Renamed {old["name"]} to {building["name"]}')
+            latest = _state()
+            latest['place'], latest['page_roles'] = registry, row['page_roles']
+            row = latest
+        _save(row)
+        return deepcopy(building)
+
+
+def remove_building(bid: str) -> None:
+    with LIFECYCLE, _LOCK:
+        row = _state()
+        registry = _place(row)
+        if not any(b['id'] == bid for b in registry['buildings']):
+            raise ValueError('Choose a building in your place.')
+        if any(p['building'] == bid for p in row['page_roles']):
+            raise ValueError('Move or remove this building\'s pages first.')
+        plan = _read_round(row, row['current']) if row['current'] is not None else None
+        if plan is not None and any(b['id'] == bid for b in plan['buildings']):
+            raise ValueError('This building is part of the house. Delete it from the house first.')
+        registry['buildings'] = [b for b in registry['buildings'] if b['id'] != bid]
+        for sid, parts in registry['photo_tags'].items():
+            registry['photo_tags'][sid] = [part for part in parts if part != bid]
+        _save(row)
+
+
+def move_page(source: str, page: int, part: str) -> list[dict]:
+    with _LOCK:
+        row = _state()
+        _check_part(_place(row), part)
+        _source_page(row, source, page)
+        moved = [p for p in row['page_roles'] if p['source'] == source and p['page'] == page]
+        roles = twin_place.LOT_ROLES if part == twin_place.LOT else twin_place.BUILDING_ROLES
+        for item in moved:
+            item['building'] = part
+            if item['role'] not in roles:
+                item['role'], item['level'] = 'other', None
+        _save(row)
+        return deepcopy(moved)
+
+
+def set_photo_tags(source: str, parts: list[str]) -> list[str]:
+    with _LOCK:
+        row = _state()
+        registry = _place(row)
+        if not any(s['id'] == source and s['kind'] == 'photo' for s in row['sources']):
+            raise ValueError('Choose a photo in your place.')
+        if not isinstance(parts, list):
+            raise ValueError('Choose the parts shown in this photo.')
+        for part in parts:
+            _check_part(registry, part)
+        tags = list(dict.fromkeys(parts))
+        registry['photo_tags'][source] = tags
+        _save(row)
+        return tags[:]
+
+
+def photos_for(part: str) -> list[str]:
+    with _LOCK:
+        row = _place_state()
+        registry = row['place']
+        _check_part(registry, part)
+        return [s['id'] for s in row['sources'] if s['kind'] == 'photo'
+                and part in (registry['photo_tags'].get(s['id']) or [twin_place.LOT])]
+
+
+def set_lot(lot: dict) -> None:
+    if not isinstance(lot, dict):
+        raise ValueError('The lot needs its placement and drawing read.')
+    with _LOCK:
+        row = _state()
+        _place(row)['lot'] = deepcopy(lot)
+        _save(row)
+
+
 def generation() -> int:
     with _LOCK:
         return _state()['generation']
@@ -70,7 +262,7 @@ def start_over() -> None:
         if any(not target.resolve().is_relative_to(root) for target in targets):
             raise ValueError('Twin files must stay within the twin data directory.')
         # Invalidate late workers and clear pointers before any fallible deletion.
-        _save({'generation': next_generation})
+        _save({'generation': next_generation, 'place': twin_place.empty_place()})
         for target in targets:
             if target.is_symlink():
                 target.unlink()
@@ -188,7 +380,7 @@ def _append_round(row, plan, kind, note='', cost=None, run=None, base=None, chan
 def push_round(plan: dict, kind: str, note: str = '', cost: float | None = None,
                run: str | None = None, base: int | None = None, step: dict | None = None,
                generation: int | None = None) -> int:
-    with _LOCK:
+    with LIFECYCLE, _LOCK:
         row = _state()
         if generation is not None and generation != row['generation']:
             raise StaleGeneration('The house was started over. Discard this result.')
@@ -252,7 +444,7 @@ def _fix_kind(path):
 
 
 def save_hand_edit(plan: dict, reason: str, base: int | None = None) -> int:
-    with _LOCK:
+    with LIFECYCLE, _LOCK:
         if not isinstance(reason, str) or not reason.strip():
             raise ValueError('A hand edit needs a reason.')
         _check_base(base)
@@ -280,7 +472,8 @@ def fixes() -> list[dict]:
         return _state()['fixes']
 
 
-def save_source(kind: str, filename: str, data: bytes, *, content_type: str | None = None) -> str:
+def save_source(kind: str, filename: str, data: bytes, *, content_type: str | None = None,
+                part: str | None = None) -> str:
     """Verify photos and render drawings before locking their storage writes."""
     if kind not in ('drawing', 'photo'):
         raise ValueError('A source must be a drawing or photo.')
@@ -288,7 +481,11 @@ def save_source(kind: str, filename: str, data: bytes, *, content_type: str | No
         raise ValueError('The source is empty.')
     if not isinstance(filename, str) or not filename.strip():
         raise ValueError('The source needs a filename.')
-    source_generation = generation()
+    with _LOCK:
+        row = _state()
+        if part is not None:
+            _check_part(_place(row), part)
+        source_generation = row['generation']
     if kind == 'drawing':
         pages = [(f"{page['page']}.png", base64.b64decode(page['b64']))
                  for page in twin_pdf.render_pages(data)]
@@ -313,7 +510,8 @@ def save_source(kind: str, filename: str, data: bytes, *, content_type: str | No
         pages = []
     source_id = uuid.uuid4().hex
     record = {'id': source_id, 'kind': kind, 'filename': filename,
-              'pages': len(pages) if kind == 'drawing' else 1, 'mime': mime}
+              'pages': len(pages) if kind == 'drawing' else 1, 'mime': mime,
+              'part': 'house' if part is None and kind == 'drawing' else part}
     if kind == 'drawing':
         record['total_pages'] = total_pages
     root = Path(DATA_DIR) / 'sources' / source_id
@@ -336,10 +534,18 @@ def save_source(kind: str, filename: str, data: bytes, *, content_type: str | No
             if source_generation != _state()['generation']:
                 raise StaleGeneration('The house was started over during the upload.')
             row = _state()
+            registry = _place(row)
+            if part is not None:
+                _check_part(registry, part)
+            elif kind == 'drawing':
+                _legacy_house(registry)
+            if kind == 'photo':
+                registry['photo_tags'][source_id] = ([part] if part is not None else
+                                                    [*[b['id'] for b in registry['buildings']], twin_place.LOT])
             row['sources'].append(record)
             _save(row)
     except Exception:
-        with LIFECYCLE:
+        with LIFECYCLE, _LOCK:
             if root.exists():
                 shutil.rmtree(root)
         raise
@@ -393,6 +599,7 @@ def set_page_roles(rows) -> None:
         raise ValueError('Page roles must be a list.')
     with _LOCK:
         row = _state()
+        registry = _place(row)
         checked = []
         for item in rows:
             if not isinstance(item, dict):
@@ -400,9 +607,15 @@ def set_page_roles(rows) -> None:
             _source_page(row, item.get('source'), item.get('page'))
             if not isinstance(item.get('role'), str) or item['role'] not in _PAGE_ROLES:
                 raise ValueError('Unknown page role.')
-            building = item.get('building', 'house')
-            if not isinstance(building, str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,64}', building):
-                raise ValueError('A building needs a valid id of at most 64 characters.')
+            building = item.get('building')
+            if 'building' not in item:
+                building = twin_place.LOT if item['role'] == 'plot' else 'house'
+                if building == 'house':
+                    _legacy_house(registry)
+            _check_part(registry, building)
+            roles = twin_place.LOT_ROLES if building == twin_place.LOT else twin_place.BUILDING_ROLES
+            if item['role'] not in roles:
+                raise ValueError('That page role does not fit this part of your place.')
             level = item.get('level')
             if level is not None and (not isinstance(level, str) or not level.strip() or len(level) > 80):
                 raise ValueError('A level must be null or a non-empty string of at most 80 characters.')
@@ -535,10 +748,7 @@ def crop(source_id, page, box, max_side=2048) -> dict:
 
 def crop_to_master(crop, uv) -> list:
     """Map crop-normalised coordinates to pixels in the full-resolution master."""
-    x0, y0, x1, y1 = crop['box']
-    width, height = crop['master']
-    return [(x0 + uv[0] * (x1 - x0)) * width,
-            (y0 + uv[1] * (y1 - y0)) * height]
+    return twin_place.to_master(crop, uv)
 
 
 def source_images(source_id: str, pages: list[int] | None = None) -> list[dict]:
