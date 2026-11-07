@@ -1,0 +1,174 @@
+{
+  "walls": [
+    {
+      "from": [
+        0.002,
+        0.161
+      ],
+      "to": [
+        0.561,
+        0.161
+      ],
+      "exterior": true,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.561,
+        0.161
+      ],
+      "to": [
+        0.561,
+        0.006
+      ],
+      "exterior": true,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.561,
+        0.006
+      ],
+      "to": [
+        0.998,
+        0.006
+      ],
+      "exterior": true,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.002,
+        0.985
+      ],
+      "to": [
+        0.283,
+        0.985
+      ],
+      "exterior": true,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.283,
+        0.985
+      ],
+      "to": [
+        0.283,
+        1
+      ],
+      "exterior": true,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.002,
+        0.506
+      ],
+      "to": [
+        0.07,
+        0.506
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.461,
+        0.585
+      ],
+      "to": [
+        0.998,
+        0.585
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.283,
+        0.667
+      ],
+      "to": [
+        0.779,
+        0.667
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.283,
+        0.667
+      ],
+      "to": [
+        0.283,
+        0.985
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.779,
+        0.585
+      ],
+      "to": [
+        0.779,
+        1
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.779,
+        0.703
+      ],
+      "to": [
+        0.901,
+        0.703
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.901,
+        0.703
+      ],
+      "to": [
+        0.901,
+        0.757
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.779,
+        0.757
+      ],
+      "to": [
+        0.998,
+        0.757
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.955,
+        0.53
+      ],
+      "to": [
+        0.955,
+        0.585
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    }
+  ],
+  "confidence": 0.9,
+  "why": "Clear wall geometry and 4 inch thickness callouts along exterior rear porch/patio walls and interior stair/dining/kitchen partitions."
+}

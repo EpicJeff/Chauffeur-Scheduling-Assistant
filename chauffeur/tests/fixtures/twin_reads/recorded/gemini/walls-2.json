@@ -1,0 +1,210 @@
+{
+  "walls": [
+    {
+      "from": [
+        0.008,
+        0.006
+      ],
+      "to": [
+        0.985,
+        0.006
+      ],
+      "exterior": true,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.008,
+        0.006
+      ],
+      "to": [
+        0.008,
+        0.979
+      ],
+      "exterior": true,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.008,
+        0.979
+      ],
+      "to": [
+        0.985,
+        0.979
+      ],
+      "exterior": true,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.985,
+        0.006
+      ],
+      "to": [
+        0.985,
+        0.979
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.008,
+        0.461
+      ],
+      "to": [
+        0.985,
+        0.461
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.733,
+        0.461
+      ],
+      "to": [
+        0.733,
+        0.708
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.733,
+        0.569
+      ],
+      "to": [
+        0.985,
+        0.569
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.733,
+        0.625
+      ],
+      "to": [
+        0.985,
+        0.625
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.595,
+        0.708
+      ],
+      "to": [
+        0.733,
+        0.708
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.595,
+        0.708
+      ],
+      "to": [
+        0.595,
+        0.847
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.008,
+        0.847
+      ],
+      "to": [
+        0.985,
+        0.847
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.008,
+        0.609
+      ],
+      "to": [
+        0.266,
+        0.609
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.266,
+        0.461
+      ],
+      "to": [
+        0.266,
+        0.609
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.008,
+        0.766
+      ],
+      "to": [
+        0.369,
+        0.766
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.369,
+        0.766
+      ],
+      "to": [
+        0.369,
+        0.847
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.595,
+        0.461
+      ],
+      "to": [
+        0.595,
+        0.521
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.595,
+        0.521
+      ],
+      "to": [
+        0.733,
+        0.521
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    }
+  ],
+  "confidence": 0.9,
+  "why": "Clearly readable floor plan showing master suite, master bath, water closet, and walk-in closets with 4 inch walls labeled throughout."
+}

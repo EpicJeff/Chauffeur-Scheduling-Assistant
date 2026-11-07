@@ -1,0 +1,78 @@
+{
+  "walls": [
+    {
+      "from": [
+        0,
+        0
+      ],
+      "to": [
+        0,
+        0.95
+      ],
+      "exterior": true,
+      "thickness_in": 6
+    },
+    {
+      "from": [
+        0,
+        0.95
+      ],
+      "to": [
+        0.27,
+        0.95
+      ],
+      "exterior": true,
+      "thickness_in": 6
+    },
+    {
+      "from": [
+        0.27,
+        0.95
+      ],
+      "to": [
+        0.27,
+        1
+      ],
+      "exterior": true,
+      "thickness_in": 6
+    },
+    {
+      "from": [
+        0.72,
+        0.95
+      ],
+      "to": [
+        0.72,
+        1
+      ],
+      "exterior": true,
+      "thickness_in": 6
+    },
+    {
+      "from": [
+        0.72,
+        0.95
+      ],
+      "to": [
+        1,
+        0.95
+      ],
+      "exterior": true,
+      "thickness_in": 6
+    },
+    {
+      "from": [
+        0.99,
+        0.09
+      ],
+      "to": [
+        0.99,
+        0.95
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    }
+  ],
+  "confidence": 0.5,
+  "why": "Garage left exterior wall and bottom wall with door jambs visible; right edge double line likely a wall at crop boundary. Rectangle at right is likely a step/platform or vehicle outline, not walls; dimension lines ignored."
+}

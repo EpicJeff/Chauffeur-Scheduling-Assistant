@@ -1,0 +1,198 @@
+{
+  "walls": [
+    {
+      "from": [
+        0.01,
+        0
+      ],
+      "to": [
+        0.01,
+        1
+      ],
+      "exterior": true,
+      "thickness_in": 6
+    },
+    {
+      "from": [
+        0.01,
+        0.995
+      ],
+      "to": [
+        0.99,
+        0.995
+      ],
+      "exterior": true,
+      "thickness_in": 6
+    },
+    {
+      "from": [
+        0.99,
+        0
+      ],
+      "to": [
+        0.99,
+        0.46
+      ],
+      "exterior": true,
+      "thickness_in": 6
+    },
+    {
+      "from": [
+        0.01,
+        0.46
+      ],
+      "to": [
+        0.3,
+        0.46
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.47,
+        0.46
+      ],
+      "to": [
+        0.62,
+        0.46
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.29,
+        0.47
+      ],
+      "to": [
+        0.29,
+        0.59
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.01,
+        0.595
+      ],
+      "to": [
+        0.75,
+        0.595
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.26,
+        0.47
+      ],
+      "to": [
+        0.26,
+        0.61
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.6,
+        0.47
+      ],
+      "to": [
+        0.6,
+        0.71
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.74,
+        0.47
+      ],
+      "to": [
+        0.74,
+        0.62
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.01,
+        0.755
+      ],
+      "to": [
+        0.38,
+        0.755
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.01,
+        0.86
+      ],
+      "to": [
+        0.4,
+        0.86
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.6,
+        0.755
+      ],
+      "to": [
+        0.6,
+        0.86
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.6,
+        0.86
+      ],
+      "to": [
+        0.99,
+        0.86
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.38,
+        0.755
+      ],
+      "to": [
+        0.38,
+        0.85
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    },
+    {
+      "from": [
+        0.75,
+        0.6
+      ],
+      "to": [
+        0.99,
+        0.6
+      ],
+      "exterior": false,
+      "thickness_in": 4
+    }
+  ],
+  "confidence": 0.45,
+  "why": "Dense interior partitions in bath/closet area; positions approximate."
+}
