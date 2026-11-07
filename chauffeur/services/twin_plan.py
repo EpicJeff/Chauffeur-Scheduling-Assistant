@@ -75,6 +75,8 @@ def _piece_meta(items, kind, notes):
                 for key, value_type in (('sheet', str), ('page', int)):
                     if type(src.get(key)) is value_type:
                         item['src'][key] = src[key]
+                if src != item['src']:
+                    notes.append(f'{kind} {item_id}: dropped invalid or unsupported src fields.')
             elif (isinstance(src, dict) and isinstance(src.get('sheet'), str)
                   and type(src.get('page')) is int and isinstance(src.get('step'), str)):
                 item['src'] = {key: src[key] for key in ('sheet', 'page', 'step')}
@@ -122,8 +124,6 @@ def _walls(building, levels, notes):
         if (not isinstance(wall, dict)
                 or not isinstance(wall.get('id'), str) or not wall['id']):
             reason = 'invalid wall data'
-        elif wall['id'] in walls:
-            reason = 'duplicate wall id'
         elif _lookup(levels, wall.get('level')) is None:
             reason = f"unknown level {wall.get('level')}"
         elif not _point(wall.get('from')) or not _point(wall.get('to')):
@@ -159,15 +159,17 @@ def _roof(building, notes):
     if migrating:
         main = roof['main']
         roof['sections'] = ([{
-            'id': 'roof-main', 'kind': main.get('kind', 'gable'),
+            'id': 'roof-main', 'kind': 'gable',
             'rect': [main.get(k) for k in ('x0', 'y0', 'x1', 'y1')],
-            'ridge': main.get('ridge_axis'), 'pitch': main.get('pitch'),
+            'ridge': main.get('ridge_axis') if main.get('ridge_axis') in ('x', 'y') else 'y',
+            'pitch': main.get('pitch'),
             'plate': main.get('plate'), 'overhang': main.get('overhang', 1),
             'pitch_source': 'drawn',
         }] if isinstance(main, dict) else [])
         if not isinstance(main, dict):
             notes.append('Dropped invalid roof main and extensions.')
-        # P0 gable coordinates and extension geometry stay unchanged.
+        # P0 always drew a gable; missing/invalid ridge metadata means y.
+        # Gable coordinates and extension geometry stay unchanged.
         openings = building.get('openings', [])
         if isinstance(openings, list):
             for opening in openings:
@@ -377,7 +379,7 @@ def _site(site, notes):
                              or not _number(fire.get('radius')) or fire['radius'] <= 0
                              or not _numeric_fields(fire, ('elevation',))):
         site['fire_pit'] = None
-        notes.append('Dropped site fire_pit: invalid at or radius.')
+        notes.append('Dropped site fire_pit: invalid at, radius or elevation.')
     for name in ('beds', 'planting', 'furniture', 'edges', 'hardscape', 'terraces'):
         kept = []
         for index, item in enumerate(_items(site, name, notes)):
@@ -435,7 +437,9 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
         if not _number(rotation):
             rotation = 0
             notes.append(f"Building {building.get('id', index)}: defaulted invalid rotation to 0.")
-        building['rotation'] = rotation % 360
+        rotation %= 360
+        # Tiny negative floats can round up to 360 during modulo.
+        building['rotation'] = 0 if rotation == 360 else rotation
         base = building.get('base', 0)
         if not _number(base) or not -50 <= base <= 50:
             base = 0

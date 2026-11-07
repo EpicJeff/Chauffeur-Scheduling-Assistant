@@ -155,6 +155,45 @@ def scenario_gable_openings_name_their_section():
     check(gables and all(o.get('section') == 'roof-main' for o in gables), gables)
 
 
+def scenario_p0_roof_without_ridge_axis_or_with_another_kind_still_migrates():
+    # Review finding: P0's generator always drew a gable with its ridge along y,
+    # whatever main.kind / main.ridge_axis said; the migration must keep what P0 drew.
+    for change in ({'drop': 'ridge_axis'}, {'kind': 'hip'}):
+        with open(FIXTURE, encoding='utf-8') as f:
+            p0 = json.load(f)
+        main = p0['buildings'][0]['roof']['main']
+        if 'drop' in change:
+            del main[change['drop']]
+        else:
+            main['kind'] = change['kind']
+        plan, notes = twin_plan.normalize(p0)
+        roof = plan['buildings'][0]['roof']
+        check(len(roof['sections']) == 1 and roof['sections'][0]['kind'] == 'gable'
+              and roof['sections'][0]['ridge'] == 'y', (change, roof['sections']))
+        check(len(roof['extensions']) == 2, (change, roof['extensions']))
+        gables = [o for o in plan['buildings'][0]['openings'] if 'gable' in o]
+        check(len(gables) == 3, (change, notes))
+
+
+def scenario_rotation_normalizes_into_range_and_stays_put():
+    plan, _ = twin_plan.normalize(_plan(_building(rotation=-1e-20)))
+    r = plan['buildings'][0]['rotation']
+    check(0 <= r < 360, r)
+    check(twin_plan.normalize(plan)[0] == plan, 'idempotent')
+
+
+def scenario_composed_plan_survives_normalize():
+    from services import twin_compose, twin_library
+    with open(FIXTURE, encoding='utf-8') as f:
+        plan = twin_plan.normalize(json.load(f))[0]
+    composed, _ = twin_compose.compose(plan, twin_library.kit('modern_farmhouse'), seed=1)
+    again, notes = twin_plan.normalize(composed)
+    check(again == composed and notes == [], notes)
+    first = twin_plan.normalize(_plan(_building(walls=[_wall(None), _wall(None, (30, 0), (30, 20))])))[0]
+    second = twin_plan.normalize(_plan(_building(walls=[_wall(None), _wall(None, (30, 0), (30, 20))])))[0]
+    check(first == second, 'ids are deterministic')
+
+
 if __name__ == '__main__':
     for fn in (scenario_p0_pool_house_migrates_to_one_gable_section,
                scenario_roof_sections_validate,
@@ -163,6 +202,9 @@ if __name__ == '__main__':
                scenario_piece_meta_is_kept_and_checked,
                scenario_terraces_validate_and_ground_items_keep_elevation,
                scenario_state_is_never_added_by_default,
-               scenario_gable_openings_name_their_section):
+               scenario_gable_openings_name_their_section,
+               scenario_p0_roof_without_ridge_axis_or_with_another_kind_still_migrates,
+               scenario_rotation_normalizes_into_range_and_stays_put,
+               scenario_composed_plan_survives_normalize):
         fn()
         print('  ok ', fn.__name__)
