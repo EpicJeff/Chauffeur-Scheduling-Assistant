@@ -19,8 +19,11 @@ from PIL import Image, ImageOps
 from services import storage, twin_pdf, twin_plan
 
 DATA_DIR = os.path.join(os.path.dirname(storage.DB_PATH), 'twin')
-_LOCK = threading.Lock()
-_KINDS = {'draft', 'director', 'hand', 'revert'}
+_LOCK = threading.RLock()
+LIFECYCLE = threading.RLock()
+build_running = lambda: False  # Task 8 supplies the build runner's predicate.
+_KINDS = {'draft', 'director', 'hand', 'revert', 'build', 'edit', 'start_over'}
+_PAGE_ROLES = {'floor', 'roof', 'plot', 'elevation', 'other', 'skip'}
 # Pillow identifies multi-picture phone JPEGs as MPO.
 _PHOTO_MIMES = {'JPEG': 'image/jpeg', 'MPO': 'image/jpeg', 'PNG': 'image/png'}
 
@@ -29,16 +32,59 @@ class StaleRound(Exception):
     """A person's edit was based on a round that is no longer current."""
 
 
+class StaleGeneration(ValueError):
+    """A worker belongs to a house that has since been started over."""
+
+
 def _state():
     row = deepcopy(storage.get_settings().get('house_twin') or {})
     row.setdefault('current', None)
-    for key in ('rounds', 'fixes', 'sources'):
+    row.setdefault('generation', 0)
+    for key in ('rounds', 'fixes', 'sources', 'page_roles', 'registrations', 'tombstones'):
         row.setdefault(key, [])
     return row
 
 
 def _save(row):
     storage.patch_settings({'house_twin': row})
+
+
+def generation() -> int:
+    with _LOCK:
+        return _state()['generation']
+
+
+def start_over() -> None:
+    """Clear the house and its files, retaining spend and panel measurements."""
+    with LIFECYCLE, _LOCK:
+        if build_running():
+            raise ValueError('Stop the build before starting over.')
+        next_generation = _state()['generation'] + 1
+        root = Path(DATA_DIR).resolve()
+        targets = [root / name for name in ('rounds', 'sources', 'runs', 'builds')]
+        # Validate every target before deleting any files, including on Windows.
+        if any(not target.resolve().is_relative_to(root) for target in targets):
+            raise ValueError('Twin files must stay within the twin data directory.')
+        for target in targets:
+            if target.is_symlink():
+                target.unlink()
+            elif target.exists():
+                shutil.rmtree(target)
+        _save({'generation': next_generation})
+
+
+def add_tombstone(piece: dict) -> None:
+    if not isinstance(piece, dict):
+        raise ValueError('A deleted piece must be an object.')
+    with _LOCK:
+        row = _state()
+        row['tombstones'].append(deepcopy(piece))
+        _save(row)
+
+
+def tombstones() -> list[dict]:
+    with _LOCK:
+        return _state()['tombstones']
 
 
 def perf_results() -> list[dict]:
@@ -71,7 +117,7 @@ def _read_round(row, round_id):
     if type(round_id) is not int or not any(r['id'] == round_id for r in row['rounds']):
         raise KeyError(round_id)
     with open(os.path.join(DATA_DIR, 'rounds', f'{round_id}.json'), encoding='utf-8') as file:
-        return json.load(file)
+        return twin_plan.normalize(json.load(file))[0]
 
 
 def current() -> dict | None:
@@ -95,13 +141,15 @@ def _check_base(base):
         raise ValueError('The base must be a round id.')
 
 
-def _append_round(row, plan, kind, note='', cost=None, run=None, base=None, changes=()):
+def _append_round(row, plan, kind, note='', cost=None, run=None, base=None, changes=(), step=None):
     """Called with _LOCK held; file, pointer and fixes form one mutation."""
     round_id = max((r['id'] for r in row['rounds']), default=0) + 1
     at = datetime.now(timezone.utc).isoformat()
     stale = base is not None and base != row['current']
     record = {'id': round_id, 'kind': kind, 'created': at, 'note': note,
               'cost': cost, 'run': run, 'stale': stale}
+    if step is not None:
+        record['step'] = deepcopy(step)
     root = Path(DATA_DIR) / 'rounds'
     root.mkdir(parents=True, exist_ok=True)
     target = root / f'{round_id}.json'
@@ -129,13 +177,26 @@ def _append_round(row, plan, kind, note='', cost=None, run=None, base=None, chan
 
 
 def push_round(plan: dict, kind: str, note: str = '', cost: float | None = None,
-               run: str | None = None, base: int | None = None) -> int:
+               run: str | None = None, base: int | None = None, step: dict | None = None) -> int:
     with _LOCK:
         if kind not in _KINDS:
             raise ValueError('Unknown twin round kind.')
         _check_base(base)
         plan, _ = twin_plan.normalize(plan)
-        return _append_round(_state(), plan, kind, note, cost, run, base)
+        return _append_round(_state(), plan, kind, note, cost, run, base, step=step)
+
+
+def update_current(mutator, kind, note='', step=None, cost=None, generation=None) -> int:
+    """Apply a mutation to the latest plan and publish it without a stale base."""
+    with LIFECYCLE, _LOCK:
+        row = _state()
+        if generation is not None and generation != row['generation']:
+            raise StaleGeneration('The house was started over. Discard this result.')
+        if kind not in _KINDS:
+            raise ValueError('Unknown twin round kind.')
+        before = _read_round(row, row['current']) if row['current'] is not None else None
+        plan, _ = twin_plan.normalize(mutator(before))
+        return _append_round(row, plan, kind, note=note, cost=cost, step=step)
 
 
 def revert(round_id: int) -> int:
@@ -208,9 +269,12 @@ def save_source(kind: str, filename: str, data: bytes, *, content_type: str | No
         raise ValueError('The source is empty.')
     if not isinstance(filename, str) or not filename.strip():
         raise ValueError('The source needs a filename.')
+    source_generation = generation()
     if kind == 'drawing':
         pages = [(f"{page['page']}.png", base64.b64decode(page['b64']))
                  for page in twin_pdf.render_pages(data)]
+        masters = [(f"master-{page['page']}.png", base64.b64decode(page['b64']))
+                   for page in twin_pdf.render_pages(data, dpi=300, max_side=7200)]
         mime, suffix = 'application/pdf', '.pdf'
         with twin_pdf._RENDER_LOCK, closing(twin_pdf.pdfium.PdfDocument(data)) as document:
             total_pages = len(document)
@@ -231,19 +295,22 @@ def save_source(kind: str, filename: str, data: bytes, *, content_type: str | No
             raise ValueError('Photos must be readable JPEG or PNG images.') from exc
         suffix = '.png' if mime == 'image/png' else '.jpg'
         pages = []
+        masters = []
     source_id = uuid.uuid4().hex
     record = {'id': source_id, 'kind': kind, 'filename': filename,
               'pages': len(pages) if kind == 'drawing' else 1, 'mime': mime}
     if kind == 'drawing':
         record['total_pages'] = total_pages
     with _LOCK:
+        if source_generation != _state()['generation']:
+            raise StaleGeneration('The house was started over during the upload.')
         root = Path(DATA_DIR) / 'sources' / source_id
         root.mkdir(parents=True)
         try:
             (root / ('original' + suffix)).write_bytes(data)
             if kind == 'photo':
                 (root / 'model.jpg').write_bytes(derivative)
-            for name, png in pages:
+            for name, png in pages + masters:
                 (root / name).write_bytes(png)
             row = _state()
             row['sources'].append(record)
@@ -257,6 +324,127 @@ def save_source(kind: str, filename: str, data: bytes, *, content_type: str | No
 def sources() -> list[dict]:
     with _LOCK:
         return _state()['sources']
+
+
+def _source_page(row, source_id, page):
+    source = next((s for s in row['sources'] if s['id'] == source_id), None)
+    if source is None:
+        raise ValueError('The source does not exist.')
+    if type(page) is not int or not 1 <= page <= source['pages']:
+        raise ValueError('Source page numbers are 1-based and must exist.')
+    return source
+
+
+def _box(box):
+    if (not isinstance(box, (list, tuple)) or len(box) != 4
+            or any(type(v) not in (int, float) or not 0 <= v <= 1 for v in box)
+            or box[0] >= box[2] or box[1] >= box[3]):
+        raise ValueError('A box must be [x0, y0, x1, y1] within 0..1 with positive area.')
+    return list(box)
+
+
+def set_page_roles(rows) -> None:
+    """Replace all page roles only after every supplied row has validated."""
+    if not isinstance(rows, list):
+        raise ValueError('Page roles must be a list.')
+    with _LOCK:
+        row = _state()
+        checked = []
+        for item in rows:
+            if not isinstance(item, dict):
+                raise ValueError('A page role must be an object.')
+            _source_page(row, item.get('source'), item.get('page'))
+            if not isinstance(item.get('role'), str) or item['role'] not in _PAGE_ROLES:
+                raise ValueError('Unknown page role.')
+            box = None if item.get('box') is None else _box(item['box'])
+            checked.append({'source': item['source'], 'page': item['page'],
+                            'role': item['role'], 'level': deepcopy(item.get('level')),
+                            'box': box, 'building': deepcopy(item.get('building', 'house'))})
+        row['page_roles'] = checked
+        _save(row)
+
+
+def page_roles() -> list[dict]:
+    with _LOCK:
+        return _state()['page_roles']
+
+
+def set_registration(source_id, page, level, reg) -> None:
+    if not isinstance(reg, dict):
+        raise ValueError('A registration must be an object.')
+    with _LOCK:
+        row = _state()
+        _source_page(row, source_id, page)
+        row['registrations'] = [r for r in row['registrations']
+                                if (r['source'], r['page'], r['level']) != (source_id, page, level)]
+        row['registrations'].append({'source': source_id, 'page': page,
+                                     'level': deepcopy(level), 'reg': deepcopy(reg)})
+        _save(row)
+
+
+def registration(source_id, page, level) -> dict | None:
+    with _LOCK:
+        return next((r['reg'] for r in _state()['registrations']
+                     if (r['source'], r['page'], r['level']) == (source_id, page, level)), None)
+
+
+def page_image(source_id, page) -> bytes:
+    """Return the model-sized PNG for the sheet underlay."""
+    with _LOCK:
+        source = _source_page(_state(), source_id, page)
+        if source['kind'] != 'drawing':
+            raise ValueError('A sheet must be a drawing source.')
+        return (Path(DATA_DIR) / 'sources' / source['id'] / f'{page}.png').read_bytes()
+
+
+def _master_image(source_id, page) -> bytes:
+    """Backfill pre-master uploads without holding the store lock while rendering."""
+    with _LOCK:
+        row = _state()
+        source = _source_page(row, source_id, page)
+        if source['kind'] != 'drawing':
+            raise ValueError('A sheet must be a drawing source.')
+        root = Path(DATA_DIR) / 'sources' / source['id']
+        target = root / f'master-{page}.png'
+        if target.is_file():
+            return target.read_bytes()
+        pdf = (root / 'original.pdf').read_bytes()
+        source_generation = row['generation']
+        kept_pages = source['pages']
+    masters = twin_pdf.render_pages(pdf, dpi=300, max_side=7200, max_pages=kept_pages)
+    with _LOCK:
+        if source_generation != _state()['generation']:
+            raise StaleGeneration('The house was started over while rendering the sheet.')
+        for master in masters:
+            path = root / f"master-{master['page']}.png"
+            if not path.is_file():
+                path.write_bytes(base64.b64decode(master['b64']))
+        return target.read_bytes()
+
+
+def crop(source_id, page, box, max_side=2048) -> dict:
+    """Crop the full-resolution sheet, shrinking only when needed for the caller."""
+    box = _box(box)
+    if type(max_side) is not int or max_side <= 0:
+        raise ValueError('The crop size limit must be a positive integer.')
+    with Image.open(io.BytesIO(_master_image(source_id, page))) as master:
+        width, height = master.size
+        bounds = (math.floor(box[0] * width), math.floor(box[1] * height),
+                  math.ceil(box[2] * width), math.ceil(box[3] * height))
+        with master.crop(bounds) as image:
+            image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+            with io.BytesIO() as output:
+                image.save(output, format='PNG')
+                return {'mime': 'image/png', 'b64': base64.b64encode(output.getvalue()).decode('ascii'),
+                        'box': box, 'size': list(image.size), 'master': [width, height]}
+
+
+def crop_to_master(crop, uv) -> list:
+    """Map crop-normalised coordinates to pixels in the full-resolution master."""
+    x0, y0, x1, y1 = crop['box']
+    width, height = crop['master']
+    return [(x0 + uv[0] * (x1 - x0)) * width,
+            (y0 + uv[1] * (y1 - y0)) * height]
 
 
 def source_images(source_id: str, pages: list[int] | None = None) -> list[dict]:

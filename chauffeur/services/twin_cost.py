@@ -61,7 +61,28 @@ def _state():
     row = deepcopy(storage.get_settings().get('house_twin_cost') or {})
     row.setdefault('entries', [])
     row.setdefault('acknowledged', [])
+    row.setdefault('archived', [])
+    row.setdefault('resets', [])
     return row
+
+
+def reset(by: str) -> dict:
+    """Archive live spend only at a person's explicit request."""
+    if not isinstance(by, str) or not by.strip():
+        raise ValueError('A spend reset needs the person who requested it.')
+    with storage.db_lock:
+        row = _state()
+        record = {'at': datetime.now(timezone.utc).isoformat(), 'by': by, 'total': _total(row)}
+        row['archived'].extend(row['entries'])
+        row['entries'] = []
+        row['acknowledged'] = []
+        row['resets'].append(record)
+        storage.patch_settings({'house_twin_cost': row})
+    return deepcopy(record)
+
+
+def resets() -> list[dict]:
+    return _state()['resets']
 
 
 def entries() -> list[dict]:

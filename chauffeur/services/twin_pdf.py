@@ -30,6 +30,9 @@ def render_pages(pdf: bytes, dpi: int = 150, max_side: int = 2048,
                     # Avoid allocating a full-size architectural sheet only to
                     # shrink it afterward. PDFium rounds dimensions upward.
                     scale = min(dpi / 72, max_side / max(width, height))
+                    # 792 * (300 / 72) can be 3300.0000000000005. Avoid an
+                    # extra raster row from ceil() at an exact DPI boundary.
+                    scale = math.nextafter(scale, 0.0)
                     with closing(page.render(scale=scale)) as bitmap:
                         with bitmap.to_pil() as image:
                             image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
