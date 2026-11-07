@@ -7403,6 +7403,21 @@ def house_twin_draft(body: dict = Body(default={})):
     return {'result': result, 'notes': notes}
 
 
+@app.post("/api/house/twin/critique")
+def house_twin_critique(body: dict = Body(default={})):
+    from services import twin_cost, twin_director
+    try:
+        result, error = twin_director.critique(
+            body.get('run'), body.get('renders'), body.get('cameras'), base=body.get('base'))
+    except twin_cost.CheckpointReached as exc:
+        raise HTTPException(status_code=409, detail={
+            'checkpoint': exc.checkpoint, 'total': exc.total, 'run': body.get('run')}) from exc
+    if error:
+        raise HTTPException(status_code=409 if error in (
+            'round cap reached', 'a critique is already running') else 400, detail=error)
+    return {'result': result}
+
+
 @app.get("/api/study/state")
 def study_state(request: Request = None):
     """The Study's one read. Same person-gate as the mind endpoints —

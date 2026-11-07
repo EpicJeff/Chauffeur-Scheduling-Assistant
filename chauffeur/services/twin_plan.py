@@ -286,7 +286,7 @@ def merge_director(plan: dict, revised: dict) -> tuple[dict, list[str]]:
     for name in ('site', 'materials'):
         if name in revised:
             merged[name] = deepcopy(revised[name])
-    return normalize(merged)
+    return normalize(record_compose_overrides(plan, merged))
 
 
 def diff_paths(a: dict, b: dict) -> list[str]:
