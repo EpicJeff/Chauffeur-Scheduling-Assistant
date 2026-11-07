@@ -529,7 +529,7 @@ def _call_candidates(tier, api_key, system_prompt, user_prompt, temperature, tim
                      strict_json, max_output_tokens, attempts, deadline,
                      thinking_level, response_schema, paid, usage: list = None):
     from services import llm as _llm
-    from services import llm_budget
+    from services import llm_budget, twin_cost
     last_err = "no models available"
     transient = False
     launched = 0
@@ -585,7 +585,9 @@ def _call_candidates(tier, api_key, system_prompt, user_prompt, temperature, tim
             deferred_until = min(deferred_until or e.retry_at, e.retry_at)
             transient = True
             continue
-        except budget_guard.BudgetExhausted:
+        except (budget_guard.BudgetExhausted, twin_cost.CheckpointReached):
+            # Admission stops must reach the caller without penalising a model
+            # or entering another candidate / paid fallback chain.
             dispatched = False
             raise
         except Exception as e:

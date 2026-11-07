@@ -139,12 +139,39 @@ def scenario_after_sees_failures_too():
     check(seen[0]['model'] == CLAUDE and seen[0]['input_tokens'] is None and seen[0]['output_tokens'] is None, seen)
 
 
+def scenario_a_checkpoint_is_not_a_model_failure():
+    # Review finding: twin_cost.CheckpointReached raised by before() inside
+    # call_pool_json's candidate loop was caught as a model failure: healthy
+    # models got penalised and the stop surfaced as a provider error.
+    from services import model_pools, storage, twin_cost
+    storage.patch_settings({'llm_provider': 'gemini', 'llm_gemini_paid_api_key': 'paid-k'})
+    failures = []
+    original = model_pools.note_failure
+    model_pools.note_failure = lambda *a, **k: failures.append(a)
+
+    def stop():
+        raise twin_cost.CheckpointReached(20.0, 20.4)
+    try:
+        with Stub(BODIES[GEMINI]) as stub, llm.collect_usage(before=stop):
+            try:
+                model_pools.call_pool_json('twin', 'paid-k', 'sys', 'hello', max_models=2, strict_json=True,
+                                           settings=storage.get_settings())
+            except twin_cost.CheckpointReached:
+                pass
+            else:
+                raise AssertionError('the checkpoint must reach the caller')
+    finally:
+        model_pools.note_failure = original
+    check(failures == [] and stub.requests == [], (failures, stub.requests))
+
+
 if __name__ == '__main__':
     for fn in (scenario_each_provider_reports_tokens,
                scenario_images_and_output_cap_are_counted,
                scenario_no_collector_no_change,
                scenario_nested_collectors_both_see_the_request,
                scenario_before_can_stop_a_request,
-               scenario_after_sees_failures_too):
+               scenario_after_sees_failures_too,
+               scenario_a_checkpoint_is_not_a_model_failure):
         fn()
         print('  ok ', fn.__name__)
