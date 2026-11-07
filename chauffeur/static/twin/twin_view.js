@@ -16,7 +16,7 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
   const renderer3 = new THREE.WebGLRenderer({ antialias: settings.antialias });
   renderer3.setPixelRatio(settings.pixelRatio);
   renderer3.shadowMap.enabled = settings.shadows;
-  renderer3.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer3.shadowMap.type = THREE.PCFShadowMap;
   renderer3.toneMapping = THREE.ACESFilmicToneMapping;
   renderer3.info.autoReset = false;
   el.appendChild(renderer3.domElement);
@@ -85,25 +85,26 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
     async capture(names, width = 1280, height = 800) {
       if (disposed) throw new Error('This twin has been disposed.');
       width = Math.max(1, Math.floor(width)); height = Math.max(1, Math.floor(height));
-      const previous = { position: camera.position.clone(), quaternion: camera.quaternion.clone(), target: controls.target.clone(), aspect: camera.aspect, name: state.camera, target3: renderer3.getRenderTarget() };
-      const renderTarget = new THREE.WebGLRenderTarget(width, height);
-      renderTarget.texture.colorSpace = THREE.SRGBColorSpace;
-      const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
-      const context = canvas.getContext('2d'), out = [], bytes = new Uint8Array(width * height * 4);
+      const previous = {
+        position: camera.position.clone(), quaternion: camera.quaternion.clone(), target: controls.target.clone(),
+        aspect: camera.aspect, name: state.camera, target3: renderer3.getRenderTarget(),
+        size: renderer3.getSize(new THREE.Vector2()), pixelRatio: renderer3.getPixelRatio(),
+      };
+      const out = [];
       try {
+        // r187 only applies the screen's tone mapping/exposure on the canvas.
+        // Render and read synchronously, before the drawing buffer is cleared.
+        renderer3.setRenderTarget(null);
+        renderer3.setPixelRatio(1); renderer3.setSize(width, height, false);
         for (const name of names) {
           view.setCamera(name);
           camera.aspect = width / height; camera.updateProjectionMatrix();
-          renderer3.setRenderTarget(renderTarget); renderer3.info.reset(); renderer3.render(scene, camera);
-          renderer3.readRenderTargetPixels(renderTarget, 0, 0, width, height, bytes);
-          const pixels = context.createImageData(width, height), stride = width * 4;
-          for (let y = 0; y < height; y++) pixels.data.set(bytes.subarray((height - 1 - y) * stride, (height - y) * stride), y * stride);
-          context.putImageData(pixels, 0, 0); out.push(canvas.toDataURL('image/png'));
-          renderer3.setRenderTarget(previous.target3);
+          render(); out.push(renderer3.domElement.toDataURL('image/png'));
         }
         return out;
       } finally {
-        renderer3.setRenderTarget(previous.target3); renderTarget.dispose();
+        renderer3.setPixelRatio(previous.pixelRatio); renderer3.setSize(previous.size.x, previous.size.y, false);
+        renderer3.setRenderTarget(previous.target3);
         camera.position.copy(previous.position); controls.target.copy(previous.target); controls.update();
         camera.quaternion.copy(previous.quaternion); camera.aspect = previous.aspect; camera.updateProjectionMatrix();
         state.camera = previous.name; render();

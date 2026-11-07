@@ -35,10 +35,10 @@ def check(cond, msg):
         raise AssertionError(msg)
 
 
-def _jpeg():
+def _jpeg(rgb=(150, 150, 140)):
     from PIL import Image
     buf = io.BytesIO()
-    Image.new('RGB', (2, 2), (150, 150, 140)).save(buf, format='JPEG')
+    Image.new('RGB', (2, 2), rgb).save(buf, format='JPEG')
     return buf.getvalue()
 
 
@@ -71,6 +71,8 @@ def _stub_urlopen(req, timeout=None):
         return _Resp(EMPTY_GLTF)
     if url.endswith('.hdr'):
         return _Resp(_hdr())
+    if '_nor_gl_' in url:
+        return _Resp(_jpeg((128, 128, 255)))          # a flat normal map, not a tilted one
     return _Resp(_jpeg())
 
 
@@ -203,10 +205,93 @@ def scenario_capture_returns_pngs():
         if os.environ.get('TWIN_SHOTS'):
             import base64
             for name in ('front', 'porch', 'rear', 'top'):
-                for tier in ('high',):
-                    data = page.evaluate(f'() => window.__twin.capture(["{name}"], 1280, 800)')[0]
-                    with open(os.path.join(os.environ['TWIN_SHOTS'], f'{tier}_{name}.png'), 'wb') as f:
-                        f.write(base64.b64decode(data.split(',', 1)[1]))
+                data = page.evaluate(f'() => window.__twin.capture(["{name}"], 1280, 800)')[0]
+                with open(os.path.join(os.environ['TWIN_SHOTS'], f'high_{name}.png'), 'wb') as f:
+                    f.write(base64.b64decode(data.split(',', 1)[1]))
+    if os.environ.get('TWIN_SHOTS'):
+        import base64
+        with s.browser(launch_args=GPU_ARGS) as page:
+            _open(page, s, 'tier=low')
+            for name in ('front', 'porch', 'rear', 'top'):
+                data = page.evaluate(f'() => window.__twin.capture(["{name}"], 1280, 800)')[0]
+                with open(os.path.join(os.environ['TWIN_SHOTS'], f'low_{name}.png'), 'wb') as f:
+                    f.write(base64.b64decode(data.split(',', 1)[1]))
+
+
+def scenario_textured_materials_are_not_tinted_dark():
+    s = _serve()
+    if s is None:
+        return
+    with s.browser(launch_args=GPU_ARGS) as page:
+        _open(page, s, 'tier=high')
+        page.wait_for_timeout(1500)
+        tinted = page.evaluate('''() => { const out = [];
+            window.__twin.scene.traverse(o => [].concat(o.material || []).forEach(m => {
+              if (m && m.map && m.map.image && m.color && m.color.getHexString() !== 'ffffff') out.push(m.name || m.type); }));
+            return out; }''')
+        check(tinted == [], f'a loaded texture is shown as it is, never multiplied by the kit colour: {tinted[:5]}')
+
+
+def scenario_captures_are_tone_mapped_like_the_screen():
+    s = _serve()
+    if s is None:
+        return
+    with s.browser(launch_args=GPU_ARGS) as page:
+        _open(page, s, 'tier=high')
+        mean = '''async (u) => { const i = new Image(); i.src = u; await i.decode();
+            const c = document.createElement('canvas'); c.width = 64; c.height = 40;
+            const x = c.getContext('2d'); x.drawImage(i, 0, 0, 64, 40);
+            const d = x.getImageData(0, 0, 64, 40).data; let t = 0;
+            for (let k = 0; k < d.length; k += 4) t += d[k] + d[k + 1] + d[k + 2];
+            return t / (d.length / 4) / 3; }'''
+        page.evaluate('() => { window.__twin.renderer3.toneMappingExposure = 0.4; }')
+        dark = page.evaluate(mean, page.evaluate('() => window.__twin.capture(["front"], 320, 200)')[0])
+        page.evaluate('() => { window.__twin.renderer3.toneMappingExposure = 2.5; }')
+        bright = page.evaluate(mean, page.evaluate('() => window.__twin.capture(["front"], 320, 200)')[0])
+        check(bright - dark > 20, f'exposure reaches the capture (tone mapped like the screen): {dark:.1f} -> {bright:.1f}')
+
+
+def scenario_ground_reaches_beyond_the_lot():
+    s = _serve()
+    if s is None:
+        return
+    with s.browser(launch_args=GPU_ARGS) as page:
+        _open(page, s, 'tier=high')
+        hit = page.evaluate('''async () => { const THREE = await import('three');
+            const r = new THREE.Raycaster(); const FT = 0.3048;
+            r.set(new THREE.Vector3(200 * FT, 200, -0 * FT), new THREE.Vector3(0, -1, 0));
+            const hits = r.intersectObject(window.__twin.scene, true);
+            return hits.length ? hits[0].point.y : null; }''')
+        check(hit is not None and abs(hit) < 1.0, f'ground under a point 60 ft outside the lot: {hit}')
+
+
+def scenario_no_requests_go_one_level_too_deep():
+    s = _serve()
+    if s is None:
+        return
+    with s.browser(launch_args=GPU_ARGS) as page:
+        bad = []
+        page.on('request', lambda r: ('/house/api/' in r.url or '/house/static/' in r.url) and bad.append(r.url))
+        _open(page, s, 'tier=high')
+        page.wait_for_timeout(1500)
+        check(not bad, f'every URL is built from the page base (admin gate included): {bad[:4]}')
+
+
+def scenario_rebuilds_do_not_leak():
+    s = _serve()
+    if s is None:
+        return
+    with s.browser(launch_args=GPU_ARGS) as page:
+        _open(page, s, 'tier=high')
+        mem = '() => ({g: window.__twin.renderer3.info.memory.geometries, t: window.__twin.renderer3.info.memory.textures})'
+        page.evaluate('async () => { const p = window.__twin.plan; await window.__twin.rebuild(p); }')
+        page.wait_for_timeout(800)
+        first = page.evaluate(mem)
+        for _ in range(3):
+            page.evaluate('async () => { const p = window.__twin.plan; await window.__twin.rebuild(p); }')
+            page.wait_for_timeout(800)
+        last = page.evaluate(mem)
+        check(last['g'] <= first['g'] and last['t'] <= first['t'], f'geometries/textures flat across rebuilds: {first} -> {last}')
 
 
 def scenario_library_urls_carry_the_device_token():
@@ -248,6 +333,11 @@ if __name__ == '__main__':
                scenario_views_cut_the_house,
                scenario_night_lights_rooms,
                scenario_capture_returns_pngs,
+               scenario_textured_materials_are_not_tinted_dark,
+               scenario_captures_are_tone_mapped_like_the_screen,
+               scenario_ground_reaches_beyond_the_lot,
+               scenario_no_requests_go_one_level_too_deep,
+               scenario_rebuilds_do_not_leak,
                scenario_library_urls_carry_the_device_token,
                scenario_page_draws_with_the_library_offline):
         fn()

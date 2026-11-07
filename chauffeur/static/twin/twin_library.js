@@ -28,6 +28,7 @@ export function kitMaterial(role, kit, tier) {
   const clear = () => {
     failed = true;
     for (const key of ['map', 'normalMap', 'roughnessMap']) material[key] = null;
+    material.color.set(ref.color || '#c3c6c2');
     textures.forEach(t => t.dispose());
     material.needsUpdate = true;
   };
@@ -38,7 +39,11 @@ export function kitMaterial(role, kit, tier) {
     pending.push(new Promise(resolve => {
       const tex = loader.load(libUrl(id, name), texture => {
         if (failed) texture.dispose();
-        else { material[property] = texture; material.needsUpdate = true; }
+        else {
+          material[property] = texture;
+          if (property === 'map') material.color.set('#ffffff');
+          material.needsUpdate = true;
+        }
         resolve();
       }, undefined, () => { clear(); resolve(); });
       textures.add(tex);
@@ -106,6 +111,7 @@ export async function loadSky(kit) {
 export function disposeObject(root) {
   const geometries = new Set(), materials = new Set(), textures = new Set();
   root.traverse(o => {
+    if (o.isInstancedMesh) o.dispose();
     if (o.geometry) geometries.add(o.geometry);
     for (const m of o.material ? [].concat(o.material) : []) {
       materials.add(m);

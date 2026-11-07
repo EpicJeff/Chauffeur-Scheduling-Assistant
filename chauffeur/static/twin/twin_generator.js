@@ -7,34 +7,66 @@ import { kitMaterial } from './twin_library.js';
 export const FT = 0.3048;
 export function mergeStatic(group) {
   group.updateMatrixWorld(true);
-  const inverse = group.matrixWorld.clone().invert(), buckets = new Map(), meshes = [];
+  const inverse = group.matrixWorld.clone().invert(), buckets = new Map();
   group.traverse(o => {
-    if (!o.isMesh || o.isInstancedMesh || Array.isArray(o.material)) return;
-    meshes.push(o);
-    const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
-    for (const key of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(key)) g.deleteAttribute(key);
-    if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
-    g.clearGroups();
-    g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inverse, o.matrixWorld));
-    if (!buckets.has(o.material)) buckets.set(o.material, []);
-    buckets.get(o.material).push(g);
+    if (!o.isMesh || o.isInstancedMesh || o.isSkinnedMesh || Array.isArray(o.material) ||
+        !o.geometry?.attributes.position || Object.keys(o.geometry.morphAttributes || {}).length) return;
+    let g;
+    try {
+      g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+      const count = g.attributes.position.count;
+      if (g.attributes.position.itemSize !== 3 || !count || count % 3) { g.dispose(); return; }
+      for (const key of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(key)) g.deleteAttribute(key);
+      if (g.attributes.normal?.count !== count || g.attributes.normal.itemSize !== 3) {
+        g.deleteAttribute('normal'); g.computeVertexNormals();
+      }
+      if (g.attributes.uv?.count !== count || g.attributes.uv.itemSize !== 2) {
+        g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(count * 2), 2));
+      }
+      // glTF may supply interleaved, quantized or normalized attributes. Merge
+      // a common float layout, including normals on position-only primitives.
+      for (const key of ['position', 'normal', 'uv']) {
+        const attr = g.attributes[key], data = new Float32Array(count * attr.itemSize);
+        for (let i = 0; i < count; i++) for (let c = 0; c < attr.itemSize; c++) data[i * attr.itemSize + c] = attr.getComponent(i, c);
+        g.setAttribute(key, new THREE.Float32BufferAttribute(data, attr.itemSize));
+      }
+      g.morphTargetsRelative = false;
+      g.clearGroups();
+      g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inverse, o.matrixWorld));
+      if (!buckets.has(o.material)) buckets.set(o.material, []);
+      buckets.get(o.material).push({ geometry: g, mesh: o });
+    } catch { g?.dispose(); } // An odd optional model stays independently drawn.
   });
   const old = new Set();
-  meshes.forEach(o => { o.removeFromParent(); old.add(o.geometry); });
-  old.forEach(g => g.dispose());
-  for (const [mat, geos] of buckets) {
-    const geometry = mergeGeometries(geos);
-    geos.forEach(g => g.dispose());
-    if (!geometry) throw new Error('Twin static geometry could not be merged');
+  for (const [mat, entries] of buckets) {
+    let geometry;
+    try { geometry = mergeGeometries(entries.map(e => e.geometry)); }
+    catch { /* Keep the originals if a model cannot be merged. */ }
+    finally { entries.forEach(e => e.geometry.dispose()); }
+    if (!geometry) continue;
+    entries.forEach(e => { e.mesh.removeFromParent(); old.add(e.mesh.geometry); });
     const mesh = new THREE.Mesh(geometry, mat);
     mesh.castShadow = !mat.transparent;
     mesh.receiveShadow = true;
     group.add(mesh);
   }
+  const retained = new Set(); group.traverse(o => { if (o.geometry) retained.add(o.geometry); });
+  old.forEach(g => { if (!retained.has(g)) g.dispose(); });
+}
+
+// BoxGeometry's face UVs span 0..1; the kit repeats every 4 (or 8) feet.
+// Scale before rotating so each face has the same physical texture density.
+export function boxGeometry(width, height, depth) {
+  const g = new THREE.BoxGeometry(width, height, depth), uv = g.attributes.uv, normal = g.attributes.normal;
+  for (let i = 0; i < uv.count; i++) {
+    const xFace = Math.abs(normal.getX(i)) > 0.5, yFace = Math.abs(normal.getY(i)) > 0.5;
+    uv.setXY(i, uv.getX(i) * (xFace ? depth : width), uv.getY(i) * (yFace ? depth : height));
+  }
+  return g;
 }
 
 export function boxRect(x0, y0, x1, y1, z0, z1) {
-  const g = new THREE.BoxGeometry(Math.abs(x1 - x0), Math.abs(z1 - z0), Math.abs(y1 - y0));
+  const g = boxGeometry(Math.abs(x1 - x0), Math.abs(z1 - z0), Math.abs(y1 - y0));
   return g.translate((x0 + x1) / 2, (z0 + z1) / 2, -(y0 + y1) / 2);
 }
 export function polygon(poly, z0, z1 = z0, holes = []) {
@@ -142,7 +174,7 @@ export function buildTwin(plan, kit, tier) {
         }
       }
       const sign = Math.sign(z.dot(new THREE.Vector3((from[0] + to[0]) / 2 - center[0], 0, -(from[1] + to[1]) / 2 + center[1]))) || 1;
-      const localBox = (u, v, w, h, d, material, offset = 0) => addMesh(group, new THREE.BoxGeometry(w, h, d).translate(u, v, offset).applyMatrix4(matrix), material);
+      const localBox = (u, v, w, h, d, material, offset = 0) => addMesh(group, boxGeometry(w, h, d).translate(u, v, offset).applyMatrix4(matrix), material);
       if (exterior && materialKit.materials.siding?.asset === 'board_and_batten' && !role) {
         for (let u = 0.5; u < length; u += 1) {
           let intervals = [[0, top(u)]];
@@ -256,7 +288,7 @@ export function buildTwin(plan, kit, tier) {
       const l = levels[s.level] || first, dx = s.to[0] - s.from[0], dy = s.to[1] - s.from[1], length = Math.hypot(dx, dy), angle = Math.atan2(dy, dx);
       for (let i = 0; i < s.risers; i++) {
         const run = length / s.risers, height = (s.rise_to - l.elevation) * (i + 1) / s.risers;
-        addMesh(local[l.id], new THREE.BoxGeometry(run, height, s.width).rotateY(angle).translate(s.from[0] + dx * (i + 0.5) / s.risers, l.elevation + height / 2, -s.from[1] - dy * (i + 0.5) / s.risers), mat('floor'));
+        addMesh(local[l.id], boxGeometry(run, height, s.width).rotateY(angle).translate(s.from[0] + dx * (i + 0.5) / s.risers, l.elevation + height / 2, -s.from[1] - dy * (i + 0.5) / s.risers), mat('floor'));
       }
     }
     for (const f of b.fixtures || []) {

@@ -50,10 +50,7 @@
   </style>
 </head>
 <body>
-  {# Keep the same nav/auth gate as house.html. Its old one-segment static
-     markup needs the same extra climb as this page's own module URLs. #}
-  {% set twin_nav %}{% include 'nav.html' %}{% endset %}
-  {% autoescape false %}{{ twin_nav | replace('src="static/', 'src="../static/') | replace('href="static/', 'href="../static/') }}{% endautoescape %}
+  {% include 'nav.html' %}
   <main id="twin-canvas" aria-label="Interactive house preview"></main>
   <div id="twin-controls" aria-label="House preview controls">
     <fieldset><legend>View</legend><div id="twin-views"></div></fieldset>
@@ -63,14 +60,6 @@
   <output id="twin-tier" aria-label="Render tier">Loading</output>
   <p id="twin-status" role="status">Loading the house preview…</p>
   <div id="twin-parent-tools"></div>
-  <script>
-    // nav.html owns auth and navigation. Correct its one-segment page links
-    // here too, before its DOMContentLoaded propagation reads them.
-    document.querySelectorAll('a[href]').forEach(link => {
-      const href = link.getAttribute('href');
-      if (href && !/^(?:[a-z]+:|\/|#|\.\.\/)/i.test(href)) link.setAttribute('href', window.chfBase + href);
-    });
-  </script>
   <script type="module">
     import(window.chfBase + {{ 'static/twin/twin_view.js' | ver | tojson }}).catch(() => {
       document.getElementById('twin-status').textContent = 'The house preview could not load.';

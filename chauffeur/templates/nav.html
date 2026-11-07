@@ -182,7 +182,7 @@
   add-on entirely. The same reasoning as home.html's apiBase, which had to
   learn this first.
 #}
-{% set _up = '../' if '/board/' in _path else '' %}
+{% set _up = '../' if '/board/' in _path or _path.endswith('/house/twin') else '' %}
 
 {# The <nav> element is a bare wrapper so that the top bar and the panel shelf
    are siblings inside it: `?tabs=none` hides the nav and both go with it, and
@@ -543,7 +543,7 @@
    script on purpose — test_nav_runtime executes the LAST script block on the
    page as nav's. #}
 {% include 'components/card_timers.html' %}
-<script src="{{ 'static/house_return.js'|ver }}" data-house-home="{{ 'true' if house_home_on() else 'false' }}"></script>
+<script src="{{ _up }}{{ 'static/house_return.js'|ver }}" data-house-home="{{ 'true' if house_home_on() else 'false' }}"></script>
 <script>
     // One identity for this page: a house parent visit, the admin session,
     // or the PWA member only on pages without an admin gate.

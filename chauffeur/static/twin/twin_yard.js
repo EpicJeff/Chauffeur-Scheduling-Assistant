@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Tree } from '@dgreenheck/ez-tree';
-import { FT, addMesh, boxRect, polygon, mergeStatic } from './twin_generator.js';
+import { FT, addMesh, boxGeometry, boxRect, polygon, mergeStatic } from './twin_generator.js';
 import { kitMaterial, loadModel } from './twin_library.js';
 
 function random(seed) {
@@ -14,7 +14,7 @@ function standardTree(tree) {
     if (!o.isMesh) return;
     const convert = m => {
       if (!converted.has(m)) converted.set(m, new THREE.MeshStandardMaterial({
-        name: m.name, color: m.color, map: m.map, normalMap: m.normalMap,
+        name: m.name, color: m.map ? '#ffffff' : m.color, map: m.map, normalMap: m.normalMap,
         alphaMap: m.alphaMap, alphaTest: m.alphaTest > 0 ? Math.max(0.5, m.alphaTest) : 0,
         side: m.side, roughness: 0.9,
       }));
@@ -93,6 +93,11 @@ export async function buildYard(plan, kit, tier) {
   if (site.lot?.length >= 3) {
     // Actual lawn material; no procedural canvas noise or substitute blobs.
     const pool = site.pool?.polygon;
+    const xs = site.lot.map(p => p[0]), ys = site.lot.map(p => p[1]), margin = 150;
+    const x0 = Math.min(...xs) - margin, x1 = Math.max(...xs) + margin;
+    const y0 = Math.min(...ys) - margin, y1 = Math.max(...ys) + margin;
+    // Continue the terrain below the lot edge without covering the sunken pool.
+    addMesh(group, polygon([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], -0.06, -0.06, pool ? [pool] : []), mat('lawn'));
     addMesh(group, polygon(site.lot, -0.04, -0.04, pool ? [pool] : []), mat('lawn'));
   }
   const pool = site.pool?.polygon;
@@ -131,9 +136,9 @@ export async function buildYard(plan, kit, tier) {
     for (let i = 0; i < f.polyline.length - 1; i++) {
       const a = f.polyline[i], b = f.polyline[i + 1], dx = b[0] - a[0], dy = b[1] - a[1], length = Math.hypot(dx, dy), angle = Math.atan2(dy, dx);
       if (!length) continue;
-      for (let d = 0.25; d < length; d += 0.5) addMesh(group, new THREE.BoxGeometry(0.46, height, 0.06).rotateY(angle).translate(a[0] + dx * d / length, height / 2 + 0.15, -a[1] - dy * d / length), mat('fence'));
+      for (let d = 0.25; d < length; d += 0.5) addMesh(group, boxGeometry(0.46, height, 0.06).rotateY(angle).translate(a[0] + dx * d / length, height / 2 + 0.15, -a[1] - dy * d / length), mat('fence'));
       for (let d = 0; d <= length; d += 8) addMesh(group, boxRect(a[0] + dx * d / length - 0.17, a[1] + dy * d / length - 0.17, a[0] + dx * d / length + 0.17, a[1] + dy * d / length + 0.17, 0, height + 0.3), mat('fence'));
-      for (const y of [1, height - 0.6]) addMesh(group, new THREE.BoxGeometry(length, 0.3, 0.12).rotateY(angle).translate((a[0] + b[0]) / 2, y, -(a[1] + b[1]) / 2), mat('fence'));
+      for (const y of [1, height - 0.6]) addMesh(group, boxGeometry(length, 0.3, 0.12).rotateY(angle).translate((a[0] + b[0]) / 2, y, -(a[1] + b[1]) / 2), mat('fence'));
     }
   }
   const cards = new Map();
