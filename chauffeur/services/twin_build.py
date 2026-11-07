@@ -43,6 +43,7 @@ def plan_steps(page_roles, photos, plot):
     floors = [r for r in page_roles if r['role'] == 'floor']
     for index, row in enumerate(floors):
         level = f'L{index + 1}'
+        row = {**row, 'level': row.get('level') or f'Floor {index + 1}'}
         kind, pause = ('outline', 'scale_outline') if index == 0 else ('registration', 'level_registration')
         steps.append(_step(kind, row, level, pause, f"{row.get('level') or level} outline"))
         steps.extend(_step(k, row, level, name=f"{row.get('level') or level} {k}")

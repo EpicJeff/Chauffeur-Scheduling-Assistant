@@ -1,6 +1,6 @@
 import { request, report, checkpoint } from './api.js';
 import { snapRotation } from './snap.js';
-import { pauseWords, sheetMaster } from './words.js';
+import { pauseWords, sheetMaster, localCentre, turnPlacement } from './words.js';
 
 const rotate = (p, degrees) => {
   const a = degrees * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
@@ -162,12 +162,8 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
     if (el('pause-turn').value.trim() && Number.isFinite(angle) && pause?.transform) {
       const owner = getSheets().page_roles.find(r => r.source === step.source && r.page === step.page)?.building || 'house';
       const house = view.plan.buildings.find(b => b.id === owner);
-      const points = house?.walls.flatMap(w => [w.from, w.to]) || [];
-      if (!points.length) points.push(...(house?.levels[0]?.outline || []));
-      const centre = points.length ? [0, 1].map(i => (Math.min(...points.map(p => p[i])) + Math.max(...points.map(p => p[i]))) / 2) : [0, 0];
-      const before = rotate(centre, pause.transform.rotation || 0), after = rotate(centre, snapRotation(angle));
-      pause.transform.position = pause.transform.position.map((v, i) => v + before[i] - after[i]);
-      pause.transform.rotation = snapRotation(angle); changed();
+      Object.assign(pause.transform, turnPlacement(pause.transform, snapRotation(angle), house ? localCentre(house) : [0, 0]));
+      changed();
     } else report(new Error('Use a finite number of degrees.'));
   }, { signal });
   el('pause-reread').addEventListener('click', async () => {

@@ -740,6 +740,90 @@ def scenario_return_here_leaves_preview():
         check(not page.locator('#time-chip').is_visible(), 'back to the present after returning')
 
 
+# ---- Task 18 review: the art director's paid path and the refusals ----
+
+def _director_route(calls, first_checkpoint):
+    def critique(route):
+        calls.append(json.loads(route.request.post_data or '{}'))
+        if first_checkpoint and len(calls) == 1:
+            return route.fulfill(status=409, headers={'Content-Type': 'application/json'},
+                                 body=json.dumps({'detail': {'checkpoint': 10.0, 'total': 10.05}}))
+        plan = _api_plan_cache['plan']
+        route.fulfill(status=200, headers={'Content-Type': 'application/json'}, body=json.dumps({
+            'round': 950 + len(calls), 'critique': f'Round {len(calls)}: fine now.', 'done': True,
+            'plan': plan, 'cost': 0.01, 'total': 10.06}))
+    return critique
+
+
+def scenario_director_checkpoint_continue_retries_and_stop_spends_nothing_more():
+    s = _serve()
+    if s is None:
+        return
+    for choice in ('Continue', 'Stop'):
+        calls, acks = [], []
+        with s.browser(launch_args=GPU_ARGS) as page:
+            page.set_viewport_size({'width': 1600, 'height': 900})
+            _signed_in(page)
+            _open(page, s)
+            _api_plan_cache['plan'] = _plan(page)
+            page.route('**/api/house/twin/critique', _director_route(calls, True))
+            page.route('**/api/house/twin/cost/ack', lambda r: (acks.append(1), r.fulfill(
+                status=200, body='{}', headers={'Content-Type': 'application/json'})))
+            page.click('#editor-menu')
+            page.click('#menu-director')
+            page.wait_for_function("() => document.body.innerText.includes('Spent $10.05 so far')", timeout=20000)
+            page.get_by_role('button', name=choice, exact=True).click()
+            page.wait_for_timeout(2500)
+        if choice == 'Continue':
+            check(acks == [1] and len(calls) == 2 and calls[0].get('run') == calls[1].get('run'),
+                  ('Continue acknowledges and retries the same run', acks, len(calls)))
+        else:
+            check(acks == [] and len(calls) == 1, ('Stop spends nothing more', acks, len(calls)))
+
+
+def scenario_editor_refusals_are_plain_and_change_nothing():
+    s = _serve()
+    if s is None:
+        return
+    from services import twin_cost, twin_store
+    twin_cost.record('step:outline', [{'model': next(iter(twin_cost.PRICES)), 'input_tokens': 1000,
+                                       'output_tokens': 100, 'images': 0, 'prompt_chars': 1,
+                                       'max_output_tokens': 1024}])
+    spent = twin_cost.total()
+    rounds = len(twin_store.rounds())
+    current = twin_store.current_id()
+    with s.browser(launch_args=GPU_ARGS) as page:
+        page.set_viewport_size({'width': 1600, 'height': 900})
+        _signed_in(page)
+        _open(page, s)
+        page.click('#editor-menu')
+        page.click('#menu-advanced')
+        page.wait_for_selector('#advanced-plan', state='visible', timeout=10000)
+        page.fill('#advanced-reason', '')
+        page.click('#advanced-save')
+        check(page.evaluate("() => document.querySelector('#advanced-reason').validity.valueMissing"),
+              'a blank reason is refused by the form itself')
+        page.fill('#advanced-reason', 'testing')
+        page.fill('#advanced-plan', '{not json')
+        page.click('#advanced-save')
+        page.wait_for_function("() => document.body.innerText.includes('valid JSON')", timeout=10000)
+        page.reload()
+        page.wait_for_function('window.__editor && window.__editor.ready === true', timeout=60000)
+        page.click('#editor-menu')
+        page.click('#menu-reset-spend')
+        page.locator('input').last.fill('nope')
+        page.get_by_role('button', name='Reset', exact=True).click()
+        page.wait_for_timeout(1200)
+        page.reload()
+        page.wait_for_function('window.__editor && window.__editor.ready === true', timeout=60000)
+        page.click('#editor-menu')
+        page.click('#menu-start-over')
+        page.get_by_role('button', name='Keep it', exact=True).click()
+        page.wait_for_timeout(1200)
+    check(abs(twin_cost.total() - spent) < 1e-9, 'a wrong word resets nothing')
+    check(len(twin_store.rounds()) == rounds and twin_store.current_id() == current, 'Keep it and refusals change nothing')
+
+
 if __name__ == '__main__':
     for fn in (scenario_signed_out_sees_the_sign_in,
                scenario_shell_matches_the_mockup_regions,
@@ -766,6 +850,8 @@ if __name__ == '__main__':
                scenario_pause_adjustments_wait_for_looks_right,
                scenario_return_here_leaves_preview,
                scenario_director_runs_from_the_editor,
+               scenario_director_checkpoint_continue_retries_and_stop_spends_nothing_more,
+               scenario_editor_refusals_are_plain_and_change_nothing,
                scenario_advanced_plan_editor_round_trips,
                scenario_reset_spend_needs_the_word_reset,
                scenario_start_over_clears_the_house_and_keeps_the_spend,

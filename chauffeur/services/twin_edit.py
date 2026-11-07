@@ -83,18 +83,27 @@ FIELD_LABELS = {
 }
 
 
+def _floor_name(level, building):
+    if level.get('name'):
+        return level['name']
+    levels = sorted(building.get('levels', []), key=lambda row: row.get('elevation', 0))
+    return f'Floor {levels.index(level) + 1}' if level in levels else 'floor'
+
+
 def _label(kind, piece, building=None):
     """Plain identity shared by edit summaries and the editor's About prompt."""
     if piece.get('name'):
         return f'the {piece["name"]}'
     building = building or {}
+    if kind == 'level':
+        return f'the {_floor_name(piece, building)}'
     level_id = piece.get('level')
     if kind == 'opening':
         wall = next((w for w in building.get('walls', []) if w['id'] == piece.get('wall')), {})
         section = next((s for s in building.get('roof', {}).get('sections', []) if s['id'] == piece.get('section')), {})
         level_id = wall.get('level', section.get('level', level_id))
     level = next((l for l in building.get('levels', []) if l['id'] == level_id), {})
-    floor = level.get('name') or 'floor'
+    floor = _floor_name(level, building)
     if kind == 'wall':
         points = [p for w in building.get('walls', []) for p in (w['from'], w['to'])]
         if piece.get('exterior') and points:
@@ -384,7 +393,7 @@ def apply(plan, edit):
                                   'exterior': False, 'state': 'settled', 'src': {'person': True}})
         if len(building['walls']) > twin_plan.CAPS['walls']:
             raise ValueError('The building has too many walls.')
-        summary = f'Added a wall on {level.get("name") or "the floor"}'
+        summary = f'Added a wall on {_floor_name(level, building)}'
     elif op == 'add_opening':
         _, wall, building, _ = _find(result, edit.get('wall'), scope, 'wall')
         _wall_length(wall)
@@ -414,7 +423,13 @@ def apply(plan, edit):
             field_label = FIELD_LABELS.get(field, field.capitalize()).lower()
             summary = f'Set {label}\'s {field_label} to {_value_words(field, piece[field])}'
         elif op == 'rotate':
+            about = _point(edit['about'], 'about') if 'about' in edit else None
+            fixed = twin_register.to_world(building, about) if about is not None else None
             _set(kind, piece, building, 'rotation', edit.get('to'))
+            if about is not None:
+                turned = twin_register.to_world(building, about)
+                piece['position'] = _point([piece['position'][i] + fixed[i] - turned[i]
+                                             for i in (0, 1)], 'position')
             summary = f'Turned {label} to {piece["rotation"]:g}°'
         elif op == 'delete':
             owner.remove(piece)

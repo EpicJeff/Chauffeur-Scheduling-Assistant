@@ -1,5 +1,7 @@
 // Kept dependency-free so the length parser can also run outside the browser.
-const report = error => window.showGlobalAlert(error.message || 'Could not save this change.');
+const report = error => {
+  if (!error.shown && !error.cancelled) window.showGlobalAlert(error.message || 'Could not save this change.');
+};
 
 // Keep this list aligned with twin_edit.EDITABLE; the server validates every save.
 const fields = {

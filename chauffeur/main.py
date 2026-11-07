@@ -7463,22 +7463,23 @@ def _house_editor_call(operation, *args, lookup=False, **kwargs):
 
 @app.get('/api/house/editor/sheets')
 def house_editor_sheets():
-    from pathlib import Path
-    from PIL import Image
     from services import twin_store, twin_edit
     with twin_store.LIFECYCLE:
         sources, roles, registrations = twin_store.sources(), twin_store.page_roles(), twin_store.registrations()
         plan = twin_store.current()
-    # Reading existing PNG headers is cheap. Legacy sources can backfill their
-    # master outside the lifecycle lock, as the crop reader already does.
+    # Validate cached masters and backfill legacy/corrupt images outside the
+    # lifecycle lock. One unreadable page must not disable the editor.
     pages = []
     for source in sources:
         if source['kind'] != 'drawing':
             continue
         for page in range(1, source['pages'] + 1):
-            path = Path(twin_store.DATA_DIR) / 'sources' / source['id'] / f'master-{page}.png'
-            with (Image.open(path) if path.is_file() else twin_store._master_image(source['id'], page)) as image:
-                pages.append({'source': source['id'], 'page': page, 'master_size': list(image.size)})
+            try:
+                with twin_store._master_image(source['id'], page) as image:
+                    master_size = list(image.size)
+            except Exception:
+                master_size = None
+            pages.append({'source': source['id'], 'page': page, 'master_size': master_size})
     sizes = {(p['source'], p['page']): p['master_size'] for p in pages}
     for row in [*roles, *registrations]:
         row['master_size'] = sizes.get((row['source'], row['page']))

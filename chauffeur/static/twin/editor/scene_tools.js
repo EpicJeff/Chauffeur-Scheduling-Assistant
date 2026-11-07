@@ -1,27 +1,25 @@
 import { report } from './api.js';
 import { createCards, findPiece, feetInches } from './cards.js';
 import { snapPoint, snapRotation } from './snap.js';
-import { sheetMaster } from './words.js';
+import { sheetMaster, localCentre } from './words.js';
 
 const rotatePoint = (p, angle) => {
   const a = angle * Math.PI / 180;
   return [Math.cos(a) * p[0] - Math.sin(a) * p[1], Math.sin(a) * p[0] + Math.cos(a) * p[1]];
 };
-function localCentre(building) {
-  const pts = building.walls.flatMap(w => [w.from, w.to]);
-  if (!pts.length) pts.push(...building.levels.flatMap(l => l.outline || []));
-  return pts.length ? [0, 1].map(i => (Math.min(...pts.map(p => p[i])) + Math.max(...pts.map(p => p[i]))) / 2) : [0, 0];
-}
 
 export function createSceneTools({ view, getPlan, getSheets, edit, panel, canEdit, signal, onInteract }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
   let selection = null, tool = 'select', levelKey = null, sheetOn = false, gesture = null, delegate = null, pointerId = null;
+  let ownsGesture = false;
+  const pointers = new Set();
   const getLabel = item => getSheets().piece_labels?.find(p => p.piece === item.pieceId && p.building === item.buildingId)?.label || 'this piece';
   const cards = createCards({ getPlan, getLabel, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
     canEdit, select, ask: item => panel.focusSelection(item, getLabel(item)) });
   const listen = (node, event, fn, options = {}) => node.addEventListener(event, fn, { ...options, signal });
-  function levels() { return (getPlan()?.buildings || []).flatMap(b => b.levels.map(l => ({ key: `${b.id}:${l.id}`, building: b, level: l }))); }
+  function levels() { return (getPlan()?.buildings || []).flatMap(b => [...b.levels].sort((a, c) => a.elevation - c.elevation)
+    .map((l, i) => ({ key: `${b.id}:${l.id}`, building: b, level: l, label: l.name || `Floor ${i + 1}` }))); }
   function floor() {
     const list = levels();
     return list.find(l => l.key === levelKey) || list[0];
@@ -65,17 +63,17 @@ export function createSceneTools({ view, getPlan, getSheets, edit, panel, canEdi
   }
   function drawFloors() {
     const host = el('editor-floors'), focused = document.activeElement?.dataset.floor;
-    const signature = JSON.stringify(levels().map(row => [row.key, row.level.name]));
+    const signature = JSON.stringify(levels().map(row => [row.key, row.label]));
     if (host.dataset.levels !== signature) {
       host.dataset.levels = signature; host.replaceChildren();
       const title = document.createElement('span'); title.textContent = 'Floors'; host.append(title);
       for (const row of levels().reverse()) {
         const group = document.createElement('div'); group.className = 'editor-floor-row';
         const button = document.createElement('button'); button.type = 'button'; button.dataset.floor = row.key;
-        button.textContent = row.level.name || row.level.id; button.addEventListener('click', () => chooseFloor(row.key));
+        button.textContent = row.label; button.addEventListener('click', () => chooseFloor(row.key));
         const toggle = document.createElement('button'); toggle.type = 'button'; toggle.dataset.floorVisible = row.key;
         toggle.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>';
-        toggle.setAttribute('aria-label', `Show ${row.level.name || row.level.id}`);
+        toggle.setAttribute('aria-label', `Show ${row.label}`);
         toggle.addEventListener('click', () => {
           onInteract?.();
           toggle.setAttribute('aria-pressed', String(toggle.getAttribute('aria-pressed') !== 'true'));
@@ -132,10 +130,7 @@ export function createSceneTools({ view, getPlan, getSheets, edit, panel, canEdi
     const building = getPlan()?.buildings.find(b => b.id === buildingId); if (!building) return;
     const to = snapRotation((building.rotation || 0) + delta);
     if (Math.abs(to - (building.rotation || 0)) < .001) return;
-    const centre = localCentre(building), old = rotatePoint(centre, building.rotation || 0), next = rotatePoint(centre, to);
-    const by = old.map((v, i) => v - next[i]);
-    await edit([...(Math.hypot(...by) > 1e-8 ? [{ op: 'move', piece: buildingId, building: buildingId, by }] : []),
-      { op: 'rotate', building: buildingId, to }]); cards.draw(selection);
+    await edit({ op: 'rotate', building: buildingId, to, about: localCentre(building) }); cards.draw(selection);
   }
   async function dragPiece(pieceId, buildingId, dx, dy) {
     const item = { pieceId, buildingId }; select(item);
@@ -145,10 +140,16 @@ export function createSceneTools({ view, getPlan, getSheets, edit, panel, canEdi
   }
   // Capture before OrbitControls so a floor drag never turns into a camera drag.
   listen(canvas, 'pointerdown', event => {
-    if (pointerId !== null) { event.stopImmediatePropagation(); return; }
+    pointers.add(event.pointerId);
+    if (pointerId !== null) {
+      if (ownsGesture) event.stopImmediatePropagation();
+      else { gesture = null; pointerId = null; } // A pinch cancels the passive tap.
+      return;
+    }
+    if (pointers.size > 1) return;
     if (event.button !== 0 || !canEdit()) return;
     pointerId = event.pointerId;
-    if (delegate?.pointerDown?.(event)) { event.stopImmediatePropagation(); return; }
+    if (delegate?.pointerDown?.(event)) { ownsGesture = true; event.stopImmediatePropagation(); return; }
     if (tool === 'select') {
       gesture = { x: event.clientX, y: event.clientY, pointerId, selecting: true }; return;
     }
@@ -159,6 +160,7 @@ export function createSceneTools({ view, getPlan, getSheets, edit, panel, canEdi
     const start = view.floorAt(event.clientX, event.clientY, anchor.key); if (!start) return;
     const centre = localCentre(anchor.record.building);
     gesture = { item: picked, start, key: anchor.key, centre, pointerId, x: event.clientX, y: event.clientY, enabled: view.controls.enabled };
+    ownsGesture = true;
     view.controls.enabled = false; canvas.setPointerCapture(event.pointerId); event.stopImmediatePropagation();
   }, { capture: true });
   listen(canvas, 'pointermove', event => {
@@ -188,8 +190,9 @@ export function createSceneTools({ view, getPlan, getSheets, edit, panel, canEdi
     delta = (delta + 540) % 360 - 180; return delta;
   }
   const finish = (event, cancel = false) => {
-    if (event.pointerId !== pointerId) { if (pointerId !== null) event.stopImmediatePropagation(); return; }
-    pointerId = null;
+    const tracked = pointers.delete(event.pointerId);
+    if (event.pointerId !== pointerId) { if (ownsGesture && tracked) event.stopImmediatePropagation(); return; }
+    pointerId = null; ownsGesture = false;
     if (delegate?.pointerUp?.(event, cancel)) return;
     if (!gesture) return;
     const g = gesture; gesture = null; el('editor-drag-hint').hidden = true;
@@ -209,7 +212,8 @@ export function createSceneTools({ view, getPlan, getSheets, edit, panel, canEdi
   listen(document, 'pointerup', finish, { capture: true });
   listen(document, 'pointercancel', event => finish(event, true), { capture: true });
   listen(canvas, 'lostpointercapture', event => finish(event, true));
-  signal.addEventListener('abort', () => { if (gesture && !gesture.selecting) view.controls.enabled = gesture.enabled; gesture = null; pointerId = null; }, { once: true });
+  signal.addEventListener('abort', () => { if (gesture && !gesture.selecting) view.controls.enabled = gesture.enabled;
+    gesture = null; pointerId = null; ownsGesture = false; pointers.clear(); }, { once: true });
   for (const id of ['select', 'move', 'rotate']) {
     el(`rail-${id}`).disabled = false; listen(el(`rail-${id}`), 'click', () => { delegate?.cancel?.(); setTool(id); });
   }

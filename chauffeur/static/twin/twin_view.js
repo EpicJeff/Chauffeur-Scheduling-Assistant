@@ -202,6 +202,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       const level = building?.levels.find(l => l.id === spec.levelId);
       const parent = twin.groups.levels[`${spec.buildingId}:${spec.levelId}`];
       if (!level || !parent || !(spec.reg?.scale > 0)) return;
+      if (!spec.masterSize) console.warn('Drawing master size is unavailable; using the displayed image size for this sheet.');
       const version = sheetRevision;
       const elevation = groundAt(plan, ...(building.position || [0, 0])) + (building.base || 0) + level.elevation;
       sheet = { ready: false, object: null, elevationFt: elevation,
