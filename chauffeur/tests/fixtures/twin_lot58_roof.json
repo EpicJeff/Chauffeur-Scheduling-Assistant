@@ -1,0 +1,11 @@
+{
+  "note": "Plausible Lot 58 roof shaped after Reference Plans Lot 58 sheet 3 (central two-storey hip, hipped side wings, rear hip, front gable, garage gable). Geometry fixture for the roof envelope, not an answer key. Plan feet, x right, y front to rear.",
+  "sections": [
+    {"id": "r-center", "kind": "hip", "rect": [14, 12, 46, 52], "ridge": "y", "pitch": 8, "plate": 19, "overhang": 1},
+    {"id": "r-left", "kind": "hip", "rect": [0, 14, 16, 54], "ridge": "y", "pitch": 8, "plate": 10, "overhang": 1},
+    {"id": "r-right", "kind": "hip", "rect": [44, 20, 59, 44], "ridge": "y", "pitch": 8, "plate": 19, "overhang": 1},
+    {"id": "r-garage", "kind": "gable", "rect": [47, 0, 70, 22], "ridge": "y", "pitch": 8, "plate": 10, "overhang": 1},
+    {"id": "r-front-gable", "kind": "gable", "rect": [24, 8, 36, 14], "ridge": "y", "pitch": 10, "plate": 19, "overhang": 1},
+    {"id": "r-rear", "kind": "hip", "rect": [20, 50, 40, 65.33], "ridge": "x", "pitch": 6, "plate": 10, "overhang": 1}
+  ]
+}
