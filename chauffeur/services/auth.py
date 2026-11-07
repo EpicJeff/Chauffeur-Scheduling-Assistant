@@ -245,6 +245,7 @@ RULES = [
     (ANY, '/kitchen', ANYONE, None),
     (ANY, '/house', ANYONE, None),
     (ANY, '/house/twin', ANYONE, None),
+    (ANY, '/house/editor', ANYONE, None),
     # Missions: public redirect to Projects; mission APIs remain gated below.
     (ANY, '/missions', ANYONE, None),
     # Study (task 2): same admin-page shape as Mind — a shell anyone can
@@ -456,6 +457,8 @@ RULES = [
     ('POST', '/api/house/twin/cost/ack', PARENTS, None),
     ('POST', '/api/house/twin/draft', PARENTS, None),
     ('POST', '/api/house/twin/critique', PARENTS, None),
+    ('GET', '/api/house/twin/rounds/{round_id}', PARENTS, None),
+    (ANY, '/api/house/editor/*', PARENTS, None),
     # The facade generator (spec 2026-09-15 §3.2): reads are family-safe
     # (a wall builds from the active facade); every write is a parent's.
     ('GET', '/api/house/facades', WALL_OR_SERVICE, None),

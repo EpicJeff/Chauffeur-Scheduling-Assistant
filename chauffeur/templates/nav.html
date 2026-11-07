@@ -182,7 +182,7 @@
   add-on entirely. The same reasoning as home.html's apiBase, which had to
   learn this first.
 #}
-{% set _up = '../../' if _path.endswith('/house/twin/') else '../' if '/board/' in _path or _path.endswith('/house/twin') else '' %}
+{% set _up = '../../' if _path.endswith(('/house/twin/', '/house/editor/')) else '../' if '/board/' in _path or _path.endswith(('/house/twin', '/house/editor')) else '' %}
 
 {# The <nav> element is a bare wrapper so that the top bar and the panel shelf
    are siblings inside it: `?tabs=none` hides the nav and both go with it, and

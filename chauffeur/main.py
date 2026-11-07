@@ -1146,6 +1146,8 @@ async def deletion_maintenance_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from services import twin_build
+    twin_build.recover()
     from services import planned
     from services import library_scripts; library_scripts.clear_jobs()
     planned.reconcile()
@@ -1959,6 +1961,11 @@ def house_twin_page(request: Request):
     from services import twin_library
     return templates.TemplateResponse(request=request, name="house_twin.html",
                                       context={"twin_manifest": twin_library.manifest()})
+
+
+@app.get("/house/editor")
+def house_editor_page(request: Request):
+    return templates.TemplateResponse(request=request, name="house_editor.html")
 
 
 @app.get("/house")
@@ -7431,6 +7438,139 @@ def house_twin_critique(body: dict = Body(default={})):
         raise HTTPException(status_code=409 if error in (
             'round cap reached', 'a critique is already running') else 400, detail=error)
     return {'result': result}
+
+
+def _house_editor_call(operation, *args, **kwargs):
+    """Keep the editor's domain errors consistent across its thin routes."""
+    from services import twin_cost
+    try:
+        return operation(*args, **kwargs)
+    except twin_cost.CheckpointReached as exc:
+        raise HTTPException(status_code=409, detail={
+            'checkpoint': exc.checkpoint, 'total': exc.total}) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail='No such build or round.') from exc
+    except ValueError as exc:
+        busy = str(exc) in ('A build is already running.', 'Stop the build before starting over.')
+        raise HTTPException(status_code=409 if busy else 400, detail=str(exc)) from exc
+
+
+@app.get('/api/house/editor/sheets')
+def house_editor_sheets():
+    from services import twin_store
+    with twin_store.LIFECYCLE, twin_store._LOCK:
+        return {'sources': twin_store.sources(), 'page_roles': twin_store.page_roles(),
+                'registrations': twin_store._state()['registrations']}
+
+
+@app.put('/api/house/editor/sheets/roles')
+def house_editor_roles(body: dict = Body(default={})):
+    from services import twin_store
+    _house_editor_call(twin_store.set_page_roles, body.get('rows'))
+    return {'page_roles': twin_store.page_roles()}
+
+
+@app.get('/api/house/editor/sheets/{source_id}/{page}.png')
+def house_editor_sheet_image(source_id: str, page: int):
+    from services import twin_store
+    try:
+        data = twin_store.page_image(source_id, page)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail='No such sheet page.') from exc
+    except ValueError as exc:
+        missing = str(exc) in ('The source does not exist.',
+                               'Source page numbers are 1-based and must exist.')
+        raise HTTPException(status_code=404 if missing else 400, detail=str(exc)) from exc
+    return Response(content=data, media_type='image/png')
+
+
+@app.post('/api/house/editor/build')
+def house_editor_build(body: dict = Body(default={})):
+    from services import twin_build
+    if not isinstance(body.get('building'), dict) or not isinstance(body['building'].get('id'), str):
+        raise HTTPException(status_code=400, detail='A building needs a valid id.')
+    return {'id': _house_editor_call(twin_build.start, body)}
+
+
+@app.get('/api/house/editor/build/{build_id}')
+def house_editor_build_status(build_id: str, since: int = 0):
+    from services import twin_build
+    return _house_editor_call(twin_build.status, build_id, since=since)
+
+
+@app.post('/api/house/editor/build/{build_id}/answer')
+def house_editor_build_answer(build_id: str, body: dict = Body(default={})):
+    from services import twin_build
+    return _house_editor_call(twin_build.answer, build_id, body.get('step'), body.get('decision', {}))
+
+
+@app.post('/api/house/editor/build/{build_id}/reread')
+def house_editor_build_reread(build_id: str, body: dict = Body(default={})):
+    from services import twin_build
+    return _house_editor_call(twin_build.reread, build_id, body.get('step'))
+
+
+@app.post('/api/house/editor/build/{build_id}/stop')
+def house_editor_build_stop(build_id: str):
+    from services import twin_build
+    return _house_editor_call(twin_build.stop, build_id)
+
+
+@app.post('/api/house/editor/build/{build_id}/resume')
+def house_editor_build_resume(build_id: str):
+    from services import twin_build
+    return _house_editor_call(twin_build.resume, build_id)
+
+
+@app.post('/api/house/editor/edit')
+def house_editor_edit(request: Request, body: dict = Body(default={})):
+    from services import twin_edit, twin_store
+    parent = require_parent_token(request.headers.get('x-member-token') or
+                                  request.query_params.get('member_token'))
+    with twin_store.LIFECYCLE:
+        result = _house_editor_call(twin_edit.save, body.get('edit'), parent['id'],
+                                   reason=body.get('reason', ''))
+        return {**result, 'plan': twin_store.current()}
+
+
+@app.post('/api/house/editor/start-over')
+def house_editor_start_over():
+    from services import twin_build, twin_store
+    # Importing the runner installs the store's live-build predicate.
+    _house_editor_call(twin_store.start_over)
+    return {'status': 'ok'}
+
+
+@app.post('/api/house/editor/cost/reset')
+def house_editor_cost_reset(request: Request, body: dict = Body(default={})):
+    from services import twin_cost
+    if body != {'confirm': 'reset'}:
+        raise HTTPException(status_code=400, detail='Confirm the spend reset with reset.')
+    parent = require_parent_token(request.headers.get('x-member-token') or
+                                  request.query_params.get('member_token'))
+    return _house_editor_call(twin_cost.reset, by=parent['id'])
+
+
+@app.get('/api/house/editor/state')
+def house_editor_state():
+    from services import twin_build, twin_cost, twin_store
+    with twin_store.LIFECYCLE, twin_build._LOCK:
+        builds = [bid for bid, build in twin_build._BUILDS.items()
+                  if build['generation'] == twin_store.generation()]
+        # Recovery loads persisted builds in directory order; use the latest
+        # saved build, including a stopped or finished one, across restarts.
+        latest = max(builds, key=lambda bid: os.stat(os.path.join(
+            twin_store.DATA_DIR, 'builds', bid, 'state.json')).st_mtime_ns, default=None)
+        return {'plan': twin_store.current(), 'rounds': twin_store.rounds(),
+                'cost': {'total': twin_cost.total(), 'blocking': twin_cost.blocking_checkpoint()},
+                'build': latest}
+
+
+@app.get('/api/house/twin/rounds/{round_id}')
+def house_twin_round(round_id: int):
+    from services import twin_store
+    with twin_store.LIFECYCLE, twin_store._LOCK:
+        return {'plan': _house_editor_call(twin_store._read_round, twin_store._state(), round_id)}
 
 
 @app.get("/api/study/state")

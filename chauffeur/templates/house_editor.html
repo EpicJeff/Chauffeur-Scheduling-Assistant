@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>House editor</title>
+  {% include 'ha_theme.html' %}
+  <script>
+    window.chfBase = location.pathname.endsWith('/house/editor/') ? '../../' : '../';
+    const editorStyles = document.createElement('link');
+    editorStyles.rel = 'stylesheet';
+    editorStyles.href = window.chfBase + {{ 'static/tailwind.css' | ver | tojson }};
+    document.head.appendChild(editorStyles);
+    document.addEventListener('DOMContentLoaded', () => {
+      const script = document.createElement('script');
+      script.src = window.chfBase + {{ 'static/vendor/alpine.min.js' | ver | tojson }};
+      document.head.appendChild(script);
+    });
+  </script>
+</head>
+<body>
+  <div id="editor-chrome" hidden>{% include 'nav.html' %}</div>
+  <main id="editor-scene" aria-label="House editor"></main>
+  {% include 'components/control_center.html' %}
+</body>
+</html>
