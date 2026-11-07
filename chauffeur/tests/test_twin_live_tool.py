@@ -118,10 +118,63 @@ def scenario_the_budget_counts_what_this_run_spent():
     check(len(reader.calls) == 2 and rows[0].get('stopped') == 'budget', (reader.calls, rows))
 
 
+class ExactReader(Reader):
+    """Answers the outline with the answer key itself, drawn at 70 ft = 0.5 page width."""
+
+    def __init__(self, wings=2):
+        super().__init__()
+        self.wings = wings
+
+    def __call__(self, kind, images, context, *, run, step):
+        answer = super().__call__(kind, images, context, run=run, step=step)
+        if kind == 'outline':
+            with open(KEY, encoding='utf-8') as f:
+                key = json.load(f)
+            s = 70.0 / 2550
+            pts = [[(x / s + 510) / 5100, (3000 - y / s) / 3300] for x, y in key['l1_outline_ft']]
+            answer = {'dimension': {'a': [0.1, 0.97], 'b': [0.6, 0.97], 'feet': 70.0}, 'outline': pts,
+                      'wings': [{'name': 'garage', 'box': [0.45, 0.5, 0.62, 0.92]},
+                                {'name': 'main', 'box': [0.1, 0.2, 0.5, 0.92]}][:self.wings],
+                      'confidence': 0.9, 'why': ''}
+        return answer
+
+
+def scenario_a_perfect_outline_scores_zero():
+    tool = _tool()
+    rows = tool.compare(_pdf(), budget=3.0, models=['gemini'], key_dir=_keys(),
+                        out_dir=tempfile.mkdtemp(prefix='twin_live_out_'), key_path=KEY, reader=ExactReader())
+    check(rows[0]['dimension_error_ft'] < 0.2 and rows[0]['outline_rms_ft'] < 0.2, rows[0])
+
+
+def scenario_one_wing_still_reads_walls_and_roof():
+    tool = _tool()
+    reader = ExactReader(wings=1)
+    rows = tool.compare(_pdf(), budget=3.0, models=['gemini'], key_dir=_keys(),
+                        out_dir=tempfile.mkdtemp(prefix='twin_live_out_'), key_path=KEY, reader=reader)
+    check(reader.calls == ['outline', 'walls', 'walls', 'roof'], reader.calls)
+    check(rows[0]['roof_sections'] == 3, rows[0])
+
+
+def scenario_the_table_shows_the_key_and_the_default_data_dir_is_scratch():
+    tool = _tool()
+    rows = tool.compare(_pdf(), budget=3.0, models=['gemini'], key_dir=_keys(),
+                        out_dir=tempfile.mkdtemp(prefix='twin_live_out_'), key_path=KEY, reader=ExactReader())
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        tool.print_table(rows, key_path=KEY)
+    text = printed.getvalue()
+    check('key' in text.lower() and '70' in text and '5-9' in text, text)
+    data_dir = os.path.abspath(tool.default_data_dir())
+    check(not data_dir.startswith(os.path.abspath(ROOT)), data_dir)
+
+
 if __name__ == '__main__':
     for fn in (scenario_providers_and_reads_are_pinned,
                scenario_a_tiny_budget_makes_no_request,
                scenario_compare_records_scores_and_never_prints_keys,
-               scenario_the_budget_counts_what_this_run_spent):
+               scenario_the_budget_counts_what_this_run_spent,
+               scenario_a_perfect_outline_scores_zero,
+               scenario_one_wing_still_reads_walls_and_roof,
+               scenario_the_table_shows_the_key_and_the_default_data_dir_is_scratch):
         fn()
         print('  ok ', fn.__name__)

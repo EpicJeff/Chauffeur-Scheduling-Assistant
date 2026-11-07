@@ -9,6 +9,7 @@ import math
 import os
 from pathlib import Path
 import sys
+import tempfile
 import uuid
 
 
@@ -33,11 +34,22 @@ COMPARE_READS = [
 ]
 
 
+def default_data_dir():
+    """Allocate fresh scratch storage outside the checkout, never live data."""
+    parent = Path(tempfile.gettempdir()).resolve()
+    if parent.is_relative_to(ROOT.parent):
+        # TMP/TEMP may point into a checkout for other tools. Do not follow
+        # that override when allocating this harness's isolated data.
+        parent = Path.home()
+    return tempfile.mkdtemp(prefix='chauffeur_twin_live_', dir=parent)
+
+
 def _local_services():
-    # Pin tooling to the checkout's local data, even on an add-on host. Tests
-    # may supply their own isolated CHAUFFEUR_DATA_DIR before loading storage.
+    # Select storage before importing any services: storage binds its database
+    # and other services derive their paths from it at import time.
     if not os.environ.get('CHAUFFEUR_DATA_DIR'):
-        os.environ['CHAUFFEUR_DATA_DIR'] = str(ROOT / 'data')
+        os.environ['CHAUFFEUR_DATA_DIR'] = default_data_dir()
+    print(f"Data directory: {Path(os.environ['CHAUFFEUR_DATA_DIR']).resolve()}")
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
     from services import model_pools, storage, twin_cost, twin_reads, twin_register, twin_store
@@ -85,7 +97,7 @@ def compare(pdf_path, budget, models, *, key_dir, out_dir, key_path,
     for model in models:
         row = {'model': model, 'cost': 0.0, 'dimension_error_ft': None,
                'outline_rms_ft': None, 'walls': 0, 'roof_sections': 0,
-               'roof_kinds': []}
+               'roof_kinds': [], 'errors': []}
         rows.append(row)
         model_started = len(costs.entries())
         try:
@@ -108,62 +120,75 @@ def compare(pdf_path, budget, models, *, key_dir, out_dir, key_path,
 
             for number, spec in enumerate(COMPARE_READS, 1):
                 kind = spec['kind']
-                if ceiling is None:
-                    # A read sends one image and at most one provider request.
-                    # Cover every eligible model, including unpriced models
-                    # (which twin_cost.price charges at its highest rates).
-                    candidates = pools.models_for('twin', storage.get_settings(), paid=True)
-                    estimate = max(costs.price(candidate, 2000, reads.MAX_OUTPUT[kind])[0]
-                                   for candidate in candidates)
-                else:
-                    estimate = ceiling(kind)
-                if not math.isfinite(estimate) or estimate < 0:
-                    raise ValueError('Read ceiling must be finite and non-negative.')
-                if spent_since(started) + estimate > budget:
-                    row['stopped'] = 'budget'
-                    break
+                step = f'{kind}-{number}'
+                try:
+                    if ceiling is None:
+                        # A read sends one image and at most one provider request.
+                        # Cover every eligible model, including unpriced models
+                        # (which twin_cost.price charges at its highest rates).
+                        candidates = pools.models_for('twin', storage.get_settings(), paid=True)
+                        estimate = max(costs.price(candidate, 2000, reads.MAX_OUTPUT[kind])[0]
+                                       for candidate in candidates)
+                    else:
+                        estimate = ceiling(kind)
+                    if not math.isfinite(estimate) or estimate < 0:
+                        raise ValueError('Read ceiling must be finite and non-negative.')
+                    if spent_since(started) + estimate > budget:
+                        row['stopped'] = 'budget'
+                        break
 
-                box = spec.get('box')
-                wing = None
-                if 'wing' in spec:
-                    wings = outline.get('wings', [])
-                    if len(wings) <= spec['wing']:
-                        raise ValueError('Outline must identify two wing boxes for the walls reads.')
-                    wing = wings[spec['wing']]
-                    box = _master_box(outline_crop['box'], wing['box'])
-                crop = store.crop(source, spec['page'], box)
-                images = [{'mime': crop['mime'], 'b64': crop['b64']}]
-                context = {'page': spec['page'], 'box': crop['box'],
-                           'level': 'L1', 'building': {'name': 'main'}}
-                if wing is not None:
-                    context['wing'] = wing['name']
-                costs.require_clear()
-                answer = read(kind, images, context, run=run, step=f'{kind}-{number}')
-                raw = json.dumps(answer, ensure_ascii=False, indent=2, allow_nan=False)
-                (destination / f'{kind}-{number}.json').write_text(
-                    _redact(raw, secrets) + '\n', encoding='utf-8')
-                if not isinstance(answer, dict):
-                    raise ValueError(f'{kind} returned no answer object.')
-                if 'error' in answer:
-                    raise ValueError(str(answer['error']))
+                    box = spec.get('box')
+                    wing = None
+                    if 'wing' in spec:
+                        # An absent wing must not discard a walls or roof read.
+                        # Fall back to the outline read's own full crop extent.
+                        parent = outline_crop['box'] if outline_crop else COMPARE_READS[0]['box']
+                        box = parent
+                        wings = (outline or {}).get('wings') or []
+                        if len(wings) > spec['wing']:
+                            candidate = wings[spec['wing']]
+                            if isinstance(candidate, dict) and candidate.get('box'):
+                                wing = candidate
+                                box = _master_box(parent, wing['box'])
+                    crop = store.crop(source, spec['page'], box)
+                    if kind == 'outline':
+                        outline_crop = crop
+                    images = [{'mime': crop['mime'], 'b64': crop['b64']}]
+                    context = {'page': spec['page'], 'box': crop['box'],
+                               'level': 'L1', 'building': {'name': 'main'}}
+                    if wing is not None and wing.get('name'):
+                        context['wing'] = wing['name']
+                    costs.require_clear()
+                    answer = read(kind, images, context, run=run, step=step)
+                    raw = json.dumps(answer, ensure_ascii=False, indent=2, allow_nan=False)
+                    (destination / f'{step}.json').write_text(
+                        _redact(raw, secrets) + '\n', encoding='utf-8')
+                    if not isinstance(answer, dict):
+                        raise ValueError(f'{kind} returned no answer object.')
+                    if 'error' in answer:
+                        raise ValueError(str(answer['error']))
 
-                if kind == 'outline':
-                    outline, outline_crop = answer, crop
-                    dimension = answer['dimension']
-                    scale = register.from_dimension(
-                        store.crop_to_master(crop, dimension['a']),
-                        store.crop_to_master(crop, dimension['b']), dimension['feet'])
-                    pixels = [store.crop_to_master(crop, point) for point in answer['outline']]
-                    width = (max(p[0] for p in pixels) - min(p[0] for p in pixels)) * scale
-                    row['dimension_error_ft'] = abs(width - key['overall']['width_ft'])
-                    reg = register.make(scale)
-                    feet = [register.apply(reg, point) for point in pixels]
-                    _, row['outline_rms_ft'] = register.fit_outline(feet, key['l1_outline_ft'])
-                elif kind == 'walls':
-                    row['walls'] += len(answer['walls'])
-                else:
-                    row['roof_sections'] = len(answer['sections'])
-                    row['roof_kinds'] = sorted({section['kind'] for section in answer['sections']})
+                    if kind == 'outline':
+                        outline = answer
+                        dimension = answer['dimension']
+                        scale = register.from_dimension(
+                            store.crop_to_master(crop, dimension['a']),
+                            store.crop_to_master(crop, dimension['b']), dimension['feet'])
+                        pixels = [store.crop_to_master(crop, point) for point in answer['outline']]
+                        width = (max(p[0] for p in pixels) - min(p[0] for p in pixels)) * scale
+                        row['dimension_error_ft'] = abs(width - key['overall']['width_ft'])
+                        reg = register.make(scale)
+                        feet = [register.apply(reg, point) for point in pixels]
+                        _, row['outline_rms_ft'] = register.fit_outline(feet, key['l1_outline_ft'])
+                    elif kind == 'walls':
+                        row['walls'] += len(answer['walls'])
+                    else:
+                        row['roof_sections'] = len(answer['sections'])
+                        row['roof_kinds'] = sorted({section['kind'] for section in answer['sections']})
+                except Exception as exc:
+                    error = _redact(f'{step}: {type(exc).__name__}: {exc}', secrets)
+                    row['errors'].append(error)
+                    row['error'] = '; '.join(row['errors'])
         except Exception as exc:
             # Provider errors can contain credential-bearing URLs. Keep the
             # useful error but scrub every key loaded during this comparison.
@@ -173,10 +198,13 @@ def compare(pdf_path, budget, models, *, key_dir, out_dir, key_path,
     return rows
 
 
-def print_table(rows):
+def print_table(rows, key_path=None):
     """Print scores and partial-run status without settings or credentials."""
+    key = json.loads(Path(key_path or DEFAULT_KEY).read_text(encoding='utf-8'))
+    roof = key['roof']
     cells = [['Model', 'Cost ($)', 'Dimension error (ft)', 'Outline RMS (ft)',
-              'Walls', 'Roof sections', 'Roof kinds', 'Status']]
+              'Key width (ft)', 'Walls', 'Key walls min', 'Roof sections',
+              'Key roof sections', 'Roof kinds', 'Key roof kinds', 'Status']]
     for row in rows:
         def score(name):
             value = row.get(name)
@@ -185,8 +213,11 @@ def print_table(rows):
         status = row.get('error') or row.get('stopped') or 'ok'
         cells.append([str(row['model']), f"{row['cost']:.4f}",
                       score('dimension_error_ft'), score('outline_rms_ft'),
-                      str(row['walls']), str(row['roof_sections']),
-                      ','.join(row['roof_kinds']) or '-', ' '.join(str(status).split())])
+                      f"{key['overall']['width_ft']:g}", str(row['walls']),
+                      str(key['l1_walls_min']), str(row['roof_sections']),
+                      f"{roof['sections_min']}-{roof['sections_max']}",
+                      ','.join(row['roof_kinds']) or '-',
+                      ','.join(sorted(roof['kinds_present'])), ' '.join(str(status).split())])
     widths = [max(len(row[i]) for row in cells) for i in range(len(cells[0]))]
     for row in cells:
         print('  '.join(cell.ljust(width) for cell, width in zip(row, widths)).rstrip())
@@ -200,6 +231,8 @@ def main(argv=None):
     comparison.add_argument('--budget', required=True, type=float)
     comparison.add_argument('--models', required=True, help='Comma-separated gemini,claude,openai.')
     comparison.add_argument('--out', type=Path, default=DEFAULT_OUT)
+    comparison.add_argument('--data-dir', type=Path,
+                            help='Storage directory (default: CHAUFFEUR_DATA_DIR or fresh scratch).')
     build = commands.add_parser('build', help='Not yet implemented.')
     build.add_argument('--sheets', type=Path)
     build.add_argument('--budget', type=float)
@@ -213,10 +246,12 @@ def main(argv=None):
     if not math.isfinite(args.budget) or args.budget < 0:
         parser.error('--budget must be a finite, non-negative dollar amount.')
     try:
+        if args.data_dir is not None:
+            os.environ['CHAUFFEUR_DATA_DIR'] = str(args.data_dir.resolve())
         rows = compare(args.sheets, args.budget, models, key_dir=ROOT,
                        out_dir=args.out, key_path=DEFAULT_KEY)
         print_table(rows)
-        _, _, costs, _, _, _ = _local_services()
+        from services import twin_cost as costs
         print(f'Local ledger total: ${costs.total():.4f}')
         return 1 if any(row.get('error') for row in rows) else 0
     except Exception as exc:
