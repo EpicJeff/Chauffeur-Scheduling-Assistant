@@ -4,7 +4,7 @@ import uuid
 import datetime
 import time
 from collections import deque
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 from pydantic import BaseModel, Field
 from services import access
 from contextvars import ContextVar
@@ -7614,8 +7614,23 @@ class CreateThreadTool(BaseModel):
     counterparty_email: str = Field(default="", description="Their email, if known.")
     next_action: str = Field(default="", description="The first concrete move (e.g. 'send an intro email asking for a quote').")
 
+class HouseDesignTool(BaseModel):
+    """Design the household's house in the house editor using its shared operations."""
+    action: Literal['status', 'edit', 'accept', 'reread', 'describe']
+    edit: Optional[dict] = Field(None, description=(
+        "One twin_edit operation: set (piece, field, value), move (piece, by [dx,dy]), "
+        "rotate (building, to), delete (piece), accept (pieces), add_wall (level, from, to), "
+        "add_opening (wall, kind, at, width), or registration (source, page, level, reg). "
+        "Lengths and coordinates are feet; rotation is degrees; pitch is rise in 12. "
+        "An optional building id disambiguates pieces."))
+    step: Optional[str] = Field(None, description="Build step id to reread.")
+    piece: Optional[str] = Field(None, description="Piece id to describe.")
+    building: Optional[str] = Field(None, description="Building id when piece ids are ambiguous.")
+
+
 # A unified schema registry
 TOOL_SCHEMAS = {
+    'house_design': HouseDesignTool.model_json_schema(),
     "answer_occasion_question": AnswerOccasionQuestionTool.model_json_schema(),
     "stamp_occasion_template": StampOccasionTemplateTool.model_json_schema(),
     "add_occasion_dishes": AddOccasionDishesTool.model_json_schema(),
@@ -9446,6 +9461,7 @@ def handle_get_travel_time(args: dict) -> dict:
 
 # These chat-only doors intentionally have no mission registry handler.
 REGISTRY_EXCEPTIONS = {
+    'house_design': 'The house editor never runs from a mission.',
     'house': 'Device control never runs from a mission.',
     'music': 'Music never runs from a mission.',
     'send_direct_message': 'DMs are private space and never run from a mission.',
@@ -9457,6 +9473,100 @@ REGISTRY_EXCEPTIONS = {
     'remove_override_for_event_fuzzy': 'Missions use the clear_assignment admin action.',
     'auto_schedule_trip_itinerary': 'Chat keeps the trip-page UI action; schedule_trip_itinerary is the server-side registry door.',
 }
+
+
+def house_design_status() -> dict:
+    """Small editor context, with the same latest-build rule as the hand path."""
+    import os
+    from services import twin_build, twin_store
+    with twin_store.LIFECYCLE, twin_build._LOCK:
+        builds = [bid for bid, build in twin_build._BUILDS.items()
+                  if build['generation'] == twin_store.generation()]
+        latest = max(builds, key=lambda bid: os.stat(os.path.join(
+            twin_store.DATA_DIR, 'builds', bid, 'state.json')).st_mtime_ns, default=None)
+        build = twin_build.status(latest) if latest else None
+        plan = twin_store.current()
+        summaries = []
+        for building in (plan or {}).get('buildings', []):
+            levels = ', '.join(level.get('name') or level['id'] for level in building['levels'])
+            roofs = ', '.join(f"{section['id']} ({section['kind']}, {section['pitch']:g} in 12)"
+                              for section in building['roof']['sections']) or 'none'
+            summaries.append(
+                f"{building.get('name') or building['id']}: levels {levels or 'none'}; "
+                f"{len(building['walls'])} walls, {len(building['openings'])} openings, "
+                f"{len(building['rooms'])} rooms. Roof sections: {roofs}.")
+        pause = (build or {}).get('pause')
+        pause_words = (f"{pause['step']}: {pause.get('why') or pause['kind'].replace('_', ' ')}"
+                       if pause else None)
+        state = build['state'] if build else 'idle'
+        summaries.append(f"Build: {state}. Pause: {pause_words or 'none'}.")
+        return {'summary': ' '.join(summaries), 'build': latest,
+                'state': state, 'pause': pause_words}
+
+
+def handle_house_design(args: dict, actor=None) -> dict:
+    if (not isinstance(actor, dict) or not actor.get('id')
+            or actor.get('role') != 'parent' or access.is_house(actor)):
+        return {'status': 'refused', 'message': 'Only a parent can change the house.'}
+    if _mission_context.get() is not None:
+        return {'status': 'refused', 'message': REGISTRY_EXCEPTIONS['house_design']}
+    from services import twin_build, twin_edit, twin_register, twin_store
+    try:
+        params = HouseDesignTool.model_validate(args)
+        if params.action == 'status':
+            return {'status': 'ok', **house_design_status()}
+        if params.action == 'edit':
+            edit = dict(params.edit or {})
+            if params.building is not None:
+                edit['building'] = params.building
+            return {'status': 'ok', 'changed': True, **twin_edit.save(edit, actor['id'])}
+        if params.action == 'describe':
+            plan = twin_store.current()
+            if plan is None:
+                raise ValueError('Build a house before describing a piece.')
+            kind, piece, building, _ = twin_edit._find(plan, params.piece, params.building)
+
+            def words(field, value):
+                if isinstance(value, bool):
+                    return 'yes' if value else 'no'
+                if isinstance(value, (int, float)):
+                    if field in ('pitch', 'rotation'):
+                        return str(twin_edit._value_words(field, value))
+                    if field in ('height', 'thickness', 'width', 'sill', 'head', 'at',
+                                 'position', 'base', 'elevation', 'ceiling', 'from', 'to',
+                                 'outline', 'polygon', 'rect', 'plate', 'overhang',
+                                 'rise_to', 'points', 'polyline', 'x', 'y', 'size',
+                                 'length', 'depth', 'radius'):
+                        return twin_register.feet_inches(value)
+                    return str(value)
+                if isinstance(value, list):
+                    return ', '.join(words(field, item) for item in value)
+                if isinstance(value, dict):
+                    return ', '.join(f"{key.replace('_', ' ')} {words(key, item)}"
+                                     for key, item in value.items())
+                return str(value)
+
+            fields = '; '.join(f"{key.replace('_', ' ')}: {words(key, value)}"
+                               for key, value in piece.items() if key != 'src')
+            return {'status': 'ok', 'summary': f"{kind.capitalize()} in {building['id']}: {fields}."}
+        current = house_design_status()
+        if not current['build']:
+            raise ValueError('There is no current build.')
+        if params.action == 'accept':
+            build = twin_build.status(current['build'])
+            if not build['pause'] or build['state'] != 'paused':
+                raise ValueError('The build is not waiting for an answer.')
+            step = build['pause']['step']
+            result = twin_build.answer(current['build'], step, {'accept': True})
+            if result.get('pause') and result['pause']['step'] == step:
+                raise ValueError('The step still needs an answer. Check it in the editor.')
+            summary = f'Accepted {step}.'
+        else:
+            twin_build.reread(current['build'], params.step)
+            summary = f'Requested a fresh read of {params.step}.'
+        return {'status': 'ok', 'changed': True, 'summary': summary}
+    except ValueError as exc:
+        return {'status': 'error', 'message': str(exc)}
 
 
 def handle_house(args: dict, actor=None) -> dict:
@@ -9623,6 +9733,7 @@ def handle_propose_program(args: dict, actor=None, focus_key=None) -> dict:
 
 
 TOOL_HANDLERS = {
+    'house_design': handle_house_design,
     'house': handle_house,
     'memory': handle_memory,
     'report_gap': handle_report_gap,
@@ -9794,7 +9905,7 @@ for _tool in get_available_tools():
 
 
 def execute_tool(name: str, args: dict, actor=None, focus_key=None, mission_id=None) -> dict:
-    from services import budget_guard, deletion
+    from services import budget_guard, deletion, twin_cost
     handler = TOOL_HANDLERS.get(name)
     if not handler:
         return {"status": "error", "message": f"Unknown tool {name}"}
@@ -9816,6 +9927,8 @@ def execute_tool(name: str, args: dict, actor=None, focus_key=None, mission_id=N
     except budget_guard.BudgetExhausted:
         raise
     except deletion.Cancelled:
+        raise
+    except twin_cost.CheckpointReached:
         raise
     except Exception as e:
         import traceback

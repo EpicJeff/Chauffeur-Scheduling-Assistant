@@ -16,6 +16,7 @@ from services.agent_tools_v2 import (
     auto_schedule_trip_itinerary
 )
 from services.llm import call_model
+from services.twin_cost import CheckpointReached
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Di
                     if not paid_fallback.count_call(settings):
                         return {"error": "Paid fallback inactive or daily cap reached", "transient": True}
                 res = call_model(model, api_key, system_prompt, prompt, tools=None, timeout_s=timeout_s, **options)
-            except Stopped:
+            except (Stopped, CheckpointReached):
                 raise
             except Exception as e:
                 last_err = str(e)
@@ -521,6 +522,16 @@ sending or claiming, and never pass from_member/member_name for them.
         # memory, places, deep trip planning).
         declared = {tool['name'] for tool in tools}
         tools = tools + [tool for tool in get_admin_tools() if tool['name'] not in declared]
+    if source == 'house_editor':
+        from services.agent_tools_v2 import TOOL_SCHEMAS
+        schema = TOOL_SCHEMAS['house_design']
+        tools = tools + [{'name': 'house_design', 'description': schema['description'],
+                          'parameters': schema}]
+        system_prompt += (
+            "\nYou are designing the household's house in the house editor. "
+            "Read and edit it through house_design; edits use the same operations as the editor. "
+            "Use describe to inspect a selected piece, and say what changed in plain words. "
+            "Show lengths in feet and inches and roof pitches as rise in 12.\n")
     if propose_only:
         tools = [t for t in tools if t.get("name") in PROPOSE_ONLY_TOOLS]
         system_prompt += (
@@ -633,6 +644,7 @@ sending or claiming, and never pass from_member/member_name for them.
     schedule_dirty = False
     card = None
     refused_tools = []
+    house_design_summary = []
     agent_message = DEFAULT_AGENT_MESSAGE
     
     for iteration in range(max_iterations):
@@ -673,6 +685,7 @@ sending or claiming, and never pass from_member/member_name for them.
             return {
                 "status": "error",
                 "message": agent_message,
+                **({'house_design_summary': house_design_summary} if source == 'house_editor' else {}),
                 "target_element_id": target_id,
                 "ui_action": ui_action,
                 "target_driver_id": target_driver_id,
@@ -782,6 +795,14 @@ sending or claiming, and never pass from_member/member_name for them.
                     if res.get('schedule_dirty'): schedule_dirty = True
                     if res.get('target_element_id'): target_id = res['target_element_id']
                     if res.get('message'): agent_message = res['message']
+                elif func_name == 'house_design':
+                    if source != 'house_editor':
+                        res = {'status': 'refused', 'message': 'House design is available in the house editor.'}
+                    else:
+                        from services import agent_tools_v2
+                        res = agent_tools_v2.execute_tool('house_design', args, actor=acting_member, focus_key=focus_key)
+                        if res.get('status') == 'ok' and res.get('changed'):
+                            house_design_summary.append(res['summary'])
                 elif func_name == "get_calendar_events":
                     res = get_calendar_events(args.get("start_date"), args.get("end_date"))
                 elif func_name == "assign_driver_to_event_fuzzy":
@@ -1521,6 +1542,8 @@ sending or claiming, and never pass from_member/member_name for them.
                         schedule_dirty = True
                     if isinstance(res, dict) and res.get("message"):
                         agent_message = res["message"]
+            except CheckpointReached:
+                raise
             except Exception as e:
                 res = {"error": str(e)}
             finally:
@@ -1575,5 +1598,6 @@ sending or claiming, and never pass from_member/member_name for them.
         "ui_action": ui_action,
         "target_driver_id": target_driver_id,
         "schedule_dirty": schedule_dirty,
-        "card": card
+        "card": card,
+        **({'house_design_summary': house_design_summary} if source == 'house_editor' else {})
     }

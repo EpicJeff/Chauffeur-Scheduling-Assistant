@@ -7533,6 +7533,41 @@ def house_editor_edit(request: Request, body: dict = Body(default={})):
         return {**result, 'plan': twin_store.current()}
 
 
+@app.post('/api/house/editor/say')
+def house_editor_say(request: Request, body: dict = Body(default={})):
+    from services import agent_router, agent_tools_v2, llm, twin_cost
+    parent = require_parent_token(request.headers.get('x-member-token') or
+                                  request.query_params.get('member_token'))
+    try:
+        twin_cost.require_clear()
+        message = body.get('message')
+        history = body.get('history', [])
+        selection = body.get('selection')
+        if not isinstance(message, str) or not message.strip():
+            raise HTTPException(status_code=400, detail='A message is required.')
+        if not isinstance(history, list) or any(not isinstance(row, dict) for row in history):
+            raise HTTPException(status_code=400, detail='History must be a list of messages.')
+        if selection is not None and not isinstance(selection, str):
+            raise HTTPException(status_code=400, detail='Selection must be a piece id.')
+        status = agent_tools_v2.house_design_status()
+        spend = []
+
+        def record_request(row):
+            spend.extend(twin_cost.record('conversation', [row]))
+
+        with llm.collect_usage(before=twin_cost.require_clear, after=record_request):
+            result = agent_router.process_agent_request(
+                message, context={'house_editor': {**status, 'selection': selection}},
+                history=history[-20:], source='house_editor', acting_member=parent,
+                focus_key='house_editor:' + (status['build'] or 'idle'))
+        summary = result.get('house_design_summary', [])
+        return {'reply': result.get('message', ''), 'changed': bool(summary),
+                'summary': summary, 'cost': sum(row['usd'] for row in spend)}
+    except twin_cost.CheckpointReached as exc:
+        raise HTTPException(status_code=409, detail={
+            'checkpoint': exc.checkpoint, 'total': exc.total}) from exc
+
+
 @app.post('/api/house/editor/start-over')
 def house_editor_start_over():
     from services import twin_build, twin_store
