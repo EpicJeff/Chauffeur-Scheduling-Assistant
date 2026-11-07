@@ -102,6 +102,51 @@ def scenario_world_rotation_and_feet_inches():
     check(twin_register.feet_inches(0.5) == "0'-6\"", twin_register.feet_inches(0.5))
 
 
+L_SHAPE = [[0, 0], [70, 0], [70, 40], [30, 40], [30, 65.33], [0, 65.33]]
+
+
+def _move_back(move, p):
+    return add(rot(p, move['angle']), move['offset'])
+
+
+def scenario_fit_outline_matches_edges_not_vertices():
+    # Review finding: a read outline never shares the settled outline's vertex list.
+    dense = []
+    for i, p in enumerate(L_SHAPE):
+        q = L_SHAPE[(i + 1) % len(L_SHAPE)]
+        dense += [p, [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2]]
+    moved = [rot(p, 90, shift=(5, -2)) for p in dense]
+    move, rms = twin_register.fit_outline(moved, L_SHAPE)
+    check(rms < 0.05, (move, rms))
+    for p in L_SHAPE:
+        check(close(_move_back(move, rot(p, 90, shift=(5, -2))), p, 0.05), (p, move))
+
+
+def scenario_fit_outline_tolerates_a_cut_corner():
+    traced = [[0, 0], [70, 0], [70, 36], [66, 40], [30, 40], [30, 65.33], [0, 65.33]]
+    moved = [rot(p, 3.0, shift=(1.5, 0.75)) for p in traced]
+    move, rms = twin_register.fit_outline(moved, L_SHAPE)
+    for p in ([0, 0], [0, 65.33], [70, 0]):
+        check(close(_move_back(move, rot(p, 3.0, shift=(1.5, 0.75))), p, 0.3), (p, move, rms))
+
+
+def scenario_symmetric_outline_prefers_the_smallest_turn_and_shows_the_runner_up():
+    rect = [[0, 0], [30, 0], [30, 20], [0, 20]]
+    moved = [rot(p, 2.0) for p in rect]
+    move, rms = twin_register.fit_outline(moved, rect)
+    check(abs(move['angle'] + 2.0) < 0.1 and rms < 0.05, (move, rms))
+    candidates = twin_register.fit_outline_candidates(moved, rect)
+    check(candidates[0][0] == move and candidates[0][1] == rms, 'first candidate is the fit')
+    check(len(candidates) >= 2 and candidates[1][1] - candidates[0][1] < 0.1, candidates[:2])
+    check(abs(abs(candidates[1][0]['angle'] + 2.0) - 180) < 0.5, 'the runner-up is the half turn')
+    check([c[1] for c in candidates] == sorted(c[1] for c in candidates), 'sorted by rms')
+
+
+def scenario_feet_inches_refuses_non_finite():
+    for bad in (float('nan'), float('inf')):
+        expect_value_error(lambda: twin_register.feet_inches(bad))
+
+
 if __name__ == '__main__':
     for fn in (scenario_apply_flips_sheet_y,
                scenario_rotation_is_counterclockwise,
@@ -109,6 +154,10 @@ if __name__ == '__main__':
                scenario_two_points_recover_a_transform,
                scenario_fit_outline_finds_quarter_turn_and_shift,
                scenario_fit_outline_refines_a_small_tilt,
-               scenario_world_rotation_and_feet_inches):
+               scenario_world_rotation_and_feet_inches,
+               scenario_fit_outline_matches_edges_not_vertices,
+               scenario_fit_outline_tolerates_a_cut_corner,
+               scenario_symmetric_outline_prefers_the_smallest_turn_and_shows_the_runner_up,
+               scenario_feet_inches_refuses_non_finite):
         fn()
         print('  ok ', fn.__name__)
