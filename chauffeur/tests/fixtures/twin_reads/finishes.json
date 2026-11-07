@@ -1,0 +1,12 @@
+{
+ "materials": {
+  "siding": {
+   "id": "board_and_batten",
+   "color": "#c9ccc9"
+  },
+  "roof": {
+   "id": "standing_seam",
+   "color": "#2f2622"
+  }
+ }
+}

@@ -1,0 +1,34 @@
+{
+ "openings": [
+  {
+   "at": [
+    0.3,
+    0.05
+   ],
+   "kind": "window",
+   "width_ft": 3.0,
+   "sill_ft": 2.0,
+   "head_ft": 7.0
+  },
+  {
+   "at": [
+    0.5,
+    0.95
+   ],
+   "kind": "door",
+   "width_ft": 3.0,
+   "sill_ft": 0.0,
+   "head_ft": 6.67
+  },
+  {
+   "at": [
+    0.95,
+    0.5
+   ],
+   "kind": "garage",
+   "width_ft": 16.0,
+   "sill_ft": 0.0,
+   "head_ft": 8.0
+  }
+ ]
+}

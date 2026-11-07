@@ -1,0 +1,66 @@
+{
+ "walls": [
+  {
+   "from": [
+    0.05,
+    0.05
+   ],
+   "to": [
+    0.95,
+    0.05
+   ],
+   "exterior": true,
+   "thickness_in": 6
+  },
+  {
+   "from": [
+    0.95,
+    0.05
+   ],
+   "to": [
+    0.95,
+    0.95
+   ],
+   "exterior": true,
+   "thickness_in": 6
+  },
+  {
+   "from": [
+    0.95,
+    0.95
+   ],
+   "to": [
+    0.05,
+    0.95
+   ],
+   "exterior": true,
+   "thickness_in": 6
+  },
+  {
+   "from": [
+    0.05,
+    0.95
+   ],
+   "to": [
+    0.05,
+    0.05
+   ],
+   "exterior": true,
+   "thickness_in": 6
+  },
+  {
+   "from": [
+    0.5,
+    0.05
+   ],
+   "to": [
+    0.5,
+    0.6
+   ],
+   "exterior": false,
+   "thickness_in": 4
+  }
+ ],
+ "confidence": 0.7,
+ "why": ""
+}

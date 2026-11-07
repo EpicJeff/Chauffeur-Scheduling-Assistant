@@ -1,0 +1,38 @@
+{
+ "pages": [
+  {
+   "page": 1,
+   "role": "floor",
+   "level": "Main floor",
+   "box": null
+  },
+  {
+   "page": 2,
+   "role": "floor",
+   "level": "Upper floor",
+   "box": null
+  },
+  {
+   "page": 3,
+   "role": "roof",
+   "level": null,
+   "box": [
+    0.4,
+    0.1,
+    0.9,
+    0.9
+   ]
+  },
+  {
+   "page": 3,
+   "role": "floor",
+   "level": "Bonus",
+   "box": [
+    0.05,
+    0.2,
+    0.4,
+    0.8
+   ]
+  }
+ ]
+}

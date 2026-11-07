@@ -1,0 +1,16 @@
+{
+ "pitches": [
+  {
+   "section": "roof-1",
+   "pitch": 8,
+   "confidence": 0.6,
+   "why": "front photo, main hip"
+  },
+  {
+   "section": "roof-3",
+   "pitch": 10,
+   "confidence": 0.5,
+   "why": "garage gable"
+  }
+ ]
+}
