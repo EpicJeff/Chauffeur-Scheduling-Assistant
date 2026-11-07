@@ -120,9 +120,14 @@ def migrate(row: dict, plan: dict | None) -> dict:
             if bid != LOT and bid not in ids:
                 ids.append(bid)
     ids.extend(bid for bid in planned if bid != LOT and bid not in ids)
+    if 'house' not in ids and any(
+            s['kind'] == 'drawing'
+            and not any(p['source'] == s['id'] for p in row.get('page_roles', []))
+            for s in row.get('sources', [])):
+        ids.append('house')
     for bid in ids:
         kind = {'house': 'main_house', 'pool_house': 'pool_house'}.get(bid, 'other')
-        name = KINDS[kind] if kind != 'other' else planned.get(bid, {}).get('name') or bid
+        name = planned.get(bid, {}).get('name') or (KINDS[kind] if kind != 'other' else bid)
         result['buildings'].append({
             'id': bid, 'name': name, 'kind': kind, 'footprint': None, 'footprint_from': None,
             'shell': shell_for(kind), 'shell_from': 'default',

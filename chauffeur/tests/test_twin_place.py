@@ -385,6 +385,188 @@ def scenario_legacy_drawing_goes_to_house():
           'a legacy photo is tagged with every building and the lot')
 
 
+# --- amendments A1-A3 (amendments.md, Task 1) ------------------------------
+
+def _two_building_plan():
+    import copy
+    plan = _house_plan()
+    studio = copy.deepcopy(plan['buildings'][0])
+    studio['id'], studio['name'], studio['position'] = 'studio-x', 'Studio X', [200, 200]
+    plan['buildings'].append(studio)
+    return plan
+
+
+def _legacy_state(sources, page_roles):
+    storage.patch_settings({'house_twin': {
+        'current': None, 'generation': 0, 'rounds': [], 'fixes': [], 'registrations': [], 'tombstones': [],
+        'sources': sources, 'page_roles': page_roles}})
+    check('place' not in storage.get_settings()['house_twin'], 'the slice 1 state has no place')
+
+
+def _drawing(sid, pages):
+    # A slice 1 drawing record: no part key.
+    return {'id': sid, 'kind': 'drawing', 'filename': f'{sid}.pdf', 'pages': pages,
+            'mime': 'application/pdf', 'total_pages': pages}
+
+
+def scenario_move_region_independently():
+    # A1: a sheet with two cropped regions can send each region to a different part.
+    _fresh()
+    sid = ts.save_source('drawing', 'h.pdf', _pdf())
+    ts.add_building('Detached garage', 'garage')
+    ts.add_building('Studio', 'studio')
+    left, right = [0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 1.0, 1.0]
+    ts.set_page_roles([
+        {'source': sid, 'page': 1, 'role': 'floor', 'level': 'Main floor', 'box': left, 'building': 'house'},
+        {'source': sid, 'page': 1, 'role': 'roof', 'level': None, 'box': right, 'building': 'house'},
+        {'source': sid, 'page': 2, 'role': 'elevation', 'level': None, 'box': None, 'building': 'house'}])
+    before = ts.page_roles()
+    for bad in (2, -1):
+        expect_value_error(lambda bad=bad: ts.move_page(sid, 1, 'detached-garage', region=bad))
+        check(ts.page_roles() == before, f'an out-of-range region {bad} changes nothing')
+    moved = ts.move_page(sid, 1, 'detached-garage', region=1)
+    check(len(moved) == 1, moved)
+    check(moved[0]['building'] == 'detached-garage' and moved[0]['role'] == 'roof' and moved[0]['box'] == right,
+          moved)
+    page1 = [r for r in ts.page_roles() if r['page'] == 1]
+    check([(r['building'], r['role'], r['level'], r['box']) for r in page1] == [
+        ('house', 'floor', 'Main floor', left), ('detached-garage', 'roof', None, right)],
+        f'only the second region moves, in stored order: {page1}')
+    check([r for r in ts.page_roles() if r['page'] == 2] == [r for r in before if r['page'] == 2],
+          'the other page is untouched')
+    # region 0 to the lot: the same role reset rule per row.
+    moved = ts.move_page(sid, 1, 'lot', region=0)
+    check(len(moved) == 1 and moved[0]['building'] == 'lot' and moved[0]['role'] == 'other'
+          and moved[0]['level'] is None and moved[0]['box'] == left, moved)
+    page1 = [r for r in ts.page_roles() if r['page'] == 1]
+    check([(r['building'], r['role']) for r in page1] == [('lot', 'other'), ('detached-garage', 'roof')], page1)
+    # region=None moves every row of the page.
+    moved = ts.move_page(sid, 1, 'studio', region=None)
+    check(len(moved) == 2 and all(r['building'] == 'studio' for r in moved), moved)
+    page1 = [r for r in ts.page_roles() if r['page'] == 1]
+    check([(r['building'], r['role'], r['box']) for r in page1] == [
+        ('studio', 'other', left), ('studio', 'roof', right)], page1)
+
+
+def scenario_migration_backfills_source_part():
+    # A2: migration gives every legacy drawing a part.
+    _fresh()
+    photo = {'id': 'p1', 'kind': 'photo', 'filename': 'front.jpg', 'pages': 1, 'mime': 'image/jpeg'}
+    _legacy_state([_drawing('da', 1), _drawing('db', 1), _drawing('dc', 2), photo], [
+        {'source': 'db', 'page': 1, 'role': 'plot', 'level': None, 'box': None, 'building': 'house'},
+        {'source': 'dc', 'page': 1, 'role': 'floor', 'level': 'Ground', 'box': None, 'building': 'pool_house'},
+        {'source': 'dc', 'page': 2, 'role': 'roof', 'level': None, 'box': None, 'building': 'pool_house'}])
+    place = ts.place()
+    parts = {s['id']: s.get('part') for s in ts.sources() if s['kind'] == 'drawing'}
+    check(parts.get('da') == 'house', f'(a) a drawing with no rows goes to house: {parts}')
+    check(parts.get('db') == 'lot', f'(b) a drawing with only a plot row goes to the lot: {parts}')
+    check(parts.get('dc') == 'pool_house', f'(c) a drawing for pool_house only goes to pool_house: {parts}')
+    listed = [(b['id'], b['name'], b['kind']) for b in place['buildings']]
+    check(('house', 'Main house', 'main_house') in listed, f'(a) Main house is added to the place: {listed}')
+    check(('pool_house', 'Pool house', 'pool_house') in listed, listed)
+    check(set(place['photo_tags'].get('p1') or []) == {'house', 'pool_house', 'lot'},
+          f'photos keep the tagging rule: {place["photo_tags"]}')
+    saved = {s['id']: s.get('part') for s in storage.get_settings()['house_twin']['sources']}
+    check(saved.get('da') == 'house' and saved.get('db') == 'lot' and saved.get('dc') == 'pool_house',
+          f'the backfilled parts are saved: {saved}')
+    # (d) rows for several buildings: the first non-plot row decides; rows keep their own building.
+    _fresh()
+    _legacy_state([_drawing('dd', 3)], [
+        {'source': 'dd', 'page': 1, 'role': 'plot', 'level': None, 'box': None, 'building': 'house'},
+        {'source': 'dd', 'page': 2, 'role': 'floor', 'level': 'Ground', 'box': None, 'building': 'pool_house'},
+        {'source': 'dd', 'page': 3, 'role': 'floor', 'level': 'Main floor', 'box': None, 'building': 'house'}])
+    ts.place()
+    part = next(s for s in ts.sources() if s['id'] == 'dd').get('part')
+    check(part == 'pool_house', f'(d) the first non-plot row names the part: {part!r}')
+    rows = sorted((r['page'], r['building']) for r in ts.page_roles())
+    check(rows == [(1, 'lot'), (2, 'pool_house'), (3, 'house')], f'rows keep their own building: {rows}')
+
+
+def scenario_revert_keeps_place_names():
+    # A3: the place stays the source of truth for names after a revert.
+    _fresh()
+    first = ts.push_round(_house_plan(), 'build')
+    ts.update_building('house', {'name': 'Farmhouse'})
+    rounds_before = len(ts.rounds())
+    ts.revert(first)
+    check(len(ts.rounds()) == rounds_before + 1, 'the revert publishes one round')
+    check(ts.rounds()[-1]['kind'] == 'revert', ts.rounds()[-1])
+    check(ts.current()['buildings'][0]['id'] == 'house', ts.current()['buildings'])
+    check(ts.current()['buildings'][0]['name'] == 'Farmhouse',
+          f'the reverted plan takes the place name: {ts.current()["buildings"][0]["name"]!r}')
+    check(_building('house')['name'] == 'Farmhouse', ts.place()['buildings'])
+
+
+def scenario_revert_restores_removed_building_into_place():
+    # A3: a revert to a round holding a building the place no longer has adds it back.
+    _fresh()
+    first = ts.push_round(_two_building_plan(), 'build')
+    check([b[0] for b in _buildings()] == ['house', 'studio-x'], _buildings())
+    ts.push_round(_house_plan(), 'build')
+    ts.remove_building('studio-x')
+    check([b[0] for b in _buildings()] == ['house'], 'studio-x is gone from the place')
+    ts.revert(first)
+    check([b['id'] for b in ts.current()['buildings']] == ['house', 'studio-x'], ts.current()['buildings'])
+    studio = _building('studio-x')
+    check(studio is not None, f'the place gains studio-x: {_buildings()}')
+    check(studio['name'] == 'Studio X' and studio['kind'] == 'other', studio)
+    check(studio['shell'] == tp.shell_for('other') and studio['footprint'] is None, studio)
+    check(_building('house')['name'] == 'Main house', _building('house'))
+
+
+def scenario_advanced_save_follows_place():
+    # A3: the advanced JSON save (PUT api/house/twin/plan calls save_hand_edit) follows the place names.
+    _fresh()
+    ts.push_round(_house_plan(), 'build')
+    ts.update_building('house', {'name': 'Farmhouse'})
+    plan = ts.current()
+    plan['buildings'][0]['name'] = 'Shack'
+    rounds_before = len(ts.rounds())
+    ts.save_hand_edit(plan, 'Advanced edit', ts.current_id())
+    check(len(ts.rounds()) == rounds_before + 1, 'the save publishes one round')
+    check(ts.current()['buildings'][0]['name'] == 'Farmhouse',
+          f'the saved plan takes the place name: {ts.current()["buildings"][0]["name"]!r}')
+    check(_building('house')['name'] == 'Farmhouse', ts.place()['buildings'])
+
+
+def scenario_remove_refuses_unconfirmed_drawing():
+    _fresh()
+    ts.add_building('Garage', 'garage')
+    sid = ts.save_source('drawing', 'garage.pdf', _pdf(pages=1), part='garage')
+    check(_source(sid)['part'] == 'garage' and ts.page_roles() == [],
+          'the drawing belongs to Garage before any roles are confirmed')
+    before = storage.get_settings()['house_twin']
+    expect_value_error(lambda: ts.remove_building('garage'),
+                       'Move or remove this building\'s pages first.')
+    check(storage.get_settings()['house_twin'] == before, 'the refusal changes nothing')
+    check(_building('garage') is not None and _source(sid)['part'] == 'garage',
+          'the building and its unconfirmed drawing stay together')
+
+
+def scenario_migration_keeps_plan_names():
+    _fresh()
+    plan = _two_building_plan()
+    plan['buildings'][0]['name'] = 'Farmhouse'
+    plan['buildings'][1]['id'], plan['buildings'][1]['name'] = 'pool_house', 'Pool pavilion'
+    ts.push_round(plan, 'build')
+    check(_buildings() == [('house', 'Farmhouse', 'main_house'),
+                           ('pool_house', 'Pool pavilion', 'pool_house')], _buildings())
+    rounds_before = len(ts.rounds())
+    ts.update_building('house', {'kind': 'barn'})
+    check(_building('house')['kind'] == 'barn' and _building('house')['name'] == 'Farmhouse',
+          _building('house'))
+    check(ts.current()['buildings'][0]['name'] == 'Farmhouse', 'a kind-only change keeps the plan name')
+    check(len(ts.rounds()) == rounds_before + 1 and ts.rounds()[-1]['kind'] == 'edit',
+          'the kind change publishes one edit round')
+    check(not ts.rounds()[-1]['note'].startswith('Renamed '),
+          f'a kind-only change creates no rename round: {ts.rounds()[-1]}')
+    for building in plan['buildings']:
+        building.pop('name')
+    fallback = tp.migrate({}, plan)
+    check([(b['name'], b['kind']) for b in fallback['buildings']]
+          == [('Main house', 'main_house'), ('Pool house', 'pool_house')], fallback)
+
+
 SCENARIOS = (
     scenario_kinds_and_shell_defaults_pinned,
     scenario_empty_place,
@@ -399,6 +581,13 @@ SCENARIOS = (
     scenario_start_over_empties_place,
     scenario_footprint_and_shell_checks,
     scenario_legacy_drawing_goes_to_house,
+    scenario_move_region_independently,
+    scenario_migration_backfills_source_part,
+    scenario_revert_keeps_place_names,
+    scenario_revert_restores_removed_building_into_place,
+    scenario_advanced_save_follows_place,
+    scenario_remove_refuses_unconfirmed_drawing,
+    scenario_migration_keeps_plan_names,
 )
 
 

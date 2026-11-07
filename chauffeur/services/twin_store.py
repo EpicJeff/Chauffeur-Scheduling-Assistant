@@ -57,6 +57,11 @@ def _place(row):
     if 'place' not in row:
         plan = _read_round(row, row['current']) if row['current'] is not None else None
         row['place'] = twin_place.migrate(row, plan)
+        for source in row['sources']:
+            if source['kind'] == 'drawing' and source.get('part') is None:
+                pages = [p for p in row['page_roles'] if p['source'] == source['id']]
+                source['part'] = next((p.get('building', 'house') for p in pages if p['role'] != 'plot'),
+                                      twin_place.LOT if pages else 'house')
         for page in row['page_roles']:
             if page['role'] == 'plot':
                 page['building'] = twin_place.LOT
@@ -165,14 +170,17 @@ def update_building(bid: str, fields: dict) -> dict:
                 and any(old[key] != building[key] for key in ('name', 'kind'))):
             def rename(current):
                 target = next(b for b in current['buildings'] if b['id'] == bid)
-                target['name'] = building['name']
+                if old['name'] != building['name']:
+                    target['name'] = building['name']
                 if 'kind' in fields:
                     target['kind'] = building['kind']
                 return current
 
-            update_current(rename, kind='edit', note=f'Renamed {old["name"]} to {building["name"]}')
+            note = (f'Renamed {old["name"]} to {building["name"]}' if old['name'] != building['name']
+                    else f'Changed {building["name"]} to {twin_place.KINDS[building["kind"]]}')
+            update_current(rename, kind='edit', note=note)
             latest = _state()
-            latest['place'], latest['page_roles'] = registry, row['page_roles']
+            latest['place'], latest['page_roles'], latest['sources'] = registry, row['page_roles'], row['sources']
             row = latest
         _save(row)
         return deepcopy(building)
@@ -184,7 +192,8 @@ def remove_building(bid: str) -> None:
         registry = _place(row)
         if not any(b['id'] == bid for b in registry['buildings']):
             raise ValueError('Choose a building in your place.')
-        if any(p['building'] == bid for p in row['page_roles']):
+        if (any(p['building'] == bid for p in row['page_roles'])
+                or any(s['kind'] == 'drawing' and s.get('part') == bid for s in row['sources'])):
             raise ValueError('Move or remove this building\'s pages first.')
         plan = _read_round(row, row['current']) if row['current'] is not None else None
         if plan is not None and any(b['id'] == bid for b in plan['buildings']):
@@ -192,15 +201,22 @@ def remove_building(bid: str) -> None:
         registry['buildings'] = [b for b in registry['buildings'] if b['id'] != bid]
         for sid, parts in registry['photo_tags'].items():
             registry['photo_tags'][sid] = [part for part in parts if part != bid]
+        for source in row['sources']:
+            if source['kind'] == 'photo' and source.get('part') == bid:
+                source['part'] = None
         _save(row)
 
 
-def move_page(source: str, page: int, part: str) -> list[dict]:
+def move_page(source: str, page: int, part: str, region: int | None = None) -> list[dict]:
     with _LOCK:
         row = _state()
         _check_part(_place(row), part)
         _source_page(row, source, page)
         moved = [p for p in row['page_roles'] if p['source'] == source and p['page'] == page]
+        if region is not None:
+            if type(region) is not int or not 0 <= region < len(moved):
+                raise ValueError('Choose a region on this page.')
+            moved = [moved[region]]
         roles = twin_place.LOT_ROLES if part == twin_place.LOT else twin_place.BUILDING_ROLES
         for item in moved:
             item['building'] = part
@@ -414,7 +430,25 @@ def revert(round_id: int, generation=None) -> int:
             raise StaleGeneration('The house was started over. Discard this result.')
         if build_running():
             raise ValueError('Stop the build before returning to an earlier house.')
-        return _append_round(row, _read_round(row, round_id), 'revert')
+        plan = _read_round(row, round_id)
+        _follow_place(row, plan)
+        return _append_round(row, plan, 'revert')
+
+
+def _follow_place(row, plan):
+    """Reconcile a normalized whole-plan save in the same state mutation."""
+    registry = _place(row)
+    by_id = {b['id']: b for b in registry['buildings']}
+    for migrated in twin_place.migrate({}, plan)['buildings']:
+        if migrated['id'] not in by_id:
+            registry['buildings'].append(migrated)
+            by_id[migrated['id']] = migrated
+    for building in plan['buildings']:
+        record = by_id[building['id']]
+        building['name'] = record['name']
+        # Legacy plans have no kind field; retain that implicit representation.
+        if 'kind' in building:
+            building['kind'] = record['kind']
 
 
 def _leaf(plan, path):
@@ -454,6 +488,17 @@ def save_hand_edit(plan: dict, reason: str, base: int | None = None) -> int:
         before = _read_round(row, row['current']) if row['current'] is not None else None
         if before is not None:
             plan = twin_plan.record_compose_overrides(before, plan)
+        normalized, _ = twin_plan.normalize(plan)
+        _follow_place(row, normalized)
+        # Keep raw geometry for the fix log, but log only accepted names/kinds.
+        plan = deepcopy(plan)
+        by_id = {b['id']: b for b in normalized['buildings']}
+        for building in plan.get('buildings', []):
+            if isinstance(building, dict) and building.get('id') in by_id:
+                accepted = by_id[building['id']]
+                building['name'] = accepted['name']
+                if 'kind' in building:
+                    building['kind'] = accepted['kind']
         # The first save establishes the plan; it corrects no previous leaves.
         # Log the person's edits before normalization drops dependent geometry
         # (e.g. an opening on a removed wall) and shifts positional list items.
@@ -463,8 +508,7 @@ def save_hand_edit(plan: dict, reason: str, base: int | None = None) -> int:
             for path in twin_plan.diff_paths(before, plan)
             if _fix_kind(path) is not None
         ]
-        plan, _ = twin_plan.normalize(plan)
-        return _append_round(row, plan, 'hand', note=reason, base=base, changes=changes)
+        return _append_round(row, normalized, 'hand', note=reason, base=base, changes=changes)
 
 
 def fixes() -> list[dict]:

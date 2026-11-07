@@ -553,6 +553,7 @@ def save(edit, actor_id, reason=''):
         row = twin_store._state()
         if place_row is not None:
             row['place'], row['page_roles'] = place_row['place'], place_row['page_roles']
+            row['sources'] = place_row['sources']
         at = next(r['created'] for r in row['rounds'] if r['id'] == round_id)
         row['fixes'].extend({**change, 'round': round_id, 'at': at} for change in changes)
         twin_store._save(row)
