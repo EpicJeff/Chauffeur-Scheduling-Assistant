@@ -136,9 +136,10 @@ def _add_building(place, bid, name, kind):
     return building
 
 
-def _legacy_house(place):
-    if not any(b['id'] == 'house' for b in place['buildings']):
-        _add_building(place, 'house', 'Main house', 'main_house')
+def _legacy_house(place, bid='house'):
+    kind = {'house': 'main_house', 'pool_house': 'pool_house'}.get(bid) if isinstance(bid, str) else None
+    if kind and not any(b['id'] == bid for b in place['buildings']):
+        _add_building(place, bid, twin_place.KINDS[kind], kind)
 
 
 def add_building(name: str, kind: str) -> dict:
@@ -434,8 +435,8 @@ def push_round(plan: dict, kind: str, note: str = '', cost: float | None = None,
         return _append_round(row, plan, kind, note, cost, run, base, step=step)
 
 
-def update_current(mutator, kind, note='', step=None, cost=None, generation=None) -> int:
-    """Apply a mutation to the latest plan and publish it without a stale base."""
+def update_current(mutator, kind, note='', step=None, cost=None, generation=None, *, state_mutator=None) -> int:
+    """Publish a latest-plan mutation and any paired state changes in one save."""
     with LIFECYCLE, _LOCK:
         row = _state()
         if generation is not None and generation != row['generation']:
@@ -444,6 +445,8 @@ def update_current(mutator, kind, note='', step=None, cost=None, generation=None
             raise ValueError('Unknown twin round kind.')
         before = _read_round(row, row['current']) if row['current'] is not None else None
         plan, _ = twin_plan.normalize(mutator(before))
+        if state_mutator is not None:
+            state_mutator(row)
         return _append_round(row, plan, kind, note=note, cost=cost, step=step)
 
 
@@ -555,7 +558,9 @@ def save_source(kind: str, filename: str, data: bytes, *, content_type: str | No
     with _LOCK:
         row = _state()
         if part is not None:
-            _check_part(_place(row), part)
+            registry = _place(row)
+            _legacy_house(registry, part)
+            _check_part(registry, part)
         source_generation = row['generation']
     if kind == 'drawing':
         pages = [(f"{page['page']}.png", base64.b64decode(page['b64']))
@@ -607,6 +612,7 @@ def save_source(kind: str, filename: str, data: bytes, *, content_type: str | No
             row = _state()
             registry = _place(row)
             if part is not None:
+                _legacy_house(registry, part)
                 _check_part(registry, part)
             elif kind == 'drawing':
                 _legacy_house(registry)
@@ -681,8 +687,7 @@ def set_page_roles(rows) -> None:
             building = item.get('building')
             if 'building' not in item:
                 building = twin_place.LOT if item['role'] == 'plot' else 'house'
-                if building == 'house':
-                    _legacy_house(registry)
+            _legacy_house(registry, building)
             _check_part(registry, building)
             roles = twin_place.LOT_ROLES if building == twin_place.LOT else twin_place.BUILDING_ROLES
             if item['role'] not in roles:
@@ -710,16 +715,21 @@ def registrations() -> list[dict]:
         return _state()['registrations']
 
 
-def set_registration(source_id, page, level, reg) -> None:
+def _set_registration(row, source_id, page, level, reg):
+    """Validate a registration into a private snapshot for a single publication."""
     if not isinstance(reg, dict):
         raise ValueError('A registration must be an object.')
+    _source_page(row, source_id, page)
+    row['registrations'] = [r for r in row['registrations']
+                            if (r['source'], r['page'], r['level']) != (source_id, page, level)]
+    row['registrations'].append({'source': source_id, 'page': page,
+                                 'level': deepcopy(level), 'reg': deepcopy(reg)})
+
+
+def set_registration(source_id, page, level, reg) -> None:
     with _LOCK:
         row = _state()
-        _source_page(row, source_id, page)
-        row['registrations'] = [r for r in row['registrations']
-                                if (r['source'], r['page'], r['level']) != (source_id, page, level)]
-        row['registrations'].append({'source': source_id, 'page': page,
-                                     'level': deepcopy(level), 'reg': deepcopy(reg)})
+        _set_registration(row, source_id, page, level, reg)
         _save(row)
 
 

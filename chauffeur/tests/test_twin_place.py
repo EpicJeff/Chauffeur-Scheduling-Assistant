@@ -567,7 +567,28 @@ def scenario_migration_keeps_plan_names():
           == [('Main house', 'main_house'), ('Pool house', 'pool_house')], fallback)
 
 
+def scenario_legacy_pool_house_row_adds_pool_house():
+    # R5: both legacy ids add their canonical place record when it is absent.
+    for bid, name, kind in (('pool_house', 'Pool house', 'pool_house'),
+                            ('house', 'Main house', 'main_house')):
+        _fresh()
+        sid = ts.save_source('drawing', 'lot.pdf', _pdf(pages=1), part='lot')
+        rows = [{'source': sid, 'page': 1, 'role': 'floor', 'level': 'Ground', 'building': bid}]
+        ts.set_page_roles(rows)
+        check(_buildings() == [(bid, name, kind)], _buildings())
+        check(ts.page_roles()[0]['building'] == bid, ts.page_roles())
+        ts.set_page_roles(rows)
+        check(_buildings() == [(bid, name, kind)], 'the legacy building is added only once')
+        ts.update_building(bid, {'name': 'Renamed'})
+        ts.set_page_roles(rows)
+        check(_building(bid)['name'] == 'Renamed', 'existing names are kept')
+        _fresh()
+        sid = ts.save_source('drawing', 'legacy.pdf', _pdf(pages=1), part=bid)
+        check(_source(sid)['part'] == bid and _buildings() == [(bid, name, kind)], _buildings())
+
+
 SCENARIOS = (
+    scenario_legacy_pool_house_row_adds_pool_house,
     scenario_kinds_and_shell_defaults_pinned,
     scenario_empty_place,
     scenario_add_building_ids_and_names,

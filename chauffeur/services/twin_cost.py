@@ -65,12 +65,7 @@ def estimate(kind: str, images: int) -> float:
     if type(images) is not int or images < 0:
         raise ValueError('Choose a nonnegative number of images.')
     settings = storage.get_settings()
-    # twin is currently a tier backed by pro, with no default pool named
-    # twin. Honour an explicit twin pool; otherwise price the tier it uses.
-    if (settings.get('model_pool_twin') or '').strip():
-        pool = model_pools._pool('twin', settings)
-    else:
-        pool = model_pools._pool(model_pools.TIER_CHAINS['twin'][0], settings)
+    pool = model_pools._pool(model_pools.TIER_CHAINS['twin'][0], settings)
     rates = PRICES.get(pool[0]) if pool else None
     inp, out = rates if rates is not None else _highest_rates()
     usd = ((1500 + 1600 * images) * inp + twin_reads.MAX_OUTPUT[kind] * out) / 1_000_000

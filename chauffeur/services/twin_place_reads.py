@@ -64,19 +64,22 @@ def read_plot(*, reader=twin_reads.read) -> dict:
                     or not twin_reads._usable('plot', fragment, problems)):
                 raise ValueError(_FAILED)
             crop = {key: image[key] for key in ('box', 'size', 'master')}
+            lot = twin_store.place()['lot']
+            placement = lot.get('placement') or {}
+            confirmed_edge = (placement['street_edge'] if placement.get('confirmed')
+                              and all(placement.get(k) == page[k] for k in ('source', 'page', 'box')) else None)
             try:
-                reg = twin_place.plot_registration(crop, fragment)
+                reg = twin_place.plot_registration(crop, fragment, edge=confirmed_edge)
                 lot_outline = [twin_register.apply(reg, twin_place.to_master(crop, p)) for p in fragment['lot']]
                 twin_place.check_footprint(lot_outline)
                 suggestions = twin_place.plot_suggestions(fragment, crop, reg)
             except (ValueError, KeyError, TypeError):
                 raise ValueError(_FAILED) from None
-            edge = fragment.get('street_edge')
+            edge = confirmed_edge if confirmed_edge is not None else fragment.get('street_edge')
             if edge is None:
                 pixels = [twin_place.to_master(crop, p) for p in fragment['lot']]
                 i = max(range(len(pixels)), key=lambda i: math.dist(pixels[i], pixels[(i + 1) % len(pixels)]))
                 edge = [i, (i + 1) % len(pixels)]
-            lot = twin_store.place()['lot']
             lot['read'] = {'id': uuid.uuid4().hex, **page, 'crop': crop, 'fragment': fragment,
                            'registration': reg, 'lot': lot_outline, 'street_edge': edge,
                            'suggestions': suggestions, 'matrix': twin_place.sheet_matrix(reg, crop),
@@ -88,7 +91,7 @@ def read_plot(*, reader=twin_reads.read) -> dict:
 
 
 def _publish(row, changed):
-    """Refit all changed built footprints in one edit round, then save place."""
+    """Save place, registrations and any built-footprint refits together."""
     registry = twin_store._place(row)
     footprints = {b['id']: b['footprint'] for b in registry['buildings'] if b['id'] in changed}
     plan = twin_store.current() if changed else None
@@ -109,10 +112,14 @@ def _publish(row, changed):
                     building.update(position=move['offset'], rotation=move['angle'])
             return current
 
-        twin_store.update_current(refit, kind='edit', note='Placed buildings on their confirmed footprints.')
-        row = twin_store._state()
-        row['place'] = registry
-    twin_store._save(row)
+        def update_state(state):
+            state['place'] = registry
+            state['registrations'] = row['registrations']
+
+        twin_store.update_current(refit, kind='edit', note='Placed buildings on their confirmed footprints.',
+                                  state_mutator=update_state)
+    else:
+        twin_store._save(row)
 
 
 def answer_suggestion(sid, action, *, building=None, name=None, kind=None, read=None) -> dict:
@@ -175,7 +182,8 @@ def confirm_placement(street_edge, footprints) -> dict:
         old_reg = previous['registration'] if same_page else plot['registration']
         old_edge = previous['street_edge'] if same_page else plot['street_edge']
         edge = old_edge if street_edge is None else street_edge
-        reg = twin_place.plot_registration(plot['crop'], plot['fragment'], edge=edge)
+        reg = (old_reg if street_edge is None else
+               twin_place.plot_registration(plot['crop'], plot['fragment'], edge=street_edge))
         changed = set()
         if edge != old_edge:
             for bid, target in targets.items():
@@ -186,13 +194,20 @@ def confirm_placement(street_edge, footprints) -> dict:
         for bid, outline in dragged.items():
             if targets[bid]['footprint'] != outline:
                 changed.add(bid)
-            targets[bid]['footprint'] = outline
+            targets[bid].update(footprint=outline, footprint_from='plot')
+        plot.update(registration=reg, street_edge=deepcopy(edge),
+                    lot=[twin_register.apply(reg, twin_place.to_master(plot['crop'], p))
+                         for p in plot['fragment']['lot']],
+                    matrix=twin_place.sheet_matrix(reg, plot['crop']))
+        for suggestion, geometry in zip(plot['suggestions'],
+                                         twin_place.plot_suggestions(plot['fragment'], plot['crop'], reg)):
+            suggestion.update(outline=[twin_register.apply(reg, p) for p in suggestion['outline_px']],
+                              size_ft=geometry['size_ft'], where=geometry['where'])
         lot['placement'] = {**{k: plot[k] for k in ('source', 'page', 'box')},
-                            'outline': [twin_register.apply(reg, twin_place.to_master(plot['crop'], p))
-                                        for p in plot['fragment']['lot']],
+                            'outline': deepcopy(plot['lot']),
                             'street_edge': deepcopy(edge), 'registration': reg, 'confirmed': True}
+        twin_store._set_registration(row, plot['source'], plot['page'], None, reg)
         _publish(row, changed)
-        twin_store.set_registration(plot['source'], plot['page'], None, reg)
         return deepcopy(lot)
 
 

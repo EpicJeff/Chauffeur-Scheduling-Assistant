@@ -150,18 +150,24 @@ def plot_registration(crop, fragment, edge=None) -> dict:
     dim = fragment['scale']
     scale = twin_register.from_dimension(to_master(crop, dim['a']), to_master(crop, dim['b']), dim['feet'])
     lot = [to_master(crop, p) for p in fragment['lot']]
+    explicit_edge = edge is not None
     if edge is None:
         edge = fragment.get('street_edge')
     if edge is None:
         i = max(range(len(lot)), key=lambda i: math.dist(lot[i], lot[(i + 1) % len(lot)]))
         edge = [i, (i + 1) % len(lot)]
-    if (not isinstance(edge, list) or len(edge) != 2
+    if explicit_edge and (not isinstance(edge, list) or len(edge) != 2
             or any(type(i) is not int or not 0 <= i < len(lot) for i in edge)
             or (edge[1] - edge[0]) % len(lot) not in (1, len(lot) - 1)):
         raise ValueError('Choose two neighbouring lot corners for the street edge.')
     a, b = (lot[i] for i in edge)
     reg = twin_register.from_two_points(a, b, [0, 0], [math.dist(a, b) * scale, 0])
-    if sum(twin_register.apply(reg, p)[1] for p in lot) < 0:
+    edges = list(zip(lot, lot[1:] + lot[:1]))
+    area2 = sum(a[0] * b[1] - b[0] * a[1] for a, b in edges)
+    centre = ([sum((a[i] + b[i]) * (a[0] * b[1] - b[0] * a[1])
+                   for a, b in edges) / (3 * area2) for i in (0, 1)]
+              if abs(area2) >= 1e-9 else [sum(p[i] for p in lot) / len(lot) for i in (0, 1)])
+    if twin_register.apply(reg, centre)[1] < 0:
         reg = twin_register.from_two_points(b, a, [0, 0], [math.dist(a, b) * scale, 0])
     return reg
 

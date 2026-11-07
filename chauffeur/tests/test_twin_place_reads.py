@@ -164,7 +164,12 @@ def _expected_reg(crop, frag, edge=None):
     i, j = edge or frag['street_edge']
     a, b = lot[i], lot[j]
     reg = tr.from_two_points(a, b, [0, 0], [math.dist(a, b) * scale, 0])
-    if _mean([tr.apply(reg, p) for p in lot])[1] < 0:
+    edges = list(zip(lot, lot[1:] + lot[:1]))
+    area2 = sum(a[0] * b[1] - b[0] * a[1] for a, b in edges)
+    centre = ([sum((a[i] + b[i]) * (a[0] * b[1] - b[0] * a[1])
+                   for a, b in edges) / (3 * area2) for i in (0, 1)]
+              if abs(area2) >= 1e-9 else _mean(lot))
+    if tr.apply(reg, centre)[1] < 0:
         reg = tr.from_two_points(b, a, [0, 0], [math.dist(a, b) * scale, 0])
     return reg
 
@@ -730,12 +735,98 @@ def scenario_photo_parts_unknown_index_and_part_dropped_real_reader():
     check(len(entry) == 1 and abs(read['cost'] - entry[0]['usd']) < 1e-9, (read['cost'], entry))
 
 
+# --- placement regression checks --------------------------------------------
+
+def scenario_confirm_edge_then_accept():
+    _setup()
+    tpr.read_plot(reader=PlotReader())
+    tpr.confirm_placement([0, 1], [])
+    tpr.answer_suggestion('plot-1', 'accept', name='Shed', kind='shed')
+
+    def check_frame():
+        read, placement = _read(), _lot()['placement']
+        reg, crop = placement['registration'], read['crop']
+        check(_same_reg(read['registration'], reg), 'read and placement share the registration')
+        check(read['street_edge'] == placement['street_edge'] == [0, 1], read['street_edge'])
+        check(close_points(read['lot'], placement['outline']), 'the lot shares the placement frame')
+        for suggestion, raw in zip(read['suggestions'], fixture('plot')['buildings']):
+            want = [tr.apply(reg, tp.to_master(crop, p)) for p in raw['outline']]
+            check(close_points(suggestion['outline'], want), (suggestion, want))
+        want = [tr.apply(reg, tp.to_master(crop, p)) for p in fixture('plot')['buildings'][0]['outline']]
+        check(close_points(_building('shed')['footprint'], want), (_building('shed'), want))
+        a, b, c, d, e, f = read['matrix']
+        for u, v in ([0, 0], [1, 0], [0, 1], [.3, .7]):
+            check(close([a*u + c*v + e, b*u + d*v + f], tr.apply(reg, [u*W, v*H])),
+                  'the sheet matrix shares the placement frame')
+
+    check_frame()
+    # A reread on this page must keep the person's edge as well.
+    tpr.read_plot(reader=PlotReader())
+    check_frame()
+    tpr.answer_suggestion('plot-2', 'accept', building='house')
+    check(close_points(_building('house')['footprint'], _suggestion('plot-2')['outline']),
+          'a suggestion accepted after rereading uses the confirmed frame')
+
+
+def scenario_dragged_footprint_moves_and_refits_in_one_save():
+    _, plot = _setup(_plan())
+    tpr.read_plot(reader=PlotReader())
+    dragged = _moved(RECT40, 60, 90)
+    saved = []
+    original = ts._save
+
+    def capture(row):
+        saved.append(copy.deepcopy(row))
+        return original(row)
+
+    ts._save = capture
+    try:
+        rounds_before = len(ts.rounds())
+        tpr.confirm_placement(None, [{'building': 'house', 'outline': dragged}])
+        check(_building('house')['footprint_from'] == 'plot', _building('house'))
+        check(len(saved) == 1 and len(ts.rounds()) == rounds_before + 1, 'drag refit saves once in one round')
+        check(_fits(_plan_building('house'), RECT40, dragged), 'the drag refits the built house')
+        old_reg = _lot()['placement']['registration']
+        saved.clear()
+        tpr.confirm_placement([0, 1], [])
+        reg = _lot()['placement']['registration']
+        want = [tr.apply(reg, tr.invert(old_reg, p)) for p in dragged]
+        check(close_points(_building('house')['footprint'], want), 'the dragged footprint moves with the lot')
+        check(_fits(_plan_building('house'), RECT40, want), 'the built house follows its footprint')
+        check(len(saved) == 1 and len(ts.rounds()) == rounds_before + 2, 'edge refit saves once in one round')
+        row = saved[0]
+        check(row['place'] == ts.place(), 'the round save already contains the new place')
+        check(any(r['source'] == plot and r['reg'] == reg for r in row['registrations']),
+              'the round save already contains the build registration')
+        saved.clear()
+        tpr.answer_suggestion('plot-1', 'accept', building='house')
+        check(len(saved) == 1 and len(ts.rounds()) == rounds_before + 3, 'accept refit saves once in one round')
+        check(saved[0]['place'] == ts.place(), 'the accept round save already contains the footprint')
+    finally:
+        ts._save = original
+
+
+def scenario_plot_registration_preserves_fragment_edge():
+    frag = fixture('plot')
+    frag['street_edge'] = [0, 2]
+    check(_same_reg(tp.plot_registration(FULL_CROP, frag), _expected_reg(FULL_CROP, frag)),
+          'a non-adjacent fragment edge retains the legacy registration')
+    expect_value_error(lambda: tp.plot_registration(FULL_CROP, frag, edge=[0, 2]),
+                       'Choose two neighbouring lot corners for the street edge.')
+    # A concave lot whose area centroid and vertex mean lie on opposite sides of the street.
+    frag['lot'] = [[0, 0], [.2, 0], [.4, 0], [.6, 0], [.8, 0], [1, 0],
+                   [1, .2], [.3, .2], [.3, 1], [0, 1]]
+    frag['street_edge'] = [0, 7]
+    check(_same_reg(tp.plot_registration(FULL_CROP, frag), _expected_reg(FULL_CROP, frag)),
+          'the legacy area centroid decides which side holds the lot')
+
+
 # --- estimates ---------------------------------------------------------------
 
 def scenario_estimate():
-    saved = storage.get_settings().get('model_pool_twin')
+    saved = storage.get_settings().get('model_pool_pro')
     try:
-        storage.patch_settings({'model_pool_twin': OPUS})
+        storage.patch_settings({'model_pool_pro': OPUS})
         # (1500 + 1600) * 4 + 8192 * 20 = 176240 per million: $0.17624, up to the cent.
         check(abs(tc.estimate('plot', 1) - 0.18) < 1e-9, tc.estimate('plot', 1))
         check(tc.estimate('plot', 1) > 0, 'a plot read costs something')
@@ -743,17 +834,20 @@ def scenario_estimate():
         check(abs(tc.estimate('photo_parts', 12) - 0.13) < 1e-9, tc.estimate('photo_parts', 12))
         check(abs(tc.estimate('photo_parts', 1) - 0.06) < 1e-9, tc.estimate('photo_parts', 1))
         check(tc.estimate('photo_parts', 12) > tc.estimate('photo_parts', 1), '12 photos cost more than 1')
-        storage.patch_settings({'model_pool_twin': 'mystery-model'})
+        storage.patch_settings({'model_pool_pro': 'mystery-model'})
         # The highest rates: 3100 * 10 + 8192 * 60 = 522520: $0.53.
         check(abs(tc.estimate('plot', 1) - 0.53) < 1e-9, tc.estimate('plot', 1))
         inp, out = tc._highest_rates()
         want = math.ceil(((1500 + 1600 * 12) * inp + 2048 * out) / 1_000_000 * 100 - 1e-9) / 100
         check(abs(tc.estimate('photo_parts', 12) - want) < 1e-9, (tc.estimate('photo_parts', 12), want))
     finally:
-        storage.patch_settings({'model_pool_twin': saved})
+        storage.patch_settings({'model_pool_pro': saved})
 
 
 SCENARIOS = (
+    scenario_confirm_edge_then_accept,
+    scenario_dragged_footprint_moves_and_refits_in_one_save,
+    scenario_plot_registration_preserves_fragment_edge,
     scenario_plot_math,
     scenario_plot_read_needs_plot_page,
     scenario_plot_read_stores_suggestions,
