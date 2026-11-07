@@ -100,6 +100,80 @@ def _nearest_on_edges(point, edges):
     return best, best_error
 
 
+def _merge_collinear(outline):
+    """Drop redundant fixed vertices without changing the closed perimeter."""
+    def straight(a, b, c):
+        ux, uy = b[0] - a[0], b[1] - a[1]
+        vx, vy = c[0] - b[0], c[1] - b[1]
+        return (ux * vx + uy * vy >= 0
+                and abs(ux * vy - uy * vx)
+                <= 1e-12 * math.hypot(ux, uy) * math.hypot(vx, vy))
+
+    vertices = []
+    for p in outline:
+        if vertices and p == vertices[-1]:
+            continue
+        while len(vertices) > 1 and straight(vertices[-2], vertices[-1], p):
+            vertices.pop()
+        vertices.append(p)
+    if len(vertices) > 1 and vertices[0] == vertices[-1]:
+        vertices.pop()
+    while len(vertices) > 2:
+        if straight(vertices[-2], vertices[-1], vertices[0]):
+            vertices.pop()
+        elif straight(vertices[-1], vertices[0], vertices[1]):
+            vertices.pop(0)
+        else:
+            break
+    return vertices
+
+
+def _edge_tree(edges):
+    """Index edge bounds once so dense outlines need fewer exact projections."""
+    bounds = (min(min(p[0], p[0] + dx) for p, dx, dy, _ in edges),
+              min(min(p[1], p[1] + dy) for p, dx, dy, _ in edges),
+              max(max(p[0], p[0] + dx) for p, dx, dy, _ in edges),
+              max(max(p[1], p[1] + dy) for p, dx, dy, _ in edges))
+    if len(edges) <= 4:
+        return bounds, None, None, edges
+    axis = 0 if bounds[2] - bounds[0] >= bounds[3] - bounds[1] else 1
+    ordered = sorted(edges, key=lambda edge: edge[0][axis] + edge[axis + 1] / 2)
+    middle = len(ordered) // 2
+    return bounds, _edge_tree(ordered[:middle]), _edge_tree(ordered[middle:]), None
+
+
+def _bounds_error(point, bounds):
+    dx = max(bounds[0] - point[0], 0.0, point[0] - bounds[2])
+    dy = max(bounds[1] - point[1], 0.0, point[1] - bounds[3])
+    return dx * dx + dy * dy
+
+
+def _nearest_indexed(point, edges, tree):
+    """Exact nearest segment, pruning only bounds farther than the best hit."""
+    if tree is None:
+        return _nearest_on_edges(point, edges)
+    best, best_error = None, math.inf
+    pending = [(0.0, tree)]
+    while pending:
+        lower_bound, node = pending.pop()
+        if lower_bound > best_error:
+            continue
+        _, left, right, leaf = node
+        if leaf is not None:
+            target, error = _nearest_on_edges(point, leaf)
+            if error < best_error:
+                best, best_error = target, error
+            continue
+        left_error = _bounds_error(point, left[0])
+        right_error = _bounds_error(point, right[0])
+        # Visit the nearer child first, tightening the bound for the other.
+        if left_error < right_error:
+            pending.extend(((right_error, right), (left_error, left)))
+        else:
+            pending.extend(((left_error, left), (right_error, right)))
+    return best, best_error
+
+
 def fit_outline(moving_ft: list, fixed_ft: list) -> tuple:
     """Return the preferred rigid perimeter fit and its trimmed RMS in feet."""
     return fit_outline_candidates(moving_ft, fixed_ft)[0]
@@ -113,9 +187,12 @@ def fit_outline_candidates(moving_ft: list, fixed_ft: list) -> list:
     the closest 80% for both least squares and RMS so a cut corner cannot pull
     the whole trace sideways. RMS ties within 0.05 ft prefer the smallest
     absolute rotation. Inputs are never mutated and scale is never fitted.
+    Each outline needs at least three points. Refinement stops below 1e-6 ft
+    RMS improvement, with at most 100 iterations per seed.
     """
-    if not moving_ft or not fixed_ft:
-        raise ValueError("Both outlines must contain points")
+    if (not moving_ft or not fixed_ft
+            or len(moving_ft) < 3 or len(fixed_ft) < 3):
+        raise ValueError("Both outlines must contain at least three points")
     if any(not math.isfinite(value)
            for outline in (moving_ft, fixed_ft) for p in outline for value in p):
         raise ValueError("Outline coordinates must be finite")
@@ -126,10 +203,12 @@ def fit_outline_candidates(moving_ft: list, fixed_ft: list) -> list:
     fixed_center = _centroid(fixed_samples)
     centered = [[p[0] - moving_center[0], p[1] - moving_center[1]]
                 for p in moving_samples]
+    fixed_vertices = _merge_collinear(fixed_ft)
     edges = []
-    for p, q in zip(fixed_ft, fixed_ft[1:] + fixed_ft[:1]):
+    for p, q in zip(fixed_vertices, fixed_vertices[1:] + fixed_vertices[:1]):
         dx, dy = q[0] - p[0], q[1] - p[1]
         edges.append((p, dx, dy, dx * dx + dy * dy))
+    tree = _edge_tree(edges) if len(edges) > 12 else None
     keep = max(1, math.ceil(len(centered) * 0.8))
     candidates = []
 
@@ -137,10 +216,11 @@ def fit_outline_candidates(moving_ft: list, fixed_ft: list) -> list:
         angle = seed
         center = fixed_center[:]
         best_move, best_error = None, math.inf
-        for _ in range(200):
+        previous_rms = math.inf
+        for _ in range(100):
             rotated = [_rotate(p, angle) for p in centered]
             placed = [[p[0] + center[0], p[1] + center[1]] for p in rotated]
-            matches = [(_nearest_on_edges(p, edges), r)
+            matches = [(_nearest_indexed(p, edges, tree), r)
                        for p, r in zip(placed, rotated)]
             matches.sort(key=lambda match: match[0][1])
             retained = matches[:keep]
@@ -154,6 +234,10 @@ def fit_outline_candidates(moving_ft: list, fixed_ft: list) -> list:
                                         center[1] - origin[1]]}
                 best_error = error
 
+            rms = math.sqrt(error)
+            if previous_rms - rms < 1e-6:
+                break
+            previous_rms = rms
             source_center, target_center = _centroid(sources), _centroid(targets)
             # Least-squares incremental rotation about the retained centroid.
             cross = dot = 0.0
@@ -189,8 +273,8 @@ def fit_outline_candidates(moving_ft: list, fixed_ft: list) -> list:
         for p in fixed_samples + fixed_ft:
             x, y = _rotate((p[0] - fixed_center[0],
                             p[1] - fixed_center[1]), turn)
-            _, error = _nearest_on_edges((x + fixed_center[0],
-                                           y + fixed_center[1]), edges)
+            _, error = _nearest_indexed((x + fixed_center[0],
+                                         y + fixed_center[1]), edges, tree)
             if error > 1e-16:
                 symmetric = False
                 break

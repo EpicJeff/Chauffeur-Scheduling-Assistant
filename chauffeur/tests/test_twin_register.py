@@ -147,6 +147,20 @@ def scenario_feet_inches_refuses_non_finite():
         expect_value_error(lambda: twin_register.feet_inches(bad))
 
 
+def scenario_fit_outline_is_fast_on_dense_outlines():
+    # Re-review finding: a noisy 200-point outline took 35 s; a pause must answer in a moment.
+    import random
+    import time
+    rng = random.Random(7)
+    fixed = [[30 * math.cos(2 * math.pi * i / 200) + rng.uniform(-0.2, 0.2),
+              18 * math.sin(2 * math.pi * i / 200) + rng.uniform(-0.2, 0.2)] for i in range(200)]
+    moved = [rot(p, 4.0, shift=(2, -1)) for p in fixed]
+    start = time.perf_counter()
+    twin_register.fit_outline(moved, fixed)
+    took = time.perf_counter() - start
+    check(took < 3.0, f'{took:.1f} s')
+
+
 if __name__ == '__main__':
     for fn in (scenario_apply_flips_sheet_y,
                scenario_rotation_is_counterclockwise,
@@ -158,6 +172,7 @@ if __name__ == '__main__':
                scenario_fit_outline_matches_edges_not_vertices,
                scenario_fit_outline_tolerates_a_cut_corner,
                scenario_symmetric_outline_prefers_the_smallest_turn_and_shows_the_runner_up,
-               scenario_feet_inches_refuses_non_finite):
+               scenario_feet_inches_refuses_non_finite,
+               scenario_fit_outline_is_fast_on_dense_outlines):
         fn()
         print('  ok ', fn.__name__)
