@@ -22,7 +22,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
   renderer3.toneMapping = THREE.ACESFilmicToneMapping;
   renderer3.info.autoReset = false;
   el.appendChild(renderer3.domElement);
-  const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(38, 1, 0.1, 1000);
+  const scene = new THREE.Scene(), perspective = new THREE.PerspectiveCamera(38, 1, 0.1, 1000);
+  const orthographic = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
+  let camera = perspective;
   const controls = new OrbitControls(camera, renderer3.domElement);
   controls.maxPolarAngle = Math.PI * 0.49;
   controls.enableDamping = false;
@@ -45,6 +47,28 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
   let visibleLevels = null, sheet = null, sheetSpec = null, sheetRevision = 0;
   const raycaster = new THREE.Raycaster(); raycaster.layers.set(PICK_LAYER);
   const visible = object => { for (let o = object; o; o = o.parent) if (!o.visible) return false; return true; };
+  const faded = new Map();
+  function restoreFloors() {
+    for (const [object, material] of faded) {
+      [].concat(object.material).forEach(m => m.dispose()); object.material = material;
+    }
+    faded.clear();
+  }
+  function floorFrame(key) {
+    const building = plan.buildings.find(b => b.levels.some(l => `${b.id}:${l.id}` === key));
+    const level = building?.levels.find(l => `${building.id}:${l.id}` === key);
+    return building && { building, elevation: groundAt(plan, ...(building.position || [0, 0])) + (building.base || 0) + level.elevation };
+  }
+  function projectFloor(x, y, key) {
+    const frame = floorFrame(key); if (!frame) return null;
+    const b = frame.building, a = (b.rotation || 0) * Math.PI / 180;
+    const wx = Math.cos(a) * x - Math.sin(a) * y + (b.position?.[0] || 0);
+    const wy = Math.sin(a) * x + Math.cos(a) * y + (b.position?.[1] || 0);
+    camera.updateMatrixWorld(true);
+    const p = new THREE.Vector3(wx * FT, frame.elevation * FT, -wy * FT).project(camera);
+    const r = renderer3.domElement.getBoundingClientRect();
+    return [r.left + (p.x + 1) * r.width / 2, r.top + (1 - p.y) * r.height / 2];
+  }
   function pieceKey(id, buildingId) {
     if (!twin) return null;
     if (buildingId !== undefined) {
@@ -87,13 +111,39 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
   }
   function resize() {
     const width = Math.max(1, el.clientWidth), height = Math.max(1, el.clientHeight);
-    renderer3.setSize(width, height); camera.aspect = width / height; camera.updateProjectionMatrix();
+    renderer3.setSize(width, height);
+    perspective.aspect = width / height; perspective.updateProjectionMatrix();
+    orthographic.left = -orthographic.top * width / height; orthographic.right = -orthographic.left;
+    orthographic.updateProjectionMatrix();
     render();
   }
   const observer = new ResizeObserver(resize); observer.observe(el);
   const view = {
     ready: false, scene, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
     groups: null, roomLights: [], plan,
+    cameraKind() { return camera.isOrthographicCamera ? 'orthographic-top' : 'perspective'; },
+    screenOfFloor: projectFloor,
+    floorAt(clientX, clientY, key) {
+      const frame = floorFrame(key); if (!frame) return null;
+      const r = renderer3.domElement.getBoundingClientRect();
+      camera.updateMatrixWorld(true);
+      raycaster.setFromCamera(new THREE.Vector2((clientX - r.left) / r.width * 2 - 1, 1 - (clientY - r.top) / r.height * 2), camera);
+      const point = raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -frame.elevation * FT), new THREE.Vector3());
+      if (!point) return null;
+      const b = frame.building, a = -(b.rotation || 0) * Math.PI / 180;
+      const x = point.x / FT - (b.position?.[0] || 0), y = -point.z / FT - (b.position?.[1] || 0);
+      return [Math.cos(a) * x - Math.sin(a) * y, Math.sin(a) * x + Math.cos(a) * y];
+    },
+    setPlanCamera(key) {
+      const frame = floorFrame(key); if (!frame) return;
+      camera = orthographic; view.camera = camera; controls.object = camera;
+      state.camera = 'top';
+      orthographic.top = Math.max(20, bounds.span * 0.72) * FT; orthographic.bottom = -orthographic.top;
+      orthographic.zoom = 1;
+      camera.position.set(bounds.x * FT, (frame.elevation + 250) * FT, -bounds.y * FT);
+      controls.target.set(bounds.x * FT, frame.elevation * FT, -bounds.y * FT);
+      controls.enableRotate = false; controls.update(); resize();
+    },
     pick(clientX, clientY) {
       if (!twin) return null;
       const rect = renderer3.domElement.getBoundingClientRect();
@@ -102,7 +152,13 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       raycaster.setFromCamera(new THREE.Vector2((clientX - rect.left) / rect.width * 2 - 1, 1 - (clientY - rect.top) / rect.height * 2), camera);
       // The plan camera reaches pieces beneath the roof, as a floor editor
       // must; perspective views can select the roof itself.
-      const candidates = [...twin.pickObjects.values()].filter(o => visible(o) && (state.camera !== 'top' || o.userData.kind !== 'roof'));
+      const candidates = [...twin.pickObjects.values()].filter(o => {
+        if (!visible(o) || (state.camera === 'top' && o.userData.kind === 'roof')) return false;
+        if (camera.isOrthographicCamera && state.view !== 'ext') {
+          for (let p = o; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey === state.view;
+        }
+        return true;
+      });
       const hits = raycaster.intersectObjects(candidates, false);
       const hit = state.camera === 'top' ? hits.find(h => h.object.userData.kind === 'wall') || hits[0] : hits[0];
       if (!hit) return null;
@@ -113,10 +169,17 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       const box = pieceBox(id, buildingId); if (!box) return null;
       return { min: [box.min.x / FT, -box.max.z / FT, box.min.y / FT], max: [box.max.x / FT, -box.min.z / FT, box.max.y / FT] };
     },
-    showLevels(keys) {
+    showLevels(keys, { faint = [] } = {}) {
       if (!twin) return;
+      restoreFloors();
       visibleLevels = keys === null ? null : new Set(keys);
       for (const [key, group] of Object.entries(twin.groups.levels)) group.visible = !visibleLevels || visibleLevels.has(key);
+      for (const key of faint) twin.groups.levels[key]?.traverse(object => {
+        if (!object.material || object.layers.isEnabled(PICK_LAYER)) return;
+        faded.set(object, object.material);
+        const clone = m => { const next = m.clone(); next.transparent = true; next.opacity = 0.18; next.depthWrite = false; return next; };
+        object.material = Array.isArray(object.material) ? object.material.map(clone) : clone(object.material);
+      });
       const buildings = new Set(Object.values(twin.groups.levels).filter(g => g.visible).map(g => g.userData.buildingId));
       for (const domain of ['roof', 'gableFull', 'gableCut']) for (const group of twin.groups[domain].children) group.visible = buildings.has(group.userData.buildingId);
       applyLights(); render();
@@ -159,6 +222,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
         if (matches.length === 1) id = matches[0];
       }
       if (!twin || (id !== 'ext' && !twin.groups.levels[id])) return;
+      restoreFloors();
       state.view = id;
       visibleLevels = null;
       const ext = id === 'ext', ids = Object.keys(twin.groups.levels).sort((a, b) => twin.levelElevations[a] - twin.levelElevations[b]);
@@ -183,6 +247,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
     },
     setCamera(name) {
       if (!['front', 'back', 'orbit', 'porch', 'rear', 'top'].includes(name)) return;
+      camera = perspective; view.camera = camera; controls.object = camera; controls.enableRotate = true;
       state.camera = name;
       const { x, y, span } = bounds, k = span / 38;
       const positions = { front: [x - 41 * k, 22 * k, y - 69 * k], porch: [x + 59 * k, 22 * k, y - 45 * k], rear: [x + 27 * k, 34 * k, y + 57 * k], top: [x, 105 * k, y - 0.01] };
@@ -194,6 +259,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       if (disposed) throw new Error('This twin has been disposed.');
       width = Math.max(1, Math.floor(width)); height = Math.max(1, Math.floor(height));
       const previous = {
+        camera,
         position: camera.position.clone(), quaternion: camera.quaternion.clone(), target: controls.target.clone(),
         aspect: camera.aspect, name: state.camera, target3: renderer3.getRenderTarget(),
         size: renderer3.getSize(new THREE.Vector2()), pixelRatio: renderer3.getPixelRatio(),
@@ -213,6 +279,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       } finally {
         renderer3.setPixelRatio(previous.pixelRatio); renderer3.setSize(previous.size.x, previous.size.y, false);
         renderer3.setRenderTarget(previous.target3);
+        camera = previous.camera; view.camera = camera; controls.object = camera; controls.enableRotate = !camera.isOrthographicCamera;
         camera.position.copy(previous.position); controls.target.copy(previous.target); controls.update();
         camera.quaternion.copy(previous.quaternion); camera.aspect = previous.aspect; camera.updateProjectionMatrix();
         state.camera = previous.name; render();
@@ -224,6 +291,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       if (probeRun) throw new Error('A performance probe is already running.');
       if (!Number.isFinite(seconds) || seconds <= 0) throw new Error('Probe seconds must be a positive finite number.');
       const previous = {
+        camera,
         view: state.view, name: state.camera, position: camera.position.clone(),
         quaternion: camera.quaternion.clone(), target: controls.target.clone(), enabled: controls.enabled,
       };
@@ -245,6 +313,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
         controls.enabled = previous.enabled;
         if (!disposed) {
           view.setView(previous.view);
+          camera = previous.camera; view.camera = camera; controls.object = camera; controls.enableRotate = !camera.isOrthographicCamera;
           camera.position.copy(previous.position); controls.target.copy(previous.target); controls.update();
           camera.quaternion.copy(previous.quaternion); state.camera = previous.name; render();
         }
@@ -312,6 +381,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       } catch (error) { release(next); throw error; }
       if (disposed || version !== revision) { release(next); return; }
       const levelsToRestore = visibleLevels && [...visibleLevels];
+      const faintToRestore = [...new Set([...faded.keys()].map(o => {
+        for (let p = o; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey;
+        return null;
+      }).filter(Boolean))];
+      restoreFloors();
       // The underlay owns its image independently of the rebuilt geometry.
       // Detach before releasing the old scene, then place the same object.
       sheet?.object?.removeFromParent();
@@ -344,7 +418,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       view.setView(twin.groups.levels[state.view] ? state.view : 'ext'); view.setTime(state.time);
       if (!(preserveCamera && (framed || cameraMoved))) view.setCamera(state.camera);
       if (points.length) framed = true;
-      if (levelsToRestore) view.showLevels(levelsToRestore);
+      if (levelsToRestore) view.showLevels(levelsToRestore, { faint: faintToRestore });
       attachSheet();
       view.ready = true;
       el.dispatchEvent(new CustomEvent('twinrebuilt', { detail: view }));
@@ -357,6 +431,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       }
       renderer3.setAnimationLoop(null); observer.disconnect(); controls.dispose();
       clearSheet(); sheetSpec = null;
+      restoreFloors();
       if (twin) { scene.remove(twin.root); release(twin); }
       sky?.dispose(); environmentTarget?.dispose(); sun.shadow.dispose();
       renderer3.dispose(); renderer3.forceContextLoss(); renderer3.domElement.remove();

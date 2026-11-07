@@ -18,7 +18,7 @@
       'three/addons/': window.chfBase + 'static/vendor/three-r187/addons/',
       '@dgreenheck/ez-tree': window.chfBase + {{ 'static/vendor/ez-tree/ez-tree.es.js' | ver | tojson }}
     };
-    {% for name in ['twin_generator', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'twin_roof', 'twin_ground', 'editor/editor', 'editor/api', 'editor/panel'] %}
+    {% for name in ['twin_generator', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'twin_roof', 'twin_ground', 'editor/editor', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/cards', 'editor/snap', 'editor/plan_view', 'editor/pauses', 'editor/timeline'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     const map = document.createElement('script'); map.type = 'importmap';
@@ -38,6 +38,7 @@
       <h1>House editor</h1>
       <output id="editor-status" role="status">Opening your house…</output>
       <output id="editor-cost" aria-label="Total spent">$0.00</output>
+      <button id="editor-check-step" type="button" hidden>Check this step</button>
       <details id="editor-menu">
         <summary aria-label="House menu">Menu</summary>
         <div><button id="editor-manage-sources" type="button">Drawings and photos</button>
@@ -49,6 +50,29 @@
       <button id="rail-{{ tool }}" type="button" aria-pressed="{{ 'true' if tool == 'select' else 'false' }}" {% if tool != 'select' %}disabled{% endif %}>{{ label }}</button>
       {% endfor %}
     </nav>
+    <nav id="editor-cameras" aria-label="Camera views">
+      {% for camera in ['Top', 'Front', 'Back', 'Orbit'] %}
+      <button type="button" data-editor-camera="{{ camera | lower }}">{{ camera }}</button>
+      {% endfor %}
+    </nav>
+    <section id="plan-tools" aria-label="Plan tools" hidden>
+      <div><button id="plan-add-wall" type="button">Add wall</button>
+        <button id="plan-add-door" type="button">Add door</button>
+        <button id="plan-add-window" type="button">Add window</button>
+        <button id="plan-cancel" type="button">Cancel drawing</button></div>
+      <p id="plan-note" role="status"></p>
+    </section>
+    <aside id="piece-card" aria-label="Selected piece" hidden></aside>
+    <aside id="pause-card" aria-label="Check this step" hidden>
+      <h3 id="pause-title">Check this outline</h3><p id="pause-reason"></p>
+      <div><button id="pause-accept" type="button">Looks right</button><button id="pause-drag" type="button">Drag</button>
+        <button id="pause-pin" type="button">Pin 2 points</button><button id="pause-reread" type="button">Re-read</button></div>
+      <label id="pause-turn-label" hidden>Turn in degrees<input id="pause-turn" type="number" step="1"></label>
+      <p id="pause-instruction" role="status"></p><button id="pause-cancel" type="button">Cancel adjustment</button>
+    </aside>
+    <output id="editor-drag-hint" hidden></output><div id="editor-pin-marks" aria-hidden="true"></div>
+    <svg id="editor-drag-layer" aria-hidden="true"><polygon id="editor-drag-outline" points=""></polygon></svg>
+    <output id="time-chip" role="status" hidden></output>
     <aside id="editor-floors" aria-label="Floors"><span>Floors</span><p>No floors yet</p></aside>
     <aside id="editor-agent" aria-label="Argyle">
       <header><h2>Argyle</h2><span id="editor-source-count">Drawings and photos</span></header>
@@ -79,6 +103,9 @@
     <footer id="editor-time" aria-label="Build timeline">
       <div id="editor-time-labels"></div>
       <progress id="editor-progress" max="1" value="0" aria-label="Build progress"></progress>
+      <label for="editor-scrub" class="editor-sr-only">Look back through the house</label>
+      <input id="editor-scrub" type="range" min="0" max="0" value="0" step="1">
+      <div id="time-actions" hidden><button id="time-return" type="button">Return here</button><button id="time-now" type="button">Back to now</button></div>
       <div><span id="editor-time-note">Your build will appear here, one step at a time.</span><output id="editor-step-count">0 steps</output></div>
     </footer>
   </main>

@@ -11,7 +11,7 @@ export function createPanel({ afterSay }) {
   const history = [];
   const seen = new Set();
   const reasons = new Map(), pauses = new Set();
-  let buildId = null, busy = false;
+  let buildId = null, busy = false, selection = null, readOnly = false;
 
   function message(text, speaker = 'argyle') {
     if (!text) return;
@@ -21,12 +21,12 @@ export function createPanel({ afterSay }) {
   }
   async function say(text) {
     text = text.trim();
-    if (!text || busy) return;
+    if (!text || busy || readOnly) return;
     busy = true; send.disabled = true;
     quick.querySelectorAll('button').forEach(button => { button.disabled = true; });
     message(text, 'you'); input.value = '';
     try {
-      const result = await request('say', 'POST', { message: text, history: history.slice(-20) });
+      const result = await request('say', 'POST', { message: text, history: history.slice(-20), selection: selection?.pieceId || null });
       history.push({ role: 'user', content: text }, { role: 'assistant', content: result.reply || '' });
       message(result.reply || 'Done.');
       await afterSay(result).catch(report);
@@ -48,8 +48,8 @@ export function createPanel({ afterSay }) {
         report(error);
       }
     } finally {
-      busy = false; send.disabled = false;
-      quick.querySelectorAll('button').forEach(button => { button.disabled = false; });
+      busy = false; send.disabled = readOnly;
+      quick.querySelectorAll('button').forEach(button => { button.disabled = readOnly; });
     }
   }
   const submit = event => { event.preventDefault(); say(input.value).catch(report); };
@@ -58,13 +58,22 @@ export function createPanel({ afterSay }) {
     quick.replaceChildren();
     labels.forEach(label => {
       const button = document.createElement('button'); button.type = 'button';
-      button.textContent = plain(label); button.disabled = busy;
+      button.textContent = plain(label); button.disabled = busy || readOnly;
       button.addEventListener('click', () => say(label).catch(report)); quick.append(button);
     });
   }
   replies();
   return {
     message, say, replies,
+    focusSelection(item) {
+      selection = item;
+      input.value = `About ${item.pieceId} in ${item.buildingId}: `;
+      input.focus(); input.setSelectionRange(input.value.length, input.value.length);
+    },
+    readOnly(value) {
+      readOnly = value; input.disabled = value; send.disabled = busy || value;
+      quick.querySelectorAll('button').forEach(button => { button.disabled = busy || value; });
+    },
     dispose() { form.removeEventListener('submit', submit); },
     events(build) {
       if (buildId !== build.id) { seen.clear(); reasons.clear(); pauses.clear(); log.replaceChildren(); buildId = build.id; }
@@ -98,7 +107,7 @@ export function createPanel({ afterSay }) {
         if (!pauses.has(key)) {
           pauses.add(key);
           const confidence = Number(pause.confidence);
-          message(`${pause.why || 'Please check this step.'} ${confidence >= .8 ? 'I am fairly sure.' : confidence >= .5 ? 'I am somewhat sure.' : 'I am not sure yet.'}`);
+          message(`${pause.why || 'Please check this step.'} ${confidence >= .8 ? 'I am sure.' : confidence >= .5 ? 'I am fairly sure.' : 'I am unsure.'} Does the blue outline match the drawing? You can tell me what to move, or use Looks right, Drag or Pin 2 points beside it.`);
           replies(['Keep going', 'What needs checking?']);
         }
       }

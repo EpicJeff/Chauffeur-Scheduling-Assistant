@@ -36,7 +36,8 @@ def _seed():
     from services import storage, twin_library, twin_reads
     twin_library._urlopen = p0view._stub_urlopen
     storage.patch_settings({'auth_enforce': True})
-    storage.add_member({'id': 'p1', 'name': 'Pat', 'role': 'parent'})
+    storage.add_member({'id': 'p1', 'name': 'Pat', 'role': 'parent', 'email': 'pat@example.com'})
+    storage.set_member_password('p1', 'correct horse battery staple')
     STATE['token'] = storage.create_member_token('p1')
     engine_tests._fresh()
     _, _, photo = engine_tests._sources()
@@ -592,6 +593,35 @@ def scenario_rebuilds_keep_the_parents_view():
                                                     after['position'] + after['target'])), (before, after))
 
 
+def scenario_a_stopped_build_can_be_resumed():
+    # Review finding: a build stopped at a checkpoint or by an add-on restart
+    # must offer Resume (cached answers, no new reads), never a dead end.
+    s = _serve()
+    if s is None:
+        return
+    resumes = []
+    with s.browser(launch_args=GPU_ARGS) as page:
+        _signed_in(page)
+        _open(page, s)
+
+        def build(route):
+            req = route.request
+            if req.method == 'POST' and req.url.endswith('/resume'):
+                resumes.append(1)
+                return route.fulfill(status=200, body='{}', headers={'Content-Type': 'application/json'})
+            if req.method == 'GET':
+                return route.fulfill(status=200, headers={'Content-Type': 'application/json'}, body=json.dumps({
+                    'id': 'b-stopped', 'state': 'stopped', 'steps': [], 'events': [], 'seq': 0, 'pause': None,
+                    'cost': 1.2}))
+            return route.continue_()
+        page.route('**/api/house/editor/build/**', build)
+        page.evaluate("() => window.__editor.followBuild('b-stopped')")
+        page.wait_for_selector('#editor-resume', state='visible', timeout=10000)
+        page.click('#editor-resume')
+        page.wait_for_timeout(1000)
+        check(resumes == [1], 'Resume asks the server to continue the stopped build')
+
+
 if __name__ == '__main__':
     for fn in (scenario_signed_out_sees_the_sign_in,
                scenario_shell_matches_the_mockup_regions,
@@ -604,6 +634,7 @@ if __name__ == '__main__':
                scenario_stop_at_a_checkpoint_stops_the_build,
                scenario_the_sign_out_notice_shows_once,
                scenario_rebuilds_keep_the_parents_view,
+               scenario_a_stopped_build_can_be_resumed,
                scenario_card_edit_round_trip,
                scenario_drag_moves_on_the_floor_only,
                scenario_rotate_snaps_to_quarter_turns,

@@ -1,6 +1,10 @@
 import { mountTwin } from '../twin_view.js';
 import { request, createPolling, idleInterval, buildInterval, checkpoint, plain, report, active, session } from './api.js';
 import { createPanel } from './panel.js';
+import { createSceneTools } from './scene_tools.js';
+import { createPlanView } from './plan_view.js';
+import { createPauses } from './pauses.js';
+import { createTimeline } from './timeline.js';
 
 const el = id => document.getElementById(id);
 const emptyPlan = () => ({ schema: 'chauffeur.twin.plan/2', units: 'ft', buildings: [], site: {}, materials: {} });
@@ -12,14 +16,26 @@ export async function boot() {
   let currentBuild = null, ghostBuild = null, renderedGhosts = 0, lastScene = '';
   let uploadsBusy = false, rolesBusy = false, building = false;
   let sourcesOpen = false;
+  let tools = null, planView = null, pauses = null, timeline = null, previewing = false, lastSummary = '';
   const lifecycle = new AbortController();
   const listen = (node, type, handler) => node.addEventListener(type, handler, { signal: lifecycle.signal });
   const ghosts = new Map(), prompted = new Set();
   const panel = createPanel({ afterSay: async () => { await polling.pollNow(true); } });
+  const canEdit = () => !previewing && !session.signedOut;
+  async function edit(change) {
+    if (!canEdit()) throw new Error('Use Back to now before changing your house.');
+    const result = await request('edit', 'POST', { edit: change });
+    snapshot = await request('state');
+    const line = document.createElement('li'); line.textContent = plain(result.summary); el('editor-log').append(line);
+    await renderScene(); timeline?.sync(currentBuild);
+    lastSummary = result.summary;
+    return result;
+  }
 
   function setStatus(text) { el('editor-status').textContent = plain(text); }
   function syncBuildButton() {
-    el('editor-build').disabled = !hooks.ready || !confirmed || uploadsBusy || rolesBusy || building || active(currentBuild);
+    el('editor-build').disabled = previewing || !hooks.ready || !confirmed || uploadsBusy || rolesBusy || building || active(currentBuild);
+    el('editor-check-step').hidden = previewing || currentBuild?.state !== 'paused';
   }
   function cost(value) { el('editor-cost').textContent = `$${Number(value || 0).toFixed(2)}`; }
   function countGhosts(plan) {
@@ -29,6 +45,13 @@ export async function boot() {
   }
   function previewPlan() {
     const plan = structuredClone(snapshot.plan || emptyPlan());
+    const pause = currentBuild?.pause;
+    if (pause?.kind === 'lot_placement' && pause.transform) {
+      const step = currentBuild.steps.find(s => s.id === pause.step);
+      const owner = sheets.page_roles.find(row => row.source === step?.source && row.page === step?.page)?.building || 'house';
+      const house = plan.buildings.find(b => b.id === owner);
+      if (house) Object.assign(house, structuredClone(pause.transform));
+    }
     // Outlines awaiting a person's approval live in events, never in saved
     // rounds. Give each one a temporary floor using the existing scene builder.
     for (const [stepId, event] of ghosts) {
@@ -52,7 +75,7 @@ export async function boot() {
     return plan;
   }
   async function renderScene() {
-    const plan = previewPlan(), signature = JSON.stringify(plan);
+    const plan = timeline?.preview() || previewPlan(), signature = JSON.stringify(plan);
     if (view && signature !== lastScene) {
       await view.rebuild(plan);
       view.scene.background?.set?.('#171e27');
@@ -60,40 +83,15 @@ export async function boot() {
     }
     renderedGhosts = countGhosts(plan);
     drawFloors();
+    tools?.refresh();
+    pauses?.sync();
+    timeline?.sync(currentBuild);
   }
   function drawFloors() {
-    const focused = document.activeElement?.dataset.floor;
-    const host = el('editor-floors'); host.replaceChildren();
-    const title = document.createElement('span'); title.textContent = 'Floors'; host.append(title);
-    const levels = (snapshot.plan?.buildings || []).flatMap(house => house.levels.map(level => ({ house, level })));
-    if (!levels.length && currentBuild) {
-      for (const step of currentBuild.steps.filter(step => ['outline', 'registration'].includes(step.kind))) {
-        const label = document.createElement('p'); label.textContent = plain(step.level_name || step.level); host.append(label);
-      }
-    } else if (!levels.length) {
-      const label = document.createElement('p'); label.textContent = 'No floors yet'; host.append(label);
-    }
-    for (const { house, level } of levels.reverse()) {
-      const button = document.createElement('button'); button.type = 'button';
-      const key = `${house.id}:${level.id}`;
-      button.dataset.floor = key;
-      button.textContent = plain(level.name || level.id);
-      button.setAttribute('aria-pressed', String(view?.state.view === key));
-      button.addEventListener('click', () => { view?.setView(key); drawFloors(); }); host.append(button);
-      if (focused === key) button.focus({ preventScroll: true });
-    }
+    tools?.drawFloors();
   }
   function drawTimeline(build) {
-    const steps = build?.steps || [], done = steps.filter(step => step.status === 'done').length;
-    el('editor-progress').max = steps.length || 1; el('editor-progress').value = done;
-    el('editor-step-count').textContent = steps.length ? `${done} of ${steps.length} steps` : '0 steps';
-    const labels = el('editor-time-labels'); labels.replaceChildren();
-    for (const step of steps) {
-      const label = document.createElement('span'); label.textContent = step.label;
-      labels.append(label);
-    }
-    el('editor-time-note').textContent = build?.state === 'paused' ? 'Argyle is waiting for you to check this step.'
-      : build?.state === 'done' ? 'Your house is ready to explore.' : 'Your build will appear here, one step at a time.';
+    timeline?.sync(build);
   }
   function drawPages() {
     const host = el('editor-pages'); host.replaceChildren();
@@ -168,7 +166,10 @@ export async function boot() {
           : build.state === 'done' ? 'House ready' : build.state === 'checkpoint' ? 'Spending checkpoint' : 'Build stopped');
       // Each new event batch can carry saved pieces, temporary outlines or
       // new costs. Read their owning state before rebuilding the scene.
-      if (build.events?.length) await polling.refreshState();
+      if (build.events?.length) {
+        await polling.refreshState();
+        sheets.registrations = (await request('sheets')).registrations;
+      }
       if (build.state === 'checkpoint') {
         const detail = [...(build.events || [])].reverse().find(event => event.type === 'checkpoint')
           || { checkpoint: build.checkpoint || snapshot.cost?.blocking, total: build.total ?? snapshot.cost?.total };
@@ -196,7 +197,7 @@ export async function boot() {
   });
 
   listen(el('editor-source-files'), 'change', async event => {
-    if (uploadsBusy) return;
+    if (!canEdit() || uploadsBusy) return;
     uploadsBusy = true; drawPages();
     try {
       const rejected = [];
@@ -216,6 +217,7 @@ export async function boot() {
     }
   });
   listen(el('editor-suggest-roles'), 'click', async () => {
+    if (!canEdit()) return;
     rolesBusy = true; drawPages();
     try {
       // Suggestions remain local until the person confirms the complete list.
@@ -231,6 +233,7 @@ export async function boot() {
     finally { rolesBusy = false; drawPages(); await polling.pollNow(true).catch(report); }
   });
   listen(el('editor-confirm-roles'), 'click', async () => {
+    if (!canEdit()) return;
     rolesBusy = true; drawPages();
     try {
       const result = await request('sheets/roles', 'PUT', { rows });
@@ -242,7 +245,7 @@ export async function boot() {
     finally { rolesBusy = false; drawPages(); }
   });
   listen(el('editor-build'), 'click', async () => {
-    if (building || active(currentBuild) || !confirmed) return;
+    if (!canEdit() || building || active(currentBuild) || !confirmed) return;
     building = true; syncBuildButton();
     try {
       if (snapshot.plan?.buildings?.length && !await window.promptConfirm('Build your house again?',
@@ -262,6 +265,9 @@ export async function boot() {
     sourcesOpen = !el('editor-upload').hidden;
     el('editor-menu').open = false;
     if (!el('editor-upload').hidden) el('editor-source-files').focus();
+  });
+  listen(el('editor-check-step'), 'click', () => {
+    tools?.select(null); planView?.leavePlan(); pauses?.show();
   });
 
   if (new URLSearchParams(location.search).get('test') === '1') Object.assign(hooks, {
@@ -304,6 +310,34 @@ export async function boot() {
     await loadSheets();
     const kit = await request('kit/modern_farmhouse', 'GET', undefined, 'twin');
     view = await mountTwin(el('editor-scene'), { plan: emptyPlan(), kit, preserveCamera: true });
+    const onInteract = () => pauses?.dismiss();
+    tools = createSceneTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getSheets: () => sheets,
+      edit, panel, canEdit, signal: lifecycle.signal, onInteract });
+    planView = createPlanView({ view, tools, edit, canEdit, signal: lifecycle.signal, onInteract });
+    pauses = createPauses({ view, getBuild: () => currentBuild, getGhost: step => ghosts.get(step),
+      getSheets: () => sheets, refresh: () => polling.pollNow(true), canEdit, signal: lifecycle.signal });
+    tools.delegate({
+      pointerDown: event => pauses.pointerDown(event) || planView.pointerDown(event),
+      pointerMove: event => pauses.pointerMove(event),
+      pointerUp: (event, cancel) => pauses.pointerUp(event, cancel),
+      floorChanged: planView.floorChanged, leavePlan: planView.leavePlan, cancel: planView.cancel,
+    });
+    timeline = createTimeline({ getState: () => snapshot, render: renderScene, signal: lifecycle.signal,
+      onPreview(value) {
+        previewing = value; tools.select(null); pauses.dismiss(); panel.readOnly(value);
+        tools.refreshCard(); syncBuildButton();
+        for (const id of ['rail-move', 'rail-rotate', 'plan-add-wall', 'plan-add-door', 'plan-add-window', 'editor-confirm-roles', 'editor-suggest-roles', 'editor-source-files']) el(id).disabled = value;
+        if (!value) { drawPages(); pauses.resume(); }
+      },
+    });
+    if (new URLSearchParams(location.search).get('test') === '1') Object.assign(hooks, {
+      clickPiece: (pieceId, buildingId) => { onInteract(); tools.select({ pieceId, buildingId }); },
+      selected: tools.selected, lastSummary: () => lastSummary,
+      dragPiece: tools.dragPiece, rotateBuilding: tools.rotateBuilding,
+      cameraKind: view.cameraKind, screenOfFloor: view.screenOfFloor,
+      screenOfGhostUV: pauses.screenOfGhostUV, screenOfSheetUV: pauses.screenOfSheetUV,
+      lastAnswer: pauses.lastAnswer, scrubTo: timeline.scrubTo, roundCount: timeline.roundCount,
+    });
     // The editor uses the mockup's dark work surface; the shared preview keeps
     // its own daylight sky, with the same renderer and lighting.
     view.scene.background?.set?.('#171e27');
