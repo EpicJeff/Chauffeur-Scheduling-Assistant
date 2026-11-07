@@ -280,13 +280,38 @@ def record_compose_overrides(before: dict, after: dict) -> dict:
     return result
 
 
+def overlay_director(plan: dict, revised: dict) -> tuple[dict, list[str]]:
+    """Overlay explicit edits; omissions preserve the household's current work."""
+    merged = deepcopy(plan)
+    notes = []
+    for name in ('site', 'materials'):
+        if name not in revised:
+            notes.append(f'Kept omitted {name} unchanged.')
+            continue
+        value = revised[name]
+        if value is None or value == []:
+            merged[name] = {}
+        elif isinstance(value, dict):
+            for key in plan.get(name, {}):
+                if key not in value:
+                    notes.append(f'Kept omitted {name}.{key} unchanged.')
+            merged[name].update(deepcopy(value))
+        else:
+            notes.append(f'Kept invalid {name} unchanged; expected an object or null.')
+    # Normalize explicit list deletions before recording compose removals.
+    for name in ('beds', 'planting', 'furniture', 'edges', 'hardscape'):
+        if merged['site'].get(name) is None:
+            merged['site'][name] = []
+    merged['materials'] = {role: value for role, value in merged['materials'].items()
+                           if value is not None and value != []}
+    return merged, notes
+
+
 def merge_director(plan: dict, revised: dict) -> tuple[dict, list[str]]:
     """Apply the director's site and materials only, then normalize a copy."""
-    merged = deepcopy(plan)
-    for name in ('site', 'materials'):
-        if name in revised:
-            merged[name] = deepcopy(revised[name])
-    return normalize(record_compose_overrides(plan, merged))
+    merged, notes = overlay_director(plan, revised)
+    normalized, normalized_notes = normalize(record_compose_overrides(plan, merged))
+    return normalized, notes + normalized_notes
 
 
 def diff_paths(a: dict, b: dict) -> list[str]:

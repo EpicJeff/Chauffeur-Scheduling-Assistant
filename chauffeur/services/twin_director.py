@@ -11,13 +11,16 @@ import threading
 from PIL import Image
 
 from services import model_pools, storage, twin_cost, twin_library, twin_plan, twin_store
+from services.twin_draft import _materials as _draft_materials
 
 
 DIRECTOR_PROMPT = """Act as the household's architectural art director. Compare
 the labelled renders with the household photos and the kit's style guide.
 Return JSON only: {"critique": "specific assessment and changes", "done": false,
-"site": {...}, "materials": {...}}. Return complete revised site and materials
-objects, preserving their schema, IDs and compose provenance. All distances are
+"site": {...}, "materials": {...}}. Preserve schema, IDs and compose provenance.
+Omitted site keys and material roles are unchanged; only explicit [] or null
+deletes. Material values must be {"id":"kit_asset", "color":"#rrggbb"}.
+All distances are
 feet. Change only site and materials, never buildings, openings or roof geometry.
 Use only the supplied kit's material IDs, plant presets and furniture assets.
 Respect its composition values, clearances and the household's real finishes.
@@ -38,6 +41,8 @@ def _validate(run, renders, cameras, base):
     if base is not None and (type(base) is not int or base < 1):
         raise ValueError('The base must be a round id.')
     for render in renders:
+        if isinstance(render, str) and len(render) > 4 * 1024 * 1024:
+            raise ValueError('Each render must be at most 4 MB of base64.')
         try:
             if not isinstance(render, str):
                 raise ValueError()
@@ -52,26 +57,47 @@ def _validate(run, renders, cameras, base):
 
 def _enforce_kit(revised, current, kit, notes):
     revised = deepcopy(revised)
-    allowed = {value['asset'] for value in kit['materials'].values()}
     for role, value in list(revised['materials'].items()):
+        if role in current['materials'] and value == current['materials'][role]:
+            continue
         asset_id = value.get('id') if isinstance(value, dict) else value
         if role not in kit['materials']:
             del revised['materials'][role]
             notes.append(f'Ignored material role {role} with asset {asset_id}: not in the kit.')
-        elif not isinstance(asset_id, str) or asset_id not in allowed:
+        else:
+            validation_notes = []
+            validated = _draft_materials({'materials': {role: value}}, kit, validation_notes)
+            if not validation_notes:
+                revised['materials'][role] = validated[role]
+                continue
             default = kit['materials'][role]
             revised['materials'][role] = deepcopy(current['materials'].get(
                 role, {'id': default['asset'], 'color': default['color']}))
-            notes.append(f'Refused material {asset_id} for {role}; kept its current value or kit default.')
+            notes.append(f'Refused invalid material {asset_id} or colour for {role}; '
+                         'kept its current value or kit default.')
     presets = set(kit['shrubs'] + kit['backdrop_trees'] + kit['specimen_trees'])
-    furniture = {'polyhaven:' + value for value in kit['furniture'].values()}
+    furniture = {value.removeprefix('polyhaven:') for value in kit['furniture'].values()}
     for name, field, accepted in (('planting', 'preset', presets), ('furniture', 'asset', furniture)):
         items = revised['site'].get(name, [])
         if not isinstance(items, list):
             continue  # normalize supplies a note for an invalid list
         kept = []
+        old_items = current['site'].get(name, [])
         for item in items:
+            if isinstance(item, dict) and item.get('id') is not None:
+                unchanged = any(old.get('id') == item['id'] and old == item
+                                for old in old_items if isinstance(old, dict))
+            else:
+                unchanged = item in old_items
+            if unchanged:
+                kept.append(item)
+                continue
             asset_id = item.get(field) if isinstance(item, dict) else None
+            if name == 'furniture' and isinstance(item, dict):
+                kind = item.get('kind')
+                asset_id = asset_id or (kit['furniture'].get(kind) if isinstance(kind, str) else None)
+                if isinstance(asset_id, str):
+                    asset_id = asset_id.removeprefix('polyhaven:')
             if not isinstance(asset_id, str) or asset_id not in accepted:
                 notes.append(f'Dropped off-kit {name} {asset_id}.')
             else:
@@ -85,7 +111,10 @@ def critique(run: str, renders: list[str], cameras: list[str], base: int | None 
     if not _LOCK.acquire(blocking=False):
         return None, 'a critique is already running'
     try:
-        _validate(run, renders, cameras, base)
+        try:
+            _validate(run, renders, cameras, base)
+        except ValueError as exc:
+            return None, str(exc)
         if sum(r['kind'] == 'director' and r.get('run') == run
                for r in twin_store.rounds()) >= twin_cost.ROUND_CAP:
             return None, 'round cap reached'
@@ -125,14 +154,15 @@ def critique(run: str, renders: list[str], cameras: list[str], base: int | None 
         if not isinstance(answer, dict):
             return None, 'The art director returned invalid JSON.'
         if 'error' in answer:
-            return None, str(answer['error'])
+            return None, 'The art director could not finish. Please try again.'
         if (not isinstance(answer.get('critique'), str) or type(answer.get('done')) is not bool
-                or not isinstance(answer.get('site'), dict)
-                or not isinstance(answer.get('materials'), dict)):
-            return None, 'The art director must return critique, done, site and materials.'
-        notes = []
-        revised = _enforce_kit(answer, current, kit, notes)
-        plan, normalized_notes = twin_plan.merge_director(current, revised)
+                or any(name in answer and answer[name] is not None
+                       and answer[name] != [] and not isinstance(answer[name], dict)
+                       for name in ('site', 'materials'))):
+            return None, 'The art director must return critique, done and valid site/material edits.'
+        revised, notes = twin_plan.overlay_director(current, answer)
+        revised = _enforce_kit(revised, current, kit, notes)
+        plan, normalized_notes = twin_plan.normalize(twin_plan.record_compose_overrides(current, revised))
         notes.extend(normalized_notes)
         cost = math.fsum(entry['usd'] for entry in entries)
         round_id = twin_store.push_round(plan, 'director', note=answer['critique'][:200],
@@ -142,8 +172,10 @@ def critique(run: str, renders: list[str], cameras: list[str], base: int | None 
                 'plan': twin_store.current(), 'cost': cost, 'stale': saved['stale'], 'notes': notes}, None
     except twin_cost.CheckpointReached:
         raise
-    except Exception as exc:
+    except ValueError:
+        return None, 'The art director returned an invalid house plan.'
+    except Exception:
         logger.exception('Twin director %s failed', run)
-        return None, str(exc)
+        return None, 'The art director could not finish. Please try again.'
     finally:
         _LOCK.release()

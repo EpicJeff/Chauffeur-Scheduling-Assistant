@@ -8,10 +8,17 @@ async function request(path, method = 'GET', body) {
     method, ...(body === undefined ? {} : body instanceof FormData
       ? { body } : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
   });
-  const data = await response.json();
+  const text = await response.text();
+  let data;
+  try { data = JSON.parse(text); }
+  catch {
+    const error = new Error(`House request ${response.status}: ${text || response.statusText || 'Empty response'}`);
+    error.status = response.status;
+    throw error;
+  }
   if (!response.ok) {
-    const error = new Error(typeof data.detail === 'string' ? data.detail : 'The house request could not finish.');
-    error.status = response.status; error.detail = data.detail;
+    const error = new Error(typeof data?.detail === 'string' ? data.detail : 'The house request could not finish.');
+    error.status = response.status; error.detail = data?.detail;
     throw error;
   }
   return data;
@@ -157,7 +164,15 @@ export function initTwinTools() {
     try {
       await request('/plan', 'PUT', { plan, reason: reason.value.trim(), base: editorBase });
       reason.value = ''; await rebuildCurrent();
-    } catch (error) { tell(error); }
+    } catch (error) {
+      if (error.status === 409) {
+        try {
+          const reload = await window.promptConfirm('Plan changed elsewhere',
+            'Reload it? Your unsaved text will be replaced.', 'Reload', 'Keep editing');
+          if (reload) await rebuildCurrent();
+        } catch (reloadError) { tell(reloadError); }
+      } else tell(error);
+    }
     finally { button.disabled = false; }
   });
   document.getElementById('twin-rounds').addEventListener('click', async event => {
@@ -214,7 +229,5 @@ export function initTwinTools() {
   document.getElementById('twin-no-plot').addEventListener('click', () => {
     sheet.querySelectorAll('[name="twin-plot"]').forEach(input => { input.checked = false; });
   });
-  // Load while the scene starts so opening tools has the current editor ready.
-  // An auth refusal is presented by nav; opening the sheet retries visibly.
-  Promise.all([refresh(), sources()]).catch(() => {});
+  // Parents-only reads start when the tools sheet opens.
 }

@@ -55,6 +55,7 @@ def _open(page, s):
     page.evaluate('''() => { window.__rebuilds = 0; const r = window.__twin.rebuild.bind(window.__twin);
                              window.__twin.rebuild = (p) => { window.__rebuilds++; return r(p); }; }''')
     page.click('#twin-tools-toggle')
+    page.wait_for_function('() => (document.querySelector("#twin-plan-editor").value || "").length > 10', timeout=30000)
 
 
 def _plan_with_extra_shrub(n):

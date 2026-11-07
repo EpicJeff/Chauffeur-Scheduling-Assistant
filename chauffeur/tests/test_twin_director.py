@@ -166,6 +166,93 @@ def scenario_assets_outside_the_kit_are_refused():
     check('gold_leaf' in notes and 'Palm Royal' in notes and 'hot_tub_9000' in notes, notes)
 
 
+def scenario_unchanged_hand_items_are_never_refused():
+    rid, plan = _fresh()
+    p = copy.deepcopy(plan)
+    p['site']['furniture'].append({'kind': 'rocker', 'at': [34.0, 9.0], 'rotation': 90})      # kind only, by hand
+    p['site']['planting'].append({'kind': 'tree', 'preset': 'Pine Small', 'at': [120.0, -90.0],
+                                  'height': 20, 'seed': 77})                               # a preset outside the kit lists
+    ts.save_hand_edit(p, 'my rocker and the pine by the gate', base=rid)
+    result, err = _run(Critic())                                                            # echoes the site back unchanged
+    cur = ts.current()
+    check(any(f.get('kind') == 'rocker' for f in cur['site']['furniture']), 'an echoed hand rocker survives')
+    check(any(t.get('preset') == 'Pine Small' for t in cur['site']['planting']), 'an echoed hand pine survives')
+    check(not any('rocker' in n or 'Pine Small' in n for n in result.get('notes', [])), result.get('notes'))
+
+
+def scenario_omitted_keys_mean_unchanged_and_empty_means_delete():
+    rid, plan = _fresh()
+
+    def partial(site, mats):
+        keep = {'planting': site['planting'], 'hardscape': site['hardscape']}
+        return keep, {'roof': mats['roof']}
+    result, err = _run(Critic(partial))
+    cur = ts.current()
+    check(cur['site']['pool'] == plan['site']['pool'] and cur['site']['lot'] == plan['site']['lot']
+          and cur['site']['beds'] == plan['site']['beds'], 'site keys the model left out are unchanged')
+    check(cur['materials']['siding'] == plan['materials']['siding'], 'material roles left out are unchanged')
+    check(not cur['site']['compose_overrides']['removed'], 'nothing left out is recorded as removed')
+    check(any('unchanged' in n for n in result.get('notes', [])), result.get('notes'))
+
+    def clear_edges(site, mats):
+        site['edges'] = []
+        return site, mats
+    _run(Critic(clear_edges), run='run-2')
+    check(ts.current()['site']['edges'] == [], 'an explicit empty list deletes')
+
+
+def scenario_director_colours_are_validated():
+    _fresh()
+
+    def bad(site, mats):
+        mats['trim'] = {'id': mats['trim']['id'], 'color': 'not-a-colour'}
+        mats['door'] = 'mocha_oak_veneer'
+        return site, mats
+    before = copy.deepcopy(ts.current()['materials'])
+    result, err = _run(Critic(bad))
+    cur = ts.current()['materials']
+    check(cur['trim'] == before['trim'] and cur['door'] == before['door'], f'invalid shapes keep the current value: {cur["trim"]}, {cur["door"]}')
+
+
+def scenario_a_failed_model_call_is_still_costed():
+    _fresh()
+
+    def boom(tier, api_key, system_prompt, user_prompt, **kw):
+        kw['usage'].append({'model': PRICED, 'input_tokens': None, 'output_tokens': None, 'images': 2,
+                            'prompt_chars': len(user_prompt), 'max_output_tokens': kw.get('max_output_tokens') or 0})
+        raise RuntimeError('503 upstream')
+    orig = model_pools.call_pool_json
+    model_pools.call_pool_json = boom
+    try:
+        result, err = tdir.critique('fail-run', [_png()], ['front'], base=ts.current_id())
+    finally:
+        model_pools.call_pool_json = orig
+    check(result is None and err, err)
+    check([e['stage'] for e in tc.entries()] == ['director'] and tc.entries()[0]['basis'] == 'estimated', tc.entries())
+
+
+def scenario_a_second_concurrent_critique_is_refused():
+    import threading
+    _fresh()
+    gate, release = threading.Event(), threading.Event()
+    critic = Critic(on_call=lambda: (gate.set(), release.wait(10)))
+    out = {}
+    orig = model_pools.call_pool_json
+    model_pools.call_pool_json = critic
+    try:
+        t = threading.Thread(target=lambda: out.setdefault('first', tdir.critique('a', [_png()], ['front'], base=ts.current_id())))
+        t.start()
+        check(gate.wait(10), 'first round in flight')
+        second = tdir.critique('b', [_png()], ['front'], base=ts.current_id())
+        release.set()
+        t.join(10)
+    finally:
+        model_pools.call_pool_json = orig
+        release.set()
+    check(second[0] is None and 'already running' in second[1], second)
+    check(out['first'][1] is None, out['first'])
+
+
 def scenario_round_cap_is_five_per_run():
     _fresh()
     critic = Critic()
@@ -240,6 +327,11 @@ if __name__ == '__main__':
                scenario_the_call_carries_brief_photos_and_renders,
                scenario_director_rounds_do_not_rerun_compose,
                scenario_assets_outside_the_kit_are_refused,
+               scenario_unchanged_hand_items_are_never_refused,
+               scenario_omitted_keys_mean_unchanged_and_empty_means_delete,
+               scenario_director_colours_are_validated,
+               scenario_a_failed_model_call_is_still_costed,
+               scenario_a_second_concurrent_critique_is_refused,
                scenario_round_cap_is_five_per_run,
                scenario_checkpoint_blocks_a_round,
                scenario_a_revert_during_a_critique_wins,
