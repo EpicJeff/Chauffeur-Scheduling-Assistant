@@ -9,6 +9,8 @@ from copy import deepcopy
 from math import hypot
 from random import Random
 
+from services import twin_register
+
 
 _EPS = 1e-6
 
@@ -137,18 +139,17 @@ def _loops(walls):
 def _building_geometry(buildings, notes):
     footprints, porches, sides = [], [], []
     for building in buildings:
-        position = building.get('position', [0, 0])
         ground = min((level['elevation'] for level in building['levels']), default=0)
         levels = {level['id'] for level in building['levels'] if level['elevation'] == ground}
         walls = deepcopy([w for w in building['walls'] if w.get('exterior') and w['level'] in levels])
         for wall in walls:
             for key in ('from', 'to'):
-                wall[key] = _along(wall[key], position, 1)
+                wall[key] = twin_register.to_world(building, wall[key])
         loops = _loops(walls)
         footprints.extend(loops)
         porch = building.get('porch') or {}
         if porch.get('polygon'):
-            porches.append([_along(p, position, 1) for p in porch['polygon']])
+            porches.append([twin_register.to_world(building, p) for p in porch['polygon']])
         for wall in walls:
             a, b = wall['from'], wall['to']
             length = hypot(*_sub(b, a))

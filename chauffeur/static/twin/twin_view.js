@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
-import { buildTwin, FT } from './twin_generator.js';
+import { buildTwin, FT, PICK_LAYER } from './twin_generator.js';
+import { heightAt } from './twin_roof.js';
+import { groundAt } from './twin_ground.js';
 import { buildYard } from './twin_yard.js';
 import { base, loadSky, disposeObject } from './twin_library.js';
 import { TIERS, pickTier, rendererName } from './twin_tiers.js';
@@ -38,6 +40,20 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
   let bounds = { x: 19, y: 11, span: 38 };
   let lastStats = { drawCalls: 0, triangles: 0, tier, fps: 0 };
   let probeRun = null, fps = 0, fpsFrames = 0, fpsSince = performance.now();
+  let visibleLevels = null, sheet = null, sheetSpec = null, sheetRevision = 0;
+  const raycaster = new THREE.Raycaster(); raycaster.layers.set(PICK_LAYER);
+  const visible = object => { for (let o = object; o; o = o.parent) if (!o.visible) return false; return true; };
+  function pieceBox(id) {
+    if (!twin) return null;
+    twin.root.updateMatrixWorld(true);
+    const bounds = twin.pieceBounds.get(id);
+    return bounds ? bounds.box.clone().applyMatrix4(bounds.group.matrixWorld) : null;
+  }
+  function clearSheet() {
+    ++sheetRevision;
+    if (sheet?.object) { sheet.object.removeFromParent(); disposeObject(sheet.object); }
+    sheet = null;
+  }
   function render() {
     if (disposed) return;
     renderer3.info.reset();
@@ -53,14 +69,79 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
   const view = {
     ready: false, scene, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
     groups: null, roomLights: [], plan,
+    pick(clientX, clientY) {
+      if (!twin) return null;
+      const rect = renderer3.domElement.getBoundingClientRect();
+      if (clientX < rect.left || clientX >= rect.right || clientY < rect.top || clientY >= rect.bottom) return null;
+      twin.root.updateMatrixWorld(true); camera.updateMatrixWorld(true);
+      raycaster.setFromCamera(new THREE.Vector2((clientX - rect.left) / rect.width * 2 - 1, 1 - (clientY - rect.top) / rect.height * 2), camera);
+      // The plan camera reaches pieces beneath the roof, as a floor editor
+      // must; perspective views can select the roof itself.
+      const candidates = twin.pickObjects.filter(o => visible(o) && (state.camera !== 'top' || o.userData.kind !== 'roof'));
+      const hits = raycaster.intersectObjects(candidates, false);
+      const hit = state.camera === 'top' ? hits.find(h => h.object.userData.kind === 'wall') || hits[0] : hits[0];
+      if (!hit) return null;
+      const { pieceId, kind, buildingId } = hit.object.userData;
+      return { pieceId, kind, buildingId };
+    },
+    worldBox(id) {
+      const box = pieceBox(id); if (!box) return null;
+      return { min: [box.min.x / FT, -box.max.z / FT, box.min.y / FT], max: [box.max.x / FT, -box.min.z / FT, box.max.y / FT] };
+    },
+    showLevels(keys) {
+      if (!twin) return;
+      visibleLevels = keys === null ? null : new Set(keys);
+      for (const [key, group] of Object.entries(twin.groups.levels)) group.visible = !visibleLevels || visibleLevels.has(key);
+      applyLights(); render();
+    },
+    setSheet(spec) {
+      clearSheet(); sheetSpec = spec;
+      if (!spec || !twin || disposed) return;
+      const building = plan.buildings.find(b => b.id === spec.buildingId);
+      const level = building?.levels.find(l => l.id === spec.levelId);
+      const parent = twin.groups.levels[`${spec.buildingId}:${spec.levelId}`];
+      if (!level || !parent || !(spec.reg?.scale > 0)) return;
+      const version = sheetRevision, model = twin;
+      const elevation = groundAt(plan, ...(building.position || [0, 0])) + (building.base || 0) + level.elevation;
+      sheet = { ready: false, object: null, elevationFt: elevation, widthFt: 0, depthFt: 0 };
+      new THREE.TextureLoader().load(spec.url, texture => {
+        if (disposed || version !== sheetRevision || model !== twin) { texture.dispose(); return; }
+        const width = texture.image.naturalWidth || texture.image.width, height = texture.image.naturalHeight || texture.image.height;
+        const reg = spec.reg, angle = (reg.angle || 0) * Math.PI / 180, c = Math.cos(angle), s = Math.sin(angle);
+        const at = (x, y) => {
+          const u = (x - reg.origin_px[0]) * reg.scale, v = (reg.origin_px[1] - y) * reg.scale;
+          return [c * u - s * v + reg.offset[0], level.elevation + 0.015, -(s * u + c * v + reg.offset[1])];
+        };
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute([at(0, height), at(width, height), at(width, 0), at(0, 0)].flat(), 3));
+        geometry.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
+        geometry.setIndex([0, 1, 2, 0, 2, 3]); geometry.computeVertexNormals();
+        texture.colorSpace = THREE.SRGBColorSpace;
+        const material = new THREE.MeshBasicMaterial({ name: 'sheet', map: texture, transparent: true, opacity: spec.opacity ?? 0.6, depthWrite: false, side: THREE.DoubleSide });
+        const object = new THREE.Mesh(geometry, material), position = building.position || [0, 0];
+        Object.assign(object.userData, { pieceId: `${building.id}:sheet:${level.id}`, kind: 'sheet', buildingId: building.id });
+        object.position.set(position[0], elevation - level.elevation, -position[1]); object.rotation.y = (building.rotation || 0) * Math.PI / 180;
+        object.renderOrder = 1; parent.add(object);
+        sheet = { ready: true, object, elevationFt: elevation, widthFt: width * reg.scale, depthFt: height * reg.scale }; render();
+      }, undefined, () => { if (version === sheetRevision) { sheet = null; render(); } });
+    },
     setView(id) {
+      // P0 callers may still name a level without a building. Only resolve an
+      // unambiguous match; all scene state and buttons use namespaced keys.
+      if (twin && id !== 'ext' && !twin.groups.levels[id]) {
+        const matches = Object.keys(twin.groups.levels).filter(key => key.endsWith(':' + id));
+        if (matches.length === 1) id = matches[0];
+      }
       if (!twin || (id !== 'ext' && !twin.groups.levels[id])) return;
       state.view = id;
+      visibleLevels = null;
       const ext = id === 'ext', ids = Object.keys(twin.groups.levels).sort((a, b) => twin.levelElevations[a] - twin.levelElevations[b]);
-      const isFirst = id === ids[0];
+      const buildingId = ext ? null : twin.groups.levels[id].userData.buildingId;
+      const isFirst = id === ids.find(key => twin.groups.levels[key].userData.buildingId === buildingId);
       twin.groups.roof.visible = twin.groups.gableFull.visible = ext;
       twin.groups.gableCut.visible = !ext && !isFirst;
-      for (const level of ids) twin.groups.levels[level].visible = ext || twin.levelElevations[level] <= twin.levelElevations[id];
+      for (const level of ids) twin.groups.levels[level].visible = ext || (twin.groups.levels[level].userData.buildingId === buildingId && twin.levelElevations[level] <= twin.levelElevations[id]);
+      for (const group of twin.groups.gableCut.children) group.visible = ext || group.userData.buildingId === buildingId;
       applyLights(); render();
     },
     setTime(time) {
@@ -75,11 +156,11 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
       applyLights(); render();
     },
     setCamera(name) {
-      if (!['front', 'porch', 'rear', 'top'].includes(name)) return;
+      if (!['front', 'back', 'orbit', 'porch', 'rear', 'top'].includes(name)) return;
       state.camera = name;
       const { x, y, span } = bounds, k = span / 38;
       const positions = { front: [x - 41 * k, 22 * k, y - 69 * k], porch: [x + 59 * k, 22 * k, y - 45 * k], rear: [x + 27 * k, 34 * k, y + 57 * k], top: [x, 105 * k, y - 0.01] };
-      const [cx, cy, cz] = positions[name];
+      const [cx, cy, cz] = positions[name === 'back' ? 'rear' : name === 'orbit' ? 'porch' : name];
       camera.position.set(cx * FT, cy * FT, -cz * FT);
       controls.target.set(x * FT, (name === 'top' ? 3 : 8) * FT, -y * FT); controls.update(); render();
     },
@@ -150,10 +231,22 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
         const yard = await buildYard(nextPlan, kit, tier); next.groups.site.add(yard.group); await next.ready;
       } catch (error) { release(next); throw error; }
       if (disposed || version !== revision) { release(next); return; }
+      const levelsToRestore = visibleLevels && [...visibleLevels];
+      clearSheet();
       if (twin) { scene.remove(twin.root); release(twin); }
       twin = next; plan = nextPlan; scene.add(twin.root);
-      view.groups = twin.groups; view.roomLights = twin.roomLights; view.plan = plan;
-      const points = (plan.buildings || []).flatMap(b => (b.walls || []).flatMap(w => [w.from, w.to].map(p => [p[0] + (b.position?.[0] || 0), p[1] + (b.position?.[1] || 0)])));
+      // Read-only legacy property access for P0 embeds, never enumerable scene
+      // keys and never a resolution when two buildings share the level name.
+      view.groups = { ...twin.groups, levels: new Proxy(twin.groups.levels, { get(target, key) {
+        if (typeof key !== 'string' || key in target) return target[key];
+        const matches = Object.keys(target).filter(id => id.endsWith(':' + key));
+        return matches.length === 1 ? target[matches[0]] : undefined;
+      } }) };
+      view.roomLights = twin.roomLights; view.plan = plan;
+      const points = (plan.buildings || []).flatMap(b => {
+        const angle = (b.rotation || 0) * Math.PI / 180, c = Math.cos(angle), s = Math.sin(angle);
+        return (b.walls || []).flatMap(w => [w.from, w.to].map(p => [c * p[0] - s * p[1] + (b.position?.[0] || 0), s * p[0] + c * p[1] + (b.position?.[1] || 0)]));
+      });
       if (points.length) {
         const xs = points.map(p => p[0]), ys = points.map(p => p[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
         bounds = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, span: Math.max(x1 - x0 + 7, y1 - y0, 20) };
@@ -163,6 +256,8 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
       const reach = Math.max(bounds.span * FT, 20);
       Object.assign(sun.shadow.camera, { left: -reach, right: reach, top: reach, bottom: -reach, near: 0.5, far: reach * 6 }); sun.shadow.camera.updateProjectionMatrix();
       view.setView(twin.groups.levels[state.view] ? state.view : 'ext'); view.setTime(state.time); view.setCamera(state.camera);
+      if (levelsToRestore) view.showLevels(levelsToRestore);
+      if (sheetSpec) view.setSheet(sheetSpec);
       view.ready = true;
       el.dispatchEvent(new CustomEvent('twinrebuilt', { detail: view }));
     },
@@ -173,6 +268,7 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
         probeRun.reject(new Error('The twin was disposed during the probe.')); probeRun = null;
       }
       renderer3.setAnimationLoop(null); observer.disconnect(); controls.dispose();
+      clearSheet(); sheetSpec = null;
       if (twin) { scene.remove(twin.root); release(twin); }
       sky?.dispose(); environmentTarget?.dispose(); sun.shadow.dispose();
       renderer3.dispose(); renderer3.forceContextLoss(); renderer3.domElement.remove();
@@ -187,10 +283,46 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
   }
   function applyLights() {
     if (!twin) return;
-    const night = state.time === 'night', elevation = twin.levelElevations[state.view];
-    twin.roomLights.forEach(l => { l.visible = night && (state.view === 'ext' || l.userData.elevation <= elevation); });
+    const night = state.time === 'night';
+    twin.roomLights.forEach(l => { l.visible = night && !!twin.groups.levels[l.userData.level]?.visible; });
     twin.root.traverse(o => { for (const m of o.material ? [].concat(o.material) : []) if (m.name === 'fixture') m.emissiveIntensity = night ? 2 : 0; });
   }
+  if (new URLSearchParams(location.search).get('test') === '1') Object.assign(view, {
+    roofStats(buildingId) {
+      let triangles = 0, maxError = 0;
+      for (const [id, roof] of twin?.roofSurfaces || []) {
+        if (buildingId && id !== buildingId) continue;
+        const p = roof.positions;
+        for (let i = 0; i < p.length; i += 9) {
+          const x = (p[i] + p[i + 3] + p[i + 6]) / 3, y = (p[i + 1] + p[i + 4] + p[i + 7]) / 3, z = (p[i + 2] + p[i + 5] + p[i + 8]) / 3;
+          maxError = Math.max(maxError, Math.abs(z - (heightAt(roof.sections, x, y) ?? z))); ++triangles;
+        }
+      }
+      return { triangles, maxError };
+    },
+    pieceInfo(id) {
+      const objects = twin?.pieces.get(id), object = objects?.[0]; if (!object) return null;
+      return { material: object.material.name, opacity: object.material.opacity, merged: objects.every(o => !!o.userData.merged), depthWrite: object.material.depthWrite };
+    },
+    screenOf(id) {
+      const box = pieceBox(id); if (!box) return null;
+      camera.updateMatrixWorld(true);
+      const point = box.getCenter(new THREE.Vector3()).project(camera), rect = renderer3.domElement.getBoundingClientRect();
+      return [rect.left + (point.x + 1) * rect.width / 2, rect.top + (1 - point.y) * rect.height / 2];
+    },
+    materialsWith(prop) {
+      const materials = new Set();
+      scene.traverse(o => { for (const m of o.material ? [].concat(o.material) : []) if (prop in m) materials.add(m); });
+      return [...materials].map(m => m.name || m.type);
+    },
+    sheetInfo() {
+      if (!sheet) return null;
+      const { ready, elevationFt, widthFt, depthFt } = sheet;
+      return { ready, visible: !!sheet.object && visible(sheet.object), elevationFt, widthFt, depthFt };
+    },
+    levelKeys() { return Object.keys(twin?.groups.levels || {}); },
+    levelVisibility() { return Object.fromEntries(Object.entries(twin?.groups.levels || {}).map(([key, group]) => [key, group.visible])); },
+  });
   window.__twin = view;
   resize();
   try {
@@ -274,7 +406,7 @@ async function boot() {
     const views = document.getElementById('twin-views');
     const syncViews = () => {
       views.replaceChildren();
-      for (const [id, label] of [['ext', 'Exterior'], ...Object.keys(view.groups.levels).map(id => [id, view.plan.buildings.flatMap(b => b.levels).find(l => l.id === id)?.name || id])]) {
+      for (const [id, label] of [['ext', 'Exterior'], ...view.plan.buildings.flatMap(b => b.levels.map(l => [`${b.id}:${l.id}`, (view.plan.buildings.length > 1 ? (b.name || b.id) + ' · ' : '') + (l.name || l.id)]))]) {
         const button = document.createElement('button'); button.type = 'button'; button.dataset.view = id; button.textContent = label; views.appendChild(button);
       }
     };

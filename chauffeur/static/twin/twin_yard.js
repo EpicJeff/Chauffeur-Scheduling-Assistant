@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Tree } from '@dgreenheck/ez-tree';
 import { FT, addMesh, boxGeometry, boxRect, polygon, mergeStatic } from './twin_generator.js';
 import { kitMaterial, loadModel } from './twin_library.js';
+import { groundAt } from './twin_ground.js';
 
 function random(seed) {
   let n = seed | 0;
@@ -79,6 +80,10 @@ async function bakePreset(preset, seed, renderer) {
 export async function buildYard(plan, kit, tier) {
   const group = new THREE.Group(); group.name = 'yard';
   const site = plan.site || {}, mats = new Map();
+  const surface = (poly, z0, z1 = z0, holes = []) => {
+    const ground = groundAt(plan, ...poly[0]);
+    return polygon(poly, z0 + ground, z1 + ground, holes);
+  };
   const materialKit = { ...kit, materials: { ...kit.materials } };
   const known = kit.manifest || window.twinManifest || {};
   for (const [role, ref] of Object.entries(plan.materials || {})) materialKit.materials[role] = {
@@ -97,19 +102,19 @@ export async function buildYard(plan, kit, tier) {
     const x0 = Math.min(...xs) - margin, x1 = Math.max(...xs) + margin;
     const y0 = Math.min(...ys) - margin, y1 = Math.max(...ys) + margin;
     // Continue the terrain below the lot edge without covering the sunken pool.
-    addMesh(group, polygon([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], -0.06, -0.06, pool ? [pool] : []), mat('lawn'));
-    addMesh(group, polygon(site.lot, -0.04, -0.04, pool ? [pool] : []), mat('lawn'));
+    addMesh(group, surface([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], -0.06, -0.06, pool ? [pool] : []), mat('lawn'));
+    addMesh(group, surface(site.lot, -0.04, -0.04, pool ? [pool] : []), mat('lawn'));
   }
   const pool = site.pool?.polygon;
   const inside = (p, poly) => { let v = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) if ((poly[i][1] > p[1]) !== (poly[j][1] > p[1]) && p[0] < (poly[j][0] - poly[i][0]) * (p[1] - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) v = !v; return v; };
   for (const h of site.hardscape || []) if (h.polygon?.length >= 3) {
     const holes = pool && pool.every(p => inside(p, h.polygon)) ? [pool] : [];
     const role = h.material === 'concrete' ? 'patio_concrete' : kit.materials?.[h.material] ? h.material : 'paving';
-    addMesh(group, polygon(h.polygon, 0, 0.3, holes), mat(role));
+    addMesh(group, surface(h.polygon, 0, 0.3, holes), mat(role));
   }
   if (pool?.length >= 3) {
     const d = site.pool.depth || 5, coping = site.pool.coping || 1;
-    addMesh(group, polygon(pool, -d - 0.2, -d), plain('pool tile', '#5fa8c4', { roughness: 0.35 }));
+    addMesh(group, surface(pool, -d - 0.2, -d), plain('pool tile', '#5fa8c4', { roughness: 0.35 }));
     // Offset each edge outwards by coping width. This works for the convex pool
     // polygons used by the plan and retains the original water outline.
     const area = pool.reduce((a, p, i) => a + p[0] * pool[(i + 1) % pool.length][1] - pool[(i + 1) % pool.length][0] * p[1], 0);
@@ -118,19 +123,19 @@ export async function buildYard(plan, kit, tier) {
       const a = normal(pool[(i + pool.length - 1) % pool.length], p), b = normal(p, pool[(i + 1) % pool.length]), factor = coping / Math.max(0.1, 1 + a[0] * b[0] + a[1] * b[1]);
       return [p[0] + (a[0] + b[0]) * factor, p[1] + (a[1] + b[1]) * factor];
     });
-    addMesh(group, polygon(outer, 0.3, 0.45, [pool]), mat('paving'));
+    addMesh(group, surface(outer, 0.3, 0.45, [pool]), mat('paving'));
     for (let i = 0; i < pool.length; i++) {
       const a = pool[i], b = pool[(i + 1) % pool.length], n = normal(a, b);
-      addMesh(group, polygon([a, b, [b[0] + n[0] * 0.25, b[1] + n[1] * 0.25], [a[0] + n[0] * 0.25, a[1] + n[1] * 0.25]], -d, 0.3), plain('pool tile', '#5fa8c4'));
+      addMesh(group, surface([a, b, [b[0] + n[0] * 0.25, b[1] + n[1] * 0.25], [a[0] + n[0] * 0.25, a[1] + n[1] * 0.25]], -d, 0.3), plain('pool tile', '#5fa8c4'));
     }
-    addMesh(group, polygon(pool, -0.25), plain('water', '#7fd0e6', { transparent: true, opacity: 0.65, roughness: 0.12, depthWrite: false }));
+    addMesh(group, surface(pool, -0.25), plain('water', '#7fd0e6', { transparent: true, opacity: 0.65, roughness: 0.12, depthWrite: false }));
   }
   if (site.fire_pit?.at) {
     const f = site.fire_pit;
     addMesh(group, new THREE.CylinderGeometry(f.radius, f.radius + 0.2, 1.4, 24, 1, true).translate(f.at[0], 0.7, -f.at[1]), mat('base'));
     addMesh(group, new THREE.CircleGeometry(f.radius + 2, 32).rotateX(-Math.PI / 2).translate(f.at[0], 0.02, -f.at[1]), plain('gravel', '#a59c8f'));
   }
-  for (const bed of site.beds || []) if (bed.polygon?.length >= 3) addMesh(group, polygon(bed.polygon, 0, 0.12), mat('mulch'));
+  for (const bed of site.beds || []) if (bed.polygon?.length >= 3) addMesh(group, surface(bed.polygon, 0, 0.12), mat('mulch'));
   if (site.fence?.polyline?.length > 1) {
     const f = site.fence, height = f.height || 6;
     for (let i = 0; i < f.polyline.length - 1; i++) {
@@ -151,13 +156,13 @@ export async function buildYard(plan, kit, tier) {
         if (!cards.has(p.preset)) cards.set(p.preset, await bakePreset(p.preset, p.seed ?? 1, baker));
         const card = cards.get(p.preset), h = p.height * 1.08;
         for (const angle of [0, Math.PI / 2]) {
-          const geometry = new THREE.PlaneGeometry(h * card.aspect, h).translate(0, h / 2, 0).rotateY(angle + (p.seed || 0) * 2.39996).translate(p.at[0], 0, -p.at[1]);
+          const geometry = new THREE.PlaneGeometry(h * card.aspect, h).translate(0, h / 2, 0).rotateY(angle + (p.seed || 0) * 2.39996).translate(p.at[0], groundAt(plan, ...p.at), -p.at[1]);
           addMesh(group, geometry, card.material);
         }
       } else {
         const tree = new Tree(); tree.loadPreset(p.preset); tree.options.seed = p.seed ?? 1; tree.generate(); standardTree(tree);
         const bounds = new THREE.Box3().setFromObject(tree), h = bounds.max.y - bounds.min.y, scale = p.height / Math.max(0.01, h);
-        tree.scale.setScalar(scale); tree.position.set(p.at[0], -bounds.min.y * scale, -p.at[1]);
+        tree.scale.setScalar(scale); tree.position.set(p.at[0], groundAt(plan, ...p.at) - bounds.min.y * scale, -p.at[1]);
         tree.rotation.y = (p.seed || 0) * 2.39996; group.add(tree);
       }
       // Let loading/status controls paint while full presets are generated.
@@ -176,9 +181,11 @@ export async function buildYard(plan, kit, tier) {
     if (!models.has(assetId)) models.set(assetId, loadModel(assetId, kit));
     const source = await models.get(assetId); if (!source) return;
     const model = source.clone(true); model.scale.setScalar((f.scale || 1) / FT);
-    let elevation = f.elevation || 0;
+    let elevation = groundAt(plan, ...f.at) + (f.elevation || 0);
     for (const b of plan.buildings || []) if (b.porch?.polygon) {
-      const pos = b.position || [0, 0]; if (inside([f.at[0] - pos[0], f.at[1] - pos[1]], b.porch.polygon)) elevation = b.porch.floor;
+      const pos = b.position || [0, 0], angle = -(b.rotation || 0) * Math.PI / 180;
+      const x = f.at[0] - pos[0], y = f.at[1] - pos[1];
+      if (inside([Math.cos(angle) * x - Math.sin(angle) * y, Math.sin(angle) * x + Math.cos(angle) * y], b.porch.polygon)) elevation = groundAt(plan, ...pos) + (b.base || 0) + b.porch.floor;
     }
     model.position.set(f.at[0], elevation, -f.at[1]); model.rotation.y = THREE.MathUtils.degToRad(f.rotation || 0);
     return model;
@@ -202,7 +209,7 @@ export async function buildYard(plan, kit, tier) {
       geo.setAttribute('position', new THREE.Float32BufferAttribute([-0.035, 0, 0, 0.035, 0, 0, 0.03, 0.45, 0], 3));
       geo.computeVertexNormals();
       const grass = new THREE.InstancedMesh(geo, plain('edge grass', '#56783a', { side: THREE.DoubleSide }), placements.length), dummy = new THREE.Object3D();
-      placements.forEach(([x, z, n], i) => { dummy.position.set(x, 0.12, z); dummy.rotation.y = n * Math.PI * 2; dummy.scale.setScalar(0.6 + n); dummy.updateMatrix(); grass.setMatrixAt(i, dummy.matrix); });
+      placements.forEach(([x, z, n], i) => { dummy.position.set(x, groundAt(plan, x, -z) + 0.12, z); dummy.rotation.y = n * Math.PI * 2; dummy.scale.setScalar(0.6 + n); dummy.updateMatrix(); grass.setMatrixAt(i, dummy.matrix); });
       grass.receiveShadow = true; group.add(grass);
     }
   }

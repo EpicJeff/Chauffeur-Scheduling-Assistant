@@ -232,8 +232,42 @@ def scenario_edges_follow_the_lawn():
     check(patio_edges, 'the lawn edge along the patio is traced')
 
 
+def scenario_rotated_building_moves_its_beds():
+    # Review finding (Codex adversarial review, house editor plan Task 4):
+    # composition ignored building rotation, so beds and clearances kept the
+    # old footprint and planting could land inside the rendered house.
+    def rot90(pt):
+        return [-pt[1], pt[0]]
+    # Isolate the rigid rotation: a lot far larger than the house and no fixed
+    # site blockers (patio, pool, fence), so the lot's own clearance rules
+    # cannot change which beds exist; the real fixture's clearances still run
+    # in the planting check below.
+    plain = _plan()
+    plain['site'] = {'lot': [[-200, -200], [200, -200], [200, 200], [-200, 200]]}
+    turned = copy.deepcopy(plain)
+    turned['buildings'][0]['rotation'] = 90
+    a, _ = tcm.compose(plain, KIT, seed=1)
+    b, _ = tcm.compose(turned, KIT, seed=1)
+    turned_footprint = [rot90(p) for p in FOOTPRINT]
+    beds_a = {x['id']: x for x in a['site']['beds'] if x.get('by') == 'compose'}
+    beds_b = {x['id']: x for x in b['site']['beds'] if x.get('by') == 'compose'}
+    check(beds_a and set(beds_a) == set(beds_b), (sorted(beds_a), sorted(beds_b)))
+    for bid, bed in beds_a.items():
+        want = [rot90(p) for p in bed['polygon']]
+        got = beds_b[bid]['polygon']
+        check(len(want) == len(got) and all(abs(w[0] - g[0]) < 0.01 and abs(w[1] - g[1]) < 0.01
+                                            for w, g in zip(want, got)), (bid, want, got))
+    real = _plan()
+    real['buildings'][0]['rotation'] = 90
+    c, _ = tcm.compose(real, KIT, seed=1)
+    for item in b['site']['planting'] + c['site']['planting']:
+        if item.get('by') == 'compose':
+            check(not _inside(item['at'], turned_footprint), f'planted inside the turned house: {item}')
+
+
 if __name__ == '__main__':
-    for fn in (scenario_compose_is_deterministic,
+    for fn in (scenario_rotated_building_moves_its_beds,
+               scenario_compose_is_deterministic,
                scenario_compose_ids_are_stable_and_tagged,
                scenario_compose_does_not_mutate_its_input,
                scenario_compose_is_idempotent_and_keeps_foreign_items,
