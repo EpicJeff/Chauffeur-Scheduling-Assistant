@@ -1,0 +1,21 @@
+{
+ "photos": [
+  {
+   "index": 0,
+   "parts": [
+    "house",
+    "lot"
+   ]
+  }
+ ],
+ "shells": [
+  {
+   "building": "shed",
+   "storeys": 1,
+   "roof": "gable",
+   "pitch": 6,
+   "confidence": 0.5,
+   "why": ""
+  }
+ ]
+}

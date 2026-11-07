@@ -2,16 +2,16 @@
 import json
 import re
 
-from services import llm, model_pools, storage, twin_cost
+from services import llm, model_pools, storage, twin_cost, twin_place
 from services.twin_draft import FINISHES_PROMPT
 
 
 KINDS = ('sheet_roles', 'outline', 'walls', 'openings', 'rooms', 'registration',
-         'roof', 'pitch', 'plot', 'site', 'finishes')
+         'roof', 'pitch', 'plot', 'site', 'finishes', 'photo_parts')
 MAX_OUTPUT = {'sheet_roles': 2048, 'outline': 4096, 'walls': 16384,
               'openings': 16384, 'rooms': 8192, 'registration': 4096,
               'roof': 8192, 'pitch': 2048, 'plot': 8192, 'site': 8192,
-              'finishes': 8192}
+              'finishes': 8192, 'photo_parts': 2048}
 
 # Reuse P0's reading/JSON rules, but its world-coordinate rules do not apply.
 _CROP_RULES = """
@@ -108,6 +108,15 @@ invent planting or furnishings. Return {"pool":{"polygon":[[0.1,0.1],
 }
 PROMPTS = {kind: prompt + _CROP_RULES for kind, prompt in PROMPTS.items()}
 PROMPTS['finishes'] = FINISHES_PROMPT
+PROMPTS['photo_parts'] = '''Suggest which of the context parts each photo shows.
+Use only part ids from context. Photo index is zero-based in the supplied images.
+For buildings without drawings, suggest a shell only when visible evidence supports it.
+Storeys is an integer from 1 to 4; roof is gable, hip, shed or flat; pitch is rise
+per 12 from 0 to 24. Confidence is from 0 to 1. Explain uncertainty in why.
+These are suggestions for a person to accept, never changes to their place. Return
+{"photos":[{"index":0,"parts":["part-id"]}],"shells":[{"building":"part-id",
+"storeys":1,"roof":"gable","pitch":6,"confidence":0.5,"why":""}]}.
+'''
 
 
 def _number(value):
@@ -301,7 +310,30 @@ def parse(kind, answer):
                 out[role] = parsed
         return out
 
+    def photo(value, path):
+        def index(value, path):
+            if type(value) is not int or value < 0:
+                v.bad(path, 'expected a nonnegative photo index')
+                return None
+            return value
+
+        return v.fields(value, path, {'index': index, 'parts': lambda x, p: v.items(x, p, v.text)})
+
+    def shell(value, path):
+        out = v.fields(value, path, {'building': v.text, 'storeys': v.numeric,
+                                    'roof': v.text, 'pitch': v.numeric,
+                                    'confidence': confidence, 'why': v.text})
+        if out is not None:
+            try:
+                checked = twin_place.check_shell(out)
+            except ValueError as exc:
+                v.bad(path, str(exc))
+                return None
+            out['pitch'] = checked['pitch']
+        return out
+
     lists = {
+        'photos': photo, 'shells': shell,
         'pages': page,
         'wings': wing,
         'walls': wall,
@@ -326,6 +358,7 @@ def parse(kind, answer):
         'plot': ('scale', 'lot', 'street_edge', 'buildings'),
         'site': ('pool', 'hardscape', 'fire_pit', 'retaining_walls'),
         'finishes': ('materials',),
+        'photo_parts': ('photos', 'shells'),
     }[kind]
     out = {}
     for name in fields:
@@ -377,6 +410,7 @@ def _usable(kind, fragment, problems):
     # Explicit empty collections can faithfully describe an absent feature.
     keys = {'sheet_roles': ('pages',), 'walls': ('walls',), 'openings': ('openings',),
             'rooms': ('rooms',), 'pitch': ('pitches',), 'finishes': ('materials',),
+            'photo_parts': ('photos', 'shells'),
             'site': ('pool', 'hardscape', 'fire_pit', 'retaining_walls')}[kind]
     return any(key in fragment and (fragment[key] or not problems) for key in keys)
 

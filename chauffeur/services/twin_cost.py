@@ -57,6 +57,26 @@ def price(model: str, input_tokens: int, output_tokens: int) -> tuple[float, boo
     return (input_tokens * inp + output_tokens * out) / 1_000_000, priced
 
 
+def estimate(kind: str, images: int) -> float:
+    """Conservative cost shown before a person requests a setup read."""
+    from services import model_pools, twin_reads
+    if not isinstance(kind, str) or kind not in twin_reads.MAX_OUTPUT:
+        raise ValueError('Choose a supported drawing or photo read.')
+    if type(images) is not int or images < 0:
+        raise ValueError('Choose a nonnegative number of images.')
+    settings = storage.get_settings()
+    # twin is currently a tier backed by pro, with no default pool named
+    # twin. Honour an explicit twin pool; otherwise price the tier it uses.
+    if (settings.get('model_pool_twin') or '').strip():
+        pool = model_pools._pool('twin', settings)
+    else:
+        pool = model_pools._pool(model_pools.TIER_CHAINS['twin'][0], settings)
+    rates = PRICES.get(pool[0]) if pool else None
+    inp, out = rates if rates is not None else _highest_rates()
+    usd = ((1500 + 1600 * images) * inp + twin_reads.MAX_OUTPUT[kind] * out) / 1_000_000
+    return math.ceil(usd * 100) / 100
+
+
 def _state():
     row = deepcopy(storage.get_settings().get('house_twin_cost') or {})
     row.setdefault('entries', [])

@@ -3,6 +3,8 @@
 import math
 import re
 
+from services import twin_register
+
 
 KINDS = {
     'main_house': 'Main house', 'garage': 'Garage', 'adu': 'ADU or guest house',
@@ -141,3 +143,51 @@ def to_master(crop, uv) -> list:
     width, height = crop['master']
     return [(x0 + uv[0] * (x1 - x0)) * width,
             (y0 + uv[1] * (y1 - y0)) * height]
+
+
+def plot_registration(crop, fragment, edge=None) -> dict:
+    """Place the street on the x axis, with the lot behind it at positive y."""
+    dim = fragment['scale']
+    scale = twin_register.from_dimension(to_master(crop, dim['a']), to_master(crop, dim['b']), dim['feet'])
+    lot = [to_master(crop, p) for p in fragment['lot']]
+    if edge is None:
+        edge = fragment.get('street_edge')
+    if edge is None:
+        i = max(range(len(lot)), key=lambda i: math.dist(lot[i], lot[(i + 1) % len(lot)]))
+        edge = [i, (i + 1) % len(lot)]
+    if (not isinstance(edge, list) or len(edge) != 2
+            or any(type(i) is not int or not 0 <= i < len(lot) for i in edge)
+            or (edge[1] - edge[0]) % len(lot) not in (1, len(lot) - 1)):
+        raise ValueError('Choose two neighbouring lot corners for the street edge.')
+    a, b = (lot[i] for i in edge)
+    reg = twin_register.from_two_points(a, b, [0, 0], [math.dist(a, b) * scale, 0])
+    if sum(twin_register.apply(reg, p)[1] for p in lot) < 0:
+        reg = twin_register.from_two_points(b, a, [0, 0], [math.dist(a, b) * scale, 0])
+    return reg
+
+
+def plot_suggestions(fragment, crop, reg) -> list[dict]:
+    lot = [twin_register.apply(reg, to_master(crop, p)) for p in fragment['lot']]
+    bounds = [[min(p[i] for p in lot), max(p[i] for p in lot)] for i in (0, 1)]
+    suggestions = []
+    for number, building in enumerate(fragment.get('buildings', []), 1):
+        pixels = [to_master(crop, p) for p in building['outline']]
+        world = [twin_register.apply(reg, p) for p in pixels]
+        bands = [(sum(p[i] for p in world) / len(world) - lo) / (hi - lo) if hi > lo else .5
+                 for i, (lo, hi) in enumerate(bounds)]
+        horizontal = 'left' if bands[0] < 1/3 else 'right' if bands[0] > 2/3 else ''
+        depth = 'front' if bands[1] < 1/3 else 'back' if bands[1] > 2/3 else ''
+        where = ' '.join(filter(None, (depth, horizontal))) or 'middle'
+        suggestions.append({'id': f'plot-{number}', 'outline': world, 'outline_px': pixels,
+                            'size_ft': [max(p[i] for p in world) - min(p[i] for p in world) for i in (0, 1)],
+                            'where': 'at the ' + where, 'name': building['name'],
+                            'state': 'open', 'building': None})
+    return suggestions
+
+
+def sheet_matrix(reg, crop) -> list:
+    """SVG affine matrix from full-page uv, independent of the read's crop."""
+    origin = twin_register.apply(reg, [0, 0])
+    x = twin_register.apply(reg, [crop['master'][0], 0])
+    y = twin_register.apply(reg, [0, crop['master'][1]])
+    return [x[0] - origin[0], x[1] - origin[1], y[0] - origin[0], y[1] - origin[1], *origin]

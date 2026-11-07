@@ -7486,7 +7486,7 @@ def house_editor_sheets():
 
 
 def _house_editor_sheets():
-    from services import twin_store, twin_edit, twin_place
+    from services import twin_store, twin_edit, twin_place, twin_cost
     with twin_store.LIFECYCLE:
         sources, roles, registrations = twin_store.sources(), twin_store.page_roles(), twin_store.registrations()
         plan = twin_store.current()
@@ -7511,7 +7511,39 @@ def _house_editor_sheets():
             'piece_labels': labels, 'field_labels': twin_edit.FIELD_LABELS,
             'place': place, 'kinds': [{'id': key, 'label': label} for key, label in twin_place.KINDS.items()],
             'roles': {'building': twin_place.BUILDING_ROLES, 'lot': twin_place.LOT_ROLES},
-            'estimates': {}}
+            'estimates': {'plot': twin_cost.estimate('plot', 1),
+                          'photos': twin_cost.estimate('photo_parts', min(12, sum(s['kind'] == 'photo' for s in sources)))}}
+
+
+@app.post('/api/house/editor/place/plot/read')
+def house_editor_read_plot():
+    from services import twin_cost, twin_place_reads
+    _house_editor_call(twin_cost.require_clear)
+    lot = _house_editor_call(twin_place_reads.read_plot)
+    return {'lot': lot, 'cost': lot['read']['cost']}
+
+
+@app.post('/api/house/editor/place/plot/suggestions/{sid}')
+def house_editor_plot_suggestion(sid: str, body: dict = Body(default={})):
+    from services import twin_place_reads
+    return _house_editor_call(twin_place_reads.answer_suggestion, sid, body.get('action'),
+                              building=body.get('building'), name=body.get('name'),
+                              kind=body.get('kind'), read=body.get('read'))
+
+
+@app.put('/api/house/editor/place/lot/placement')
+def house_editor_lot_placement(body: dict = Body(default={})):
+    from services import twin_place_reads
+    return {'lot': _house_editor_call(twin_place_reads.confirm_placement,
+                                     body.get('street_edge'), body.get('footprints'))}
+
+
+@app.post('/api/house/editor/place/photos/suggest')
+def house_editor_suggest_photos():
+    from services import twin_cost, twin_place_reads
+    _house_editor_call(twin_cost.require_clear)
+    photo_read = _house_editor_call(twin_place_reads.suggest_photos)
+    return {'photo_read': photo_read, 'cost': photo_read['cost']}
 
 
 @app.post('/api/house/editor/place/buildings')

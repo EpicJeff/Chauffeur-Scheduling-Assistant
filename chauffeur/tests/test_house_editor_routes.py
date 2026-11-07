@@ -576,6 +576,129 @@ def scenario_suggest_hint():
         check(put.status_code == 200, put.text)
 
 
+# Slice 1b-i Task 3 (plan docs/superpowers/plans/2026-11-07-house-editor-slice-1b-i.md,
+# amendments A4-A6): the plot plan read, its suggestions, the lot placement,
+# photo suggestions and estimates, through the real twin_reads.read with
+# model_pools.call_pool_json stubbed.
+PLOT_API = [
+    ('POST', '/api/house/editor/place/plot/read'),
+    ('POST', '/api/house/editor/place/plot/suggestions/plot-1'),
+    ('PUT', '/api/house/editor/place/lot/placement'),
+    ('POST', '/api/house/editor/place/photos/suggest'),
+]
+
+
+class PlacePool:
+    """Stands in for model_pools.call_pool_json: the plot fixture for the plot
+    read, a photo answer for the photo read; each call reports usage."""
+
+    def __init__(self, photo_answer):
+        self.photo_answer, self.calls = photo_answer, []
+
+    def __call__(self, tier, api_key, system_prompt, user_prompt, **kw):
+        plot = system_prompt == twin_reads.PROMPTS.get('plot')
+        self.calls.append({'kind': 'plot' if plot else 'other', 'images': len(kw.get('images') or [])})
+        if kw.get('usage') is not None:
+            kw['usage'].append({'model': PRICED, 'input_tokens': 1500, 'output_tokens': 300,
+                                'images': len(kw.get('images') or []), 'prompt_chars': len(user_prompt),
+                                'max_output_tokens': kw.get('max_output_tokens') or 0})
+        return copy.deepcopy(engine_tests.fixture('plot') if plot else self.photo_answer)
+
+
+def scenario_plot_routes():
+    from services import model_pools
+    _fresh()
+    _setup()
+    saved = {k: _real_settings().get(k) for k in ('llm_provider', 'llm_gemini_paid_api_key')}
+    storage.patch_settings({'llm_provider': 'gemini', 'llm_gemini_paid_api_key': 'paid-k'})
+    try:
+        house = ts.save_source('drawing', 'house.pdf', engine_tests._pdf(1))      # no part: Main house
+        plot = ts.save_source('drawing', 'plot.pdf', engine_tests._pdf(1), part='lot')
+        photo = ts.save_source('photo', 'yard.png', _png(), part='lot')
+        ts.set_page_roles([
+            {'source': house, 'page': 1, 'role': 'floor', 'level': 'Main floor', 'box': None, 'building': 'house'},
+            {'source': plot, 'page': 1, 'role': 'plot', 'level': None, 'box': None, 'building': 'lot'}])
+        pool = PlacePool({'photos': [{'index': 0, 'parts': ['house', 'lot']}], 'shells': []})
+        c = _client()
+        with _enforced(), patch.object(model_pools, 'call_pool_json', pool):
+            for method, path in PLOT_API:
+                for who in (MEMBER, PANEL, {}):
+                    r = c.request(method, path, headers=who, json={})
+                    check(r.status_code in (401, 403), ('parents only', method, path, r.status_code))
+            check(pool.calls == [] and ts.place()['lot']['read'] is None, 'a refused caller reads nothing')
+
+            r = c.post('/api/house/editor/place/plot/read', headers=PARENT, json={})
+            check(r.status_code == 200, r.text)
+            body = r.json()
+            read = body['lot']['read']
+            check([s['id'] for s in read['suggestions']] == ['plot-1', 'plot-2'], read['suggestions'])
+            check(read['street_edge'] == [1, 2] and read['source'] == plot, read)
+            check(read['cost'] > 0 and abs(body['cost'] - read['cost']) < 1e-9,
+                  ('the route returns the ledger entry as cost', body.get('cost'), read['cost']))
+            check([call['kind'] for call in pool.calls] == ['plot'] and pool.calls[0]['images'] == 1, pool.calls)
+            check(ts.place()['lot']['read']['id'] == read['id'], 'the read is saved')
+
+            r = c.post('/api/house/editor/place/plot/suggestions/plot-1', headers=PARENT,
+                       json={'action': 'accept', 'name': 'Shed', 'kind': 'shed', 'read': read['id']})
+            check(r.status_code == 200, r.text)
+            body = r.json()
+            check({'lot', 'place', 'summary'} <= set(body) and isinstance(body['summary'], str) and body['summary'],
+                  body)
+            shed = next((b for b in body['place']['buildings'] if b['id'] == 'shed'), None)
+            check(shed is not None and shed['footprint_from'] == 'plot', body['place'])
+            first = next(s for s in body['lot']['read']['suggestions'] if s['id'] == 'plot-1')
+            check(first['state'] == 'accepted' and first['building'] == 'shed', first)
+            again = c.post('/api/house/editor/place/plot/suggestions/plot-1', headers=PARENT,
+                           json={'action': 'dismiss', 'read': read['id']})
+            check(again.status_code == 400 and again.json()['detail'] == 'This suggestion was already answered.',
+                  again.text)
+            stale = c.post('/api/house/editor/place/plot/suggestions/plot-2', headers=PARENT,
+                           json={'action': 'dismiss', 'read': '0' * 32})
+            check(stale.status_code == 400
+                  and stale.json()['detail'] == 'This plot plan read is out of date. Read it again.', stale.text)
+            r = c.post('/api/house/editor/place/plot/suggestions/plot-2', headers=PARENT,
+                       json={'action': 'accept', 'building': 'house', 'read': read['id']})
+            check(r.status_code == 200, r.text)
+            check(next(b for b in ts.place()['buildings'] if b['id'] == 'house')['footprint_from'] == 'plot',
+                  ts.place()['buildings'])
+
+            bow = c.put('/api/house/editor/place/lot/placement', headers=PARENT,
+                        json={'footprints': [{'building': 'shed', 'outline': [[0, 0], [10, 10], [10, 0], [0, 10]]}]})
+            check(bow.status_code == 400 and bow.json()['detail'] == 'A footprint cannot cross itself.', bow.text)
+            check(ts.place()['lot']['placement'] is None, 'a refused placement saves nothing')
+            r = c.put('/api/house/editor/place/lot/placement', headers=PARENT,
+                      json={'street_edge': [0, 1], 'footprints': []})
+            check(r.status_code == 200, r.text)
+            placement = r.json()['lot']['placement']
+            check(placement['confirmed'] is True and placement['street_edge'] == [0, 1]
+                  and placement['source'] == plot, placement)
+            check(ts.registration(plot, 1, None) == placement['registration'], 'the build will use this registration')
+
+            got = c.get('/api/house/editor/sheets', headers=PARENT)
+            check(got.status_code == 200, got.text)
+            check(got.json()['estimates'] == {'plot': tc.estimate('plot', 1), 'photos': tc.estimate('photo_parts', 1)},
+                  got.json()['estimates'])
+
+            r = c.post('/api/house/editor/place/photos/suggest', headers=PARENT, json={})
+            check(r.status_code == 200, r.text)
+            photo_read = r.json()['photo_read']
+            check(photo_read['photos'] == [{'source': photo, 'parts': ['house', 'lot']}], photo_read)
+            check(photo_read['cost'] > 0 and abs(r.json()['cost'] - photo_read['cost']) < 1e-9,
+                  (r.json().get('cost'), photo_read['cost']))
+            check(ts.place()['photo_tags'][photo] == ['lot'], 'a suggestion never retags a photo')
+
+            # A checkpoint answers 409 before any paid request, as the build route does.
+            tc.record('step:outline', [{'model': PRICED, 'input_tokens': 1_100_000, 'output_tokens': 0}])
+            calls = len(pool.calls)
+            for path in ('/api/house/editor/place/plot/read', '/api/house/editor/place/photos/suggest'):
+                r = c.post(path, headers=PARENT, json={})
+                check(r.status_code == 409 and r.json()['detail']['checkpoint'] == 10.0, (path, r.status_code, r.text))
+            check(len(pool.calls) == calls, ('nothing is asked past a checkpoint', pool.calls[calls:]))
+            check(ts.place()['lot']['read']['id'] == read['id'], 'the earlier read stays')
+    finally:
+        storage.patch_settings(saved)
+
+
 if __name__ == '__main__':
     failed = []
     for fn in (scenario_every_editor_route_is_parents_only,
@@ -595,7 +718,8 @@ if __name__ == '__main__':
                scenario_move_page_route,
                scenario_move_region_route,
                scenario_suggest_null_elsewhere,
-               scenario_suggest_hint):
+               scenario_suggest_hint,
+               scenario_plot_routes):
         try:
             fn()
         except Exception as exc:

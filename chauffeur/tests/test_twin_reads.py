@@ -74,10 +74,10 @@ class Pool:
 
 def scenario_kinds_and_output_caps_are_pinned():
     check(twin_reads.KINDS == ('sheet_roles', 'outline', 'walls', 'openings', 'rooms', 'registration', 'roof',
-                               'pitch', 'plot', 'site', 'finishes'), twin_reads.KINDS)
+                               'pitch', 'plot', 'site', 'finishes', 'photo_parts'), twin_reads.KINDS)
     check(twin_reads.MAX_OUTPUT == {'sheet_roles': 2048, 'outline': 4096, 'walls': 16384, 'openings': 16384,
                                     'rooms': 8192, 'registration': 4096, 'roof': 8192, 'pitch': 2048,
-                                    'plot': 8192, 'site': 8192, 'finishes': 8192}, twin_reads.MAX_OUTPUT)
+                                    'plot': 8192, 'site': 8192, 'finishes': 8192, 'photo_parts': 2048}, twin_reads.MAX_OUTPUT)
 
 
 def scenario_each_kind_parses_its_fixture():

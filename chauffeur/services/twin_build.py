@@ -641,17 +641,8 @@ def _registration(build, step, result, plan):
 
 
 def _plot_registration(crop, fragment):
-    scale = _dimension(crop, fragment['scale'])
-    lot = [twin_store.crop_to_master(crop, p) for p in fragment['lot']]
-    edge = fragment.get('street_edge')
-    if edge is None:
-        i = max(range(len(lot)), key=lambda i: math.dist(lot[i], lot[(i + 1) % len(lot)]))
-        edge = [i, (i + 1) % len(lot)]
-    a, b = (lot[i] for i in edge)
-    reg = twin_register.from_two_points(a, b, [0, 0], [math.dist(a, b) * scale, 0])
-    if _centroid([twin_register.apply(reg, p) for p in lot])[1] < 0:
-        reg = twin_register.from_two_points(b, a, [0, 0], [math.dist(a, b) * scale, 0])
-    return reg
+    from services import twin_place
+    return twin_place.plot_registration(crop, fragment)
 
 
 def _pause(build, step, result):

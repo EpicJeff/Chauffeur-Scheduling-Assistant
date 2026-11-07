@@ -72,10 +72,36 @@ def _place(row):
 
 def _place_state():
     row = _state()
-    if 'place' not in row:
-        _place(row)
+    migrated = 'place' not in row
+    _place(row)
+    if _clear_plot_read(row) or migrated:
         _save(row)
     return row
+
+
+def _plot_page(row):
+    """The single confirmed plot region on the lot, including its provenance."""
+    sources = {s['id'] for s in row['sources'] if s['kind'] == 'drawing'}
+    pages = [p for p in row['page_roles'] if p['role'] == 'plot'
+             and p.get('building') == twin_place.LOT and p['source'] in sources]
+    if len(pages) != 1:
+        return None
+    return {key: deepcopy(pages[0].get(key)) for key in ('source', 'page', 'box')}
+
+
+def _clear_plot_read(row):
+    """Keep confirmed placement, but discard suggestions tied to an old page."""
+    lot = _place(row)['lot']
+    page = _plot_page(row)
+    changed = False
+    for key in ('read', 'placement'):
+        value = lot.get(key)
+        if value is None or (key == 'placement' and value.get('confirmed')):
+            continue
+        if {k: value.get(k) for k in ('source', 'page', 'box')} != page:
+            lot[key] = None
+            changed = True
+    return changed
 
 
 def place() -> dict:
@@ -222,6 +248,7 @@ def move_page(source: str, page: int, part: str, region: int | None = None) -> l
             item['building'] = part
             if item['role'] not in roles:
                 item['role'], item['level'] = 'other', None
+        _clear_plot_read(row)
         _save(row)
         return deepcopy(moved)
 
@@ -668,6 +695,7 @@ def set_page_roles(rows) -> None:
                             'role': item['role'], 'level': level,
                             'box': box, 'building': building})
         row['page_roles'] = checked
+        _clear_plot_read(row)
         _save(row)
 
 
