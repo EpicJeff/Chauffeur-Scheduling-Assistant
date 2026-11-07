@@ -289,6 +289,93 @@ def scenario_long_messages_are_capped():
         check(longest('x') <= 4000 and longest('y') <= 4000, ('message and history capped', longest('x'), longest('y')))
 
 
+def _parent():
+    _people()
+    return storage.get_member('p1')
+
+
+def _place_pdf():
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new('RGB', (612, 396), (255, 255, 255)).save(buf, format='PDF', resolution=72)
+    return buf.getvalue()
+
+
+def scenario_add_detached_garage():
+    _seed()
+    out = agent_tools_v2.execute_tool('house_design', {
+        'action': 'add_building', 'name': 'Detached garage', 'kind': 'Garage'}, actor=_parent())
+    check(out == {'status': 'ok', 'changed': True, 'summary': 'Added Detached garage.'}, out)
+    garage = next((b for b in ts.place()['buildings'] if b['id'] == 'detached-garage'), None)
+    check(garage and garage['kind'] == 'garage' and garage['name'] == 'Detached garage', ts.place())
+    again = agent_tools_v2.execute_tool('house_design', {
+        'action': 'add_building', 'name': 'detached garage', 'kind': 'garage'}, actor=_parent())
+    check(again['status'] == 'error' and 'already a building called' in again['message'], again)
+
+
+def scenario_shed_size_and_roof():
+    _seed()
+    parent = _parent()
+    agent_tools_v2.execute_tool('house_design', {'action': 'add_building', 'name': 'Shed', 'kind': 'shed'}, actor=parent)
+    out = agent_tools_v2.execute_tool('house_design', {
+        'action': 'set_building', 'building': 'Shed', 'size': [10, 12], 'shell': {'roof': 'gable'}}, actor=parent)
+    check(out == {'status': 'ok', 'changed': True, 'summary': 'Updated Shed.'}, out)
+    # No other footprints exist, so the rectangle starts at x 10, y 10.
+    shed = next(b for b in ts.place()['buildings'] if b['id'] == 'shed')
+    check(shed['footprint'] == [[10, 10], [20, 10], [20, 22], [10, 22]], shed['footprint'])
+    check(shed['footprint_from'] == 'typed' and shed['shell']['roof'] == 'gable'
+          and shed['shell_from'] == 'person', shed)
+    # A second sized building lands to the right of the first, 10 ft apart.
+    agent_tools_v2.execute_tool('house_design', {'action': 'add_building', 'name': 'Barn', 'kind': 'barn'}, actor=parent)
+    agent_tools_v2.execute_tool('house_design', {
+        'action': 'set_building', 'building': 'barn', 'size': [20, 30]}, actor=parent)
+    barn = next(b for b in ts.place()['buildings'] if b['id'] == 'barn')
+    check(barn['footprint'] == [[30, 10], [50, 10], [50, 40], [30, 40]], barn['footprint'])
+
+
+def scenario_remove_refusal_words():
+    _seed()
+    parent = _parent()
+    agent_tools_v2.execute_tool('house_design', {'action': 'add_building', 'name': 'Shed', 'kind': 'shed'}, actor=parent)
+    ts.save_source('drawing', 's.pdf', _place_pdf(), part='shed')
+    out = agent_tools_v2.execute_tool('house_design', {'action': 'remove_building', 'building': 'shed'}, actor=parent)
+    check(out == {'status': 'error', 'message': "Move or remove this building's pages first."}, out)
+    check(any(b['id'] == 'shed' for b in ts.place()['buildings']), 'still there')
+    agent_tools_v2.execute_tool('house_design', {'action': 'add_building', 'name': 'Barn', 'kind': 'barn'}, actor=parent)
+    out = agent_tools_v2.execute_tool('house_design', {'action': 'remove_building', 'building': 'BARN'}, actor=parent)
+    check(out == {'status': 'ok', 'changed': True, 'summary': 'Removed Barn.'}, out)
+    check(not any(b['id'] == 'barn' for b in ts.place()['buildings']), ts.place())
+
+
+def scenario_status_mentions_place():
+    _seed()
+    parent = _parent()
+    agent_tools_v2.execute_tool('house_design', {'action': 'add_building', 'name': 'Shed', 'kind': 'shed'}, actor=parent)
+    agent_tools_v2.execute_tool('house_design', {'action': 'set_building', 'building': 'shed', 'size': [10, 12]}, actor=parent)
+    ts.save_source('drawing', 'h.pdf', _place_pdf(), part='house')
+    out = agent_tools_v2.execute_tool('house_design', {'action': 'status'}, actor=parent)
+    summary = out['summary']
+    check(summary.startswith('Your place: 2 buildings ('), summary)
+    check('Shed (Shed, no drawings, footprint)' in summary, summary)
+    check('(Main house, drawings, no footprint)' in summary, summary)
+    check('). Lot: plot plan not read, placement not confirmed.' in summary, summary)
+    check(summary.index('Lot:') < summary.index('Build:'), 'the place comes first, then the existing text')
+    check(len(json.dumps(out)) < 2000, 'still a summary')
+
+
+def scenario_kid_refused():
+    _seed()
+    _people()
+    calls = ({'action': 'add_building', 'name': 'Shed', 'kind': 'shed'},
+             {'action': 'set_building', 'building': 'house', 'name': 'Home'},
+             {'action': 'remove_building', 'building': 'house'})
+    for actor in (storage.get_member('k1'), None):
+        for call in calls:
+            out = agent_tools_v2.execute_tool('house_design', call, actor=actor)
+            check('Only a parent can change the house.' in (out.get('message') or ''), out)
+    check(not any(b['id'] == 'shed' for b in ts.place()['buildings']), 'nothing added')
+
+
 if __name__ == '__main__':
     for fn in (scenario_tool_is_registered_and_never_runs_from_a_mission,
                scenario_tool_edits_through_the_same_operations,
@@ -301,6 +388,11 @@ if __name__ == '__main__':
                scenario_accept_and_reread_drive_the_build,
                scenario_house_design_is_refused_off_the_editor,
                scenario_a_checkpoint_mid_turn_still_reports_what_changed,
-               scenario_long_messages_are_capped):
+               scenario_long_messages_are_capped,
+               scenario_add_detached_garage,
+               scenario_shed_size_and_roof,
+               scenario_remove_refusal_words,
+               scenario_status_mentions_place,
+               scenario_kid_refused):
         fn()
         print('  ok ', fn.__name__)

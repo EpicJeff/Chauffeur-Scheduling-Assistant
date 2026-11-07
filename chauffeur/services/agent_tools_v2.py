@@ -7615,8 +7615,15 @@ class CreateThreadTool(BaseModel):
     next_action: str = Field(default="", description="The first concrete move (e.g. 'send an intro email asking for a quote').")
 
 class HouseDesignTool(BaseModel):
-    """Design the household's house in the house editor using its shared operations."""
-    action: Literal['status', 'edit', 'accept', 'reread', 'describe']
+    """Design your place in the house editor using its shared operations.
+
+    Status reads the buildings, drawings, footprints, lot and current build.
+    Add a named building with add_building; change its name, kind, size or shell
+    with set_building; remove an unbuilt building without pages with remove_building.
+    Edit, accept, reread and describe operate on the house and its build as before.
+    """
+    action: Literal['status', 'edit', 'accept', 'reread', 'describe',
+                    'add_building', 'set_building', 'remove_building']
     edit: Optional[dict] = Field(None, description=(
         "One twin_edit operation: set (piece, field, value), move (piece, by [dx,dy]), "
         "rotate (building, to), delete (piece), accept (pieces), add_wall (level, from, to), "
@@ -7625,7 +7632,19 @@ class HouseDesignTool(BaseModel):
         "An optional building id disambiguates pieces."))
     step: Optional[str] = Field(None, description="Build step id to reread.")
     piece: Optional[str] = Field(None, description="Piece id to describe.")
-    building: Optional[str] = Field(None, description="Building id when piece ids are ambiguous.")
+    building: Optional[str] = Field(None, description=(
+        "Target building id or name (case-insensitive) for set_building or remove_building; "
+        "building id when piece ids are ambiguous for edit or describe."))
+    name: Optional[str] = Field(None, description="Building name to add, or the new name for set_building.")
+    kind: Optional[str] = Field(None, description=(
+        "Building kind id or label (case-insensitive): Main house, Garage, ADU or guest house, "
+        "Pool house, Shed, Greenhouse, Barn, Studio or office, Workshop, Other."))
+    size: Optional[list[float]] = Field(None, description=(
+        "Width and depth in feet for a rectangular footprint, placed to the right of the "
+        "other footprints with a 10 foot gap, starting at y 10. For add_building or set_building."))
+    shell: Optional[dict] = Field(None, description=(
+        "Building shell details for add_building or set_building: storeys, wall_height in feet, "
+        "roof (gable, hip, shed or flat), pitch (rise in 12), door_side (front, back, left or right)."))
 
 
 # A unified schema registry
@@ -9487,13 +9506,26 @@ def _house_design_building_summary(building) -> str:
 
 def house_design_status() -> dict:
     """Small editor context, with the same latest-build rule as the hand path."""
-    from services import twin_build, twin_store
+    from services import twin_build, twin_place, twin_store
     with twin_store.LIFECYCLE, twin_build._LOCK:
         latest = twin_build.latest()
         build = twin_build.status(latest) if latest else None
         plan = twin_store.current()
-        summaries = [_house_design_building_summary(building)
-                     for building in (plan or {}).get('buildings', [])]
+        place = twin_store.place()
+        drawings = {s.get('part') for s in twin_store.sources() if s['kind'] == 'drawing'}
+        buildings = '; '.join(
+            f"{b['name']} ({twin_place.KINDS[b['kind']]}, "
+            f"{'drawings' if b['id'] in drawings else 'no drawings'}, "
+            f"{'footprint' if b.get('footprint') else 'no footprint'})"
+            for b in place['buildings'])
+        lot = place['lot']
+        summaries = [
+            f"Your place: {len(place['buildings'])} buildings ({buildings}). "
+            f"Lot: plot plan {'read' if lot.get('read') is not None else 'not read'}, "
+            f"placement {'confirmed' if (lot.get('placement') or {}).get('confirmed') else 'not confirmed'}."
+        ]
+        summaries.extend(_house_design_building_summary(building)
+                         for building in (plan or {}).get('buildings', []))
         pause = (build or {}).get('pause')
         pause_words = (f"{pause['step']}: {pause.get('why') or pause['kind'].replace('_', ' ')}"
                        if pause else None)
@@ -9509,11 +9541,61 @@ def handle_house_design(args: dict, actor=None) -> dict:
         return {'status': 'refused', 'message': 'Only a parent can change the house.'}
     if _mission_context.get() is not None:
         return {'status': 'refused', 'message': REGISTRY_EXCEPTIONS['house_design']}
-    from services import twin_build, twin_edit, twin_register, twin_store
+    from pydantic import ValidationError
+    from services import twin_build, twin_edit, twin_place, twin_register, twin_store
     try:
         params = HouseDesignTool.model_validate(args)
         if params.action == 'status':
             return {'status': 'ok', **house_design_status()}
+        if params.action in ('add_building', 'set_building', 'remove_building'):
+            with twin_store.LIFECYCLE:
+                buildings = twin_store.place()['buildings']
+                target = None
+                if params.action != 'add_building':
+                    target = next((b for b in buildings if b['id'] == params.building), None)
+                    if target is None and params.building:
+                        target = next((b for b in buildings
+                                       if b['name'].casefold() == params.building.casefold()), None)
+                    if target is None:
+                        raise ValueError('Choose a building in your place.')
+                if params.action == 'remove_building':
+                    twin_store.remove_building(target['id'])
+                    return {'status': 'ok', 'changed': True, 'summary': f'Removed {target["name"]}.'}
+
+                fields = {}
+                if params.name is not None:
+                    fields['name'] = params.name
+                if params.kind is not None:
+                    kind = next((key for key, label in twin_place.KINDS.items()
+                                 if params.kind.casefold() in (key.casefold(), label.casefold())), None)
+                    if kind is None:
+                        raise ValueError('Choose a kind of building.')
+                    fields['kind'] = kind
+                if params.size is not None:
+                    if len(params.size) != 2 or any(v <= 0 for v in params.size):
+                        raise ValueError('Give the width and depth in feet as two positive numbers.')
+                    width, depth = params.size
+                    x = 10 + max((p[0] for b in buildings if b != target
+                                  for p in (b.get('footprint') or [])), default=0)
+                    fields['footprint'] = twin_place.check_footprint(
+                        [[x, 10], [x + width, 10], [x + width, 10 + depth], [x, 10 + depth]])
+                    fields['footprint_from'] = 'typed'
+                if params.shell is not None:
+                    base = target['shell'] if target else twin_place.shell_for(fields.get('kind'))
+                    fields['shell'] = twin_place.check_shell({**base, **params.shell})
+                    fields['shell_from'] = 'person'
+                if params.action == 'add_building':
+                    building = twin_store.add_building(params.name, fields.get('kind'))
+                    details = {key: value for key, value in fields.items() if key not in ('name', 'kind')}
+                    if details:
+                        twin_store.update_building(building['id'], details)
+                    summary = f'Added {building["name"]}.'
+                else:
+                    if not fields:
+                        raise ValueError('Choose a building detail to change.')
+                    building = twin_store.update_building(target['id'], fields)
+                    summary = f'Updated {building["name"]}.'
+                return {'status': 'ok', 'changed': True, 'summary': summary}
         if params.action == 'edit':
             edit = dict(params.edit or {})
             if params.building is not None:
@@ -9569,6 +9651,8 @@ def handle_house_design(args: dict, actor=None) -> dict:
             twin_build.reread(current['build'], params.step)
             summary = f'Requested a fresh read of {params.step}.'
         return {'status': 'ok', 'changed': True, 'summary': summary}
+    except ValidationError:
+        return {'status': 'error', 'message': 'Choose a house design action and give valid details for it.'}
     except ValueError as exc:
         return {'status': 'error', 'message': str(exc)}
 
