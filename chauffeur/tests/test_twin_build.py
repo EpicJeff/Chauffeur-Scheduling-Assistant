@@ -82,6 +82,9 @@ class Reader:
         self.reverse_walls = False          # a reread that returns the same walls in another order
         self.isolated_walls_for = None      # a walls step whose walls are all tiny and unconnected
         self.plot_no_street = False
+        self.outline_reads = 0
+        self.shift_wings_after_first = False   # a reread draws the same wings a little differently (~0.4 ft)
+        self.error_once_at = None             # a step whose first read fails (timeout)
         self.wings_l2 = wings_l2
         self.walls_extra = walls_extra or []
         self.checkpoint_at, self.crash_at, self.block_at = checkpoint_at, crash_at, block_at
@@ -97,7 +100,15 @@ class Reader:
         if step == self.block_at:
             self.blocked.set()
             self.release.wait(10)
+        if step == self.error_once_at:
+            self.error_once_at = None
+            return {'error': 'The model did not answer in 120 s.'}
         if kind == 'outline':
+            self.outline_reads += 1
+            if self.shift_wings_after_first and self.outline_reads > 1:
+                return {'dimension': DIM, 'outline': L1, 'confidence': 0.8, 'why': '',
+                        'wings': [{'name': 'garage', 'box': [0.553, 0.5, 0.703, 0.1 + DEPTH_V]},
+                                  {'name': 'main', 'box': [0.203, 0.1, 0.603, 0.1 + DEPTH_V]}]}
             return {'dimension': DIM, 'outline': L1, 'confidence': 0.8, 'why': '',
                     'wings': [{'name': 'garage', 'box': [0.55, 0.5, 0.7, 0.1 + DEPTH_V]},
                               {'name': 'main', 'box': [0.2, 0.1, 0.6, 0.1 + DEPTH_V]}]}
@@ -514,6 +525,60 @@ def scenario_registration_pause_reports_fit_quality_and_rejects_junk():
     check(tb.status(b)['state'] == 'paused', 'still waiting for a real answer')
 
 
+def scenario_replayed_walls_keep_the_crop_they_were_read_from():
+    _fresh()
+    _, _, photo = _sources()
+    reader = Reader()
+    reader.shift_wings_after_first = True
+    b = tb.start(_inputs(photo), reader=reader, inline=True)
+    _run_to(b, 'registration:L2')
+    before = {w['id']: (w['from'], w['to']) for w in _walls(ts.current(), 'L1')}
+    calls = len(reader.calls)
+    tb.reread(b, 'outline:L1', reader=reader, inline=True)
+    _run_to(b, 'registration:L2')
+    again = [c['step'] for c in reader.calls[calls:]]
+    check(not any(st.startswith('walls:L1') for st in again), again)
+    after = [(w['from'], w['to']) for w in _walls(ts.current(), 'L1')]
+    for wid, (a, b2) in before.items():
+        check(any(all(abs(x - y) < 0.1 for x, y in zip(a + b2, f + t)) for f, t in after),
+              ('a replayed wall moved', wid, a, b2))
+
+
+def scenario_a_failed_read_is_retried_on_resume():
+    _fresh()
+    _, _, photo = _sources()
+    reader = Reader()
+    reader.error_once_at = 'walls:L1:main'
+    b = tb.start(_inputs(photo), reader=reader, inline=True)
+    tb.answer(b, 'outline:L1', {'accept': True})
+    st = tb.status(b)
+    check(st['state'] in ('stopped', 'failed'), st['state'])
+    tb.resume(b, reader=reader, inline=True)
+    steps = [c['step'] for c in reader.calls]
+    check(steps.count('walls:L1:main') == 2, steps)
+    walls = next(x for x in tb.status(b)['steps'] if x['id'] == 'walls:L1:main')
+    check(walls['status'] == 'done', walls)
+
+
+def scenario_no_new_build_while_a_stopped_read_is_in_flight():
+    _fresh()
+    _, _, photo = _sources()
+    reader = Reader(block_at='outline:L1')
+    b = tb.start(_inputs(photo), reader=reader, inline=False)
+    check(reader.blocked.wait(10), 'worker reached the read')
+    tb.stop(b)
+    try:
+        tb.start(_inputs(photo), reader=Reader(), inline=True)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('a second build must wait for the stopped read')
+    reader.release.set()
+    for t in threading.enumerate():
+        if t.name.startswith('twin-build-'):
+            t.join(10)
+
+
 if __name__ == '__main__':
     for fn in (scenario_main_house_step_order,
                scenario_first_pause_and_wings_expand_after_the_outline,
@@ -535,6 +600,9 @@ if __name__ == '__main__':
                scenario_plot_without_a_street_edge_pauses_instead_of_failing,
                scenario_resume_waits_for_a_stopping_read_and_keeps_its_answer,
                scenario_roles_must_be_confirmed_first,
-               scenario_registration_pause_reports_fit_quality_and_rejects_junk):
+               scenario_registration_pause_reports_fit_quality_and_rejects_junk,
+               scenario_replayed_walls_keep_the_crop_they_were_read_from,
+               scenario_a_failed_read_is_retried_on_resume,
+               scenario_no_new_build_while_a_stopped_read_is_in_flight):
         fn()
         print('  ok ', fn.__name__)

@@ -24,6 +24,10 @@ _ACTIVE = ('running', 'paused', 'checkpoint')
 _FULL = [0, 0, 1, 1]
 
 
+class _ReadError(ValueError):
+    """An unsuccessful reader reply leaves the step retryable, without a cache."""
+
+
 def _step(kind, row=None, level=None, pause=None, name=None):
     row = row or {}
     sid = f'{kind}:{level}' if level else kind
@@ -140,7 +144,7 @@ def _dispatch(build, ticket, reader, inline):
 def start(inputs, *, reader=None, inline=False):
     reader = reader or twin_reads.read
     with twin_store.LIFECYCLE, _LOCK:
-        if running():
+        if running() or any(worker.get('busy') for worker in _WORKERS.values()):
             raise ValueError('A build is already running.')
         building = deepcopy(inputs['building'])
         if not re.fullmatch(r'[A-Za-z0-9_.:-]{1,64}', building['id']):
@@ -440,13 +444,25 @@ def _reattach(house, old_house, ghosts):
         walls = [w for w in house['walls'] if w['level'] == old_wall['level']]
         hit = min(((*_nearest(point, w['from'], w['to']), w) for w in walls),
                   key=lambda h: h[0], default=None)
-        if hit and hit[0] <= 1:
-            opening.update(wall=hit[2]['id'], at=hit[1])
-            if hit[2].get('state') == 'ghost':
-                opening.update(state='ghost', why='The nearest wall is still a ghost.')
+        reasons = []
+        if hit:
+            distance, at, wall = hit
+            # Ghosts also need a valid carrier or normalize drops them. Retain
+            # the original centre separately when the carrier needs checking.
+            length = math.dist(wall['from'], wall['to'])
+            clamped = max(opening['width'] / 2, min(length - opening['width'] / 2, at))
+            opening.update(wall=wall['id'], at=clamped)
+            if distance > 1:
+                reasons.append('No replacement wall is within 1 ft of this opening.')
+            if clamped != at:
+                reasons.append('The opening was clamped to the replacement wall span.')
+            if wall.get('state') == 'ghost':
+                reasons.append('The nearest wall is still a ghost.')
         else:
-            opening.update(state='ghost', why='No replacement wall is within 1 ft of this opening.')
-            ghosts.append({**opening, 'at': point})
+            reasons.append('There is no replacement wall on this floor.')
+        if reasons:
+            opening.update(state='ghost', why=' '.join(reasons), position=point)
+            ghosts.append(opening)
 
 
 def _spend(build):
@@ -475,15 +491,18 @@ def _obtain(build, step, reader, ticket):
     path = _cache_path(build, step)
     if path.is_file():
         result = json.loads(path.read_text(encoding='utf-8'))
-        if step.get('replay') and result.get('crop'):
-            _, _, result['crop'] = _images_context(build, step)
-        return result
+        if not result.get('error'):
+            return result
+        # Older builds may have cached an unsuccessful reply. Resume retries it.
+        path.unlink()
     if step['kind'] == 'compose':
         result = {'fragment': {}, 'problems': []}
     else:
         images, context, crop = _images_context(build, step)
         twin_cost.require_clear()
         raw = reader(step['kind'], images, context, run=build['id'], step=step['id'])
+        if isinstance(raw, dict) and raw.get('error'):
+            raise _ReadError(raw['error'])
         fragment, problems = twin_reads.parse(step['kind'], raw)
         if isinstance(raw, dict):
             problems = list(raw.get('problems') or []) + problems
@@ -565,7 +584,8 @@ def _expand(build, step, result):
         return
     parent = result['crop']['box']
     wings = result['fragment'].get('wings') or [{'name': 'main', 'box': _FULL}]
-    previous = {s['id']: s for s in build['steps'] if s['kind'] == 'walls' and s['level'] == step['level']}
+    previous = {s.get('wing_id', s['id']): s for s in build['steps']
+                if s['kind'] == 'walls' and s['level'] == step['level']}
     children, used = [], set()
     for index, wing in enumerate(wings):
         name = re.sub(r'[^A-Za-z0-9_.-]', '-', wing['name'])[:24] or 'main'
@@ -581,12 +601,34 @@ def _expand(build, step, result):
                       name=f"{step['level_name']} {wing['name']} walls")
         child['id'] += ':' + name
         if child['id'] in previous:
-            child.update(reread=True, replay=True)
+            old = previous[child['id']]
+            child['wing_id'] = child['id']
+            child['id'] = old['id']
+            if old.get('removed_steps'):
+                child['removed_steps'] = list(old['removed_steps'])
+            path = _cache_path(build, old)
+            cached = json.loads(path.read_text(encoding='utf-8')) if path.is_file() else {}
+            crop = cached.get('crop') if not cached.get('error') else None
+            if crop:
+                reg = twin_store.registration(step['source'], step['page'], step['level'])
+                shift = max(math.hypot((a[0] - b[0]) * crop['master'][0],
+                                       (a[1] - b[1]) * crop['master'][1]) * reg['scale']
+                            for a, b in zip(_corners(crop['box']), _corners(master_box)))
+                if shift > 1:
+                    # This is a different read, with its own cache and provenance.
+                    child['id'] = f"{child['wing_id']}:{uuid.uuid4().hex[:8]}"
+                    child['removed_steps'] = [old['id'], *old.get('removed_steps', [])]
+                    _event(build, 'log', step=child['id'],
+                           text=f"{child['label']}: crop changed by {twin_register.feet_inches(shift)}; reading again.")
+                else:
+                    child.update(box=deepcopy(crop['box']), replay=True)
+            child['reread'] = True
         children.append(child)
-    build['steps'][:] = [s for s in build['steps'] if s['id'] not in previous]
-    obsolete = set(previous) - {s['id'] for s in children}
+    previous_ids = {s['id'] for s in previous.values()}
+    build['steps'][:] = [s for s in build['steps'] if s['id'] not in previous_ids]
+    obsolete = previous_ids - {s['id'] for s in children}
     if obsolete:
-        children[-1].update(reread=True, removed_steps=sorted(obsolete))
+        children[-1].update(reread=True, removed_steps=sorted(obsolete | set(children[-1].get('removed_steps', []))))
     index = build['steps'].index(step)
     build['steps'][index + 1:index + 1] = children
     step['expanded'] = True
@@ -617,9 +659,10 @@ def _settle(build, step, result, decision=None):
                                exterior=w['exterior']) for i, w in enumerate(fragment.get('walls', []))]
             outline = level.get('outline', [])
             anchors = list(zip(outline, outline[1:] + outline[:1]))
+            replaced = {step['id'], *step.get('removed_steps', [])}
             anchors.extend((w['from'], w['to']) for w in house['walls']
                            if w['level'] == step['level'] and w.get('state') != 'ghost'
-                           and w.get('src', {}).get('step') != step['id'])
+                           and w.get('src', {}).get('step') not in replaced)
             pending = incoming[:]
             while pending:
                 ready = [w for w in pending if all(any(_nearest(p, a, b)[0] <= 2 for a, b in anchors)
@@ -764,11 +807,11 @@ def _settle(build, step, result, decision=None):
         collections = [house['walls'], house['openings'], house['rooms'], house['roof']['sections']]
         generated = [p for pieces in collections for p in pieces if p.get('src', {}).get('step') == step['id']]
         for piece in generated:
-            if not piece.get('src', {}).get('person'):
-                _ghost(build, step, piece, piece.get('why', ''))
             if 'confidence' in fragment:
                 if not piece.get('src', {}).get('person'):
                     piece['confidence'] = fragment['confidence']
+            if not piece.get('src', {}).get('person'):
+                ghosts.append(piece)
         normalized, problems = twin_plan.normalize(plan)
         notes.extend(problems)
         target = _house(normalized, build)
@@ -803,8 +846,9 @@ def _settle(build, step, result, decision=None):
     for note in notes:
         _event(build, 'log', step=step['id'], text=note)
     for ghost in {p['id']: p for p in ghosts}.values():
-        _ghost(build, step, ghost, ghost['why'])
-        _event(build, 'log', step=step['id'], text=ghost['why'])
+        _ghost(build, step, ghost, ghost.get('why', ''))
+        if ghost.get('why'):
+            _event(build, 'log', step=step['id'], text=ghost['why'])
     _event(build, 'settled', step=step['id'], pieces=settled)
 
 
@@ -874,7 +918,8 @@ def reread(build_id, step_id, *, reader=None, inline=None):
             raise ValueError('The build is still stopping; wait for its read to return.')
         step['reread'] = True
         if step['kind'] in ('outline', 'registration'):
-            # Reproject cached crop coordinates through the accepted registration.
+            # Reproject cached coordinates through the accepted registration,
+            # keeping each answer's original crop.
             # Higher registrations depend on the outline immediately below them.
             first = int(step['level'][1:])
             for dependent in build['steps']:
@@ -893,6 +938,7 @@ def reread(build_id, step_id, *, reader=None, inline=None):
 def _run(build, ticket, reader):
     try:
         while True:
+            result = None
             with twin_store.LIFECYCLE, _LOCK:
                 if not _live(build, ticket):
                     return
@@ -905,7 +951,6 @@ def _run(build, ticket, reader):
                 step['status'] = 'running'
                 _event(build, 'stage', step=step['id'], label=step['label'])
                 _save(build)
-            result = None
             result = _obtain(build, step, reader, ticket)
             with twin_store.LIFECYCLE, _LOCK:
                 if not _live(build, ticket) or result is None:
@@ -937,9 +982,10 @@ def _run(build, ticket, reader):
             if _live(build, ticket):
                 _spend(build)
                 cached = _cache_path(build, step).is_file()
-                build['state'] = 'stopped' if cached else 'failed'
+                retryable = cached or isinstance(exc, _ReadError)
+                build['state'] = 'stopped' if retryable else 'failed'
                 step['status'] = 'pending'
-                _event(build, 'question' if cached else 'error', step=step['id'], text=str(exc))
+                _event(build, 'question' if retryable else 'error', step=step['id'], text=str(exc))
                 if cached and step['pause'] and isinstance(result, dict) and not result.get('error'):
                     try:
                         _pause(build, step, result)
