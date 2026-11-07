@@ -19,7 +19,10 @@ _OPENING_KINDS = ('window', 'door', 'slider', 'bifold', 'passage', 'garage')
 
 
 def _number(value, label, minimum=None, maximum=None, positive=False):
-    if (type(value) not in (int, float) or not math.isfinite(value)
+    # Check the bound before isfinite, which converts ints to float and can
+    # overflow on an LLM's arbitrarily large integer.
+    if (type(value) not in (int, float) or not -1e5 <= value <= 1e5
+            or not math.isfinite(value)
             or (positive and value <= 0)
             or (minimum is not None and value < minimum)
             or (maximum is not None and value > maximum)):
@@ -117,6 +120,7 @@ def _set(kind, piece, building, field, value):
         if value not in choices:
             raise ValueError(f'Invalid {field}.')
     elif field == 'panels':
+        _number(value, field, positive=True)
         if type(value) is not int or value < 1:
             raise ValueError('panels must be a positive integer.')
     else:
@@ -133,6 +137,8 @@ def _set(kind, piece, building, field, value):
         elif field == 'rotation':
             value %= 360
             value = 0 if value == 360 else value
+    if piece.get(field) == value:
+        raise ValueError('Nothing changed')
     piece[field] = deepcopy(value)
     if kind == 'roof':
         if field == 'pitch':
@@ -154,19 +160,62 @@ def _set(kind, piece, building, field, value):
 
 
 def _transform(piece, transform):
+    def point(value):
+        return _point(transform(value), 'Transformed point')
+
     for field in ('from', 'to', 'position'):
         if field in piece:
-            piece[field] = transform(piece[field])
+            piece[field] = point(piece[field])
     if isinstance(piece.get('at'), (list, tuple)):
-        piece['at'] = transform(piece['at'])
+        piece['at'] = point(piece['at'])
     for field in ('polygon', 'points', 'polyline'):
         if field in piece:
-            piece[field] = [transform(p) for p in piece[field]]
+            piece[field] = [point(p) for p in piece[field]]
     if 'rect' in piece:
         x0, y0, x1, y1 = piece['rect']
-        points = [transform(p) for p in ((x0, y0), (x0, y1), (x1, y0), (x1, y1))]
+        points = [point(p) for p in ((x0, y0), (x0, y1), (x1, y0), (x1, y1))]
         piece['rect'] = [min(p[0] for p in points), min(p[1] for p in points),
                          max(p[0] for p in points), max(p[1] for p in points)]
+
+
+def _shift_gables(building, section, old_rect):
+    axis = 0 if section['ridge'] == 'y' else 1
+    delta = section['rect'][axis] - old_rect[axis]
+    for opening in building['openings']:
+        if 'gable' in opening and opening.get('section') == section['id'] and delta:
+            opening['x'] = _number(opening['x'] + delta, 'Gable opening x')
+            _mark(opening)
+
+
+def _removed(before, after):
+    identities = {(b['id'], kind, p['id']) for kind, p, b, _ in _entries(after) if 'id' in p}
+    # Legacy fixtures and lights need not have ids. Match those by value so a
+    # level deletion still records each one, including identical instances.
+    unkeyed = [(b['id'], kind, p) for kind, p, b, _ in _entries(after) if 'id' not in p]
+    removed = []
+    for kind, piece, building, _ in _entries(before):
+        if 'id' in piece:
+            if (building['id'], kind, piece['id']) in identities:
+                continue
+        elif (building['id'], kind, piece) in unkeyed:
+            unkeyed.remove((building['id'], kind, piece))
+            continue
+        removed.append((kind, piece, building))
+    return removed
+
+
+def _new_id(plan, building, kind):
+    used = {p['id'] for k, p, b, _ in _entries(plan) if k == kind and b is building}
+    n = 1
+    while f'{kind}-{n}' in used:
+        n += 1
+    return f'{kind}-{n}'
+
+
+def _wall_length(wall):
+    length = math.dist(wall['from'], wall['to'])
+    if not 0.5 <= length <= 1e4:
+        raise ValueError('A wall must be between 0.5 and 10000 feet long.')
 
 
 def _registration(value):
@@ -181,14 +230,20 @@ def _registration(value):
 def _register(plan, edit):
     source = _text(edit.get('source'), 'Source')
     page = edit.get('page')
+    _number(page, 'Page', positive=True)
     if type(page) is not int or page < 1:
         raise ValueError('Page must be a positive integer.')
     level = _text(edit.get('level'), 'Level')
+    if edit.get('from_reg') is None:
+        raise ValueError('No registration on file for this sheet yet')
     old, new = _registration(edit.get('from_reg')), _registration(edit.get('reg'))
-    scale = new['scale'] / old['scale']
+    if old == new:
+        raise ValueError('Nothing changed')
+    scale = _number(new['scale'] / old['scale'], 'Registration scale ratio', positive=True)
 
     def transform(point):
-        return twin_register.apply(new, twin_register.invert(old, point))
+        return _point(twin_register.apply(new, twin_register.invert(old, point)),
+                      'Registered point')
 
     selected = []
     for kind, piece, building, _ in _entries(plan):
@@ -198,35 +253,42 @@ def _register(plan, edit):
         piece_level = piece.get('level')
         if kind == 'opening' and 'wall' in piece:
             piece_level = _wall(building, piece)['level']
+        elif kind == 'opening' and 'gable' in piece:
+            section = next(s for s in building['roof']['sections'] if s['id'] == piece['section'])
+            piece_level = section.get('level')
         if src.get('sheet') == source and src.get('page') == page and piece_level == level:
             selected.append((kind, piece, building))
     # Capture centres before transforming walls; an opening may have different provenance.
     centres = {}
+    moved_openings = set()
     for kind, piece, building in selected:
         if kind == 'opening' and 'wall' in piece:
             wall = _wall(building, piece)
             unit, _ = _wall_vector(wall)
-            centres[id(piece)] = transform([wall['from'][i] + unit[i] * piece['at']
-                                             for i in (0, 1)])
-        elif kind == 'opening' and 'gable' in piece:
-            section = next(s for s in building['roof']['sections'] if s['id'] == piece['section'])
-            y = section['rect'][1 if piece['gable'] == 'front' else 3]
-            centres[id(piece)] = transform([piece['x'], y])
-    for kind, piece, _ in selected:
+            centre = [wall['from'][i] + unit[i] * piece['at'] for i in (0, 1)]
+            centres[id(piece)] = transform(centre)
+            if centres[id(piece)] != centre:
+                moved_openings.add(id(piece))
+    for kind, piece, building in selected:
         if kind != 'opening':
+            original = deepcopy(piece)
             _transform(piece, transform)
-        _mark(piece)
+            if kind == 'roof' and piece.get('ridge') in ('x', 'y'):
+                _shift_gables(building, piece, original['rect'])
+            if piece != original:
+                _mark(piece)
     for kind, piece, building in selected:
         if kind == 'opening':
+            original = deepcopy(piece)
             if 'wall' in piece:
                 wall = _wall(building, piece)
                 unit, _ = _wall_vector(wall)
-                piece['at'] = sum((centres[id(piece)][i] - wall['from'][i]) * unit[i]
-                                  for i in (0, 1))
-            elif 'x' in piece:
-                piece['x'] = centres[id(piece)][0]
-            piece['width'] *= scale
+                piece['at'] = _number(sum((centres[id(piece)][i] - wall['from'][i]) * unit[i]
+                                         for i in (0, 1)), 'Opening at')
+            piece['width'] = _number(piece['width'] * scale, 'Opening width', positive=True)
             _opening_valid(building, piece)
+            if piece != original or id(piece) in moved_openings:
+                _mark(piece)
     return f'Updated registration for {source} page {page} on {level}'
 
 
@@ -251,6 +313,8 @@ def apply(plan, edit):
     if not isinstance(edit, dict):
         raise ValueError('An edit must be an object.')
     result, _ = twin_plan.normalize(plan)
+    before = deepcopy(result)
+    added = None
     op, scope = edit.get('op'), edit.get('building')
     if scope is not None:
         _find(result, scope, kind='building')
@@ -262,15 +326,16 @@ def apply(plan, edit):
             raise ValueError('Accept needs a list of piece ids.')
         for pid in ids:
             _, piece, _, _ = _find(result, pid, scope)
-            piece['state'] = 'settled'
-            _mark(piece)
+            if piece.get('state', 'settled') != 'settled':
+                piece['state'] = 'settled'
+                _mark(piece)
         summary = f'Accepted {len(ids)} piece' + ('' if len(ids) == 1 else 's')
     elif op == 'add_wall':
         _, level, building, _ = _find(result, edit.get('level'), scope, 'level')
         start, end = _point(edit.get('from'), 'from'), _point(edit.get('to'), 'to')
-        if start == end:
-            raise ValueError('A wall must have positive length.')
-        building['walls'].append({'level': level['id'], 'from': start, 'to': end,
+        _wall_length({'from': start, 'to': end})
+        added = ('wall', _new_id(result, building, 'wall'), building['id'])
+        building['walls'].append({'id': added[1], 'level': level['id'], 'from': start, 'to': end,
                                   'height': level['ceiling'], 'thickness': 0.33,
                                   'exterior': False, 'state': 'settled', 'src': {'person': True}})
         if len(building['walls']) > twin_plan.CAPS['walls']:
@@ -278,10 +343,12 @@ def apply(plan, edit):
         summary = f'Added a wall on {level.get("name", level["id"])}'
     elif op == 'add_opening':
         _, wall, building, _ = _find(result, edit.get('wall'), scope, 'wall')
+        _wall_length(wall)
         kind = edit.get('kind')
         if kind not in _OPENING_KINDS:
             raise ValueError('Invalid opening kind.')
-        piece = {'wall': wall['id'], 'kind': kind,
+        added = ('opening', _new_id(result, building, 'opening'), building['id'])
+        piece = {'id': added[1], 'wall': wall['id'], 'kind': kind,
                  'at': _number(edit.get('at'), 'at', minimum=0),
                  'width': _number(edit.get('width'), 'width', positive=True),
                  'sill': min(2, wall['height'] / 3) if kind == 'window' else 0,
@@ -308,6 +375,7 @@ def apply(plan, edit):
             summary = f'Removed {label}'
         else:
             dx, dy = _point(edit.get('by'), 'by')
+            original = deepcopy(piece)
             if kind == 'opening':
                 wall = _wall(building, piece)
                 unit, length = _wall_vector(wall)
@@ -316,9 +384,14 @@ def apply(plan, edit):
                 dx, dy = [(at - piece['at']) * v for v in unit]
                 piece['at'] = at
             elif kind in ('wall', 'room', 'roof', 'building', 'stair', 'fixture', 'light'):
+                old_rect = deepcopy(piece.get('rect'))
                 _transform(piece, lambda p: [p[0] + dx, p[1] + dy])
+                if kind == 'roof' and piece.get('ridge') in ('x', 'y'):
+                    _shift_gables(building, piece, old_rect)
             else:
                 raise ValueError(f'Cannot move a {kind}.')
+            if piece == original:
+                raise ValueError('Nothing changed')
             _mark(piece)
             direction = ('toward the rear' if dy >= 0 else 'toward the front') if abs(dy) >= abs(dx) else (
                 'to the right' if dx >= 0 else 'to the left')
@@ -329,13 +402,30 @@ def apply(plan, edit):
     # Edits must never silently discard a piece as a side effect of bad input.
     if op not in ('delete', 'add_wall', 'add_opening') and twin_plan.diff_paths(result, normalized):
         raise ValueError('The edit would create invalid geometry or dimensions.')
+    if added is not None:
+        added_kind, added_id, added_building = added
+        if not any(k == added_kind and p['id'] == added_id and b['id'] == added_building
+                   for k, p, b, _ in _entries(normalized)):
+            raise ValueError('The added piece did not survive normalization.')
+    if not twin_plan.diff_paths(before, normalized):
+        raise ValueError('Nothing changed')
+    if op == 'delete':
+        counts = {}
+        for removed_kind, removed_piece, removed_building in _removed(before, normalized):
+            if (removed_kind, removed_piece.get('id'), removed_building['id']) == (kind, piece['id'], building['id']):
+                continue
+            counts[removed_kind] = counts.get(removed_kind, 0) + 1
+        if counts:
+            summary += ' and ' + ', '.join(
+                f'{count} {name}' + ('' if count == 1 else 's') for name, count in counts.items())
+            summary += ' on it' if kind in ('wall', 'roof') else ' in it'
     return normalized, summary
 
 
-def _tombstone(plan, edit):
-    kind, piece, building, _ = _find(plan, edit.get('piece'), edit.get('building'))
-    geometry = {k: deepcopy(piece[k]) for k in ('from', 'to', 'polygon', 'rect') if k in piece}
-    level = piece.get('level')
+def _tombstone(kind, piece, building):
+    geometry = {k: deepcopy(piece[k]) for k in
+                ('from', 'to', 'polygon', 'rect', 'position', 'at', 'points', 'polyline') if k in piece}
+    level = piece['id'] if kind == 'level' else piece.get('level')
     if kind == 'opening':
         if 'wall' in piece:
             wall = _wall(building, piece)
@@ -346,9 +436,11 @@ def _tombstone(plan, edit):
             level = wall['level']
         else:
             section = next(s for s in building['roof']['sections'] if s['id'] == piece['section'])
-            y = section['rect'][1 if piece['gable'] == 'front' else 3]
-            geometry = {'from': [piece['x'] - piece['width'] / 2, y],
-                        'to': [piece['x'] + piece['width'] / 2, y]}
+            axis = 0 if section['ridge'] == 'y' else 1
+            edge = section['rect'][(1 - axis) + (0 if piece['gable'] == 'front' else 2)]
+            geometry = {key: ([distance, edge] if axis == 0 else [edge, distance])
+                        for key, distance in (('from', piece['x'] - piece['width'] / 2),
+                                              ('to', piece['x'] + piece['width'] / 2))}
             level = section.get('level')
     return {'kind': kind, 'level': level, 'geometry': geometry,
             'src': deepcopy(piece.get('src') or {})}
@@ -371,9 +463,13 @@ def save(edit, actor_id, reason=''):
             raise ValueError('Build a house before editing it.')
         if edit.get('op') == 'registration':
             edit['from_reg'] = twin_store.registration(edit.get('source'), edit.get('page'), edit.get('level'))
+            if edit['from_reg'] is None:
+                raise ValueError('No registration on file for this sheet yet')
+            edit['reg'] = _registration(edit.get('reg'))
             twin_store._source_page(twin_store._state(), edit.get('source'), edit.get('page'))
         after, summary = apply(before, edit)
-        tombstone = _tombstone(before, edit) if edit.get('op') == 'delete' else None
+        tombstones = ([_tombstone(*entry) for entry in _removed(before, after)]
+                      if edit.get('op') == 'delete' else [])
         changes = [{'path': path, 'kind': twin_store._fix_kind(path),
                     'before': twin_store._leaf(before, path), 'after': twin_store._leaf(after, path),
                     'reason': reason.strip() or summary, 'actor_id': actor_id}
@@ -386,7 +482,7 @@ def save(edit, actor_id, reason=''):
         at = next(r['created'] for r in row['rounds'] if r['id'] == round_id)
         row['fixes'].extend({**change, 'round': round_id, 'at': at} for change in changes)
         twin_store._save(row)
-        if tombstone is not None:
+        for tombstone in tombstones:
             twin_store.add_tombstone(tombstone)
         if edit.get('op') == 'registration':
             twin_store.set_registration(edit['source'], edit['page'], edit['level'], edit['reg'])

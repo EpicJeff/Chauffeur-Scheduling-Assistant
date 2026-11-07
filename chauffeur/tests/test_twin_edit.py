@@ -201,6 +201,51 @@ def scenario_an_id_shared_by_two_buildings_needs_the_building():
     check(garage['walls'][0]['height'] == 10 and house_b['walls'][0]['height'] == 9, 'only the named building')
 
 
+def scenario_llm_sized_numbers_are_refused_not_crashes():
+    for edit in ({'op': 'set', 'piece': 'wall-1', 'field': 'height', 'value': 10 ** 400},
+                 {'op': 'set', 'piece': 'wall-1', 'field': 'height', 'value': float('nan')},
+                 {'op': 'set', 'piece': 'wall-1', 'field': 'height', 'value': True},
+                 {'op': 'set', 'piece': 'wall-1', 'field': 'height', 'value': '9'},
+                 {'op': 'move', 'piece': 'wall-1', 'by': [1e308, 1e308]},
+                 {'op': 'move', 'piece': 'wall-1', 'by': [1, 2, 3]},
+                 {'op': 'set', 'building': 'house', 'piece': 'house', 'field': 'position', 'value': [1e308, 1]},
+                 {'op': 'add_wall', 'building': 'house', 'level': 'L1', 'from': [0, 0], 'to': [1e-9, 0]},
+                 {'op': 'add_wall', 'building': 'house', 'level': 'L1', 'from': [0, 0], 'to': [1e300, 0]},
+                 {'op': 'set', 'piece': 'opening-1', 'field': 'width', 'value': 3}):     # no change
+        expect_value_error(lambda: twin_edit.apply(house(), edit))
+
+
+def scenario_deleting_a_wall_tombstones_what_goes_with_it():
+    _seed()
+    out = twin_edit.save({'op': 'delete', 'piece': 'wall-1'}, 'p1')
+    plan = ts.current()
+    check(piece(plan, 'wall-1') is None and piece(plan, 'opening-1') is None, 'its opening goes with it')
+    kinds = sorted(t['kind'] for t in ts.tombstones())
+    check(kinds == ['opening', 'wall'], kinds)
+    check('opening' in out['summary'], out['summary'])
+
+
+def scenario_gable_openings_follow_their_section():
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures', 'twin_poolhouse.plan.json'),
+              encoding='utf-8') as f:
+        pool = tp.normalize(json.load(f))[0]
+    before = [o['x'] for o in pool['buildings'][0]['openings'] if 'gable' in o]
+    plan, _ = twin_edit.apply(pool, {'op': 'move', 'piece': 'roof-main', 'by': [1, 0]})
+    after = [o['x'] for o in plan['buildings'][0]['openings'] if 'gable' in o]
+    check(len(after) == len(before) == 3 and all(abs(a - b - 1) < 1e-9 for a, b in zip(after, before)), (before, after))
+
+
+def scenario_registration_needs_one_on_file():
+    _seed()
+    try:
+        twin_edit.save({'op': 'registration', 'source': 'nope', 'page': 2, 'level': 'L2',
+                        'reg': tr.make(0.05)}, 'p1')
+    except ValueError as exc:
+        check('registration' in str(exc).lower(), exc)
+    else:
+        raise AssertionError('no registration on file must refuse')
+
+
 if __name__ == '__main__':
     for fn in (scenario_editable_fields_are_pinned,
                scenario_set_pitch_marks_the_person,
@@ -213,6 +258,10 @@ if __name__ == '__main__':
                scenario_save_logs_fixes_and_a_plain_summary,
                scenario_delete_leaves_a_tombstone,
                scenario_registration_save_updates_the_store,
-               scenario_an_id_shared_by_two_buildings_needs_the_building):
+               scenario_an_id_shared_by_two_buildings_needs_the_building,
+               scenario_llm_sized_numbers_are_refused_not_crashes,
+               scenario_deleting_a_wall_tombstones_what_goes_with_it,
+               scenario_gable_openings_follow_their_section,
+               scenario_registration_needs_one_on_file):
         fn()
         print('  ok ', fn.__name__)
