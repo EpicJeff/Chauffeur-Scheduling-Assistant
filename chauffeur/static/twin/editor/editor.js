@@ -14,7 +14,7 @@ export async function boot() {
   let view = null, snapshot = { plan: null, rounds: [], cost: {}, build: null };
   let sheets = { sources: [], page_roles: [] }, rows = [], confirmed = false;
   let currentBuild = null, ghostBuild = null, renderedGhosts = 0, lastScene = '';
-  let uploadsBusy = false, rolesBusy = false, building = false;
+  let uploadsBusy = false, rolesBusy = false, building = false, resuming = false;
   let sourcesOpen = false;
   let tools = null, planView = null, pauses = null, timeline = null, previewing = false, lastSummary = '';
   const lifecycle = new AbortController();
@@ -34,8 +34,10 @@ export async function boot() {
 
   function setStatus(text) { el('editor-status').textContent = plain(text); }
   function syncBuildButton() {
-    el('editor-build').disabled = previewing || !hooks.ready || !confirmed || uploadsBusy || rolesBusy || building || active(currentBuild);
+    el('editor-build').disabled = previewing || !hooks.ready || !confirmed || uploadsBusy || rolesBusy || building || resuming || active(currentBuild);
     el('editor-check-step').hidden = previewing || currentBuild?.state !== 'paused';
+    el('editor-resume').hidden = previewing || !['stopped', 'checkpoint'].includes(currentBuild?.state);
+    el('editor-resume').disabled = !hooks.ready || building || resuming || session.signedOut;
   }
   function cost(value) { el('editor-cost').textContent = `$${Number(value || 0).toFixed(2)}`; }
   function countGhosts(plan) {
@@ -208,7 +210,6 @@ export async function boot() {
         try { await request('sources', 'POST', data, 'twin'); }
         catch (error) { rejected.push(`${file.name}: ${error.message}`); if (error.signedOut) break; }
       }
-      if (rejected.length) report(new Error(rejected.join('\n')));
       el('editor-upload-status').textContent = rejected.length ? rejected.join('\n') : 'Check each page, then confirm.';
     } catch (error) { report(error); }
     finally {
@@ -245,7 +246,7 @@ export async function boot() {
     finally { rolesBusy = false; drawPages(); }
   });
   listen(el('editor-build'), 'click', async () => {
-    if (!canEdit() || building || active(currentBuild) || !confirmed) return;
+    if (!canEdit() || building || resuming || active(currentBuild) || !confirmed) return;
     building = true; syncBuildButton();
     try {
       if (snapshot.plan?.buildings?.length && !await window.promptConfirm('Build your house again?',
@@ -259,6 +260,20 @@ export async function boot() {
       await polling.follow(result.id);
     } catch (error) { report(error); }
     finally { building = false; syncBuildButton(); }
+  });
+  listen(el('editor-resume'), 'click', async () => {
+    if (!canEdit() || building || resuming || !['stopped', 'checkpoint'].includes(currentBuild?.state)) return;
+    const id = currentBuild.id;
+    resuming = true; syncBuildButton();
+    try {
+      // Recheck spending before resuming cached work, including a build
+      // stopped at a checkpoint in an earlier tab or add-on session.
+      await polling.refreshState();
+      if (snapshot.cost?.blocking && !await checkpoint({ checkpoint: snapshot.cost.blocking, total: snapshot.cost.total })) return;
+      await request(`build/${encodeURIComponent(id)}/resume`, 'POST', {});
+      await polling.follow(id);
+    } catch (error) { report(error); }
+    finally { resuming = false; syncBuildButton(); }
   });
   listen(el('editor-manage-sources'), 'click', () => {
     el('editor-upload').hidden = !el('editor-upload').hidden;

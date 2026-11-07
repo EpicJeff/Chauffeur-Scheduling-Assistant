@@ -70,7 +70,7 @@ export async function request(path, method = 'GET', body, area = 'editor') {
   }
 }
 
-export const active = build => ['running', 'paused', 'checkpoint', 'stopped'].includes(build?.state);
+export const active = build => ['running', 'paused', 'checkpoint'].includes(build?.state);
 
 export function createPolling({ onState, onBuild, onTick, onError }) {
   let build = null, seq = 0, timer = null, pending = null, stopped = false;
@@ -126,7 +126,7 @@ export function createPolling({ onState, onBuild, onTick, onError }) {
   return {
     start: () => pollNow(true), pollNow,
     async follow(id) {
-      while (pending) await pending;
+      while (pending) await pending.catch(() => {});
       return run(() => readBuild(id));
     },
     refreshState: readState,
