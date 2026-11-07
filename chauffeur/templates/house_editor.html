@@ -1,16 +1,28 @@
 <!DOCTYPE html>
+{% set _up = '../../' if request.url.path.endswith('/house/editor/') else '../' %}
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>House editor</title>
   {% include 'ha_theme.html' %}
   <script>
     window.chfBase = location.pathname.endsWith('/house/editor/') ? '../../' : '../';
-    const editorStyles = document.createElement('link');
-    editorStyles.rel = 'stylesheet';
-    editorStyles.href = window.chfBase + {{ 'static/tailwind.css' | ver | tojson }};
-    document.head.appendChild(editorStyles);
+    window.twinManifest = {{ twin_manifest | tojson }};
+    for (const path of [{{ 'static/tailwind.css' | ver | tojson }}, {{ 'static/vendor/fonts/inter/inter.css' | ver | tojson }}, {{ 'static/twin/editor/editor.css' | ver | tojson }}]) {
+      const link = document.createElement('link'); link.rel = 'stylesheet';
+      link.href = window.chfBase + path; document.head.appendChild(link);
+    }
+    const imports = {
+      'three': window.chfBase + {{ 'static/vendor/three-r187/three.module.js' | ver | tojson }},
+      'three/addons/': window.chfBase + 'static/vendor/three-r187/addons/',
+      '@dgreenheck/ez-tree': window.chfBase + {{ 'static/vendor/ez-tree/ez-tree.es.js' | ver | tojson }}
+    };
+    {% for name in ['twin_generator', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'twin_roof', 'twin_ground', 'editor/editor', 'editor/api', 'editor/panel'] %}
+    imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
+    {% endfor %}
+    const map = document.createElement('script'); map.type = 'importmap';
+    map.textContent = JSON.stringify({ imports }); document.head.appendChild(map);
     document.addEventListener('DOMContentLoaded', () => {
       const script = document.createElement('script');
       script.src = window.chfBase + {{ 'static/vendor/alpine.min.js' | ver | tojson }};
@@ -19,8 +31,63 @@
   </script>
 </head>
 <body>
-  <div id="editor-chrome" hidden>{% include 'nav.html' %}</div>
-  <main id="editor-scene" aria-label="House editor"></main>
+  <div id="editor-chrome">{% include 'nav.html' %}</div>
+  <main class="editor-shell" aria-label="House editor">
+    <div id="editor-scene" aria-label="Interactive house preview"></div>
+    <header id="editor-top">
+      <h1>House designer</h1>
+      <output id="editor-status" role="status">Opening your house…</output>
+      <output id="editor-cost" aria-label="Total spent">$0.00</output>
+      <button id="editor-build" type="button" disabled>Build</button>
+      <details id="editor-menu">
+        <summary aria-label="House menu">Menu</summary>
+        <div><button id="editor-manage-sources" type="button">Drawings and photos</button>
+          <a href="{{ _up }}house/twin">House preview</a></div>
+      </details>
+    </header>
+    <nav id="editor-rail" aria-label="House tools">
+      {% for tool, label in [('select', 'Select'), ('move', 'Move'), ('rotate', 'Turn'), ('pin', 'Pin'), ('measure', 'Ruler'), ('sheet', 'Sheet'), ('cut', 'Cut'), ('plan', 'Plan')] %}
+      <button id="rail-{{ tool }}" type="button" aria-pressed="{{ 'true' if tool == 'select' else 'false' }}" {% if tool != 'select' %}disabled{% endif %}>{{ label }}</button>
+      {% endfor %}
+    </nav>
+    <aside id="editor-floors" aria-label="Floors"><span>Floors</span><p>No floors yet</p></aside>
+    <aside id="editor-agent" aria-label="Argyle">
+      <header><h2>Argyle</h2><span id="editor-source-count">Drawings and photos</span></header>
+      <div id="editor-panel-scroll">
+        <section id="editor-upload" aria-labelledby="editor-upload-title">
+          <h3 id="editor-upload-title">Start with your drawings</h3>
+          <p>Add PDF drawings and JPEG or PNG photos. Check what each page shows, then build your house.</p>
+          <label for="editor-source-files">Drawings and photos</label>
+          <input id="editor-source-files" type="file" accept="application/pdf,image/jpeg,image/png" multiple>
+          <p id="editor-upload-status" role="status"></p>
+          <div id="editor-pages"></div>
+          <div class="editor-actions">
+            <button id="editor-suggest-roles" type="button" disabled>Suggest page roles</button>
+            <button id="editor-confirm-roles" type="button" disabled>Confirm pages</button>
+          </div>
+        </section>
+        <ol id="editor-log" aria-label="Build steps" aria-live="polite"></ol>
+        <div id="editor-messages" role="log" aria-label="Conversation" aria-live="polite"></div>
+      </div>
+      <div id="editor-quick-replies" aria-label="Quick replies"></div>
+      <form id="editor-say">
+        <label class="editor-sr-only" for="editor-message">Message Argyle</label>
+        <input id="editor-message" type="text" placeholder="Talk to Argyle, or drag in the scene" maxlength="4000" autocomplete="off" required>
+        <button type="submit" aria-label="Send to Argyle">Send</button>
+      </form>
+    </aside>
+    <footer id="editor-time" aria-label="Build timeline">
+      <div id="editor-time-labels"><span>Sheets</span><span>Main floor</span><span>Upper</span><span>Roof</span><span>Lot</span><span>Finishes</span></div>
+      <progress id="editor-progress" max="1" value="0" aria-label="Build progress"></progress>
+      <div><span id="editor-time-note">Your build will appear here, one step at a time.</span><output id="editor-step-count">0 steps</output></div>
+    </footer>
+  </main>
   {% include 'components/control_center.html' %}
+  <script type="module">
+    import(window.chfBase + {{ 'static/twin/editor/editor.js' | ver | tojson }})
+      .then(module => module.boot()).catch(() => {
+        document.getElementById('editor-status').textContent = 'The house editor could not open. Reload to try again.';
+      });
+  </script>
 </body>
 </html>

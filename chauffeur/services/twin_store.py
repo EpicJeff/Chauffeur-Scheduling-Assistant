@@ -410,6 +410,12 @@ def page_roles() -> list[dict]:
         return _state()['page_roles']
 
 
+def registrations() -> list[dict]:
+    """Return the saved sheet placements without exposing store internals."""
+    with _LOCK:
+        return _state()['registrations']
+
+
 def set_registration(source_id, page, level, reg) -> None:
     if not isinstance(reg, dict):
         raise ValueError('A registration must be an object.')

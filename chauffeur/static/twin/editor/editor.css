@@ -1,0 +1,78 @@
+/* Full-bleed placement: house_twin.html. Dark panels: the approved editor
+   mockup; shared thin scrollbars: panel_skin.html. Keep admin overlays free. */
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+#editor-chrome #top-nav-bar, #editor-chrome #panel-shelf,
+#editor-chrome #panel-shelf-flyout { display: none !important; }
+.editor-shell { --editor-panel: rgba(21, 27, 34, .96); --editor-line: #2b3847; --editor-muted: #a0afc1; --editor-accent: #52ccff; --editor-side: 364px; position: fixed; inset: 0; background: #171e27; color: #dce4ef; font: 13px/1.5 Inter, system-ui, sans-serif; }
+.editor-shell * { box-sizing: border-box; }
+.editor-shell [hidden] { display: none !important; }
+.editor-shell button, .editor-shell input, .editor-shell select, #editor-menu summary,
+.editor-shell a { font: inherit; color: inherit; }
+.editor-shell button, #editor-menu summary, .editor-shell a { cursor: pointer; }
+.editor-shell button, .editor-shell select, .editor-shell input { border: 1px solid var(--editor-line); border-radius: 10px; padding: 8px 10px; min-height: 44px; background: #1c2531; }
+.editor-shell button:hover:not(:disabled), .editor-shell a:hover { background: #293849; }
+.editor-shell :focus-visible { outline: 2px solid var(--editor-accent); outline-offset: 3px; }
+.editor-shell button:disabled { opacity: .5; cursor: default; }
+.editor-shell h1, .editor-shell h2, .editor-shell h3, .editor-shell p { margin: 0; }
+.editor-shell h1, .editor-shell h2 { font-size: 13px; font-weight: 600; }
+.editor-shell h3 { font-size: 16px; font-weight: 600; }
+#editor-scene { position: absolute; inset: 0 calc(var(--editor-side) + 28px) 0 0; }
+#editor-scene canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+#editor-top { position: absolute; top: 14px; left: 16px; right: calc(var(--editor-side) + 152px); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; pointer-events: none; z-index: 3; }
+#editor-top > * { pointer-events: auto; }
+#editor-top h1, #editor-top output { background: var(--editor-panel); border: 1px solid var(--editor-line); border-radius: 24px; padding: 8px 14px; }
+#editor-top #editor-status { color: var(--editor-accent); border-color: #167aa5; }
+#editor-build { background: #119e50; border-color: #119e50; font-weight: 600; }
+#editor-menu { position: relative; }
+#editor-menu summary { list-style: none; border: 1px solid var(--editor-line); border-radius: 10px; padding: 10px; background: var(--editor-panel); }
+#editor-menu > div { position: absolute; left: 0; top: 48px; width: 210px; padding: 8px; background: var(--editor-panel); border: 1px solid var(--editor-line); border-radius: 12px; }
+#editor-menu button, #editor-menu a { display: block; width: 100%; text-align: left; text-decoration: none; padding: 10px; border: 0; border-radius: 8px; }
+#editor-rail { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; padding: 6px; gap: 2px; border: 1px solid var(--editor-line); border-radius: 16px; background: var(--editor-panel); z-index: 2; }
+#editor-rail button { font-size: 11px; border: 0; background: transparent; padding: 6px; }
+#editor-rail button[aria-pressed="true"] { background: #0ba7df; color: white; }
+#editor-floors { position: absolute; right: calc(var(--editor-side) + 28px); top: 14px; display: flex; flex-direction: column; gap: 5px; width: 112px; z-index: 2; }
+#editor-floors > span { color: var(--editor-muted); text-align: right; }
+#editor-floors button, #editor-floors p { background: var(--editor-panel); border: 1px solid var(--editor-line); border-radius: 10px; padding: 6px 10px; text-align: right; }
+#editor-floors button[aria-pressed="true"] { border-color: var(--editor-accent); color: var(--editor-accent); }
+#editor-agent { position: absolute; right: 14px; top: 14px; bottom: 96px; width: var(--editor-side); display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--editor-line); border-radius: 16px; background: var(--editor-panel); overflow: hidden; }
+#editor-agent > header { display: flex; gap: 12px; justify-content: space-between; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--editor-line); }
+#editor-source-count { font-size: 12px; color: var(--editor-muted); }
+#editor-panel-scroll { flex: 1; min-height: 0; overflow: auto; padding: 14px; }
+.editor-shell * { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.2) transparent; }
+#editor-upload { border: 1px solid var(--editor-line); border-radius: 12px; padding: 12px; margin-bottom: 14px; }
+#editor-upload p { color: var(--editor-muted); margin: 8px 0; }
+#editor-upload input[type="file"] { width: 100%; font-size: 12px; padding: 6px; margin-top: 6px; }
+#editor-pages { display: grid; gap: 12px; margin: 12px 0; }
+.editor-page { border: 1px solid var(--editor-line); border-radius: 10px; padding: 8px; min-width: 0; }
+.editor-page legend { padding: 0 4px; overflow-wrap: anywhere; }
+.editor-page label { display: block; color: var(--editor-muted); margin: 6px 0; }
+.editor-page select, .editor-page input { display: block; width: 100%; margin-top: 3px; }
+.editor-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+#editor-log { padding: 0 0 0 16px; margin: 0 0 12px; color: var(--editor-muted); font-size: 12px; }
+#editor-log li { margin: 0 0 8px; overflow-wrap: anywhere; }
+#editor-log li::marker { color: #1db66b; }
+.editor-message { padding: 10px 12px; border-radius: 14px; background: #202c39; margin: 8px 24px 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.editor-message[data-speaker="you"] { background: #104e6b; margin: 8px 0 8px 24px; }
+#editor-quick-replies { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 12px; }
+#editor-quick-replies button { border-radius: 24px; color: var(--editor-accent); font-size: 12px; }
+#editor-say { display: flex; gap: 6px; padding: 0 12px 12px; }
+#editor-message { width: 100%; min-width: 0; background: transparent; }
+#editor-message::placeholder { color: var(--editor-muted); font-size: 12px; }
+#editor-time { position: absolute; left: 14px; right: calc(var(--editor-side) + 28px); bottom: 14px; padding: 10px 16px; border: 1px solid var(--editor-line); border-radius: 16px; background: var(--editor-panel); color: var(--editor-muted); font-size: 11px; }
+#editor-time-labels, #editor-time > div:last-child { display: flex; justify-content: space-between; gap: 8px; }
+#editor-progress { display: block; width: 100%; height: 8px; margin: 8px 0; border: 0; border-radius: 10px; accent-color: #18af84; overflow: hidden; }
+#editor-progress::-webkit-progress-bar { background: #293849; }
+#editor-progress::-webkit-progress-value { background: linear-gradient(90deg, #16a45f, #10b2e0); }
+.editor-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+@media (max-width: 1050px) { .editor-shell { --editor-side: 320px; } #editor-top { right: calc(var(--editor-side) + 28px); } #editor-floors { top: 120px; } }
+@media (max-width: 700px) {
+  .editor-shell { --editor-side: 0px; }
+  #editor-scene { inset: 0 0 48% 0; }
+  #editor-top { left: 8px; right: 8px; top: 8px; gap: 4px; }
+  #editor-top h1, #editor-top output { padding: 6px 8px; font-size: 11px; }
+  #editor-agent { top: 52%; bottom: calc(8px + env(safe-area-inset-bottom)); left: 8px; right: 8px; width: auto; }
+  #editor-rail { left: 8px; top: 100px; transform: none; max-height: calc(52% - 160px); overflow: auto; }
+  #editor-floors { right: 8px; top: 100px; max-height: calc(52% - 160px); overflow: auto; }
+  #editor-time { left: 8px; right: 8px; bottom: 49%; padding: 6px 10px; }
+  #editor-time-labels { display: none; }
+}

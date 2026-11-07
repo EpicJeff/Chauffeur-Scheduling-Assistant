@@ -1965,7 +1965,9 @@ def house_twin_page(request: Request):
 
 @app.get("/house/editor")
 def house_editor_page(request: Request):
-    return templates.TemplateResponse(request=request, name="house_editor.html")
+    from services import twin_library
+    return templates.TemplateResponse(request=request, name="house_editor.html",
+                                      context={"twin_manifest": twin_library.manifest()})
 
 
 @app.get("/house")
@@ -7440,16 +7442,20 @@ def house_twin_critique(body: dict = Body(default={})):
     return {'result': result}
 
 
-def _house_editor_call(operation, *args, **kwargs):
+def _house_editor_call(operation, *args, lookup=False, **kwargs):
     """Keep the editor's domain errors consistent across its thin routes."""
-    from services import twin_cost
+    from services import twin_cost, twin_store
     try:
         return operation(*args, **kwargs)
     except twin_cost.CheckpointReached as exc:
         raise HTTPException(status_code=409, detail={
             'checkpoint': exc.checkpoint, 'total': exc.total}) from exc
+    except twin_store.StaleGeneration as exc:
+        raise HTTPException(status_code=409, detail='The house was started over.') from exc
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail='No such build or round.') from exc
+        if lookup:
+            raise HTTPException(status_code=404, detail='No such build or round.') from exc
+        raise
     except ValueError as exc:
         busy = str(exc) in ('A build is already running.', 'Stop the build before starting over.')
         raise HTTPException(status_code=409 if busy else 400, detail=str(exc)) from exc
@@ -7458,9 +7464,44 @@ def _house_editor_call(operation, *args, **kwargs):
 @app.get('/api/house/editor/sheets')
 def house_editor_sheets():
     from services import twin_store
-    with twin_store.LIFECYCLE, twin_store._LOCK:
+    with twin_store.LIFECYCLE:
         return {'sources': twin_store.sources(), 'page_roles': twin_store.page_roles(),
-                'registrations': twin_store._state()['registrations']}
+                'registrations': twin_store.registrations()}
+
+
+@app.post('/api/house/editor/sheets/suggest')
+def house_editor_suggest_roles(body: dict = Body(default={})):
+    from base64 import b64encode
+    from io import BytesIO
+    from PIL import Image
+    from services import twin_reads, twin_store
+    source_id = body.get('source')
+    images = []
+    with twin_store.LIFECYCLE:
+        source = next((s for s in twin_store.sources() if s['id'] == source_id), None)
+        if source is None or source['kind'] != 'drawing':
+            raise HTTPException(status_code=400, detail='Choose an existing drawing source.')
+        generation = twin_store.generation()
+        for page in range(1, source['pages'] + 1):
+            # Suggestions use small in-memory thumbnails, without creating
+            # master-image caches or changing the saved page roles.
+            png = _house_editor_call(twin_store.page_image, source_id, page)
+            with Image.open(BytesIO(png)) as image, BytesIO() as output:
+                image.thumbnail((768, 768), Image.Resampling.LANCZOS)
+                image.save(output, format='PNG')
+                images.append({'mime': 'image/png', 'b64': b64encode(output.getvalue()).decode('ascii')})
+    result = _house_editor_call(twin_reads.read, 'sheet_roles', images,
+                                {'source': source_id, 'pages': source['pages']},
+                                run='suggest', step='sheet_roles')
+    if generation != twin_store.generation():
+        raise HTTPException(status_code=409, detail='The house was started over.')
+    if result.get('error'):
+        raise HTTPException(status_code=400, detail=result['error'])
+    fragment, problems = twin_reads.parse('sheet_roles', result)
+    rows = fragment.get('pages', [])
+    if problems or any(row['page'] > source['pages'] for row in rows):
+        raise HTTPException(status_code=400, detail='The suggested pages could not be read. Set their roles by hand.')
+    return {'rows': [{**row, 'source': source_id, 'building': 'house'} for row in rows]}
 
 
 @app.put('/api/house/editor/sheets/roles')
@@ -7489,37 +7530,40 @@ def house_editor_build(body: dict = Body(default={})):
     from services import twin_build
     if not isinstance(body.get('building'), dict) or not isinstance(body['building'].get('id'), str):
         raise HTTPException(status_code=400, detail='A building needs a valid id.')
+    if not isinstance(body.get('photos', []), list) or any(
+            not isinstance(source, str) for source in body.get('photos', [])):
+        raise HTTPException(status_code=400, detail='Photos must be a list of source ids.')
     return {'id': _house_editor_call(twin_build.start, body)}
 
 
 @app.get('/api/house/editor/build/{build_id}')
 def house_editor_build_status(build_id: str, since: int = 0):
     from services import twin_build
-    return _house_editor_call(twin_build.status, build_id, since=since)
+    return _house_editor_call(twin_build.status, build_id, since=since, lookup=True)
 
 
 @app.post('/api/house/editor/build/{build_id}/answer')
 def house_editor_build_answer(build_id: str, body: dict = Body(default={})):
     from services import twin_build
-    return _house_editor_call(twin_build.answer, build_id, body.get('step'), body.get('decision', {}))
+    return _house_editor_call(twin_build.answer, build_id, body.get('step'), body.get('decision', {}), lookup=True)
 
 
 @app.post('/api/house/editor/build/{build_id}/reread')
 def house_editor_build_reread(build_id: str, body: dict = Body(default={})):
     from services import twin_build
-    return _house_editor_call(twin_build.reread, build_id, body.get('step'))
+    return _house_editor_call(twin_build.reread, build_id, body.get('step'), lookup=True)
 
 
 @app.post('/api/house/editor/build/{build_id}/stop')
 def house_editor_build_stop(build_id: str):
     from services import twin_build
-    return _house_editor_call(twin_build.stop, build_id)
+    return _house_editor_call(twin_build.stop, build_id, lookup=True)
 
 
 @app.post('/api/house/editor/build/{build_id}/resume')
 def house_editor_build_resume(build_id: str):
     from services import twin_build
-    return _house_editor_call(twin_build.resume, build_id)
+    return _house_editor_call(twin_build.resume, build_id, lookup=True)
 
 
 @app.post('/api/house/editor/edit')
@@ -7595,7 +7639,7 @@ def house_editor_cost_reset(request: Request, body: dict = Body(default={})):
 @app.get('/api/house/editor/state')
 def house_editor_state():
     from services import twin_build, twin_cost, twin_store
-    with twin_store.LIFECYCLE, twin_build._LOCK:
+    with twin_store.LIFECYCLE:
         latest = twin_build.latest()
         return {'plan': twin_store.current(), 'rounds': twin_store.rounds(),
                 'cost': {'total': twin_cost.total(), 'blocking': twin_cost.blocking_checkpoint()},
@@ -7606,7 +7650,7 @@ def house_editor_state():
 def house_twin_round(round_id: int):
     from services import twin_store
     with twin_store.LIFECYCLE, twin_store._LOCK:
-        return {'plan': _house_editor_call(twin_store._read_round, twin_store._state(), round_id)}
+        return {'plan': _house_editor_call(twin_store._read_round, twin_store._state(), round_id, lookup=True)}
 
 
 @app.get("/api/study/state")

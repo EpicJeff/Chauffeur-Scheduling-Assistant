@@ -459,6 +459,7 @@ RULES = [
     ('POST', '/api/house/twin/critique', PARENTS, None),
     ('GET', '/api/house/twin/rounds/{round_id}', PARENTS, None),
     ('POST', '/api/house/editor/say', PARENTS, None),
+    ('POST', '/api/house/editor/sheets/suggest', PARENTS, None),
     (ANY, '/api/house/editor/*', PARENTS, None),
     # The facade generator (spec 2026-09-15 §3.2): reads are family-safe
     # (a wall builds from the active facade); every write is a parent's.

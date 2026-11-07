@@ -271,7 +271,11 @@ export async function mountTwin(el, { plan, kit, tier } = {}) {
       view.roomLights = twin.roomLights; view.plan = plan;
       const points = (plan.buildings || []).flatMap(b => {
         const angle = (b.rotation || 0) * Math.PI / 180, c = Math.cos(angle), s = Math.sin(angle);
-        return (b.walls || []).flatMap(w => [w.from, w.to].map(p => [c * p[0] - s * p[1] + (b.position?.[0] || 0), s * p[0] + c * p[1] + (b.position?.[1] || 0)]));
+        // Before any walls settle, the editor previews only a floor outline.
+        // Frame that footprint with the same camera rule as a finished house.
+        const points = b.walls?.length ? b.walls.flatMap(w => [w.from, w.to])
+          : [...(b.levels || []).flatMap(l => l.outline || []), ...(b.rooms || []).flatMap(r => r.polygon || [])];
+        return points.map(p => [c * p[0] - s * p[1] + (b.position?.[0] || 0), s * p[0] + c * p[1] + (b.position?.[1] || 0)]);
       });
       if (points.length) {
         const xs = points.map(p => p[0]), ys = points.map(p => p[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
