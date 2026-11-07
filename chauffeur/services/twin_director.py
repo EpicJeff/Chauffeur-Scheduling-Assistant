@@ -111,6 +111,7 @@ def _enforce_kit(revised, current, kit, notes):
 
 def critique(run: str, renders: list[str], cameras: list[str], base: int | None = None
              ) -> tuple[dict | None, str | None]:
+    generation = twin_store.generation()
     if not _LOCK.acquire(blocking=False):
         return None, 'a critique is already running'
     try:
@@ -172,7 +173,7 @@ def critique(run: str, renders: list[str], cameras: list[str], base: int | None 
         notes.extend(normalized_notes)
         cost = math.fsum(entry['usd'] for entry in entries)
         round_id = twin_store.push_round(plan, 'director', note=answer['critique'][:200],
-                                         cost=cost, run=run, base=base)
+                                         cost=cost, run=run, base=base, generation=generation)
         saved = next(r for r in twin_store.rounds() if r['id'] == round_id)
         return {'round': round_id, 'critique': answer['critique'], 'done': answer['done'],
                 'plan': twin_store.current(), 'cost': cost, 'stale': saved['stale'], 'notes': notes}, None

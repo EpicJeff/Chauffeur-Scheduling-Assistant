@@ -17,6 +17,7 @@ from pathlib import Path
 
 os.environ.setdefault('CHAUFFEUR_DATA_DIR', tempfile.mkdtemp(prefix='chauffeur_twin_sheets_'))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from services import storage  # noqa: E402
 from services import twin_cost as tc  # noqa: E402
@@ -231,6 +232,72 @@ def scenario_tombstones_round_trip_and_clear():
     check(ts.tombstones() == [], 'cleared by start over')
 
 
+def scenario_a_late_push_round_cannot_resurrect_the_house():
+    # Review finding: drafts and critiques publish with push_round, which had no generation check.
+    _fresh()
+    generation = ts.generation()
+    ts.start_over()
+    try:
+        ts.push_round(_plan(), 'director', generation=generation)
+    except ts.StaleGeneration:
+        pass
+    else:
+        raise AssertionError('a push_round from before the start over must refuse')
+    check(ts.current() is None, 'nothing written')
+    rid = ts.push_round(_plan(), 'director', generation=ts.generation())
+    check(ts.current_id() == rid, 'the current generation still writes')
+
+
+def scenario_a_draft_running_through_a_start_over_publishes_nothing():
+    import test_twin_draft as drafts
+    from services import model_pools, twin_draft
+    _fresh()
+    drawing, plot, photo = drafts._fresh()
+    model = drafts.Model()
+    calls = {'n': 0}
+
+    def start_over_midway(*a, **k):
+        calls['n'] += 1
+        if calls['n'] == 1:
+            ts.start_over()          # a parent presses Start over while the draft is reading
+        return model(*a, **k)
+    original = model_pools.call_pool_json
+    model_pools.call_pool_json = start_over_midway
+    try:
+        twin_draft.draft([{'id': drawing}], [photo], {'id': plot})
+    except Exception:
+        pass
+    finally:
+        model_pools.call_pool_json = original
+    check(ts.current() is None and ts.rounds() == [], 'the cleared house stays cleared')
+
+
+def scenario_start_over_clears_the_row_before_the_files():
+    _fresh()
+    ts.push_round(_plan(), 'build')
+    original = shutil.rmtree
+
+    def failing(*a, **k):
+        raise OSError('Directory not empty')
+    shutil.rmtree = failing
+    try:
+        try:
+            ts.start_over()
+        except OSError:
+            pass
+    finally:
+        shutil.rmtree = original
+    check(ts.current() is None, 'the row never points at missing rounds')
+
+
+def scenario_a_truncated_master_is_rendered_again():
+    _fresh()
+    sid = ts.save_source('drawing', 'lot58.pdf', _pdf(pages=1))
+    master = Path(ts.DATA_DIR) / 'sources' / sid / 'master-1.png'
+    master.write_bytes(bytes([0x89]) + b'PNG' + bytes([13, 10, 26, 10]) + b' truncated')
+    check(ts.crop(sid, 1, [0, 0, 1, 1])['master'] == [5100, 3300], 'recovered by re-rendering')
+
+
 if __name__ == '__main__':
     for fn in (scenario_crop_is_full_resolution,
                scenario_old_sources_render_masters_lazily,
@@ -242,6 +309,10 @@ if __name__ == '__main__':
                scenario_ledger_reset_is_recorded,
                scenario_v1_rounds_upgrade_on_read,
                scenario_late_result_after_start_over_is_refused,
-               scenario_tombstones_round_trip_and_clear):
+               scenario_tombstones_round_trip_and_clear,
+               scenario_a_late_push_round_cannot_resurrect_the_house,
+               scenario_a_draft_running_through_a_start_over_publishes_nothing,
+               scenario_start_over_clears_the_row_before_the_files,
+               scenario_a_truncated_master_is_rendered_again):
         fn()
         print('  ok ', fn.__name__)

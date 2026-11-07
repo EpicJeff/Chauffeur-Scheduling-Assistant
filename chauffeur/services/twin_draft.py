@@ -212,6 +212,7 @@ def _unfinished_run(inputs):
 def draft(drawings: list[dict], photos: list[str], site: dict | None,
           kit_id: str = 'modern_farmhouse', run: str | None = None
           ) -> tuple[dict | None, list[str], str | None]:
+    generation = twin_store.generation()
     notes = []
     if not _LOCK.acquire(blocking=False):
         return None, notes, 'a draft is already running'
@@ -315,7 +316,7 @@ def draft(drawings: list[dict], photos: list[str], site: dict | None,
         notes.extend(composed_notes)
         cost = math.fsum(entry['usd'] for entry in twin_cost.entries() if entry.get('run') == run)
         round_id = twin_store.push_round(plan, 'draft', '\n'.join(notes), cost=cost,
-                                         run=run, base=metadata['base'])
+                                         run=run, base=metadata['base'], generation=generation)
         saved = next(row for row in twin_store.rounds() if row['id'] == round_id)
         return {'round': round_id, 'plan': plan, 'cost': cost, 'run': run,
                 'stale': saved['stale']}, notes, None
