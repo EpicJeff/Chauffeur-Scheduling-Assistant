@@ -126,7 +126,7 @@ Step ids stay the same across rebuilds (`draft`, `rooms`), so the read cache and
 
 **Call.**
 - `model_pools.call_pool_json('twin', ...)` with these settings:
-  - `strict_json=True`
+  - `strict_json='lenient'` (every completion check of `strict_json=True`, plus the lenient parse below)
   - `thinking_level='medium'`
   - `max_output_tokens=64000`
   - `timeout_s=420`
@@ -146,7 +146,8 @@ Step ids stay the same across rebuilds (`draft`, `rooms`), so the read cache and
 **Lenient parse.**
 - Before validation:
   - strip code fences;
-  - strip any text before the first `{` or after the last matching `}`;
+  - strip any text before the first `{`;
+  - text after the object is refused, except one stray `}`; a second JSON object is refused;
   - drop one stray trailing brace.
 - Nothing else is repaired.
 - A reply cut off at the output limit is not retried at the same size, because 64k is the ceiling. It goes to the per-level fallback in section 5.
