@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { kitMaterial } from './twin_library.js';
-import { roofMesh, heightAt } from './twin_roof.js';
+import { roofMesh, heightAt, firstRoofAbove } from './twin_roof.js';
 import { groundAt } from './twin_ground.js';
 
 export const FT = 0.3048;
@@ -119,6 +119,18 @@ function footprints(walls) {
   return out;
 }
 
+// Include edges: a wall on the next floor's outline supports its slab too.
+function contains(poly, [x, y]) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [ax, ay] = poly[j], [bx, by] = poly[i], dx = bx - ax, dy = by - ay;
+    const t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1)));
+    if (Math.hypot(x - ax - t * dx, y - ay - t * dy) < 1e-7) return true;
+    if ((ay > y) !== (by > y) && x < ax + dx * (y - ay) / dy) inside = !inside;
+  }
+  return inside;
+}
+
 // One render mesh and one dashed line per ghost, even when wall openings or
 // roof seams split it into many primitives. Domain index ranges retain floor
 // and full/cut gable visibility without splitting the ghost into more draws.
@@ -222,6 +234,10 @@ export function buildTwin(plan, kit, tier) {
     ordered.forEach(l => { levelElevations[levelKey(l.id)] = base + l.elevation; });
     const sections = b.roof?.sections || [];
     const envelope = roofMesh(sections);
+    // Walls meet the first roof above them. Keep those lower surfaces visible
+    // from below even where a higher roof covers them in plan.
+    const roofLayers = roofMesh(sections, { retainLower: true });
+    const outlines = new Map(ordered.map(l => [l.id, l.outline?.length >= 3 ? [l.outline] : footprints(b.walls.filter(w => w.level === l.id))]));
     let activePiece = null;
     const records = new Map();
     const use = (piece, kind, fallback) => { activePiece = { pieceId: piece.id || fallback, kind, buildingId: b.id, ghost: piece.state === 'ghost' }; };
@@ -239,26 +255,54 @@ export function buildTwin(plan, kit, tier) {
       return object;
     };
     const center = b.walls.length ? b.walls.reduce((a, w) => [a[0] + w.from[0] / b.walls.length, a[1] + w.from[1] / b.walls.length], [0, 0]) : [0, 0];
+    const wallNormal = w => {
+      const length = Math.hypot(w.to[0] - w.from[0], w.to[1] - w.from[1]);
+      const dx = (w.to[0] - w.from[0]) / length, dy = (w.to[1] - w.from[1]) / length;
+      const polys = outlines.get(w.level) || [], mid = [(w.from[0] + w.to[0]) / 2, (w.from[1] + w.to[1]) / 2];
+      const sign = polys.length ? (polys.some(poly => contains(poly, [mid[0] + dy * 0.1, mid[1] - dx * 0.1])) ? -1 : 1)
+        : Math.sign(dy * (mid[0] - center[0]) - dx * (mid[1] - center[1])) || 1;
+      return { sign, outward: [sign * dy, -sign * dx] };
+    };
     const roofHeight = (x, y) => heightAt(sections, x, y) ?? Infinity;
-    function wall(group, from, to, elevation, thickness, top, holes, exterior, role = null, clipRoof = true) {
+    function wall(group, from, to, elevation, thickness, top, holes, exterior, role = null, clipRoof = true, profile = {}) {
       const { matrix, length, z } = wallBasis(from, to, elevation);
       if (!length) return;
-      const samples = Array.from({ length: 17 }, (_, i) => length * i / 16);
+      const start = -(profile.extendStart || 0), end = length + (profile.extendEnd || 0), offset = profile.offset || 0;
+      const samples = Array.from({ length: 17 }, (_, i) => start + (end - start) * i / 16);
       // Include every envelope face boundary crossed by this wall. Uniform
       // samples alone can bridge a narrow valley and put siding above it.
-      const dx = to[0] - from[0], dy = to[1] - from[1], positions = envelope.positions;
+      const dx = to[0] - from[0], dy = to[1] - from[1], positions = profile.positions || envelope.positions;
+      const edges = [];
       for (let i = 0; clipRoof && i < positions.length; i += 9) for (let j = 0; j < 3; j++) {
         const a = i + j * 3, c = i + ((j + 1) % 3) * 3;
-        const ex = positions[c] - positions[a], ey = positions[c + 1] - positions[a + 1], denominator = dx * ey - dy * ex;
+        edges.push([[positions[a], positions[a + 1]], [positions[c], positions[c + 1]]]);
+      }
+      edges.push(...(profile.edges || []));
+      for (const face of profile.faces || [[0, 0]]) for (const [a, c] of edges) {
+        const ex = c[0] - a[0], ey = c[1] - a[1], denominator = dx * ey - dy * ex;
         if (Math.abs(denominator) < 1e-8) continue;
-        const ax = positions[a] - from[0], ay = positions[a + 1] - from[1];
+        const ax = a[0] - from[0] - face[0], ay = a[1] - from[1] - face[1];
         const u = (ax * ey - ay * ex) / denominator, v = (ax * dy - ay * dx) / denominator;
-        if (u > 0 && u < 1 && v >= 0 && v <= 1) samples.push(u * length);
+        if (u * length > start && u * length < end && v >= -1e-8 && v <= 1 + 1e-8) samples.push(u * length);
       }
       // Partition the surface at opening edges. This treats doors touching the
       // floor as notches (not invalid polygon holes), and clips all upper pieces
       // under the sampled roof, including gable windows near a slope.
-      const cuts = [...new Set([0, length, ...samples, ...holes.flatMap(h => [Math.max(0, h.u0), Math.min(length, h.u1)])])].sort((a, c) => a - c);
+      const cuts = [...new Set([start, end, ...samples, ...holes.flatMap(h => [h.u0, h.u1])].filter(u => u >= start && u <= end))].sort((a, c) => a - c);
+      // Between face boundaries each height limit is linear. Split where
+      // the two faces (or a slab cap) exchange which one is lower.
+      if (profile.limits) {
+        const crossings = [];
+        for (let i = 0; i + 1 < cuts.length; i++) {
+          const a = cuts[i], c = cuts[i + 1], mid = (a + c) / 2;
+          const left = profile.limits(a, mid), right = profile.limits(c, mid);
+          for (let j = 0; j < left.length; j++) for (let k = j + 1; k < left.length; k++) {
+            const da = left[j] - left[k], dc = right[j] - right[k];
+            if (Number.isFinite(da) && Number.isFinite(dc) && da * dc < 0) crossings.push(a + (c - a) * da / (da - dc));
+          }
+        }
+        cuts.push(...crossings); cuts.sort((a, c) => a - c);
+      }
       const wallMat = role ? mat(role) : mat(exterior ? 'siding' : 'interior_wall');
       for (let i = 0; i < cuts.length - 1; i++) {
         const a = cuts[i], c = cuts[i + 1], mid = (a + c) / 2;
@@ -268,23 +312,34 @@ export function buildTwin(plan, kit, tier) {
           intervals = intervals.flatMap(([lo, hi]) => [[lo, Math.min(hi, h.v0)], [Math.max(lo, h.v1), hi]].filter(([p, q]) => q > p));
         });
         for (const [lo, hi] of intervals) {
-          const ta = Math.min(hi, top(a)), tc = Math.min(hi, top(c));
+          // Evaluate from this interval's side of a roof/floor boundary. A
+          // single shared height at a step would interpolate siding across it.
+          const ta = Math.min(hi, top(a, mid)), tc = Math.min(hi, top(c, mid));
           if (ta <= lo && tc <= lo) continue;
           const shape = new THREE.Shape([[a, lo], [c, lo], [c, Math.max(lo, tc)], [a, Math.max(lo, ta)]].map(p => new THREE.Vector2(...p)));
           const geo = new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false, steps: 1 });
-          geo.translate(0, 0, -thickness / 2).applyMatrix4(matrix);
+          geo.translate(0, 0, offset - thickness / 2).applyMatrix4(matrix);
           mesh(group, geo, wallMat);
         }
       }
-      const sign = Math.sign(z.dot(new THREE.Vector3((from[0] + to[0]) / 2 - center[0], 0, -(from[1] + to[1]) / 2 + center[1]))) || 1;
-      const localBox = (u, v, w, h, d, material, offset = 0) => mesh(group, boxGeometry(w, h, d).translate(u, v, offset).applyMatrix4(matrix), material);
+      const sign = profile.sign || Math.sign(z.dot(new THREE.Vector3((from[0] + to[0]) / 2 - center[0], 0, -(from[1] + to[1]) / 2 + center[1]))) || 1;
+      const localBox = (u, v, w, h, d, material, faceOffset = 0) => mesh(group, boxGeometry(w, h, d).translate(u, v, offset + faceOffset).applyMatrix4(matrix), material);
       if (exterior && materialKit.materials.siding?.asset === 'board_and_batten' && !role) {
         for (let u = 0.5; u < length; u += 1) {
-          let intervals = [[0, top(u)]];
+          let intervals = [[0, Infinity]];
           holes.filter(h => u > h.u0 - 0.4 && u < h.u1 + 0.4).forEach(h => {
             intervals = intervals.flatMap(([a, c]) => [[a, Math.min(c, h.v0 - 0.35)], [Math.max(a, h.v1 + 0.35), c]].filter(([a, c]) => c - a > 0.1));
           });
-          intervals.forEach(([a, c]) => localBox(u, (a + c) / 2, 0.14, c - a, 0.09, wallMat, sign * (thickness / 2 + 0.045)));
+          const edges = [Math.max(start, u - 0.07), ...cuts.filter(c => c > u - 0.07 && c < u + 0.07), Math.min(end, u + 0.07)];
+          for (let i = 0; i + 1 < edges.length; i++) for (const [lo, hi] of intervals) {
+            const a = edges[i], c = edges[i + 1], mid = (a + c) / 2;
+            const ta = Math.min(hi, top(a, mid)), tc = Math.min(hi, top(c, mid));
+            if (ta <= lo && tc <= lo) continue;
+            const shape = new THREE.Shape([[a, lo], [c, lo], [c, Math.max(lo, tc)], [a, Math.max(lo, ta)]].map(p => new THREE.Vector2(...p)));
+            const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.09, bevelEnabled: false, steps: 1 });
+            geo.translate(0, 0, offset + sign * (thickness / 2 + 0.045) - 0.045).applyMatrix4(matrix);
+            mesh(group, geo, wallMat);
+          }
         }
       }
       const wallPiece = activePiece;
@@ -324,15 +379,44 @@ export function buildTwin(plan, kit, tier) {
       const l = levels[w.level]; if (!l) continue;
       use(w, 'wall', w.id);
       const length = Math.hypot(w.to[0] - w.from[0], w.to[1] - w.from[1]);
+      if (!length) continue;
+      const dx = (w.to[0] - w.from[0]) / length, dy = (w.to[1] - w.from[1]) / length;
+      const { sign, outward } = wallNormal(w);
+      // Outside face stays on the drawn line. Interior walls retain their
+      // centreline and sample both faces to avoid piercing a sloping roof.
+      const faces = w.exterior ? [[0, 0], outward.map(v => -v * w.thickness)]
+        : [-0.5, 0.5].map(f => outward.map(v => v * w.thickness * f));
+      const extension = vertex => {
+        if (!w.exterior) return 0;
+        const concave = b.walls.some(other => {
+          if (other === w || !other.exterior || other.level !== w.level) return false;
+          const near = p => Math.hypot(p[0] - vertex[0], p[1] - vertex[1]) < 1e-4;
+          const away = near(other.from) ? other.to : near(other.to) ? other.from : null;
+          return away && (away[0] - vertex[0]) * outward[0] + (away[1] - vertex[1]) * outward[1] > 1e-6;
+        });
+        return concave ? w.thickness : 0;
+      };
+      const next = ordered[ordered.indexOf(l) + 1], above = next ? outlines.get(next.id) : [];
+      const at = (u, face) => [w.from[0] + dx * u + face[0], w.from[1] + dy * u + face[1]];
       const gables = sections.filter(s => s.kind === 'gable').flatMap(section => {
         const axis = section.ridge === 'y' ? 1 : 0;
         return [section.rect[axis], section.rect[axis + 2]].filter(end => ownsGable(w, section, end)).map(end => ({ section, end, axis }));
       });
-      const clipRoof = gables.length > 0 || w.level !== first.id;
-      const top = u => {
-        const height = clipRoof ? roofHeight(w.from[0] + (w.to[0] - w.from[0]) * u / length, w.from[1] + (w.to[1] - w.from[1]) * u / length) - l.elevation - 0.08 : Infinity;
-        return gables.length && Number.isFinite(height) ? height : Math.min(w.height, height);
+      const limits = (u, toward = u) => {
+        // Stay on this side of a discontinuity, including a section rect's
+        // boundary, without moving the actual wall vertices off that boundary.
+        const sample = u + Math.sign(toward - u) * Math.min(1e-6, Math.abs(toward - u) / 2);
+        const points = faces.map(face => at(sample, face));
+        const heights = points.map(p => firstRoofAbove(sections, ...p, l.elevation));
+        const roof = heights[0] === null ? [w.height]
+          : heights.filter(h => h !== null).map(h => h - l.elevation - 0.08);
+        const cap = next && points.some(p => above.some(poly => contains(poly, p))) ? next.elevation - 0.8 - l.elevation : Infinity;
+        return [...roof, cap];
       };
+      const top = (u, toward = u) => Math.max(0, Math.min(...limits(u, toward)));
+      const profile = { offset: w.exterior ? -sign * w.thickness / 2 : 0, sign,
+        extendStart: extension(w.from), extendEnd: extension(w.to), faces, limits, positions: roofLayers.positions,
+        edges: above.flatMap(poly => poly.map((p, i) => [p, poly[(i + 1) % poly.length]])) };
       const holes = (b.openings || []).filter(o => o.wall === w.id).map(o => opening(o));
       for (const { section, end, axis } of gables) for (const o of b.openings || []) {
         if (o.section !== section.id || o.gable !== (end === section.rect[axis] ? 'front' : 'rear')) continue;
@@ -343,8 +427,8 @@ export function buildTwin(plan, kit, tier) {
         if (at + o.width / 2 <= 0 || at - o.width / 2 >= length) continue;
         holes.push(opening({ ...o, sill: o.sill + section.plate - l.elevation, head: o.head + section.plate - l.elevation }, at));
       }
-      wall(local[w.level], w.from, w.to, l.elevation, w.thickness, top, holes, w.exterior, null, clipRoof);
-      if (w.exterior && l.elevation > 0 && w.level === first.id) wall(local[w.level], w.from, w.to, 0, w.thickness + 0.12, () => l.elevation, [], false, 'base', false);
+      wall(local[w.level], w.from, w.to, l.elevation, w.thickness, top, holes, w.exterior, null, true, profile);
+      if (w.exterior && l.elevation > 0 && w.level === first.id) wall(local[w.level], w.from, w.to, 0, w.thickness + 0.12, () => l.elevation, [], false, 'base', false, profile);
     }
     const roofGeometry = positions => {
       const geometry = new THREE.BufferGeometry(), mapped = [], uv = [];
@@ -359,10 +443,12 @@ export function buildTwin(plan, kit, tier) {
     };
     // Retain the actual envelope geometry for diagnostics after it is merged.
     roofSurfaces.set(b.id, { sections, positions: envelope.positions });
+    // A low roof meeting a wall can be seen from underneath an upper overhang.
+    mat('roof').side = THREE.DoubleSide;
     for (let index = 0; index < sections.length; index++) {
       const section = sections[index], positions = [];
       use(section, 'roof', `roof:${index}`);
-      for (let t = 0; t < envelope.section.length; t++) if (envelope.section[t] === index) positions.push(...envelope.positions.slice(t * 9, t * 9 + 9));
+      for (let t = 0; t < roofLayers.section.length; t++) if (roofLayers.section[t] === index) positions.push(...roofLayers.positions.slice(t * 9, t * 9 + 9));
       if (positions.length) mesh(local.roof, roofGeometry(positions), mat('roof'));
       // Clip standing seams to each face triangle, running down its gradient.
       // Adjacent triangles meet at the same seam spacing in plan feet.
@@ -480,15 +566,12 @@ export function buildTwin(plan, kit, tier) {
         }
         // Use the same outside face as the wall's siding. Span coordinates
         // run along plan x for front/back walls, or plan y for side walls.
-        const { z: outward } = wallBasis(support.from, support.to, 0);
-        const mid = support.from.map((v, i) => (v + support.to[i]) / 2);
-        outward.multiplyScalar(Math.sign(outward.dot(new THREE.Vector3(mid[0] - center[0], 0, -mid[1] + center[1]))) || 1);
+        const n = wallNormal(support).outward, outward = new THREE.Vector3(n[0], 0, -n[1]);
         const tangent = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), outward);
         const axis = Math.abs(tangent.x) >= Math.abs(tangent.z) ? 0 : 1;
         const spanMid = (aw.x0 + aw.x1) / 2;
         const t = (spanMid - support.from[axis]) / (support.to[axis] - support.from[axis]);
         const origin = new THREE.Vector3(support.from[0] + t * (support.to[0] - support.from[0]), 0, -support.from[1] - t * (support.to[1] - support.from[1]));
-        origin.addScaledVector(outward, support.thickness / 2);
         const frame = new THREE.Matrix4().makeBasis(tangent, new THREE.Vector3(0, 1, 0), outward).setPosition(origin);
         const width = (aw.x1 - aw.x0) / Math.abs(axis === 0 ? tangent.x : tangent.z);
         const slope = aw.pitch / 12, rise = aw.depth * slope;
@@ -514,10 +597,10 @@ export function buildTwin(plan, kit, tier) {
         }
       }
     }
-    const outlines = footprints(b.walls.filter(w => w.level === first.id));
     for (const l of ordered) {
       use({ ...l, id: `floor:${l.id}` }, 'floor', `floor:${l.id}`);
-      const polys = outlines.length ? outlines : (b.rooms || []).filter(r => r.level === l.id).map(r => r.polygon);
+      const floorOutlines = outlines.get(l.id);
+      const polys = floorOutlines.length ? floorOutlines : (b.rooms || []).filter(r => r.level === l.id).map(r => r.polygon);
       const holes = (b.stairs || []).filter(s => s.rise_to >= l.elevation && l.elevation > first.elevation).map(s => {
         const dx = s.to[0] - s.from[0], dy = s.to[1] - s.from[1], length = Math.hypot(dx, dy), nx = -dy / length * s.width / 2, ny = dx / length * s.width / 2;
         return [[s.from[0] + nx, s.from[1] + ny], [s.to[0] + nx, s.to[1] + ny], [s.to[0] - nx, s.to[1] - ny], [s.from[0] - nx, s.from[1] - ny]];
@@ -604,7 +687,7 @@ export function buildTwin(plan, kit, tier) {
         geometry = boxGeometry(basis.length, size.y, wall.thickness + 0.2).translate(basis.length / 2, size.y / 2, 0).applyMatrix4(basis.matrix);
       } else if (data.kind === 'roof') {
         const index = sections.findIndex((s, i) => (s.id || `roof:${i}`) === data.pieceId), positions = [];
-        for (let t = 0; t < envelope.section.length; t++) if (envelope.section[t] === index) positions.push(...envelope.positions.slice(t * 9, t * 9 + 9));
+        for (let t = 0; t < roofLayers.section.length; t++) if (roofLayers.section[t] === index) positions.push(...roofLayers.positions.slice(t * 9, t * 9 + 9));
         geometry = roofGeometry(positions);
       } else geometry = boxGeometry(Math.max(0.01, size.x), Math.max(0.01, size.y), Math.max(0.01, size.z)).translate(...center.toArray());
       const proxy = new THREE.Mesh(geometry, pickMaterial);

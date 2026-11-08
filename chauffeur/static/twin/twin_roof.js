@@ -39,12 +39,22 @@ export function sectionHeight(section, x, y) {
   return Math.min(...planes(section).map(plane => valueAt(plane, x, y)));
 }
 
-/** Upper envelope of all sections covering the point; null off the roof. */
+/** Upper envelope, including overhangs. */
 export function heightAt(sections, x, y) {
   let height = null;
   for (const section of sections) {
     const z = sectionHeight(section, x, y);
     if (z !== null && (height === null || z > height)) height = z;
+  }
+  return height;
+}
+
+/** First covering roof surface more than one foot above a wall's floor. */
+export function firstRoofAbove(sections, x, y, floor) {
+  let height = null;
+  for (const section of sections) {
+    const z = sectionHeight(section, x, y);
+    if (z !== null && z > floor + 1 && (height === null || z < height)) height = z;
   }
   return height;
 }
@@ -194,8 +204,8 @@ function gableEnds(sections, index) {
   return positions;
 }
 
-/** Triangles of the upper envelope, plus exposed vertical gable ends. */
-export function roofMesh(sections) {
+/** Upper envelope and gable ends; retainLower also keeps roofs visible below it. */
+export function roofMesh(sections, { retainLower = false } = {}) {
   const faces = sections.flatMap(sectionFaces);
   const positions = [], labels = [], gables = [];
   for (const face of faces) {
@@ -208,6 +218,7 @@ export function roofMesh(sections) {
         if (other.section > face.section) continue;
         cutter = other.polygon;
       } else {
+        if (retainLower) continue;
         cutter = clip(other.polygon, difference(other.plane, face.plane));
       }
       if (cutter.length) pieces = pieces.flatMap(piece => subtract(piece, cutter));
