@@ -42,6 +42,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from services import twin_build as tb  # noqa: E402
+from services import twin_compose as tc  # noqa: E402
+from services import twin_library as tl  # noqa: E402
 from services import twin_joints as tj  # noqa: E402
 from services import twin_plan as tp  # noqa: E402
 from services import twin_reads as tr  # noqa: E402
@@ -382,6 +384,65 @@ def test_report_edge_inside_outline_silent():
     check(lines == [], ('an edge inside the outline is not a gap', lines))
 
 
+def test_report_outline_boundary_keeps_plate_check():
+    section = _section('a', [0, 0, 30, 20])
+    section['plate'] = 12
+    lines = tj.report(_lone([section]))
+    check(lines == ['A roof plate over the front is 2 ft above its wall tops.'], lines)
+
+
+def test_report_outline_boundary_keeps_missing_wall_check():
+    house = _lone([_section('a', [0, 0, 30, 20])])
+    house['walls'] = [w for w in house['walls'] if w['id'] != 'w2']
+    lines = tj.report(house)
+    check('A roof edge over the rear is 20 ft from any wall.' in lines, lines)
+
+
+def test_report_internal_cross_gable_keeps_plate_check():
+    cross = _section('cross', [10, 0, 20, 10])
+    cross['plate'] = 12
+    lines = tj.report(_lone([_section('main', [0, 0, 30, 20]), cross]))
+    check(lines == ['A roof plate over the front is 2 ft above its wall tops.'], lines)
+
+
+def test_all_porches_deduplicates_aliases_without_mutation():
+    front = dict(rear_porch(), id='front')
+    rear = dict(rear_porch(), id='rear')
+    moved_alias = dict(front, polygon=[[0, 0], [1, 0], [1, 1]])
+    for alias in (moved_alias, {k: v for k, v in front.items() if k != 'id'}):
+        house = {'porches': [front, copy.deepcopy(front), rear], 'porch': alias}
+        before = copy.deepcopy(house)
+        got = tp.porches(house)
+        check(got == [front, rear], ('id first; polygon only without an id', got))
+        check(got[0] is front and house == before, 'no copying or mutation of pieces')
+    check(tp.porches({'porch': front}) == [front], 'legacy-only porch')
+    check(tp.porches({'porches': [front, rear], 'porch': rear}) == [front, rear],
+          'a shared legacy reference does not reorder the collection')
+    check(tp.porches({}) == [], 'no porches')
+    unique = dict(rear_porch(), polygon=[[0, 0], [1, 0], [1, 1]])
+    check(tp.porches({'porches': [front], 'porch': unique}) == [unique, front],
+          'a distinct legacy porch stays first')
+
+
+def test_compose_porches_collection_keeps_clearance_and_foundations():
+    from test_twin_compose import _plan as compose_plan
+    legacy = compose_plan()
+    collection = copy.deepcopy(legacy)
+    for house in collection['buildings']:
+        if house.get('porch'):
+            house['porches'] = [dict(house.pop('porch'), id='side')]
+    before = copy.deepcopy(collection)
+    old_geometry = tc._building_geometry(legacy['buildings'], [])
+    new_geometry = tc._building_geometry(collection['buildings'], [])
+    check(old_geometry[1] and old_geometry == new_geometry,
+          ('collection porch participates in clearance and foundation geometry', new_geometry[1]))
+    expected, old_notes = tc.compose(legacy, tl.kit('modern_farmhouse'), seed=1)
+    actual, new_notes = tc.compose(collection, tl.kit('modern_farmhouse'), seed=1)
+    check(actual['site'] == expected['site'] and new_notes == old_notes,
+          'collection porch preserves the legacy yard clearances and foundations')
+    check(collection == before, 'composition does not mutate the collection plan')
+
+
 TESTS = (
     test_plan_keeps_two_porches_with_ids_and_screened,
     test_plan_drops_invalid_porch_with_plain_note,
@@ -396,6 +457,11 @@ TESTS = (
     test_report_lone_outer_edge_still_flagged,
     test_report_edge_inside_neighbour_rect_silent,
     test_report_edge_inside_outline_silent,
+    test_report_outline_boundary_keeps_plate_check,
+    test_report_outline_boundary_keeps_missing_wall_check,
+    test_report_internal_cross_gable_keeps_plate_check,
+    test_all_porches_deduplicates_aliases_without_mutation,
+    test_compose_porches_collection_keeps_clearance_and_foundations,
 )
 
 

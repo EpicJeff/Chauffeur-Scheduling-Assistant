@@ -14,6 +14,26 @@ CAPS = {'walls': 400, 'openings': 400, 'rooms': 120, 'planting': 300,
         'furniture': 120, 'beds': 60, 'roof_sections': 40, 'terraces': 40}
 
 
+def porches(building: dict) -> list[dict]:
+    """All porch pieces, collection first in conflicts with the legacy alias.
+
+    Identity wins when both pieces have ids; otherwise compare polygons.
+    Return the original pieces so provenance and person edits stay attached.
+    """
+    result = []
+    collection = building.get('porches') or []
+    for index, porch in enumerate([*collection, building.get('porch')]):
+        if not porch or any(
+                (p['id'] == porch['id'] if p.get('id') and porch.get('id')
+                 else p.get('polygon') == porch.get('polygon')) for p in result):
+            continue
+        if index == len(collection):
+            result.insert(0, porch)
+        else:
+            result.append(porch)
+    return result
+
+
 def _number(value):
     return (type(value) in (int, float)
             and (isinstance(value, int) or isfinite(value)))

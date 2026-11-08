@@ -464,7 +464,7 @@ def _feet(value):
 
 
 def _edge_in_outline(edge, polygon):
-    """Require the entire edge inside, including across concave recesses."""
+    """Require strict interior coverage, including across concave recesses."""
     if len(polygon) < 3:
         return False
     axis, line, start, end = edge
@@ -482,7 +482,7 @@ def _edge_in_outline(edge, polygon):
 
     def inside(value):
         if any(lo - _EPS <= value <= hi + _EPS for lo, hi in spans):
-            return True
+            return False
         point = [line, value] if axis == 0 else [value, line]
         x, y = point
         result = False
@@ -538,14 +538,15 @@ def report(building: dict) -> list[str]:
         tops = []
         for edge in _edges(section):
             axis, line, start, end = edge
-            # Inner joins are not unsupported eaves or plate contacts. Require
-            # full coverage so a partial overlap cannot conceal an open end.
-            if internal(section, edge):
-                continue
             candidates = _bearing(building, section, edge)
             levels = {l['id']: l for l in building.get('levels', [])}
             tops.extend(levels[w['level']]['elevation'] + w['height'] for w in candidates
                         if abs(w['from'][axis] - line) <= _EPS)
+            # Inner joins are not unsupported eaves. Their bearing walls still
+            # supply plate contacts (e.g. a cross-gable on the front wall).
+            # Require full coverage so partial joins cannot conceal open ends.
+            if internal(section, edge):
+                continue
             distance = min((abs(w['from'][axis] - line) for w in candidates), default=None)
             side = _side(bounds, axis, line)
             if distance is None:

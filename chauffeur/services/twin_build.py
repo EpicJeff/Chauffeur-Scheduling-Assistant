@@ -870,14 +870,8 @@ def _merge_draft(build, step, fragment, house):
                                              'extension', house, build, step)
     # Keep the legacy field as an alias when that is what the read supplied.
     # Merge the complete collection through the usual person-edit protections.
-    existing = list(house.get('porches', []))
     legacy = house.get('porch')
-    if legacy and not any(p.get('id') == legacy.get('id') for p in existing):
-        existing.insert(0, legacy)
-    incoming = list(draft.get('porches', []))
-    if draft.get('porch') and not any(p['polygon'] == draft['porch']['polygon'] for p in incoming):
-        incoming.insert(0, draft['porch'])
-    house['porches'] = _merge_list(existing, pieces('', 'porch', incoming),
+    house['porches'] = _merge_list(twin_plan.porches(house), pieces('', 'porch', twin_plan.porches(draft)),
                                   'porch', house, build, step)
     if not (legacy or {}).get('src', {}).get('person'):
         house['porch'] = (next((p for p in house['porches']
@@ -958,7 +952,7 @@ def _check_draft(house):
                       for l in levels)
         if outside:
             supported = False
-            for porch in [*house.get('porches', []), house.get('porch') or {}]:
+            for porch in twin_plan.porches(house):
                 polygon = porch.get('polygon', [])
                 supported = supported or (polygon and (
                     all(within(p, corners, 0) for p in polygon)
@@ -1828,9 +1822,7 @@ def _settle(build, step, result, decision=None):
         target_collections = [target['walls'], target['openings'], target['rooms'], target['roof']['sections']] if target else []
         if kind in ('draft', 'draft_rooms'):
             extra = target['levels'] + target['roof'].get('extensions', []) + target.get('stairs', [])
-            extra.extend(target.get('porches', []))
-            if target.get('porch') and not any(p['id'] == target['porch']['id'] for p in extra):
-                extra.append(target['porch'])
+            extra.extend(twin_plan.porches(target))
             ghosts.extend(p for p in [*extra, *(p for c in target_collections for p in c)]
                           if p.get('src', {}).get('step') == step['id'] and p.get('state') == 'ghost')
             settled.extend(p for p in extra if p.get('src', {}).get('step') == step['id']

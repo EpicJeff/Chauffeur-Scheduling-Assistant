@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Tree } from '@dgreenheck/ez-tree';
-import { FT, addMesh, boxGeometry, boxRect, polygon, mergeStatic } from './twin_generator.js';
+import { FT, addMesh, boxGeometry, boxRect, polygon, mergeStatic, allPorches } from './twin_generator.js';
 import { kitMaterial, loadModel } from './twin_library.js';
 import { groundAt } from './twin_ground.js';
 
@@ -182,10 +182,10 @@ export async function buildYard(plan, kit, tier) {
     const source = await models.get(assetId); if (!source) return;
     const model = source.clone(true); model.scale.setScalar((f.scale || 1) / FT);
     let elevation = groundAt(plan, ...f.at) + (f.elevation || 0);
-    for (const b of plan.buildings || []) if (b.porch?.polygon) {
+    for (const b of plan.buildings || []) for (const porch of allPorches(b)) if (porch.polygon) {
       const pos = b.position || [0, 0], angle = -(b.rotation || 0) * Math.PI / 180;
       const x = f.at[0] - pos[0], y = f.at[1] - pos[1];
-      if (inside([Math.cos(angle) * x - Math.sin(angle) * y, Math.sin(angle) * x + Math.cos(angle) * y], b.porch.polygon)) elevation = groundAt(plan, ...pos) + (b.base || 0) + b.porch.floor;
+      if (inside([Math.cos(angle) * x - Math.sin(angle) * y, Math.sin(angle) * x + Math.cos(angle) * y], porch.polygon)) elevation = groundAt(plan, ...pos) + (b.base || 0) + porch.floor;
     }
     model.position.set(f.at[0], elevation, -f.at[1]); model.rotation.y = THREE.MathUtils.degToRad(f.rotation || 0);
     return model;

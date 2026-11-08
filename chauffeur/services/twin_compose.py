@@ -9,7 +9,7 @@ from copy import deepcopy
 from math import hypot
 from random import Random
 
-from services import twin_register
+from services import twin_plan, twin_register
 
 
 _EPS = 1e-6
@@ -147,9 +147,9 @@ def _building_geometry(buildings, notes):
                 wall[key] = twin_register.to_world(building, wall[key])
         loops = _loops(walls)
         footprints.extend(loops)
-        porch = building.get('porch') or {}
-        if porch.get('polygon'):
-            porches.append([twin_register.to_world(building, p) for p in porch['polygon']])
+        for porch in twin_plan.porches(building):
+            if porch.get('polygon'):
+                porches.append([twin_register.to_world(building, p) for p in porch['polygon']])
         skipped = False
         for wall in walls:
             a, b = wall['from'], wall['to']

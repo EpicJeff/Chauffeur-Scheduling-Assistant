@@ -9,6 +9,20 @@ import { groundAt } from './twin_ground.js';
 export const FT = 0.3048;
 export const PICK_LAYER = 31;
 const ROOF_THICKNESS = 0.25;
+// Keep in step with twin_plan.porches: ids win, polygon fallback for aliases
+// without an id. Return the original pieces, preferring collection entries.
+export function allPorches(building) {
+  const result = [];
+  const collection = building.porches || [];
+  for (const [index, porch] of [...collection, building.porch].entries()) {
+    if (!porch || result.some(p => p.id && porch.id ? p.id === porch.id
+      : JSON.stringify(p.polygon) === JSON.stringify(porch.polygon))) continue;
+    if (index === collection.length) result.unshift(porch);
+    else result.push(porch);
+  }
+  return result;
+}
+
 export function mergeStatic(group) {
   group.updateMatrixWorld(true);
   const inverse = group.matrixWorld.clone().invert(), buckets = new Map();
@@ -751,9 +765,7 @@ export function buildTwin(plan, kit, tier) {
         mesh(local[l.id], polygon(poly, l.elevation, l.elevation, cuts), mat('floor'));
       }
     }
-    const porches = [...(b.porches || [])];
-    if (b.porch?.polygon && !porches.some(p => (p.id && p.id === b.porch.id) || JSON.stringify(p.polygon) === JSON.stringify(b.porch.polygon))) porches.unshift(b.porch);
-    for (const [index, po] of porches.entries()) {
+    for (const [index, po] of allPorches(b).entries()) {
       if (!po.polygon) continue;
       use(po, 'porch', po === b.porch ? 'porch' : `porch:${index}`); mesh(local[first.id], polygon(po.polygon, 0, po.floor), mat('patio_concrete'));
       const shed = b.roof?.extensions?.find(e => e.kind === 'shed_continuation');
@@ -780,6 +792,10 @@ export function buildTwin(plan, kit, tier) {
         const distance = p => Math.abs((p[0] - a[0]) * dy - (p[1] - a[1]) * dx) / length;
         const posts = (po.columns || []).filter(c => distance(c.at) <= c.size / 2 + 0.1
           && project(c.at) >= 0 && project(c.at) <= length).sort((c, d) => project(c.at) - project(d.at));
+        // Polygon corners close the ends too: an attached side needs a panel
+        // from the house wall to its single outside post (R19).
+        posts.unshift({ at: a, size: 0 });
+        posts.push({ at: endPoint, size: 0 });
         for (let j = 1; j < posts.length; j++) {
           const c = posts[j - 1], d = posts[j], span = Math.hypot(d.at[0] - c.at[0], d.at[1] - c.at[1]);
           if (span <= (c.size + d.size) / 2) continue;

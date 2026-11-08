@@ -78,11 +78,28 @@ import path from 'node:path';
 const job = JSON.parse(process.argv[2]);
 registerHooks({
   resolve(spec, ctx, next) {
+    if (job.yard && spec === '@dgreenheck/ez-tree') return { url: 'test:tree', shortCircuit: true };
     if (spec === 'three') return { url: pathToFileURL(path.join(job.vendor, 'three.module.js')).href, shortCircuit: true };
     if (spec.startsWith('three/addons/')) return { url: pathToFileURL(path.join(job.vendor, 'addons', spec.slice('three/addons/'.length))).href, shortCircuit: true };
     return next(spec, ctx);
   },
   load(url, ctx, next) {
+    // Only the external asset/plant loaders are stubbed. buildYard, loadModel,
+    // placement transforms, and static merging run their production code.
+    if (url === 'test:tree') return { format: 'module', shortCircuit: true, source: 'export class Tree {}' };
+    if (job.yard && url.endsWith('/loaders/GLTFLoader.js')) return {
+      format: 'module', shortCircuit: true, source: `
+        import * as THREE from 'three';
+        export class GLTFLoader {
+          setResourcePath() { return this; }
+          async loadAsync() {
+            const scene = new THREE.Group();
+            scene.add(new THREE.Mesh(new THREE.BoxGeometry(0.3048, 0.3048, 0.3048).translate(0, 0.1524, 0),
+              new THREE.MeshStandardMaterial({ name: 'yard-probe' })));
+            return { scene };
+          }
+        }`,
+    };
     if (url.startsWith('file:') && url.endsWith('.js')) return { ...next(url, { ...ctx, format: 'module' }), format: 'module' };
     return next(url, ctx);
   },
@@ -95,6 +112,11 @@ const result = {};
 result.heights = (job.heights || []).map(([x, y]) => roof.heightAt(sections, x, y));
 const THREE = await import('three');
 const gen = await import(pathToFileURL(path.join(job.twin, 'twin_generator.js')).href);
+if (job.aliasCases) {
+  result.aliases = job.aliasCases.map(b => gen.allPorches(b));
+  const collection = job.aliasCases[0].porches;
+  result.sharedAliasOrder = gen.allPorches({ porches: collection, porch: collection[1] }).map(p => p.id);
+}
 const out = gen.buildTwin(job.plan, job.kit, 'low');
 const root = out.root;
 // Work in plan feet: undo the FT scale on the root.
@@ -113,6 +135,7 @@ root.traverse(o => {
   meshes.push(o);
 });
 result.meshCount = meshes.length;
+result.vertexCount = meshes.reduce((n, o) => n + o.geometry.attributes.position.count, 0);
 // Shown meshes per material instance (a merged material is one draw call per group).
 result.meshesByMaterial = {};
 for (const o of meshes) {
@@ -132,6 +155,26 @@ result.hits = (job.rays || []).map(ray => {
              opacity: m?.opacity ?? 1 };
   });
 });
+if (job.yard) {
+  window.location = { href: 'http://localhost/house/editor' };
+  job.kit.manifest = { probe: { kind: 'model', files: { 'probe.glb': {} } } };
+  const yard = await import(pathToFileURL(path.join(job.twin, 'twin_yard.js')).href);
+  const built = await yard.buildYard(job.plan, job.kit, 'low');
+  built.group.updateMatrixWorld(true);
+  result.furnitureBounds = [];
+  const chairs = [];
+  built.group.traverse(o => {
+    if (o.isMesh && o.material?.name === 'yard-probe') {
+      const box = new THREE.Box3().setFromObject(o);
+      result.furnitureBounds.push([box.min.toArray(), box.max.toArray()]);
+      chairs.push(o);
+    }
+  });
+  result.chairTops = job.plan.site.furniture.map(f => {
+    caster.set(new THREE.Vector3(f.at[0], 20, -f.at[1]), new THREE.Vector3(0, -1, 0));
+    return caster.intersectObjects(chairs, false)[0]?.point.y ?? null;
+  });
+}
 console.log(JSON.stringify(result));
 """
 
@@ -171,7 +214,7 @@ def building(p):
     return next(b for b in p['buildings'] if b['id'] == BID)
 
 
-def run(p, rays=None, heights=None):
+def run(p, rays=None, heights=None, **options):
     d = tempfile.mkdtemp(prefix='twin_porches_js_')
     try:
         driver = os.path.join(d, 'driver.mjs')
@@ -179,7 +222,7 @@ def run(p, rays=None, heights=None):
             f.write(DRIVER)
         job = {'vendor': VENDOR, 'twin': TWIN, 'plan': p, 'building': BID,
                'kit': {**tl.kit('modern_farmhouse'), 'manifest': {}},
-               'rays': rays, 'heights': heights}
+               'rays': rays, 'heights': heights, **options}
         job_path = os.path.join(d, 'job.json')
         with open(job_path, 'w', encoding='utf-8') as f:
             json.dump(job, f)
@@ -311,9 +354,83 @@ def test_screened_porch_draws_screens():
           ('an open porch has no screen: the ray reaches the house wall', front and (front['role'], [_r(v) for v in front['p']])))
 
 
+def test_screened_side_closes_from_wall_to_one_corner_post():
+    p = plan(rear_screened=True, front_screened=False)
+    b = building(p)
+    # A simple porch attached to y=0, with only the two outside corner posts.
+    b['levels'] = [{'id': 'L1', 'name': 'Main floor', 'elevation': 0, 'ceiling': 10,
+                    'outline': [[0, 0], [30, 0], [30, 20], [0, 20]]}]
+    b['walls'] = [{'id': 'front', 'level': 'L1', 'from': [0, 0], 'to': [30, 0],
+                   'height': 10, 'thickness': 0.5, 'exterior': True}]
+    b['openings'], b['rooms'] = [], []
+    b['roof'] = {'sections': [{'id': 'cover', 'kind': 'flat', 'rect': [0, -8, 10, 0],
+                              'plate': 10, 'pitch': 0, 'overhang': 0}]}
+    b['porches'] = [{'id': 'screened', 'floor': 0, 'screened': True,
+                     'polygon': [[0, 0], [0, -8], [10, -8], [10, 0]],
+                     'columns': [{'at': [0.4, -7.6], 'size': 0.8},
+                                 {'at': [9.6, -7.6], 'size': 0.8}]}]
+    rays = [{'o': [-2, -4, 4], 'd': [1, 0, 0], 'far': 4},
+            {'o': [12, -4, 4], 'd': [-1, 0, 0], 'far': 4},
+            {'o': [5, -10, 4], 'd': [0, 1, 0], 'far': 4},
+            {'o': [5, -4, 4], 'd': [0, 1, 0], 'far': 6}]
+    info = run(p, rays=rays)
+    screens = [hs[0] if hs else None for hs in info['hits'][:3]]
+    check(all(h and h['role'] == 'screen' for h in screens),
+          ('both wall-to-post sides and post-to-post front close', screens))
+    check(len({h['object'] for h in screens}) == 1, 'all panels still merge')
+    wall = info['hits'][3][0] if info['hits'][3] else None
+    check(wall and classify(wall) == 'wall', ('the attached house wall is not screened', wall))
+
+
+def test_yard_uses_collection_slab_elevation_with_building_transform():
+    p = plan()
+    b = building(p)
+    b['position'], b['rotation'], b['base'] = [100, 50], 90, 2
+    b['porches'] = [{'id': 'front', 'floor': 1.25, 'columns': [],
+                     'polygon': [[0, 0], [10, 0], [10, 8], [0, 8]]},
+                    {'id': 'rear', 'floor': 3, 'columns': [],
+                     'polygon': [[20, 0], [30, 0], [30, 8], [20, 8]]}]
+    b.pop('porch', None)
+    p['buildings'] = [b]
+    # local [5,4] -> [96,55]; [25,4] -> [96,75]. The third chair is on ground.
+    p['site'] = {'furniture': [{'asset': 'probe', 'at': at} for at in ([96, 55], [96, 75], [80, 90])]}
+    info = run(p, yard=True)
+    bounds = info['furnitureBounds']
+    check(bounds, 'the yard loaded and placed the probe furniture')
+    check(all(got is not None and abs(got - want) < 1e-5
+              for got, want in zip(info['chairTops'], [4.25, 6, 1])),
+          ('both collection slabs raise their chair; the ground chair stays down', info['chairTops']))
+    check(len(bounds) == 1 and abs(bounds[0][0][1]) < 1e-5
+          and abs(bounds[0][1][1] - 6) < 1e-5,
+          ('ground chair stays at zero; highest slab at base 2 + floor 3, plus 1 ft chair', bounds))
+
+
+def test_js_all_porches_matches_alias_rules_and_generator_draws_once():
+    p = plan()
+    b = building(p)
+    front = b['porches'][0]
+    b['porch'] = copy.deepcopy(front)
+    b['porches'].append(copy.deepcopy(front))
+    cases = [{'porches': [front, dict(front, id='distinct')], 'porch': copy.deepcopy(front)},
+             {'porches': [front], 'porch': {k: v for k, v in front.items() if k != 'id'}},
+             {'porches': [front], 'porch': dict(front, polygon=[[0, 0], [1, 0], [1, 1]])},
+             {'porch': front}, {}]
+    plain = plan()
+    baseline = run(plain)
+    info = run(p, aliasCases=cases)
+    check([len(x) for x in info['aliases']] == [2, 1, 1, 1, 0], info['aliases'])
+    check(info['sharedAliasOrder'] == [front['id'], 'distinct'],
+          ('shared alias references keep collection order', info['sharedAliasOrder']))
+    check(info['meshCount'] == baseline['meshCount'] and info['vertexCount'] == baseline['vertexCount'],
+          'aliases do not add rendered meshes or duplicate merged geometry')
+
+
 TESTS = (
     test_columns_reach_roof_for_both_porches,
     test_screened_porch_draws_screens,
+    test_screened_side_closes_from_wall_to_one_corner_post,
+    test_yard_uses_collection_slab_elevation_with_building_transform,
+    test_js_all_porches_matches_alias_rules_and_generator_draws_once,
 )
 
 
