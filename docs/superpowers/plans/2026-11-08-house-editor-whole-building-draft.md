@@ -210,6 +210,9 @@
 - **`parse('draft', answer)`** validates this answer shape: `{building:{levels, walls, openings, rooms, roof:{sections, extensions}, porch, stairs}, pages:[{image:int, level:str, anchors:[{px:[u,v], at:[x,y]}]}], checks:{...}, notes:[...]}`.
   - `parse('draft_level', ...)` takes the same shape restricted to one level, or `roof` only.
   - `parse('draft_rooms', ...)` takes `{rooms:[{name, level, polygon}], walls:[...exterior false]}`.
+- **`twin_reads.OUTPUT_CAP`** = `{'anthropic': 64000, 'openai': 64000, 'gemini': 65536}`, keyed by the twin provider.
+  - The draft kinds clamp `max_output_tokens` to it.
+  - When the cap is below 32000, a `draft` read returns `{'error': 'too small', 'truncated': True}` without calling, and the build takes the per-level fallback. Test: `test_small_output_cap_skips_to_fallback`.
 - **`twin_cost.estimate(kind, images)`** uses `IMAGE_TOKENS = {'draft': 5000, 'draft_level': 5000, 'draft_rooms': 5000}` (others 1600) per image.
 - **Prompts.** `PROMPTS['draft']` carries every rule in spec §2 "Prompt rules" plus the §3 half-storey and gable-opening rules, the §6a ambiguity line, and the `pages`/`anchors` request. It is written generically, with no household text.
 
