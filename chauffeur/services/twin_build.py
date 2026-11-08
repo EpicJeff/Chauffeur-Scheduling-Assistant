@@ -16,7 +16,7 @@ from urllib.parse import quote
 import uuid
 
 from services import (twin_compose, twin_cost, twin_draft, twin_library,
-                      twin_place, twin_plan, twin_reads, twin_register, twin_store)
+                      twin_joints, twin_place, twin_plan, twin_reads, twin_register, twin_store)
 
 _LOCK = threading.RLock()
 _BUILDS = {}
@@ -1317,6 +1317,14 @@ def _settle(build, step, result, decision=None):
         if problems:
             logger.warning('%s: some pieces need checking against the drawing.', step['label'])
         target = _house(normalized, build)
+        if target is not None:
+            notes.extend(twin_joints.snap(target))
+            # fit/compose publish placement and landscaping, rather than reads
+            # of this building. Check its joints with its last settled read.
+            reads = [s for s in build['steps'] if s['kind'] not in
+                     ('fit', 'compose', 'plot', 'site', 'lot')]
+            if reads and step is reads[-1]:
+                notes.extend(twin_joints.report(target))
         target_collections = [target['walls'], target['openings'], target['rooms'], target['roof']['sections']] if target else []
         if kind == 'walls' and result.get('wall_count', len(incoming)):
             settled_ids = {w['id'] for w in target['walls'] if w.get('state') != 'ghost'}

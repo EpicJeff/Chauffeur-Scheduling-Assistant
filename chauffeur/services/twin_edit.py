@@ -4,7 +4,7 @@ from copy import deepcopy
 import math
 import uuid
 
-from services import twin_plan, twin_register
+from services import twin_joints, twin_plan, twin_register
 
 
 EDITABLE = {
@@ -484,6 +484,13 @@ def apply(plan, edit):
             summary += ' and ' + ', '.join(
                 f'{count} {name}' + ('' if count == 1 else 's') for name, count in counts.items())
             summary += ' on it' if kind in ('wall', 'roof') else ' in it'
+    # Compare buildings after the edit, rather than relying on optional scope:
+    # accept and registration may edit more than one building, and a deletion
+    # may have removed the very piece used to find the owning building.
+    originals = {b['id']: b for b in before['buildings']}
+    for edited_building in normalized['buildings']:
+        if edited_building != originals.get(edited_building['id']):
+            twin_joints.snap(edited_building)
     return normalized, summary
 
 
