@@ -209,6 +209,20 @@ These rules were learned in the spikes. All of them go in the product prompt, wr
 - The prompt states the budget: the whole reply fits in 64000 tokens, so stop reasoning by about 45000.
 - The JSON is compact. The first character is `{` and the last is `}`.
 
+### 2b. The roof check (added 2026-11-08 after the user's review of the acceptance renders)
+
+The whole-building read is not consistent on roofs. On the same drawings, the spike read the main house's two-storey centre correctly: a hip with its ridge side to side and a front gable dormer. The acceptance read made the same block a big front-facing gable with no dormer, and simplified the left wing's hip to a gable.
+
+So after the draft (and after the per-level fallback when it ran), the draft step makes one more read, `roof_check`. It checks only the roof:
+- **Inputs:** the roof plan, the elevations and the photos, plus the read roof sections as JSON.
+- **Answer:** corrections only (changed kind, ridge, pitch, plate or rect; added sections such as dormers and cross gables; removed sections). An empty answer means the roof is right.
+- **Read settings:** medium effort, 16000 output.
+- **When corrections apply:** before normalize, snap and the checks.
+- **What it never touches:** a section a person edited.
+- **If the read fails:** the build log says "The roof could not be double-checked; it is shown as first read." and the build carries on.
+- **While it runs:** a heartbeat line, "Checking the roof of the <building name> drawings, M:SS so far."
+- **Cost:** about $0.10 to $0.20 and under a minute per building, included in the estimate.
+
 ### 3. Schema additions
 
 **Half-storey levels.**
