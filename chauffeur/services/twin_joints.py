@@ -4,6 +4,7 @@ This is a publication pass, not a loader or a normalizer. Person geometry is
 an anchor; read geometry may join it even when it is off the inch grid.
 """
 from copy import deepcopy
+from collections import Counter
 import math
 
 from services import twin_plan
@@ -282,8 +283,9 @@ def _awning_support(building, awning):
         # the roof-edge tolerance wins by proximity. Side spans run along y.
         distance = min(abs(line - section['rect'][axis]), abs(line - section['rect'][axis + 2]))
         if distance <= 1.5 + _EPS:
-            ranked.append((distance, axis != 1, wall))
-    return min(ranked, key=lambda row: row[:2])[2] if ranked else None
+            front_distance = abs(line - section['rect'][1]) if axis == 1 else math.inf
+            ranked.append((distance, front_distance, axis != 1, wall))
+    return min(ranked, key=lambda row: row[:3])[3] if ranked else None
 
 
 def _snap(building, pinned_walls, pinned_roofs):
@@ -329,12 +331,37 @@ def _snap(building, pinned_walls, pinned_roofs):
 def snap(building: dict) -> list[str]:
     """Repair building joints in place; return counted, plain-sentence notes."""
     before = deepcopy(building)
+    original_walls = {w['id']: w for w in before.get('walls', [])}
+    centres = {}
+    for opening in before.get('openings', []):
+        wall = original_walls.get(opening.get('wall'))
+        if wall:
+            length = math.dist(wall['from'], wall['to'])
+            if length > _EPS:
+                centres[opening['id']] = [wall['from'][i] + opening['at'] *
+                                          (wall['to'][i] - wall['from'][i]) / length for i in (0, 1)]
     pinned_walls, pinned_roofs = set(), set()
     # Publication normalizes again. Do not let a shorter carrier silently
     # delete an existing window or door, including one placed by a person.
     while True:
         notes = _snap(building, pinned_walls, pinned_roofs)
         walls = {w['id']: w for w in building.get('walls', [])}
+        # `at` is measured from the carrier's from end. Keep the opening's
+        # world centre even when its provenance differs from the moved wall.
+        # Reproject from the original centre on every retry, never cumulatively.
+        for opening in building.get('openings', []):
+            centre = centres.get(opening['id'])
+            wall = walls.get(opening.get('wall'))
+            if centre is None or wall is None:
+                continue
+            original = original_walls[wall['id']]
+            if all(wall[key] == original[key] for key in ('from', 'to')):
+                continue
+            length = math.dist(wall['from'], wall['to'])
+            if length > _EPS:
+                at = sum((centre[i] - wall['from'][i]) * (wall['to'][i] - wall['from'][i])
+                         for i in (0, 1)) / length
+                opening['at'] = max(0, min(length, at))
         roofs = {s['id']: s for s in building.get('roof', {}).get('sections', [])}
         invalid = [o for o in building.get('openings', [])
                    if twin_plan._opening_error(o, walls, roofs)]
@@ -350,19 +377,108 @@ def snap(building: dict) -> list[str]:
         building.update(deepcopy(before))
 
 
+def _open_corners(walls):
+    ends = [(wall, key) for wall in walls for key in ('from', 'to')
+            if not any(other is not wall and math.dist(wall[key], _project(wall[key], other, segment=True)) <= _EPS
+                       for other in walls)]
+    # Two separated ends approaching the same intersection are one open
+    # corner. Match the nearest such pair first; do not pair a wall with itself
+    # or ends whose intersection is back inside either wall's span.
+    pairs = []
+    for i, (wall, key) in enumerate(ends):
+        p = wall[key]
+        u = [p[k] - wall['to' if key == 'from' else 'from'][k] for k in (0, 1)]
+        for j, (other, other_key) in enumerate(ends[:i]):
+            if other is wall:
+                continue
+            q = other[other_key]
+            v = [q[k] - other['to' if other_key == 'from' else 'from'][k] for k in (0, 1)]
+            delta = [q[k] - p[k] for k in (0, 1)]
+            cross = u[0] * v[1] - u[1] * v[0]
+            if abs(cross) > _EPS:
+                t = (delta[0] * v[1] - delta[1] * v[0]) / cross
+                s = (delta[0] * u[1] - delta[1] * u[0]) / cross
+                if t < -_EPS or s < -_EPS:
+                    continue
+                distance = t * math.hypot(*u) + s * math.hypot(*v)
+            else:
+                if abs(delta[0] * u[1] - delta[1] * u[0]) > _EPS:
+                    continue
+                if sum(delta[k] * u[k] for k in (0, 1)) < -_EPS or sum(-delta[k] * v[k] for k in (0, 1)) < -_EPS:
+                    continue
+                distance = math.dist(p, q)
+            pairs.append((distance, i, j))
+    paired = set()
+    count = len(ends)
+    for _, i, j in sorted(pairs):
+        if i not in paired and j not in paired:
+            paired.update((i, j))
+            count -= 1
+    return count
+
+
+def _bounds(building):
+    points = [w[key] for w in building.get('walls', []) if w.get('exterior') and w.get('state') != 'ghost'
+              for key in ('from', 'to')]
+    if not points:
+        points = [p for level in building.get('levels', []) for p in level.get('outline') or []]
+    if not points:
+        points = [s['rect'][i:i + 2] for s in building.get('roof', {}).get('sections', []) for i in (0, 2)]
+    return [min((p[i] for p in points), default=0) for i in (0, 1)] + [
+        max((p[i] for p in points), default=0) for i in (0, 1)]
+
+
+def _side(bounds, axis, line):
+    return (('left', 'right') if axis == 0 else ('front', 'rear'))[
+        abs(line - bounds[axis + 2]) < abs(line - bounds[axis])]
+
+
+def _awning_location(building, awning, bounds):
+    section = next((s for s in building.get('roof', {}).get('sections', [])
+                    if s['id'] == awning.get('section')), None)
+    wall = next((w for w in building.get('walls', []) if w['id'] == awning.get('wall')), None)
+    # An unassigned awning uses its section's y0 face in the renderer. Even
+    # when no wall spans its eave, an opening below can still identify it.
+    if wall is None and section:
+        wall = next((w for w in building.get('walls', []) if w.get('exterior') and w.get('state') != 'ghost'
+                     and _axis(w, near=True) == 1
+                     and abs(w['from'][1] - section['rect'][1]) <= 1.5 + _EPS
+                     and _overlap(w['from'][0], w['to'][0], awning['x0'], awning['x1']) > _EPS), None)
+    axis = _axis(wall, near=True) if wall else None
+    axis = 1 if axis is None else axis
+    line = sum(wall[key][axis] for key in ('from', 'to')) / 2 if wall else section['rect'][1] if section else bounds[1]
+    side = _side(bounds, axis, line)
+    if wall:
+        length = math.dist(wall['from'], wall['to'])
+        for opening in building.get('openings', []):
+            if opening.get('wall') != wall['id'] or length <= _EPS:
+                continue
+            along = wall['from'][1 - axis] + opening['at'] * (wall['to'][1 - axis] - wall['from'][1 - axis]) / length
+            if awning['x0'] <= along <= awning['x1']:
+                return f'over the {opening["kind"]} on the {side}'
+    return f'on the {side}'
+
+
+def _feet(value):
+    return f'{value:.1f}'.removesuffix('.0')
+
+
 def report(building: dict) -> list[str]:
     """Describe remaining open corners, unsupported roof edges and awnings."""
-    lines = []
+    messages = Counter()
+    bounds = _bounds(building)
+
+    def add(singular, plural, count=1):
+        messages[singular, plural] += count
+
     walls = [w for w in building.get('walls', []) if w.get('exterior') and w.get('state') != 'ghost']
     for level in building.get('levels', []):
         floor = [w for w in walls if w['level'] == level['id']]
-        open_ends = sum(not any(other is not wall and math.dist(wall[key], _project(wall[key], other, segment=True)) <= _EPS
-                               for other in floor)
-                        for wall in floor for key in ('from', 'to'))
-        if open_ends:
+        corners = _open_corners(floor)
+        if corners:
             name = level.get('name') or 'floor'
-            lines.append(f'{open_ends} outside corner' + ('' if open_ends == 1 else 's') +
-                         f' on the {name} do not meet.')
+            add(f'1 outside corner on the {name} does not meet.',
+                f'{{count}} outside corners on the {name} do not meet.', corners)
     sections = [s for s in building.get('roof', {}).get('sections', []) if s.get('state') != 'ghost']
     for section in sections:
         tops = []
@@ -379,17 +495,27 @@ def report(building: dict) -> list[str]:
             tops.extend(levels[w['level']]['elevation'] + w['height'] for w in candidates
                         if abs(w['from'][axis] - line) <= _EPS)
             distance = min((abs(w['from'][axis] - line) for w in candidates), default=None)
+            side = _side(bounds, axis, line)
             if distance is None:
-                lines.append('A roof edge has no wall beneath it.')
+                add(f'A roof edge over the {side} has no wall beneath it.',
+                    f'{{count}} roof edges over the {side} have no wall beneath them.')
             elif distance > 1 / 12 + _EPS:
-                lines.append(f'A roof edge is {distance:.2g} ft from any wall.')
+                add(f'A roof edge over the {side} is {_feet(distance)} ft from any wall.',
+                    f'{{count}} roof edges over the {side} are {_feet(distance)} ft from any wall.')
         if tops:
             top = min(tops, key=lambda value: abs(value - section['plate']))
             gap = section['plate'] - top
             if abs(gap) > 1 / 12 + _EPS:
                 direction = 'above' if gap > 0 else 'below'
-                lines.append(f'A roof plate is {abs(gap):.2g} ft {direction} its wall tops.')
+                edge = min(_edges(section), key=lambda e: (
+                    min(abs(e[1] - bounds[e[0]]), abs(e[1] - bounds[e[0] + 2])), e[0] != 1))
+                side = _side(bounds, edge[0], edge[1])
+                add(f'A roof plate over the {side} is {_feet(abs(gap))} ft {direction} its wall tops.',
+                    f'{{count}} roof plates over the {side} are {_feet(abs(gap))} ft {direction} their wall tops.')
     for awning in building.get('roof', {}).get('extensions', []):
         if awning.get('kind') == 'awning' and not any(w['id'] == awning.get('wall') for w in _awning_walls(building, awning)):
-            lines.append('An awning has no wall to hang from.')
-    return lines
+            location = _awning_location(building, awning, bounds)
+            add(f'The awning {location} has no wall to hang from.',
+                f'{{count}} awnings {location} have no wall to hang from.')
+    return [singular if count == 1 else plural.replace('{count}', str(count))
+            for (singular, plural), count in messages.items()]

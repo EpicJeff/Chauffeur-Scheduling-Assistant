@@ -344,6 +344,95 @@ def test_idempotent():
     check(b == settled, ('a second snap changes nothing', tp.diff_paths({'b': settled}, {'b': b})))
 
 
+def _opening_centre(b, opening):
+    carrier = by_id(b, opening['wall'])
+    length = math.dist(carrier['from'], carrier['to'])
+    return [carrier['from'][i] + opening['at'] *
+            (carrier['to'][i] - carrier['from'][i]) / length for i in (0, 1)]
+
+
+def test_weld_preserves_person_and_read_opening_centres():
+    walls = rect_walls(0, 0, 20, 15)
+    walls[1]['from'] = [20, 0.8]
+    b = building(walls)
+    b['openings'] = [
+        {'id': _id('opening'), 'kind': 'window', 'wall': walls[1]['id'],
+         'at': at, 'width': 2, 'sill': 3, 'head': 7,
+         'src': {'person': True} if person else dict(READ_SRC)}
+        for at, person in ((5, True), (10, False))]
+    before = [_opening_centre(b, o) for o in b['openings']]
+    notes = tj().snap(b)
+    check(has(notes, 'joined', 'corner'), notes)
+    for centre, opening in zip(before, b['openings']):
+        check(same(centre, _opening_centre(b, opening), 0.01),
+              ('welding keeps each opening at its world centre', centre, opening))
+    normalized, _ = tp.normalize({'units': 'ft', 'buildings': [b]})
+    check(len(normalized['buildings'][0]['openings']) == 2, 'both openings survive publication')
+    settled = copy.deepcopy(b)
+    check(tj().snap(b) == [] and b == settled, 'opening reprojection is idempotent')
+
+
+def test_awning_prefers_front_with_rear_wall_first():
+    walls = rect_walls(0, 0, 30, 20)
+    roof = section([0, 0, 30, 20])
+    b = building([walls[2], walls[1], walls[0], walls[3]], [roof], [awning(roof, 10, 20)])
+    tj().snap(b)
+    check(b['roof']['extensions'][0].get('wall') == walls[0]['id'],
+          ('the y0 wall wins a front/rear tie regardless of list order', b['roof']['extensions']))
+    b['roof']['extensions'][0]['wall'] = walls[2]['id']
+    tj().snap(b)
+    check(b['roof']['extensions'][0]['wall'] == walls[2]['id'], 'an explicit valid rear wall is retained')
+
+
+def test_report_counts_corners_instead_of_wall_ends():
+    walls = rect_walls(0, 0, 20, 15)
+    walls[1]['from'] = [20, 1.3]
+    b = building(walls)
+    tj().snap(b)
+    check(tj().report(b) == ['1 outside corner on the Main floor does not meet.'], tj().report(b))
+    b['walls'][3]['from'] = [0, 13.7]
+    check(tj().report(b) == ['2 outside corners on the Main floor do not meet.'], tj().report(b))
+
+
+def test_report_names_rear_and_formats_feet():
+    for distance in (2, 12.5, 100):
+        b = building(rect_walls(0, 0, 30, 20), [section([0, 0, 30, 20 + distance])])
+        tj().snap(b)
+        expected = f'A roof edge over the rear is {distance} ft from any wall.'
+        check(tj().report(b) == [expected], (expected, tj().report(b)))
+        no_raw_ids(b, tj().report(b))
+    b = building(rect_walls(0, 0, 30, 20), [section([0, 0, 30, 20], plate=110)])
+    check(has(tj().report(b), 'roof plate', 'front', '100 ft above'), tj().report(b))
+
+
+def test_report_collapses_identical_roof_lines():
+    b = building(rect_walls(0, 0, 30, 20),
+                 [section([0, 0, 10, 22]), section([20, 0, 30, 22])])
+    lines = tj().report(b)
+    rear = [line for line in lines if 'roof edge' in line and 'rear' in line]
+    check(rear == ['2 roof edges over the rear are 2 ft from any wall.'], lines)
+
+
+def test_report_locates_unsupported_awning_and_covered_opening():
+    walls = rect_walls(0, 0, 30, 20)
+    roof = section([0, 0, 30, 20])
+    # Too high for L1: it cannot attach, but the front window still locates it.
+    b = building(walls, [roof], [awning(roof, 10, 20, eave=12)])
+    b['openings'] = [{'id': _id('opening'), 'kind': 'window', 'wall': walls[0]['id'],
+                      'at': 15, 'width': 3, 'sill': 3, 'head': 7, 'src': {'person': True}}]
+    before = copy.deepcopy(b)
+    expected = 'The awning over the window on the front has no wall to hang from.'
+    check(tj().report(b) == [expected], tj().report(b))
+    check(b == before, 'report is read-only')
+    b['roof']['extensions'].append(copy.deepcopy(b['roof']['extensions'][0]))
+    check(tj().report(b) == ['2 awnings over the window on the front have no wall to hang from.'],
+          tj().report(b))
+    b['openings'].clear()
+    lines = tj().report(b)
+    check(lines == ['2 awnings on the front have no wall to hang from.'], lines)
+    no_raw_ids(b, lines)
+
+
 # --- the build and the editor run it ------------------------------------------
 
 def test_build_runs_snap():
@@ -407,6 +496,12 @@ SCENARIOS = (
     test_awning_takes_the_wall_of_its_floor,
     test_person_piece_never_moves,
     test_idempotent,
+    test_weld_preserves_person_and_read_opening_centres,
+    test_awning_prefers_front_with_rear_wall_first,
+    test_report_counts_corners_instead_of_wall_ends,
+    test_report_names_rear_and_formats_feet,
+    test_report_collapses_identical_roof_lines,
+    test_report_locates_unsupported_awning_and_covered_opening,
     test_build_runs_snap,
     test_edit_runs_snap,
 )
