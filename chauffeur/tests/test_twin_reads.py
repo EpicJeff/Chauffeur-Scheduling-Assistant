@@ -72,16 +72,24 @@ class Pool:
         return False
 
 
+STEP_KINDS = ('sheet_roles', 'outline', 'walls', 'openings', 'rooms', 'registration', 'roof',
+              'pitch', 'plot', 'site', 'finishes', 'photo_parts')
+DRAFT_KINDS = ('draft', 'draft_level', 'draft_rooms')
+
+
 def scenario_kinds_and_output_caps_are_pinned():
-    check(twin_reads.KINDS == ('sheet_roles', 'outline', 'walls', 'openings', 'rooms', 'registration', 'roof',
-                               'pitch', 'plot', 'site', 'finishes', 'photo_parts'), twin_reads.KINDS)
+    # Whole-building draft task 5: the three draft kinds join the step kinds.
+    check(twin_reads.KINDS == STEP_KINDS + DRAFT_KINDS, twin_reads.KINDS)
     check(twin_reads.MAX_OUTPUT == {'sheet_roles': 2048, 'outline': 4096, 'walls': 16384, 'openings': 16384,
                                     'rooms': 16384, 'registration': 4096, 'roof': 8192, 'pitch': 2048,
-                                    'plot': 8192, 'site': 8192, 'finishes': 8192, 'photo_parts': 2048}, twin_reads.MAX_OUTPUT)
+                                    'plot': 8192, 'site': 8192, 'finishes': 8192, 'photo_parts': 2048,
+                                    'draft': 64000, 'draft_level': 32000, 'draft_rooms': 32000},
+          twin_reads.MAX_OUTPUT)
 
 
 def scenario_each_kind_parses_its_fixture():
-    for kind in twin_reads.KINDS:
+    # The draft kinds have no crop fixture; test_parse_draft_shape covers them.
+    for kind in STEP_KINDS:
         frag, problems = twin_reads.parse(kind, fixture(kind))
         check(frag and problems == [], (kind, problems))
         check(frag == fixture(kind) or kind in ('outline', 'registration', 'roof', 'plot'),
@@ -304,7 +312,215 @@ def scenario_footprint_prompts_agree_on_enclosed_walls():
     check('lower_outline' in twin_reads.PROMPTS['registration'], 'the registration names lower_outline')
 
 
+# ---- whole-building draft, task 5 (task-5-brief.md) ----
+#
+# Lenient JSON is driven through llm._call_llm_json with the provider HTTP
+# layer (llm_budget.urlopen) stubbed by a canned Anthropic body, so the
+# stop_reason completion check runs for real.
+
+import io  # noqa: E402
+
+from services import llm  # noqa: E402
+
+RECORDED = os.path.join(FIXTURES, 'recorded', 'claude')
+DRAFT_TRUNCATED = {'error': 'Incomplete Claude JSON response (finish=max_tokens; output_tokens=64000; limit=64000)',
+                   'transient': False}
+
+
+def spike_answer():
+    with open(os.path.join(RECORDED, 'draft-main-spike-answer.json'), encoding='utf-8') as f:
+        return json.load(f)
+
+
+class _Body(io.BytesIO):
+    status = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class ClaudeStub:
+    """Stands in for llm_budget.urlopen with one Anthropic Messages reply."""
+
+    def __init__(self, text, stop_reason='end_turn'):
+        self.body = {'content': [{'type': 'text', 'text': text}], 'stop_reason': stop_reason,
+                     'usage': {'input_tokens': 100, 'output_tokens': 20}}
+        self.requests = []
+
+    def __call__(self, request, timeout=60):
+        self.requests.append(request)
+        return _Body(json.dumps(self.body).encode('utf-8'))
+
+    def __enter__(self):
+        self.original = llm.llm_budget.urlopen
+        llm.llm_budget.urlopen = self
+        return self
+
+    def __exit__(self, *exc):
+        llm.llm_budget.urlopen = self.original
+        return False
+
+
+def _claude_json(text, strict_json='lenient', stop_reason='end_turn'):
+    with ClaudeStub(text, stop_reason) as stub:
+        out = llm._call_llm_json('anthropic', '', 'k', 'claude-opus-5-5', 'sys', 'user',
+                                 strict_json=strict_json, transient_retries=0, max_output_tokens=64000)
+    check(len(stub.requests) == 1, 'one provider request')
+    return out
+
+
+def _raises(fn, *words):
+    try:
+        out = fn()
+    except RuntimeError as exc:
+        for word in words:
+            check(word in str(exc), (word, str(exc)[:300]))
+        return
+    raise AssertionError(f'expected a RuntimeError, got {out!r}')
+
+
+def test_lenient_fences_and_lead_text():
+    out = _claude_json('Here:\n```json\n{"a":1}\n```')
+    check(out == {'a': 1}, out)
+
+
+def test_lenient_trailing_brace():
+    out = _claude_json('{"a":1}}')
+    check(out == {'a': 1}, out)
+    # Strict JSON is unchanged: it never repairs anything.
+    _raises(lambda: _claude_json('{"a":1}}', strict_json=True))
+
+
+def test_lenient_two_objects_refused():
+    _raises(lambda: _claude_json('{"a":1}{"b":2}'), 'Two JSON objects in one reply')
+
+
+def test_lenient_keeps_truncation_check():
+    # A complete-looking object cut off at max_tokens is still a truncated reply.
+    _raises(lambda: _claude_json('{"a":1}', stop_reason='max_tokens'),
+            'Incomplete Claude JSON response', 'max_tokens')
+
+
+def test_draft_call_settings():
+    _fresh()
+    with Pool(answer=spike_answer()) as pool:
+        twin_reads.read('draft', [img(), img()], {'building': 'Main house'}, run='r1', step='draft')
+    check(len(pool.calls) == 1, ('one request', len(pool.calls)))
+    c = pool.calls[0]
+    check(c['tier'] == 'twin' and c['system'] == twin_reads.PROMPTS['draft'], (c['tier'], c['system'][:80]))
+    check(c['thinking_level'] == 'medium' and c['max_output_tokens'] == 64000 and c['timeout_s'] == 420
+          and c['strict_json'] == 'lenient' and c['max_models'] == 1,
+          {k: c.get(k) for k in ('thinking_level', 'max_output_tokens', 'timeout_s', 'strict_json', 'max_models')})
+    check(len(c['images']) == 2, 'every page image goes in the one request')
+    for kind in ('draft_level', 'draft_rooms'):
+        with Pool(answer={}) as pool:
+            twin_reads.read(kind, [img()], {}, run='r1', step=kind)
+        c = pool.calls[0]
+        check(len(pool.calls) == 1 and c['thinking_level'] == 'medium' and c['max_output_tokens'] == 32000
+              and c['timeout_s'] == 300 and c['strict_json'] == 'lenient' and c['max_models'] == 1,
+              (kind, {k: c.get(k) for k in ('thinking_level', 'max_output_tokens', 'timeout_s', 'strict_json')}))
+    check(twin_reads.THINKING == {'draft': 'medium', 'draft_level': 'medium', 'draft_rooms': 'medium'},
+          twin_reads.THINKING)
+    check(twin_reads.TIMEOUT == {'draft': 420, 'draft_level': 300, 'draft_rooms': 300}, twin_reads.TIMEOUT)
+    with Pool(answer=fixture('outline')) as pool:
+        twin_reads.read('outline', [img()], {'level': 'Main floor'}, run='r1', step='outline:L1')
+    c = pool.calls[0]
+    check(c['thinking_level'] == 'low' and c['timeout_s'] == 120 and c['strict_json'] is True, c)
+
+
+def test_draft_truncated_no_retry():
+    _fresh()
+    before = len(tc.entries())
+    with SeqPool([DRAFT_TRUNCATED, spike_answer()]) as pool:
+        out = twin_reads.read('draft', [img()], {}, run='r1', step='draft')
+    check(len(pool.calls) == 1, ('64k is the ceiling: no doubled retry', len(pool.calls)))
+    check(out.get('truncated') is True and 'error' in out, out)
+    check(len(tc.entries()) == before + 1 and tc.entries()[-1]['stage'] == 'step:draft', 'metered once')
+    for kind in ('draft_level', 'draft_rooms'):
+        with SeqPool([DRAFT_TRUNCATED, {}]) as pool:
+            out = twin_reads.read(kind, [img()], {}, run='r1', step=kind)
+        check(len(pool.calls) == 1 and 'error' in out, (kind, len(pool.calls), out))
+
+
+def test_draft_prompt_generic():
+    prompt = ' '.join(twin_reads.PROMPTS['draft'].split()).lower()
+    for words in ('dimension strings', 'stop reasoning by about 45000', 'half', 'anchors',
+                  'prefer the reading where walls, floors and roofs meet'):
+        check(words in prompt, ('the draft prompt says', words))
+    for words in ('upton', 'lot 58', 'pool house'):
+        check(words not in prompt, ('the draft prompt carries no household text', words))
+
+
+def _pages(*anchors_per_page):
+    return [{'image': 1, 'level': 'L1', 'anchors': list(anchors)} for anchors in anchors_per_page]
+
+
+def test_parse_draft_shape():
+    answer = spike_answer()
+    check('pages' not in answer, 'the recorded spike answer predates the pages request')
+    frag, problems = twin_reads.parse('draft', answer)
+    check(problems == [], problems[:10])
+    b = frag.get('building') or {}
+    src = answer['building']
+    check(len(b.get('levels') or []) == len(src['levels']) and len(b.get('walls') or []) == len(src['walls'])
+          and len(b.get('openings') or []) == len(src['openings']) and b.get('rooms') == [],
+          'a clean building passes through with nothing dropped')
+    roof = b.get('roof') or {}
+    check(len(roof.get('sections') or []) == len(src['roof']['sections'])
+          and len(roof.get('extensions') or []) == len(src['roof']['extensions']), roof.keys())
+    check(b.get('porch') and len(b.get('stairs') or []) == len(src['stairs']), 'porch and stairs kept')
+    # A missing pages key is allowed: no problem, an empty list.
+    check(frag.get('pages') == [], frag.get('pages'))
+
+    a1 = {'px': [0.1, 0.2], 'at': [0, 14.33]}
+    a2 = {'px': [0.9, 0.8], 'at': [70, 0]}
+    good = _pages([a1, a2])
+    frag, problems = twin_reads.parse('draft', {**answer, 'pages': copy.deepcopy(good)})
+    check(problems == [] and frag['pages'] == good, (problems, frag.get('pages')))
+
+    wide = {'px': [1.4, 0.2], 'at': [10, 10]}
+    frag, problems = twin_reads.parse('draft', {**answer, 'pages': _pages([a1, a2, wide])})
+    check(any('pages' in p for p in problems), ('an out-of-range u is named', problems))
+    kept = [a for page in frag.get('pages') or [] for a in page.get('anchors') or []]
+    check(all(a['px'][0] <= 1 for a in kept) and wide not in kept, ('and never kept', kept))
+
+    frag, problems = twin_reads.parse('draft', {**answer, 'pages': _pages([a1], [a1, a2])})
+    check(any('anchors' in p for p in problems), ('fewer than 2 anchors is named', problems))
+    check(frag.get('pages') == _pages([a1, a2]), ('only the page with two anchors is kept', frag.get('pages')))
+
+
+def test_small_output_cap_skips_to_fallback():
+    check(twin_reads.OUTPUT_CAP == {'anthropic': 64000, 'openai': 64000, 'gemini': 65536}, twin_reads.OUTPUT_CAP)
+    _fresh()
+    saved = dict(twin_reads.OUTPUT_CAP)
+    try:
+        twin_reads.OUTPUT_CAP.update({prov: 16000 for prov in saved})
+        before = len(tc.entries())
+        with Pool(answer=spike_answer()) as pool:
+            out = twin_reads.read('draft', [img()], {}, run='r1', step='draft')
+        check(pool.calls == [] and len(tc.entries()) == before, ('no request below a 32000 cap', pool.calls))
+        check(out.get('truncated') is True and 'too small' in str(out.get('error')), out)
+        # The per-level fallback still runs, clamped to the provider's cap.
+        with Pool(answer={}) as pool:
+            twin_reads.read('draft_level', [img()], {}, run='r1', step='draft_level:L1')
+        check(len(pool.calls) == 1 and pool.calls[0]['max_output_tokens'] == 16000,
+              [c['max_output_tokens'] for c in pool.calls])
+        # At exactly 32000 the whole-building read goes ahead, clamped.
+        twin_reads.OUTPUT_CAP.update({prov: 32000 for prov in saved})
+        with Pool(answer=spike_answer()) as pool:
+            twin_reads.read('draft', [img()], {}, run='r1', step='draft')
+        check(len(pool.calls) == 1 and pool.calls[0]['max_output_tokens'] == 32000,
+              [c['max_output_tokens'] for c in pool.calls])
+    finally:
+        twin_reads.OUTPUT_CAP.clear()
+        twin_reads.OUTPUT_CAP.update(saved)
+
+
 if __name__ == '__main__':
+    failed = []
     for fn in (scenario_kinds_and_output_caps_are_pinned,
                scenario_each_kind_parses_its_fixture,
                scenario_out_of_range_points_are_named_not_kept,
@@ -323,6 +539,23 @@ if __name__ == '__main__':
                scenario_rooms_output_cap_is_16384,
                scenario_a_truncated_read_is_retried_once_at_twice_the_limit,
                scenario_a_second_truncation_stops_and_other_failures_are_not_retried,
-               scenario_footprint_prompts_agree_on_enclosed_walls):
-        fn()
-        print('  ok ', fn.__name__)
+               scenario_footprint_prompts_agree_on_enclosed_walls,
+               test_lenient_fences_and_lead_text,
+               test_lenient_trailing_brace,
+               test_lenient_two_objects_refused,
+               test_lenient_keeps_truncation_check,
+               test_draft_call_settings,
+               test_draft_truncated_no_retry,
+               test_draft_prompt_generic,
+               test_parse_draft_shape,
+               test_small_output_cap_skips_to_fallback):
+        try:
+            fn()
+        except Exception as exc:
+            failed.append(fn.__name__)
+            print('  FAIL', fn.__name__, type(exc).__name__, ' '.join(str(exc).split())[:200])
+        else:
+            print('  ok ', fn.__name__)
+    if failed:
+        print(f'{len(failed)} failed')
+        sys.exit(1)

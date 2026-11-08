@@ -1,4 +1,4 @@
-"""Small, metered reads of cropped drawing sheets; no plan/world conversion."""
+"""Metered crop reads and whole-building reads in dimensioned building feet."""
 import json
 import re
 
@@ -7,11 +7,16 @@ from services.twin_draft import FINISHES_PROMPT
 
 
 KINDS = ('sheet_roles', 'outline', 'walls', 'openings', 'rooms', 'registration',
-         'roof', 'pitch', 'plot', 'site', 'finishes', 'photo_parts')
+         'roof', 'pitch', 'plot', 'site', 'finishes', 'photo_parts',
+         'draft', 'draft_level', 'draft_rooms')
 MAX_OUTPUT = {'sheet_roles': 2048, 'outline': 4096, 'walls': 16384,
               'openings': 16384, 'rooms': 16384, 'registration': 4096,
               'roof': 8192, 'pitch': 2048, 'plot': 8192, 'site': 8192,
-              'finishes': 8192, 'photo_parts': 2048}
+              'finishes': 8192, 'photo_parts': 2048,
+              'draft': 64000, 'draft_level': 32000, 'draft_rooms': 32000}
+THINKING = {'draft': 'medium', 'draft_level': 'medium', 'draft_rooms': 'medium'}
+TIMEOUT = {'draft': 420, 'draft_level': 300, 'draft_rooms': 300}
+OUTPUT_CAP = {'anthropic': 64000, 'openai': 64000, 'gemini': 65536}
 
 # Reuse P0's reading/JSON rules, but its world-coordinate rules do not apply.
 _CROP_RULES = """
@@ -122,6 +127,163 @@ These are suggestions for a person to accept, never changes to their place. Retu
 {"photos":[{"index":0,"parts":["part-id"]}],"shells":[{"building":"part-id",
 "storeys":1,"roof":"gable","pitch":6,"confidence":0.5,"why":""}]}.
 '''
+
+# These rules use the successful whole-set spike's dimensioned frame, never
+# _CROP_RULES. Keep the same geometry rules in the per-level fallback.
+_DRAFT_RULES = '''
+UNITS AND MEASURING
+- Work in decimal feet from the PRINTED DIMENSION STRINGS (31'-0" = 31.0,
+  5'-8" = 5.667, 4" = 0.333). Chain partial strings against the overall string
+  beside them; report strings that do not add up in checks and notes.
+- Never take a position from pixel distances when a dimension string or a size
+  callout gives it. Only an element with no dimension may be scaled from the
+  nearest dimension strings; name every scaled element in notes.
+- Size callouts are width x height: 2^8 x 5^2 means 2'-8" by 5'-2";
+  12^0 x 8^0 SLIDER means 12'-0" wide by 8'-0" tall.
+- Sheet notes (CLG. HGT., SET WINDOWS @ ... for head height, door height,
+  PLATE HGT., knee walls), elevations and building sections when present are
+  the sources for heights. When a height is missing, use a typical value
+  checked against the photos, and list each assumed height in notes.
+
+ONE FRAME FOR THE WHOLE BUILDING
+- Origin (0,0) is the front-left corner of the OVERALL dimension box of the
+  enclosed ground floor: x=0 at the leftmost exterior wall face, y=0 at the
+  frontmost face as seen standing in front. It need not be a wall corner.
+  +x runs right along the front; +y runs toward the rear. Match the front photo
+  by entry door, porch and gables. Plans may put the front at the bottom of the
+  sheet, so +y then runs UP the sheet.
+- Every level uses this same frame. Place upper levels using strings shared
+  with the floor below, aligned wall lines and the stair. State in checks which
+  strings fixed each upper level's x and y offsets.
+- Keep each staggered wing's own front and rear y from side and partial strings;
+  only the frontmost wall lies at y=0. A porch sits in front of its own wall.
+  List every wing's front and rear y and the strings used in checks.wing_y.
+- Overall dimensions are to the outside wall face. Outline points and exterior
+  wall endpoints lie on that face.
+
+LEVELS AND WALLS
+- levels: [{id, name, elevation, ceiling, outline:[[x,y],...]}]. Use L1, L2, ...
+  in elevation order; use the page's level name from context as name. L1 is at
+  elevation 0, top of slab. Each upper elevation includes the floor framing
+  depth from the section; ceiling is the level's ceiling height from the notes.
+- Outline traces ENCLOSED walls only, with at least three corners, without
+  repeating the first point. Open porches and decks are never in an outline.
+  A screened porch is an open porch with a roof, not an enclosed room.
+- A storey-and-a-half area with rooms under the roof is still a level with
+  half: true and an outline of the floor area inside the knee walls. Give it a
+  floor even if no full-height exterior walls surround it. Knee walls have
+  exterior: false and their own height; the roof above remains the roof.
+- walls: [{id, level, from:[x,y], to:[x,y], height, thickness, exterior}]. All
+  lengths, including thickness, are feet. Exterior walls follow the outline
+  exactly, share endpoints exactly and close it. Height is above its own floor.
+- GABLE ENDS apply only to gable sections, never hips. Do not write an upper
+  wall along a gable end when the section's plate is below the top of that
+  upper wall: the roof generator supplies the triangle from plate to ridge.
+  Under hips, and under gables with plate on the upper floor's own plate, write
+  every upper exterior wall so the floor closes. Rooms under a low gable are
+  bounded by knee walls and the gable ends themselves.
+
+OPENINGS
+- openings: [{id, wall, kind, at, width, sill, head}]. kind is window, door,
+  slider, bifold, passage or garage. at is the distance in feet from the wall's
+  from point to the opening's CENTRE. Sill and head are above its level's floor;
+  head never exceeds wall height. Doors and sliders have sill 0. Use size
+  callouts and head notes; include openings visible in elevations too.
+- A gable opening is {id, gable:"front"|"rear", section, kind, x, width, sill,
+  head} for ridge "y": x is the centre along the building x axis, front is the
+  y0 end, rear the y1 end. For ridge "x", give y instead of x: y is the centre
+  along the building y axis, front is the x0 end, rear the x1 end. Gable sill
+  and head are measured above the section's PLATE, not the level's floor.
+
+ROOF
+- roof: {sections:[...], extensions:[...]}. Each section is {id, kind, rect,
+  ridge, low_side, pitch, plate, overhang}; kind is gable, hip, shed or flat.
+  rect=[x0,y0,x1,y1] follows the bearing wall lines, excluding overhang; give
+  overhang separately in feet. ridge is the axis the ridge LINE runs along:
+  x runs side to side with gable ends left/right; y runs front to rear. A shed's
+  low_side is its lowest rect edge: x0, x1, y0 or y1. Pitch is rise per 12;
+  plate is the rafters' bearing elevation above the L1 floor.
+- One section per roof mass: each storey block, wing, cross gable, porch roof
+  and lean-to. Sections may overlap; their HIGHEST surface wins. Run lower
+  wings into the taller roof's footprint toward its ridge/wall so valleys form.
+  A cross gable on a hip is its own section, spanning its width into the hip.
+- Read roof plans: solid outer lines are eaves; dashed lines are bearing walls
+  and give rects; heavy/double lines are ridges; diagonals from outside corners
+  to ridge ends are hips; diagonals from inside corners are valleys. A ridge
+  ending at an eave in a gable bracket/triangle is a gable end; a ridge whose
+  ends split into two hips is a hip. Read ridge axis from the ridge line itself.
+- Give each section its own plate: a one-storey wing on its own plate, a taller
+  block on the upper elevation plus upper plate height. Use pitches:{x0,x1,y0,y1}
+  when slopes differ. If no pitch is drawn, estimate against photos, set
+  pitch_source:"photos" and say so in notes. Check each ridge height against
+  photos: plate + half span * pitch/12 for hips and gables.
+- A small bracketed roof is an extension: {kind:"awning", section, wall, x0,
+  x1, depth, pitch, eave, brackets}. Reference its section and supporting wall;
+  it hangs from that exterior wall and slopes down away. depth is projection,
+  eave is its low edge height above L1. brackets is an integer count, 0 if none,
+  never true/false. It need not hang from the section's front edge.
+
+PORCH, STAIRS AND PHOTOS
+- porch: {polygon, floor, columns:[{at:[x,y],size}]} for an open porch; floor 0
+  for a slab porch. Put columns at drawn posts, with size in feet.
+- stairs: [{id, level, from:[x,y], to:[x,y], width, risers, rise_to}]. from is
+  the bottom, to the top, level the starting level, rise_to the reached elevation.
+- Photos confirm the front, roof forms and look. Never take a dimension from
+  a photo. Example numbers explain the schema, never this building's dimensions.
+- When a drawing is ambiguous, prefer the reading where walls, floors and roofs meet.
+
+PAGE REGISTRATIONS AND CHECKS
+- Request pages: [{image, level, anchors:[{px:[u,v], at:[x,y]}]}], one per floor
+  page and the roof page. Use the supplied image index and level id. Give 3-4
+  outline corners per page: u and v are fractions of that supplied image,
+  origin top-left, u right, v down, in [0,1]; at is the same corner in building
+  feet. These anchors align the sheet only; geometry still uses dimensions.
+- checks: {front_edge, level_sizes:{L1:[width,depth]}, upper_offsets:{L2:
+  "which strings placed it"}, wing_y:[{wing,front,rear,strings}]}.
+- notes lists assumed heights/pitches, scaled elements and strings that disagree.
+'''
+_DRAFT_OUTPUT = '''
+Write compact JSON, numbers to at most 2 decimals. The first character is {
+and the last is }. No code fences or text before or after.
+'''
+PROMPTS['draft'] = '''Read the complete architectural set for ONE building as
+one 3D plan in feet. All relevant sheets and photos are attached: read them
+together, including elevations and sections when present. Write exterior walls
+and knee walls only, no interior partitions, and rooms: []. Return
+{building:{id,name,position:[0,0],rotation:0,base:0,levels,walls,openings,rooms,
+roof:{sections,extensions},porch,stairs},pages,checks,notes}.
+''' + _DRAFT_RULES + '''
+Your whole reply, reasoning included, must fit in 64000 tokens: stop reasoning
+by about 45000 and leave the rest for the JSON.
+''' + _DRAFT_OUTPUT
+PROMPTS['draft_level'] = '''Read ONLY the requested level, or ONLY the roof
+when context requests the roof. Settled lower levels in context fix the frame
+and dimensions; preserve them and their ids. Use shared dimension strings to
+place the requested level in that same frame; never restart at a local origin.
+Return {building:{levels,walls,openings,rooms:[],porch,stairs},pages,checks,notes}
+restricted to that one level (exterior and knee walls only, no partitions).
+For a roof-only request return {building:{roof:{sections,extensions},openings},
+pages,checks,notes}, with only roof and gable openings, given all settled levels.
+Omit geometry outside the requested scope; never repeat or revise settled levels.
+''' + _DRAFT_RULES + '''
+Your whole reply, reasoning included, must fit in 32000 tokens: stop reasoning
+by about 20000 and leave the rest for the JSON.
+''' + _DRAFT_OUTPUT
+PROMPTS['draft_rooms'] = '''Read room boundaries and INTERIOR walls from the
+floor pages, given the settled building (levels, exterior walls and openings)
+in context. Keep its level ids, outlines and shared coordinate frame exactly.
+Return only {rooms:[{name,level,polygon:[[x,y],...]}],walls:[{id,level,
+from:[x,y],to:[x,y],height,thickness,exterior:false}]} in building feet.
+Use printed room labels; leave an unreadable name blank. Trace each room inside
+its level's outline, without overlapping other rooms, covering the enclosed
+floor area. Include interior partitions and knee walls, no exterior walls.
+Do not return or revise levels, exterior openings, roofs, porches or stairs.
+The rules below explain the settled geometry; pages/checks/notes and exterior
+geometry are not requested in this reply.
+''' + _DRAFT_RULES + '''
+Your whole reply, reasoning included, must fit in 32000 tokens: stop reasoning
+by about 20000 and leave the rest for the JSON.
+''' + _DRAFT_OUTPUT
 
 
 def _number(value):
@@ -238,6 +400,184 @@ class _Validator:
         return out
 
 
+def _parse_draft(kind, answer, v):
+    """Check world-coordinate shapes; settling/normalize owns geometric gates.
+
+    Partial level/roof reads may reference pieces in the settled context, so
+    references are retained here rather than checked against this reply alone.
+    """
+    signed = lambda x, p: v.numeric(x, p, minimum=-1e308)
+    positive = lambda x, p: v.numeric(x, p, positive=True)
+
+    def boolean(value, path):
+        if type(value) is not bool:
+            v.bad(path, 'expected a boolean')
+            return None
+        return value
+
+    def integer(value, path):
+        if type(value) is not int or value < 0:
+            v.bad(path, 'expected a nonnegative integer')
+            return None
+        return value
+
+    def point(value, path):
+        if not isinstance(value, list) or len(value) != 2 or not all(map(_number, value)):
+            v.bad(path, 'expected a finite [x,y] point in feet')
+            return None
+        return list(value)
+
+    def polygon(value, path):
+        points = v.items(value, path, point)
+        if points is None:
+            return None
+        if len(points) < 3 or len(points) != len(value):
+            v.bad(path, 'polygon needs at least three valid points')
+            return None
+        return points
+
+    def rect(value, path):
+        if (not isinstance(value, list) or len(value) != 4 or not all(map(_number, value))
+                or value[0] >= value[2] or value[1] >= value[3]):
+            v.bad(path, 'expected a finite [x0,y0,x1,y1] with positive size')
+            return None
+        return list(value)
+
+    def level(value, path):
+        return v.fields(value, path, {'id': v.text, 'name': v.text, 'elevation': signed,
+                                     'ceiling': positive, 'outline': polygon}, {'half': boolean})
+
+    def wall(value, path):
+        out = v.fields(value, path, {'level': v.text, 'from': point, 'to': point,
+                                    'height': positive, 'thickness': positive, 'exterior': boolean},
+                       {'id': v.text})
+        if out is not None and kind == 'draft_rooms' and out['exterior']:
+            v.bad(path + '.exterior', 'rooms read may only return interior walls')
+            return None
+        return out
+
+    def opening(value, path):
+        out = v.fields(value, path, {
+            'kind': lambda x, p: v.choice(x, p, ('window', 'door', 'slider', 'bifold', 'passage', 'garage')),
+            'width': positive, 'sill': v.numeric, 'head': positive}, {'id': v.text})
+        if out is None:
+            return None
+        if ('wall' in value) == ('gable' in value):
+            v.bad(path, 'reference exactly one wall or gable')
+            return None
+        if 'wall' in value:
+            reference = v.fields(value, path, {'wall': v.text, 'at': v.numeric})
+        else:
+            if ('x' in value) == ('y' in value):
+                v.bad(path, 'gable opening needs exactly one centre axis, x or y')
+                return None
+            axis = 'x' if 'x' in value else 'y'
+            reference = v.fields(value, path, {
+                'gable': lambda x, p: v.choice(x, p, ('front', 'rear')),
+                'section': v.text, axis: signed})
+        return {**out, **reference} if reference is not None else None
+
+    def section(value, path):
+        out = v.fields(value, path, {
+            'id': v.text, 'kind': lambda x, p: v.choice(x, p, ('gable', 'hip', 'shed', 'flat')),
+            'rect': rect, 'pitch': lambda x, p: v.numeric(x, p, maximum=24),
+            'plate': signed, 'overhang': v.numeric}, {
+            'pitch_source': lambda x, p: v.choice(x, p, ('drawn', 'photos', 'person', 'card', 'default')),
+            'pitches': lambda x, p: v.fields(x, p, {}, {
+                side: lambda x, p: v.numeric(x, p, maximum=24) for side in ('x0', 'x1', 'y0', 'y1')})})
+        if out is None:
+            return None
+        if out['kind'] in ('gable', 'hip'):
+            extra = v.fields(value, path, {'ridge': lambda x, p: v.choice(x, p, ('x', 'y'))})
+        elif out['kind'] == 'shed':
+            extra = v.fields(value, path, {
+                'low_side': lambda x, p: v.choice(x, p, ('x0', 'x1', 'y0', 'y1'))})
+        else:
+            extra = {}
+        return {**out, **extra} if extra is not None else None
+
+    def extension(value, path):
+        if v.object(value, path) is None:
+            return None
+        if value.get('kind') == 'awning':
+            fields = {'x0': signed, 'x1': signed, 'depth': positive,
+                      'eave': signed, 'brackets': integer}
+        elif value.get('kind') == 'shed_continuation':
+            fields = {'to_x': signed}
+        else:
+            v.bad(path + '.kind', 'unknown roof extension')
+            return None
+        return v.fields(value, path, {'kind': v.text, 'section': v.text, 'pitch': positive, **fields},
+                        {'id': v.text, 'wall': v.text, 'overhang': v.numeric})
+
+    room = lambda x, p: v.fields(x, p, {'name': v.text, 'level': v.text, 'polygon': polygon}, {'id': v.text})
+    stair = lambda x, p: v.fields(x, p, {
+        'level': v.text, 'from': point, 'to': point, 'width': positive,
+        'risers': positive, 'rise_to': signed}, {'id': v.text})
+    roof = lambda x, p: v.fields(x, p, {
+        'sections': lambda x, p: v.items(x, p, section)}, {
+        'extensions': lambda x, p: v.items(x, p, extension)})
+
+    def porch(value, path):
+        return v.fields(value, path, {'polygon': polygon}, {
+            'floor': signed, 'columns': lambda x, p: v.items(x, p, lambda x, p: v.fields(
+                x, p, {'at': point, 'size': positive}))})
+
+    def anchor(value, path):
+        def fraction_point(value, path):
+            if (not isinstance(value, list) or len(value) != 2
+                    or not all(_number(x) and 0 <= x <= 1 for x in value)):
+                v.bad(path, 'expected image fractions [u,v] in 0..1')
+                return None
+            return list(value)
+        return v.fields(value, path, {'px': fraction_point, 'at': point})
+
+    def page(value, path):
+        out = v.fields(value, path, {'image': integer, 'level': v.text,
+                                    'anchors': lambda x, p: v.items(x, p, anchor)})
+        if out is not None and len(out['anchors']) < 2:
+            v.bad(path + '.anchors', 'at least two valid anchors are needed')
+            return None
+        return out
+
+    if kind == 'draft_rooms':
+        return v.fields(answer, kind, {'rooms': lambda x, p: v.items(x, p, room),
+                                      'walls': lambda x, p: v.items(x, p, wall)}) or {}
+
+    building_fields = {
+        'levels': lambda x, p: v.items(x, p, level),
+        'walls': lambda x, p: v.items(x, p, wall),
+        'openings': lambda x, p: v.items(x, p, opening),
+        'rooms': lambda x, p: v.items(x, p, room), 'roof': roof,
+        'porch': lambda x, p: None if x is None else porch(x, p),
+        'stairs': lambda x, p: v.items(x, p, stair),
+    }
+    building = v.object(answer.get('building'), kind + '.building')
+    out = {'pages': v.items(answer.get('pages', []), kind + '.pages', page) or []}
+    if building is not None:
+        checked = v.fields(building, kind + '.building', {}, {
+            **building_fields, 'id': v.text, 'name': v.text, 'position': point,
+            'rotation': signed, 'base': signed})
+        if building.get('porch') is None and 'porch' in building:
+            # Null explicitly describes an absent optional porch.
+            checked['porch'] = None
+        if kind == 'draft':
+            for name in ('levels', 'walls', 'openings', 'rooms', 'roof', 'stairs'):
+                if name not in building:
+                    v.bad(kind + '.building.' + name, 'missing field')
+        elif len(checked.get('levels', [])) > 1:
+            v.bad(kind + '.building.levels', 'per-level read must contain only one level')
+            checked['levels'] = []
+        out['building'] = checked
+    for name, validate in (('checks', v.object), ('notes', lambda x, p: v.items(x, p, v.text))):
+        if name in answer:
+            parsed = validate(answer[name], kind + '.' + name)
+            if parsed is not None:
+                # Do not share mutable checks with the caller's answer.
+                out[name] = json.loads(json.dumps(parsed))
+    return out
+
+
 def parse(kind, answer):
     """Validate a JSON value without I/O or input mutation; drop invalid pieces.
 
@@ -249,6 +589,8 @@ def parse(kind, answer):
         return {}, ['kind: unknown read kind']
     if v.object(answer, kind) is None:
         return {}, v.problems
+    if kind in THINKING:
+        return _parse_draft(kind, answer, v), v.problems
 
     positive = lambda value, path: v.numeric(value, path, positive=True)
     confidence = lambda value, path: v.numeric(value, path, maximum=1)
@@ -406,6 +748,12 @@ def parse(kind, answer):
 
 
 def _usable(kind, fragment, problems):
+    if kind in ('draft', 'draft_level'):
+        building = fragment.get('building', {})
+        return bool(building.get('levels')) or (
+            kind == 'draft_level' and bool(building.get('roof', {}).get('sections')))
+    if kind == 'draft_rooms':
+        return any(key in fragment and (fragment[key] or not problems) for key in ('rooms', 'walls'))
     if kind in ('outline', 'registration'):
         return bool(fragment.get('outline')) and bool(fragment.get('dimension'))
     if kind == 'roof':
@@ -421,23 +769,32 @@ def _usable(kind, fragment, problems):
 
 
 def read(kind, images, context, *, run, step):
-    """Meter every request; retry a token-truncated reply once at twice the cap."""
+    """Meter every request; only legacy crop reads retry a truncated reply."""
     if not isinstance(kind, str) or kind not in KINDS:
         return {'error': 'Unknown twin read kind.'}
     try:
         settings = storage.get_settings()
-        _, key = model_pools.credentials('twin', settings)
+        model, key = model_pools.credentials('twin', settings)
     except twin_cost.CheckpointReached:
         raise
     except Exception as exc:
         return {'error': str(exc)}
     if not key:
         return {'error': 'No model key is configured for twin reads.'}
+    draft = kind in THINKING
+    output_limit = MAX_OUTPUT[kind]
+    if draft:
+        provider, _ = model_pools.split_model(model)
+        cap = OUTPUT_CAP.get(provider, 0)
+        if cap <= 0 or (kind == 'draft' and cap < 32000):
+            return {'error': 'too small', 'truncated': True}
+        output_limit = min(output_limit, cap)
     try:
         user_prompt = json.dumps({'step': step, 'context': context}, ensure_ascii=False, allow_nan=False)
     except (TypeError, ValueError, OverflowError) as exc:
         return {'error': str(exc)}
-    for attempt in range(2):
+    truncated = False
+    for attempt in range(1 if draft else 2):
         usage, provider_usage = [], []
         twin_cost.require_clear()
         try:
@@ -446,8 +803,9 @@ def read(kind, images, context, *, run, step):
             with llm.collect_usage() as provider_usage:
                 answer = model_pools.call_pool_json(
                     'twin', key, PROMPTS[kind], user_prompt, images=images,
-                    strict_json=True, max_models=1, thinking_level='low',
-                    max_output_tokens=MAX_OUTPUT[kind] * (attempt + 1), timeout_s=120,
+                    strict_json='lenient' if draft else True, max_models=1,
+                    thinking_level=THINKING.get(kind, 'low'),
+                    max_output_tokens=output_limit * (attempt + 1), timeout_s=TIMEOUT.get(kind, 120),
                     usage=usage, settings=settings)
         except twin_cost.CheckpointReached:
             raise
@@ -456,11 +814,12 @@ def read(kind, images, context, *, run, step):
         finally:
             twin_cost.record(f'step:{kind}', provider_usage or usage, run)
         error = str(answer.get('error', '')) if isinstance(answer, dict) else ''
-        if attempt or not re.search(r'(?:finish\s*=\s*[\"\']?max_tokens\b|reason\s*=\s*max_output_tokens\b)',
-                                    error, re.IGNORECASE):
+        truncated = bool(re.search(r'(?:finish\s*=\s*[\"\']?max_tokens\b|reason\s*=\s*max_output_tokens\b)',
+                                   error, re.IGNORECASE))
+        if draft or attempt or not truncated:
             break
     if isinstance(answer, dict) and 'error' in answer:
-        return {'error': str(answer['error'])}
+        return {'error': str(answer['error']), **({'truncated': True} if draft and truncated else {})}
     fragment, problems = parse(kind, answer)
     if not _usable(kind, fragment, problems):
         return {'error': '; '.join(problems) or f'{kind} returned no usable fragment.'}

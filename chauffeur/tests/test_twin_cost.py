@@ -318,6 +318,26 @@ def scenario_refused_requests_are_not_charged_and_estimates_use_the_models_own_r
     check(abs(e['usd'] - want) < 1e-9 and e['basis'] == 'estimated', (e, want))
 
 
+def test_estimate_draft():
+    # Whole-building draft task 5: a draft page costs 5000 image tokens (others
+    # 1600) against the 64000-token output cap, priced at the twin pool's model.
+    saved = storage.get_settings().get('model_pool_pro')
+    try:
+        storage.patch_settings({'model_pool_pro': 'anthropic:claude-opus-5-5'})
+        check(tc.PRICES['anthropic:claude-opus-5-5'] == (4.0, 20.0), 'Opus 5.5 rates')
+        draft, outline = tc.estimate('draft', 6), tc.estimate('outline', 6)
+        check(draft > outline, (draft, outline))
+        # (1500 + 5000 * 6) * 4 + 64000 * 20 = 1406000 per million: $1.406, up to the cent.
+        check(abs(draft - 1.41) < 1e-9, draft)
+        # (1500 + 5000) * 4 + 32000 * 20 = 666000: $0.67 for one level or one rooms read.
+        check(abs(tc.estimate('draft_level', 1) - 0.67) < 1e-9, tc.estimate('draft_level', 1))
+        check(abs(tc.estimate('draft_rooms', 1) - 0.67) < 1e-9, tc.estimate('draft_rooms', 1))
+        # Other kinds keep 1600 per image: (1500 + 1600 * 6) * 4 + 4096 * 20 = 126320: $0.13.
+        check(abs(outline - 0.13) < 1e-9, outline)
+    finally:
+        storage.patch_settings({'model_pool_pro': saved})
+
+
 if __name__ == '__main__':
     for fn in (scenario_refused_requests_are_not_charged_and_estimates_use_the_models_own_rate,
                scenario_constants,
@@ -333,6 +353,7 @@ if __name__ == '__main__':
                scenario_one_request_cap_holds_across_the_paid_fallback,
                scenario_partial_metrics_are_estimated_not_zero,
                scenario_the_hard_stop_cannot_be_acknowledged,
-               scenario_cost_routes):
+               scenario_cost_routes,
+               test_estimate_draft):
         fn()
         print('  ok ', fn.__name__)

@@ -244,7 +244,7 @@ def call_model(model_id: str, api_key: str, system_prompt: str, user_prompt: str
         _usage_request.reset(token)
 
 
-def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.1, tools: list = None, timeout_s: int = 180, images: list = None, metrics: dict = None, max_output_tokens: int = None, transient_retries: int = 2, thinking_level: str = None, strict_json: bool = False, response_schema: dict = None, use_system_instruction: bool = False, text: bool = False) -> dict:
+def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.1, tools: list = None, timeout_s: int = 180, images: list = None, metrics: dict = None, max_output_tokens: int = None, transient_retries: int = 2, thinking_level: str = None, strict_json: bool | str = False, response_schema: dict = None, use_system_instruction: bool = False, text: bool = False) -> dict:
     from services.app_voice import current as phone_voice, MODEL_ATTEMPT_TIMEOUT
     phone_turn = phone_voice.get()
     if phone_turn is not None:
@@ -479,6 +479,26 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
         raise ValueError(f"Unknown provider: {provider}")
         
     try:
+        if strict_json == 'lenient':
+            import re
+            # Completion checks above still apply. Repair only wrappers and a
+            # single extra closing brace; never choose between two answers.
+            reply = raw_response.strip()
+            reply = re.sub(r'```+\s*$', '', reply).strip()
+            start = reply.find('{')
+            if start < 0:
+                raise json.JSONDecodeError('Expected a JSON object', reply, 0)
+            reply = reply[start:]
+            decoder = json.JSONDecoder()
+            obj, end = decoder.raw_decode(reply)
+            trailing = reply[end:].strip()
+            if trailing.startswith('{'):
+                second, _ = decoder.raw_decode(trailing)
+                if isinstance(second, dict):
+                    raise RuntimeError('Two JSON objects in one reply')
+            if trailing not in ('', '}'):
+                raise json.JSONDecodeError('Extra data', reply, end)
+            return obj
         if strict_json:
             return json.loads(raw_response.strip())
         import re

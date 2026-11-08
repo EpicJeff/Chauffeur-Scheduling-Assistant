@@ -14,6 +14,7 @@ CHECKPOINTS = (10.0, 20.0, 30.0, 40.0)
 HARD_STOP = 50.0
 ROUND_CAP = 5
 UNKNOWN_OUTPUT_TOKENS = 65536
+IMAGE_TOKENS = {'draft': 5000, 'draft_level': 5000, 'draft_rooms': 5000}
 
 # USD per million input/output tokens, checked 2026-11-06.
 PRICES: dict[str, tuple[float, float]] = {
@@ -68,7 +69,8 @@ def estimate(kind: str, images: int) -> float:
     pool = model_pools._pool(model_pools.TIER_CHAINS['twin'][0], settings)
     rates = PRICES.get(pool[0]) if pool else None
     inp, out = rates if rates is not None else _highest_rates()
-    usd = ((1500 + 1600 * images) * inp + twin_reads.MAX_OUTPUT[kind] * out) / 1_000_000
+    usd = ((1500 + IMAGE_TOKENS.get(kind, 1600) * images) * inp
+           + twin_reads.MAX_OUTPUT[kind] * out) / 1_000_000
     return math.ceil(usd * 100) / 100
 
 
