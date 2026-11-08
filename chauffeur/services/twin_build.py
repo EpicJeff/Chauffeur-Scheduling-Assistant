@@ -174,9 +174,14 @@ def status(build_id, since=0):
 
 def _launch(build, reader, inline):
     ticket = uuid.uuid4().hex
-    _WORKERS[build['id']] = {'reader': reader, 'inline': inline, 'ticket': ticket, 'busy': True}
+    previous_state = build['state']
     build['state'] = 'running'
-    _save(build)
+    try:
+        _save(build)
+    except Exception:
+        build['state'] = previous_state
+        raise
+    _WORKERS[build['id']] = {'reader': reader, 'inline': inline, 'ticket': ticket, 'busy': True}
     return ticket
 
 
@@ -215,6 +220,8 @@ def start(inputs, *, reader=None, inline=False):
                 raise ValueError('Add a building with drawings or a footprint first.')
             inputs.update(part=parts[0], then=parts[1:], compose=len(parts) == 1)
         build = _create(inputs)
+        if inputs.get('then'):
+            build['chain_names'] = {b['id']: b['name'] for b in twin_store.place()['buildings']}
         for message in skipped:
             _event(build, 'log', text=message)
         ticket = _launch(build, reader, inline)
@@ -284,19 +291,57 @@ def _chain(build):
     that prevented saving its predecessor's next pointer.
     """
     if (build['generation'] != twin_store.generation() or build['state'] != 'done'
-            or build.get('next') or not build['inputs'].get('then')):
+            or build.get('next') or build.get('chain_error') or not build['inputs'].get('then')):
         return None
-    remaining = build['inputs']['then']
+    # A pause may last indefinitely. Only hand off parts still buildable now;
+    # new parts are left for the person's next whole-place Build.
+    buildings = {b['id']: b for b in twin_store.place()['buildings']}
+    pages = twin_store.page_roles()
+    remaining = []
+    for part in build['inputs']['then']:
+        building = buildings.get(part)
+        reason = None
+        if building is None:
+            reason = 'it is no longer part of your place.'
+        elif not building.get('footprint') and not any(
+                r['role'] == 'floor' and r.get('building') == part for r in pages):
+            reason = 'it has no footprint yet.'
+        if reason:
+            name = (building or {}).get('name') or build.get('chain_names', {}).get(part) or part.replace('_', ' ').capitalize()
+            _event(build, 'log', text=f'Skipped {name}: {reason}')
+        else:
+            remaining.append(part)
+    build['inputs']['then'] = remaining
+    if not remaining:
+        # Reuse the ordinary composition path, with no paid reads or new build.
+        build['inputs']['compose'] = True
+        step = _step('compose')
+        build['steps'].append(step)
+        step['status'] = 'running'
+        _event(build, 'stage', step=step['id'], label=step['label'])
+        _settle(build, step, {'fragment': {}, 'problems': []})
+        step['status'] = 'done'
+        _save(build)
+        return None
     successor = next((b for b in _BUILDS.values()
-                      if b.get('previous') == build['id'] and b['generation'] == build['generation']), None)
+                      if b.get('previous') == build['id'] and b['generation'] == build['generation']
+                      and b['inputs'].get('part') == remaining[0]), None)
     if successor is None:
         successor = _create({'part': remaining[0], 'then': remaining[1:], 'compose': len(remaining) == 1})
-        successor.update(state='stopped', previous=build['id'])
+        successor.update(state='stopped', previous=build['id'], chain_names=deepcopy(build.get('chain_names', {})))
         _save(successor)
     build['next'] = successor['id']
     _event(build, 'next', id=successor['id'])
     _save(build)
     return successor
+
+
+def _chain_failed(build):
+    """A failed handoff is visible and terminal, including during recovery."""
+    logger.exception('Twin build %s could not continue its chain', build['id'])
+    build['chain_error'] = True
+    _event(build, 'error', text='The next part could not be built. Try building the remaining parts again.')
+    _save(build)
 
 
 def stop(build_id):
@@ -357,8 +402,10 @@ def recover():
         for build in recovered:
             try:
                 _chain(build)
-            except (ValueError, KeyError, TypeError, OSError):
-                logger.warning('Could not recover twin build chain %s', build['id'], exc_info=True)
+            except twin_store.StaleGeneration:
+                continue
+            except Exception:
+                _chain_failed(build)
 
 
 def _forget():
@@ -1293,6 +1340,7 @@ def _idle(build, ticket):
 
 
 def _run(build, ticket, reader):
+    successor = next_ticket = None
     try:
         while True:
             result = None
@@ -1363,6 +1411,14 @@ def _run(build, ticket, reader):
                         pass
                 _save(build)
                 _idle(build, ticket)
+            elif (_BUILDS.get(build['id']) is build and build['state'] == 'done'
+                  and _WORKERS.get(build['id'], {}).get('ticket') == ticket
+                  and build['generation'] == twin_store.generation()):
+                _chain_failed(build)
+                if successor is not None and next_ticket is not None:
+                    _idle(successor, next_ticket)
+                    successor['state'] = 'stopped'
+                    _save(successor)
     finally:
         with twin_store.LIFECYCLE, _LOCK:
             _idle(build, ticket)

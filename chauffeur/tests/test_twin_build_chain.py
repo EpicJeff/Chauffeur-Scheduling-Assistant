@@ -401,6 +401,167 @@ SCENARIOS = (
 )
 
 
+def scenario_removed_part_is_skipped_mid_chain():
+    _place()
+    lot = tb.start({'part': 'place'}, reader=ThreadReader(), inline=True)
+    house = tb.status(lot)['next']
+    check(tb.status(house)['state'] == 'paused', 'the house pauses before the shed is removed')
+    ts.remove_building('shed')
+    st = _accept_all(house)
+    check(st['state'] == 'done' and st['next'] is None, _trouble(st))
+    message = 'Skipped Shed: it is no longer part of your place.'
+    check([e.get('text') for e in _events(house, 'log')].count(message) == 1,
+          ('the predecessor explains the removed part', st['events']))
+    check(any(p.get('by') == 'compose' for p in ts.current()['site']['planting']), 'the place is composed')
+    check(_state_file(house)['inputs']['compose'] is True, 'the predecessor becomes the final part')
+    before = _saved_builds()
+    for _ in range(2):
+        tb._forget()
+        tb.recover()
+        check(_saved_builds() == before and tb.status(house)['next'] is None, 'recovery creates nothing')
+    check([e.get('text') for e in _events(house, 'log')].count(message) == 1, 'the skip is saved once')
+
+
+def scenario_failing_successor_is_logged():
+    _place()
+    lot = tb.start({'part': 'place'}, reader=ThreadReader(), inline=True)
+    house = tb.status(lot)['next']
+    original = tb.twin_place.shell_building
+    calls = []
+
+    def fail_shell(*args, **kwargs):
+        calls.append(True)
+        raise RuntimeError('successor shell failed')
+
+    try:
+        tb.twin_place.shell_building = fail_shell
+        st = _accept_all(house)
+        check(st['state'] == 'done' and st['next'] is None, _trouble(st))
+        errors = _events(house, 'error')
+        check(errors and errors[-1].get('text'), ('the predecessor records the handoff failure', st['events']))
+        check(any(e['type'] == 'error' for e in _state_file(house)['events']), 'the error is durable')
+        before = _saved_builds()
+        for _ in range(2):
+            tb._forget()
+            tb.recover()
+        check(len(calls) == 1 and _saved_builds() == before, ('recovery never retries the failure', calls))
+    finally:
+        tb.twin_place.shell_building = original
+    tb._forget()
+    tb.recover()
+    check(_saved_builds() == before and tb.status(house)['next'] is None,
+          'fixing the shell does not resurrect a failed chain')
+
+
+SCENARIOS += (scenario_removed_part_is_skipped_mid_chain, scenario_failing_successor_is_logged)
+
+
+def scenario_missing_footprint_reassigns_compose():
+    for keep_garage, cleared in ((False, 'shed'), (True, 'shed'), (True, 'garage')):
+        _place()
+        ts.update_building('shed', {'name': 'Garden shed'})
+        if keep_garage:
+            ts.update_building('garage', {'footprint': GARAGE_FOOTPRINT, 'footprint_from': 'typed'})
+        lot = tb.start({'part': 'place'}, reader=ThreadReader(), inline=True)
+        house = tb.status(lot)['next']
+        # Model a restored place with its shell footprint cleared; the normal
+        # update endpoint currently requires a nonempty footprint.
+        with ts.LIFECYCLE, ts._LOCK:
+            row = ts._state()
+            next(b for b in row['place']['buildings'] if b['id'] == cleared)['footprint'] = None
+            ts._save(row)
+        st = _accept_all(house)
+        name = 'Garden shed' if cleared == 'shed' else 'Garage'
+        message = f'Skipped {name}: it has no footprint yet.'
+        check([e.get('text') for e in _events(house, 'log')].count(message) == 1, 'the missing footprint is explained')
+        final = st['next'] if keep_garage else house
+        check(final and tb.status(final)['state'] == 'done', ('the new last part finishes', final))
+        expected = ('garage' if cleared == 'shed' else 'shed') if keep_garage else 'house'
+        check(tb.status(final)['part'] == expected, 'the remaining order is kept')
+        check(_state_file(final)['inputs']['compose'] is True and _kinds(final)[-1] == 'compose',
+              'composition moves to the new last part')
+        check(any(p.get('by') == 'compose' for p in ts.current()['site']['planting']), 'the place is composed')
+        check(not any(b['id'] == cleared for b in ts.current()['buildings']), 'the skipped shell is never built')
+
+
+def scenario_recover_failure_is_reconciled_once():
+    chain, _ = _run_place_chain()
+    lot, house, shed = chain
+    root = Path(ts.DATA_DIR) / 'builds'
+    state = _state_file(house)
+    state['next'] = None
+    state['events'] = [e for e in state['events'] if e['type'] != 'next']
+    (root / house / 'state.json').write_text(json.dumps(state), encoding='utf-8')
+    shutil.rmtree(root / shed)
+    original = tb.twin_place.shell_building
+    calls = []
+
+    def fail_shell(*args, **kwargs):
+        calls.append(True)
+        raise OSError('cannot create the recovered successor')
+
+    try:
+        tb.twin_place.shell_building = fail_shell
+        for _ in range(2):
+            tb._forget()
+            tb.recover()
+        check(len(calls) == 1, ('recovery reconciles a failed handoff once', calls))
+        check(len(_events(house, 'error')) == 1, 'the recovery failure is saved on the predecessor')
+        check(_saved_builds() == sorted([lot, house]), 'no successor was created')
+    finally:
+        tb.twin_place.shell_building = original
+
+
+def scenario_successor_launch_failure_leaves_no_busy_worker():
+    _place()
+    lot = tb.start({'part': 'place'}, reader=ThreadReader(), inline=True)
+    house = tb.status(lot)['next']
+    original = tb._save
+
+    def fail_launch(build):
+        if build['inputs'].get('part') == 'shed' and build['state'] == 'running':
+            raise OSError('cannot save the successor launch')
+        return original(build)
+
+    try:
+        tb._save = fail_launch
+        st = _accept_all(house)
+    finally:
+        tb._save = original
+    check(st['state'] == 'done' and _events(house, 'error'), 'the predecessor logs a launch failure')
+    check(not any(w.get('busy') for w in tb._WORKERS.values()), 'no nonexistent worker is busy')
+    check(not tb.running(), 'the failed launch does not block a new build')
+    before = _saved_builds()
+    tb._forget()
+    tb.recover()
+    check(_saved_builds() == before and len(_events(house, 'error')) == 1, 'recovery does not relaunch')
+    shed = tb.start({'part': 'shed'}, reader=ThreadReader(), inline=True)
+    check(tb.status(shed)['state'] == 'done', 'a new build is allowed after a launch failure')
+
+    _place()
+    lot = tb.start({'part': 'place'}, reader=ThreadReader(), inline=True)
+    house = tb.status(lot)['next']
+    dispatch = tb._dispatch
+
+    def fail_dispatch(build, *args):
+        if build['inputs'].get('part') == 'shed':
+            raise RuntimeError('cannot start the successor worker')
+        return dispatch(build, *args)
+
+    try:
+        tb._dispatch = fail_dispatch
+        _accept_all(house)
+    finally:
+        tb._dispatch = dispatch
+    check(_events(house, 'error'), 'a dispatch failure is also logged on the predecessor')
+    check(not tb.running() and not any(w.get('busy') for w in tb._WORKERS.values()),
+          'a dispatch failure leaves no active build or worker')
+
+
+SCENARIOS += (scenario_missing_footprint_reassigns_compose, scenario_recover_failure_is_reconciled_once,
+              scenario_successor_launch_failure_leaves_no_busy_worker)
+
+
 if __name__ == '__main__':
     failed = []
     for fn in SCENARIOS:
