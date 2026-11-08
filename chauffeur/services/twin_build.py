@@ -614,6 +614,18 @@ def _geometry(piece, kind, house):
                         for key, d in (('from', -piece['width'] / 2), ('to', piece['width'] / 2))}
             return {key: [wall['from'][i] + (wall['to'][i] - wall['from'][i]) / length * d for i in (0, 1)]
                     for key, d in (('from', piece['at'] - piece['width'] / 2), ('to', piece['at'] + piece['width'] / 2))}
+        section = next((s for s in house['roof']['sections'] if s['id'] == piece.get('section')), None)
+        if section and 'gable' in piece:
+            axis = 1 if section['ridge'] == 'x' else 0
+            edge = section['rect'][1 - axis + (0 if piece['gable'] == 'front' else 2)]
+            center = piece.get('y' if axis else 'x')
+            if center is None:
+                # Normalize will explain/drop an unreadable gable opening;
+                # identity matching must not abort the rest of the draft.
+                return {}
+            return {key: ([edge, d] if axis else [d, edge])
+                    for key, d in (('from', center - piece['width'] / 2),
+                                   ('to', center + piece['width'] / 2))}
     return {key: piece[key] for key in ('from', 'to', 'polygon', 'rect', 'position', 'at', 'points', 'polyline') if key in piece}
 
 
@@ -641,18 +653,21 @@ def _near_geometry(a, b, kind=None):
     return bool(edges) and all(min(_nearest(p, x, y)[0] for x, y in edges) <= 1 for p in aa)
 
 
-def _deleted(piece, kind, house, build):
+def _deleted(piece, kind, house, build, tombstones=None):
     level = piece.get('level')
     if kind == 'opening':
         level = next((w['level'] for w in house['walls'] if w['id'] == piece.get('wall')), None)
+        if 'gable' in piece:
+            level = next((s.get('level') for s in house['roof']['sections']
+                          if s['id'] == piece.get('section')), None)
     src = piece.get('src', {})
     return any(t['kind'] == kind and t['level'] == level
                and (t.get('building') is None or t['building'] == (house or {}).get('id'))
                and t['src'].get('sheet') == src.get('sheet')
                and t['src'].get('page') == src.get('page')
-               and any(_near_geometry(_geometry(piece, kind, house), geometry, kind)
-                       for geometry in (t['geometry'], t.get('read_geometry') or {}))
-               for t in twin_store.tombstones())
+               and _near_geometry(_match_geometry(piece, kind, house),
+                                  t.get('read_geometry') or t['geometry'], kind)
+               for t in (twin_store.tombstones() if tombstones is None else tombstones))
 
 
 def _centroid(points):
@@ -667,11 +682,14 @@ def _centroid(points):
 def _matches(a, b, kind, house, *, original=False):
     def level(p):
         if kind == 'opening':
-            return next((w['level'] for w in house['walls'] if w['id'] == p.get('wall')), None)
+            if 'wall' in p:
+                return next((w['level'] for w in house['walls'] if w['id'] == p['wall']), None)
+            return next((s.get('level') for s in house['roof']['sections']
+                         if s['id'] == p.get('section')), None)
         return p.get('level')
     if level(a) != level(b) or (kind == 'site' and a.get('kind') != b.get('kind')):
         return False
-    ga, gb = _geometry(a, kind, house), _geometry(b, kind, house)
+    ga, gb = _match_geometry(a, kind, house), _match_geometry(b, kind, house)
     if original:
         gb = b.get('read_geometry') or gb
     if kind == 'wall':
@@ -689,14 +707,26 @@ def _matches(a, b, kind, house, *, original=False):
     return _near_geometry(ga, gb)
 
 
-def _merge_list(existing, incoming, kind, house, build, step=None):
+def _match_geometry(piece, kind, house):
+    if piece.get('src', {}).get('person') and piece.get('read_geometry'):
+        return piece['read_geometry']
+    return _geometry(piece, kind, house)
+
+
+def _merge_list(existing, incoming, kind, house, build, step=None, *, tombstones=None):
     protected_walls = {o.get('wall') for o in (house or {}).get('openings', []) if o.get('src', {}).get('person')}
+    protected_sections = {o.get('section') for o in (house or {}).get('openings', [])
+                          if o.get('src', {}).get('person')}
     def protected(p):
-        return p.get('src', {}).get('person') or (kind == 'wall' and p['id'] in protected_walls)
+        return (p.get('src', {}).get('person') or (kind == 'wall' and p['id'] in protected_walls)
+                or (kind == 'roof' and p['id'] in protected_sections))
+    def length(p):
+        geometry = _match_geometry(p, kind, house)
+        return math.dist(geometry['from'], geometry['to'])
     merged = list(existing)
     kept = set()
     for piece in incoming:
-        if _deleted(piece, kind, house, build):
+        if _deleted(piece, kind, house, build, tombstones):
             continue
         if kind == 'wall':
             # A zoomed read can split a wall the whole-floor read already saw.
@@ -704,12 +734,14 @@ def _merge_list(existing, incoming, kind, house, build, step=None):
             # edits and later rereads still refer to the same wall.
             covering = next((p for p in merged if p.get('level') == piece.get('level')
                              and p.get('src', {}).get('step') != piece.get('src', {}).get('step')
-                             and math.dist(p['from'], p['to']) >= math.dist(piece['from'], piece['to'])
+                             and length(p) >= length(piece)
                              and _near_geometry(_geometry(piece, kind, house),
-                                                _geometry(p, kind, house), kind)), None)
+                                                _match_geometry(p, kind, house), kind)), None)
             if covering:
                 piece['id'] = covering['id']
                 kept.add(covering['id'])
+                if covering.get('src', {}).get('person') and not covering.get('read_geometry'):
+                    covering['read_geometry'] = deepcopy(_geometry(covering, kind, house))
                 if not protected(covering) and piece.get('state') == 'settled':
                     covering['state'] = 'settled'
                     covering.pop('why', None)
@@ -726,6 +758,8 @@ def _merge_list(existing, incoming, kind, house, build, step=None):
         if old:
             piece['id'] = old['id']
             kept.add(old['id'])
+            if old.get('src', {}).get('person') and not old.get('read_geometry'):
+                old['read_geometry'] = deepcopy(piece['read_geometry'])
             if not protected(old):
                 merged[merged.index(old)] = deepcopy(piece)
                 if kind == 'wall':
@@ -806,7 +840,108 @@ def _draft_pages(build, *, floors_only=False):
                   key=lambda r: (r['page'], r.get('box') or _FULL, r['source']))
 
 
-def _merge_draft(build, step, fragment, house):
+def _migrate_crop_draft(house, draft, step, tombstones, notes):
+    """Change the old read frame once, alongside publication of the draft."""
+    steps = {(w.get('src') or {}).get('step', '') for w in house['walls']}
+    if 'draft' in steps or not any(s.startswith(('walls:', 'outline:')) for s in steps):
+        return
+    old_levels = sorted((l for l in house['levels'] if l.get('outline')),
+                        key=lambda l: l['elevation'])
+    new_levels = sorted(draft.get('levels', []), key=lambda l: l['elevation'])
+    if not new_levels:
+        return
+    try:
+        move, rms = twin_register.fit_outline(old_levels[0]['outline'], new_levels[0]['outline'])
+    except (IndexError, ValueError):
+        move, rms = None, math.inf
+    good = rms <= 2
+    if not good:
+        notes.append('Some of your changes may need moving: the new reading of the drawings sits differently.')
+    level_ids = {level['id']: f'L{i + 1}' for i, level in enumerate(old_levels)}
+
+    def point(p):
+        return twin_register.to_world({'position': move['offset'], 'rotation': move['angle']}, p)
+
+    def direction(side):
+        vectors = {'x0': [-1, 0], 'x1': [1, 0], 'y0': [0, -1], 'y1': [0, 1]}
+        vector = twin_register._rotate(vectors[side], move['angle'])
+        return min(vectors, key=lambda key: math.dist(vector, vectors[key]))
+
+    def geometry(piece):
+        for key in ('from', 'to', 'position', 'at'):
+            if isinstance(piece.get(key), (list, tuple)):
+                piece[key] = point(piece[key])
+        for key in ('outline', 'polygon', 'points', 'polyline'):
+            if key in piece:
+                piece[key] = [point(p) for p in piece[key]]
+        if 'rect' in piece:
+            corners = [point(p) for p in _corners(piece['rect'])]
+            piece['rect'] = _bounds(corners)
+        for column in piece.get('columns', []):
+            geometry(column)
+        if piece.get('read_geometry'):
+            geometry(piece['read_geometry'])
+
+    gables = {o['id']: _geometry(o, 'opening', house) for o in house['openings'] if 'gable' in o}
+    porch_alias = house.get('porch')
+    house['porches'] = twin_plan.porches(house)
+    if porch_alias:
+        house['porch'] = next(p for p in house['porches'] if p['id'] == porch_alias['id'])
+    collections = [house.get(key, []) for key in
+                   ('levels', 'walls', 'openings', 'rooms', 'stairs', 'fixtures', 'lights')]
+    collections += [house['roof']['sections'], house['roof'].get('extensions', []), house['porches']]
+    seen = set()
+    for collection in collections:
+        for piece in collection:
+            if id(piece) in seen:
+                continue
+            seen.add(id(piece))
+            if good:
+                geometry(piece)
+                if piece.get('ridge') in ('x', 'y'):
+                    piece['ridge'] = direction(piece['ridge'] + '1')[0]
+                if piece.get('low_side') in ('x0', 'x1', 'y0', 'y1'):
+                    piece['low_side'] = direction(piece['low_side'])
+                if piece.get('pitches'):
+                    piece['pitches'] = {direction(side): pitch for side, pitch in piece['pitches'].items()}
+            if 'level' in piece:
+                piece['level'] = level_ids.get(piece['level'], piece['level'])
+            if not piece.get('src', {}).get('person') and piece.get('src', {}).get('step'):
+                # Retire every crop read in this draft merge, even if its
+                # geometry has no match. Retained carriers keep stable ids.
+                piece['src'] = {'sheet': '', 'page': 1, 'step': step['id']}
+    for level in old_levels:
+        level['id'] = level_ids[level['id']]
+    house['levels'] = old_levels
+    if good:
+        for opening in house['openings']:
+            if opening['id'] not in gables:
+                continue
+            endpoints = [point(p) for p in gables[opening['id']].values()]
+            section = next(s for s in house['roof']['sections'] if s['id'] == opening['section'])
+            axis = 1 if section['ridge'] == 'x' else 0
+            center = [(endpoints[0][i] + endpoints[1][i]) / 2 for i in (0, 1)]
+            opening.pop('x' if axis else 'y', None)
+            opening['y' if axis else 'x'] = center[axis]
+            opening['gable'] = min(('front', 'rear'), key=lambda side:
+                abs(center[1 - axis] - section['rect'][1 - axis + (0 if side == 'front' else 2)]))
+        for stone in tombstones:
+            if stone.get('building') != house['id']:
+                continue
+            geometry(stone['geometry'])
+            if stone.get('read_geometry'):
+                geometry(stone['read_geometry'])
+            stone['level'] = level_ids.get(stone['level'], stone['level'])
+            stone['src'] = {'sheet': '', 'page': 1, 'step': step['id']}
+        if house.get('position_from') == 'person':
+            # new = Rfit * old + offset. Compose the inverse fit with the
+            # old lot transform so every migrated point stays put on the lot.
+            house['rotation'] = (house['rotation'] - move['angle']) % 360
+            delta = twin_register._rotate(move['offset'], house['rotation'])
+            house['position'] = [house['position'][i] - delta[i] for i in (0, 1)]
+
+
+def _merge_draft(build, step, fragment, house, *, tombstones=None):
     """The read already uses building feet. Merge identities before references."""
     draft = deepcopy(fragment.get('building', {}) if step['kind'] == 'draft' else fragment)
     pages = _draft_pages(build, floors_only=True)
@@ -839,16 +974,17 @@ def _merge_draft(build, step, fragment, house):
 
     walls = pieces('walls', 'wall')
     old_ids = [w.get('id') for w in draft.get('walls', [])]
-    house['walls'] = _merge_list(house['walls'], walls, 'wall', house, build, step)
+    house['walls'] = _merge_list(house['walls'], walls, 'wall', house, build, step, tombstones=tombstones)
     wall_ids = dict(zip(old_ids, (w['id'] for w in walls)))
     rooms = pieces('rooms', 'room')
-    house['rooms'] = _merge_list(house['rooms'], rooms, 'room', house, build, step)
+    house['rooms'] = _merge_list(house['rooms'], rooms, 'room', house, build, step, tombstones=tombstones)
     if step['kind'] != 'draft':
         return
     roof = draft.get('roof', {})
     sections = pieces('', 'roof', roof.get('sections', []))
     old_sections = [s['id'] for s in roof.get('sections', [])]
-    house['roof']['sections'] = _merge_list(house['roof']['sections'], sections, 'roof', house, build, step)
+    house['roof']['sections'] = _merge_list(house['roof']['sections'], sections, 'roof', house, build, step,
+                                            tombstones=tombstones)
     section_ids = dict(zip(old_sections, (s['id'] for s in sections)))
     openings = pieces('openings', 'opening')
     for opening in openings:
@@ -862,23 +998,24 @@ def _merge_draft(build, step, fragment, house):
                                           {s['id']: s for s in house['roof']['sections']})
         if reason in ('outside the wall span', 'head is above the wall height'):
             opening.update(state='ghost', why='This opening extends beyond its wall span or height.')
-    house['openings'] = _merge_list(house['openings'], openings, 'opening', house, build, step)
+    house['openings'] = _merge_list(house['openings'], openings, 'opening', house, build, step,
+                                   tombstones=tombstones)
     extensions = pieces('', 'extension', roof.get('extensions', []))
     for extension in extensions:
         extension['section'] = section_ids.get(extension['section'], extension['section'])
     house['roof']['extensions'] = _merge_list(house['roof'].get('extensions', []), extensions,
-                                             'extension', house, build, step)
+                                             'extension', house, build, step, tombstones=tombstones)
     # Keep the legacy field as an alias when that is what the read supplied.
     # Merge the complete collection through the usual person-edit protections.
     legacy = house.get('porch')
     house['porches'] = _merge_list(twin_plan.porches(house), pieces('', 'porch', twin_plan.porches(draft)),
-                                  'porch', house, build, step)
+                                  'porch', house, build, step, tombstones=tombstones)
     if not (legacy or {}).get('src', {}).get('person'):
         house['porch'] = (next((p for p in house['porches']
                                if p['polygon'] == draft['porch']['polygon']), None)
                           if draft.get('porch') else None)
     house['stairs'] = _merge_list(house.get('stairs', []), pieces('stairs', 'stair'),
-                                  'stair', house, build, step)
+                                  'stair', house, build, step, tombstones=tombstones)
 
 
 def _check_draft(house):
@@ -1396,7 +1533,7 @@ def _plot_registration(crop, fragment):
 def _building_fit(build):
     plan = _base(twin_store.current(), build)
     house = _house(plan, build)
-    if house.get('src', {}).get('person'):
+    if house.get('position_from') == 'person':
         return {'transform': {'position': deepcopy(house['position']), 'rotation': house['rotation']}, 'why': ''}
     outline = min(house['levels'], key=lambda level: level['elevation']).get('outline', [])
     target = next((b for b in twin_store.place()['buildings'] if b['id'] == house['id']), {})
@@ -1564,6 +1701,7 @@ def _settle(build, step, result, decision=None):
     is_lot = build['inputs'].get('part') == 'lot'
     lot_state = None
     lot_outline = None
+    draft_tombstones = twin_store.tombstones() if kind == 'draft' else None
     if is_lot and kind in ('lot', 'plot', 'site'):
         _check_lot_page(step)
     if is_lot and kind == 'lot':
@@ -1594,7 +1732,9 @@ def _settle(build, step, result, decision=None):
         level = next((l for l in (house or {}).get('levels', []) if l['id'] == step['level']), None)
         reg = twin_store.registration(step['source'], step['page'], step['level']) if crop else None
         if kind in ('draft', 'draft_rooms'):
-            _merge_draft(build, step, fragment, house)
+            if kind == 'draft':
+                _migrate_crop_draft(house, fragment.get('building', {}), step, draft_tombstones, notes)
+            _merge_draft(build, step, fragment, house, tombstones=draft_tombstones)
         elif kind == 'shell':
             shell = deepcopy(fragment)
             generated_levels = {w['level'] for w in house['walls']
@@ -1745,7 +1885,7 @@ def _settle(build, step, result, decision=None):
                         house['position_from'] = 'person'
                 notes.append(f"Placed {house.get('name', house['id'])} on the lot, turned {house['rotation']:g}\N{DEGREE SIGN}")
         elif kind == 'fit':
-            if not house.get('src', {}).get('person'):
+            if house.get('position_from') != 'person':
                 house.update(deepcopy(decision.get('transform', fragment['transform'])))
                 if 'transform' in decision:
                     house['position_from'] = 'person'
@@ -1893,13 +2033,16 @@ def _settle(build, step, result, decision=None):
                        and p.get('src', {}).get('step') == step['id'])
         return normalized
 
-    def publish_lot(row):
-        row['place']['lot'] = deepcopy(lot_state)
-        twin_store._set_registration(row, step['source'], step['page'], None, build['pause']['registration'])
+    def publish_state(row):
+        if lot_state is not None:
+            row['place']['lot'] = deepcopy(lot_state)
+            twin_store._set_registration(row, step['source'], step['page'], None, build['pause']['registration'])
+        if draft_tombstones is not None:
+            row['tombstones'] = draft_tombstones
 
     twin_store.update_current(mutate, kind='build', step={'id': step['id'], 'label': step['label']},
                               generation=build['generation'], cost=build['cost'],
-                              state_mutator=publish_lot if lot_state is not None else None)
+                              state_mutator=publish_state)
     if kind == 'draft':
         _register_draft(result)
     if kind in ('outline', 'registration', 'plot') and not is_lot:

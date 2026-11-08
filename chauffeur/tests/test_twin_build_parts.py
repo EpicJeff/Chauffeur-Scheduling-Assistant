@@ -425,7 +425,7 @@ def scenario_fit_never_moves_a_person_placed_building():
 
     def place_by_hand(plan):
         house = _house(plan)
-        house.update(position=[5.0, 5.0], rotation=0, src={'person': True})
+        house.update(position=[5.0, 5.0], rotation=0, src={'person': True}, position_from='person')
         return plan
 
     ts.update_current(place_by_hand, kind='edit')
@@ -557,7 +557,7 @@ def scenario_person_placed_fit_never_pauses():
         check(_accept_all(b)['state'] == 'done', tb.status(b))
 
         def place_by_hand(plan):
-            _house(plan).update(position=[5, 6], rotation=30, src={'person': True})
+            _house(plan).update(position=[5, 6], rotation=30, src={'person': True}, position_from='person')
             return plan
 
         ts.update_current(place_by_hand, kind='edit')
