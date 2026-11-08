@@ -93,9 +93,11 @@ class LiveReader(engine_tests.Reader):
         super().__init__()
         self.draft_gate = None
         self.fail_first_floor = 0
+        self.failing_build = False
 
     def _draft(self, context):
         answer = _spike_answer()
+        self.failing_build = bool(self.fail_first_floor)
         if self.fail_first_floor:
             self.fail_first_floor -= 1
             building = answer['building']
@@ -124,6 +126,9 @@ class LiveReader(engine_tests.Reader):
             if gate is not None:
                 gate.wait(90)
             return self._draft(context)
+        if kind == 'draft_level' and self.failing_build and (context or {}).get('level') == 'L1':
+            self.calls.append({'kind': kind, 'step': step, 'context': copy.deepcopy(context), 'images': len(images)})
+            return {}
         if kind == 'draft_rooms':
             self.calls.append({'kind': kind, 'step': step, 'context': copy.deepcopy(context), 'images': len(images)})
             return {'rooms': [], 'walls': []}
