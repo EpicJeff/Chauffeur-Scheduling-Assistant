@@ -1104,6 +1104,45 @@ def test_eave_trim_present():
            f'{len(thin)}/{len(free)} points where the roof is thinner than 0.15 ft', thin[:8]))
 
 
+def test_half_level_has_slab():
+    """An L2 with half: true still gets a floor slab with its own outline bounds."""
+    p = plan()
+    b = building(p)
+    l2 = level(b, 'L2')
+    l2['half'] = True
+    key = f'{BID}:floor:L2'
+    box = run(p, bounds=[key])['bounds'][key]
+    check(box is not None, 'no L2 floor piece for a half level')
+    xs = [q[0] for q in l2['outline']]
+    ys = [q[1] for q in l2['outline']]
+    want = (min(xs), min(ys), max(xs), max(ys))
+    got = (box['min'][0], box['min'][1], box['max'][0], box['max'][1])
+    check(all(abs(g - e) <= 0.05 for g, e in zip(got, want)),
+          ('half L2 slab bounds (x0, y0, x1, y1)', [round(g, 3) for g in got], 'want', want))
+
+
+def test_ridge_x_gable_window_cut():
+    """A window on left_wing's x0 gable end (ridge x): a ray through its centre
+    passes the siding and hits glass."""
+    p = plan()
+    b = building(p)
+    sec = next(s for s in b['roof']['sections'] if s['id'] == 'left_wing')
+    check(sec['plate'] == 10.9 and sec['rect'][0] == 0, sec)
+    b['openings'].append({'id': 'gx', 'gable': 'front', 'section': 'left_wing', 'kind': 'window',
+                          'y': 34, 'width': 3, 'sill': 2, 'head': 6})
+    z = sec['plate'] + 4  # centre of sill 2 .. head 6, measured from the plate
+    # From outside the x0 end heading +x, stopping inside the wing.
+    ray = {'o': [-5, 34, z], 'd': [1, 0, 0], 'far': 8, 'keep': 12}
+    hits = run(p, rays=[ray])['hits'][0]
+    glass = [h for h in hits if h['role'] == 'glass']
+    seen = [(h['role'], round(h['p'][0], 2)) for h in hits]
+    check(glass, ('no glass hit through the window centre', seen))
+    first_glass = min(h['p'][0] for h in glass)
+    siding = [h for h in hits if h['role'] in WALL_ROLES and h['p'][0] < first_glass - 0.3]
+    check(not siding, ('siding in front of the glass', seen))
+    check(first_glass < 2, ('glass not at the x0 gable end', first_glass))
+
+
 TESTS = (
     test_no_band_under_eaves,
     test_no_wall_above_roof,
@@ -1122,6 +1161,8 @@ TESTS = (
     test_floor_view_wall_and_batten_top_caps,
     test_no_siding_on_roof_faces,
     test_eave_trim_present,
+    test_half_level_has_slab,
+    test_ridge_x_gable_window_cut,
 )
 
 

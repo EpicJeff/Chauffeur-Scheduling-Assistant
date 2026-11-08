@@ -109,6 +109,11 @@ def _levels(building, notes):
                 or not _number(level.get('ceiling')) or level['ceiling'] <= 0):
             notes.append(f'Dropped level {name}: invalid or duplicate level data.')
             continue
+        # Half-storeys keep the same outline, slab and wall data as any level.
+        # An absent flag means false; preserve that absence on existing plans.
+        if 'half' in level and type(level['half']) is not bool:
+            del level['half']
+            notes.append(f'Level {name}: dropped invalid half flag; absent means false.')
         levels[level['id']] = level
     building['levels'] = sorted(levels.values(), key=lambda level: level['elevation'])
     return levels
@@ -278,10 +283,12 @@ def _opening_error(opening, walls, sections):
         section = _lookup(sections, opening.get('section'))
         if section is None or section['kind'] != 'gable':
             return 'unknown gable section'
-        x, x0, x1 = opening.get('x'), section['rect'][0], section['rect'][2]
-        if (not all(_number(value) for value in (x, x0, x1))
-                or x0 >= x1 or x - width / 2 < x0 - 1e-6
-                or x + width / 2 > x1 + 1e-6):
+        axis = 1 if section['ridge'] == 'x' else 0
+        centre = opening.get('y' if axis else 'x')
+        lo, hi = section['rect'][axis], section['rect'][axis + 2]
+        if (not all(_number(value) for value in (centre, lo, hi))
+                or lo >= hi or centre - width / 2 < lo - 1e-6
+                or centre + width / 2 > hi + 1e-6):
             return 'outside the roof gable span'
     return None
 

@@ -429,6 +429,7 @@ export function buildTwin(plan, kit, tier) {
         Math.abs(w.from[axis] - end) < 1e-4 && Math.abs(w.to[axis] - end) < 1e-4 &&
         Math.max(w.from[other], w.to[other]) > section.rect[other] && Math.min(w.from[other], w.to[other]) < section.rect[other + 2];
     };
+    // Half-storey knee walls use this same path and retain the roof caps.
     for (const w of b.walls) {
       const l = levels[w.level]; if (!l) continue;
       use(w, 'wall', w.id);
@@ -484,7 +485,7 @@ export function buildTwin(plan, kit, tier) {
         // Gable sill/head are relative to the plate. Project its span onto
         // the owning wall, including reversed and partial wall segments.
         const other = 1 - axis, direction = (w.to[other] - w.from[other]) / length;
-        const at = (o.x - w.from[other]) / direction;
+        const at = (o[axis === 0 ? 'y' : 'x'] - w.from[other]) / direction;
         if (at + o.width / 2 <= 0 || at - o.width / 2 >= length) continue;
         holes.push(opening({ ...o, sill: o.sill + section.plate - l.elevation, head: o.head + section.plate - l.elevation }, at));
       }
@@ -613,12 +614,14 @@ export function buildTwin(plan, kit, tier) {
           for (const x of [x0, x1]) mesh(local[first.id], boxRect(x - 0.3, end - 0.3, x + 0.3, end + 0.3, first.elevation, section.plate - 0.65), mat('trim'));
         }
         const holes = (b.openings || []).filter(o => o.section === section.id && o.gable === (front ? 'front' : 'rear'));
-        if (holes.length && !alongX) {
-          const from = [front ? x0 : x1, end], to = [front ? x1 : x0, end];
+        if (holes.length) {
+          const from = alongX ? [end, front ? y1 : y0] : [front ? x0 : x1, end];
+          const to = alongX ? [end, front ? y0 : y1] : [front ? x1 : x0, end];
+          const other = 1 - axis, direction = Math.sign(to[other] - from[other]);
           // This separate windowed gable extrusion must sit under the roof
           // shell; its top cap previously lay directly on the rake surface.
-          const top = u => Math.max(0, roofHeight(front ? x0 + u : x1 - u, end) - section.plate - ROOF_THICKNESS);
-          const openings = holes.map(o => opening(o, front ? o.x - x0 : x1 - o.x));
+          const top = u => Math.max(0, roofHeight(from[0] + (alongX ? 0 : direction * u), from[1] + (alongX ? direction * u : 0)) - section.plate - ROOF_THICKNESS);
+          const openings = holes.map(o => opening(o, (o[alongX ? 'y' : 'x'] - from[other]) * direction));
           wall(local.gableFull, from, to, section.plate, 0.5, top, openings, true);
           wall(local.gableCut, from, to, section.plate, 0.5, u => Math.min(8, top(u)), openings.filter(o => o.v1 <= 8), true);
         } else {
@@ -715,6 +718,7 @@ export function buildTwin(plan, kit, tier) {
         }
       }
     }
+    // A half-storey gets its own outline-based slab just like a full level.
     for (const l of ordered) {
       use({ ...l, id: `floor:${l.id}` }, 'floor', `floor:${l.id}`);
       const floorOutlines = outlines.get(l.id);

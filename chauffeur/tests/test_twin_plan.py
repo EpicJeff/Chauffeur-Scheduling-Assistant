@@ -228,8 +228,63 @@ def scenario_missing_fields_default_with_notes():
     check(any(o.get('kind') == 'door' and o['sill'] == 0 for o in nb['openings']), 'a door without a sill sits at 0')
     check(any('ceiling' in n for n in notes) and any('sill' in n for n in notes), notes)
 
+_DRAFT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures',
+                      'twin_reads', 'recorded', 'claude', 'draft-main-spike.json')
+
+
+def _draft():
+    with open(_DRAFT, encoding='utf-8') as f:
+        return json.load(f)
+
+
+def _gable_opening(**kw):
+    return {'id': 'gx', 'gable': 'front', 'section': 'left_wing', 'kind': 'window',
+            'width': 3, 'sill': 2, 'head': 6, **kw}
+
+
+def scenario_test_half_level_kept():
+    raw = _draft()
+    next(l for l in raw['buildings'][0]['levels'] if l['id'] == 'L2')['half'] = True
+    plan, _ = tp.normalize(raw)
+    levels = {l['id']: l for l in plan['buildings'][0]['levels']}
+    check(levels['L2'].get('half') is True, f"half survives normalize: {levels['L2']}")
+    check(not levels['L1'].get('half'), 'half defaults to false')
+
+
+def scenario_test_ridge_x_gable_opening_valid():
+    raw = _draft()
+    # left_wing: ridge x, y range 14.33..54; y = 34 spans 32.5..35.5
+    raw['buildings'][0]['openings'].append(_gable_opening(y=34))
+    plan, notes = tp.normalize(raw)
+    kept = [o for o in plan['buildings'][0]['openings'] if o.get('id') == 'gx']
+    check(len(kept) == 1 and kept[0]['y'] == 34, (kept, notes))
+
+
+def scenario_test_ridge_x_gable_opening_outside_dropped():
+    raw = _draft()
+    n0 = len(raw['buildings'][0]['openings'])
+    raw['buildings'][0]['openings'].append(_gable_opening(id='gx1', y=60))       # past y1 = 54
+    raw['buildings'][0]['openings'].append(_gable_opening(id='gx2', y=15))       # 13.5 < y0 = 14.33
+    raw['buildings'][0]['openings'].append(_gable_opening(id='gx3', gable='rear', y=54.5))
+    plan, notes = tp.normalize(raw)
+    check(len(plan['buildings'][0]['openings']) == n0, 'all three dropped')
+    check(len(notes) == 3 and all('outside' in n for n in notes), notes)
+
+
+def scenario_test_ridge_y_gable_opening_unchanged():
+    raw = _draft()
+    n0 = len(raw['buildings'][0]['openings'])
+    plan, notes = tp.normalize(raw)
+    check(any(o.get('id') == 'g1' for o in plan['buildings'][0]['openings']), 'ridge-y gable opening kept')
+    raw['buildings'][0]['openings'].append({'id': 'gbad', 'gable': 'front', 'section': 'front_wing',
+                                            'kind': 'window', 'x': 90, 'width': 2, 'sill': 2, 'head': 5})
+    plan, notes = tp.normalize(raw)
+    check(len(plan['buildings'][0]['openings']) == n0, 'ridge-y x outside the span still dropped')
+    check(any('outside' in n for n in notes), notes)
+
 
 if __name__ == '__main__':
+    failed = []
     for fn in (scenario_the_fixture_normalizes_clean,
                scenario_levels_are_sorted_by_elevation,
                scenario_normalize_does_not_mutate_its_input,
@@ -244,6 +299,17 @@ if __name__ == '__main__':
                scenario_model_shaped_junk_is_coerced_not_crashed,
                scenario_openings_that_exactly_fill_a_wall_survive,
                scenario_every_part_of_a_partial_answer_is_validated,
-               scenario_missing_fields_default_with_notes):
-        fn()
-        print('  ok ', fn.__name__)
+               scenario_missing_fields_default_with_notes,
+               scenario_test_half_level_kept,
+               scenario_test_ridge_x_gable_opening_valid,
+               scenario_test_ridge_x_gable_opening_outside_dropped,
+               scenario_test_ridge_y_gable_opening_unchanged):
+        try:
+            fn()
+        except Exception as e:
+            failed.append(fn.__name__)
+            print('  FAIL', fn.__name__, repr(e)[:200])
+        else:
+            print('  ok ', fn.__name__)
+    if failed:
+        raise SystemExit(1)
