@@ -49,6 +49,9 @@ def _local_services():
     # and other services derive their paths from it at import time.
     if not os.environ.get('CHAUFFEUR_DATA_DIR'):
         os.environ['CHAUFFEUR_DATA_DIR'] = default_data_dir()
+    data_dir = Path(os.environ['CHAUFFEUR_DATA_DIR']).resolve()
+    if data_dir.is_relative_to((ROOT / 'data').resolve()):
+        raise ValueError('Choose scratch storage outside chauffeur/data.')
     print(f"Data directory: {Path(os.environ['CHAUFFEUR_DATA_DIR']).resolve()}")
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
@@ -199,26 +202,30 @@ def compare(pdf_path, budget, models, *, key_dir, out_dir, key_path,
 
 
 def record_place(sheets_path, plot_page, photos, budget, models, *, key_dir,
-                 out_dir, reader=None, ceiling=None):
-    """Record three setup reads without publishing or accepting a place.
+                 out_dir, reader=None, ceiling=None, plot_path=None):
+    """Record setup reads without publishing or accepting a place.
 
     Like compare, use local scratch storage and count only ledger entries
     appended during this invocation. Each saved answer includes its own
     metered usage and actual model, including answers reporting an error.
+    The plot page belongs to plot_path when supplied, otherwise sheets_path.
+    With no photos, skip photo_parts and record that fact in the result row.
     """
     if not math.isfinite(budget) or budget < 0:
         raise ValueError('Budget must be a finite, non-negative dollar amount.')
     if type(plot_page) is not int or plot_page < 1:
         raise ValueError('Choose a positive plot page number.')
     photos = [Path(photo) for photo in photos]
-    if not 1 <= len(photos) <= 4:
-        raise ValueError('Choose one to four photos.')
+    if len(photos) > 4:
+        raise ValueError('Choose zero to four photos.')
     pools, storage, costs, reads, _, store = _local_services()
     started = len(costs.entries())
     run = 'record-place:' + uuid.uuid4().hex
     read = reader or reads.read
     sheets_path = Path(sheets_path)
     pdf = sheets_path.read_bytes()
+    plot_path = Path(plot_path) if plot_path is not None else None
+    plot_pdf = plot_path.read_bytes() if plot_path is not None else None
     rows, secrets = [], []
 
     def spent_since(index):
@@ -226,6 +233,8 @@ def record_place(sheets_path, plot_page, photos, budget, models, *, key_dir,
 
     for model in models:
         row = {'model': model, 'cost': 0.0, 'errors': []}
+        if not photos:
+            row['notes'] = ['No photos supplied; photo_parts skipped.']
         rows.append(row)
         model_started = len(costs.entries())
         try:
@@ -240,23 +249,29 @@ def record_place(sheets_path, plot_page, photos, budget, models, *, key_dir,
                                     provider['setting']: secret, 'model_pool_pro': ''})
             source = store.save_source('drawing', sheets_path.name, pdf,
                                        content_type='application/pdf')
+            plot_source = source if plot_path is None else store.save_source(
+                'drawing', plot_path.name, plot_pdf, content_type='application/pdf')
             # Validate the requested plot page before starting any paid reads.
-            plot = store.crop(source, plot_page, [0, 0, 1, 1])
+            plot = store.crop(plot_source, plot_page, [0, 0, 1, 1])
             photo_images = []
             for photo in photos:
                 sid = store.save_source('photo', photo.name, photo.read_bytes())
                 photo_images.extend(store.source_images(sid))
-            part = {'id': 'building-1', 'name': 'Building', 'kind': 'other',
+            part = {'id': 'house', 'name': 'Main house', 'kind': 'main_house',
                     'has_drawings': True}
-            parts = [part, {'id': 'lot', 'name': 'Lot', 'kind': 'lot',
+            parts = [part, {'id': 'pool_house', 'name': 'Pool house', 'kind': 'pool_house',
+                            'has_drawings': True},
+                     {'id': 'lot', 'name': 'Lot', 'kind': 'lot',
                             'has_drawings': True}]
             requests = [
                 ('plot', 'plot-place', [{'mime': plot['mime'], 'b64': plot['b64']}],
                  {'page': plot_page, 'box': plot['box']}),
-                ('photo_parts', 'photo_parts', photo_images, {'parts': parts}),
-                ('sheet_roles', 'sheet_roles-hint', store.source_images(source),
-                 {'part': part, 'parts': parts}),
             ]
+            if photos:
+                requests.append(('photo_parts', 'photo_parts', photo_images, {'parts': parts}))
+            requests.append(
+                ('sheet_roles', 'sheet_roles-hint', store.source_images(source),
+                 {'part': part, 'parts': parts}))
             destination = Path(out_dir) / model
             destination.mkdir(parents=True, exist_ok=True)
             for kind, step, images, context in requests:
@@ -335,10 +350,11 @@ def main(argv=None):
     comparison.add_argument('--out', type=Path, default=DEFAULT_OUT)
     comparison.add_argument('--data-dir', type=Path,
                             help='Storage directory (default: CHAUFFEUR_DATA_DIR or fresh scratch).')
-    recording = commands.add_parser('record-place', help='Record three paid, budgeted setup reads locally.')
+    recording = commands.add_parser('record-place', help='Record paid, budgeted setup reads locally.')
     recording.add_argument('--sheets', required=True, type=Path)
+    recording.add_argument('--plot', type=Path, help='Separate plot PDF (default: --sheets).')
     recording.add_argument('--plot-page', required=True, type=int)
-    recording.add_argument('--photos', required=True, nargs='+', type=Path)
+    recording.add_argument('--photos', nargs='*', type=Path, default=[])
     recording.add_argument('--budget', required=True, type=float)
     recording.add_argument('--models', required=True, help='Comma-separated gemini,claude,openai.')
     recording.add_argument('--out', type=Path, default=DEFAULT_OUT)
@@ -361,7 +377,7 @@ def main(argv=None):
             os.environ['CHAUFFEUR_DATA_DIR'] = str(args.data_dir.resolve())
         if args.command == 'record-place':
             rows = record_place(args.sheets, args.plot_page, args.photos, args.budget,
-                                models, key_dir=ROOT, out_dir=args.out)
+                                models, key_dir=ROOT, out_dir=args.out, plot_path=args.plot)
             for row in rows:
                 status = row.get('error') or row.get('stopped') or 'ok'
                 print(f"{row['model']}: ${row['cost']:.4f} {status}")

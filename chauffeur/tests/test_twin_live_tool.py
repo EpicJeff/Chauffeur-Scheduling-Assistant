@@ -237,6 +237,142 @@ def scenario_record_place_budget():
     check('SECRET' not in shown, 'keys never printed')
 
 
+class ImagePlaceReader(PlaceReader):
+    def __init__(self):
+        super().__init__('offline-placeholder')
+        self.image_data = []
+
+    def __call__(self, kind, images, context, *, run, step):
+        self.image_data.append(images)
+        return super().__call__(kind, images, context, run=run, step=step)
+
+
+def _check_place_parts(reader):
+    expected = {'house': ('Main house', 'main_house'),
+                'pool_house': ('Pool house', 'pool_house'), 'lot': ('Lot', 'lot')}
+    for call in reader.calls:
+        if call['kind'] in ('photo_parts', 'sheet_roles'):
+            parts = call['context']['parts']
+            check({p['id']: (p['name'], p['kind']) for p in parts} == expected, parts)
+        if call['kind'] == 'sheet_roles':
+            check(call['context']['part']['id'] == 'house', call)
+
+
+def scenario_record_place_separate_plot():
+    from pathlib import Path
+    from unittest import mock
+    import pypdfium2 as pdfium
+    from services import model_pools, twin_store
+
+    sheets = Path(_pdf(2))
+    plot_path = sheets.with_name('separate-plot.pdf')
+    with pdfium.PdfDocument.new() as doc:
+        doc.new_page(300, 600)
+        doc.save(str(plot_path))
+    sheet_source = twin_store.save_source('drawing', sheets.name, sheets.read_bytes(),
+                                          content_type='application/pdf')
+    plot_source = twin_store.save_source('drawing', plot_path.name, plot_path.read_bytes(),
+                                         content_type='application/pdf')
+    sheet_crop = twin_store.crop(sheet_source, 1, [0, 0, 1, 1])
+    plot_crop = twin_store.crop(plot_source, 1, [0, 0, 1, 1])
+    check(sheet_crop['b64'] != plot_crop['b64'], 'test PDFs must render differently')
+
+    tool, reader = _tool(), ImagePlaceReader()
+    out = tempfile.mkdtemp(prefix='twin_live_separate_plot_')
+    with mock.patch.object(model_pools, 'call_pool_json', side_effect=AssertionError('provider call')):
+        rows = tool.record_place(sheets, 1, _jpgs(4), 2.0, ['claude'], key_dir=_keys(),
+                                 out_dir=out, reader=reader, ceiling=lambda kind: 0.40,
+                                 plot_path=plot_path)
+    check(not rows[0]['errors'], rows)
+    check([c['kind'] for c in reader.calls] == ['plot', 'photo_parts', 'sheet_roles'], reader.calls)
+    check(reader.image_data[0] == [{'mime': plot_crop['mime'], 'b64': plot_crop['b64']}],
+          'plot read must receive the separate plot page image')
+    check(reader.image_data[2] == twin_store.source_images(sheet_source),
+          'sheet_roles must receive only the plans PDF pages')
+    check(reader.calls[1]['images'] == 4, 'four photos remain supported')
+    _check_place_parts(reader)
+
+    with mock.patch.object(tool, 'record_place', return_value=rows) as record:
+        check(tool.main(['record-place', '--sheets', str(sheets), '--plot', str(plot_path),
+                         '--plot-page', '1', '--budget', '2', '--models', 'claude']) == 0,
+              'separate plot CLI failed')
+        check(record.call_args.kwargs['plot_path'] == plot_path, record.call_args)
+        check(record.call_args.args[2] == [], record.call_args)
+
+
+def scenario_record_place_without_photos():
+    from pathlib import Path
+    from unittest import mock
+    from services import model_pools, twin_store
+
+    tool, reader = _tool(), ImagePlaceReader()
+    sheets = Path(_pdf(2))
+    source = twin_store.save_source('drawing', sheets.name, sheets.read_bytes(),
+                                    content_type='application/pdf')
+    expected = twin_store.crop(source, 2, [0, 0, 1, 1])
+    out = tempfile.mkdtemp(prefix='twin_live_no_photos_')
+    with mock.patch.object(model_pools, 'call_pool_json', side_effect=AssertionError('provider call')):
+        rows = tool.record_place(sheets, 2, [], 1.0, ['claude'], key_dir=_keys(), out_dir=out,
+                                 reader=reader, ceiling=lambda kind: 0.40)
+    check([c['kind'] for c in reader.calls] == ['plot', 'sheet_roles'], reader.calls)
+    check(reader.image_data[0] == [{'mime': expected['mime'], 'b64': expected['b64']}],
+          'without --plot, the plot page still comes from the sheets PDF')
+    check(not rows[0]['errors'] and abs(rows[0]['cost'] - 0.8) < 0.005, rows)
+    check(any('photo_parts' in note and 'skip' in note.lower()
+              for note in rows[0].get('notes', [])), rows)
+    check(sorted(os.listdir(os.path.join(out, 'claude'))) ==
+          ['plot-place.json', 'sheet_roles-hint.json'], 'no photo_parts file should be written')
+    _check_place_parts(reader)
+    for photo_args in ([], ['--photos']):
+        with mock.patch.object(tool, 'record_place', return_value=rows) as record:
+            check(tool.main(['record-place', '--sheets', str(sheets), '--plot-page', '2',
+                             '--budget', '1', '--models', 'claude'] + photo_args) == 0,
+                  'no-photo CLI failed')
+            check(record.call_args.args[2] == [], record.call_args)
+
+
+def scenario_record_place_refuses_dev_data():
+    from pathlib import Path
+    from unittest import mock
+    import builtins
+
+    tool = _tool()
+    original_import = builtins.__import__
+    imports = []
+
+    def no_services(name, *args, **kwargs):
+        if name == 'services' or name.startswith('services.'):
+            imports.append(name)
+            raise AssertionError('services must not import before dev-data refusal')
+        return original_import(name, *args, **kwargs)
+
+    forbidden = [Path(ROOT) / 'data', Path(ROOT) / 'data' / 'nested',
+                 Path(ROOT) / 'data' / '..' / 'data' / 'nested']
+    for target in forbidden:
+        for from_cli in (False, True):
+            with mock.patch.dict(os.environ):
+                if not from_cli:
+                    os.environ['CHAUFFEUR_DATA_DIR'] = str(target)
+                with mock.patch('builtins.__import__', side_effect=no_services):
+                    if from_cli:
+                        error = io.StringIO()
+                        with contextlib.redirect_stderr(error):
+                            code = tool.main(['record-place', '--sheets', 'missing.pdf',
+                                              '--plot-page', '1', '--budget', '1',
+                                              '--models', 'claude', '--data-dir', str(target)])
+                        check(code == 1 and '(ValueError)' in error.getvalue(), error.getvalue())
+                    else:
+                        try:
+                            tool.record_place('missing.pdf', 1, [], 1.0, ['claude'],
+                                              key_dir='unused', out_dir='unused',
+                                              reader=lambda *a, **k: check(False, 'reader called'))
+                        except ValueError as exc:
+                            check('chauffeur/data' in str(exc), str(exc))
+                        else:
+                            raise AssertionError('record_place must raise ValueError for dev data')
+    check(imports == [], imports)
+
+
 if __name__ == '__main__':
     for fn in (scenario_providers_and_reads_are_pinned,
                scenario_a_tiny_budget_makes_no_request,
@@ -245,6 +381,9 @@ if __name__ == '__main__':
                scenario_a_perfect_outline_scores_zero,
                scenario_one_wing_still_reads_walls_and_roof,
                scenario_the_table_shows_the_key_and_the_default_data_dir_is_scratch,
+               scenario_record_place_separate_plot,
+               scenario_record_place_without_photos,
+               scenario_record_place_refuses_dev_data,
                scenario_record_place_budget):
         fn()
         print('  ok ', fn.__name__)
