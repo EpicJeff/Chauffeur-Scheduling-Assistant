@@ -1,0 +1,1402 @@
+{
+ "pages": [
+  {
+   "image": 0,
+   "level": "L1",
+   "anchors": [
+    {
+     "px": [
+      0.282,
+      0.643
+     ],
+     "at": [
+      0,
+      14.33
+     ]
+    },
+    {
+     "px": [
+      0.524,
+      0.789
+     ],
+     "at": [
+      37,
+      0
+     ]
+    },
+    {
+     "px": [
+      0.74,
+      0.565
+     ],
+     "at": [
+      70,
+      22
+     ]
+    },
+    {
+     "px": [
+      0.668,
+      0.13
+     ],
+     "at": [
+      59,
+      65.33
+     ]
+    }
+   ]
+  },
+  {
+   "image": 1,
+   "level": "L2",
+   "anchors": [
+    {
+     "px": [
+      0.328,
+      0.64
+     ],
+     "at": [
+      14.33,
+      14.33
+     ]
+    },
+    {
+     "px": [
+      0.594,
+      0.782
+     ],
+     "at": [
+      55,
+      0
+     ]
+    },
+    {
+     "px": [
+      0.62,
+      0.351
+     ],
+     "at": [
+      59,
+      43
+     ]
+    },
+    {
+     "px": [
+      0.235,
+      0.334
+     ],
+     "at": [
+      0,
+      44.67
+     ]
+    }
+   ]
+  },
+  {
+   "image": 2,
+   "level": "L1",
+   "anchors": [
+    {
+     "px": [
+      0.418,
+      0.685
+     ],
+     "at": [
+      0,
+      14.33
+     ]
+    },
+    {
+     "px": [
+      0.661,
+      0.83
+     ],
+     "at": [
+      37,
+      0
+     ]
+    },
+    {
+     "px": [
+      0.877,
+      0.403
+     ],
+     "at": [
+      70,
+      42
+     ]
+    },
+    {
+     "px": [
+      0.805,
+      0.166
+     ],
+     "at": [
+      59,
+      65.33
+     ]
+    }
+   ]
+  }
+ ],
+ "building": {
+  "levels": [
+   {
+    "id": "L1",
+    "name": "Main floor",
+    "elevation": 0,
+    "ceiling": 10,
+    "outline": [
+     [
+      0,
+      14.33
+     ],
+     [
+      22.67,
+      14.33
+     ],
+     [
+      22.67,
+      13.33
+     ],
+     [
+      37,
+      13.33
+     ],
+     [
+      37,
+      0
+     ],
+     [
+      59,
+      0
+     ],
+     [
+      59,
+      22
+     ],
+     [
+      70,
+      22
+     ],
+     [
+      70,
+      42
+     ],
+     [
+      59,
+      42
+     ],
+     [
+      59,
+      65.33
+     ],
+     [
+      43.33,
+      65.33
+     ],
+     [
+      43.33,
+      59
+     ],
+     [
+      31,
+      59
+     ],
+     [
+      31,
+      52
+     ],
+     [
+      14.33,
+      52
+     ],
+     [
+      14.33,
+      54
+     ],
+     [
+      0,
+      54
+     ]
+    ]
+   },
+   {
+    "id": "L2",
+    "name": "Second floor",
+    "elevation": 11,
+    "ceiling": 9,
+    "outline": [
+     [
+      14.33,
+      14.33
+     ],
+     [
+      22.67,
+      14.33
+     ],
+     [
+      22.67,
+      13.33
+     ],
+     [
+      37.33,
+      13.33
+     ],
+     [
+      37.33,
+      19.33
+     ],
+     [
+      41,
+      19.33
+     ],
+     [
+      41,
+      0
+     ],
+     [
+      55,
+      0
+     ],
+     [
+      55,
+      19.33
+     ],
+     [
+      59,
+      19.33
+     ],
+     [
+      59,
+      43
+     ],
+     [
+      37.33,
+      43
+     ],
+     [
+      37.33,
+      52
+     ],
+     [
+      14.33,
+      52
+     ],
+     [
+      14.33,
+      44.67
+     ],
+     [
+      0,
+      44.67
+     ],
+     [
+      0,
+      25.33
+     ],
+     [
+      14.33,
+      25.33
+     ]
+    ]
+   }
+  ],
+  "walls": [
+   {
+    "level": "L1",
+    "from": [
+     0,
+     14.33
+    ],
+    "to": [
+     22.67,
+     14.33
+    ],
+    "height": 10,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "w1"
+   },
+   {
+    "level": "L1",
+    "from": [
+     22.67,
+     14.33
+    ],
+    "to": [
+     22.67,
+     13.33
+    ],
+    "height": 10,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "w2"
+   },
+   {
+    "level": "L1",
+    "from": [
+     22.67,
+     13.33
+    ],
+    "to": [
+     37,
+     13.33
+    ],
+    "height": 10,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "w3"
+   },
+   {
+    "level": "L1",
+    "from": [
+     37,
+     13.33
+    ],
+    "to": [
+     37,
+     0
+    ],
+    "height": 10,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "w4"
+   },
+   {
+    "level": "L1",
+    "from": [
+     37,
+     0
+    ],
+    "to": [
+     59,
+     0
+    ],
+    "height": 10,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "w5"
+   },
+   {
+    "level": "L1",
+    "from": [
+     59,
+     0
+    ],
+    "to": [
+     59,
+     22
+    ],
+    "height": 10,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "w6"
+   },
+   {
+    "level": "L1",
+    "from": [
+     59,
+     22
+    ],
+    "to": [
+     70,
+     22
+    ],
+    "height": 10,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "w7"
+   },
+   {
+    "level": "L1",
+    "from": [
+     70,
+     22
+    ],
+    "to": [
+     70,
+     42
+    ],
+    "height": 10,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "w8"
+   },
+   {
+    "level": "L1",
+    "from": [
+     70,
+     42
+    ],
+    "to": [
+     59,
+     42
+    ],
+    "height": 10,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "w9"
+   },
+   {
+    "level": "L1",
+    "from": [
+     59,
+     42
+    ],
+    "to": [
+     59,
+     65.33
+    ],
+    "height": 10,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "w10"
+   },
+   {
+    "level": "L1",
+    "from": [
+     59,
+     65.33
+    ],
+    "to": [
+     43.33,
+     65.33
+    ],
+    "height": 10,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "w11"
+   },
+   {
+    "level": "L1",
+    "from": [
+     43.33,
+     65.33
+    ],
+    "to": [
+     43.33,
+     59
+    ],
+    "height": 10,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "w12"
+   },
+   {
+    "level": "L1",
+    "from": [
+     43.33,
+     59
+    ],
+    "to": [
+     31,
+     59
+    ],
+    "height": 10,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "w13"
+   },
+   {
+    "level": "L1",
+    "from": [
+     31,
+     59
+    ],
+    "to": [
+     31,
+     52
+    ],
+    "height": 10,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "w14"
+   },
+   {
+    "level": "L1",
+    "from": [
+     31,
+     52
+    ],
+    "to": [
+     14.33,
+     52
+    ],
+    "height": 10,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "w15"
+   },
+   {
+    "level": "L1",
+    "from": [
+     14.33,
+     52
+    ],
+    "to": [
+     14.33,
+     54
+    ],
+    "height": 10,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "w16"
+   },
+   {
+    "level": "L1",
+    "from": [
+     14.33,
+     54
+    ],
+    "to": [
+     0,
+     54
+    ],
+    "height": 10,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "w17"
+   },
+   {
+    "level": "L1",
+    "from": [
+     0,
+     54
+    ],
+    "to": [
+     0,
+     14.33
+    ],
+    "height": 10,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "w18"
+   },
+   {
+    "level": "L2",
+    "from": [
+     14.33,
+     14.33
+    ],
+    "to": [
+     22.67,
+     14.33
+    ],
+    "height": 9,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "u1"
+   },
+   {
+    "level": "L2",
+    "from": [
+     22.67,
+     14.33
+    ],
+    "to": [
+     22.67,
+     13.33
+    ],
+    "height": 9,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "u2"
+   },
+   {
+    "level": "L2",
+    "from": [
+     22.67,
+     13.33
+    ],
+    "to": [
+     37.33,
+     13.33
+    ],
+    "height": 9,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "u3"
+   },
+   {
+    "level": "L2",
+    "from": [
+     37.33,
+     13.33
+    ],
+    "to": [
+     37.33,
+     19.33
+    ],
+    "height": 9,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "u4"
+   },
+   {
+    "level": "L2",
+    "from": [
+     37.33,
+     19.33
+    ],
+    "to": [
+     41,
+     19.33
+    ],
+    "height": 9,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "u5"
+   },
+   {
+    "level": "L2",
+    "from": [
+     41,
+     19.33
+    ],
+    "to": [
+     41,
+     0
+    ],
+    "height": 3,
+    "thickness": 0.5,
+    "exterior": false,
+    "id": "k1"
+   },
+   {
+    "level": "L2",
+    "from": [
+     55,
+     0
+    ],
+    "to": [
+     55,
+     19.33
+    ],
+    "height": 3,
+    "thickness": 0.5,
+    "exterior": false,
+    "id": "k2"
+   },
+   {
+    "level": "L2",
+    "from": [
+     55,
+     19.33
+    ],
+    "to": [
+     59,
+     19.33
+    ],
+    "height": 9,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "u6"
+   },
+   {
+    "level": "L2",
+    "from": [
+     59,
+     19.33
+    ],
+    "to": [
+     59,
+     43
+    ],
+    "height": 9,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "u7"
+   },
+   {
+    "level": "L2",
+    "from": [
+     59,
+     43
+    ],
+    "to": [
+     37.33,
+     43
+    ],
+    "height": 9,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "u8"
+   },
+   {
+    "level": "L2",
+    "from": [
+     37.33,
+     43
+    ],
+    "to": [
+     37.33,
+     52
+    ],
+    "height": 9,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "u9"
+   },
+   {
+    "level": "L2",
+    "from": [
+     37.33,
+     52
+    ],
+    "to": [
+     14.33,
+     52
+    ],
+    "height": 9,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "u10"
+   },
+   {
+    "level": "L2",
+    "from": [
+     14.33,
+     52
+    ],
+    "to": [
+     14.33,
+     44.67
+    ],
+    "height": 9,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "u11"
+   },
+   {
+    "level": "L2",
+    "from": [
+     14.33,
+     44.67
+    ],
+    "to": [
+     0,
+     44.67
+    ],
+    "height": 5.17,
+    "thickness": 0.5,
+    "exterior": false,
+    "id": "k3"
+   },
+   {
+    "level": "L2",
+    "from": [
+     0,
+     25.33
+    ],
+    "to": [
+     14.33,
+     25.33
+    ],
+    "height": 6.33,
+    "thickness": 0.5,
+    "exterior": false,
+    "id": "k4"
+   },
+   {
+    "level": "L2",
+    "from": [
+     14.33,
+     25.33
+    ],
+    "to": [
+     14.33,
+     14.33
+    ],
+    "height": 9,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "u12"
+   }
+  ],
+  "openings": [
+   {
+    "kind": "window",
+    "width": 4.5,
+    "sill": 2,
+    "head": 8,
+    "id": "o1",
+    "wall": "w1",
+    "at": 7.17
+   },
+   {
+    "kind": "door",
+    "width": 5,
+    "sill": 0,
+    "head": 8,
+    "id": "o2",
+    "wall": "w1",
+    "at": 18.92
+   },
+   {
+    "kind": "window",
+    "width": 6,
+    "sill": 1.5,
+    "head": 8,
+    "id": "o3",
+    "wall": "w3",
+    "at": 7.33
+   },
+   {
+    "kind": "window",
+    "width": 3,
+    "sill": 2,
+    "head": 8,
+    "id": "o4",
+    "wall": "w5",
+    "at": 3
+   },
+   {
+    "kind": "window",
+    "width": 8,
+    "sill": 2,
+    "head": 8,
+    "id": "o5",
+    "wall": "w5",
+    "at": 11
+   },
+   {
+    "kind": "window",
+    "width": 3,
+    "sill": 2,
+    "head": 8,
+    "id": "o6",
+    "wall": "w5",
+    "at": 19
+   },
+   {
+    "kind": "garage",
+    "width": 16,
+    "sill": 0,
+    "head": 8,
+    "id": "o7",
+    "wall": "w6",
+    "at": 11
+   },
+   {
+    "kind": "window",
+    "width": 2.67,
+    "sill": 2,
+    "head": 8,
+    "id": "o8",
+    "wall": "w7",
+    "at": 5.5
+   },
+   {
+    "kind": "door",
+    "width": 3,
+    "sill": 0,
+    "head": 8,
+    "id": "o9",
+    "wall": "w8",
+    "at": 3.75
+   },
+   {
+    "kind": "window",
+    "width": 6,
+    "sill": 2,
+    "head": 8,
+    "id": "o10",
+    "wall": "w11",
+    "at": 7.83
+   },
+   {
+    "kind": "window",
+    "width": 6,
+    "sill": 2,
+    "head": 8,
+    "id": "o11",
+    "wall": "w13",
+    "at": 6.17
+   },
+   {
+    "kind": "door",
+    "width": 3,
+    "sill": 0,
+    "head": 8,
+    "id": "o12",
+    "wall": "w14",
+    "at": 3.67
+   },
+   {
+    "kind": "slider",
+    "width": 6,
+    "sill": 0,
+    "head": 8,
+    "id": "o13",
+    "wall": "w15",
+    "at": 7.5
+   },
+   {
+    "kind": "window",
+    "width": 6,
+    "sill": 2,
+    "head": 8,
+    "id": "o14",
+    "wall": "w17",
+    "at": 7
+   },
+   {
+    "kind": "window",
+    "width": 2.67,
+    "sill": 2.5,
+    "head": 7.5,
+    "id": "o15",
+    "wall": "u1",
+    "at": 4.59
+   },
+   {
+    "kind": "window",
+    "width": 2.67,
+    "sill": 2.5,
+    "head": 7.5,
+    "id": "o16",
+    "wall": "u3",
+    "at": 4
+   },
+   {
+    "kind": "window",
+    "width": 2.67,
+    "sill": 2.5,
+    "head": 7.5,
+    "id": "o17",
+    "wall": "u3",
+    "at": 10.67
+   },
+   {
+    "kind": "window",
+    "width": 3,
+    "sill": 2.5,
+    "head": 7.5,
+    "id": "o18",
+    "wall": "u7",
+    "at": 5.58
+   },
+   {
+    "kind": "window",
+    "width": 3,
+    "sill": 2.5,
+    "head": 7.5,
+    "id": "o19",
+    "wall": "u7",
+    "at": 16.42
+   },
+   {
+    "kind": "window",
+    "width": 3,
+    "sill": 2.5,
+    "head": 7.5,
+    "id": "o20",
+    "wall": "u10",
+    "at": 11.5
+   },
+   {
+    "kind": "window",
+    "width": 3,
+    "sill": 3.5,
+    "head": 8.5,
+    "id": "g1",
+    "gable": "front",
+    "section": "r_garage",
+    "x": 48
+   },
+   {
+    "kind": "window",
+    "width": 2.5,
+    "sill": 3.5,
+    "head": 8.5,
+    "id": "g2",
+    "gable": "front",
+    "section": "r_left",
+    "y": 28
+   },
+   {
+    "kind": "window",
+    "width": 2.5,
+    "sill": 3.5,
+    "head": 8.5,
+    "id": "g3",
+    "gable": "front",
+    "section": "r_left",
+    "y": 37.67
+   }
+  ],
+  "rooms": [],
+  "roof": {
+   "sections": [
+    {
+     "id": "r_left",
+     "kind": "gable",
+     "rect": [
+      0,
+      14.33,
+      14.33,
+      54
+     ],
+     "pitch": 8,
+     "plate": 10,
+     "overhang": 1,
+     "pitch_source": "photos",
+     "ridge": "x"
+    },
+    {
+     "id": "r_main",
+     "kind": "gable",
+     "rect": [
+      14.33,
+      13.33,
+      37.33,
+      52
+     ],
+     "pitch": 10,
+     "plate": 20,
+     "overhang": 1,
+     "pitch_source": "photos",
+     "ridge": "y"
+    },
+    {
+     "id": "r_right",
+     "kind": "hip",
+     "rect": [
+      37.33,
+      19.33,
+      59,
+      43
+     ],
+     "pitch": 10,
+     "plate": 20,
+     "overhang": 1,
+     "pitch_source": "photos",
+     "ridge": "x"
+    },
+    {
+     "id": "r_garage",
+     "kind": "gable",
+     "rect": [
+      37,
+      0,
+      59,
+      30
+     ],
+     "pitch": 12,
+     "plate": 10,
+     "overhang": 1,
+     "pitch_source": "photos",
+     "ridge": "y"
+    },
+    {
+     "id": "r_side",
+     "kind": "gable",
+     "rect": [
+      57,
+      22,
+      70,
+      42
+     ],
+     "pitch": 8,
+     "plate": 10,
+     "overhang": 1,
+     "pitch_source": "photos",
+     "ridge": "x"
+    },
+    {
+     "id": "r_rear",
+     "kind": "gable",
+     "rect": [
+      43.33,
+      40,
+      59,
+      65.33
+     ],
+     "pitch": 10,
+     "plate": 10,
+     "overhang": 1,
+     "pitch_source": "photos",
+     "ridge": "y"
+    },
+    {
+     "id": "r_bkfst",
+     "kind": "shed",
+     "rect": [
+      31,
+      48,
+      43.33,
+      59
+     ],
+     "pitch": 4,
+     "plate": 10,
+     "overhang": 1,
+     "pitch_source": "photos",
+     "low_side": "y1"
+    },
+    {
+     "id": "r_screen",
+     "kind": "gable",
+     "rect": [
+      14.33,
+      50,
+      31,
+      66
+     ],
+     "pitch": 8,
+     "plate": 10,
+     "overhang": 1,
+     "pitch_source": "photos",
+     "ridge": "y"
+    },
+    {
+     "id": "r_porch_shed",
+     "kind": "shed",
+     "rect": [
+      14.33,
+      6.33,
+      37,
+      13.33
+     ],
+     "pitch": 3,
+     "plate": 9,
+     "overhang": 0.5,
+     "pitch_source": "photos",
+     "low_side": "y0"
+    },
+    {
+     "id": "r_porch_gable",
+     "kind": "gable",
+     "rect": [
+      14.33,
+      6.33,
+      23.5,
+      14.33
+     ],
+     "pitch": 10,
+     "plate": 9,
+     "overhang": 0.5,
+     "pitch_source": "photos",
+     "ridge": "y"
+    }
+   ],
+   "extensions": [
+    {
+     "kind": "awning",
+     "section": "r_garage",
+     "pitch": 4,
+     "x0": 41,
+     "x1": 55,
+     "depth": 2.5,
+     "eave": 8.5,
+     "brackets": 3,
+     "wall": "w5"
+    }
+   ]
+  },
+  "porches": [
+   {
+    "polygon": [
+     [
+      14.33,
+      6.33
+     ],
+     [
+      37,
+      6.33
+     ],
+     [
+      37,
+      13.33
+     ],
+     [
+      22.67,
+      13.33
+     ],
+     [
+      22.67,
+      14.33
+     ],
+     [
+      14.33,
+      14.33
+     ]
+    ],
+    "id": "p_front",
+    "screened": false,
+    "floor": 0,
+    "columns": [
+     {
+      "at": [
+       14.83,
+       6.83
+      ],
+      "size": 1
+     },
+     {
+      "at": [
+       23.33,
+       6.83
+      ],
+      "size": 1
+     },
+     {
+      "at": [
+       30.42,
+       6.83
+      ],
+      "size": 1
+     },
+     {
+      "at": [
+       36.5,
+       6.83
+      ],
+      "size": 1
+     }
+    ]
+   },
+   {
+    "polygon": [
+     [
+      14.33,
+      52
+     ],
+     [
+      31,
+      52
+     ],
+     [
+      31,
+      66
+     ],
+     [
+      14.33,
+      66
+     ]
+    ],
+    "id": "p_rear",
+    "screened": true,
+    "floor": 0,
+    "columns": [
+     {
+      "at": [
+       14.83,
+       65.5
+      ],
+      "size": 0.67
+     },
+     {
+      "at": [
+       22.67,
+       65.5
+      ],
+      "size": 0.67
+     },
+     {
+      "at": [
+       30.5,
+       65.5
+      ],
+      "size": 0.67
+     }
+    ]
+   }
+  ],
+  "stairs": [
+   {
+    "level": "L1",
+    "from": [
+     21,
+     31
+    ],
+    "to": [
+     32.5,
+     31
+    ],
+    "width": 3.33,
+    "risers": 15,
+    "rise_to": 11,
+    "id": "s1"
+   }
+  ],
+  "id": "main-house",
+  "name": "Main house",
+  "position": [
+   0,
+   0
+  ],
+  "rotation": 0,
+  "base": 0
+ },
+ "checks": {
+  "front_edge": "y=0 at front face of the 22' garage/front-gable wing (x 37-59); its 1' bay bump-out is treated as flush",
+  "level_sizes": {
+   "L1": [
+    70,
+    65.33
+   ],
+   "L2": [
+    59,
+    52
+   ]
+  },
+  "upper_offsets": {
+   "L2": "x from L2 top string 14'-4\"+23'-0\"+21'-8\"=59'-0\" and bottom 37'-0\"+22'-0\"+11'-0\"=70'-0\" sharing x=0 with L1; y from left strings 11'-0\"/19'-4\"/9'-4\" inside the shared 39'-8\" and right strings 19'-4\"/23'-8\"/22'-4\" inside 65'-4\""
+  },
+  "wing_y": [
+   {
+    "wing": "garage front gable x37-59",
+    "front": 0,
+    "rear": 22,
+    "strings": "22'-0\" right side"
+   },
+   {
+    "wing": "left wing x0-14.33",
+    "front": 14.33,
+    "rear": 54,
+    "strings": "39'-8\", 12'-0\"+27'-8\""
+   },
+   {
+    "wing": "dining x22.67-37",
+    "front": 13.33,
+    "rear": null,
+    "strings": "13'-4\", 1'-0\" jog"
+   },
+   {
+    "wing": "side wing x59-70",
+    "front": 22,
+    "rear": 42,
+    "strings": "22'-0\"+20'-0\""
+   },
+   {
+    "wing": "rear kitchen block x43.33-59",
+    "front": 42,
+    "rear": 65.33,
+    "strings": "23'-4\", 65'-4\" overall"
+   },
+   {
+    "wing": "great room rear x14.33-31",
+    "front": 14.33,
+    "rear": 52,
+    "strings": "2'-0\" offset from 54, 7'-0\" to breakfast"
+   },
+   {
+    "wing": "breakfast x31-43.33",
+    "front": 52,
+    "rear": 59,
+    "strings": "7'-0\", 3'-4\"+3'-0\""
+   }
+  ]
+ },
+ "notes": [
+  "Heights assumed: L1 plate/ceiling 10', floor framing 1', L2 ceiling/plate 9' (L2 elevation 11), porch plates 9-10', windows head 8' (L1) and 7.5' (L2); none are noted on the sheets.",
+  "All roof pitches estimated from photos (no pitch callouts).",
+  "Left bedroom on L2 is under the left side gable: knee walls at y 25.33 (6.33') and y 44.67 (5.17'); bonus room over garage bounded by 3' knee walls at x41/x55; their gable-end walls are left to the roof generator.",
+  "L2 center block right face taken as 37.33 from 23'-0\" string while L1 dining right face is 37.0 from 14'-4\" string (4\" discrepancy).",
+  "Porch column string 1'0\"+7'-6\"+1'0\"+6'-1\"+1'0\"+6'-1\"+6\" = 23'-2\" vs 22'-8\" porch width; columns placed approximately.",
+  "Screened porch depth 12'-0\" from y 54 runs to y 66, beyond the 65'-4\" overall line.",
+  "Rear-block window, breakfast, stair and side door positions scaled from nearest strings; garage door placed on right face of garage wing centred by 11'-0\"+11'-0\" string (assumed side-load).",
+  "Roof-plan left-wing hip facet (16'-0\") simplified to a side gable as seen in the side photo."
+ ]
+}

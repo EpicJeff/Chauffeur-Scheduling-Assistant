@@ -1,0 +1,564 @@
+{
+ "pages": [
+  {
+   "image": 0,
+   "level": "L1",
+   "anchors": [
+    {
+     "px": [
+      0.299,
+      0.416
+     ],
+     "at": [
+      0,
+      0
+     ]
+    },
+    {
+     "px": [
+      0.624,
+      0.416
+     ],
+     "at": [
+      31,
+      0
+     ]
+    },
+    {
+     "px": [
+      0.624,
+      0.119
+     ],
+     "at": [
+      31,
+      22
+     ]
+    },
+    {
+     "px": [
+      0.299,
+      0.119
+     ],
+     "at": [
+      0,
+      22
+     ]
+    }
+   ]
+  },
+  {
+   "image": 1,
+   "level": "L2",
+   "anchors": [
+    {
+     "px": [
+      0.328,
+      0.417
+     ],
+     "at": [
+      5.67,
+      0
+     ]
+    },
+    {
+     "px": [
+      0.534,
+      0.417
+     ],
+     "at": [
+      25.33,
+      0
+     ]
+    },
+    {
+     "px": [
+      0.534,
+      0.119
+     ],
+     "at": [
+      25.33,
+      22
+     ]
+    },
+    {
+     "px": [
+      0.268,
+      0.119
+     ],
+     "at": [
+      0,
+      22
+     ]
+    }
+   ]
+  },
+  {
+   "image": 2,
+   "level": "roof",
+   "anchors": [
+    {
+     "px": [
+      0.11,
+      0.744
+     ],
+     "at": [
+      0,
+      0
+     ]
+    },
+    {
+     "px": [
+      0.754,
+      0.744
+     ],
+     "at": [
+      31,
+      0
+     ]
+    },
+    {
+     "px": [
+      0.9,
+      0.08
+     ],
+     "at": [
+      38,
+      22
+     ]
+    },
+    {
+     "px": [
+      0.11,
+      0.08
+     ],
+     "at": [
+      0,
+      22
+     ]
+    }
+   ]
+  }
+ ],
+ "building": {
+  "levels": [
+   {
+    "id": "L1",
+    "name": "Main floor",
+    "elevation": 0,
+    "ceiling": 10,
+    "outline": [
+     [
+      0,
+      0
+     ],
+     [
+      31,
+      0
+     ],
+     [
+      31,
+      22
+     ],
+     [
+      0,
+      22
+     ]
+    ]
+   },
+   {
+    "id": "L2",
+    "name": "Second floor",
+    "elevation": 11,
+    "ceiling": 9,
+    "outline": [
+     [
+      5.67,
+      0
+     ],
+     [
+      25.33,
+      0
+     ],
+     [
+      25.33,
+      22
+     ],
+     [
+      0,
+      22
+     ],
+     [
+      0,
+      17.83
+     ],
+     [
+      5.67,
+      17.83
+     ]
+    ],
+    "half": true
+   }
+  ],
+  "walls": [
+   {
+    "level": "L1",
+    "from": [
+     0,
+     0
+    ],
+    "to": [
+     31,
+     0
+    ],
+    "height": 10,
+    "thickness": 0.33,
+    "exterior": true,
+    "id": "W1"
+   },
+   {
+    "level": "L1",
+    "from": [
+     31,
+     0
+    ],
+    "to": [
+     31,
+     22
+    ],
+    "height": 10,
+    "thickness": 0.33,
+    "exterior": true,
+    "id": "W2"
+   },
+   {
+    "level": "L1",
+    "from": [
+     31,
+     22
+    ],
+    "to": [
+     0,
+     22
+    ],
+    "height": 10,
+    "thickness": 0.5,
+    "exterior": true,
+    "id": "W3"
+   },
+   {
+    "level": "L1",
+    "from": [
+     0,
+     22
+    ],
+    "to": [
+     0,
+     0
+    ],
+    "height": 10,
+    "thickness": 0.33,
+    "exterior": true,
+    "id": "W4"
+   },
+   {
+    "level": "L2",
+    "from": [
+     25.33,
+     0
+    ],
+    "to": [
+     25.33,
+     22
+    ],
+    "height": 5.33,
+    "thickness": 0.33,
+    "exterior": false,
+    "id": "K1"
+   },
+   {
+    "level": "L2",
+    "from": [
+     0,
+     22
+    ],
+    "to": [
+     0,
+     17.83
+    ],
+    "height": 0.5,
+    "thickness": 0.5,
+    "exterior": false,
+    "id": "K2"
+   },
+   {
+    "level": "L2",
+    "from": [
+     0,
+     17.83
+    ],
+    "to": [
+     5.67,
+     17.83
+    ],
+    "height": 5.33,
+    "thickness": 0.33,
+    "exterior": false,
+    "id": "K3"
+   },
+   {
+    "level": "L2",
+    "from": [
+     5.67,
+     17.83
+    ],
+    "to": [
+     5.67,
+     0
+    ],
+    "height": 5.33,
+    "thickness": 0.33,
+    "exterior": false,
+    "id": "K4"
+   }
+  ],
+  "openings": [
+   {
+    "kind": "slider",
+    "width": 12,
+    "sill": 0,
+    "head": 8,
+    "id": "O1",
+    "wall": "W1",
+    "at": 9.08
+   },
+   {
+    "kind": "bifold",
+    "width": 10,
+    "sill": 3.5,
+    "head": 8,
+    "id": "O2",
+    "wall": "W1",
+    "at": 23.67
+   },
+   {
+    "kind": "door",
+    "width": 2.67,
+    "sill": 0,
+    "head": 8,
+    "id": "O3",
+    "wall": "W2",
+    "at": 10.33
+   },
+   {
+    "kind": "door",
+    "width": 2.67,
+    "sill": 0,
+    "head": 8,
+    "id": "O4",
+    "wall": "W2",
+    "at": 14.17
+   },
+   {
+    "kind": "door",
+    "width": 2.67,
+    "sill": 0,
+    "head": 8,
+    "id": "O5",
+    "wall": "W3",
+    "at": 14.83
+   },
+   {
+    "kind": "window",
+    "width": 5.25,
+    "sill": 2,
+    "head": 8,
+    "id": "O6",
+    "wall": "W4",
+    "at": 13.17
+   },
+   {
+    "kind": "window",
+    "width": 2.67,
+    "sill": 2.5,
+    "head": 7.67,
+    "id": "G1",
+    "gable": "front",
+    "section": "R1",
+    "x": 11.83
+   },
+   {
+    "kind": "window",
+    "width": 2.67,
+    "sill": 2.5,
+    "head": 7.67,
+    "id": "G2",
+    "gable": "front",
+    "section": "R1",
+    "x": 19.17
+   },
+   {
+    "kind": "window",
+    "width": 4,
+    "sill": 5.67,
+    "head": 7.67,
+    "id": "G3",
+    "gable": "rear",
+    "section": "R1",
+    "x": 15.5
+   }
+  ],
+  "rooms": [],
+  "roof": {
+   "sections": [
+    {
+     "id": "R1",
+     "kind": "gable",
+     "rect": [
+      0,
+      0,
+      31,
+      22
+     ],
+     "pitch": 11,
+     "plate": 11,
+     "overhang": 1,
+     "ridge": "y"
+    },
+    {
+     "id": "R2",
+     "kind": "shed",
+     "rect": [
+      29,
+      0,
+      38,
+      22
+     ],
+     "pitch": 3,
+     "plate": 10,
+     "overhang": 1,
+     "low_side": "x1"
+    }
+   ],
+   "extensions": [
+    {
+     "kind": "awning",
+     "section": "R1",
+     "pitch": 2,
+     "x0": 17.17,
+     "x1": 30.17,
+     "depth": 4,
+     "eave": 8.83,
+     "brackets": 2,
+     "wall": "W1"
+    }
+   ]
+  },
+  "porches": [
+   {
+    "polygon": [
+     [
+      31,
+      0
+     ],
+     [
+      38,
+      0
+     ],
+     [
+      38,
+      22
+     ],
+     [
+      31,
+      22
+     ]
+    ],
+    "id": "P1",
+    "screened": false,
+    "floor": 0,
+    "columns": [
+     {
+      "at": [
+       37.67,
+       0.33
+      ],
+      "size": 0.67
+     },
+     {
+      "at": [
+       37.67,
+       21.67
+      ],
+      "size": 0.67
+     }
+    ]
+   }
+  ],
+  "stairs": [
+   {
+    "level": "L1",
+    "from": [
+     3.56,
+     19.65
+    ],
+    "to": [
+     14.87,
+     19.65
+    ],
+    "width": 3.5,
+    "risers": 17,
+    "rise_to": 11,
+    "id": "S1"
+   }
+  ],
+  "id": "pool-house",
+  "name": "Pool house",
+  "position": [
+   0,
+   0
+  ],
+  "rotation": 0,
+  "base": 0
+ },
+ "checks": {
+  "front_edge": "Front = slider/bifold wall (bottom of sheets), matching photo gable with two DH windows; +y runs up the sheet",
+  "level_sizes": {
+   "L1": [
+    31,
+    22
+   ],
+   "L2": [
+    25.33,
+    22
+   ]
+  },
+  "upper_offsets": {
+   "L2": "x from 5'-8\"+19'-8\"+12'-8\"=38'-0\" and 25'-4\"/15'-6\"+9'-10\" sharing the 38'-0\" overall with L1; y from shared 22'-0\" side strings and 4'-2\" stair alcove; stair along rear wall aligns"
+  },
+  "wing_y": [
+   {
+    "wing": "Main block",
+    "front": 0,
+    "rear": 22,
+    "strings": "22'-0\" side; 13'-2\"+8'-10\"; 7'-10\"+3'-10\"+10'-4\""
+   },
+   {
+    "wing": "Porch",
+    "front": 0,
+    "rear": 22,
+    "strings": "22'-0\" right side string; 7'-0\" porch width"
+   }
+  ],
+  "strings": "All L1 and L2 partial strings sum to their overalls (31+7=38, 16'-2\"+14'-10\"=31, 9'-1\"+14'-7\"+7'-4\"=31, 11+5+3+4\"+4\"=19'-8\")"
+ },
+ "notes": [
+  "L2 elevation 11 assumed (10' ceiling + ~1' joists); 17R at 7-5/8\" = 10.8'.",
+  "Main gable plate 11 = plate on ceiling joist at L2 floor; ridge ~25.2'. Porch shed plate 10 per note, 3/12, rect run to x=29 into main roof.",
+  "Front/rear L2 walls omitted as gable ends; gable window heads 7'-8\" above plate (=L2 floor).",
+  "Left existing windows scaled: centre y=8.83 at string break, width ~5.25, sill 2 assumed, head 8.",
+  "Awning x 17.17-30.17 and depth 4 scaled from ROOF ABV dashed line and roof plan; eave 8.83 assumed; 2 brackets from photo.",
+  "Bifold window sill 3.5 from 4'-6\" height and 8' head.",
+  "Stair position scaled; L2 left alcove knee wall at x=0 given nominal 0.5' height; K3 height assumed 5.33.",
+  "Wall thickness: 2x6 rear 0.5, others 0.33."
+ ]
+}

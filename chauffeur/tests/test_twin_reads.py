@@ -524,10 +524,11 @@ def test_parse_draft_rooms_shape():
     answer = {'rooms': [room], 'walls': [wall]}
     saved = copy.deepcopy(answer)
     fragment, problems = twin_reads.parse('draft_rooms', answer)
-    check(problems == [] and fragment == answer and answer == saved, (fragment, problems))
+    expected = {**answer, 'rooms': [{**room, 'name': 'Room'}]}
+    check(problems == [] and fragment == expected and answer == saved, (fragment, problems))
     for bad in ({**wall, 'exterior': True}, {**wall, 'thickness': float('inf')}):
         fragment, problems = twin_reads.parse('draft_rooms', {'rooms': [room], 'walls': [bad, wall]})
-        check(problems and fragment == answer, ('invalid walls leave valid rooms and siblings intact',
+        check(problems and fragment == expected, ('invalid walls leave valid rooms and siblings intact',
                                                fragment, problems))
 
 
@@ -582,6 +583,39 @@ def test_small_output_cap_skips_to_fallback():
         twin_reads.OUTPUT_CAP.update(saved)
 
 
+# --- Task 11 fix 2 (task-11-fixes.md): rooms keep their printed names --------
+
+def test_parse_draft_rooms_blank_name_becomes_room():
+    rooms = [{'name': '', 'level': 'L1', 'polygon': [[0, 0], [10, 0], [10, 8], [0, 8]]},
+             {'name': 'BEDROOM 2', 'level': 'L2', 'polygon': [[0, 0], [12, 0], [12, 11], [0, 11]]},
+             {'name': 'KITCHEN', 'level': 'L1', 'polygon': [[10, 0], [20, 0], [20, 8], [10, 8]]}]
+    answer = {'rooms': copy.deepcopy(rooms), 'walls': []}
+    saved = copy.deepcopy(answer)
+    fragment, problems = twin_reads.parse('draft_rooms', answer)
+    check(problems == [], ('a blank room name is not a problem', problems))
+    check([r['name'] for r in fragment['rooms']] == ['Room', 'BEDROOM 2', 'KITCHEN'],
+          ('a blank name becomes "Room"; a printed name is kept as printed', [r['name'] for r in fragment['rooms']]))
+    check([r['polygon'] for r in fragment['rooms']] == [r['polygon'] for r in rooms], 'the polygons are kept')
+    check(answer == saved, 'parse does not mutate the reply')
+    # The household's recorded answer came back with every name blank.
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures', 'twin_reads', 'recorded',
+                        'claude', 'draft_rooms-main-house.json')
+    with open(path, encoding='utf-8') as f:
+        recorded = json.load(f)
+    check(recorded['rooms'] and all(r['name'] == '' for r in recorded['rooms']),
+          'test setup: the recorded main-house rooms are all unnamed')
+    fragment, problems = twin_reads.parse('draft_rooms', recorded)
+    check(len(fragment['rooms']) == len(recorded['rooms']) and all(r['name'] == 'Room' for r in fragment['rooms']),
+          ('every recorded blank name becomes "Room"', sorted({r['name'] for r in fragment['rooms']})))
+
+
+def test_draft_rooms_prompt_asks_names_as_printed():
+    prompt = twin_reads.PROMPTS['draft_rooms']
+    check('as printed' in prompt, 'the rooms prompt asks for each room name as printed on the plan')
+    check('"Room"' in prompt, 'the rooms prompt names "Room" for a room with nothing printed')
+    check('leave an unreadable name blank' not in prompt, 'the rooms prompt no longer asks for blank names')
+
+
 if __name__ == '__main__':
     failed = []
     for fn in (scenario_kinds_and_output_caps_are_pinned,
@@ -615,7 +649,9 @@ if __name__ == '__main__':
                test_parse_draft_rooms_shape,
                test_parse_draft_rooms_without_walls,
                test_draft_rooms_prompt_scope,
-               test_small_output_cap_skips_to_fallback):
+               test_small_output_cap_skips_to_fallback,
+               test_parse_draft_rooms_blank_name_becomes_room,
+               test_draft_rooms_prompt_asks_names_as_printed):
         try:
             fn()
         except Exception as exc:

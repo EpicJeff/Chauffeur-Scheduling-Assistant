@@ -974,7 +974,11 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None):
 
     walls = pieces('walls', 'wall')
     old_ids = [w.get('id') for w in draft.get('walls', [])]
-    house['walls'] = _merge_list(house['walls'], walls, 'wall', house, build, step, tombstones=tombstones)
+    # A rooms partition may continue inward from a short exterior jog. It
+    # must not replace that carrier or change the settled outside walls.
+    exterior = [w for w in house['walls'] if w.get('exterior')] if step['kind'] == 'draft_rooms' else []
+    existing = [w for w in house['walls'] if not w.get('exterior')] if exterior else house['walls']
+    house['walls'] = exterior + _merge_list(existing, walls, 'wall', house, build, step, tombstones=tombstones)
     wall_ids = dict(zip(old_ids, (w['id'] for w in walls)))
     rooms = pieces('rooms', 'room')
     house['rooms'] = _merge_list(house['rooms'], rooms, 'room', house, build, step, tombstones=tombstones)
@@ -1043,14 +1047,27 @@ def _check_draft(house):
     levels = sorted(house['levels'], key=lambda l: l['elevation'])
     first_failed = False
     for i, level in enumerate(levels):
-        walls = [w for w in house['walls'] if w['level'] == level['id'] and w.get('exterior')]
+        outline = level.get('outline', [])
+        level_walls = [w for w in house['walls'] if w['level'] == level['id']]
+        walls = [w for w in level_walls if w.get('exterior')]
+        # Boundary knee walls also close exterior-wall runs under the roof.
+        # A half storey may have only these runs, with gable ends left open.
+        knee_walls = [w for w in level_walls if not w.get('exterior')
+                      and outline and all(min(_nearest(p, a, b)[0]
+                          for a, b in zip(outline, outline[1:] + outline[:1])) <= .1 + 1e-6
+                          for p in boundary([w['from'], w['to']]))]
+        closing = walls + knee_walls
+        if level.get('half'):
+            walls = closing = level_walls
         open_walls = [w for w in walls if any(not any(
             other is not w and _nearest(p, other['from'], other['to'])[0] <= .1 + 1e-6
-            for other in walls) for p in (w['from'], w['to']))]
+            for other in closing) and not (level.get('half') and not w.get('exterior')
+                and any(math.dist(p, corner) <= .1 + 1e-6 for corner in outline))
+            for p in (w['from'], w['to']))]
         failing = open_walls
         why = ''
-        level_failed = not walls
-        if not walls or open_walls:
+        level_failed = not walls and not level.get('half')
+        if level_failed or open_walls:
             why = "This floor's exterior walls do not close."
         if i:
             below = levels[i - 1].get('outline', [])
@@ -1071,7 +1088,7 @@ def _check_draft(house):
             for wall in failing:
                 ghost(wall, why)
         if i == 0:
-            first_failed = not walls or all(w.get('state') == 'ghost' for w in walls)
+            first_failed = level_failed or (bool(walls) and all(w.get('state') == 'ghost' for w in walls))
     for section in house['roof']['sections']:
         bearing = [l for l in levels if l['elevation'] + .5 < section['plate']
                    <= l['elevation'] + l['ceiling'] + 2]
@@ -1114,6 +1131,32 @@ def _check_draft(house):
 def _check_draft_rooms(house, step):
     """Contain complete edges, including crossings of a concave outline."""
     outlines = {l['id']: l.get('outline', []) for l in house['levels']}
+    anchors = {lid: list(zip(poly, poly[1:] + poly[:1])) for lid, poly in outlines.items()}
+    wall_lines = {}
+    for wall in house['walls']:
+        if wall.get('exterior') and wall.get('state') != 'ghost':
+            wall_lines.setdefault(wall['level'], []).append((wall['from'], wall['to']))
+
+    def snap(point, lid):
+        candidates = []
+        for a, b in anchors.get(lid, []):
+            distance, along = _nearest(point, a, b)
+            length = math.dist(a, b)
+            target = [a[i] + (b[i] - a[i]) * along / length for i in (0, 1)] if length else list(a)
+            candidates.append((distance, target))
+        for a, b in wall_lines.get(lid, []):
+            length2 = sum((b[i] - a[i]) ** 2 for i in (0, 1))
+            if not length2 or _nearest(point, a, b)[0] > .5 + 1e-6:
+                continue
+            t = sum((point[i] - a[i]) * (b[i] - a[i]) for i in (0, 1)) / length2
+            target = [a[i] + t * (b[i] - a[i]) for i in (0, 1)]
+            # Use the nearby wall's line past a corner only into the floor.
+            # Clamping an interior vertex to that corner distorts shared
+            # room edges; extending outward would keep an overshoot outside.
+            if _inside(target, outlines.get(lid, [])):
+                candidates.append((math.dist(point, target), target))
+        nearest = min(candidates, key=lambda row: row[0], default=None)
+        return nearest[1] if nearest and nearest[0] <= .5 + 1e-6 else list(point)
 
     def cross(a, b):
         return a[0] * b[1] - a[1] * b[0]
@@ -1124,7 +1167,7 @@ def _check_draft_rooms(house, step):
         edges = list(zip(outline, outline[1:] + outline[:1]))
 
         def inside(p):
-            return _inside(p, outline) or any(_nearest(p, a, b)[0] <= 1e-6 for a, b in edges)
+            return _inside(p, outline) or any(_nearest(p, a, b)[0] <= .25 + 1e-6 for a, b in edges)
 
         if not all(inside(p) for p in points):
             return False
@@ -1150,6 +1193,11 @@ def _check_draft_rooms(house, step):
         for piece in house[key]:
             if piece.get('src', {}).get('step') != step['id'] or piece.get('src', {}).get('person'):
                 continue
+            if key == 'rooms':
+                piece['polygon'] = [snap(p, piece['level']) for p in piece['polygon']]
+            else:
+                for end in ('from', 'to'):
+                    piece[end] = snap(piece[end], piece['level'])
             points = (piece['polygon'] + piece['polygon'][:1] if key == 'rooms'
                       else [piece['from'], piece['to']])
             if not contained(points, outlines.get(piece['level'], [])):
@@ -1234,8 +1282,10 @@ def _start_draft_heartbeat(build, step, ticket, context, finished, mode):
                     if finished.is_set() or not _live(build, ticket):
                         return
                     name = context['building']['name']
+                    text = (f'Reading the rooms of the {name} drawings, ' if step['kind'] == 'draft_rooms'
+                            else f'Reading the {name} drawings {mode}, ')
                     _event(build, 'log', step=step['id'],
-                           text=f'Reading the {name} drawings {mode}, {elapsed // 60}:{elapsed % 60:02d} so far.')
+                           text=text + f'{elapsed // 60}:{elapsed % 60:02d} so far.')
                     _save(build)
                 due = elapsed + 15
             except Exception:
@@ -1472,8 +1522,18 @@ def _obtain(build, step, reader, ticket):
             context, sheets = progress['context'], progress['sheets']
         else:
             twin_cost.require_clear()
-            raw = (_read_draft(build, step, reader, ticket, images, context, sheets) if step['kind'] == 'draft'
-                   else reader(step['kind'], images, context, run=build['id'], step=step['id']))
+            if step['kind'] == 'draft':
+                raw = _read_draft(build, step, reader, ticket, images, context, sheets)
+            elif step['kind'] == 'draft_rooms':
+                finished = threading.Event()
+                pulse = _start_draft_heartbeat(build, step, ticket, context, finished, '')
+                try:
+                    raw = reader(step['kind'], images, context, run=build['id'], step=step['id'])
+                finally:
+                    finished.set()
+                    pulse.join()
+            else:
+                raw = reader(step['kind'], images, context, run=build['id'], step=step['id'])
         truncated = step['kind'] == 'draft' and isinstance(raw, dict) and raw.get('truncated')
         if isinstance(raw, dict) and raw.get('error') and not truncated:
             raise _ReadError(raw['error'])

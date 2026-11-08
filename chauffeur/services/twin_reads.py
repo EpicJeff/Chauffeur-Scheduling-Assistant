@@ -275,7 +275,8 @@ floor pages, given the settled building (levels, exterior walls and openings)
 in context. Keep its level ids, outlines and shared coordinate frame exactly.
 Return only {rooms:[{name,level,polygon:[[x,y],...]}],walls:[{id,level,
 from:[x,y],to:[x,y],height,thickness,exterior:false}]} in building feet.
-Use printed room labels; leave an unreadable name blank. Trace each room inside
+Give each room its name exactly as printed on the plan (e.g. BEDROOM 2,
+KITCHEN); use "Room" only when nothing is printed. Trace each room inside
 its level's outline, without overlapping other rooms, covering the enclosed
 floor area. Include interior partitions and knee walls, no exterior walls.
 Do not return or revise levels, exterior openings, roofs, porches or stairs.
@@ -553,6 +554,9 @@ def _parse_draft(kind, answer, v):
         out = v.fields(answer, kind, {'rooms': lambda x, p: v.items(x, p, room)},
                        {'walls': lambda x, p: v.items(x, p, wall)}) or {}
         out.setdefault('walls', [])
+        for item in out.get('rooms', []):
+            if not item['name'].strip():
+                item['name'] = 'Room'
         return out
 
     building_fields = {

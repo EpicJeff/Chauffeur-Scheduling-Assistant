@@ -78,9 +78,16 @@ def _walls_on_level(walls, lower, counts, pinned):
     ends = [(w, key) for w in walls for key in ('from', 'to')]
     points = [list(w[key]) for w, key in ends]
     corners = _Groups(len(ends))
+    # Keep existing joints as constraints, but only bridge genuinely open
+    # ends. Otherwise a short jog's two joined corners merge into one.
+    closed = {i for i, point in enumerate(points) if any(
+        ends[i][0] is not ends[j][0] and math.dist(point, other) <= .05 + _EPS
+        for j, other in enumerate(points))}
     pairs = sorted((math.dist(a, b), i, j) for i, a in enumerate(points)
                    for j, b in enumerate(points[:i])
-                   if ends[i][0] is not ends[j][0] and math.dist(a, b) <= 1 + _EPS)
+                   if ends[i][0] is not ends[j][0] and
+                   (math.dist(a, b) <= .05 + _EPS or
+                    (i not in closed and j not in closed and math.dist(a, b) <= 1 + _EPS)))
     for _, i, j in pairs:
         a, b = corners.owner[i], corners.owner[j]
         if a == b:
