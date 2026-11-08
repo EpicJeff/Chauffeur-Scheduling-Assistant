@@ -194,6 +194,86 @@ function gableEnds(sections, index) {
   return positions;
 }
 
+/** Vertical drops of the upper envelope, facing the lower roof. Free edges
+ * have no lower roof and are left to the roof shell. Convex exclusions use
+ * the same per-section convention as roofMesh (occupied upper floors). */
+export function stepFaces(sections, { section: only = null, exclude = [], wallCover = () => [] } = {}) {
+  const rects = sections.map(bounds), allPlanes = sections.map(planes), positions = [];
+  sections.forEach((section, index) => {
+    if (only !== null && only !== index) return;
+    const rect = rects[index];
+    for (let axis = 0; axis < 2; axis++) for (const sign of [-1, 1]) {
+      // Rake ends are closed at the wall line by gableEnds, beneath their
+      // overhang. Do not put another gable out at the roof's outer edge.
+      if (section.kind === 'gable' && axis === (section.ridge === 'y' ? 1 : 0)) continue;
+      const along = 1 - axis, end = rect[axis + (sign > 0 ? 2 : 0)];
+      const lo = rect[along], hi = rect[along + 2];
+      const xy = u => axis === 0 ? [end, u] : [u, end];
+      // On each interval every covering side-plane and envelope winner is
+      // fixed. Include all plane exchanges, not just the section corners.
+      const lines = allPlanes.flat().map(p => [p[along], p[axis] * end + p[2]]);
+      const cuts = [lo, hi, ...rects.flatMap(r => [r[along], r[along + 2]])];
+      for (let i = 0; i < lines.length; i++) for (let j = 0; j < i; j++) {
+        const slope = lines[i][0] - lines[j][0];
+        if (Math.abs(slope) > EPS) cuts.push((lines[j][1] - lines[i][1]) / slope);
+      }
+      const sorted = [...new Set(cuts.filter(u => u >= lo && u <= hi))].sort((a, b) => a - b);
+      const winner = (u, outward) => {
+        let best = null;
+        rects.forEach((r, j) => {
+          if (u <= r[along] || u >= r[along + 2] || end < r[axis] || end > r[axis + 2]) return;
+          const direction = outward ? sign : -sign;
+          if ((direction < 0 && end <= r[axis]) || (direction > 0 && end >= r[axis + 2])) return;
+          const z = Math.min(...allPlanes[j].map(p => valueAt(p, ...xy(u))));
+          if (!best || z > best.z + EPS) best = { index: j, z };
+        });
+        return best;
+      };
+      for (let i = 0; i + 1 < sorted.length; i++) {
+        let a = sorted[i], b = sorted[i + 1];
+        if (b - a < EPS) continue;
+        const mid = (a + b) / 2, upper = winner(mid, false), lower = winner(mid, true);
+        if (upper?.index !== index || !lower) continue;
+        const height = (j, u) => Math.min(...allPlanes[j].map(p => valueAt(p, ...xy(u))));
+        const gap = u => height(index, u) - height(lower.index, u);
+        // Retain only the portion whose drop exceeds the step tolerance.
+        const ga = gap(a), gb = gap(b);
+        if (Math.max(ga, gb) <= 0.05) continue;
+        if (ga < 0.05) a += (b - a) * (0.05 - ga) / (gb - ga);
+        else if (gb < 0.05) b = a + (b - a) * (ga - 0.05) / (ga - gb);
+        let pieces = [[[a, height(lower.index, a)], [b, height(lower.index, b)],
+          [b, height(index, b)], [a, height(index, a)]]];
+        for (const cutter of exclude[index] || []) {
+          // Restrict the plan cutter to this vertical boundary plane.
+          const lines = insideEdges(cutter).map(p => [p[along], 0, p[axis] * end + p[2]]);
+          pieces = pieces.flatMap(piece => {
+            let overlap = piece;
+            for (const line of lines) overlap = clip(overlap, line);
+            return subtract(piece, overlap);
+          });
+        }
+        // Existing supporting walls (including their windows) own these
+        // spans. Their overhang stays open below the soffit, not curtained
+        // off by siding projected forward from the wall.
+        for (const cutter of wallCover(index, axis, sign, end)) {
+          pieces = pieces.flatMap(piece => subtract(piece, cutter));
+        }
+        for (const piece of pieces) {
+          const local = [];
+          triangulate(piece, ([u, z]) => [...xy(u), z], local);
+          const reverse = axis === 0 ? sign < 0 : sign > 0;
+          for (let t = 0; t < local.length; t += 9) {
+            positions.push(...local.slice(t, t + 3),
+              ...local.slice(t + (reverse ? 6 : 3), t + (reverse ? 9 : 6)),
+              ...local.slice(t + (reverse ? 3 : 6), t + (reverse ? 6 : 9)));
+          }
+        }
+      }
+    }
+  });
+  return new Float32Array(positions);
+}
+
 /** Upper envelope and gable ends; optionally retain lower roofs and subtract
  * per-section convex plan polygons (occupied upper floors in the scene). */
 export function roofMesh(sections, { retainLower = false, exclude = [] } = {}) {
