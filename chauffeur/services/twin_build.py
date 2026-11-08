@@ -196,58 +196,107 @@ def start(inputs, *, reader=None, inline=False):
         inputs = deepcopy(inputs)
         # Chaining and composition are engine decisions, never caller options.
         inputs.update(compose=True, then=[])
-        inputs.pop('shell', None)
-        part = inputs.get('part')
-        place = twin_store.place() if part is not None else None
-        pages = twin_store.page_roles()
-        plot = [r for r in pages if r['role'] == 'plot'
-                and (part is None or r.get('building') == 'lot')]
-        placement = None
-        if part == 'lot':
-            inputs.pop('building', None)
-            inputs['photos'] = []
-            roles = []
-            if not plot:
-                raise ValueError('Add a plot plan to the lot first.')
-            candidate = place['lot'].get('placement') or {}
-            if candidate.get('confirmed') and all(candidate.get(k) == plot[0].get(k) for k in ('source', 'page', 'box')):
-                placement = deepcopy(candidate)
-        else:
-            if part is not None:
-                part_building = next((b for b in place['buildings'] if b['id'] == part), None)
-                if part_building is None:
-                    raise ValueError('Choose a building in your place.')
-                inputs['building'] = {k: part_building[k] for k in ('id', 'name', 'kind')}
-                inputs['photos'] = twin_store.photos_for(part)
-            building = inputs['building']
-            if not re.fullmatch(r'[A-Za-z0-9_.:-]{1,64}', building['id']):
-                raise ValueError('A building needs a valid id.')
-            roles = [r for r in pages if r.get('building', 'house') == building['id']]
-            if not any(r['role'] == 'floor' for r in roles):
-                if part is None:
-                    raise ValueError('Confirm floor page roles for this building before building.')
-                inputs['shell'] = twin_place.shell_building(part_building, 'shell')
-        photos = {s['id'] for s in twin_store.sources() if s['kind'] == 'photo'}
-        photo_ids = inputs.get('photos', [])
-        if (not isinstance(photo_ids, list)
-                or any(not isinstance(source, str) or source not in photos for source in photo_ids)):
-            raise ValueError('Every photo id must name an existing photo source.')
-        bid = uuid.uuid4().hex
-        current = twin_store.current()
-        has_lot = bool((current or {}).get('site', {}).get('lot')
-                       or (place and ((place['lot'].get('placement') or {}).get('outline')
-                                      or (place['lot'].get('read') or {}).get('lot'))))
-        build = {'id': bid, 'inputs': deepcopy(inputs), 'generation': twin_store.generation(),
-                 'state': 'running', 'steps': plan_steps(roles, inputs.get('photos', []), plot,
-                     part=part, placement=placement, has_lot=has_lot, compose=inputs['compose']),
-                 'placement': placement, 'next': None,
-                 'events': [], 'seq': 0, 'pause': None, 'cost': 0,
-                 'existing': bool(part != 'lot' and current
-                                  and any(b['id'] == building['id'] for b in current['buildings']))}
-        _BUILDS[bid] = build
+        skipped = []
+        if inputs.get('part') == 'place':
+            place = twin_store.place()
+            pages = twin_store.page_roles()
+            parts = ['lot'] if any(r['role'] == 'plot' and r.get('building') == 'lot'
+                                  for r in pages) else []
+            drawings, shells = [], []
+            for building in place['buildings']:
+                if any(r['role'] == 'floor' and r.get('building') == building['id'] for r in pages):
+                    drawings.append(building['id'])
+                elif building.get('footprint'):
+                    shells.append(building['id'])
+                else:
+                    skipped.append(f"Skipped {building['name']}: it has no footprint yet.")
+            parts.extend(drawings + shells)
+            if not parts:
+                raise ValueError('Add a building with drawings or a footprint first.')
+            inputs.update(part=parts[0], then=parts[1:], compose=len(parts) == 1)
+        build = _create(inputs)
+        for message in skipped:
+            _event(build, 'log', text=message)
         ticket = _launch(build, reader, inline)
     _dispatch(build, ticket, reader, inline)
-    return bid
+    return build['id']
+
+
+def _create(inputs):
+    """Create one part under LIFECYCLE then _LOCK; caller saves and dispatches."""
+    inputs = deepcopy(inputs)
+    inputs.pop('shell', None)
+    part = inputs.get('part')
+    place = twin_store.place() if part is not None else None
+    pages = twin_store.page_roles()
+    plot = [r for r in pages if r['role'] == 'plot'
+            and (part is None or r.get('building') == 'lot')]
+    placement = None
+    if part == 'lot':
+        inputs.pop('building', None)
+        inputs['photos'] = []
+        roles = []
+        if not plot:
+            raise ValueError('Add a plot plan to the lot first.')
+        candidate = place['lot'].get('placement') or {}
+        if candidate.get('confirmed') and all(candidate.get(k) == plot[0].get(k) for k in ('source', 'page', 'box')):
+            placement = deepcopy(candidate)
+    else:
+        if part is not None:
+            part_building = next((b for b in place['buildings'] if b['id'] == part), None)
+            if part_building is None:
+                raise ValueError('Choose a building in your place.')
+            inputs['building'] = {k: part_building[k] for k in ('id', 'name', 'kind')}
+            inputs['photos'] = twin_store.photos_for(part)
+        building = inputs['building']
+        if not re.fullmatch(r'[A-Za-z0-9_.:-]{1,64}', building['id']):
+            raise ValueError('A building needs a valid id.')
+        roles = [r for r in pages if r.get('building', 'house') == building['id']]
+        if not any(r['role'] == 'floor' for r in roles):
+            if part is None:
+                raise ValueError('Confirm floor page roles for this building before building.')
+            inputs['shell'] = twin_place.shell_building(part_building, 'shell')
+    photos = {s['id'] for s in twin_store.sources() if s['kind'] == 'photo'}
+    photo_ids = inputs.get('photos', [])
+    if (not isinstance(photo_ids, list)
+            or any(not isinstance(source, str) or source not in photos for source in photo_ids)):
+        raise ValueError('Every photo id must name an existing photo source.')
+    bid = uuid.uuid4().hex
+    current = twin_store.current()
+    has_lot = bool((current or {}).get('site', {}).get('lot')
+                   or (place and ((place['lot'].get('placement') or {}).get('outline')
+                                  or (place['lot'].get('read') or {}).get('lot'))))
+    build = {'id': bid, 'inputs': deepcopy(inputs), 'generation': twin_store.generation(),
+             'state': 'running', 'steps': plan_steps(roles, inputs.get('photos', []), plot,
+                 part=part, placement=placement, has_lot=has_lot, compose=inputs['compose']),
+             'placement': placement, 'next': None,
+             'events': [], 'seq': 0, 'pause': None, 'cost': 0,
+             'existing': bool(part != 'lot' and current
+                              and any(b['id'] == building['id'] for b in current['buildings']))}
+    _BUILDS[bid] = build
+    return build
+
+
+def _chain(build):
+    """Save a stopped successor and its handoff while both locks are held.
+
+    The reverse link lets recovery reuse a successor saved just before a crash
+    that prevented saving its predecessor's next pointer.
+    """
+    if (build['generation'] != twin_store.generation() or build['state'] != 'done'
+            or build.get('next') or not build['inputs'].get('then')):
+        return None
+    remaining = build['inputs']['then']
+    successor = next((b for b in _BUILDS.values()
+                      if b.get('previous') == build['id'] and b['generation'] == build['generation']), None)
+    if successor is None:
+        successor = _create({'part': remaining[0], 'then': remaining[1:], 'compose': len(remaining) == 1})
+        successor.update(state='stopped', previous=build['id'])
+        _save(successor)
+    build['next'] = successor['id']
+    _event(build, 'next', id=successor['id'])
+    _save(build)
+    return successor
 
 
 def stop(build_id):
@@ -278,6 +327,7 @@ def resume(build_id, *, reader=None, inline=None):
 
 def recover():
     with twin_store.LIFECYCLE, _LOCK:
+        recovered = []
         for path in (Path(twin_store.DATA_DIR) / 'builds').glob('*/state.json'):
             try:
                 build = _get(path.parent.name)
@@ -295,12 +345,20 @@ def recover():
                 if build['state'] == 'running':
                     build['state'] = 'stopped'
                     _save(build)
+                recovered.append(build)
             except twin_store.StaleGeneration:
                 continue
             except (ValueError, KeyError, TypeError, OSError):
                 _BUILDS.pop(path.parent.name, None)
                 logger.warning('Skipping unreadable twin build %s', path.parent.name, exc_info=True)
                 continue
+        # Load every saved successor before reconciling a missing forward link.
+        # Recovered successors wait for Resume rather than starting paid reads.
+        for build in recovered:
+            try:
+                _chain(build)
+            except (ValueError, KeyError, TypeError, OSError):
+                logger.warning('Could not recover twin build chain %s', build['id'], exc_info=True)
 
 
 def _forget():
@@ -1243,11 +1301,16 @@ def _run(build, ticket, reader):
                     return
                 step = next((s for s in build['steps'] if s['status'] != 'done'), None)
                 if step is None:
+                    first_done = not any(e['type'] == 'done' for e in build['events'])
                     build['state'] = 'done'
                     _event(build, 'done')
                     _save(build)
                     _idle(build, ticket)
-                    return
+                    successor = _chain(build) if first_done else None
+                    if successor is not None:
+                        inline = _WORKERS[build['id']]['inline']
+                        next_ticket = _launch(successor, reader, inline)
+                    break
                 step['status'] = 'running'
                 _event(build, 'stage', step=step['id'], label=step['label'])
                 _save(build)
@@ -1269,6 +1332,8 @@ def _run(build, ticket, reader):
                 _settle(build, step, result)
                 step['status'] = 'done'
                 _save(build)
+        if successor is not None:
+            _dispatch(successor, next_ticket, reader, inline)
     except twin_store.StaleGeneration:
         return
     except twin_cost.CheckpointReached as exc:

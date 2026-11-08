@@ -7684,7 +7684,12 @@ def house_editor_sheet_image(source_id: str, page: int):
 @app.post('/api/house/editor/build')
 def house_editor_build(body: dict = Body(default={})):
     from services import twin_build, twin_cost
-    if not isinstance(body.get('building'), dict) or not isinstance(body['building'].get('id'), str):
+    if 'part' in body:
+        if not isinstance(body['part'], str):
+            raise HTTPException(status_code=400, detail='Choose what to build.')
+    elif 'building' not in body:
+        raise HTTPException(status_code=400, detail='Choose what to build.')
+    elif not isinstance(body['building'], dict) or not isinstance(body['building'].get('id'), str):
         raise HTTPException(status_code=400, detail='A building needs a valid id.')
     if not isinstance(body.get('photos', []), list) or any(
             not isinstance(source, str) for source in body.get('photos', [])):

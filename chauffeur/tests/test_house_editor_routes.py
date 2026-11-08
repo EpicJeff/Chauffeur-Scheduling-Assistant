@@ -699,6 +699,54 @@ def scenario_plot_routes():
         storage.patch_settings(saved)
 
 
+def scenario_build_part_route():
+    # Slice 1b-i Task 6: the build route takes {part}, a string; the legacy
+    # {building, photos} body still builds; a body with neither is refused.
+    _fresh()
+    _setup()
+    reader = engine_tests.Reader()
+    c = _client()
+    build = '/api/house/editor/build'
+
+    def status(bid):
+        return c.get(f'{build}/{bid}', headers=PARENT).json()
+
+    with _enforced(), patch.object(twin_reads, 'read', reader):
+        r = c.post(build, headers=PARENT, json={})
+        check(r.status_code == 400 and r.json()['detail'] == 'Choose what to build.', r.text)
+        r = c.post(build, headers=PARENT, json={'part': 5})
+        check(r.status_code == 400, ('a part is a string', r.status_code, r.text))
+        r = c.post(build, headers=PARENT, json={'part': 'place'})
+        check(r.status_code == 400 and r.json()['detail'] == 'Add a building with drawings or a footprint first.',
+              r.text)
+        check(tb.latest() is None and reader.calls == [], 'a refused build starts nothing')
+
+        ts.add_building('Shed', 'shed')
+        ts.update_building('shed', {'footprint': [[0, 0], [10, 0], [10, 12], [0, 12]], 'footprint_from': 'typed'})
+        r = c.post(build, headers=PARENT, json={'part': 'place'})
+        check(r.status_code == 200 and isinstance(r.json().get('id'), str), r.text)
+        bid = r.json()['id']
+        st = _wait(lambda: status(bid), lambda s: s['state'] != 'running')
+        check(st['state'] == 'done' and st['part'] == 'shed' and st['next'] is None,
+              ('the whole place is the shed', st['state'], st.get('part'), st.get('next')))
+        r = c.post(build, headers=PARENT, json={'part': 'shed'})
+        check(r.status_code == 200 and isinstance(r.json().get('id'), str), r.text)
+        one = r.json()['id']
+        st = _wait(lambda: status(one), lambda s: s['state'] != 'running')
+        check(st['state'] == 'done' and st['part'] == 'shed', (st['state'], st.get('part')))
+        check(reader.calls == [], ('a shell is never read', reader.calls))
+
+        sheets = ts.save_source('drawing', 'house.pdf', engine_tests._pdf(1))     # no part: Main house
+        ts.set_page_roles([{'source': sheets, 'page': 1, 'role': 'floor', 'level': 'Main floor', 'box': None,
+                            'building': 'house'}])
+        r = c.post(build, headers=PARENT, json={'building': {'id': 'house', 'name': 'Main house'}, 'photos': []})
+        check(r.status_code == 200 and isinstance(r.json().get('id'), str), ('the legacy body still builds', r.text))
+        legacy = r.json()['id']
+        st = _wait(lambda: status(legacy), lambda s: s['state'] == 'paused')
+        check(st['state'] == 'paused' and st['pause']['step'] == 'outline:L1', (st['state'], st.get('pause')))
+        check(c.post(f'{build}/{legacy}/stop', headers=PARENT, json={}).status_code == 200, 'stop')
+
+
 if __name__ == '__main__':
     failed = []
     for fn in (scenario_every_editor_route_is_parents_only,
@@ -719,7 +767,8 @@ if __name__ == '__main__':
                scenario_move_region_route,
                scenario_suggest_null_elsewhere,
                scenario_suggest_hint,
-               scenario_plot_routes):
+               scenario_plot_routes,
+               scenario_build_part_route):
         try:
             fn()
         except Exception as exc:
