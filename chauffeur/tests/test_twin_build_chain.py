@@ -67,7 +67,7 @@ class ThreadReader(PartReader):
         self.fail_at = fail_at
 
     def __call__(self, kind, images, context, *, run, step):
-        self.threads.append(threading.get_ident())
+        self.threads.append((kind, threading.get_ident()))
         if step == self.fail_at:
             self.calls.append({'kind': kind, 'step': step, 'context': {}, 'images': len(images)})
             raise RuntimeError('a bug, not a read error')
@@ -154,7 +154,9 @@ def scenario_place_chain_order():
     check(st['state'] == 'paused' and st['part'] == 'house' and st['pause']['step'] == 'fit',
           ('an inline chain runs its successor inline, to its first pause', _trouble(st), st['part']))
     check(st['next'] is None, ('a paused build has no successor yet', st['next']))
-    check(reader.threads and set(reader.threads) == {main}, ('every read of an inline chain is inline', reader.threads))
+    check(any(kind == 'outline' for kind, _ in reader.threads)
+          and all(thread != main if kind == 'outline' else thread == main for kind, thread in reader.threads),
+          ('only the outline read runs on a side thread in an inline chain', reader.threads))
 
     st = _accept_all(house)
     check(st['state'] == 'done', _trouble(st))
@@ -164,7 +166,8 @@ def scenario_place_chain_order():
     check(st['state'] == 'done' and st['part'] == 'shed', ('the shell ran inline to done', _trouble(st), st['part']))
     check(st['next'] is None, ('the last build has no successor', st['next']))
     check(_saved_builds() == sorted([lot, house, shed]), ('three builds in turn', _saved_builds()))
-    check(set(reader.threads) == {main}, reader.threads)
+    check(all(thread != main if kind == 'outline' else thread == main for kind, thread in reader.threads),
+          reader.threads)
 
     chain = [lot, house, shed]
     check([tb.status(b)['part'] for b in chain] == ['lot', 'house', 'shed'], [tb.status(b)['part'] for b in chain])

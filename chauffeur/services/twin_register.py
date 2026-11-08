@@ -60,6 +60,25 @@ def from_two_points(a_px, b_px, a_ft, b_ft) -> dict:
     return make(scale, angle, origin_px=a_px, offset=a_ft)
 
 
+def from_points(px: list, ft: list) -> tuple[dict, float]:
+    """Least-squares similarity fit, with sheet y flipped and RMS in feet."""
+    if len(px) != len(ft) or len(px) < 2:
+        raise ValueError('At least two corresponding point pairs are needed')
+    if any(len(p) != 2 or not all(math.isfinite(v) for v in p) for p in [*px, *ft]):
+        raise ValueError('Points must have two finite coordinates')
+    origin, offset = _centroid(px), _centroid(ft)
+    sheet = [(p[0] - origin[0], origin[1] - p[1]) for p in px]
+    feet = [(p[0] - offset[0], p[1] - offset[1]) for p in ft]
+    spread = math.fsum(x * x + y * y for x, y in sheet)
+    if spread <= 0:
+        raise ValueError('Sheet points must be distinct')
+    a = math.fsum(x * u + y * v for (x, y), (u, v) in zip(sheet, feet)) / spread
+    b = math.fsum(x * v - y * u for (x, y), (u, v) in zip(sheet, feet)) / spread
+    reg = make(math.hypot(a, b), math.degrees(math.atan2(b, a)), origin, offset)
+    rms = math.sqrt(math.fsum(math.dist(apply(reg, p), q) ** 2 for p, q in zip(px, ft)) / len(px))
+    return reg, rms
+
+
 def _centroid(points):
     return [sum(p[axis] for p in points) / len(points) for axis in (0, 1)]
 

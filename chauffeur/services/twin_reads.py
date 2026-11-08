@@ -768,8 +768,11 @@ def _usable(kind, fragment, problems):
     return any(key in fragment and (fragment[key] or not problems) for key in keys)
 
 
-def read(kind, images, context, *, run, step):
-    """Meter every request; only legacy crop reads retry a truncated reply."""
+def read(kind, images, context, *, run, step, checkpoint_checked=False):
+    """Meter every request; only legacy crop reads retry a truncated reply.
+
+    A paired draft's caller may check the checkpoint once for both reads.
+    """
     if not isinstance(kind, str) or kind not in KINDS:
         return {'error': 'Unknown twin read kind.'}
     try:
@@ -796,7 +799,8 @@ def read(kind, images, context, *, run, step):
     truncated = False
     for attempt in range(1 if draft else 2):
         usage, provider_usage = [], []
-        twin_cost.require_clear()
+        if not checkpoint_checked:
+            twin_cost.require_clear()
         try:
             # HTTP-attempt rows preserve refusal status; keep the compatibility
             # fallback for mocked/older providers. Each attempt is charged once.

@@ -70,7 +70,9 @@ def test_checks_follow_snap_and_reread_invalidates_rooms():
     again = DraftReader()
     tb.reread(build, 'draft', reader=again, inline=True)
     check(tb.status(build)['state'] == 'done', tb.status(build)['pause'])
-    check(_read_kinds(again) == ['draft', 'draft_rooms'], _read_kinds(again))
+    check(_read_kinds(again).count('outline') == 1
+          and [kind for kind in _read_kinds(again) if kind != 'outline'] == ['draft', 'draft_rooms'],
+          _read_kinds(again))
 
 
 def test_empty_reread_cannot_settle_the_previous_building():
@@ -80,7 +82,9 @@ def test_empty_reread_cannot_settle_the_previous_building():
     reader = DraftReader(answer={'building': {'levels': []}})
     tb.reread(build, 'draft', reader=reader, inline=True)
     check(tb.status(build)['state'] == 'paused', tb.status(build)['pause'])
-    check(_read_kinds(reader) == ['draft'], _read_kinds(reader))
+    check(_read_kinds(reader).count('outline') == 1
+          and [kind for kind in _read_kinds(reader) if kind != 'outline'] == ['draft'],
+          _read_kinds(reader))
 
 
 def test_page_level_mapping_controls_names():

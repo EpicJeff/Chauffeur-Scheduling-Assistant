@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import tempfile
 import threading
+import time
 from urllib.parse import quote
 import uuid
 
@@ -23,6 +24,7 @@ _BUILDS = {}
 _WORKERS = {}
 _ACTIVE = ('running', 'paused', 'checkpoint')
 _FULL = [0, 0, 1, 1]
+_clock = time.monotonic
 logger = logging.getLogger(__name__)
 _LABELS = {'roof': 'Roof sections', 'pitch': 'Roof slopes', 'plot': 'Lot',
            'draft': 'Reading the drawings', 'draft_rooms': 'Rooms',
@@ -955,7 +957,7 @@ def _pause_draft(build, step):
     _event(build, 'question', step=step['id'], text=build['pause']['why'])
 
 
-def _images_context(build, step):
+def _images_context(build, step, sheets=None):
     context = {'level': step['level'],
                'box': deepcopy(step['box'] or _FULL)}
     if 'building' in build['inputs']:
@@ -964,6 +966,9 @@ def _images_context(build, step):
         images, pages = [], []
         for row in _draft_pages(build, floors_only=step['kind'] == 'draft_rooms'):
             crop = twin_store.crop(row['source'], row['page'], row.get('box') or _FULL, max_side=2576)
+            if sheets is not None:
+                sheets.append({**deepcopy(row), 'image': len(images),
+                               'crop': {k: crop[k] for k in ('box', 'size', 'master')}})
             pages.append({'image': len(images), 'role': row['role'], 'level_name': row.get('level')})
             images.append({'mime': crop['mime'], 'b64': crop['b64']})
         context['pages'] = pages
@@ -1008,6 +1013,92 @@ def _images_context(build, step):
     return [{'mime': crop['mime'], 'b64': crop['b64']}], context, {k: crop[k] for k in ('box', 'size', 'master')}
 
 
+def _read_draft(build, step, reader, ticket, images, context, sheets):
+    """Run the paid pair together; only the draft can publish plan geometry."""
+    finished = threading.Event()
+    clock = _clock
+
+    def read(kind, read_images, read_context):
+        options = {'checkpoint_checked': True} if reader is twin_reads.read else {}
+        return reader(kind, read_images, read_context, run=build['id'], step=step['id'], **options)
+
+    def outline():
+        try:
+            sheet = next(s for s in sheets if s['role'] == 'floor')
+            crop = sheet['crop']
+            raw = read('outline', [images[sheet['image']]],
+                       {'level': 'L1', 'box': crop['box'], 'building': context['building']})
+            if isinstance(raw, dict) and raw.get('error'):
+                return
+            fragment, _ = twin_reads.parse('outline', raw)
+            reg, _ = _registration(build, _step('outline', sheet, 'L1'),
+                                   {'fragment': fragment, 'crop': crop}, None)
+            points = [_map(crop, reg, p) for p in fragment['outline']]
+            with twin_store.LIFECYCLE, _LOCK:
+                if not finished.is_set() and _live(build, ticket):
+                    for i, (a, b) in enumerate(zip(points, points[1:] + points[:1])):
+                        _ghost(build, step, {'id': f'draft-outline:{i}', 'level': 'L1', 'from': a, 'to': b,
+                                             'outline': points},
+                               'First look at the outline while the drawings are read.')
+                    _save(build)
+        except Exception:
+            # A first look is disposable, including unusable geometry.
+            pass
+        finally:
+            with twin_store.LIFECYCLE, _LOCK:
+                if (_BUILDS.get(build['id']) is build
+                        and build['generation'] == twin_store.generation()
+                        and _WORKERS.get(build['id'], {}).get('ticket') == ticket):
+                    _spend(build)
+                    _save(build)
+
+    def heartbeat(started):
+        due = 15
+        while not finished.wait(0.1):
+            elapsed = max(0, int(clock() - started))
+            if elapsed < due:
+                continue
+            with twin_store.LIFECYCLE, _LOCK:
+                if finished.is_set() or not _live(build, ticket):
+                    return
+                name = context['building']['name']
+                _event(build, 'log', step=step['id'],
+                       text=f'Reading the {name} drawings as one set, {elapsed // 60}:{elapsed % 60:02d} so far.')
+                _save(build)
+            due = elapsed + 15
+
+    threading.Thread(target=outline, daemon=True, name=f"twin-outline-{build['id'][:8]}").start()
+    pulse = threading.Thread(target=heartbeat, args=(clock(),), daemon=True,
+                             name=f"twin-heartbeat-{build['id'][:8]}")
+    pulse.start()
+    try:
+        return read('draft', images, context)
+    finally:
+        finished.set()
+        pulse.join()
+
+
+def _register_draft(result):
+    """Fit each drawn floor's sheet to the same remapped levels as the draft."""
+    fragment = result['fragment']
+    levels = sorted(fragment['building'].get('levels', []), key=lambda l: l['elevation'])
+    remap = {level['id']: f'L{i + 1}' for i, level in enumerate(levels)}
+    sheets = {s['image']: s for s in result.get('sheets', []) if s['role'] == 'floor'}
+    for page in fragment.get('pages', []):
+        sheet = sheets.get(page['image'])
+        level = remap.get(page['level'])
+        if sheet is None or level is None:
+            continue
+        anchors = page['anchors']
+        try:
+            reg, _ = twin_register.from_points(
+                [twin_store.crop_to_master(sheet['crop'], a['px']) for a in anchors],
+                [a['at'] for a in anchors])
+        except ValueError:
+            continue
+        twin_store.set_registration(sheet['source'], sheet['page'], level, reg)
+
+
 def _obtain(build, step, reader, ticket):
     path = _cache_path(build, step)
     if path.is_file():
@@ -1030,9 +1121,15 @@ def _obtain(build, step, reader, ticket):
     elif step['kind'] == 'fit':
         result = {'fragment': _building_fit(build), 'problems': []}
     else:
-        images, context, crop = _images_context(build, step)
+        sheets = []
+        images, context, crop = _images_context(build, step, sheets)
+        if step['kind'] == 'draft':
+            with twin_store.LIFECYCLE, _LOCK:
+                step['estimate'] = twin_cost.estimate('draft', len(images)) + twin_cost.estimate('outline', 1)
+                _save(build)
         twin_cost.require_clear()
-        raw = reader(step['kind'], images, context, run=build['id'], step=step['id'])
+        raw = (_read_draft(build, step, reader, ticket, images, context, sheets) if step['kind'] == 'draft'
+               else reader(step['kind'], images, context, run=build['id'], step=step['id']))
         if isinstance(raw, dict) and raw.get('error'):
             raise _ReadError(raw['error'])
         fragment, problems = twin_reads.parse(step['kind'], raw)
@@ -1042,6 +1139,8 @@ def _obtain(build, step, reader, ticket):
                   'error': raw.get('error') if isinstance(raw, dict) else None}
         if step['kind'] in ('draft', 'draft_rooms'):
             result['context'] = context
+        if step['kind'] == 'draft':
+            result['sheets'] = sheets
         if step['kind'] == 'walls' and isinstance(raw, dict) and isinstance(raw.get('walls'), list):
             result['wall_count'] = len(raw['walls'])
     with twin_store.LIFECYCLE, _LOCK:
@@ -1585,6 +1684,8 @@ def _settle(build, step, result, decision=None):
     twin_store.update_current(mutate, kind='build', step={'id': step['id'], 'label': step['label']},
                               generation=build['generation'], cost=build['cost'],
                               state_mutator=publish_lot if lot_state is not None else None)
+    if kind == 'draft':
+        _register_draft(result)
     if kind in ('outline', 'registration', 'plot') and not is_lot:
         reg = decision.get('registration', build['pause']['registration']) if kind != 'plot' else build['pause']['registration']
         twin_store.set_registration(step['source'], step['page'], step['level'], reg)

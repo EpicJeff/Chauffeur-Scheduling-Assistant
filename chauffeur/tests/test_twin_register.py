@@ -9,6 +9,7 @@ Run from chauffeur/:  python tests/test_twin_register.py
 import math
 import os
 import sys
+import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -161,7 +162,51 @@ def scenario_fit_outline_is_fast_on_dense_outlines():
     check(took < 3.0, f'{took:.1f} s')
 
 
+def test_from_points_exact():
+    # Task 8 (plan 2026-11-08-house-editor-whole-building-draft): a page's
+    # registration fitted from its anchors, a least-squares similarity fit.
+    truth = twin_register.make(0.05, angle=30, origin_px=(120, 340), offset=(12, -3))
+    px = [(200, 400), (900, 120), (500, 800)]
+    ft = [twin_register.apply(truth, p) for p in px]
+    out = twin_register.from_points(px, ft)
+    check(isinstance(out, tuple) and len(out) == 2, ('returns (registration, rms)', out))
+    reg, rms = out
+    check(set(reg) == {'scale', 'angle', 'origin_px', 'offset'}, sorted(reg))
+    check(rms < 1e-6, ('three exact pairs fit exactly', rms))
+    check(abs(reg['scale'] - 0.05) < 1e-9, reg)
+    for p in [(0, 0), (1000, 1000), (333, 77), *px]:
+        check(close(twin_register.apply(reg, p), twin_register.apply(truth, p), 1e-6), (p, reg))
+    # Sheet y is flipped as in apply: up the sheet is toward the rear.
+    flat = [(100, 500), (300, 500), (100, 300)]
+    reg, rms = twin_register.from_points(flat, [[0, 0], [10, 0], [0, 10]])
+    check(rms < 1e-6 and abs(reg['scale'] - 0.05) < 1e-9, (reg, rms))
+    check(close(twin_register.apply(reg, (300, 300)), [10, 10], 1e-6), twin_register.apply(reg, (300, 300)))
+    # Least squares: one anchor off by a foot gives a small, honest rms in feet.
+    px4 = [(200, 400), (900, 120), (500, 800), (850, 760)]
+    ft4 = [twin_register.apply(truth, p) for p in px4]
+    ft4[3] = [ft4[3][0] + 1.0, ft4[3][1]]
+    reg, rms = twin_register.from_points(px4, ft4)
+    check(0.1 < rms < 1.0, ('a one-foot slip shows in the rms', rms))
+    check(close(twin_register.apply(reg, (500, 500)), twin_register.apply(truth, (500, 500)), 1.0), reg)
+
+
+def test_from_points_needs_two():
+    check(callable(getattr(twin_register, 'from_points', None)), 'twin_register.from_points exists')
+    expect_value_error(lambda: twin_register.from_points([], []))
+    expect_value_error(lambda: twin_register.from_points([(10, 10)], [[0, 0]]))
+    expect_value_error(lambda: twin_register.from_points([(5, 5), (5, 5)], [[0, 0], [10, 0]]))
+    expect_value_error(lambda: twin_register.from_points([(5, 5), (5, 5), (5, 5)], [[0, 0], [10, 0], [0, 10]]))
+    # Two distinct pairs are enough, and agree with from_two_points.
+    a, b = (200, 400), (900, 120)
+    reg, rms = twin_register.from_points([a, b], [[3, 4], [40, 9]])
+    two = twin_register.from_two_points(a, b, [3, 4], [40, 9])
+    check(rms < 1e-6, rms)
+    for p in [(0, 0), (1000, 1000), (333, 77)]:
+        check(close(twin_register.apply(reg, p), twin_register.apply(two, p), 1e-6), p)
+
+
 if __name__ == '__main__':
+    failed = []
     for fn in (scenario_apply_flips_sheet_y,
                scenario_rotation_is_counterclockwise,
                scenario_scale_from_the_70_foot_dimension,
@@ -173,6 +218,15 @@ if __name__ == '__main__':
                scenario_fit_outline_tolerates_a_cut_corner,
                scenario_symmetric_outline_prefers_the_smallest_turn_and_shows_the_runner_up,
                scenario_feet_inches_refuses_non_finite,
-               scenario_fit_outline_is_fast_on_dense_outlines):
-        fn()
-        print('  ok ', fn.__name__)
+               scenario_fit_outline_is_fast_on_dense_outlines,
+               test_from_points_exact,
+               test_from_points_needs_two):
+        try:
+            fn()
+        except Exception:
+            failed.append(fn.__name__)
+            print('  FAIL', fn.__name__)
+            traceback.print_exc()
+        else:
+            print('  ok ', fn.__name__)
+    sys.exit(1 if failed else 0)
