@@ -1,0 +1,48 @@
+{
+  "answer": {
+    "photos": [
+      {
+        "index": 0,
+        "parts": [
+          "house",
+          "lot"
+        ]
+      },
+      {
+        "index": 1,
+        "parts": [
+          "house"
+        ]
+      },
+      {
+        "index": 2,
+        "parts": [
+          "house"
+        ]
+      },
+      {
+        "index": 3,
+        "parts": [
+          "pool_house",
+          "lot",
+          "house"
+        ]
+      }
+    ],
+    "shells": []
+  },
+  "usage": [
+    {
+      "stage": "step:photo_parts",
+      "model": "anthropic:claude-opus-5-5",
+      "input_tokens": 11075,
+      "output_tokens": 209,
+      "usd": 0.04848,
+      "priced": true,
+      "basis": "reported",
+      "run": "record-place:427d016aae2d4eba93f16d23b4de00d9",
+      "at": "2026-11-08T02:07:43.157856+00:00"
+    }
+  ],
+  "model": "anthropic:claude-opus-5-5"
+}

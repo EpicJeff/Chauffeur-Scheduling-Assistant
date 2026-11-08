@@ -7488,9 +7488,9 @@ def house_editor_sheets():
 def _house_editor_sheets():
     from services import twin_store, twin_edit, twin_place, twin_cost
     with twin_store.LIFECYCLE:
+        place = twin_store.place()
         sources, roles, registrations = twin_store.sources(), twin_store.page_roles(), twin_store.registrations()
         plan = twin_store.current()
-        place = twin_store.place()
     # Inspect headers only. Crops render legacy masters lazily when needed.
     pages = []
     for source in sources:
@@ -7606,22 +7606,25 @@ def _house_editor_suggest_roles(body):
     source_id = body.get('source')
     images = []
     with twin_store.LIFECYCLE:
+        place = twin_store.place()
         source = next((s for s in twin_store.sources() if s['id'] == source_id), None)
         if source is None or source['kind'] != 'drawing':
             raise HTTPException(status_code=400, detail='Choose an existing drawing source.')
         generation = twin_store.generation()
         confirmed = [row for row in twin_store.page_roles() if row['source'] == source_id]
-        if confirmed:
-            return {'rows': confirmed}
+        assigned = {row['page'] for row in confirmed}
+        page_numbers = [page for page in range(1, source['pages'] + 1) if page not in assigned]
+        if not page_numbers:
+            return {'rows': []}
         parts = [{key: b[key] for key in ('id', 'name', 'kind')}
-                 for b in twin_store.place()['buildings']]
+                 for b in place['buildings']]
         parts.append({'id': twin_place.LOT, 'name': 'Lot', 'kind': 'lot'})
         part_id = source.get('part') or 'house'  # Legacy drawing uploads belong to the main house.
         part = next((p for p in parts if p['id'] == part_id), None)
         if part is None:
             raise ValueError('Choose a part of your place.')
         pages = [_house_editor_call(twin_store.page_image, source_id, page)
-                 for page in range(1, source['pages'] + 1)]
+                 for page in page_numbers]
     # Snapshot source bytes while the generation is protected; resizing and
     # the paid reader must never hold the house lifecycle lock.
     for png in pages:
@@ -7632,7 +7635,8 @@ def _house_editor_suggest_roles(body):
     if generation != twin_store.generation():
         raise HTTPException(status_code=409, detail='The house was started over.')
     result = _house_editor_call(twin_reads.read, 'sheet_roles', images,
-                                {'source': source_id, 'pages': source['pages'], 'part': part, 'parts': parts},
+                                {'source': source_id, 'pages': source['pages'], 'page_numbers': page_numbers,
+                                 'part': part, 'parts': parts},
                                 run='suggest', step='sheet_roles')
     if generation != twin_store.generation():
         raise HTTPException(status_code=409, detail='The house was started over.')
@@ -7645,6 +7649,9 @@ def _house_editor_suggest_roles(body):
     problems = [problem for problem in problems if not problem.partition(':')[0].endswith('.elsewhere')]
     if problems or any(row['page'] > source['pages'] for row in rows):
         raise HTTPException(status_code=400, detail='The suggested pages could not be read. Set their roles by hand.')
+    # Preserve saved regions, including a page moved while the reader ran.
+    assigned = {row['page'] for row in twin_store.page_roles() if row['source'] == source_id}
+    rows = [row for row in rows if row['page'] in page_numbers and row['page'] not in assigned]
     allowed_roles = twin_place.LOT_ROLES if part_id == twin_place.LOT else twin_place.BUILDING_ROLES
     by_id = {p['id']: p for p in parts}
     for row in rows:

@@ -74,7 +74,8 @@ def _place_state():
     row = _state()
     migrated = 'place' not in row
     _place(row)
-    if _clear_plot_read(row) or migrated:
+    followed = _follow_drawing_rows(row)
+    if _clear_plot_read(row) or migrated or followed:
         _save(row)
     return row
 
@@ -107,6 +108,40 @@ def _clear_plot_read(row):
 def place() -> dict:
     with _LOCK:
         return deepcopy(_place_state()['place'])
+
+
+def _drawing_parts(row):
+    """Saved page rows own a drawing; only a drawing without rows uses part."""
+    parts = set()
+    for source in row['sources']:
+        if source['kind'] != 'drawing':
+            continue
+        pages = [p for p in row['page_roles'] if p['source'] == source['id']]
+        if pages:
+            parts.update(p['building'] for p in pages)
+        else:
+            parts.add(source.get('part'))
+    return parts - {None}
+
+
+def drawing_parts() -> set:
+    with _LOCK:
+        return _drawing_parts(_place_state())
+
+
+def _follow_drawing_rows(row):
+    """Follow a sole row owner only when every stored page has role rows."""
+    changed = False
+    for source in row['sources']:
+        if source['kind'] == 'drawing':
+            rows = [p for p in row['page_roles'] if p['source'] == source['id']]
+            parts = {p['building'] for p in rows}
+            assigned = {p['page'] for p in rows}
+            if (len(parts) == 1 and source.get('part') not in parts
+                    and all(page in assigned for page in range(1, source['pages'] + 1))):
+                source['part'] = next(iter(parts))
+                changed = True
+    return changed
 
 
 def _check_part(place, part):
@@ -219,8 +254,7 @@ def remove_building(bid: str) -> None:
         registry = _place(row)
         if not any(b['id'] == bid for b in registry['buildings']):
             raise ValueError('Choose a building in your place.')
-        if (any(p['building'] == bid for p in row['page_roles'])
-                or any(s['kind'] == 'drawing' and s.get('part') == bid for s in row['sources'])):
+        if bid in _drawing_parts(row):
             raise ValueError('Move or remove this building\'s pages first.')
         plan = _read_round(row, row['current']) if row['current'] is not None else None
         if plan is not None and any(b['id'] == bid for b in plan['buildings']):
@@ -254,6 +288,7 @@ def move_page(source: str, page: int, part: str, region: int | None = None) -> l
             item['building'] = part
             if item['role'] not in roles:
                 item['role'], item['level'] = 'other', None
+        _follow_drawing_rows(row)
         _clear_plot_read(row)
         _save(row)
         return deepcopy(moved)
@@ -705,6 +740,7 @@ def set_page_roles(rows) -> None:
                             'role': item['role'], 'level': level,
                             'box': box, 'building': building})
         row['page_roles'] = checked
+        _follow_drawing_rows(row)
         _clear_plot_read(row)
         _save(row)
 

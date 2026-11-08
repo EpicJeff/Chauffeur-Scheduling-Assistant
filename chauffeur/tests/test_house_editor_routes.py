@@ -747,9 +747,51 @@ def scenario_build_part_route():
         check(c.post(f'{build}/{legacy}/stop', headers=PARENT, json={}).status_code == 200, 'stop')
 
 
+def scenario_sheets_migrates_before_returning_sources_and_rows():
+    _fresh()
+    _setup()
+    sid = ts.save_source('drawing', 'legacy.pdf', engine_tests._pdf(1))
+    with ts._LOCK:
+        row = ts._state()
+        row.pop('place', None)
+        row['sources'][0].pop('part', None)
+        row['page_roles'] = [{'source': sid, 'page': 1, 'role': 'plot', 'level': None, 'box': None, 'building': 'house'}]
+        ts._save(row)
+    with _enforced():
+        r = _client().get('/api/house/editor/sheets', headers=PARENT)
+    check(r.status_code == 200, r.text)
+    data = r.json()
+    check(data['page_roles'][0]['building'] == 'lot', data['page_roles'])
+    check(data['sources'][0].get('part') == 'lot', data['sources'])
+
+
+def scenario_suggest_roles_after_moving_one_page_reads_only_remaining_pages():
+    _fresh()
+    _setup()
+    garage = ts.add_building('Garage', 'garage')['id']
+    sid = ts.save_source('drawing', 'shared.pdf', engine_tests._pdf(3), part='house')
+    ts.move_page(sid, 2, garage)
+    stored = copy.deepcopy(ts.page_roles())
+    calls = []
+
+    def reader(kind, images, context, **kw):
+        calls.append((kind, len(images), context))
+        return {'pages': [{'page': p, 'role': 'floor', 'level': 'Floor', 'box': None} for p in (1, 3)]}
+
+    with _enforced(), patch.object(twin_reads, 'read', reader):
+        r = _client().post('/api/house/editor/sheets/suggest', headers=PARENT, json={'source': sid})
+    check(r.status_code == 200, r.text)
+    check(len(calls) == 1 and calls[0][1] == 2, calls)
+    check(calls[0][2]['page_numbers'] == [1, 3], calls)
+    check([row['page'] for row in r.json()['rows']] == [1, 3], r.json())
+    check(ts.page_roles() == stored, 'the moved page stays saved and suggestions stay unsaved')
+
+
 if __name__ == '__main__':
     failed = []
-    for fn in (scenario_every_editor_route_is_parents_only,
+    for fn in (scenario_sheets_migrates_before_returning_sources_and_rows,
+               scenario_suggest_roles_after_moving_one_page_reads_only_remaining_pages,
+               scenario_every_editor_route_is_parents_only,
                scenario_page_renders_for_anyone,
                scenario_sheets_roles_and_page_images,
                scenario_build_runs_through_the_api,

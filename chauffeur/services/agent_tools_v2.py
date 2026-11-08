@@ -9512,7 +9512,7 @@ def house_design_status() -> dict:
         build = twin_build.status(latest) if latest else None
         plan = twin_store.current()
         place = twin_store.place()
-        drawings = {s.get('part') for s in twin_store.sources() if s['kind'] == 'drawing'}
+        drawings = twin_store.drawing_parts()
         buildings = '; '.join(
             f"{b['name']} ({twin_place.KINDS[b['kind']]}, "
             f"{'drawings' if b['id'] in drawings else 'no drawings'}, "

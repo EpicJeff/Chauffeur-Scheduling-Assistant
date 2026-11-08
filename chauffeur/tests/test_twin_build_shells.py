@@ -326,7 +326,55 @@ def scenario_shell_moved_then_deleted_wall_stays_deleted():
         _segment(*original.values()), _segment(*current.values())) for w in shed['walls']), shed['walls'])
 
 
+def scenario_shell_refit_then_rebuild_lands_on_footprint_once():
+    from services import twin_place_reads as tpr, twin_register as tr
+    from test_twin_build_parts import _lot_only
+    for edge, drag in ((None, [20, 10]), ([0, 1], [0, 0])):
+        _lot_only()
+        tpr.read_plot(reader=Reader())
+        suggestion = ts.place()['lot']['read']['suggestions'][0]
+        tpr.answer_suggestion(suggestion['id'], 'accept', name='Shed', kind='shed')
+        tpr.confirm_placement(None, [])
+        tb.start({'part': 'shed'}, reader=Reader(), inline=True)
+        footprint = _place_building('shed')['footprint']
+        dragged = [[x + drag[0], y + drag[1]] for x, y in footprint]
+        tpr.confirm_placement(edge, [] if edge else [{'building': 'shed', 'outline': dragged}])
+        footprint = _place_building('shed')['footprint']
+        b = tb.start({'part': 'shed'}, reader=Reader(), inline=True)
+        check(tb.status(b)['state'] == 'done', tb.status(b))
+        shed = _plan_building(ts.current(), 'shed')
+        world = [tr.to_world(shed, p) for p in shed['levels'][0]['outline']]
+        check(_edges(world) == _edges(footprint), (edge, world, footprint))
+
+
+def scenario_shell_fewer_storeys_drops_only_empty_generated_levels():
+    for edit in ('none', 'level', 'wall', 'room'):
+        _shed_place(shell={'storeys': 2})
+        tb.start({'part': 'shed'}, reader=Reader(), inline=True)
+
+        def person_edit(plan):
+            shed = _plan_building(plan, 'shed')
+            if edit == 'level':
+                shed['levels'][1]['src'] = {'person': True}
+            elif edit == 'wall':
+                next(w for w in shed['walls'] if w['level'] == 'L2')['src']['person'] = True
+            elif edit == 'room':
+                shed['rooms'].append({'id': 'my-room', 'name': 'Loft', 'level': 'L2',
+                                      'polygon': RECT, 'src': {'person': True}})
+            return plan
+
+        ts.update_current(person_edit, kind='edit')
+        ts.update_building('shed', {'shell': {'storeys': 1}})
+        b = tb.start({'part': 'shed'}, reader=Reader(), inline=True)
+        check(tb.status(b)['state'] == 'done', tb.status(b))
+        shed = _plan_building(ts.current(), 'shed')
+        check([l['id'] for l in shed['levels']] == (['L1'] if edit == 'none' else ['L1', 'L2']), (edit, shed))
+        check(not any(w['level'] == 'L2' and not w.get('src', {}).get('person') for w in shed['walls']), shed)
+
+
 SCENARIOS = (
+    scenario_shell_refit_then_rebuild_lands_on_footprint_once,
+    scenario_shell_fewer_storeys_drops_only_empty_generated_levels,
     scenario_shell_moved_then_deleted_wall_stays_deleted,
     scenario_shell_geometry,
     scenario_shell_two_storeys_hip_left_door,

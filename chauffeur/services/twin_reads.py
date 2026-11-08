@@ -48,7 +48,8 @@ PROMPTS = {
 have multiple entries for one page, with a crop box for each region. Page is
 one-based; role is floor, roof, plot, survey, landscape, elevation or other;
 level is a name or null; box is null for the full page. Context lists the
-source's part and all parts of the place. Only when a page clearly shows
+source's part and all parts of the place, and original page_numbers in image
+order. Use those page numbers in the answer. Only when a page clearly shows
 another listed part, include optional elsewhere with that part's id. Return
 {"pages":[{"page":1,"role":"floor","level":"Main floor","box":null}]}.''',
     'outline': 'Read one floor footprint and a readable dimension to set scale. '

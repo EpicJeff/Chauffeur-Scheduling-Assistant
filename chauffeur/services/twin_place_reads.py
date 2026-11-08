@@ -6,6 +6,7 @@ hold LIFECYCLE then _LOCK so plan refits and place changes cannot interleave.
 import base64
 from copy import deepcopy
 import io
+import math
 import threading
 import uuid
 
@@ -50,6 +51,23 @@ def plot_read_record(page, crop, fragment, *, registration=None, edge=None, cost
         raise ValueError(_FAILED) from None
 
 
+def _matching_street_edge(placement, crop, fragment):
+    """Match physical endpoints in master pixels, never reuse corner indices."""
+    old = [twin_register.invert(placement['registration'], placement['outline'][i])
+           for i in placement['street_edge']]
+    corners = [twin_place.to_master(crop, p) for p in fragment['lot']]
+    choices = []
+    for i in range(len(corners)):
+        j = (i + 1) % len(corners)
+        for edge in ([i, j], [j, i]):
+            distance = max(math.dist(old[n], corners[k]) for n, k in enumerate(edge))
+            choices.append((distance, edge))
+    distance, edge = min(choices)
+    # Small extraction drift is expected. A different boundary must use the
+    # new reader's edge rather than turning an unrelated edge into the street.
+    return edge if distance <= max(10, math.dist(*old) * .05) else None
+
+
 def read_plot(*, reader=twin_reads.read) -> dict:
     with _READ_LOCK:
         with twin_store.LIFECYCLE, twin_store._LOCK:
@@ -80,7 +98,7 @@ def read_plot(*, reader=twin_reads.read) -> dict:
             crop = {key: image[key] for key in ('box', 'size', 'master')}
             lot = twin_store.place()['lot']
             placement = lot.get('placement') or {}
-            confirmed_edge = (placement['street_edge'] if placement.get('confirmed')
+            confirmed_edge = (_matching_street_edge(placement, crop, fragment) if placement.get('confirmed')
                               and all(placement.get(k) == page[k] for k in ('source', 'page', 'box')) else None)
             lot['read'] = plot_read_record(page, crop, fragment, edge=confirmed_edge, cost=_cost('plot', before))
             if not (lot.get('placement') or {}).get('confirmed'):
@@ -179,12 +197,12 @@ def confirm_placement(street_edge, footprints) -> dict:
         previous = lot.get('placement')
         same_page = previous and all(previous.get(k) == plot[k] for k in ('source', 'page', 'box'))
         old_reg = previous['registration'] if same_page else plot['registration']
-        old_edge = previous['street_edge'] if same_page else plot['street_edge']
-        edge = old_edge if street_edge is None else street_edge
-        reg = (old_reg if street_edge is None else
+        edge = plot['street_edge'] if street_edge is None else street_edge
+        reg = (plot['registration'] if street_edge is None or (
+                   edge == plot['street_edge'] and isinstance(edge, list) and all(type(i) is int for i in edge)) else
                twin_place.plot_registration(plot['crop'], plot['fragment'], edge=street_edge))
         changed = set()
-        if edge != old_edge:
+        if reg != old_reg:
             for bid, target in targets.items():
                 if target.get('footprint') and target.get('footprint_from') == 'plot':
                     target['footprint'] = twin_place.check_footprint([
@@ -219,12 +237,12 @@ def suggest_photos(*, reader=twin_reads.read) -> dict:
             sources = [s for s in row['sources'] if s['kind'] == 'photo'][:12]
             if not sources:
                 raise ValueError('Upload a photo before asking for photo suggestions.')
+            drawings = twin_store._drawing_parts(row)
             parts = [{**{key: b[key] for key in ('id', 'name', 'kind')},
-                      'has_drawings': any(p['building'] == b['id'] for p in row['page_roles'])
-                      or any(s['kind'] == 'drawing' and s.get('part') == b['id'] for s in row['sources'])}
+                      'has_drawings': b['id'] in drawings}
                      for b in place['buildings']]
             parts.append({'id': twin_place.LOT, 'name': 'Lot', 'kind': 'lot',
-                          'has_drawings': any(p['building'] == twin_place.LOT for p in row['page_roles'])})
+                          'has_drawings': twin_place.LOT in drawings})
             originals = [twin_store.source_images(s['id'])[0] for s in sources]
         images = []
         for original in originals:

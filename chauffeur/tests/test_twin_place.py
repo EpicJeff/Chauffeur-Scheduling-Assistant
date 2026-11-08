@@ -604,7 +604,67 @@ def scenario_legacy_pool_house_row_adds_pool_house():
         check(_source(sid)['part'] == bid and _buildings() == [(bid, name, kind)], _buildings())
 
 
+def scenario_move_one_page_keeps_rowless_pages_home():
+    # F2a: moving an unassigned page must not move its row-less siblings.
+    _fresh()
+    sid = ts.save_source('drawing', 'house.pdf', _pdf(2), part='house')
+    check(ts.page_roles() == [], 'neither uploaded page has a role row')
+    moved = ts.move_page(sid, 2, 'lot')
+    check(len(moved) == 1 and moved[0]['page'] == 2 and moved[0]['building'] == 'lot'
+          and moved[0]['role'] == 'other', moved)
+    check(_source(sid)['part'] == 'house', 'moving page 2 keeps the source with the house')
+    ts.place()  # Loading existing state must keep the same fallback owner.
+    source, rows = _source(sid), ts.page_roles()
+    owners = {page: {r['building'] for r in rows if r['page'] == page} or {source['part']}
+              for page in (1, 2)}
+    check(owners == {1: {'house'}, 2: {'lot'}}, owners)
+    check(not any(r['page'] == 1 for r in rows), 'page 1 still has no role rows')
+    check(ts.drawing_parts() == {'lot'}, 'drawing status keeps F2 row-based ownership')
+    # Two regions on page 2 still leave page 1 unassigned on save and reload.
+    ts.set_page_roles([
+        {**moved[0], 'box': [0, 0, 0.5, 1]},
+        {**moved[0], 'box': [0.5, 0, 1, 1]}])
+    check(_source(sid)['part'] == 'house', 'saving regions counts covered pages, not rows')
+    ts.place()
+    check(_source(sid)['part'] == 'house', 'loading partial coverage keeps the source owner')
+    ts.move_page(sid, 1, 'lot')
+    check(_source(sid)['part'] == 'lot', 'the source follows once every page has rows on the lot')
+
+
+def scenario_drawing_ownership_follows_rows_and_allows_removal():
+    _fresh()
+    garage = ts.add_building('Garage', 'garage')['id']
+    home = ts.add_building('Home', 'main_house')['id']
+    sid = ts.save_source('drawing', 'mixed.pdf', _pdf(2), part=garage)
+    ts.set_page_roles([{'source': sid, 'page': p, 'building': garage,
+                       'role': 'other', 'level': None, 'box': None} for p in (1, 2)])
+    ts.move_page(sid, 1, home)
+    expect_value_error(lambda: ts.remove_building(garage))
+    ts.move_page(sid, 2, home)
+    check(_source(sid)['part'] == home, _source(sid))
+    ts.remove_building(garage)
+    check(_building(garage) is None, _buildings())
+    # Saved rows are authoritative even for an older source with stale ownership.
+    with ts._LOCK:
+        row = ts._state()
+        row['sources'][0]['part'] = garage
+        ts._save(row)
+    check(ts.drawing_parts() == {home}, ts.drawing_parts())
+    check(_source(sid)['part'] == home, _source(sid))
+    empty = ts.add_building('Empty', 'other')['id']
+    mixed = ts.save_source('drawing', 'several-parts.pdf', _pdf(2), part=empty)
+    ts.set_page_roles([*ts.page_roles(),
+                       {'source': mixed, 'page': 1, 'building': home, 'role': 'other'},
+                       {'source': mixed, 'page': 2, 'building': 'lot', 'role': 'other'}])
+    check(_source(mixed)['part'] == empty, 'mixed rows do not choose a new source part')
+    check(ts.drawing_parts() == {home, 'lot'}, ts.drawing_parts())
+    ts.remove_building(empty)
+    check(_building(empty) is None, _buildings())
+
+
 SCENARIOS = (
+    scenario_move_one_page_keeps_rowless_pages_home,
+    scenario_drawing_ownership_follows_rows_and_allows_removal,
     scenario_legacy_pool_house_row_adds_pool_house,
     scenario_kinds_and_shell_defaults_pinned,
     scenario_empty_place,

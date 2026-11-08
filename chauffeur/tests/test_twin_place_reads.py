@@ -844,7 +844,109 @@ def scenario_estimate():
         storage.patch_settings({'model_pool_pro': saved})
 
 
+def scenario_reread_matches_confirmed_street_by_master_geometry():
+    _setup(_plan())
+    # A crop makes normalized image coordinates differ from master pixels.
+    rows = ts.page_roles()
+    next(r for r in rows if r['role'] == 'plot')['box'] = [.1, .15, .9, .85]
+    ts.set_page_roles(rows)
+    tpr.read_plot(reader=PlotReader())
+    tpr.confirm_placement([0, 1], [])
+    old = copy.deepcopy(_lot()['placement'])
+    answer = fixture('plot')
+    answer['lot'] = answer['lot'][1:] + answer['lot'][:1]
+    answer['street_edge'] = [1, 2]  # Deliberately points at a different physical edge.
+    tpr.read_plot(reader=PlotReader(answer))
+    read = _read()
+    got = [tp.to_master(read['crop'], answer['lot'][i]) for i in read['street_edge']]
+    want = [tr.invert(old['registration'], old['outline'][i]) for i in old['street_edge']]
+    check(close_points(got, want), (got, want, read['street_edge']))
+    tpr.confirm_placement(None, [])
+    check(_same_reg(_lot()['placement']['registration'], read['registration']), _lot())
+
+
+def scenario_confirm_reprojects_on_registration_change_with_same_indices():
+    _setup(_plan())
+    tpr.read_plot(reader=PlotReader())
+    suggestion = _read()['suggestions'][0]
+    tpr.answer_suggestion(suggestion['id'], 'accept', building='house')
+    tpr.confirm_placement(None, [])
+    old = copy.deepcopy(_lot()['placement'])
+    footprint = copy.deepcopy(_building('house')['footprint'])
+    answer = fixture('plot')
+    answer['scale']['feet'] *= 1.25
+    tpr.read_plot(reader=PlotReader(answer))
+    read = copy.deepcopy(_read())
+    check(read['street_edge'] == old['street_edge'], (read, old))
+    expected = [tr.apply(read['registration'], tr.invert(old['registration'], p)) for p in footprint]
+    tpr.confirm_placement(read['street_edge'], [])
+    check(close_points(_building('house')['footprint'], expected), (_building('house'), expected))
+    house = next(b for b in ts.current()['buildings'] if b['id'] == 'house')
+    outline = min(house['levels'], key=lambda l: l['elevation'])['outline']
+    fit, _ = tr.fit_outline(outline, expected)
+    check(close(house['position'], fit['offset']) and abs(house['rotation'] - fit['angle']) < 1e-6,
+          (house['position'], house['rotation'], fit))
+
+
+def scenario_confirmed_nonadjacent_fragment_edge_can_be_read_again():
+    _setup()
+    answer = fixture('plot')
+    answer['street_edge'] = [0, 2]
+    tpr.read_plot(reader=PlotReader(answer))
+    tpr.confirm_placement(None, [])
+    # None and an unchanged edge from the map both accept the reader's edge.
+    tpr.confirm_placement([0, 2], [])
+    tpr.read_plot(reader=PlotReader(answer))
+    tpr.confirm_placement(_read()['street_edge'], [])
+    check(_lot()['placement']['confirmed'], _lot())
+
+
+def scenario_reread_with_fewer_corners_matches_or_falls_back():
+    for changed_boundary in (False, True):
+        _setup()
+        tpr.read_plot(reader=PlotReader())
+        tpr.confirm_placement([3, 0], [])
+        old = copy.deepcopy(_lot()['placement'])
+        answer = fixture('plot')
+        answer['lot'] = [answer['lot'][i] for i in (0, 2, 3)]
+        answer['street_edge'] = [0, 1]
+        if changed_boundary:
+            answer['lot'] = [[x + .1, y + .1] for x, y in answer['lot']]
+        tpr.read_plot(reader=PlotReader(answer))
+        read = _read()
+        if changed_boundary:
+            check(read['street_edge'] == [0, 1], read)
+        else:
+            got = [tp.to_master(read['crop'], answer['lot'][i]) for i in read['street_edge']]
+            want = [tr.invert(old['registration'], old['outline'][i]) for i in old['street_edge']]
+            check(close_points(got, want), (got, want))
+        tpr.confirm_placement(None, [])
+        check(_lot()['placement']['confirmed'], _lot())
+
+
+def scenario_photo_drawings_hint_uses_rows_instead_of_stale_source_part():
+    _setup()
+    shed = ts.add_building('Shed', 'shed')['id']
+    sid = next(s['id'] for s in ts.sources() if s.get('part') == 'house')
+    ts.move_page(sid, 1, shed)
+    mixed = ts.save_source('drawing', 'several-parts.pdf', _pdf(2), part='house')
+    ts.set_page_roles([*ts.page_roles(),
+                       {'source': mixed, 'page': 1, 'building': shed, 'role': 'other'},
+                       {'source': mixed, 'page': 2, 'building': 'lot', 'role': 'other'}])
+    check(next(s for s in ts.sources() if s['id'] == mixed)['part'] == 'house', ts.sources())
+    ts.save_source('photo', 'yard.png', _photo(), part='lot')
+    reader = PhotoReader({'photos': [{'index': 0, 'parts': ['lot']}], 'shells': []})
+    tpr.suggest_photos(reader=reader)
+    parts = {p['id']: p['has_drawings'] for p in reader.calls[0]['context']['parts']}
+    check(parts['house'] is False and parts[shed] is True and parts['lot'] is True, parts)
+
+
 SCENARIOS = (
+    scenario_reread_with_fewer_corners_matches_or_falls_back,
+    scenario_reread_matches_confirmed_street_by_master_geometry,
+    scenario_confirm_reprojects_on_registration_change_with_same_indices,
+    scenario_confirmed_nonadjacent_fragment_edge_can_be_read_again,
+    scenario_photo_drawings_hint_uses_rows_instead_of_stale_source_part,
     scenario_confirm_edge_then_accept,
     scenario_dragged_footprint_moves_and_refits_in_one_save,
     scenario_plot_registration_preserves_fragment_edge,

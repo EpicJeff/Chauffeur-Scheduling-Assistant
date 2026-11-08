@@ -587,7 +587,58 @@ def scenario_drawing_build_moved_then_deleted_wall_stays_deleted():
     check(not any(tb._near_geometry(tb._geometry(w, 'wall', house), original, 'wall') for w in house['walls']), house['walls'])
 
 
+def scenario_part_settle_keeps_pause_time_name_and_kind():
+    _house_place(roof=False, plot=False, photos=False)
+    b = tb.start({'part': 'house'}, reader=Reader(), inline=True)
+    check(tb.status(b)['state'] == 'paused', tb.status(b))
+    ts.update_building('house', {'name': 'Farmhouse', 'kind': 'other'})
+    check(_accept_all(b)['state'] == 'done', tb.status(b))
+    house = _house(ts.current())
+    check((house['name'], house['kind']) == ('Farmhouse', 'other'), house)
+
+
+def scenario_lot_build_reuses_setup_read_and_answers():
+    from services import twin_place_reads as tpr
+    _lot_only()
+    tpr.read_plot(reader=Reader())
+    suggestions = ts.place()['lot']['read']['suggestions']
+    tpr.answer_suggestion(suggestions[0]['id'], 'accept', name='Shed', kind='shed')
+    tpr.answer_suggestion(suggestions[1]['id'], 'dismiss')
+    stored = copy.deepcopy(ts.place()['lot']['read'])
+    reader = Reader()
+    b = tb.start({'part': 'lot'}, reader=reader, inline=True)
+    st = tb.status(b)
+    check(st['state'] == 'paused' and st['pause']['kind'] == 'lot_placement', st)
+    check(reader.calls == [], ('setup read must not be repaid', reader.calls))
+    check(st['pause']['registration'] == stored['registration'], st['pause'])
+    # Restart with the cached setup read, then confirm it through the real answer path.
+    tb._forget()
+    tb.recover()
+    tb.resume(b, reader=reader, inline=True)
+    check(_accept_all(b)['state'] == 'done', tb.status(b))
+    lot = ts.place()['lot']
+    check(lot['placement']['confirmed'] and lot['read'] == stored, lot)
+    check(_read_kinds(reader) == ['site'], reader.calls)
+
+
+def scenario_lot_setup_read_can_still_be_explicitly_reread():
+    from services import twin_place_reads as tpr
+    _lot_only()
+    tpr.read_plot(reader=Reader())
+    original_id = ts.place()['lot']['read']['id']
+    reader = Reader()
+    b = tb.start({'part': 'lot'}, reader=reader, inline=True)
+    check(reader.calls == [], reader.calls)
+    tb.reread(b, 'plot', reader=reader, inline=True)
+    check(_read_kinds(reader) == ['plot'], reader.calls)
+    check(_accept_all(b)['state'] == 'done', tb.status(b))
+    check(ts.place()['lot']['read']['id'] != original_id, ts.place()['lot'])
+
+
 SCENARIOS = (
+    scenario_lot_setup_read_can_still_be_explicitly_reread,
+    scenario_part_settle_keeps_pause_time_name_and_kind,
+    scenario_lot_build_reuses_setup_read_and_answers,
     scenario_drawing_build_moved_then_deleted_wall_stays_deleted,
     scenario_finishes_override_only_answered_valid_roles,
     scenario_lot_build_rejects_self_crossing_plot,

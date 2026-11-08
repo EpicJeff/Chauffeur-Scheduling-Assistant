@@ -239,6 +239,7 @@ def _create(inputs):
     plot = [r for r in pages if r['role'] == 'plot'
             and (part is None or r.get('building') == 'lot')]
     placement = None
+    plot_read = None
     if part == 'lot':
         inputs.pop('building', None)
         inputs['photos'] = []
@@ -248,6 +249,9 @@ def _create(inputs):
         candidate = place['lot'].get('placement') or {}
         if candidate.get('confirmed') and all(candidate.get(k) == plot[0].get(k) for k in ('source', 'page', 'box')):
             placement = deepcopy(candidate)
+        candidate_read = place['lot'].get('read') or {}
+        if all(candidate_read.get(k) == plot[0].get(k) for k in ('source', 'page', 'box')):
+            plot_read = deepcopy(candidate_read)
     else:
         if part is not None:
             part_building = next((b for b in place['buildings'] if b['id'] == part), None)
@@ -276,7 +280,7 @@ def _create(inputs):
     build = {'id': bid, 'inputs': deepcopy(inputs), 'generation': twin_store.generation(),
              'state': 'running', 'steps': plan_steps(roles, inputs.get('photos', []), plot,
                  part=part, placement=placement, has_lot=has_lot, compose=inputs['compose']),
-             'placement': placement, 'next': None,
+             'placement': placement, 'plot_read': plot_read, 'next': None,
              'events': [], 'seq': 0, 'pause': None, 'cost': 0,
              'existing': bool(part != 'lot' and current
                               and any(b['id'] == building['id'] for b in current['buildings']))}
@@ -432,6 +436,11 @@ def _base(plan, build, lot=None):
             plan['site']['lot'] = deepcopy(lot)
         return twin_plan.normalize(plan)[0]
     bid = build['inputs']['building']['id']
+    identity = deepcopy(build['inputs']['building'])
+    if build['inputs'].get('part') is not None:
+        current = next((b for b in twin_store.place()['buildings'] if b['id'] == bid), None)
+        if current is not None:
+            identity = {k: current[k] for k in ('id', 'name', 'kind')}
     levels = [{'id': s['level'], 'name': s['level_name'], 'elevation': i * 9, 'ceiling': 9}
               for i, s in enumerate(s for s in build['steps'] if s['kind'] in ('outline', 'registration'))]
     if 'shell' in build['inputs']:
@@ -439,13 +448,13 @@ def _base(plan, build, lot=None):
     if not levels:
         raise ValueError('No floor sheets are confirmed for this building.')
     if not any(b['id'] == bid for b in plan['buildings']):
-        plan['buildings'].append({**deepcopy(build['inputs']['building']), 'levels': levels,
+        plan['buildings'].append({**identity, 'levels': levels,
                                   'position': [0, 0], 'rotation': 0, 'walls': [], 'openings': [],
                                   'rooms': [], 'roof': {'sections': []}})
     else:
         house = _house(plan, build)
         if build['inputs'].get('part') is not None:
-            house.update(deepcopy(build['inputs']['building']))
+            house.update(identity)
         house['levels'].extend(l for l in levels if not any(old['id'] == l['id'] for old in house['levels']))
     return twin_plan.normalize(plan)[0]
 
@@ -761,7 +770,11 @@ def _obtain(build, step, reader, ticket):
             return result
         # Older builds may have cached an unsuccessful reply. Resume retries it.
         path.unlink()
-    if step['kind'] == 'shell':
+    if step['kind'] == 'plot' and build.get('plot_read') and not step.get('reread'):
+        stored = build['plot_read']
+        result = {'fragment': deepcopy(stored['fragment']), 'crop': deepcopy(stored['crop']),
+                  'plot_read': deepcopy(stored), 'problems': []}
+    elif step['kind'] == 'shell':
         shell = deepcopy(build['inputs']['shell'])
         for piece in [*shell['walls'], *shell['openings'], *shell['roof']['sections']]:
             piece['src']['step'] = step['id']
@@ -869,7 +882,8 @@ def _pause(build, step, result):
             _check_lot_page(step)
             from services import twin_place_reads
             page = {k: step[k] for k in ('source', 'page', 'box')}
-            reg = twin_place_reads.plot_read_record(page, result['crop'], fragment)['registration']
+            reg = (result['plot_read']['registration'] if result.get('plot_read') else
+                   twin_place_reads.plot_read_record(page, result['crop'], fragment)['registration'])
         else:
             reg = _plot_registration(result['crop'], fragment)
         if not fragment.get('street_edge'):
@@ -982,12 +996,18 @@ def _settle(build, step, result, decision=None):
         from services import twin_place_reads
         reg = build['pause']['registration']
         page = {k: deepcopy(step[k]) for k in ('source', 'page', 'box')}
-        record = twin_place_reads.plot_read_record(
-            page, crop, fragment, registration=reg,
-            cost=math.fsum(e['usd'] for e in twin_cost.entries()
-                           if e.get('run') == build['id'] and e.get('stage') == 'step:plot'))
-        lot_outline = record['lot']
         lot_state = deepcopy(twin_store.place()['lot'])
+        if result.get('plot_read'):
+            record = lot_state.get('read')
+            if (not record or record['id'] != result['plot_read']['id']
+                    or record['registration'] != reg):
+                raise ValueError('This plot plan read is out of date. Read it again.')
+        else:
+            record = twin_place_reads.plot_read_record(
+                page, crop, fragment, registration=reg,
+                cost=math.fsum(e['usd'] for e in twin_cost.entries()
+                               if e.get('run') == build['id'] and e.get('stage') == 'step:plot'))
+        lot_outline = record['lot']
         lot_state['placement'] = {**page, 'outline': lot_outline, 'street_edge': record['street_edge'],
                                   'registration': reg, 'confirmed': True}
         lot_state['read'] = record
@@ -999,10 +1019,15 @@ def _settle(build, step, result, decision=None):
         reg = twin_store.registration(step['source'], step['page'], step['level']) if crop else None
         if kind == 'shell':
             shell = deepcopy(fragment)
+            generated_levels = {w['level'] for w in house['walls']
+                                if w.get('src', {}).get('step') == step['id']}
+            if not house.get('src', {}).get('person'):
+                house.update(position=[0, 0], rotation=0)
             for incoming_level in shell['levels']:
                 old_level = next(l for l in house['levels'] if l['id'] == incoming_level['id'])
                 if not old_level.get('src', {}).get('person'):
                     old_level.update(incoming_level)
+                    old_level['src'] = {'sheet': '', 'page': 1, 'step': step['id']}
             # _merge_list assigns the retained wall ids back to incoming walls.
             # The door must reference those ids, including a wall moved by hand.
             wall_ids = [w['id'] for w in shell['walls']]
@@ -1017,6 +1042,12 @@ def _settle(build, step, result, decision=None):
             house['openings'] = _merge_list(house['openings'], incoming, 'opening', house, build, step)
             house['roof']['sections'] = _merge_list(
                 house['roof']['sections'], shell['roof']['sections'], 'roof', house, build, step)
+            incoming_ids = {l['id'] for l in shell['levels']}
+            occupied = {p.get('level') for key in ('walls', 'rooms', 'stairs', 'fixtures', 'lights')
+                        for p in house.get(key, [])}
+            house['levels'] = [l for l in house['levels'] if l['id'] in incoming_ids
+                               or l.get('src', {}).get('person') or l['id'] in occupied
+                               or (l.get('src', {}).get('step') != step['id'] and l['id'] not in generated_levels)]
         elif kind in ('outline', 'registration'):
             reg = decision.get('registration', build['pause']['registration'])
             if not level.get('src', {}).get('person'):

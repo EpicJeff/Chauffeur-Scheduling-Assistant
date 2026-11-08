@@ -122,11 +122,92 @@ def scenario_a_done_build_without_next_is_not_followed_further():
     check(not r['errors'], r['errors'])
 
 
+def scenario_place_suggest_stays_enabled_for_unassigned_pages():
+    """Run createPlace with a small DOM double; click Suggest and Confirm pages."""
+    d = tempfile.mkdtemp(prefix='twin_place_js_')
+    shutil.copy(os.path.join(ROOT, 'static', 'twin', 'editor', 'place.js'), os.path.join(d, 'place.mjs'))
+    shutil.copy(MODULE, os.path.join(d, 'api.js'))
+    with open(os.path.join(d, 'package.json'), 'w', encoding='utf-8') as f:
+        json.dump({'type': 'module'}, f)
+    driver = r"""
+import assert from 'node:assert/strict';
+class Element {
+  constructor(tag = 'div') { this.tagName = tag; this.children = []; this.dataset = {}; this.attrs = {}; this.events = {}; this.style = {}; this.value = ''; }
+  append(...children) { this.children.push(...children); }
+  replaceChildren(...children) { this.children = children; }
+  setAttribute(key, value) {
+    this.attrs[key] = value;
+    if (key.startsWith('data-')) this.dataset[key.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = value;
+  }
+  getAttribute(key) { return this.attrs[key]; }
+  addEventListener(name, fn) { this.events[name] = fn; }
+  matches(selector) { return selector.split(',').some(s => s.trim().startsWith('[') ? s.trim().slice(1, -1) in this.attrs : s.trim() === this.tagName); }
+  querySelectorAll(selector) { return this.children.flatMap(n => [ ...(n.matches(selector) ? [n] : []), ...n.querySelectorAll(selector)]); }
+}
+const els = new Map();
+const get = id => { if (!els.has(id)) els.set(id, new Element()); return els.get(id); };
+globalThis.document = { getElementById: get, createElement: tag => new Element(tag), createElementNS: (_, tag) => new Element(tag) };
+globalThis.window = { promptConfirm: async () => true, showGlobalAlert: text => { throw new Error(text); } };
+get('place-view').append(get('place-cards'));
+const row = (page, building = 'home') => ({source: 'pdf', page, building, role: 'other', level: null, box: null});
+const moved = row(2, 'garage');
+let sheets = { sources: [{id: 'pdf', filename: 'shared.pdf', kind: 'drawing', pages: 3, part: 'home'}],
+  page_roles: [moved], kinds: [], roles: {building: ['other'], lot: ['other']},
+  place: {buildings: [{id: 'home', name: 'Home', kind: 'other', footprint: null},
+                      {id: 'garage', name: 'Garage', kind: 'garage', footprint: null}], lot: {}, photo_tags: {}} };
+let confirmed, placement;
+const requests = [];
+const {createPlace} = await import('./place.mjs');
+const place = createPlace({ getSheets: () => sheets, canEdit: () => true, panel: {message() {}}, reload: async () => {}, follow: async () => {},
+  request: async (path, method, body) => {
+    requests.push(path);
+    if (path === 'sheets/suggest') return {rows: [row(1), row(3)]};
+    if (path === 'sheets/roles') { confirmed = body.rows; return {}; }
+    if (path === 'place/lot/placement') { placement = body; return {}; }
+    throw new Error(path);
+  } });
+place.sync(sheets, {});
+const buttons = () => get('place-view').querySelectorAll('[data-place-suggest]');
+assert.ok(buttons().length);
+assert.ok(buttons().every(b => !b.disabled), 'a moved page must not disable suggestions for the remaining pages');
+buttons()[0].events.click();
+await new Promise(resolve => setImmediate(resolve));
+get('place-confirm-pages').events.click();
+await new Promise(resolve => setImmediate(resolve));
+assert.deepEqual(requests, ['sheets/suggest', 'sheets/roles']);
+assert.deepEqual(confirmed.find(r => r.page === 2), moved, 'keep the moved row');
+assert.equal(confirmed.find(r => r.page === 1).building, 'home', 'keep the server assignment');
+sheets = {...sheets, page_roles: confirmed};
+place.sync(sheets, {});
+assert.ok(buttons().every(b => b.disabled), 'a fully confirmed PDF needs no paid suggestion');
+const outline = [[0,0], [40,0], [40,30], [0,30]];
+sheets = {...sheets, place: {...sheets.place, lot: {
+  placement: {outline, street_edge: [1,2], confirmed: true},
+  read: {id: 'old', lot: outline, street_edge: [1,2]}
+}}};
+place.sync(sheets, {});
+sheets = {...sheets, place: {...sheets.place, lot: {...sheets.place.lot,
+  read: {id: 'new', lot: outline, street_edge: [2,3]}
+}}};
+place.sync(sheets, {});
+get('place-confirm-placement').events.click();
+await new Promise(resolve => setImmediate(resolve));
+assert.deepEqual(placement.street_edge, [2,3], 'confirm must send the new read edge, never old placement indices');
+console.log('ok');
+"""
+    path = os.path.join(d, 'place-driver.mjs')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(driver)
+    result = subprocess.run([shutil.which('node'), path], capture_output=True, text=True, timeout=30, cwd=d)
+    check(result.returncode == 0, result.stdout + result.stderr)
+
+
 if __name__ == '__main__':
     if not shutil.which('node'):
         print('  ..  skipped (node not available)')
     else:
-        for fn in (scenario_a_done_build_with_next_is_followed_by_the_poller,
+        for fn in (scenario_place_suggest_stays_enabled_for_unassigned_pages,
+                   scenario_a_done_build_with_next_is_followed_by_the_poller,
                    scenario_a_chain_is_followed_link_by_link,
                    scenario_a_done_build_without_next_is_not_followed_further):
             fn()

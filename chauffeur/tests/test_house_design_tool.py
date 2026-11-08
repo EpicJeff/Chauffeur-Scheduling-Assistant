@@ -376,8 +376,27 @@ def scenario_kid_refused():
     check(not any(b['id'] == 'shed' for b in ts.place()['buildings']), 'nothing added')
 
 
+def scenario_status_drawings_follows_moved_pages():
+    _seed()
+    garage = ts.add_building('Garage', 'garage')['id']
+    import pypdfium2 as pdfium
+    doc = pdfium.PdfDocument.new()
+    for _ in range(2):
+        doc.new_page(612, 396)
+    buf = io.BytesIO()
+    doc.save(buf)
+    sid = ts.save_source('drawing', 'garage.pdf', buf.getvalue(), part=garage)
+    ts.set_page_roles([{'source': sid, 'page': 1, 'building': 'house', 'role': 'other'},
+                       {'source': sid, 'page': 2, 'building': 'lot', 'role': 'other'}])
+    check(next(s for s in ts.sources() if s['id'] == sid)['part'] == garage, ts.sources())
+    summary = agent_tools_v2.house_design_status()['summary']
+    check('Garage (Garage, no drawings,' in summary, summary)
+    check('(Main house, drawings,' in summary, summary)
+
+
 if __name__ == '__main__':
-    for fn in (scenario_tool_is_registered_and_never_runs_from_a_mission,
+    for fn in (scenario_status_drawings_follows_moved_pages,
+               scenario_tool_is_registered_and_never_runs_from_a_mission,
                scenario_tool_edits_through_the_same_operations,
                scenario_tool_refuses_non_parents,
                scenario_a_real_turn_edits_the_house_and_is_metered,

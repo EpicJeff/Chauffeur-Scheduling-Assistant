@@ -66,7 +66,9 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
       button.disabled = blocked || dirty() || !ready(button.dataset.placeBuild);
     });
     host.querySelectorAll('[data-place-suggest]').forEach(button => {
-      const assigned = saved.some(row => row.source === button.dataset.placeSuggest);
+      const source = sheets.sources.find(s => s.id === button.dataset.placeSuggest);
+      const assigned = Array.from({ length: source?.pages || 0 }, (_, i) => i + 1)
+        .every(page => saved.some(row => row.source === source.id && row.page === page));
       button.disabled = blocked || assigned;
       button.title = !canEdit() ? 'Return to editing before suggesting page roles.'
         : busy ? 'Wait for the current change to finish.'
@@ -272,11 +274,13 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
         'aria-label': `Suggest page roles for ${source.filename}` });
       suggest.addEventListener('click', () => work(() => paid('Suggest page roles?', 'roles', async () => {
         const result = await request('sheets/suggest', 'POST', { source: source.id });
-        const suggested = new Set(result.rows.map(r => r.page));
+        const assigned = new Set(saved.filter(r => r.source === source.id).map(r => r.page));
+        const suggestions = result.rows.filter(r => !assigned.has(r.page));
+        const suggested = new Set(suggestions.map(r => r.page));
         // Preserve the page order even when a reader lists the pages differently.
         const byPage = new Map();
-        for (let page = 1; page <= source.pages; page++) byPage.set(page, result.rows.filter(r => r.page === page)
-          .map(r => ({ ...r, source: source.id, building: source.part })));
+        for (let page = 1; page <= source.pages; page++) byPage.set(page, suggestions.filter(r => r.page === page)
+          .map(r => ({ ...r, source: source.id, building: r.building ?? source.part })));
         rows = rows.filter(r => r.source !== source.id || !suggested.has(r.page));
         rows.push(...[...byPage.values()].flat());
         status('These are suggestions. Check the roles and level names, then confirm.'); render();
@@ -441,7 +445,7 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     savedFootprints = latest;
     const lot = place().lot, nextLot = JSON.stringify([lot?.read?.id, lot?.read?.matrix, lot?.placement]);
     if (nextLot !== lotSignature) {
-      streetEdge = copy(lot?.placement?.street_edge || lot?.read?.street_edge || null); lotSignature = nextLot;
+      streetEdge = copy(lot?.read?.street_edge || lot?.placement?.street_edge || null); lotSignature = nextLot;
     }
     render();
   }
