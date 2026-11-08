@@ -224,8 +224,9 @@ ROOF
   never true/false. It need not hang from the section's front edge.
 
 PORCH, STAIRS AND PHOTOS
-- porch: {polygon, floor, columns:[{at:[x,y],size}]} for an open porch; floor 0
-  for a slab porch. Put columns at drawn posts, with size in feet.
+- porches: [{id, polygon, floor, columns:[{at:[x,y],size}], screened}] for
+  EVERY front, rear and side porch, open or screened; floor 0 for a slab porch.
+  Put columns at every drawn post, with size in feet; screened is a boolean.
 - stairs: [{id, level, from:[x,y], to:[x,y], width, risers, rise_to}]. from is
   the bottom, to the top, level the starting level, rise_to the reached elevation.
 - Photos confirm the front, roof forms and look. Never take a dimension from
@@ -251,7 +252,7 @@ one 3D plan in feet. All relevant sheets and photos are attached: read them
 together, including elevations and sections when present. Write exterior walls
 and knee walls only, no interior partitions, and rooms: []. Return
 {building:{id,name,position:[0,0],rotation:0,base:0,levels,walls,openings,rooms,
-roof:{sections,extensions},porch,stairs},pages,checks,notes}.
+roof:{sections,extensions},porches,stairs},pages,checks,notes}.
 ''' + _DRAFT_RULES + '''
 Your whole reply, reasoning included, must fit in 64000 tokens: stop reasoning
 by about 45000 and leave the rest for the JSON.
@@ -260,9 +261,9 @@ PROMPTS['draft_level'] = '''Read ONLY the requested level, or ONLY the roof
 when context requests the roof. Settled lower levels in context fix the frame
 and dimensions; preserve them and their ids. Use shared dimension strings to
 place the requested level in that same frame; never restart at a local origin.
-Return {building:{levels,walls,openings,rooms:[],porch,stairs},pages,checks,notes}
+Return {building:{levels,walls,openings,rooms:[],porches,stairs},pages,checks,notes}
 restricted to that one level (exterior and knee walls only, no partitions).
-For a roof-only request return {building:{roof:{sections,extensions},openings},
+For a roof-only request return {building:{roof:{sections,extensions},openings,porches},
 pages,checks,notes}, with only roof and gable openings, given all settled levels.
 Omit geometry outside the requested scope; never repeat or revise settled levels.
 ''' + _DRAFT_RULES + '''
@@ -520,6 +521,7 @@ def _parse_draft(kind, answer, v):
 
     def porch(value, path):
         return v.fields(value, path, {'polygon': polygon}, {
+            'id': v.text, 'screened': boolean,
             'floor': signed, 'columns': lambda x, p: v.items(x, p, lambda x, p: v.fields(
                 x, p, {'at': point, 'size': positive}))})
 
@@ -550,6 +552,7 @@ def _parse_draft(kind, answer, v):
         'openings': lambda x, p: v.items(x, p, opening),
         'rooms': lambda x, p: v.items(x, p, room), 'roof': roof,
         'porch': lambda x, p: None if x is None else porch(x, p),
+        'porches': lambda x, p: v.items(x, p, porch),
         'stairs': lambda x, p: v.items(x, p, stair),
     }
     building = v.object(answer.get('building'), kind + '.building')

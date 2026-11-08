@@ -341,12 +341,11 @@ def _rooms(building, levels, notes):
 
 
 def _details(building, levels, notes):
-    porch = building.get('porch')
-    if porch is not None:
+    def porch_detail(porch):
         if (not isinstance(porch, dict) or not _polygon(porch.get('polygon'))
                 or not _numeric_fields(porch, ('floor',))):
-            building['porch'] = None
             notes.append('Dropped porch: invalid polygon or floor.')
+            return None
         else:
             porch.setdefault('floor', 0)
             columns = []
@@ -357,6 +356,17 @@ def _details(building, levels, notes):
                 else:
                     notes.append(f'Dropped porch column {index}: invalid at or size.')
             porch['columns'] = columns
+            if 'screened' in porch and type(porch['screened']) is not bool:
+                del porch['screened']
+            return porch
+
+    if building.get('porch') is not None:
+        building['porch'] = porch_detail(building['porch'])
+    if 'porches' in building:
+        porches = [p for item in _items(building, 'porches', notes)
+                   if (p := porch_detail(item)) is not None]
+        _piece_meta(porches, 'porch', notes)
+        building['porches'] = porches
     for name in ('stairs', 'fixtures', 'lights'):
         valid_items = []
         for index, item in enumerate(_items(building, name, notes)):

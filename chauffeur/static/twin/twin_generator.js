@@ -199,6 +199,7 @@ export function buildTwin(plan, kit, tier) {
     return materials.get(key);
   };
   const glass = plain('glass', '#b9d7db', { transparent: true, opacity: 0.26, roughness: 0.1, depthWrite: false });
+  const screen = plain('screen', '#59615d', { transparent: true, opacity: 0.3, depthWrite: false, side: THREE.DoubleSide });
   const fixture = plain('fixture', '#fff4e0', { emissive: '#ffd59a', emissiveIntensity: 0 });
   const ghost = plain('ghost', '#38bdf8', { opacity: 0.35, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
   const ghostEdges = new THREE.LineDashedMaterial({ color: '#38bdf8', dashSize: 0.4, gapSize: 0.25, transparent: true, opacity: 0.8, depthWrite: false });
@@ -750,14 +751,57 @@ export function buildTwin(plan, kit, tier) {
         mesh(local[l.id], polygon(poly, l.elevation, l.elevation, cuts), mat('floor'));
       }
     }
-    if (b.porch?.polygon) {
-      const po = b.porch; use(po, 'porch', 'porch'); mesh(local[first.id], polygon(po.polygon, 0, po.floor), mat('patio_concrete'));
+    const porches = [...(b.porches || [])];
+    if (b.porch?.polygon && !porches.some(p => (p.id && p.id === b.porch.id) || JSON.stringify(p.polygon) === JSON.stringify(b.porch.polygon))) porches.unshift(b.porch);
+    for (const [index, po] of porches.entries()) {
+      if (!po.polygon) continue;
+      use(po, 'porch', po === b.porch ? 'porch' : `porch:${index}`); mesh(local[first.id], polygon(po.polygon, 0, po.floor), mat('patio_concrete'));
       const shed = b.roof?.extensions?.find(e => e.kind === 'shed_continuation');
       const section = sections.find(s => s.id === shed?.section);
       const main = section && { plate: section.plate, x1: section.rect[2] };
+      const topAt = (x, y) => {
+        const roof = heightAt(sections, x, y);
+        // Tuck into the roof shell, allowing for the triangulated surface's
+        // small difference from the analytic height at overlapping sections.
+        if (roof !== null && roof !== undefined) return roof - ROOF_THICKNESS + 0.05;
+        return main && shed ? main.plate - (x - main.x1) * shed.pitch / 12 : first.elevation + first.ceiling;
+      };
       for (const c of po.columns || []) {
-        const top = main && shed ? main.plate - (c.at[0] - main.x1) * shed.pitch / 12 : first.elevation + first.ceiling;
+        const top = topAt(...c.at);
         mesh(local[first.id], boxRect(c.at[0] - c.size / 2, c.at[1] - c.size / 2, c.at[0] + c.size / 2, c.at[1] + c.size / 2, po.floor, top), mat('trim'));
+      }
+      const porchWalls = b.walls.filter(w => w.exterior && (levels[w.level]?.elevation ?? 0) <= po.floor
+        && (levels[w.level]?.elevation ?? 0) + w.height > po.floor);
+      if (po.screened === true) for (let i = 0; i < po.polygon.length; i++) {
+        const a = po.polygon[i], endPoint = po.polygon[(i + 1) % po.polygon.length];
+        const dx = endPoint[0] - a[0], dy = endPoint[1] - a[1], length = Math.hypot(dx, dy);
+        if (!length) continue;
+        const project = p => ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length;
+        const distance = p => Math.abs((p[0] - a[0]) * dy - (p[1] - a[1]) * dx) / length;
+        const posts = (po.columns || []).filter(c => distance(c.at) <= c.size / 2 + 0.1
+          && project(c.at) >= 0 && project(c.at) <= length).sort((c, d) => project(c.at) - project(d.at));
+        for (let j = 1; j < posts.length; j++) {
+          const c = posts[j - 1], d = posts[j], span = Math.hypot(d.at[0] - c.at[0], d.at[1] - c.at[1]);
+          if (span <= (c.size + d.size) / 2) continue;
+          const basis = wallBasis(c.at, d.at, po.floor);
+          // Subtract wall spans so an attached side never receives a screen.
+          let gaps = [[c.size / 2, span - d.size / 2]];
+          for (const w of porchWalls) {
+            if (distance(w.from) > w.thickness + 0.1 || distance(w.to) > w.thickness + 0.1) continue;
+            const lo = Math.min(project(w.from), project(w.to)) - project(c.at), hi = Math.max(project(w.from), project(w.to)) - project(c.at);
+            gaps = gaps.flatMap(([s, e]) => hi <= s || lo >= e ? [[s, e]] : [[s, Math.max(s, lo)], [Math.min(e, hi), e]].filter(([u, v]) => v > u));
+          }
+          for (const [start, end] of gaps) {
+            const shape = new THREE.Shape(); shape.moveTo(start, 0); shape.lineTo(end, 0);
+            const count = Math.max(1, Math.ceil((end - start) * 2));
+            for (let k = count; k >= 0; k--) {
+              const t = start + (end - start) * k / count;
+              shape.lineTo(t, Math.max(0, topAt(c.at[0] + (d.at[0] - c.at[0]) * t / span, c.at[1] + (d.at[1] - c.at[1]) * t / span) - po.floor));
+            }
+            shape.closePath();
+            mesh(local[first.id], new THREE.ShapeGeometry(shape).applyMatrix4(basis.matrix), screen);
+          }
+        }
       }
       if (main && shed) {
         const xs = po.polygon.map(p => p[0]), ys = po.polygon.map(p => p[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);

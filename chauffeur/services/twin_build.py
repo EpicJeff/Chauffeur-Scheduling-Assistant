@@ -868,11 +868,21 @@ def _merge_draft(build, step, fragment, house):
         extension['section'] = section_ids.get(extension['section'], extension['section'])
     house['roof']['extensions'] = _merge_list(house['roof'].get('extensions', []), extensions,
                                              'extension', house, build, step)
-    if not (house.get('porch') or {}).get('src', {}).get('person'):
-        porches = _merge_list([house['porch']] if house.get('porch') else [],
-                             pieces('', 'porch', [draft['porch']] if draft.get('porch') else []),
-                             'porch', house, build, step)
-        house['porch'] = porches[-1] if porches else None
+    # Keep the legacy field as an alias when that is what the read supplied.
+    # Merge the complete collection through the usual person-edit protections.
+    existing = list(house.get('porches', []))
+    legacy = house.get('porch')
+    if legacy and not any(p.get('id') == legacy.get('id') for p in existing):
+        existing.insert(0, legacy)
+    incoming = list(draft.get('porches', []))
+    if draft.get('porch') and not any(p['polygon'] == draft['porch']['polygon'] for p in incoming):
+        incoming.insert(0, draft['porch'])
+    house['porches'] = _merge_list(existing, pieces('', 'porch', incoming),
+                                  'porch', house, build, step)
+    if not (legacy or {}).get('src', {}).get('person'):
+        house['porch'] = (next((p for p in house['porches']
+                               if p['polygon'] == draft['porch']['polygon']), None)
+                          if draft.get('porch') else None)
     house['stairs'] = _merge_list(house.get('stairs', []), pieces('stairs', 'stair'),
                                   'stair', house, build, step)
 
@@ -947,11 +957,13 @@ def _check_draft(house):
         outside = all(sum(within(p, l.get('outline', []), 0) for p in samples) < len(samples) / 2
                       for l in levels)
         if outside:
-            porch = house.get('porch') or {}
-            polygon = porch.get('polygon', [])
-            supported = (polygon and (all(within(p, corners, 0) for p in polygon)
-                                      or all(within(p, polygon, 0) for p in boundary(corners))))
-            supported = supported or any(within(c['at'], corners, 0) for c in porch.get('columns', []))
+            supported = False
+            for porch in [*house.get('porches', []), house.get('porch') or {}]:
+                polygon = porch.get('polygon', [])
+                supported = supported or (polygon and (
+                    all(within(p, corners, 0) for p in polygon)
+                    or all(within(p, polygon, 0) for p in boundary(corners))))
+                supported = supported or any(within(c['at'], corners, 0) for c in porch.get('columns', []))
             if not supported:
                 ghost(section, 'This porch roof has no porch or columns beneath it.')
         else:
@@ -1645,7 +1657,8 @@ def _settle(build, step, result, decision=None):
         target_collections = [target['walls'], target['openings'], target['rooms'], target['roof']['sections']] if target else []
         if kind in ('draft', 'draft_rooms'):
             extra = target['levels'] + target['roof'].get('extensions', []) + target.get('stairs', [])
-            if target.get('porch'):
+            extra.extend(target.get('porches', []))
+            if target.get('porch') and not any(p['id'] == target['porch']['id'] for p in extra):
                 extra.append(target['porch'])
             ghosts.extend(p for p in [*extra, *(p for c in target_collections for p in c)]
                           if p.get('src', {}).get('step') == step['id'] and p.get('state') == 'ghost')

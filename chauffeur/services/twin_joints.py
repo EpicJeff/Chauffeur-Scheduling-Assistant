@@ -463,6 +463,38 @@ def _feet(value):
     return f'{value:.1f}'.removesuffix('.0')
 
 
+def _edge_in_outline(edge, polygon):
+    """Require the entire edge inside, including across concave recesses."""
+    if len(polygon) < 3:
+        return False
+    axis, line, start, end = edge
+    along = 1 - axis
+    spans, cuts = [], [start, end]
+    for a, b in zip(polygon, polygon[1:] + polygon[:1]):
+        if abs(a[axis] - b[axis]) <= _EPS:
+            if abs(a[axis] - line) <= _EPS:
+                spans.append(sorted((a[along], b[along])))
+                cuts.extend(v for v in (a[along], b[along]) if start < v < end)
+        elif min(a[axis], b[axis]) <= line <= max(a[axis], b[axis]):
+            v = a[along] + (b[along] - a[along]) * (line - a[axis]) / (b[axis] - a[axis])
+            if start < v < end:
+                cuts.append(v)
+
+    def inside(value):
+        if any(lo - _EPS <= value <= hi + _EPS for lo, hi in spans):
+            return True
+        point = [line, value] if axis == 0 else [value, line]
+        x, y = point
+        result = False
+        for a, b in zip(polygon, polygon[1:] + polygon[:1]):
+            if (a[1] > y) != (b[1] > y) and x < a[0] + (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]):
+                result = not result
+        return result
+
+    cuts = sorted(set(cuts))
+    return all(inside((a + b) / 2) for a, b in zip(cuts, cuts[1:]))
+
+
 def report(building: dict) -> list[str]:
     """Describe remaining open corners, unsupported roof edges and awnings."""
     messages = Counter()
@@ -480,15 +512,35 @@ def report(building: dict) -> list[str]:
             add(f'1 outside corner on the {name} does not meet.',
                 f'{{count}} outside corners on the {name} do not meet.', corners)
     sections = [s for s in building.get('roof', {}).get('sections', []) if s.get('state') != 'ghost']
+
+    def internal(section, edge):
+        axis, line, start, end = edge
+        rectangles = [s['rect'] for s in sections if s is not section
+                      and s['rect'][axis] - .5 - _EPS <= line <= s['rect'][axis + 2] + .5 + _EPS]
+        outlines = [l.get('outline', []) for l in building.get('levels', [])]
+        cuts = [start, end]
+        cuts.extend(v for r in rectangles for v in (r[1 - axis] - .5, r[3 - axis] + .5)
+                    if start < v < end)
+        for poly in outlines:
+            for a, b in zip(poly, poly[1:] + poly[:1]):
+                if abs(a[axis] - b[axis]) <= _EPS:
+                    continue
+                if min(a[axis], b[axis]) <= line <= max(a[axis], b[axis]):
+                    v = a[1 - axis] + (b[1 - axis] - a[1 - axis]) * (line - a[axis]) / (b[axis] - a[axis])
+                    if start < v < end:
+                        cuts.append(v)
+        cuts = sorted(set(cuts))
+        return all(any(r[1 - axis] - .5 - _EPS <= lo and hi <= r[3 - axis] + .5 + _EPS for r in rectangles)
+                   or any(_edge_in_outline((axis, line, lo, hi), poly) for poly in outlines)
+                   for lo, hi in zip(cuts, cuts[1:]))
+
     for section in sections:
         tops = []
         for edge in _edges(section):
             axis, line, start, end = edge
-            # An internal edge shared with another roof is a roof joint, not
-            # an unsupported eave. A partial overlap does not hide an open end.
-            if any(other is not section and any(a == axis and abs(c - line) <= _EPS
-                       and lo <= start + _EPS and hi >= end - _EPS
-                       for a, c, lo, hi in _edges(other)) for other in sections):
+            # Inner joins are not unsupported eaves or plate contacts. Require
+            # full coverage so a partial overlap cannot conceal an open end.
+            if internal(section, edge):
                 continue
             candidates = _bearing(building, section, edge)
             levels = {l['id']: l for l in building.get('levels', [])}
