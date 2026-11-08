@@ -116,7 +116,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #time-actions { display: flex; justify-content: flex-start; gap: 8px; margin-bottom: 8px; }
 /* Your place reuses the editor's panel, page fieldset and action treatments.
    Full-screen header/body/footer follows ui_design_guide's growing dialogs. */
-#place-view { position: fixed; inset: 0; z-index: 90; display: flex; flex-direction: column; background: #171e27; }
+#place-view { position: fixed; inset: 0; z-index: 90; display: flex; flex-direction: column; background: #171e27; color-scheme: dark; }
 .place-header, .place-footer { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; background: var(--editor-panel); }
 .place-header { border-bottom: 1px solid var(--editor-line); }
 .editor-shell .place-header h2 { font-size: 20px; }
@@ -135,9 +135,15 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 .place-card label, .place-add label { display: block; color: var(--editor-muted); }
 .place-card input:not([type="checkbox"]), .place-card select, .place-add input, .place-add select { display: block; margin-top: 4px; width: 100%; min-width: 0; }
 .place-card input[type="file"] { font-size: 12px; padding: 6px; }
+.place-card input[type="file"]::file-selector-button { font: inherit; color: inherit; background: #1c2531; border: 1px solid var(--editor-line); border-radius: 10px; min-height: 44px; padding: 8px 10px; margin-right: 8px; cursor: pointer; }
+.place-card input[type="file"]:not(:disabled)::file-selector-button:hover { background: #293849; }
+.place-card input[type="file"]:disabled::file-selector-button { opacity: .5; cursor: default; }
 .place-card details > summary { cursor: pointer; min-height: 44px; padding: 8px 0; color: var(--editor-muted); }
 .place-card details > label, .place-card details > button { margin-bottom: 8px; }
 .place-region + .place-region { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--editor-line); }
+.place-region-preview { position: relative; overflow: hidden; width: 140px; max-width: 100%; aspect-ratio: 1; border-radius: 6px; background: white; }
+.place-region-preview img { position: absolute; max-height: none; border-radius: 0; object-fit: fill; }
+.editor-shell .place-region-caption { margin-top: 8px; color: var(--editor-muted); }
 .place-photo .editor-actions { margin-top: 8px; }
 .place-photo button[aria-pressed="true"] { color: var(--editor-accent); border-color: var(--editor-accent); background: #104e6b; }
 .place-shell { min-width: 0; margin: 0; padding: 10px; border: 1px solid var(--editor-line); border-radius: 10px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
@@ -158,6 +164,9 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 .place-footprint { fill: #104e6bbd; stroke: #52ccff; stroke-width: 2; cursor: grab; }
 .place-selected { fill: #52ccff55; stroke-width: 3; }
 .place-map-label { fill: #dce4ef; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
+.place-map-label-small { opacity: 0; }
+.place-map-footprint:hover .place-map-label-small, .place-map-footprint:focus-within .place-map-label-small,
+.place-selected + .place-map-label-small { opacity: 1; }
 @media (max-width: 1150px) { #place-cards { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 700px) {
   .place-header, .place-footer { padding: 12px; gap: 10px; flex-wrap: wrap; }
@@ -166,6 +175,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
   .place-scroll { padding: 12px; }
   .place-add > label, .place-add label:first-child { flex: 1 1 160px; max-width: none; }
   .place-layout { grid-template-columns: minmax(0, 1fr); }
+  .place-shell [data-place-draw] { grid-column: 1 / -1; }
   .place-footer > p { font-size: 12px; }
   .place-footer .editor-actions { width: 100%; }
   .place-footer .editor-actions button { flex: 1; }

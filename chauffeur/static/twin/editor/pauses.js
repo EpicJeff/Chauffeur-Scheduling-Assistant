@@ -108,6 +108,7 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
       el('pause-dimension').value = pause.dimension_ft > 0 ? feetInches(pause.dimension_ft) : '';
       const lotPlot = build.part === 'lot' && pause.step === 'plot';
       el('pause-drag').hidden = lotPlot;
+      el('pause-cancel').hidden = lotPlot;
       el('pause-turn-label').hidden = pause.kind !== 'lot_placement' || lotPlot;
       el('pause-turn').value = pause.transform?.rotation || 0;
       el('pause-pin').hidden = pause.kind !== 'level_registration' || lotPlot;

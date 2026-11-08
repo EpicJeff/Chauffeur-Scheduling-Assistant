@@ -140,6 +140,11 @@ export async function boot() {
     },
     async onBuild(build) {
       if (ghostBuild !== build.id) { ghosts.clear(); ghostBuild = build.id; }
+      // Yield once per new question, while allowing uploads if the person
+      // reopens Your place during the same pause.
+      if (['paused', 'checkpoint'].includes(build.state) && place?.isOpen()
+        && (currentBuild?.id !== build.id || currentBuild?.state !== build.state
+          || currentBuild?.pause?.step !== build.pause?.step)) place.close();
       currentBuild = build;
       for (const event of build.events || []) {
         if (event.type === 'ghost') ghosts.set(event.step, event);

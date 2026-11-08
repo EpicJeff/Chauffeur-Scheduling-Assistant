@@ -230,6 +230,23 @@ def scenario_move_page_resets_incompatible_role():
     expect_value_error(lambda: ts.move_page(sid, 2, 'nope'))
 
 
+def scenario_move_page_without_rows_creates_other_row():
+    _fresh()
+    ts.add_building('Detached garage', 'garage')
+    sid = ts.save_source('drawing', 'garage.pdf', _pdf(pages=3), part='detached-garage')
+    check(ts.page_roles() == [], 'fresh pages have no saved role rows')
+    for page, region in ((1, None), (2, 0)):
+        expected = {'source': sid, 'page': page, 'building': 'lot',
+                    'role': 'other', 'level': None, 'box': None}
+        moved = ts.move_page(sid, page, 'lot', region=region)
+        check(moved == [expected], moved)
+        check([r for r in ts.page_roles() if r['page'] == page] == [expected],
+              'moving an unassigned page persists exactly one Other row')
+    before = ts.page_roles()
+    expect_value_error(lambda: ts.move_page(sid, 3, 'lot', region=1), 'Choose a region on this page.')
+    check(ts.page_roles() == before, 'an invalid region leaves the fresh page unassigned')
+
+
 def scenario_photo_tags():
     _fresh()
     ts.add_building('Detached garage', 'garage')
@@ -595,6 +612,7 @@ SCENARIOS = (
     scenario_upload_to_part,
     scenario_roles_per_part,
     scenario_move_page_resets_incompatible_role,
+    scenario_move_page_without_rows_creates_other_row,
     scenario_photo_tags,
     scenario_migration_from_slice_1,
     scenario_rename_built_building_updates_plan,

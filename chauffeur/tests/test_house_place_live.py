@@ -343,10 +343,11 @@ def scenario_hint_moves_page():
         page.route('**/api/house/editor/place/pages/move', lambda r: (moves.append(json.loads(r.request.post_data)), r.continue_()))
         _open_place(page)
         _upload(page, 'house', 'garage-sheet.pdf', 'application/pdf', engine_tests._pdf(1))
-        page.wait_for_function("() => document.querySelectorAll('[data-place-suggest]').length >= 1", timeout=30000)
-        src = _source(page, 'garage-sheet.pdf')['id']
+        # two.pdf (scenario 3) already shows a Suggest button, so wait for THIS upload's source and its button.
+        src = _wait_source(page, 'garage-sheet.pdf')['id']
         STATE['hint_src'] = src
         button = page.locator(f'[data-place-suggest="{src}"]')
+        button.wait_for(state='visible', timeout=30000)
         check(button.inner_text().strip().startswith('Suggest page roles'), button.inner_text())
         button.click()
         _paid_confirm(page)

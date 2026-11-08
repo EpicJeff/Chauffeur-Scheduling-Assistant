@@ -39,7 +39,8 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
   const place = () => sheets.place || { buildings: [], lot: {}, photo_tags: {} };
   const parts = () => [{ id: 'lot', name: 'Lot' }, ...place().buildings];
   const kinds = () => (sheets.kinds || []).map(k => [k.id, k.label]);
-  const stopped = () => busy || !canEdit() || active(snapshot.buildState || (snapshot.build ? { state: 'running' } : null));
+  const buildActive = () => active(snapshot.buildState || (snapshot.build ? { state: 'running' } : null));
+  const stopped = (duringBuild = false) => busy || !canEdit() || (!duringBuild && buildActive());
   const grouped = list => {
     const pages = new Map();
     for (const row of list) { const key = pageKey(row); if (!pages.has(key)) pages.set(key, []); pages.get(key).push(cleanRow(row)); }
@@ -59,13 +60,19 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
   function controls() {
     const blocked = stopped();
     host.querySelectorAll('input, select, button').forEach(control => {
-      if (control.id !== 'place-close') control.disabled = blocked;
+      if (control.id !== 'place-close') control.disabled = control.matches('[data-place-upload], [data-place-tag]') ? stopped(true) : blocked;
     });
     host.querySelectorAll('[data-place-build]').forEach(button => {
       button.disabled = blocked || dirty() || !ready(button.dataset.placeBuild);
     });
     host.querySelectorAll('[data-place-suggest]').forEach(button => {
-      button.disabled = blocked || saved.some(row => row.source === button.dataset.placeSuggest);
+      const assigned = saved.some(row => row.source === button.dataset.placeSuggest);
+      button.disabled = blocked || assigned;
+      button.title = !canEdit() ? 'Return to editing before suggesting page roles.'
+        : busy ? 'Wait for the current change to finish.'
+          : buildActive() ? 'Wait until the build finishes before suggesting page roles.'
+            : assigned ? 'Page roles are already saved for this document. You can change each role by hand.'
+              : button.getAttribute('aria-label');
     });
     el('place-build').disabled = blocked || dirty() || !parts().some(part => ready(part.id));
     el('place-confirm-pages').disabled = blocked || !rows.length;
@@ -75,8 +82,8 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     el('place-turn').disabled = blocked || !selected;
     host.setAttribute('aria-busy', String(busy));
   }
-  async function work(action) {
-    if (stopped()) return;
+  async function work(action, duringBuild = false) {
+    if (stopped(duringBuild)) return;
     busy = true; controls();
     try { await action(); }
     catch (error) { report(error); }
@@ -122,13 +129,28 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     await mutate('place/pages/move', 'POST', { source: row.source, page: row.page, part,
       ...(region === null ? {} : { region }) });
   }
+  function pagePreview(source, page, box) {
+    const image = node('img', undefined, { src: sheetURL(source.id, page),
+      alt: `${box ? 'Part of page' : 'Page'} ${page} of ${source.filename}`, loading: 'lazy' });
+    if (!box) return image;
+    const [x0, y0, x1, y1] = box, width = x1 - x0, height = y1 - y0;
+    const crop = node('div', undefined, { class: 'place-region-preview' });
+    Object.assign(image.style, { width: `${100 / width}%`, height: `${100 / height}%`,
+      left: `${-100 * x0 / width}%`, top: `${-100 * y0 / height}%` });
+    image.addEventListener('load', () => {
+      const ratio = width * image.naturalWidth / (height * image.naturalHeight);
+      crop.style.aspectRatio = String(ratio);
+      crop.style.width = `min(100%, ${140 * ratio}px)`;
+    });
+    crop.append(image); return crop;
+  }
   function pageCard(source, page, part) {
     const card = node('fieldset', undefined, { class: 'editor-page', 'data-place-page': `${source.id}:${page}` });
-    card.append(node('legend', `${source.filename} · page ${page}`), node('img', undefined, {
-      src: sheetURL(source.id, page), alt: `Page ${page} of ${source.filename}`, loading: 'lazy' }));
+    card.append(node('legend', `${source.filename} · page ${page}`));
     for (const row of pageRows(source.id, page).filter(row => row.building === part)) {
       const region = node('div', undefined, { class: 'place-region' });
-      if (row.box) region.append(node('p', 'One part of this page'));
+      region.append(pagePreview(source, page, row.box));
+      if (row.box) region.append(node('p', 'One part of this page', { class: 'place-region-caption' }));
       const roles = sheets.roles?.[part === 'lot' ? 'lot' : 'building'] || [];
       const role = select(roles.map(id => [id, roleWords[id]]), row.role, { 'data-place-role': '' });
       role.addEventListener('change', () => { row.role = role.value; if (part === 'lot') row.level = null; controls(); });
@@ -161,7 +183,7 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     for (const part of parts()) {
       const button = node('button', part.name, { type: 'button', 'data-place-tag': part.id, 'aria-pressed': String(tags.includes(part.id)) });
       button.addEventListener('click', () => work(() => mutate(`place/photos/${encodeURIComponent(source.id)}`, 'PUT', {
-        parts: tags.includes(part.id) ? tags.filter(id => id !== part.id) : [...tags, part.id] }))); buttons.append(button);
+        parts: tags.includes(part.id) ? tags.filter(id => id !== part.id) : [...tags, part.id] }), true)); buttons.append(button);
     }
     card.append(buttons); return card;
   }
@@ -227,17 +249,17 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     upload.addEventListener('change', event => {
       const files = Array.from(event.target.files);
       work(async () => {
-        const errors = [];
+        const errors = []; let added = 0;
         for (const file of files) {
-          if (!['application/pdf', 'image/jpeg', 'image/png'].includes(file.type)) { errors.push('Choose a PDF, JPEG or PNG file.'); continue; }
+          if (!['application/pdf', 'image/jpeg', 'image/png'].includes(file.type)) { errors.push(`${file.name} could not be added: Choose a PDF, JPEG or PNG file.`); continue; }
           status(`Uploading ${file.name}…`);
           const data = new FormData(); data.append('part', part.id); data.append('kind', file.type === 'application/pdf' ? 'drawing' : 'photo'); data.append('file', file);
-          try { await request('sources', 'POST', data, 'twin'); }
-          catch (error) { errors.push(error.message); if (error.signedOut) break; }
+          try { await request('sources', 'POST', data, 'twin'); added++; }
+          catch (error) { errors.push(`${file.name} could not be added: ${error.message}`); if (error.signedOut) break; }
         }
-        await reload(); status('Check each page, then confirm.');
+        await reload(); status(added ? 'Files added. Check each drawing page, then confirm.' : 'No files were added. Check the errors and try again.');
         if (errors.length) report(new Error(errors.join('\n')));
-      }).finally(() => { upload.value = ''; });
+      }, true).finally(() => { upload.value = ''; });
     });
     card.append(labelled('Add drawings or photos', upload));
     let documents = 0;
@@ -246,7 +268,8 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
       if (!pages.length) continue;
       documents += pages.length;
       for (const page of pages) card.append(pageCard(source, page, part.id));
-      const suggest = node('button', 'Suggest page roles', { type: 'button', 'data-place-suggest': source.id });
+      const suggest = node('button', 'Suggest page roles', { type: 'button', 'data-place-suggest': source.id,
+        'aria-label': `Suggest page roles for ${source.filename}` });
       suggest.addEventListener('click', () => work(() => paid('Suggest page roles?', 'roles', async () => {
         const result = await request('sheets/suggest', 'POST', { source: source.id });
         const suggested = new Set(result.rows.map(r => r.page));
@@ -346,23 +369,38 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
       edge.addEventListener('click', choose);
       edge.addEventListener('keydown', event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); choose(); } }); map.append(edge);
     });
+    const scale = Math.min(map.clientWidth / (w + 2 * pad), map.clientHeight / (h + 2 * pad)) || 1;
+    const fontSize = 13 / scale;
     for (const [id, outline] of footprints) {
+      const name = place().buildings.find(b => b.id === id)?.name || 'Building';
+      const group = svgNode('g', { class: 'place-map-footprint' });
       const polygon = svgNode('polygon', { points: points(outline), 'data-place-footprint': id, tabindex: 0, role: 'button',
-        'aria-label': `Place ${place().buildings.find(b => b.id === id)?.name || 'building'}`,
+        'aria-label': `Place ${name}`,
         class: selected === id ? 'place-footprint place-selected' : 'place-footprint' });
-      polygon.addEventListener('focus', () => { selected = id; controls(); });
+      const title = svgNode('title', {}); title.textContent = name; polygon.append(title);
+      polygon.addEventListener('focus', () => selectFootprint(id));
       // Arrow keys move one foot; the same confirmation saves keyboard and pointer changes.
       polygon.addEventListener('keydown', event => {
         const by = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
         if (!by || stopped()) return;
         event.preventDefault(); footprints.set(id, footprints.get(id).map(p => p.map((v, i) => v + by[i])));
-        polygon.setAttribute('points', points(footprints.get(id)));
+        drawMap(); map.querySelector(`[data-place-footprint="${CSS.escape(id)}"]`)?.focus();
       });
-      map.append(polygon);
       const centre = [0, 1].map(i => outline.reduce((n, p) => n + p[i], 0) / outline.length);
-      const text = svgNode('text', { x: centre[0], y: centre[1], class: 'place-map-label', 'font-size': Math.max(w, h) / 40 });
-      text.textContent = place().buildings.find(b => b.id === id)?.name || ''; map.append(text);
+      const width = Math.max(...outline.map(p => p[0])) - Math.min(...outline.map(p => p[0]));
+      const height = Math.max(...outline.map(p => p[1])) - Math.min(...outline.map(p => p[1]));
+      const small = width < fontSize * (name.length * .65 + 1) || height < fontSize * 1.5;
+      const text = svgNode('text', { x: centre[0], y: centre[1],
+        class: `place-map-label${small ? ' place-map-label-small' : ''}`, 'font-size': fontSize });
+      text.textContent = name; group.append(polygon, text); map.append(group);
     }
+  }
+  function selectFootprint(id) {
+    selected = id;
+    map.querySelectorAll('[data-place-footprint]').forEach(polygon => {
+      polygon.classList.toggle('place-selected', polygon.dataset.placeFootprint === id);
+    });
+    controls();
   }
   function render() {
     const addKind = el('place-add-kind'), chosenKind = addKind.value;
@@ -452,7 +490,7 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     const id = event.target.closest('[data-place-footprint]')?.dataset.placeFootprint;
     if (!drawing && !id) return;
     event.preventDefault();
-    const p = world(event); selected = drawing || id;
+    const p = world(event); selectFootprint(drawing || id);
     drag = { id: selected, start: [p.x, p.y], outline: copy(footprints.get(selected) || []), pointer: event.pointerId, drawing: !!drawing };
     map.setPointerCapture(event.pointerId); controls();
   });
