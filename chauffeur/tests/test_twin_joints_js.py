@@ -19,8 +19,8 @@ and the driver sets the root scale (FT) back to 1, so world = (x, z + base,
 What a ray may hit. Only meshes a camera would draw: visible all the way up
 the parent chain (the gable cutaway group is hidden), not on PICK_LAYER (the
 pick proxies), not a ghost (userData.ghost or the 'ghost' material). Line
-segments are not meshes and are skipped. Materials keep their own side, so a
-roof (front side up) is not hit from below, as in the render.
+segments are not meshes and are skipped. Materials keep their own side: roofs
+are FrontSide with upward winding, so are not hit from below, as in the render.
 
 How a hit is classed. Settled meshes are merged per material, so a hit is
 classed by its material role (material.name is the kit role):
@@ -103,9 +103,10 @@ result.heights = (job.heights || []).map(([x, y]) => {
   const h = roof.heightAt(sections, x, y);
   let best = null, top = -Infinity;
   sections.forEach((s, i) => { const z = roof.sectionHeight(s, x, y); if (z !== null && z > top) { top = z; best = i; } });
-  return { h, section: best, plate: best === null ? null : sections[best].plate };
+  return { h, section: best, plate: best === null ? null : sections[best].plate,
+           all: sections.map(s => roof.sectionHeight(s, x, y)) };
 });
-if (job.rays || job.bounds) {
+if (job.rays || job.bounds || job.triangles) {
   const THREE = await import('three');
   const gen = await import(pathToFileURL(path.join(job.twin, 'twin_generator.js')).href);
   const out = gen.buildTwin(job.plan, job.kit, 'low');
@@ -131,12 +132,36 @@ if (job.rays || job.bounds) {
   result.hits = (job.rays || []).map(ray => {
     const d = new THREE.Vector3(ray.d[0], ray.d[2], -ray.d[1]).normalize();
     caster.set(toWorld(ray.o), d); caster.near = 0; caster.far = ray.far ?? Infinity;
-    return caster.intersectObjects(meshes, false).slice(0, ray.keep ?? 4).map(hit => {
+    const targets = ray.roles ? meshes.filter(o => ray.roles.includes(o.material?.name)) : meshes;
+    return caster.intersectObjects(targets, false).slice(0, ray.keep ?? 4).map(hit => {
       const m = Array.isArray(hit.object.material) ? hit.object.material[hit.face?.materialIndex ?? 0] : hit.object.material;
       const n = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : new THREE.Vector3();
       return { role: m?.name || '', dist: hit.distance, p: [hit.point.x, -hit.point.z, hit.point.y - base], n: [n.x, -n.z, n.y] };
     });
   });
+  // Triangles of the named material roles, in plan feet (x, y, height above
+  // L1's base), world transforms applied: [ax, ay, az, bx, by, bz, cx, cy, cz].
+  if (job.triangles) {
+    result.triangles = {};
+    const v = new THREE.Vector3();
+    for (const role of job.triangles) {
+      const out = result.triangles[role] = [];
+      for (const o of meshes) {
+        const m = Array.isArray(o.material) ? o.material[0] : o.material;
+        if ((m?.name || '') !== role) continue;
+        const pos = o.geometry.attributes.position, index = o.geometry.index;
+        const count = index ? index.count : pos.count;
+        for (let i = 0; i + 2 < count; i += 3) {
+          const tri = [];
+          for (let k = 0; k < 3; k++) {
+            v.fromBufferAttribute(pos, index ? index.getX(i + k) : i + k).applyMatrix4(o.matrixWorld);
+            tri.push(+v.x.toFixed(4), +(-v.z).toFixed(4), +(v.y - base).toFixed(4));
+          }
+          out.push(tri);
+        }
+      }
+    }
+  }
   // Piece bounds are in the building's local frame: plan feet, x, height, -y.
   result.bounds = {};
   for (const key of job.bounds || []) {
@@ -175,7 +200,7 @@ def building(p):
     return next(b for b in p['buildings'] if b['id'] == BID)
 
 
-def run(p, rays=None, heights=None, bounds=None):
+def run(p, rays=None, heights=None, bounds=None, triangles=None):
     d = tempfile.mkdtemp(prefix='twin_joints_js_')
     try:
         driver = os.path.join(d, 'driver.mjs')
@@ -183,7 +208,7 @@ def run(p, rays=None, heights=None, bounds=None):
             f.write(DRIVER)
         job = {'vendor': VENDOR, 'twin': TWIN, 'plan': p, 'building': BID,
                'kit': {**tl.kit('modern_farmhouse'), 'manifest': {}},
-               'rays': rays, 'heights': heights, 'bounds': bounds}
+               'rays': rays, 'heights': heights, 'bounds': bounds, 'triangles': triangles}
         job_path = os.path.join(d, 'job.json')
         with open(job_path, 'w', encoding='utf-8') as f:
             json.dump(job, f)
@@ -510,6 +535,453 @@ def test_upper_floor_slab_own_outline():
           ('L2 slab bounds (x0, y0, x1, y1)', [round(g, 3) for g in got], 'want', want))
 
 
+def test_upper_storey_walls_reach_own_roof():
+    """Wing roofs cannot cut L2 walls short below the main eave."""
+    p = plan()
+    b = building(p)
+    l2 = level(b, 'L2')
+    rays, meta = [], []
+    for w in exterior(b, 'L2'):
+        d, n, length = wall_frame(w, l2['outline'])
+        for z in (3, 6):
+            count = 0
+            for i in range(1, 20):
+                u = length * i / 20
+                # Windows are intentional holes; probe the wall beside them.
+                if any(o.get('wall') == w['id'] and o['sill'] - 0.4 <= z <= o['head'] + 0.4
+                       and abs(u - o['at']) <= o['width'] / 2 + 0.4 for o in b['openings']):
+                    continue
+                x, y = at(w, d, u)
+                rays.append({'o': [x + 3 * n[0], y + 3 * n[1], l2['elevation'] + z],
+                             'd': [-n[0], -n[1], 0], 'far': 4})
+                meta.append((w['id'], round(u, 2), z))
+                count += 1
+            check(count > 0, ('no wall samples', w['id'], z))
+    hits = run(p, rays=rays)['hits']
+    bad = [m for m, hs in zip(meta, hits) if not any(classify(h) in ('wall', 'roof') for h in hs)]
+    check(not bad, ('L2 wall rays missed within 4 ft (wall, along, height)', bad[:12]))
+
+
+def test_upper_storey_windows_within_walls():
+    """The complete drawn L2 window, including its trim, fits its wall."""
+    p = plan()
+    b = building(p)
+    walls = {w['id']: w for w in exterior(b, 'L2')}
+    openings = [o for o in b['openings'] if o.get('wall') in walls and o['kind'] == 'window']
+    check(openings, 'no L2 windows tested')
+    keys = [f'{BID}:{wid}' for wid in walls] + [f"{BID}:{o['id']}" for o in openings]
+    boxes = run(p, bounds=keys)['bounds']
+    rays, meta = [], []
+    for o in openings:
+        wall_box, window_box = boxes[f"{BID}:{o['wall']}"], boxes[f"{BID}:{o['id']}"]
+        check(wall_box is not None and window_box is not None, ('missing wall/window', o['id']))
+        check(window_box['min'][2] >= wall_box['min'][2] - 0.01
+              and window_box['max'][2] <= wall_box['max'][2] + 0.01,
+              ('L2 window extends beyond drawn wall', o['id'], window_box, wall_box))
+        w = walls[o['wall']]
+        d, n, _ = wall_frame(w, level(b, 'L2')['outline'])
+        # Check the actual wall above and below the window across its width;
+        # a tall end of a sloping wall must not hide a locally truncated top.
+        for f in (-0.5, -0.25, 0, 0.25, 0.5):
+            x, y = at(w, d, o['at'] + f * o['width'])
+            for z in (window_box['min'][2] - 0.1, window_box['max'][2] + 0.1):
+                rays.append({'o': [x + 3 * n[0], y + 3 * n[1], z],
+                             'd': [-n[0], -n[1], 0], 'far': 4})
+                meta.append((o['id'], f, z))
+    hits = run(p, rays=rays)['hits']
+    bad = [m for m, hs in zip(meta, hits) if not any(classify(h) == 'wall' for h in hs)]
+    check(not bad, ('window lacks surrounding wall at its drawn limits', bad))
+
+
+def test_lower_roof_stays_outside_upper_rooms():
+    """A downward ray inside L2 reaches its floor, without a wing roof."""
+    p = plan()
+    hits = run(p, rays=[{'o': [34, 45, 18], 'd': [0, 0, -1], 'far': 20, 'keep': 1}])['hits'][0]
+    check(hits and hits[0]['role'] == 'floor' and abs(hits[0]['p'][2] - 10.9) <= 0.1,
+          ('lower roof intrudes into an L2 room', hits))
+
+
+def test_storey_roof_plate_limits_and_upper_envelope():
+    """R5''': strict lower plate bound, inclusive upper bound, highest cover."""
+    p = plan()
+    b = building(p)
+    b['levels'] = [{'id': 'L1', 'elevation': 5, 'ceiling': 10,
+                    'outline': [[0, 0], [10, 0], [10, 10], [0, 10]]}]
+    b['walls'] = [{'id': 'probe', 'level': 'L1', 'from': [0, 0], 'to': [10, 0],
+                   'height': 7, 'thickness': 0.5, 'exterior': True}]
+    b['openings'], b['rooms'] = [], []
+    b['roof']['extensions'] = []
+    key = f'{BID}:probe'
+    # The wall is covered only by the overhang, exercising that part of R5'''.
+    def roof(plate):
+        return {'kind': 'flat', 'rect': [0, 0.5, 10, 10], 'plate': plate,
+                'pitch': 0, 'overhang': 1}
+    for plates, expected in (([5.5], 7), ([5.5001], 9.9201),
+                             ([17], 11.92), ([17.0001], 7),
+                             ([10, 14, 30], 8.92), ([], 7)):
+        b['roof']['sections'] = [dict(roof(h), id=f'r{i}') for i, h in enumerate(plates)]
+        # A low-plate shed has a high surface here: R9's visible envelope does
+        # not hide whether R5 excluded its plate at the strict lower bound.
+        for s in b['roof']['sections']:
+            if s['plate'] < 6:
+                s.update(kind='shed', low_side='y1', pitch=12)
+        box = run(p, bounds=[key])['bounds'][key]
+        check(box is not None and abs(box['max'][2] - 5 - expected) < 0.001,
+              ('storey plate selection / highest envelope', plates, box, expected))
+
+
+def test_uncovered_knee_walls_capped_by_visible_roof():
+    """R9 caps uncovered L2 knees at the lower of both visible roof faces."""
+    p = plan()
+    b = building(p)
+    samples = [('k1', (0.1, 25.33)), ('k5', (58.9, 19.33))]
+    points, rays = [], []
+    for wid, (x, y) in samples:
+        w = next(w for w in b['walls'] if w['id'] == wid)
+        points += [[x, y - w['thickness'] / 2], [x, y + w['thickness'] / 2]]
+        rays.append({'o': [x, y, 40], 'd': [0, 0, -1], 'far': 40,
+                     'keep': 1, 'roles': ['interior_wall']})
+    got = run(p, rays=rays, heights=points)
+    # Probe the actual knee top outside the main block, rather than its whole
+    # piece bounds: the other end of k1 legitimately rises under the main hip.
+    for i, ((wid, _), hits) in enumerate(zip(samples, got['hits'])):
+        expected = min(h['h'] for h in got['heights'][2 * i:2 * i + 2]) - 0.08
+        check(hits and abs(hits[0]['p'][2] - expected) < 0.01,
+              ('knee wall pierces visible roof', wid, hits, expected))
+
+
+# ---- Task 3: roof steps are filled; the roof has thickness, fascia, rake trim
+# and soffit (plan docs/superpowers/plans/
+# 2026-11-08-house-editor-whole-building-draft.md, Task 3).
+
+def section_bounds(s):
+    """A section's plan rect with its overhang, as twin_roof.js bounds()."""
+    x0, y0, x1, y1 = s['rect']
+    o = s.get('overhang') or 0
+    return (x0 - o, y0 - o, x1 + o, y1 + o)
+
+
+def boundary_distance(poly, pt):
+    x, y = pt
+    best = math.inf
+    for i in range(len(poly)):
+        (ax, ay), (bx, by) = poly[i], poly[(i + 1) % len(poly)]
+        dx, dy = bx - ax, by - ay
+        L2 = dx * dx + dy * dy
+        t = 0 if L2 == 0 else max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / L2))
+        best = min(best, math.hypot(x - (ax + t * dx), y - (ay + t * dy)))
+    return best
+
+
+def inside_spans(poly, o, d, length):
+    """Where an axis-aligned plan ray o + t*d, t in [0, length], lies inside
+    the polygon: a list of (t0, t1)."""
+    ts = []
+    for i in range(len(poly)):
+        (ax, ay), (bx, by) = poly[i], poly[(i + 1) % len(poly)]
+        if d[0]:   # moving along x at fixed y
+            y = o[1]
+            if (ay > y) != (by > y):
+                x = ax + (y - ay) * (bx - ax) / (by - ay)
+                ts.append((x - o[0]) / d[0])
+        else:      # moving along y at fixed x
+            x = o[0]
+            if (ax > x) != (bx > x):
+                y = ay + (x - ax) * (by - ay) / (bx - ax)
+                ts.append((y - o[1]) / d[1])
+    ts.sort()
+    spans = []
+    for t0, t1 in zip(ts[0::2], ts[1::2]):
+        a, c = max(t0, 0.0), min(t1, length)
+        if c > a:
+            spans.append((a, c))
+    return spans
+
+
+def test_rear_seams_closed():
+    """Horizontal rays from the rear (travelling -y) and from both sides
+    (+x from the left, -x from the right), every 0.5 ft across the building
+    (at k/2 + 1/4) and every 0.5 ft in height from 0.5 ft up. The building
+    edge of a ray is the first point on its path that a roof section covers
+    (rect plus overhang); a ray is cast at every height below heightAt
+    there. Each such ray must hit a mesh before it reaches the inside of the
+    house.
+
+    Inside the house: a point on the ray's path more than 1 ft inside the
+    ground floor's outline (deeper than any wall), more than 0.5 ft below the
+    roof (heightAt) there, and not within 1 ft of the upper floor's outline
+    when at or above that floor (its walls stand there). The plan's "every
+    ray hits a mesh" alone is both too weak and too strong: a ray that slips
+    through a seam still hits a floor or an interior wall deep inside, and a
+    ray running along under an eave beside a wall hits nothing yet sees
+    nothing of the inside. So: a ray that reaches the inside unhit, or
+    crosses the house without a hit, fails."""
+    p = plan()
+    b = building(p)
+    l1, l2 = level(b, 'L1'), level(b, 'L2')
+    rects = [section_bounds(s) for s in b['roof']['sections']]
+    X0, Y0 = min(r[0] for r in rects), min(r[1] for r in rects)
+    X1, Y1 = max(r[2] for r in rects), max(r[3] for r in rects)
+
+    def across(lo, hi):
+        v = math.floor(lo) + 0.25
+        while v < hi:
+            yield v
+            v += 0.5
+
+    starts = []   # (side, lateral, edge point, direction)
+    for x in across(X0, X1):
+        ys = [r[3] for r in rects if r[0] <= x <= r[2]]
+        if ys:
+            starts.append(('rear', x, (x, max(ys)), (0, -1)))
+    for y in across(Y0, Y1):
+        xs = [r for r in rects if r[1] <= y <= r[3]]
+        if xs:
+            starts.append(('left', y, (min(r[0] for r in xs), y), (1, 0)))
+            starts.append(('right', y, (max(r[2] for r in xs), y), (-1, 0)))
+    edge_h = run(p, heights=[list(e[2]) for e in starts])['heights']
+    back, far = 3.0, 100.0
+    rays, meta = [], []
+    for (side, lat, (ex, ey), (dx, dy)), h in zip(starts, edge_h):
+        if h['h'] is None:
+            continue
+        z = 0.5
+        while z < h['h'] - 1e-9:
+            o = (ex - back * dx, ey - back * dy)
+            rays.append({'o': [o[0], o[1], l1['elevation'] + z], 'd': [dx, dy, 0], 'far': far, 'keep': 1})
+            meta.append((side, lat, z, round(h['h'], 2), o, (dx, dy)))
+            z += 0.5
+    check(len(rays) >= 2000, ('too few rays to mean anything', len(rays)))
+    hits = run(p, rays=rays)['hits']
+    # The path each ray travels unhit, sampled every 0.25 ft wherever it is
+    # more than 1 ft inside the ground floor's outline.
+    probes, owner = [], []
+    for k, ((side, lat, z, he, o, d), hs) in enumerate(zip(meta, hits)):
+        reach = (hs[0]['dist'] if hs else far) - 0.05
+        for t0, t1 in inside_spans(l1['outline'], o, d, reach):
+            t = t0
+            while t <= t1:
+                q = (o[0] + d[0] * t, o[1] + d[1] * t)
+                if boundary_distance(l1['outline'], q) > 1:
+                    probes.append(q)
+                    owner.append(k)
+                t += 0.25
+    roof_h = run(p, heights=[list(q) for q in probes])['heights'] if probes else []
+    seen = {}
+    for k, q, h in zip(owner, probes, roof_h):
+        z = l1['elevation'] + meta[k][2]
+        if k in seen or h['h'] is None or z >= h['h'] - 0.5:
+            continue
+        if z >= l2['elevation'] - 0.05 and boundary_distance(l2['outline'], q) <= 1:
+            continue
+        seen[k] = q
+    bad = []
+    for k in sorted(seen):
+        side, lat, z, he, o, d = meta[k]
+        hs = hits[k]
+        first = (hs[0]['role'], [round(c, 2) for c in hs[0]['p']]) if hs else 'nothing'
+        bad.append((side, lat, z, 'edge roof', he, 'inside at', [round(c, 2) for c in seen[k]], 'first hit', first))
+    check(not bad, (f'{len(bad)}/{len(rays)} rays reach the inside of the house through a seam '
+                    '(side, across, height, roof at the edge, first inside point, first hit)', bad[:12]))
+
+
+def _tri_normal(t):
+    u = [t[3] - t[0], t[4] - t[1], t[5] - t[2]]
+    v = [t[6] - t[0], t[7] - t[1], t[8] - t[2]]
+    n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
+    a = math.hypot(*n)
+    return [c / a for c in n] if a > 1e-12 else None
+
+
+def test_no_siding_on_roof_faces():
+    """No siding lies on a roof face. A non-vertical siding triangle
+    (|normal.z| > 0.3) fails when its three corners and its centroid all lie
+    within 0.05 ft of the same roof section's surface (sectionHeight): it is
+    coplanar with that roof face and fights it in the render. Step faces and
+    gable ends are vertical, so they never trip this.
+
+    Narrower than "no non-vertical siding at all", on purpose: every
+    extruded wall and batten has flat top and bottom caps in siding (4,584
+    horizontal triangles today, none of them on a roof face). The coplanar
+    siding Task 2 saw on the front_wing roof face is of this kind: the top
+    cap of a wall that follows a rake (the front_wing front gable, drawn as a
+    0.5 ft wall because it has a window), lying in the roof plane."""
+    p = plan()
+    b = building(p)
+    tris = run(p, triangles=['siding'])['triangles']['siding']
+    sloped = []
+    for t in tris:
+        n = _tri_normal(t)
+        if n is not None and abs(n[2]) > 0.3:
+            sloped.append(t)
+    check(tris, 'no siding at all')
+    pts = []
+    for t in sloped:
+        pts += [[t[0], t[1]], [t[3], t[4]], [t[6], t[7]],
+                [(t[0] + t[3] + t[6]) / 3, (t[1] + t[4] + t[7]) / 3]]
+    heights = run(p, heights=pts)['heights'] if pts else []
+    names = [s.get('id') or f'roof:{i}' for i, s in enumerate(b['roof']['sections'])]
+    bad = []
+    for k, t in enumerate(sloped):
+        zs = [t[2], t[5], t[8], (t[2] + t[5] + t[8]) / 3]
+        hs = heights[4 * k:4 * k + 4]
+        for i in range(len(names)):
+            if all(h['all'][i] is not None and abs(z - h['all'][i]) <= 0.05 for z, h in zip(zs, hs)):
+                bad.append((names[i], [round(c, 2) for c in t], [round(c, 2) for c in _tri_normal(t)]))
+                break
+    check(not bad, (f'{len(bad)} siding triangles lie on a roof face (section, triangle, normal)', bad[:8]))
+
+
+def _eave_sides(s):
+    """The sides of a section whose edge is an eave (level along its length)."""
+    kind = s.get('kind')
+    if kind in ('hip', 'flat'):
+        return ['x0', 'x1', 'y0', 'y1']
+    if kind == 'gable':
+        return ['x0', 'x1'] if s.get('ridge') == 'y' else ['y0', 'y1']
+    if kind == 'shed':
+        return [s['low_side']]
+    return []
+
+
+def free_eave_points(b, step=1.0, corner=0.75):
+    """Points every `step` ft along each eave edge of each section's rect
+    plus overhang, at least `corner` ft from the section's corners: (section
+    index, side, plan point, outward unit normal). The caller keeps those
+    where the section is the envelope there and nothing covers the point
+    0.05 ft further out (a free edge, not a step onto another section)."""
+    out = []
+    for i, s in enumerate(b['roof']['sections']):
+        X0, Y0, X1, Y1 = section_bounds(s)
+        for side in _eave_sides(s):
+            if side in ('y0', 'y1'):
+                y, n = (Y0, (0, -1)) if side == 'y0' else (Y1, (0, 1))
+                u, pts = X0 + corner, []
+                while u <= X1 - corner + 1e-9:
+                    pts.append((u, y))
+                    u += step
+            else:
+                x, n = (X0, (-1, 0)) if side == 'x0' else (X1, (1, 0))
+                u, pts = Y0 + corner, []
+                while u <= Y1 - corner + 1e-9:
+                    pts.append((x, u))
+                    u += step
+            out += [(i, side, q, n) for q in pts]
+    return out
+
+
+def _point_triangle_distance(p, t):
+    """Distance from point p to triangle t (nine floats), 3D."""
+    a, b_, c = t[0:3], t[3:6], t[6:9]
+    sub_ = lambda u, v: (u[0] - v[0], u[1] - v[1], u[2] - v[2])
+    dot = lambda u, v: u[0] * v[0] + u[1] * v[1] + u[2] * v[2]
+    ab, ac, ap = sub_(b_, a), sub_(c, a), sub_(p, a)
+    d1, d2 = dot(ab, ap), dot(ac, ap)
+    if d1 <= 0 and d2 <= 0:
+        q = a
+    else:
+        bp = sub_(p, b_)
+        d3, d4 = dot(ab, bp), dot(ac, bp)
+        cp = sub_(p, c)
+        d5, d6 = dot(ab, cp), dot(ac, cp)
+        vc, vb, va = d1 * d4 - d3 * d2, d5 * d2 - d1 * d6, d3 * d6 - d5 * d4
+        if d3 >= 0 and d4 <= d3:
+            q = b_
+        elif vc <= 0 and d1 >= 0 and d3 <= 0:
+            v = d1 / (d1 - d3)
+            q = tuple(a[i] + v * ab[i] for i in range(3))
+        elif d6 >= 0 and d5 <= d6:
+            q = c
+        elif vb <= 0 and d2 >= 0 and d6 <= 0:
+            w = d2 / (d2 - d6)
+            q = tuple(a[i] + w * ac[i] for i in range(3))
+        elif va <= 0 and (d4 - d3) >= 0 and (d5 - d6) >= 0:
+            w = (d4 - d3) / ((d4 - d3) + (d5 - d6))
+            q = tuple(b_[i] + w * (c[i] - b_[i]) for i in range(3))
+        else:
+            den = va + vb + vc
+            if abs(den) < 1e-18:
+                q = a
+            else:
+                v, w = vb / den, vc / den
+                q = tuple(a[i] + ab[i] * v + ac[i] * w for i in range(3))
+    return math.dist(p, q)
+
+
+def test_eave_trim_present():
+    """Every free eave edge of the envelope has trim (material 'trim', the
+    fascia) within 0.3 ft, and the roof there has thickness of at least
+    0.15 ft.
+
+    Free eave edge: an eave side of a section (both sides of a hip, the
+    long sides of a gable, the low side of a shed), its rect plus overhang,
+    sampled every 1 ft at least 0.75 ft from the corners, kept where that
+    section is the envelope (heightAt equals its sectionHeight) and nothing
+    covers the point 0.05 ft further out. The edge point is at the section's
+    height there: the roof's top outer corner.
+
+    Thickness is measured at the same samples, moved in from the edge by
+    half the overhang (0.5 ft here): under the overhang, clear of the wall
+    whose outside face is on the rect edge (1 ft in, where the plan's
+    wording puts it, an upward ray would run along that face). One ray
+    straight down from 60 ft must first hit the roof (its top surface); one
+    ray straight up from 3 ft below the envelope there finds the underside,
+    whatever is first hit from below: the roof's own underside or a soffit
+    (the soffit's material is the implementer's choice). Thickness = top hit
+    minus underside hit. Today the roof is one double-sided surface, so both
+    rays meet the same surface and the thickness is 0."""
+    p = plan()
+    b = building(p)
+    sections = b['roof']['sections']
+    cand = free_eave_points(b)
+    beyond = [[q[0] + 0.05 * n[0], q[1] + 0.05 * n[1]] for _, _, q, n in cand]
+    info = run(p, heights=[list(q) for _, _, q, _ in cand] + beyond)['heights']
+    at, out = info[:len(cand)], info[len(cand):]
+    free = []
+    for (i, side, q, n), h, o in zip(cand, at, out):
+        mine = h['all'][i]
+        if mine is None or h['h'] is None or abs(h['h'] - mine) > 1e-6 or o['h'] is not None:
+            continue
+        free.append((i, side, q, n, mine))
+    check(len(free) >= 40, ('too few free eave samples to mean anything', len(free)))
+    elev = level(b, 'L1')['elevation']
+    rays = []
+    for i, side, q, n, z in free:
+        inset = (sections[i].get('overhang') or 0) / 2
+        m = (q[0] - inset * n[0], q[1] - inset * n[1])
+        rays.append({'o': [m[0], m[1], 60], 'd': [0, 0, -1], 'far': 80, 'keep': 1})
+        rays.append({'o': [m[0], m[1], elev + z - 3], 'd': [0, 0, 1], 'far': 3.5, 'keep': 1})
+    got = run(p, rays=rays, triangles=['trim'])
+    trim = got['triangles']['trim']
+    boxes = [(min(t[0::3]), min(t[1::3]), min(t[2::3]), max(t[0::3]), max(t[1::3]), max(t[2::3])) for t in trim]
+    names = [s.get('id') or f'roof:{i}' for i, s in enumerate(sections)]
+    no_trim, thin = [], []
+    for k, (i, side, q, n, z) in enumerate(free):
+        pt = (q[0], q[1], elev + z)
+        near = math.inf
+        for t, bx in zip(trim, boxes):
+            if (bx[0] - 0.3 <= pt[0] <= bx[3] + 0.3 and bx[1] - 0.3 <= pt[1] <= bx[4] + 0.3
+                    and bx[2] - 0.3 <= pt[2] <= bx[5] + 0.3):
+                near = min(near, _point_triangle_distance(pt, t))
+                if near <= 0.3:
+                    break
+        if near > 0.3:
+            no_trim.append((names[i], side, [round(c, 2) for c in pt]))
+        down, up = got['hits'][2 * k], got['hits'][2 * k + 1]
+        if not down or down[0]['role'] != 'roof':
+            thin.append((names[i], side, [round(c, 2) for c in q], 'top is', down[0]['role'] if down else None))
+            continue
+        if not up:
+            thin.append((names[i], side, [round(c, 2) for c in q], 'nothing underneath'))
+            continue
+        thickness = down[0]['p'][2] - up[0]['p'][2]
+        if thickness < 0.15:
+            thin.append((names[i], side, [round(c, 2) for c in q], 'thickness', round(thickness, 3), 'under', up[0]['role']))
+    check(not no_trim and not thin,
+          (f'{len(no_trim)}/{len(free)} free eave points with no trim within 0.3 ft (section, side, point)', no_trim[:8],
+           f'{len(thin)}/{len(free)} points where the roof is thinner than 0.15 ft', thin[:8]))
+
+
 TESTS = (
     test_no_band_under_eaves,
     test_no_wall_above_roof,
@@ -517,6 +989,14 @@ TESTS = (
     test_outside_face_on_line,
     test_uncovered_wall_keeps_height,
     test_upper_floor_slab_own_outline,
+    test_upper_storey_walls_reach_own_roof,
+    test_upper_storey_windows_within_walls,
+    test_lower_roof_stays_outside_upper_rooms,
+    test_storey_roof_plate_limits_and_upper_envelope,
+    test_uncovered_knee_walls_capped_by_visible_roof,
+    test_rear_seams_closed,
+    test_no_siding_on_roof_faces,
+    test_eave_trim_present,
 )
 
 

@@ -18,6 +18,7 @@ export function kitMaterial(role, kit, tier) {
   const material = new THREE.MeshStandardMaterial({
     name: role, color: ref.color || '#c3c6c2', roughness: role === 'roof' ? 0.45 : 0.85,
     metalness: role === 'roof' ? 0.45 : 0,
+    side: THREE.FrontSide,
   });
   if (asset?.kind !== 'material') return material;
   const loader = new THREE.TextureLoader();

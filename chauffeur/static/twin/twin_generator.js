@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { kitMaterial } from './twin_library.js';
-import { roofMesh, heightAt, firstRoofAbove } from './twin_roof.js';
+import { roofMesh, heightAt } from './twin_roof.js';
 import { groundAt } from './twin_ground.js';
 
 export const FT = 0.3048;
@@ -234,10 +234,26 @@ export function buildTwin(plan, kit, tier) {
     ordered.forEach(l => { levelElevations[levelKey(l.id)] = base + l.elevation; });
     const sections = b.roof?.sections || [];
     const envelope = roofMesh(sections);
-    // Walls meet the first roof above them. Keep those lower surfaces visible
-    // from below even where a higher roof covers them in plan.
-    const roofLayers = roofMesh(sections, { retainLower: true });
     const outlines = new Map(ordered.map(l => [l.id, l.outline?.length >= 3 ? [l.outline] : footprints(b.walls.filter(w => w.level === l.id))]));
+    // Triangulate concave floor outlines into convex roof cutters. A floor at
+    // the roof's plate also occupies the space above that roof (e.g. L2).
+    const floorCutters = new Map(ordered.map(l => [l.id, outlines.get(l.id).flatMap(poly => {
+      const contour = poly.map(p => new THREE.Vector2(...p));
+      return THREE.ShapeUtils.triangulateShape(contour, []).map(indices => {
+        const triangle = indices.map(i => poly[i]);
+        if (THREE.ShapeUtils.isClockWise(triangle.map(p => new THREE.Vector2(...p)))) triangle.reverse();
+        return triangle;
+      });
+    })]));
+    const exclude = sections.map(s => ordered.filter(l => l.elevation >= s.plate)
+      .flatMap(l => floorCutters.get(l.id)));
+    // Retained lower roofs serve walls under overhangs, never upper rooms.
+    const roofLayers = roofMesh(sections, { retainLower: true, exclude });
+    const storeyRoofs = new Map(ordered.map(l => {
+      const own = sections.filter(s => l.elevation + 0.5 < s.plate && s.plate <= l.elevation + l.ceiling + 2);
+      return [l.id, { sections: own,
+        positions: new Float32Array([...roofMesh(own).positions, ...envelope.positions]) }];
+    }));
     let activePiece = null;
     const records = new Map();
     const use = (piece, kind, fallback) => { activePiece = { pieceId: piece.id || fallback, kind, buildingId: b.id, ghost: piece.state === 'ghost' }; };
@@ -397,6 +413,7 @@ export function buildTwin(plan, kit, tier) {
         return concave ? w.thickness : 0;
       };
       const next = ordered[ordered.indexOf(l) + 1], above = next ? outlines.get(next.id) : [];
+      const storeyRoof = storeyRoofs.get(l.id);
       const at = (u, face) => [w.from[0] + dx * u + face[0], w.from[1] + dy * u + face[1]];
       const gables = sections.filter(s => s.kind === 'gable').flatMap(section => {
         const axis = section.ridge === 'y' ? 1 : 0;
@@ -407,15 +424,19 @@ export function buildTwin(plan, kit, tier) {
         // boundary, without moving the actual wall vertices off that boundary.
         const sample = u + Math.sign(toward - u) * Math.min(1e-6, Math.abs(toward - u) / 2);
         const points = faces.map(face => at(sample, face));
-        const heights = points.map(p => firstRoofAbove(sections, ...p, l.elevation));
+        const heights = points.map(p => heightAt(storeyRoof.sections, ...p));
         const roof = heights[0] === null ? [w.height]
           : heights.filter(h => h !== null).map(h => h - l.elevation - 0.08);
+        // R9: even an otherwise uncovered knee wall cannot pierce the visible
+        // roof. Apply the all-section envelope cap after R5's storey rule.
+        const visible = points.map(p => heightAt(sections, ...p)).filter(h => h !== null)
+          .map(h => h - l.elevation - 0.08);
         const cap = next && points.some(p => above.some(poly => contains(poly, p))) ? next.elevation - 0.8 - l.elevation : Infinity;
-        return [...roof, cap];
+        return [...roof, ...visible, cap];
       };
       const top = (u, toward = u) => Math.max(0, Math.min(...limits(u, toward)));
       const profile = { offset: w.exterior ? -sign * w.thickness / 2 : 0, sign,
-        extendStart: extension(w.from), extendEnd: extension(w.to), faces, limits, positions: roofLayers.positions,
+        extendStart: extension(w.from), extendEnd: extension(w.to), faces, limits, positions: storeyRoof.positions,
         edges: above.flatMap(poly => poly.map((p, i) => [p, poly[(i + 1) % poly.length]])) };
       const holes = (b.openings || []).filter(o => o.wall === w.id).map(o => opening(o));
       for (const { section, end, axis } of gables) for (const o of b.openings || []) {
@@ -443,8 +464,6 @@ export function buildTwin(plan, kit, tier) {
     };
     // Retain the actual envelope geometry for diagnostics after it is merged.
     roofSurfaces.set(b.id, { sections, positions: envelope.positions });
-    // A low roof meeting a wall can be seen from underneath an upper overhang.
-    mat('roof').side = THREE.DoubleSide;
     for (let index = 0; index < sections.length; index++) {
       const section = sections[index], positions = [];
       use(section, 'roof', `roof:${index}`);

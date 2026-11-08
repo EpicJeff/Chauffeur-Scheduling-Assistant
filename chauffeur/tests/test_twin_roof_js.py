@@ -13,7 +13,9 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
+import traceback
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODULE = os.path.join(ROOT, 'static', 'twin', 'twin_roof.js')
@@ -65,6 +67,10 @@ if (job.cover) {
     else if (Math.abs(hit - h) > 0.01) wrong++;
   }
   console.log(JSON.stringify({points: pts.length, holes, wrong, holeSamples}));
+} else if (job.steps) {
+  // stepFaces(sections): triangles in plan feet, z up, nine floats each.
+  const q = roof.stepFaces(job.steps);
+  console.log(JSON.stringify({float32: q instanceof Float32Array, positions: Array.from(q)}));
 } else if (job.call) {
   console.log(JSON.stringify(job.args.map(a => roof[job.call](...a))));
 } else {
@@ -200,11 +206,88 @@ def scenario_every_roof_triangle_faces_up(js):
         check(r['downward'] == 0, (name, r))
 
 
+# ---- step faces (plan docs/superpowers/plans/2026-11-08-house-editor-whole-building-draft.md, Task 3)
+
+STEP_A = {'kind': 'hip', 'rect': [0, 0, 20, 20], 'ridge': 'x', 'pitch': 6, 'plate': 10, 'overhang': 0}
+STEP_B = {'kind': 'hip', 'rect': [20, 5, 30, 15], 'ridge': 'x', 'pitch': 6, 'plate': 8, 'overhang': 0}
+
+
+def _triangles(flat):
+    return [flat[i:i + 9] for i in range(0, len(flat) - 8, 9)]
+
+
+def _normal(t):
+    """Unit normal (by winding) and area of one triangle of nine floats."""
+    u = [t[3] - t[0], t[4] - t[1], t[5] - t[2]]
+    v = [t[6] - t[0], t[7] - t[1], t[8] - t[2]]
+    n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
+    a = (n[0] ** 2 + n[1] ** 2 + n[2] ** 2) ** 0.5
+    return ([c / a for c in n] if a > 1e-12 else [0, 0, 0]), a / 2
+
+
+def _in_triangle_2d(p, a, b, c, eps=1e-6):
+    d = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1])
+    if abs(d) < 1e-12:
+        return False
+    l1 = ((b[1] - c[1]) * (p[0] - c[0]) + (c[0] - b[0]) * (p[1] - c[1])) / d
+    l2 = ((c[1] - a[1]) * (p[0] - c[0]) + (a[0] - c[0]) * (p[1] - c[1])) / d
+    return l1 >= -eps and l2 >= -eps and 1 - l1 - l2 >= -eps
+
+
+def test_step_face_between_overlapping_hips(js):
+    """Hip A (plate 10) meets the lower hip B (plate 8) along x = 20, both
+    pitch 6, no overhang. The step faces fill the vertical gap there: their
+    area is within 2% of the integral of (A - B) over the shared boundary
+    (y 5..15, where both sections stand), they lie in the plane x = 20, cover
+    every point of the gap, and face +x: outward from the upper section
+    towards the lower one, as gable ends face out of theirs. A's other edges
+    drop to nothing (free eaves), which is not a step, so they add no area."""
+    ys = [5 + (i + 0.5) * 10 / 100 for i in range(100)]
+    a = js.call('sectionHeight', *[[STEP_A, 20, y] for y in ys])
+    b = js.call('sectionHeight', *[[STEP_B, 20, y] for y in ys])
+    integral = sum(ha - hb for ha, hb in zip(a, b)) * 10 / 100
+    check(abs(integral - 20) < 1e-6, ('fixture: A is 10 and B is 8 along x = 20, y 5..15', integral))
+    r = js.run({'steps': [STEP_A, STEP_B]})
+    check(r['float32'], 'stepFaces must return a Float32Array')
+    flat = r['positions']
+    check(flat and len(flat) % 9 == 0, ('no step faces', len(flat)))
+    tris = _triangles(flat)
+    area = sum(_normal(t)[1] for t in tris)
+    check(abs(area - integral) <= 0.02 * integral, ('step face area', round(area, 4), 'want', integral))
+    off_plane = [t for t in tris if any(abs(t[i] - 20) > 1e-3 for i in (0, 3, 6))]
+    check(not off_plane, ('step triangles off the x = 20 plane', off_plane[:3]))
+    inward = [t for t in tris if _normal(t)[1] > 1e-9 and _normal(t)[0][0] < 0.99]
+    check(not inward, ('step triangles must face +x (towards the lower section)', inward[:3]))
+    holes = []
+    for i in range(20):
+        y = 5.25 + i * 0.5
+        for z in (8.05, 8.5, 9.0, 9.5, 9.95):
+            if not any(_in_triangle_2d((y, z), (t[1], t[2]), (t[4], t[5]), (t[7], t[8])) for t in tris):
+                holes.append((y, z))
+    check(not holes, (f'{len(holes)}/100 points of the gap are open (y, z)', holes[:8]))
+
+
+def test_no_step_where_continuous(js):
+    """Two coplanar sections that touch give no step faces, with their
+    overhangs reaching over each other (a drop to nothing at a free edge is
+    not a step either)."""
+    flat_a = {'kind': 'flat', 'rect': [0, 0, 10, 10], 'pitch': 0, 'plate': 9, 'overhang': 0.5}
+    flat_b = {**flat_a, 'rect': [10, 0, 20, 10]}
+    gable_a = {'kind': 'gable', 'rect': [0, 0, 20, 20], 'ridge': 'x', 'pitch': 9, 'plate': 10, 'overhang': 1}
+    gable_b = {**gable_a, 'rect': [20, 0, 40, 20]}
+    for name, sections in (('flats', [flat_a, flat_b]), ('gables', [gable_a, gable_b])):
+        r = js.run({'steps': sections})
+        check(r['float32'], 'stepFaces must return a Float32Array')
+        area = sum(_normal(t)[1] for t in _triangles(r['positions']))
+        check(area < 1e-6, (name, 'step faces where the roof is continuous', len(r['positions']) // 9, round(area, 4)))
+
+
 if __name__ == '__main__':
     if not shutil.which('node'):
         print('  ..  skipped (node not available)')
     else:
         js = Node()
+        failed = []
         for fn in (scenario_section_heights,
                    scenario_shed_flat_and_overhang,
                    scenario_uneven_pitches,
@@ -213,6 +296,15 @@ if __name__ == '__main__':
                    scenario_the_roof_has_no_holes,
                    scenario_nothing_hides_under_another_section,
                    scenario_gable_ends_exist_and_face_out,
-                   scenario_every_roof_triangle_faces_up):
-            fn(js)
-            print('  ok ', fn.__name__)
+                   scenario_every_roof_triangle_faces_up,
+                   test_step_face_between_overlapping_hips,
+                   test_no_step_where_continuous):
+            try:
+                fn(js)
+            except Exception:
+                failed.append(fn.__name__)
+                print('  FAIL', fn.__name__)
+                traceback.print_exc()
+            else:
+                print('  ok ', fn.__name__)
+        sys.exit(1 if failed else 0)

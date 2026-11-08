@@ -49,16 +49,6 @@ export function heightAt(sections, x, y) {
   return height;
 }
 
-/** First covering roof surface more than one foot above a wall's floor. */
-export function firstRoofAbove(sections, x, y, floor) {
-  let height = null;
-  for (const section of sections) {
-    const z = sectionHeight(section, x, y);
-    if (z !== null && z > floor + 1 && (height === null || z < height)) height = z;
-  }
-  return height;
-}
-
 function rectangle([x0, y0, x1, y1]) {
   return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
 }
@@ -204,8 +194,9 @@ function gableEnds(sections, index) {
   return positions;
 }
 
-/** Upper envelope and gable ends; retainLower also keeps roofs visible below it. */
-export function roofMesh(sections, { retainLower = false } = {}) {
+/** Upper envelope and gable ends; optionally retain lower roofs and subtract
+ * per-section convex plan polygons (occupied upper floors in the scene). */
+export function roofMesh(sections, { retainLower = false, exclude = [] } = {}) {
   const faces = sections.flatMap(sectionFaces);
   const positions = [], labels = [], gables = [];
   for (const face of faces) {
@@ -223,6 +214,9 @@ export function roofMesh(sections, { retainLower = false } = {}) {
       }
       if (cutter.length) pieces = pieces.flatMap(piece => subtract(piece, cutter));
       if (!pieces.length) break;
+    }
+    for (const cutter of exclude[face.section] || []) {
+      pieces = pieces.flatMap(piece => subtract(piece, cutter));
     }
     for (const piece of pieces) {
       triangulate(piece, ([x, y]) => [x, y, valueAt(face.plane, x, y)], positions, labels, face.section);
