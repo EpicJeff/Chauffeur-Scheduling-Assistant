@@ -305,7 +305,8 @@ def _openings(building, walls, sections, notes):
                 and opening.get('state') == 'ghost' and opening.get('why')
                 and opening.get('src', {}).get('step') == 'draft'):
             # Draft checks retain readable, referenced failures for hand repair.
-            # They are ghosts and never cut a settled wall.
+            # The generator displays them clamped to their carrier as ghost
+            # outlines, excluding them from wall holes and opening frames.
             reason = None
         if reason:
             name = (opening.get('wall', opening.get('gable', index))

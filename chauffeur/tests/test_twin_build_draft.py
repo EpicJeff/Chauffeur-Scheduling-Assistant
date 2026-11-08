@@ -259,7 +259,17 @@ def test_draft_settles_all_at_once():
     check(len(got.get('level', [])) == 2, ('both levels settle', counts))
     check(len(got.get('wall', [])) >= 28, ('the exterior walls settle', counts))
     check(len(got.get('opening', [])) >= 18, ('the openings settle', counts))
-    check(len(got.get('roof', [])) >= 1, ('roof sections settle', counts))
+    main_roofs = {'main', 'cross_gable', 'left_wing', 'front_wing', 'right_block',
+                  'side_wing', 'rear_gable', 'kitchen_bump'}
+    # Merge assigns stable piece ids, so identify the recorded sections by rect.
+    expected_rects = {tuple(s['rect']) for s in spike()['building']['roof']['sections']
+                      if s['id'] in main_roofs}
+    check(len(expected_rects) == 8 and expected_rects <= {
+              tuple(s.get('read_geometry', {}).get('rect', s['rect'])) for s in got.get('roof', [])},
+          ('all eight main-roof sections settle', got.get('roof', [])))
+    check(not any('bearing walls' in e.get('text', '') for e in st['events']
+                  if e['type'] == 'log' and e.get('step') == 'draft'),
+          'no bearing-wall failures for the main roof')
     check(len(got.get('porch', [])) == 1, ('the porch settles', counts))
 
     plan = ts.current()

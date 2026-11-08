@@ -1143,6 +1143,29 @@ def test_ridge_x_gable_window_cut():
     check(first_glass < 2, ('glass not at the x0 gable end', first_glass))
 
 
+def test_ghost_openings_leave_siding_solid_and_stay_on_wall():
+    p = plan()
+    b = building(p)
+    b.update(levels=[{'id': 'L1', 'name': 'Main floor', 'elevation': 0, 'ceiling': 9,
+                      'outline': [[0, 0], [20, 0], [20, 20], [0, 20]]}],
+             walls=[{'id': 'front', 'level': 'L1', 'from': [0, 0], 'to': [20, 0],
+                     'height': 9, 'thickness': .5, 'exterior': True}],
+             roof={'sections': [], 'extensions': []}, openings=[], rooms=[], stairs=[], porch=None)
+    for at, width, sill, head in [(5, 3, 2, 100), (1000, 3, 2, 100), (-1000, 100, 100, 200)]:
+        b['openings'] = [{'id': 'bad-window', 'wall': 'front', 'kind': 'window',
+                          'at': at, 'width': width, 'sill': sill, 'head': head,
+                          'state': 'ghost', 'why': 'This opening needs checking.'}]
+        result = run(p, rays=[{'o': [5, -5, 4], 'd': [0, 1, 0], 'far': 6}],
+                     bounds=[f'{BID}:bad-window'], triangles=['window_frame', 'trim', 'glass'])
+        check(result['hits'][0] and result['hits'][0][0]['role'] == 'siding', result['hits'])
+        bounds = result['bounds'][f'{BID}:bad-window']
+        check(bounds is not None, 'the ghost stays visible and selectable')
+        check(0 <= bounds['min'][0] <= bounds['max'][0] <= 20
+              and 0 <= bounds['min'][2] <= bounds['max'][2] <= 9, bounds)
+        check(all(not faces for faces in result['triangles'].values()),
+              'ghosts draw an outline, never opening frames or glass')
+
+
 TESTS = (
     test_no_band_under_eaves,
     test_no_wall_above_roof,
@@ -1163,6 +1186,7 @@ TESTS = (
     test_eave_trim_present,
     test_half_level_has_slab,
     test_ridge_x_gable_window_cut,
+    test_ghost_openings_leave_siding_solid_and_stay_on_wall,
 )
 
 

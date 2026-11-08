@@ -886,6 +886,18 @@ def _check_draft(house):
         return abs(sum(a[0] * b[1] - b[0] * a[1]
                        for a, b in zip(poly, poly[1:] + poly[:1]))) / 2
 
+    def boundary(poly):
+        points = list(poly)
+        for a, b in zip(poly, poly[1:] + poly[:1]):
+            count = max(1, math.ceil(math.dist(a, b) * 2))
+            points.extend([[a[j] + (b[j] - a[j]) * k / count for j in (0, 1)]
+                           for k in range(1, count)])
+        return points
+
+    def within(point, poly, margin):
+        return bool(poly) and (_inside(point, poly) or min(
+            _nearest(point, a, b)[0] for a, b in zip(poly, poly[1:] + poly[:1])) <= margin + 1e-6)
+
     levels = sorted(house['levels'], key=lambda l: l['elevation'])
     first_failed = False
     for i, level in enumerate(levels):
@@ -895,6 +907,7 @@ def _check_draft(house):
             for other in walls) for p in (w['from'], w['to']))]
         failing = open_walls
         why = ''
+        level_failed = not walls
         if not walls or open_walls:
             why = "This floor's exterior walls do not close."
         if i:
@@ -902,21 +915,17 @@ def _check_draft(house):
             outline = level.get('outline', [])
             # Vertices alone miss an edge crossing a recess in an L-shaped
             # floor below. Check the boundary at half-foot intervals too.
-            boundary = list(outline)
-            for a, b in zip(outline, outline[1:] + outline[:1]):
-                count = max(1, math.ceil(math.dist(a, b) * 2))
-                boundary.extend([[a[j] + (b[j] - a[j]) * k / count for j in (0, 1)]
-                                 for k in range(1, count)])
-            if below and any(not _inside(p, below) and min(
-                    _nearest(p, a, b)[0] for a, b in zip(below, below[1:] + below[:1])) > 2
-                    for p in boundary):
+            if below and any(not within(p, below, 2) for p in boundary(outline)):
                 why = 'The upper floor extends more than 2 ft beyond the floor below.'
                 failing = walls
+                level_failed = True
             elif below and area(outline) < .2 * area(below):
                 why = 'The upper floor is less than a fifth of the floor below.'
                 failing = walls
+                level_failed = True
         if why:
-            ghost(level, why)
+            if level_failed:
+                ghost(level, why)
             for wall in failing:
                 ghost(wall, why)
         if i == 0:
@@ -924,18 +933,27 @@ def _check_draft(house):
     for section in house['roof']['sections']:
         bearing = [l for l in levels if l['elevation'] + .5 < section['plate']
                    <= l['elevation'] + l['ceiling'] + 2]
-        walls = [w for w in house['walls'] if w.get('exterior')
-                 and any(w['level'] == l['id'] for l in bearing)]
         corners = _corners(section['rect'])
-        def bears(a, b, wall):
-            axis = 0 if a[0] == b[0] else 1
-            along = 1 - axis
-            return (abs(wall['from'][axis] - wall['to'][axis]) <= .1
-                    and abs(a[axis] - wall['from'][axis]) <= 3 + 1e-6
-                    and min(max(a[along], b[along]), max(wall['from'][along], wall['to'][along]))
-                    > max(min(a[along], b[along]), min(wall['from'][along], wall['to'][along])))
-        if not walls or any(not any(bears(a, b, wall) for wall in walls)
-                            for a, b in zip(corners, corners[1:] + corners[:1])):
+        # Inner edges can join other roof sections over the house interior.
+        if any(all(within(p, l.get('outline', []), 3) for p in boundary(corners)) for l in bearing):
+            continue
+        x0, y0, x1, y1 = section['rect']
+        # Cell centres estimate occupied area, rather than treating a porch's
+        # shared wall edge as evidence that most of its roof covers a room.
+        nx, ny = [max(1, min(64, math.ceil(span))) for span in (x1 - x0, y1 - y0)]
+        samples = [[x0 + (i + .5) * (x1 - x0) / nx, y0 + (j + .5) * (y1 - y0) / ny]
+                   for i in range(nx) for j in range(ny)]
+        outside = all(sum(within(p, l.get('outline', []), 0) for p in samples) < len(samples) / 2
+                      for l in levels)
+        if outside:
+            porch = house.get('porch') or {}
+            polygon = porch.get('polygon', [])
+            supported = (polygon and (all(within(p, corners, 0) for p in polygon)
+                                      or all(within(p, polygon, 0) for p in boundary(corners))))
+            supported = supported or any(within(c['at'], corners, 0) for c in porch.get('columns', []))
+            if not supported:
+                ghost(section, 'This porch roof has no porch or columns beneath it.')
+        else:
             ghost(section, 'This roof section does not meet its bearing walls within 3 ft.')
     walls = {w['id']: w for w in house['walls']}
     sections = {s['id']: s for s in house['roof']['sections']}
@@ -1613,7 +1631,6 @@ def _settle(build, step, result, decision=None):
             if kind == 'draft':
                 if _check_draft(target):
                     _pause_draft(build, step)
-                notes.extend(fragment.get('notes', []))
             # fit/compose publish placement and landscaping, rather than reads
             # of this building. Check its joints with its last settled read.
             reads = [s for s in build['steps'] if s['kind'] not in
@@ -1696,10 +1713,19 @@ def _settle(build, step, result, decision=None):
     step.pop('removed_steps', None)
     for note in notes:
         _event(build, 'log', step=step['id'], text=note)
+    reasons = {}
     for ghost in {p['id']: p for p in ghosts}.values():
         _ghost(build, step, ghost, ghost.get('why', ''))
         if ghost.get('why'):
-            _event(build, 'log', step=step['id'], text=ghost['why'])
+            reasons.setdefault(ghost['why'], []).append(ghost)
+    for why, pieces in reasons.items():
+        count = len(pieces)
+        nouns = {'roof section' if 'rect' in p else 'opening' if 'head' in p
+                 else 'wall' if 'from' in p and 'to' in p else 'piece' for p in pieces}
+        noun = nouns.pop() if len(nouns) == 1 else 'piece'
+        _event(build, 'log', step=step['id'], text=(
+            f"{count} {noun}{'s' if count != 1 else ''} "
+            f"{'need' if count != 1 else 'needs'} checking. {why}"))
     _event(build, 'settled', step=step['id'], pieces=settled)
 
 

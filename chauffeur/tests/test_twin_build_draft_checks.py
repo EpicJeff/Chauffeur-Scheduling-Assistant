@@ -1,6 +1,8 @@
 """Extra Task 7 runtime proof for rooms, failed pieces and dependent caches."""
 import sys
 import traceback
+import json
+from copy import deepcopy
 
 from test_twin_build_draft import (
     DraftReader, _drawn_house, _house, _read_kinds, check, spike, tb, ts,
@@ -41,7 +43,8 @@ def test_each_geometric_failure_stays_a_ghost():
     upper = next(l for l in house['levels'] if l['id'] == 'L2')
     check(upper['state'] == 'ghost' and '2 ft' in upper['why'], upper)
     roof = next(s for s in house['roof']['sections'] if s['rect'][0] == 200)
-    check(roof['state'] == 'ghost' and 'bearing walls' in roof['why'], roof)
+    check(roof['state'] == 'ghost' and roof['why'] ==
+          'This porch roof has no porch or columns beneath it.', roof)
     failed = next(o for o in house['openings'] if o['at'] == 1000)
     check(failed['state'] == 'ghost' and failed['why'], failed)
     # Loading the persisted plan normalizes it again; the bad opening survives.
@@ -111,10 +114,89 @@ def test_upper_edge_cannot_cross_a_lower_floor_recess():
     check(upper['state'] == 'ghost' and '2 ft' in upper['why'], upper)
 
 
+def test_open_ends_only_and_rooms_keep_the_level():
+    _drawn_house(photos=0)
+    answer = spike()
+    answer['building']['walls'] = [w for w in answer['building']['walls'] if w['id'] != 'u5']
+    reader = DraftReader(answer=answer)
+    build = tb.start({'part': 'house'}, reader=reader, inline=True)
+    check(tb.status(build)['state'] == 'done', tb.status(build)['pause'])
+    house = _house(ts.current())
+    upper = next(l for l in house['levels'] if l['id'] == 'L2')
+    check(upper['state'] == 'settled', upper)
+    walls = [w for w in house['walls'] if w['level'] == 'L2' and w['exterior']]
+    ghosts = [w for w in walls if w['state'] == 'ghost']
+    check(len(ghosts) == 2 and all(abs(w['to'][1] - 52) < .1 or abs(w['from'][1] - 52) < .1
+                                  for w in ghosts), ghosts)
+    context = next(c['context']['settled'] for c in reader.seen if c['kind'] == 'draft_rooms')
+    check(any(l['id'] == 'L2' for l in context['levels']), context['levels'])
+    check(all(w['state'] == 'settled' for w in context['walls']), context['walls'])
+
+    # The check's 0.1 ft closure tolerance also applies to a one-foot gap.
+    # Isolate it from snap, which is allowed to weld a gap of exactly 1 ft.
+    house = deepcopy(spike()['building'])
+    wall = next(w for w in house['walls'] if w['id'] == 'u5')
+    wall['to'][0] += 1
+    tb._check_draft(house)
+    check(next(l for l in house['levels'] if l['id'] == 'L2').get('state') != 'ghost', house['levels'])
+    check({w['id'] for w in house['walls'] if w.get('state') == 'ghost'} == {'u5', 'u6'}, house['walls'])
+
+
+def test_ghost_logs_group_reasons_and_exclude_model_notes():
+    _drawn_house(photos=0)
+    answer = spike()
+    openings = [o for o in answer['building']['openings'] if 'wall' in o][:5]
+    for opening in openings:
+        opening.update(head=100)
+    answer['building']['openings'] = openings
+    answer['notes'] = ['L1 ceiling/plate 10 (L2 at 10.9), raw-piece-id']
+    build = tb.start({'part': 'house'}, reader=DraftReader(answer=answer), inline=True)
+    st = tb.status(build)
+    check(st['state'] == 'done', st['pause'])
+    house = _house(ts.current())
+    check(len([o for o in house['openings'] if o['state'] == 'ghost']) == 5, house['openings'])
+    logs = [e['text'] for e in st['events'] if e['type'] == 'log']
+    matching = [line for line in logs if 'opening' in line and 'span or height' in line]
+    check(len(matching) == 1 and matching[0].startswith('5 openings'), matching)
+    raw_ids = [p['id'] for key in ('walls', 'openings', 'levels') for p in house[key]]
+    check(not any(raw in line for line in logs for raw in [*raw_ids, 'raw-piece-id']), logs)
+    state = tb._get(build)
+    step = next(s for s in state['steps'] if s['id'] == 'draft')
+    cached = json.loads(tb._cache_path(state, step).read_text(encoding='utf-8'))
+    check(cached['fragment']['notes'] == answer['notes'],
+          'model notes remain in the cached build record')
+
+
+def test_roof_outline_recess_and_porch_support():
+    # All corners are inside this U-shaped footprint; one edge crosses its recess.
+    house = deepcopy(spike()['building'])
+    house['levels'] = [dict(house['levels'][0], outline=[[0, 0], [40, 0], [40, 40],
+                          [30, 40], [30, 10], [10, 10], [10, 40], [0, 40]])]
+    house['porch'] = None
+    house['roof']['sections'] = [dict(house['roof']['sections'][0], rect=[5, 5, 35, 15], plate=10)]
+    tb._check_draft(house)
+    check(house['roof']['sections'][0]['state'] == 'ghost', house['roof'])
+    for support in ('polygon', 'columns', 'none', 'unrelated'):
+        house = deepcopy(spike()['building'])
+        section = dict(house['roof']['sections'][0], rect=[100, 100, 110, 110], plate=10)
+        house['roof']['sections'] = [section]
+        house['porch'] = {'polygon': [], 'columns': []}
+        if support == 'polygon':
+            house['porch']['polygon'] = [[100, 100], [110, 100], [110, 110], [100, 110]]
+        elif support == 'columns':
+            house['porch']['columns'] = [{'at': [101, 101]}, {'at': [109, 101]}]
+        elif support == 'unrelated':
+            house['porch']['polygon'] = [[200, 200], [210, 200], [210, 210], [200, 210]]
+            house['porch']['columns'] = [{'at': [201, 201]}, {'at': [209, 201]}]
+        tb._check_draft(house)
+        check((section.get('state') == 'ghost') == (support in ('none', 'unrelated')), (support, section))
+
+
 TESTS = (test_rooms_in_feet_and_settled_context, test_each_geometric_failure_stays_a_ghost,
          test_small_upper_floor_is_a_ghost, test_checks_follow_snap_and_reread_invalidates_rooms,
          test_empty_reread_cannot_settle_the_previous_building, test_page_level_mapping_controls_names,
-         test_upper_edge_cannot_cross_a_lower_floor_recess)
+         test_upper_edge_cannot_cross_a_lower_floor_recess, test_open_ends_only_and_rooms_keep_the_level,
+         test_ghost_logs_group_reasons_and_exclude_model_notes, test_roof_outline_recess_and_porch_support)
 
 if __name__ == '__main__':
     failed = []

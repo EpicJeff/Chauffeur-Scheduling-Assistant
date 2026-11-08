@@ -287,6 +287,8 @@ export function buildTwin(plan, kit, tier) {
     function wall(group, from, to, elevation, thickness, top, holes, exterior, role = null, clipRoof = true, profile = {}) {
       const { matrix, length, z } = wallBasis(from, to, elevation);
       if (!length) return;
+      const ghostOpenings = holes.filter(h => h.state === 'ghost');
+      holes = holes.filter(h => h.state !== 'ghost');
       const start = -(profile.extendStart || 0), end = length + (profile.extendEnd || 0), offset = profile.offset || 0;
       const samples = Array.from({ length: 17 }, (_, i) => start + (end - start) * i / 16);
       // Include every envelope face boundary crossed by this wall. Uniform
@@ -419,6 +421,19 @@ export function buildTwin(plan, kit, tier) {
           if (h.split === 'double_hung') localBox(cu, cv, width, fw, 0.22, mat('window_frame'));
           localBox(cu, cv, width - fw, height - fw, 0.025, glass);
         }
+      }
+      // Saved failures stay visible and selectable without cutting siding or
+      // drawing a frame at the model's possibly far-outside coordinates.
+      // mesh() / batchGhost() supply the shared translucent, dashed outline.
+      for (const h of ghostOpenings) {
+        const width = Math.min(length, h.u1 - h.u0);
+        const cu = Math.max(width / 2, Math.min(length - width / 2, (h.u0 + h.u1) / 2));
+        const ceiling = Math.max(0, Math.min(top(cu - width / 2, cu), top(cu), top(cu + width / 2, cu)));
+        const height = Math.min(ceiling, h.v1 - h.v0);
+        if (width <= 0 || height <= 0) continue;
+        const sill = Math.max(0, Math.min(ceiling - height, h.v0));
+        use(h, 'opening', `opening:${h.wall || h.section}:${h.u0}`);
+        localBox(cu, sill + height / 2, width, height, 0.08, ghost, sign * (thickness / 2 + 0.05));
       }
       activePiece = wallPiece;
     }
