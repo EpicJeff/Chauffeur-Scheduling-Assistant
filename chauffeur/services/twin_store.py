@@ -111,15 +111,15 @@ def place() -> dict:
 
 
 def _drawing_parts(row):
-    """Saved page rows own a drawing; only a drawing without rows uses part."""
+    """Rows own their pages; row-less pages still belong to the source part."""
     parts = set()
     for source in row['sources']:
         if source['kind'] != 'drawing':
             continue
         pages = [p for p in row['page_roles'] if p['source'] == source['id']]
-        if pages:
-            parts.update(p['building'] for p in pages)
-        else:
+        parts.update(p['building'] for p in pages)
+        assigned = {p['page'] for p in pages}
+        if any(page not in assigned for page in range(1, source['pages'] + 1)):
             parts.add(source.get('part'))
     return parts - {None}
 

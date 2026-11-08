@@ -201,6 +201,8 @@ def _set(kind, piece, building, field, value):
             if opening.get('wall') == piece['id']:
                 _opening_valid(building, opening)
     _mark(piece)
+    if kind == 'building' and field in ('position', 'rotation'):
+        piece['position_from'] = 'person'
 
 
 def _transform(piece, transform):
@@ -454,6 +456,8 @@ def apply(plan, edit):
             if piece == original:
                 raise ValueError('Nothing changed')
             _mark(piece)
+            if kind == 'building':
+                piece['position_from'] = 'person'
             direction = ('toward the rear' if dy >= 0 else 'toward the front') if abs(dy) >= abs(dx) else (
                 'to the right' if dx >= 0 else 'to the left')
             summary = f'Moved {label} {twin_register.feet_inches(math.hypot(dx, dy))} {direction}'

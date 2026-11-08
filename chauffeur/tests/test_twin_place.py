@@ -619,7 +619,7 @@ def scenario_move_one_page_keeps_rowless_pages_home():
               for page in (1, 2)}
     check(owners == {1: {'house'}, 2: {'lot'}}, owners)
     check(not any(r['page'] == 1 for r in rows), 'page 1 still has no role rows')
-    check(ts.drawing_parts() == {'lot'}, 'drawing status keeps F2 row-based ownership')
+    check(ts.drawing_parts() == {'house', 'lot'}, 'F2b counts row-less pages on their source part')
     # Two regions on page 2 still leave page 1 unassigned on save and reload.
     ts.set_page_roles([
         {**moved[0], 'box': [0, 0, 0.5, 1]},
@@ -662,7 +662,40 @@ def scenario_drawing_ownership_follows_rows_and_allows_removal():
     check(_building(empty) is None, _buildings())
 
 
+def scenario_remove_refused_with_rowless_page():
+    _fresh()
+    garage = ts.add_building('Garage', 'garage')['id']
+    home = ts.add_building('Home', 'main_house')['id']
+    sid = ts.save_source('drawing', 'garage.pdf', _pdf(2), part=garage)
+    ts.move_page(sid, 2, home)
+    check(_source(sid)['part'] == garage, 'the row-less page stays on its upload card')
+    check(ts.drawing_parts() == {garage, home}, ts.drawing_parts())
+    expect_value_error(lambda: ts.remove_building(garage),
+                       "Move or remove this building's pages first.")
+    check(_building(garage) is not None, 'the refused removal keeps the building')
+    from services import agent_tools_v2, twin_place_reads
+    summary = agent_tools_v2.house_design_status()['summary']
+    check('Garage (Garage, drawings,' in summary, summary)
+    ts.save_source('photo', 'yard.png', _png(), part='lot')
+    contexts = []
+
+    def reader(kind, images, context, **kwargs):
+        contexts.append(context)
+        return {'photos': [], 'shells': []}
+
+    twin_place_reads.suggest_photos(reader=reader)
+    parts = {p['id']: p['has_drawings'] for p in contexts[0]['parts']}
+    check(parts[garage] and parts[home], parts)
+    ts.set_page_roles([*ts.page_roles(), {'source': sid, 'page': 1, 'building': garage,
+                                        'role': 'other', 'level': None, 'box': None}])
+    ts.move_page(sid, 1, home)
+    ts.remove_building(garage)
+    check(_building(garage) is None and _source(sid)['part'] == home,
+          'moving the last page allows removal and keeps a valid source owner')
+
+
 SCENARIOS = (
+    scenario_remove_refused_with_rowless_page,
     scenario_move_one_page_keeps_rowless_pages_home,
     scenario_drawing_ownership_follows_rows_and_allows_removal,
     scenario_legacy_pool_house_row_adds_pool_house,

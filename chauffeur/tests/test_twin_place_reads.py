@@ -941,7 +941,44 @@ def scenario_photo_drawings_hint_uses_rows_instead_of_stale_source_part():
     check(parts['house'] is False and parts[shed] is True and parts['lot'] is True, parts)
 
 
+def scenario_reread_accept_confirm_lands_on_suggestion():
+    for edge in (None, [0, 1]):
+        _setup(_plan())
+        tpr.read_plot(reader=PlotReader())
+        first = _read()['id']
+        tpr.answer_suggestion(_read()['suggestions'][0]['id'], 'accept', building='house')
+        tpr.confirm_placement(None, [])
+        old_reg = copy.deepcopy(_lot()['placement']['registration'])
+        old_footprint = copy.deepcopy(_building('house')['footprint'])
+        answer = fixture('plot')
+        answer['scale']['feet'] *= 1.25
+        tpr.read_plot(reader=PlotReader(answer))
+        read = copy.deepcopy(_read())
+        suggestion = read['suggestions'][1]
+        tpr.answer_suggestion(suggestion['id'], 'accept', name='Shed2', kind='shed')
+        check(_building('house').get('footprint_read') == first, 'old footprint retains its read')
+        check(_building('shed2').get('footprint_read') == read['id'], 'accept records the new read')
+        tpr.confirm_placement(edge, [])
+        reg = _lot()['placement']['registration']
+        expected_old = [tr.apply(reg, tr.invert(old_reg, p)) for p in old_footprint]
+        expected_new = [tr.apply(reg, tr.invert(read['registration'], p)) for p in suggestion['outline']]
+        check(close_points(_building('house')['footprint'], expected_old), 'old footprint moves once')
+        check(close_points(_building('shed2')['footprint'], expected_new), 'new footprint stays on its suggestion')
+        check(close_points(_building('shed2')['footprint'], _suggestion(suggestion['id'])['outline']),
+              'confirmed footprint and suggestion share the frame')
+        house = _plan_building('house')
+        outline = min(house['levels'], key=lambda l: l['elevation'])['outline']
+        fit, _ = tr.fit_outline(outline, expected_old)
+        check(close(house['position'], fit['offset'])
+              and abs((house['rotation'] - fit['angle'] + 180) % 360 - 180) < 1e-6,
+              'the old built house follows its footprint')
+        before = copy.deepcopy(ts.place()['buildings'])
+        tpr.confirm_placement(None, [])
+        check(ts.place()['buildings'] == before, 'confirming again does not move either footprint')
+
+
 SCENARIOS = (
+    scenario_reread_accept_confirm_lands_on_suggestion,
     scenario_reread_with_fewer_corners_matches_or_falls_back,
     scenario_reread_matches_confirmed_street_by_master_geometry,
     scenario_confirm_reprojects_on_registration_change_with_same_indices,

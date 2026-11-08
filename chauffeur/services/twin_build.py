@@ -1021,7 +1021,7 @@ def _settle(build, step, result, decision=None):
             shell = deepcopy(fragment)
             generated_levels = {w['level'] for w in house['walls']
                                 if w.get('src', {}).get('step') == step['id']}
-            if not house.get('src', {}).get('person'):
+            if house.get('position_from') != 'person':
                 house.update(position=[0, 0], rotation=0)
             for incoming_level in shell['levels']:
                 old_level = next(l for l in house['levels'] if l['id'] == incoming_level['id'])
@@ -1164,10 +1164,14 @@ def _settle(build, step, result, decision=None):
                 transform = decision.get('transform', build['pause']['transform'])
                 if not house.get('src', {}).get('person'):
                     house.update(deepcopy(transform))
+                    if 'transform' in decision:
+                        house['position_from'] = 'person'
                 notes.append(f"Placed {house.get('name', house['id'])} on the lot, turned {house['rotation']:g}\N{DEGREE SIGN}")
         elif kind == 'fit':
             if not house.get('src', {}).get('person'):
                 house.update(deepcopy(decision.get('transform', fragment['transform'])))
+                if 'transform' in decision:
+                    house['position_from'] = 'person'
             else:
                 notes.append('Kept the building where you placed it.')
         elif kind == 'site':

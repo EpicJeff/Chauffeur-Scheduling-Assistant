@@ -372,7 +372,52 @@ def scenario_shell_fewer_storeys_drops_only_empty_generated_levels():
         check(not any(w['level'] == 'L2' and not w.get('src', {}).get('person') for w in shed['walls']), shed)
 
 
+def scenario_renamed_shell_still_lands_on_footprint():
+    from services import twin_place_reads as tpr, twin_register as tr
+    from test_twin_build_parts import _lot_only
+    for edit in (None, {'op': 'move', 'piece': 'shed', 'by': [5, 7]},
+                 {'op': 'rotate', 'to': 90},
+                 {'op': 'set', 'piece': 'shed', 'field': 'position', 'value': [12, 34]},
+                 {'op': 'set', 'piece': 'shed', 'field': 'rotation', 'value': 180}):
+        _lot_only()
+        tpr.read_plot(reader=Reader())
+        tpr.answer_suggestion(ts.place()['lot']['read']['suggestions'][0]['id'],
+                              'accept', name='Shed', kind='shed')
+        tpr.confirm_placement(None, [])
+        check(tb.status(tb.start({'part': 'shed'}, reader=Reader(), inline=True))['state'] == 'done', 'built')
+        footprint = _place_building('shed')['footprint']
+        tpr.confirm_placement(None, [{'building': 'shed', 'outline': [[x + 20, y + 10] for x, y in footprint]}])
+        if edit:
+            twin_edit.save({**edit, 'building': 'shed'}, 'p1')
+        before = _plan_building(ts.current(), 'shed')
+        twin_edit.save({'op': 'set', 'building': 'shed', 'piece': 'shed',
+                        'field': 'name', 'value': 'Garden shed'}, 'p1')
+        check(tb.status(tb.start({'part': 'shed'}, reader=Reader(), inline=True))['state'] == 'done', 'rebuilt')
+        shed = _plan_building(ts.current(), 'shed')
+        check(shed['name'] == 'Garden shed', shed['name'])
+        if edit:
+            check(shed['position'] == before['position'] and shed['rotation'] == before['rotation'],
+                  'rename retains a person-placed transform across rebuild')
+        else:
+            world = [tr.to_world(shed, p) for p in shed['levels'][0]['outline']]
+            check(_edges(world) == _edges(_place_building('shed')['footprint']),
+                  ('a rename does not apply the refit offset twice', world))
+    # A dragged answer to the build's placement pause also pins the transform.
+    engine_tests.scenario_lot_placement_answer_moves_and_turns_the_building()
+    check(_plan_building(ts.current(), 'house').get('position_from') == 'person',
+          'the placement answer records who placed the building')
+    ts.update_building('house', {'footprint': RECT, 'footprint_from': 'typed'})
+    ts.set_page_roles([{**row, 'role': 'other', 'level': None}
+                       if row['building'] == 'house' else row for row in ts.page_roles()])
+    check(tb.status(tb.start({'part': 'house'}, reader=Reader(), inline=True))['state'] == 'done',
+          'a building whose drawings are now Other rebuilds as a shell')
+    house = _plan_building(ts.current(), 'house')
+    check(house['position'] == [10, 20] and house['rotation'] == 90,
+          'a shell rebuild keeps the dragged placement')
+
+
 SCENARIOS = (
+    scenario_renamed_shell_still_lands_on_footprint,
     scenario_shell_refit_then_rebuild_lands_on_footprint_once,
     scenario_shell_fewer_storeys_drops_only_empty_generated_levels,
     scenario_shell_moved_then_deleted_wall_stays_deleted,

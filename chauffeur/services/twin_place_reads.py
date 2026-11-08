@@ -170,7 +170,7 @@ def answer_suggestion(sid, action, *, building=None, name=None, kind=None, read=
                 target = twin_store._add_building(place, bid, name, kind)
             if target['footprint'] != outline:
                 changed.add(target['id'])
-            target.update(footprint=outline, footprint_from='plot')
+            target.update(footprint=outline, footprint_from='plot', footprint_read=plot['id'])
             suggestion.update(state='accepted', building=target['id'])
             summary = 'Accepted the plot plan footprint.'
         _publish(row, changed)
@@ -202,16 +202,21 @@ def confirm_placement(street_edge, footprints) -> dict:
                    edge == plot['street_edge'] and isinstance(edge, list) and all(type(i) is int for i in edge)) else
                twin_place.plot_registration(plot['crop'], plot['fragment'], edge=street_edge))
         changed = set()
-        if reg != old_reg:
-            for bid, target in targets.items():
-                if target.get('footprint') and target.get('footprint_from') == 'plot':
+        for bid, target in targets.items():
+            if target.get('footprint') and target.get('footprint_from') == 'plot':
+                # New accepts already use this read's frame. Older footprints
+                # still use the previous confirmed frame (including legacy ones
+                # without a read id). An edge change also moves current accepts.
+                footprint_reg = plot['registration'] if target.get('footprint_read') == plot['id'] else old_reg
+                if reg != footprint_reg:
                     target['footprint'] = twin_place.check_footprint([
-                        twin_register.apply(reg, twin_register.invert(old_reg, p)) for p in target['footprint']])
+                        twin_register.apply(reg, twin_register.invert(footprint_reg, p)) for p in target['footprint']])
                     changed.add(bid)
+                target['footprint_read'] = plot['id']
         for bid, outline in dragged.items():
             if targets[bid]['footprint'] != outline:
                 changed.add(bid)
-            targets[bid].update(footprint=outline, footprint_from='plot')
+            targets[bid].update(footprint=outline, footprint_from='plot', footprint_read=plot['id'])
         plot.update(registration=reg, street_edge=deepcopy(edge),
                     lot=[twin_register.apply(reg, twin_place.to_master(plot['crop'], p))
                          for p in plot['fragment']['lot']],
