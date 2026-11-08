@@ -190,7 +190,7 @@ export function buildTwin(plan, kit, tier) {
   const ghost = plain('ghost', '#38bdf8', { opacity: 0.35, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
   const ghostEdges = new THREE.LineDashedMaterial({ color: '#38bdf8', dashSize: 0.4, gapSize: 0.25, transparent: true, opacity: 0.8, depthWrite: false });
   const pickMaterial = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
-  const roomLights = [], levelElevations = {};
+  const roomLights = [], levelElevations = {}, notes = [];
   for (const b of plan.buildings || []) {
     const materialKit = materialKitFor({ ...plan.materials, ...b.materials });
     const mat = role => {
@@ -453,10 +453,65 @@ export function buildTwin(plan, kit, tier) {
         const end = extension.to_x + (extension.overhang || 0);
         roofPlane([x1, section.plate], [end, section.plate - (end - x1) * extension.pitch / 12], y0 - oh, y1 + oh);
       } else if (extension.kind === 'awning') {
-        const aw = extension, rise = aw.depth * aw.pitch / 12, angle = -Math.atan2(rise, aw.depth), length = Math.hypot(aw.depth, rise);
-        mesh(local.roof, new THREE.BoxGeometry(aw.x1 - aw.x0, 0.3, length).rotateX(angle).translate((aw.x0 + aw.x1) / 2, aw.eave + rise / 2, -y0 + aw.depth / 2), mat('roof'));
-        for (let x = aw.x0 + 0.75; x < aw.x1; x += 1.5) if (materialKit.materials.roof?.asset === 'standing_seam') mesh(local.roof, new THREE.BoxGeometry(0.065, 0.08, length).rotateX(angle).translate(x, aw.eave + rise / 2 + 0.2, -y0 + aw.depth / 2), mat('roof'));
-        for (let i = 0; i < (aw.brackets || 0); i++) mesh(local[first.id], new THREE.BoxGeometry(0.3, 0.3, Math.hypot(3, 2.6)).rotateX(-Math.atan2(2.6, 3)).translate(aw.x0 + 0.6 + i * (aw.x1 - aw.x0 - 1.2) / Math.max(1, aw.brackets - 1), aw.eave - 1.4, -y0 + 1.6), mat('trim'));
+        const aw = extension, exterior = b.walls.filter(w => w.exterior);
+        let support = exterior.find(w => w.id === aw.wall);
+        if (!aw.wall) {
+          // Prefer the section's front wall with the largest covered span.
+          let overlap = 0;
+          for (const w of exterior) {
+            if (Math.abs(w.from[1] - y0) > 1e-4 || Math.abs(w.to[1] - y0) > 1e-4) continue;
+            const covered = Math.min(aw.x1, Math.max(w.from[0], w.to[0])) - Math.max(aw.x0, Math.min(w.from[0], w.to[0]));
+            if (covered > overlap) { support = w; overlap = covered; }
+          }
+          if (!support) {
+            const midpoint = [(aw.x0 + aw.x1) / 2, y0];
+            let nearest = 2 + 1e-6;
+            for (const w of exterior) {
+              const dx = w.to[0] - w.from[0], dy = w.to[1] - w.from[1];
+              const t = Math.max(0, Math.min(1, ((midpoint[0] - w.from[0]) * dx + (midpoint[1] - w.from[1]) * dy) / (dx * dx + dy * dy)));
+              const distance = Math.hypot(midpoint[0] - w.from[0] - t * dx, midpoint[1] - w.from[1] - t * dy);
+              if (distance < nearest) { support = w; nearest = distance; }
+            }
+          }
+        }
+        if (!support) {
+          notes.push({ code: 'extension_skipped', building: b.id, section: section.id, kind: aw.kind, reason: 'No exterior wall near the awning span.' });
+          continue;
+        }
+        // Use the same outside face as the wall's siding. Span coordinates
+        // run along plan x for front/back walls, or plan y for side walls.
+        const { z: outward } = wallBasis(support.from, support.to, 0);
+        const mid = support.from.map((v, i) => (v + support.to[i]) / 2);
+        outward.multiplyScalar(Math.sign(outward.dot(new THREE.Vector3(mid[0] - center[0], 0, -mid[1] + center[1]))) || 1);
+        const tangent = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), outward);
+        const axis = Math.abs(tangent.x) >= Math.abs(tangent.z) ? 0 : 1;
+        const spanMid = (aw.x0 + aw.x1) / 2;
+        const t = (spanMid - support.from[axis]) / (support.to[axis] - support.from[axis]);
+        const origin = new THREE.Vector3(support.from[0] + t * (support.to[0] - support.from[0]), 0, -support.from[1] - t * (support.to[1] - support.from[1]));
+        origin.addScaledVector(outward, support.thickness / 2);
+        const frame = new THREE.Matrix4().makeBasis(tangent, new THREE.Vector3(0, 1, 0), outward).setPosition(origin);
+        const width = (aw.x1 - aw.x0) / Math.abs(axis === 0 ? tangent.x : tangent.z);
+        const slope = aw.pitch / 12, rise = aw.depth * slope;
+        // Shear the boxes so their top edges meet the face and eave exactly;
+        // thickness stays below that plane rather than lifting the low edge.
+        const slopedBox = (w, h, depth, gradient, u, height) => {
+          const g = new THREE.BoxGeometry(w, h, depth), p = g.attributes.position;
+          for (let i = 0; i < p.count; i++) p.setY(i, p.getY(i) + gradient * p.getZ(i));
+          g.computeVertexNormals();
+          return g.translate(u, height, depth / 2).applyMatrix4(frame);
+        };
+        const topMid = aw.eave + rise / 2;
+        mesh(local.roof, slopedBox(width, 0.3, aw.depth, -slope, 0, topMid - 0.15), mat('roof'));
+        if (materialKit.materials.roof?.asset === 'standing_seam') for (let u = -width / 2 + 0.75; u < width / 2; u += 1.5) {
+          mesh(local.roof, slopedBox(0.065, 0.08, aw.depth, -slope, u, topMid + 0.04), mat('roof'));
+        }
+        const run = Math.min(3, aw.depth * 0.8), bracketRise = run * 2.6 / 3;
+        const bracketMid = aw.eave + rise - run * slope - 0.3 - 0.15 - 0.04 - bracketRise / 2;
+        for (let i = 0; i < (aw.brackets || 0); i++) {
+          const inset = Math.min(0.6, width / 2);
+          const u = -width / 2 + inset + i * (width - 2 * inset) / Math.max(1, aw.brackets - 1);
+          mesh(local[support.level], slopedBox(0.3, 0.3, run, bracketRise / run, u, bracketMid), mat('trim'));
+        }
       }
     }
     const outlines = footprints(b.walls.filter(w => w.level === first.id));
@@ -568,5 +623,5 @@ export function buildTwin(plan, kit, tier) {
   const ready = Promise.all([...materials.values()].map(m => m.userData.ready));
   // These two shared materials may have no objects in a settled-only plan.
   materials.set('ghostEdges', ghostEdges); materials.set('pick', pickMaterial);
-  return { root, groups, pieces, pieceBounds, pickObjects, roofSurfaces, roomLights, levelElevations, materials, ready, updateGhosts };
+  return { root, groups, pieces, pieceBounds, pickObjects, roofSurfaces, roomLights, levelElevations, materials, ready, updateGhosts, notes };
 }

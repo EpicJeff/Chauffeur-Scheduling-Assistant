@@ -235,6 +235,10 @@ def _roof(building, notes):
             valid = (all(_number(extension.get(k)) for k in ('x0', 'x1', 'depth', 'pitch', 'eave'))
                      and extension['x0'] < extension['x1'] and extension['depth'] > 0
                      and _numeric_fields(extension, ('brackets',)))
+            if 'wall' in extension and (not isinstance(extension['wall'], str)
+                                        or not any(w['id'] == extension['wall'] for w in building['walls'])):
+                notes.append(f'Roof extension {index}: dropped invalid or unknown wall reference; kept the awning.')
+                del extension['wall']
         else:
             valid = False
         if valid and 0 < extension['pitch'] <= 24:
