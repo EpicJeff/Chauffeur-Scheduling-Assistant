@@ -16,7 +16,7 @@ from urllib.parse import quote
 import uuid
 
 from services import (twin_compose, twin_cost, twin_draft, twin_library,
-                      twin_plan, twin_reads, twin_register, twin_store)
+                      twin_place, twin_plan, twin_reads, twin_register, twin_store)
 
 _LOCK = threading.RLock()
 _BUILDS = {}
@@ -52,6 +52,8 @@ def plan_steps(page_roles, photos, plot, *, part=None, placement=None, has_lot=F
     steps = []
     floors = sorted((r for r in page_roles if r['role'] == 'floor'),
                     key=lambda r: (r['page'], r.get('box') or _FULL, r.get('source', '')))
+    if part is not None and not floors:
+        return [_step('shell')] + ([_step('compose')] if compose else [])
     for index, row in enumerate(floors):
         level = f'L{index + 1}'
         row = {**row, 'level': row.get('level') or f'Floor {index + 1}'}
@@ -194,6 +196,7 @@ def start(inputs, *, reader=None, inline=False):
         inputs = deepcopy(inputs)
         # Chaining and composition are engine decisions, never caller options.
         inputs.update(compose=True, then=[])
+        inputs.pop('shell', None)
         part = inputs.get('part')
         place = twin_store.place() if part is not None else None
         pages = twin_store.page_roles()
@@ -211,17 +214,19 @@ def start(inputs, *, reader=None, inline=False):
                 placement = deepcopy(candidate)
         else:
             if part is not None:
-                building = next((b for b in place['buildings'] if b['id'] == part), None)
-                if building is None:
+                part_building = next((b for b in place['buildings'] if b['id'] == part), None)
+                if part_building is None:
                     raise ValueError('Choose a building in your place.')
-                inputs['building'] = {k: building[k] for k in ('id', 'name', 'kind')}
+                inputs['building'] = {k: part_building[k] for k in ('id', 'name', 'kind')}
                 inputs['photos'] = twin_store.photos_for(part)
             building = inputs['building']
             if not re.fullmatch(r'[A-Za-z0-9_.:-]{1,64}', building['id']):
                 raise ValueError('A building needs a valid id.')
             roles = [r for r in pages if r.get('building', 'house') == building['id']]
             if not any(r['role'] == 'floor' for r in roles):
-                raise ValueError('Confirm floor page roles for this building before building.')
+                if part is None:
+                    raise ValueError('Confirm floor page roles for this building before building.')
+                inputs['shell'] = twin_place.shell_building(part_building, 'shell')
         photos = {s['id'] for s in twin_store.sources() if s['kind'] == 'photo'}
         photo_ids = inputs.get('photos', [])
         if (not isinstance(photo_ids, list)
@@ -324,6 +329,8 @@ def _base(plan, build, lot=None):
     bid = build['inputs']['building']['id']
     levels = [{'id': s['level'], 'name': s['level_name'], 'elevation': i * 9, 'ceiling': 9}
               for i, s in enumerate(s for s in build['steps'] if s['kind'] in ('outline', 'registration'))]
+    if 'shell' in build['inputs']:
+        levels = deepcopy(build['inputs']['shell']['levels'])
     if not levels:
         raise ValueError('No floor sheets are confirmed for this building.')
     if not any(b['id'] == bid for b in plan['buildings']):
@@ -646,7 +653,12 @@ def _obtain(build, step, reader, ticket):
             return result
         # Older builds may have cached an unsuccessful reply. Resume retries it.
         path.unlink()
-    if step['kind'] in ('compose', 'lot'):
+    if step['kind'] == 'shell':
+        shell = deepcopy(build['inputs']['shell'])
+        for piece in [*shell['walls'], *shell['openings'], *shell['roof']['sections']]:
+            piece['src']['step'] = step['id']
+        result = {'fragment': shell, 'problems': []}
+    elif step['kind'] in ('compose', 'lot'):
         result = {'fragment': {}, 'problems': []}
     elif step['kind'] == 'fit':
         result = {'fragment': _building_fit(build), 'problems': []}
@@ -877,7 +889,27 @@ def _settle(build, step, result, decision=None):
         house = _house(plan, build)
         level = next((l for l in (house or {}).get('levels', []) if l['id'] == step['level']), None)
         reg = twin_store.registration(step['source'], step['page'], step['level']) if crop else None
-        if kind in ('outline', 'registration'):
+        if kind == 'shell':
+            shell = deepcopy(fragment)
+            for incoming_level in shell['levels']:
+                old_level = next(l for l in house['levels'] if l['id'] == incoming_level['id'])
+                if not old_level.get('src', {}).get('person'):
+                    old_level.update(incoming_level)
+            # _merge_list assigns the retained wall ids back to incoming walls.
+            # The door must reference those ids, including a wall moved by hand.
+            wall_ids = [w['id'] for w in shell['walls']]
+            house['walls'] = _merge_list(house['walls'], shell['walls'], 'wall', house, build, step)
+            remap = dict(zip(wall_ids, (w['id'] for w in shell['walls'])))
+            live_walls = {w['id'] for w in house['walls']}
+            incoming = []
+            for opening in shell['openings']:
+                opening['wall'] = remap[opening['wall']]
+                if opening['wall'] in live_walls:
+                    incoming.append(opening)
+            house['openings'] = _merge_list(house['openings'], incoming, 'opening', house, build, step)
+            house['roof']['sections'] = _merge_list(
+                house['roof']['sections'], shell['roof']['sections'], 'roof', house, build, step)
+        elif kind in ('outline', 'registration'):
             reg = decision.get('registration', build['pause']['registration'])
             if not level.get('src', {}).get('person'):
                 level['outline'] = [_map(crop, reg, p) for p in fragment['outline']]

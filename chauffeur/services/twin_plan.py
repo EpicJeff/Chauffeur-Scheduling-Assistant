@@ -215,7 +215,7 @@ def _roof(building, notes):
             overhang = max(0, min(4, overhang)) if _number(overhang) else 1
             notes.append(f'Roof section {name}: overhang clamped to {overhang}.')
         section['overhang'] = overhang
-        if section.get('pitch_source', 'default') not in ('drawn', 'photos', 'person', 'default'):
+        if section.get('pitch_source', 'default') not in ('drawn', 'photos', 'person', 'card', 'default'):
             notes.append(f'Roof section {name}: defaulted invalid pitch_source.')
             section['pitch_source'] = 'default'
         section.setdefault('pitch_source', 'default')

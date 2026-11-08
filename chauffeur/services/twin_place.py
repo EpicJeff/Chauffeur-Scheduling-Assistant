@@ -1,7 +1,9 @@
 """Pure place records, validation and migration; no storage dependencies."""
 
+from copy import deepcopy
 import math
 import re
+import uuid
 
 from services import twin_register
 
@@ -96,6 +98,53 @@ def check_footprint(points) -> list:
     if area < 4:
         raise ValueError('A footprint must cover at least 4 square feet.')
     return result
+
+
+def shell_building(building: dict, step_id: str) -> dict:
+    """Build local geometry from an accepted footprint and the shell card."""
+    if not building.get('footprint'):
+        raise ValueError(f"Give {building['name']} a footprint: type its size or draw it on the lot.")
+    footprint = check_footprint(building['footprint'])
+    card = check_shell({**shell_for(building['kind']), **building.get('shell', {})})
+    height = card['wall_height']
+
+    def piece(piece_kind, **fields):
+        return {'id': f'{piece_kind}:{uuid.uuid4().hex}', 'state': 'settled',
+                'src': {'sheet': '', 'page': 1, 'step': step_id}, **fields}
+
+    levels, walls = [], []
+    edges = list(zip(footprint, footprint[1:] + footprint[:1]))
+    for n in range(1, card['storeys'] + 1):
+        level = f'L{n}'
+        levels.append({'id': level, 'name': f'Floor {n}', 'elevation': (n - 1) * height,
+                       'ceiling': height, 'outline': deepcopy(footprint)})
+        walls.extend(piece('wall', level=level, **{'from': list(a), 'to': list(b)},
+                           thickness=0.5, height=height, exterior=True) for a, b in edges)
+
+    # Counterclockwise edges have outward normals (dy, -dx); reverse for CW.
+    winding = 1 if sum(a[0] * b[1] - b[0] * a[1] for a, b in edges) > 0 else -1
+    direction = {'front': (0, -1), 'back': (0, 1), 'left': (-1, 0), 'right': (1, 0)}[card['door_side']]
+    facing = [wall for wall in walls if wall['level'] == 'L1' and winding * (
+        (wall['to'][1] - wall['from'][1]) * direction[0]
+        - (wall['to'][0] - wall['from'][0]) * direction[1]) > 0]
+    wall = max(facing, key=lambda w: math.dist(w['from'], w['to']), default=None)
+    openings = []
+    if wall is not None:
+        length = math.dist(wall['from'], wall['to'])
+        if length >= 2:
+            openings.append(piece('opening', kind='door', wall=wall['id'], at=length / 2,
+                                  width=min(3, length - 1), head=min(6.67, height - 0.25), sill=0))
+
+    x0, y0 = (min(p[i] for p in footprint) for i in (0, 1))
+    x1, y1 = (max(p[i] for p in footprint) for i in (0, 1))
+    roof = piece('roof', kind=card['roof'], rect=[x0, y0, x1, y1],
+                 ridge='x' if x1 - x0 >= y1 - y0 else 'y', pitch=card['pitch'],
+                 plate=card['storeys'] * height, overhang=1, pitch_source='card')
+    if card['roof'] == 'shed':
+        roof['low_side'] = 'y1'
+    return {**{k: building[k] for k in ('id', 'name', 'kind')},
+            'position': [0, 0], 'rotation': 0, 'base': 0, 'levels': levels,
+            'walls': walls, 'openings': openings, 'rooms': [], 'roof': {'sections': [roof]}}
 
 
 def new_id(name, taken) -> str:
