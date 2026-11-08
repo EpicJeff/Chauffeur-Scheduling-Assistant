@@ -601,6 +601,21 @@ def test_lower_roof_stays_outside_upper_rooms():
           ('lower roof intrudes into an L2 room', hits))
 
 
+def test_visible_roof_stays_above_upper_attic():
+    """An upper attic outline cannot cut away the visible roof above it."""
+    p = plan()
+    level(building(p), 'L2')['outline'] = [
+        [0, 14.33], [22.67, 14.33], [22.67, 13.33],
+        [37, 13.33], [37, 52], [0, 52],
+    ]
+    got = run(p, rays=[{'o': [5, 30, 40], 'd': [0, 0, -1], 'far': 40, 'keep': 1}],
+              heights=[[5, 30]])
+    hits = got['hits'][0]
+    check(hits and hits[0]['role'] == 'roof'
+          and abs(hits[0]['p'][2] - got['heights'][0]['h']) < 0.01,
+          ('visible roof disappears above the L2 attic', hits, got['heights'][0]))
+
+
 def test_storey_roof_plate_limits_and_upper_envelope():
     """R5''': strict lower plate bound, inclusive upper bound, highest cover."""
     p = plan()
@@ -928,8 +943,8 @@ def test_eave_trim_present():
     ray straight up from 3 ft below the envelope there finds the underside,
     whatever is first hit from below: the roof's own underside or a soffit
     (the soffit's material is the implementer's choice). Thickness = top hit
-    minus underside hit. Today the roof is one double-sided surface, so both
-    rays meet the same surface and the thickness is 0."""
+    minus underside hit. The roof uses FrontSide top faces; its separate
+    underside or soffit supplies the hit from below."""
     p = plan()
     b = building(p)
     sections = b['roof']['sections']
@@ -992,6 +1007,7 @@ TESTS = (
     test_upper_storey_walls_reach_own_roof,
     test_upper_storey_windows_within_walls,
     test_lower_roof_stays_outside_upper_rooms,
+    test_visible_roof_stays_above_upper_attic,
     test_storey_roof_plate_limits_and_upper_envelope,
     test_uncovered_knee_walls_capped_by_visible_roof,
     test_rear_seams_closed,

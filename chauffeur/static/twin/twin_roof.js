@@ -274,8 +274,8 @@ export function stepFaces(sections, { section: only = null, exclude = [], wallCo
   return new Float32Array(positions);
 }
 
-/** Upper envelope and gable ends; optionally retain lower roofs and subtract
- * per-section convex plan polygons (occupied upper floors in the scene). */
+/** Upper envelope and gable ends; optionally retain lower roofs. Per-section
+ * convex exclusions cut only retained pieces below the visible envelope. */
 export function roofMesh(sections, { retainLower = false, exclude = [] } = {}) {
   const faces = sections.flatMap(sectionFaces);
   const positions = [], labels = [], gables = [];
@@ -295,8 +295,25 @@ export function roofMesh(sections, { retainLower = false, exclude = [] } = {}) {
       if (cutter.length) pieces = pieces.flatMap(piece => subtract(piece, cutter));
       if (!pieces.length) break;
     }
-    for (const cutter of exclude[face.section] || []) {
-      pieces = pieces.flatMap(piece => subtract(piece, cutter));
+    const cutters = exclude[face.section] || [];
+    if (retainLower && cutters.length) {
+      // Coplanar ownership is already resolved. Apply the normal envelope
+      // cut to find the visible pieces, which occupied floors must not erase.
+      let envelopePieces = pieces;
+      for (const other of faces) {
+        if (other.section === face.section || samePlane(other.plane, face.plane)) continue;
+        const cutter = clip(other.polygon, difference(other.plane, face.plane));
+        if (cutter.length) envelopePieces = envelopePieces.flatMap(piece => subtract(piece, cutter));
+        if (!envelopePieces.length) break;
+      }
+      let remainder = pieces;
+      for (const piece of envelopePieces) {
+        remainder = remainder.flatMap(lower => subtract(lower, piece));
+      }
+      for (const cutter of cutters) {
+        remainder = remainder.flatMap(piece => subtract(piece, cutter));
+      }
+      pieces = [...envelopePieces, ...remainder];
     }
     for (const piece of pieces) {
       triangulate(piece, ([x, y]) => [x, y, valueAt(face.plane, x, y)], positions, labels, face.section);

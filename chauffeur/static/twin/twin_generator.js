@@ -248,9 +248,10 @@ export function buildTwin(plan, kit, tier) {
     })]));
     const exclude = sections.map(s => ordered.filter(l => l.elevation >= s.plate)
       .flatMap(l => floorCutters.get(l.id)));
-    // Retained lower roofs serve walls under overhangs, never upper rooms.
+    // Retained lower roofs serve walls under overhangs, never upper rooms;
+    // the visible envelope remains above occupied attic outlines.
     const roofLayers = roofMesh(sections, { retainLower: true, exclude });
-    const visibleRoof = roofMesh(sections, { exclude });
+    const visibleRoof = envelope;
     const storeyRoofs = new Map(ordered.map(l => {
       const own = sections.filter(s => l.elevation + 0.5 < s.plate && s.plate <= l.elevation + l.ceiling + 2);
       return [l.id, { sections: own,
