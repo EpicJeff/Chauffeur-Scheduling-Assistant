@@ -327,8 +327,9 @@ export function buildTwin(plan, kit, tier) {
       // Keep closed wall/batten tops in floor views. Only nudge an extrusion
       // whose top actually coincides with a roof face, rather than removing
       // every cap with a roof somewhere overhead. A slab-limited top embeds
-      // into that slab; other contacts move down inside the roof shell.
-      const separateRoofContact = (geo, a, c, ta, tc, faceOffset) => {
+      // into that slab only for a wall body beneath its footprint; battens
+      // and other contacts move down inside the roof shell.
+      const separateRoofContact = (geo, a, c, ta, tc, faceOffset, wallBody = false) => {
         if (!exterior || !clipRoof || group === local.gableCut) return;
         const p = geo.attributes.position, n = geo.attributes.normal;
         const expected = j => ta + (tc - ta) * (p.getX(j) - a) / (c - a);
@@ -346,7 +347,11 @@ export function buildTwin(plan, kit, tier) {
           }))) points.push(i);
         }
         if (!points.length) return;
-        const atSlab = Math.abs(elevation + ta - profile.slabCap) < 1e-5 && Math.abs(elevation + tc - profile.slabCap) < 1e-5;
+        const atSlab = wallBody && Math.abs(elevation + ta - profile.slabCap) < 1e-5 && Math.abs(elevation + tc - profile.slabCap) < 1e-5 &&
+          [a, c].every(u => [0, thickness].every(depth => {
+            point.set(u, 0, depth + faceOffset).applyMatrix4(matrix);
+            return profile.slabOutlines.some(poly => contains(poly, [point.x, -point.z]));
+          }));
         for (let j = 0; j < p.count; j++) if (Math.abs(p.getY(j) - expected(j)) < 1e-5) p.setY(j, p.getY(j) + (atSlab ? 0.11 : -0.11));
         geo.computeVertexNormals();
       };
@@ -365,7 +370,7 @@ export function buildTwin(plan, kit, tier) {
           if (ta <= lo && tc <= lo) continue;
           const shape = new THREE.Shape([[a, lo], [c, lo], [c, Math.max(lo, tc)], [a, Math.max(lo, ta)]].map(p => new THREE.Vector2(...p)));
           const geo = new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false, steps: 1 });
-          separateRoofContact(geo, a, c, top(a, mid), top(c, mid), offset - thickness / 2);
+          separateRoofContact(geo, a, c, top(a, mid), top(c, mid), offset - thickness / 2, true);
           geo.translate(0, 0, offset - thickness / 2).applyMatrix4(matrix);
           mesh(group, geo, wallMat);
         }
@@ -470,6 +475,7 @@ export function buildTwin(plan, kit, tier) {
       const top = (u, toward = u) => Math.max(0, Math.min(...limits(u, toward)));
       const profile = { offset: w.exterior ? -sign * w.thickness / 2 : 0, sign,
         slabCap: next ? next.elevation - 0.8 : NaN,
+        slabOutlines: above,
         extendStart: extension(w.from), extendEnd: extension(w.to), faces, limits, positions: storeyRoof.positions,
         edges: above.flatMap(poly => poly.map((p, i) => [p, poly[(i + 1) % poly.length]])), panels: [] };
       const holes = (b.openings || []).filter(o => o.wall === w.id).map(o => opening(o));

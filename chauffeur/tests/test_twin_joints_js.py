@@ -373,6 +373,58 @@ def test_no_wall_above_roof():
                     '(wall id, x, y, first role, its height, roof height)', bad[:12]))
 
 
+def test_no_batten_above_roof():
+    """Downward rays across every exterior batten's outer footprint meet
+    the drawn roof before siding, including beside an upper slab boundary.
+
+    Use rendered roof hits. The explicit lower-contact ray starts just above
+    the slab underside so overlapping higher roofs cannot hide the defect.
+    """
+    p = plan()
+    b = building(p)
+    outlines = {l['id']: l['outline'] for l in b['levels']}
+    # L2's slab underside is 10.1 ft; this ray starts above the old raised
+    # batten (10.21), below the overlapping higher roof sections.
+    samples = [('left_wing regression', (14.455, 14.285), 10.3)]
+    for w in b['walls']:
+        if not w.get('exterior') or w['level'] not in outlines:
+            continue
+        d, n, length = wall_frame(w, outlines[w['level']])
+        u = 0.5
+        while u < length:
+            # Batten width is 0.14 ft; its 0.09-ft depth is outside the
+            # wall's drawn outer face. Stay clear of footprint edges.
+            for along in (-0.05, 0, 0.05):
+                x, y = at(w, d, u + along)
+                for out in (0.02, 0.045, 0.07):
+                    samples.append((w['id'], (x + out * n[0], y + out * n[1]), 40))
+            u += 1
+    rays = [{'o': [x, y, start], 'd': [0, 0, -1], 'far': 60,
+             'roles': ['roof', 'siding'], 'keep': 32} for _, (x, y), start in samples]
+    got = run(p, rays=rays, heights=[list(pt) for _, pt, _ in samples])
+    hits = got['hits']
+    bad, roof_samples = [], 0
+    for (wid, pt, start), hs, heights in zip(samples, hits, got['heights']):
+        # Awnings may hang below a wall. Only section surfaces own its top;
+        # match actual drawn hits so excluded roof faces cannot mask a leak.
+        roofs = [h for h in hs if h['role'] == 'roof' and
+                 any(z is not None and abs(h['p'][2] - z) < 0.01
+                     for z in heights['all'])]
+        if not roofs:
+            continue
+        roof_samples += 1
+        roof = roofs[0]
+        above = [h for h in hs if h['role'] == 'siding' and
+                 h['p'][2] > roof['p'][2] + 0.02]
+        if above:
+            bad.append((wid, pt, start, above[0]['p'][2], roof['p'][2]))
+    check(roof_samples >= 500, ('too few drawn-roof batten samples', roof_samples))
+    check(any(h['role'] == 'roof' for h in hits[0]),
+          ('regression point missed the drawn lower roof', hits[0]))
+    check(not bad, (f'{len(bad)}/{roof_samples} batten points have siding above the roof '
+                    '(wall id, point, ray start, siding height, roof height)', bad[:12]))
+
+
 def _corners(b, lid):
     """Each exterior corner of a level: the vertex and its two walls."""
     walls = exterior(b, lid)
@@ -1055,6 +1107,7 @@ def test_eave_trim_present():
 TESTS = (
     test_no_band_under_eaves,
     test_no_wall_above_roof,
+    test_no_batten_above_roof,
     test_corners_closed,
     test_outside_face_on_line,
     test_uncovered_wall_keeps_height,
