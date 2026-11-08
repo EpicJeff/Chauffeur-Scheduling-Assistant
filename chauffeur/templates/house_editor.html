@@ -18,7 +18,7 @@
       'three/addons/': window.chfBase + 'static/vendor/three-r187/addons/',
       '@dgreenheck/ez-tree': window.chfBase + {{ 'static/vendor/ez-tree/ez-tree.es.js' | ver | tojson }}
     };
-    {% for name in ['twin_generator', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'twin_roof', 'twin_ground', 'twin_director', 'editor/editor', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/cards', 'editor/snap', 'editor/plan_view', 'editor/pauses', 'editor/timeline', 'editor/words'] %}
+    {% for name in ['twin_generator', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'twin_roof', 'twin_ground', 'twin_director', 'editor/editor', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/cards', 'editor/snap', 'editor/plan_view', 'editor/pauses', 'editor/timeline', 'editor/words', 'editor/place'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     const map = document.createElement('script'); map.type = 'importmap';
@@ -43,7 +43,7 @@
       <button id="editor-stop" type="button" aria-label="Stop build" hidden>Stop</button>
       <details id="editor-menu">
         <summary aria-label="House menu">Menu</summary>
-        <div><button id="editor-manage-sources" type="button">Drawings and photos</button>
+        <div><button id="editor-manage-sources" type="button">Your place</button>
           <button id="menu-upload" type="button">Upload more</button>
           <button id="menu-director" type="button" disabled>Art director</button>
           <button id="menu-advanced" type="button" disabled>Advanced: edit the plan file</button>
@@ -98,21 +98,6 @@
               <button id="advanced-close" type="button">Close plan file</button></div>
           </form>
         </section>
-        <section id="editor-upload" aria-labelledby="editor-upload-title">
-          <h3 id="editor-upload-title">Start with your drawings</h3>
-          <p>Add PDF drawings and JPEG or PNG photos. Check what each page shows, then build your house.</p>
-          <label for="editor-source-files">Drawings and photos</label>
-          <input id="editor-source-files" type="file" accept="application/pdf,image/jpeg,image/png" multiple>
-          <p id="editor-upload-status" role="status"></p>
-          <div id="editor-pages"></div>
-          <label for="editor-build-target">Building to build</label>
-          <select id="editor-build-target"><option value="house">Main house</option><option value="pool_house">Pool house</option></select>
-          <div class="editor-actions">
-            <button id="editor-suggest-roles" type="button" disabled>Suggest page roles</button>
-            <button id="editor-confirm-roles" type="button" disabled>Confirm pages</button>
-            <button id="editor-build" type="button" disabled>Build</button>
-          </div>
-        </section>
         <ol id="editor-log" aria-label="Build steps" aria-live="polite"></ol>
         <div id="editor-messages" role="log" aria-label="Conversation" aria-live="polite"></div>
       </div>
@@ -131,6 +116,50 @@
       <div id="time-actions" hidden><button id="time-return" type="button">Return here</button><button id="time-now" type="button">Back to now</button></div>
       <div><span id="editor-time-note">Your build will appear here, one step at a time.</span><output id="editor-step-count">0 steps</output></div>
     </footer>
+    <section id="place-view" role="dialog" aria-modal="true" aria-label="Your place" hidden>
+      <header class="place-header">
+        <div><h2>Your place</h2><p>The lot and every building, with their drawings and photos.</p></div>
+        <button id="place-close" type="button">Back to the house</button>
+      </header>
+      <div class="place-scroll">
+        <form id="place-add-form" class="place-add">
+          <label>Building name<input id="place-add-name" type="text" maxlength="100" required placeholder="For example, Detached garage"></label>
+          <label>Kind<select id="place-add-kind"></select></label>
+          <button id="place-add" type="submit">Add building</button>
+        </form>
+        <div class="place-layout">
+          <div id="place-cards"></div>
+          <aside class="place-setup" aria-label="Set up the lot">
+            <section class="place-card">
+              <h3>The plot plan</h3>
+              <p>Upload it to the Lot and confirm its page role. Read it to find building footprints, then choose which to keep.</p>
+              <button id="place-read-plot" type="button" disabled>Read the plot plan</button>
+              <div id="place-suggestions"></div>
+            </section>
+            <section id="place-placement" class="place-card" hidden>
+              <h3>Place the buildings</h3>
+              <p id="place-map-note">Tap a lot edge for the street. Drag a building to place it, or select it and use the arrow keys.</p>
+              <svg id="place-map" role="group" aria-label="Lot and building footprints in feet"></svg>
+              <div class="editor-actions">
+                <button id="place-turn" type="button" disabled>Turn 90 degrees</button>
+                <button id="place-confirm-placement" type="button">These are in the right place</button>
+              </div>
+            </section>
+            <section class="place-card">
+              <h3>Learn from photos</h3>
+              <p>Suggest which buildings a photo shows and a starting shape for buildings without drawings. You choose what to use.</p>
+              <button id="place-suggest-photos" type="button" disabled>Suggest from photos</button>
+              <div id="place-photo-suggestions"></div>
+            </section>
+          </aside>
+        </div>
+      </div>
+      <footer class="place-footer">
+        <p id="place-status" role="status">Add PDF drawings and JPEG or PNG photos to the part they show. Check each page, then confirm.</p>
+        <div class="editor-actions"><button id="place-confirm-pages" type="button" disabled>Confirm pages</button>
+          <button id="place-build" class="place-primary" type="button" disabled>Build your place</button></div>
+      </footer>
+    </section>
   </main>
   {% include 'components/control_center.html' %}
   <script type="module">

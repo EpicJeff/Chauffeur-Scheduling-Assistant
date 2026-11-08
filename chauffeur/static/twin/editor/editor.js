@@ -6,6 +6,7 @@ import { createSceneTools } from './scene_tools.js';
 import { createPlanView } from './plan_view.js';
 import { createPauses, applyRegistration, invertRegistration } from './pauses.js';
 import { createTimeline } from './timeline.js';
+import { createPlace } from './place.js';
 
 const el = id => document.getElementById(id);
 const emptyPlan = () => ({ schema: 'chauffeur.twin.plan/2', units: 'ft', buildings: [], site: {}, materials: {} });
@@ -13,12 +14,11 @@ const emptyPlan = () => ({ schema: 'chauffeur.twin.plan/2', units: 'ft', buildin
 export async function boot() {
   const hooks = window.__editor = { ready: false };
   let view = null, snapshot = { plan: null, rounds: [], cost: {}, build: null };
-  let sheets = { sources: [], page_roles: [] }, rows = [], confirmed = false;
+  let sheets = { sources: [], page_roles: [] };
   let currentBuild = null, ghostBuild = null, renderedGhosts = 0, lastScene = '';
-  let uploadsBusy = false, rolesBusy = false, building = false, resuming = false, stopping = false, assignmentsChanged = false;
-  let sourcesOpen = false;
+  let resuming = false, stopping = false;
   let menuBusy = false, directing = false, advancedBase = null;
-  let tools = null, planView = null, pauses = null, timeline = null, previewing = false, lastSummary = '';
+  let tools = null, planView = null, pauses = null, timeline = null, place = null, previewing = false, lastSummary = '';
   const lifecycle = new AbortController();
   const listen = (node, type, handler) => node.addEventListener(type, handler, { signal: lifecycle.signal });
   const ghosts = new Map(), prompted = new Set();
@@ -48,15 +48,15 @@ export async function boot() {
 
   function setStatus(text) { el('editor-status').textContent = plain(text); }
   function syncBuildButton() {
-    el('editor-build').disabled = !canEdit() || !hooks.ready || !confirmed || uploadsBusy || rolesBusy || building || resuming || active(currentBuild);
+    place?.sync(sheets, { ...snapshot, buildState: currentBuild });
     el('editor-check-step').hidden = previewing || currentBuild?.state !== 'paused' || !pauses?.dismissed();
     el('editor-resume').hidden = previewing || !['stopped', 'checkpoint'].includes(currentBuild?.state);
-    el('editor-resume').disabled = !canEdit() || !hooks.ready || building || resuming;
+    el('editor-resume').disabled = !canEdit() || !hooks.ready || resuming;
     el('editor-stop').hidden = previewing || !active(currentBuild);
     el('editor-stop').disabled = !canEdit() || stopping;
-    const busy = !canEdit() || !hooks.ready || uploadsBusy || rolesBusy || building || resuming || active(currentBuild);
+    const busy = !canEdit() || !hooks.ready || resuming || active(currentBuild);
     for (const id of ['menu-director', 'menu-advanced', 'menu-start-over', 'menu-reset-spend']) el(id).disabled = busy;
-    el('menu-start-over').disabled = !canEdit() || !hooks.ready || uploadsBusy || rolesBusy || building || resuming
+    el('menu-start-over').disabled = !canEdit() || !hooks.ready || resuming
       || currentBuild?.state === 'running';
     el('menu-director').disabled ||= !snapshot.plan?.buildings?.length;
     el('advanced-save').disabled = busy;
@@ -72,9 +72,10 @@ export async function boot() {
     const plan = structuredClone(snapshot.plan || emptyPlan());
     const savedPause = currentBuild?.pause;
     const pause = savedPause && pauses?.current()?.step === savedPause.step ? pauses.current() : savedPause;
-    if (pause?.kind === 'lot_placement' && pause.transform) {
+    if (pause?.kind === 'lot_placement' && pause.transform && currentBuild.part !== 'lot') {
       const step = currentBuild.steps.find(s => s.id === pause.step);
-      const owner = sheets.page_roles.find(row => row.source === step?.source && row.page === step?.page)?.building || 'house';
+      const owner = step?.id === 'fit' ? currentBuild.part
+        : sheets.page_roles.find(row => row.source === step?.source && row.page === step?.page)?.building || currentBuild.part || 'house';
       const house = plan.buildings.find(b => b.id === owner);
       if (house) Object.assign(house, structuredClone(pause.transform));
     }
@@ -121,63 +122,11 @@ export async function boot() {
   function drawTimeline(build) {
     timeline?.sync(build);
   }
-  function drawPages() {
-    const host = el('editor-pages'); host.replaceChildren();
-    for (const [index, row] of rows.entries()) {
-      const source = sheets.sources.find(source => source.id === row.source);
-      const group = document.createElement('fieldset'); group.className = 'editor-page';
-      const legend = document.createElement('legend'); legend.textContent = `${source?.filename || 'Drawing'} · page ${row.page}`;
-      const thumbnail = document.createElement('img'); thumbnail.alt = `Page ${row.page} of ${source?.filename || 'drawing'}`;
-      thumbnail.loading = 'lazy';
-      const url = (window.chfBase ?? '../') + `api/house/editor/sheets/${encodeURIComponent(row.source)}/${row.page}.png`;
-      thumbnail.src = window.chfAuthUrl ? window.chfAuthUrl(url) : url;
-      const roleLabel = document.createElement('label'); roleLabel.textContent = 'This page shows';
-      const select = document.createElement('select'); select.dataset.pageRole = ''; select.id = `editor-role-${index}`;
-      for (const [value, label] of [['floor', 'Floor'], ['roof', 'Roof'], ['plot', 'Lot'], ['elevation', 'Outside view'], ['other', 'Other'], ['skip', 'Skip']]) {
-        const option = document.createElement('option'); option.value = value; option.textContent = label; select.append(option);
-      }
-      select.value = row.role;
-      const buildingLabel = document.createElement('label'); buildingLabel.textContent = 'Building';
-      const buildingSelect = document.createElement('select'); buildingSelect.dataset.pageBuilding = '';
-      for (const [value, label] of [['house', 'Main house'], ['pool_house', 'Pool house']]) {
-        const option = document.createElement('option'); option.value = value; option.textContent = label; buildingSelect.append(option);
-      }
-      buildingSelect.value = row.building || 'house';
-      buildingSelect.addEventListener('change', () => {
-        row.building = buildingSelect.value; assignmentsChanged = true; syncBuildButton();
-      });
-      buildingLabel.append(buildingSelect);
-      const levelLabel = document.createElement('label'); levelLabel.textContent = 'Level name';
-      const input = document.createElement('input'); input.type = 'text'; input.maxLength = 80;
-      input.value = row.level || ''; input.placeholder = 'For example, Main floor';
-      select.addEventListener('change', () => { row.role = select.value; confirmed = false; syncBuildButton(); });
-      input.addEventListener('input', () => { row.level = input.value.trim() || null; confirmed = false; syncBuildButton(); });
-      roleLabel.append(select); levelLabel.append(input); group.append(legend, thumbnail, roleLabel, levelLabel, buildingLabel);
-      if (row.box) { const crop = document.createElement('p'); crop.textContent = 'One part of this page'; group.append(crop); }
-      host.append(group);
-    }
-    el('editor-suggest-roles').disabled = rolesBusy || uploadsBusy || !sheets.sources.some(source =>
-      source.kind === 'drawing' && !sheets.page_roles.some(row => row.source === source.id));
-    el('editor-confirm-roles').disabled = rolesBusy || uploadsBusy || !rows.length;
-    syncBuildButton();
-  }
   async function loadSheets() {
     sheets = await request('sheets');
-    rows = sheets.page_roles.map(row => ({ ...row }));
-    const missing = [];
-    for (const source of sheets.sources.filter(source => source.kind === 'drawing')) {
-      for (let page = 1; page <= source.pages; page++) {
-        if (!rows.some(row => row.source === source.id && row.page === page)) {
-          missing.push({ source: source.id, page, role: 'other', level: null, box: null, building: 'house' });
-        }
-      }
-    }
-    rows.push(...missing);
-    confirmed = missing.length === 0 && rows.some(row => row.role === 'floor');
-    el('editor-upload').hidden = !!snapshot.build && !sourcesOpen;
     const photos = sheets.sources.filter(source => source.kind === 'photo').length;
-    el('editor-source-count').textContent = `${sheets.sources.filter(source => source.kind === 'drawing').reduce((n, source) => n + source.pages, 0)} sheets · ${photos} ${photos === 1 ? 'photo' : 'photos'}`;
-    drawPages();
+    el('editor-source-count').textContent = `${sheets.sources.filter(source => source.kind === 'drawing').reduce((n, source) => n + source.pages, 0)} sheets \u00b7 ${photos} ${photos === 1 ? 'photo' : 'photos'}`;
+    place?.sync(sheets, { ...snapshot, buildState: currentBuild });
   }
   const polling = createPolling({
     async onState(state) {
@@ -186,9 +135,8 @@ export async function boot() {
         await loadSheets();
       }
       snapshot = state; cost(state.cost?.total);
-      el('editor-upload').hidden = !!state.build && !sourcesOpen;
       syncBuildButton();
-      if (!currentBuild) setStatus(confirmed ? 'Ready to build' : 'Add drawings to begin');
+      if (!currentBuild) setStatus(sheets.page_roles.some(row => ['floor', 'plot'].includes(row.role)) ? 'Ready to build' : 'Add drawings to begin');
     },
     async onBuild(build) {
       if (ghostBuild !== build.id) { ghosts.clear(); ghostBuild = build.id; }
@@ -206,7 +154,7 @@ export async function boot() {
       // new costs. Read their owning state before rebuilding the scene.
       if (build.events?.length) {
         await polling.refreshState();
-        sheets = await request('sheets');
+        await loadSheets();
       }
       if (build.state === 'checkpoint') {
         const detail = [...(build.events || [])].reverse().find(event => event.type === 'checkpoint')
@@ -234,77 +182,12 @@ export async function boot() {
     },
   });
 
-  listen(el('editor-source-files'), 'change', async event => {
-    if (!canEdit() || uploadsBusy) return;
-    uploadsBusy = true; drawPages();
-    try {
-      const rejected = [];
-      for (const file of event.target.files) {
-        if (!['application/pdf', 'image/jpeg', 'image/png'].includes(file.type)) { rejected.push(`${file.name}: choose a PDF, JPEG or PNG file.`); continue; }
-        el('editor-upload-status').textContent = plain(`Uploading ${file.name}…`);
-        const data = new FormData(); data.append('kind', file.type === 'application/pdf' ? 'drawing' : 'photo'); data.append('file', file);
-        try { await request('sources', 'POST', data, 'twin'); }
-        catch (error) { rejected.push(`${file.name}: ${error.message}`); if (error.signedOut) break; }
-      }
-      el('editor-upload-status').textContent = rejected.length ? rejected.join('\n') : 'Check each page, then confirm.';
-    } catch (error) { report(error); }
-    finally {
-      await loadSheets().catch(report);
-      uploadsBusy = false; event.target.value = ''; drawPages();
-    }
-  });
-  listen(el('editor-suggest-roles'), 'click', async () => {
-    if (!canEdit()) return;
-    rolesBusy = true; drawPages();
-    try {
-      // Suggestions remain local until the person confirms the complete list.
-      for (const source of sheets.sources.filter(source => source.kind === 'drawing'
-        && !sheets.page_roles.some(row => row.source === source.id))) {
-        const result = await request('sheets/suggest', 'POST', { source: source.id });
-        const suggestedPages = new Set(result.rows.map(row => row.page));
-        rows = rows.filter(row => row.source !== source.id || !suggestedPages.has(row.page)).concat(result.rows);
-      }
-      confirmed = false;
-      el('editor-upload-status').textContent = 'These are suggestions. Check the roles and level names, then confirm.';
-    } catch (error) { report(error); }
-    finally { rolesBusy = false; drawPages(); await polling.pollNow(true).catch(report); }
-  });
-  listen(el('editor-confirm-roles'), 'click', async () => {
-    if (!canEdit()) return;
-    rolesBusy = true; drawPages();
-    try {
-      const result = await request('sheets/roles', 'PUT', { rows });
-      assignmentsChanged = false;
-      sheets.page_roles = result.page_roles;
-      confirmed = result.page_roles.some(row => row.role === 'floor');
-      el('editor-upload-status').textContent = confirmed ? 'Pages confirmed. You can build now.' : 'Choose at least one floor page to build.';
-      setStatus(confirmed ? 'Ready to build' : 'Choose a floor page');
-    } catch (error) { report(error); }
-    finally { rolesBusy = false; drawPages(); }
-  });
-  listen(el('editor-build'), 'click', async () => {
-    if (!canEdit() || building || resuming || active(currentBuild) || !confirmed) return;
-    building = true; syncBuildButton();
-    try {
-      if (snapshot.plan?.buildings?.length && !await window.promptConfirm('Build your house again?',
-        'This reads the drawings again and adds to the running cost. Continue?', 'Build again', 'Cancel')) return;
-      if (assignmentsChanged) {
-        const saved = await request('sheets/roles', 'PUT', { rows });
-        sheets.page_roles = saved.page_roles; assignmentsChanged = false;
-      }
-      const result = await request('build', 'POST', {
-        building: { id: el('editor-build-target').value,
-          name: el('editor-build-target').selectedOptions[0].textContent },
-        photos: sheets.sources.filter(source => source.kind === 'photo').map(source => source.id),
-      });
-      el('editor-upload').hidden = true;
-      sourcesOpen = false;
-      await polling.follow(result.id);
-    } catch (error) { report(error); }
-    finally { building = false; syncBuildButton(); }
-  });
+  place = createPlace({ request, getSheets: () => sheets,
+    reload: async () => { await polling.pollNow(true); await loadSheets(); },
+    follow: id => polling.follow(id), canEdit: () => canEdit() && !resuming && !stopping, panel });
+
   listen(el('editor-resume'), 'click', async () => {
-    if (!canEdit() || building || resuming || !['stopped', 'checkpoint'].includes(currentBuild?.state)) return;
+    if (!canEdit() || resuming || !['stopped', 'checkpoint'].includes(currentBuild?.state)) return;
     const id = currentBuild.id;
     resuming = true; syncBuildButton();
     try {
@@ -326,17 +209,8 @@ export async function boot() {
     } catch (error) { report(error); }
     finally { stopping = false; syncBuildButton(); }
   });
-  listen(el('editor-manage-sources'), 'click', () => {
-    el('editor-upload').hidden = !el('editor-upload').hidden;
-    sourcesOpen = !el('editor-upload').hidden;
-    el('editor-menu').open = false;
-    if (!el('editor-upload').hidden) el('editor-source-files').focus();
-  });
-  listen(el('menu-upload'), 'click', () => {
-    sourcesOpen = true; el('editor-upload').hidden = false;
-    el('editor-menu').open = false;
-    el('editor-source-files').focus();
-  });
+  listen(el('editor-manage-sources'), 'click', () => place.open());
+  listen(el('menu-upload'), 'click', () => place.open());
   listen(el('menu-director'), 'click', async () => {
     if (!canEdit() || active(currentBuild) || !view || !snapshot.plan?.buildings?.length) return;
     directing = true; syncBuildButton(); timeline?.sync(); el('editor-menu').open = false;
@@ -429,10 +303,10 @@ export async function boot() {
       await request('start-over', 'POST', {});
       currentBuild = null; ghostBuild = null; ghosts.clear(); prompted.clear();
       panel.reset(); tools?.select(null); pauses?.dismiss(); planView?.leavePlan();
-      el('editor-advanced').hidden = true; advancedBase = null; sourcesOpen = false;
-      el('editor-upload-status').textContent = '';
+      el('editor-advanced').hidden = true; advancedBase = null;
       await polling.pollNow(true);
       await loadSheets();
+      place.open();
       await timeline?.now();
       summary('House cleared. The spend total stays.');
       setStatus('Add drawings to begin');
@@ -502,8 +376,8 @@ export async function boot() {
       onPreview(value) {
         previewing = value; tools.select(null); pauses.dismiss(); panel.readOnly(value);
         tools.refreshCard(); syncBuildButton();
-        for (const id of ['rail-move', 'rail-rotate', 'plan-add-wall', 'plan-add-door', 'plan-add-window', 'editor-confirm-roles', 'editor-suggest-roles', 'editor-source-files']) el(id).disabled = value;
-        if (!value) { drawPages(); pauses.resume(); }
+        for (const id of ['rail-move', 'rail-rotate', 'plan-add-wall', 'plan-add-door', 'plan-add-window']) el(id).disabled = value;
+        if (!value) pauses.resume();
       },
     });
     if (new URLSearchParams(location.search).get('test') === '1') Object.assign(hooks, {
@@ -523,6 +397,7 @@ export async function boot() {
     view.scene.background?.set?.('#171e27');
     hooks.ready = true;
     syncBuildButton();
+    if (!sheets.place?.buildings?.length && !sheets.sources.some(source => source.part === 'lot')) place.open();
   } catch (error) {
     setStatus(error.signedOut ? 'Home Assistant signed the tab out'
       : error.status === 401 || error.status === 403 ? 'Sign in to edit your house' : 'Could not open the house. Reload to try again.');

@@ -60,7 +60,7 @@ export async function request(path, method = 'GET', body, area = 'editor') {
     // Only these routes check spend before doing any work. A conversation
     // can reach a checkpoint AFTER applying edits, so it must never replay.
     if (response.status === 409 && data?.detail?.checkpoint
-        && ((area === 'editor' && ['build', 'sheets/suggest'].includes(path))
+        && ((area === 'editor' && ['build', 'sheets/suggest', 'place/plot/read', 'place/photos/suggest'].includes(path))
           || (area === 'twin' && path === 'critique'))) {
       if (await checkpoint(data.detail)) continue;
       throw Object.assign(new Error('Stopped at the spending checkpoint.'), { cancelled: true });
@@ -74,8 +74,8 @@ export async function request(path, method = 'GET', body, area = 'editor') {
 export const active = build => ['running', 'paused', 'checkpoint'].includes(build?.state);
 
 export function createPolling({ onState, onBuild, onTick, onError }) {
-  let build = null, seq = 0, timer = null, pending = null, stopped = false;
-  const interval = () => build?.state === 'running' ? buildInterval : idleInterval;
+  let build = null, seq = 0, timer = null, pending = null, stopped = false, nextBuild = null;
+  const interval = () => nextBuild || build?.state === 'running' ? buildInterval : idleInterval;
   const enabled = () => !stopped && !session.signedOut && !document.hidden;
   const schedule = () => {
     clearTimeout(timer);
@@ -98,6 +98,9 @@ export function createPolling({ onState, onBuild, onTick, onError }) {
     await onBuild(next);
     // Advance only after the scene and log consumed this batch successfully.
     seq = next.seq;
+    // Queue the handoff for the next poll, after this batch and onTick finish.
+    // Calling follow here (or in onBuild) would wait on our own pending poll.
+    nextBuild = next.state === 'done' && next.next && next.next !== next.id ? next.next : null;
   }
   async function readState() {
     const state = await request('state');
@@ -116,7 +119,10 @@ export function createPolling({ onState, onBuild, onTick, onError }) {
   }
   function pollNow(forceState = false) {
     return run(async () => {
-      if (build?.state === 'running' && !forceState) {
+      if (nextBuild) {
+        const id = nextBuild; nextBuild = null;
+        await readBuild(id);
+      } else if (build?.state === 'running' && !forceState) {
         await readBuild(build.id);
       } else {
         const state = await readState();
@@ -128,6 +134,7 @@ export function createPolling({ onState, onBuild, onTick, onError }) {
     start: () => pollNow(true), pollNow,
     async follow(id) {
       while (pending) await pending.catch(() => {});
+      nextBuild = null;
       return run(() => readBuild(id));
     },
     refreshState: readState,

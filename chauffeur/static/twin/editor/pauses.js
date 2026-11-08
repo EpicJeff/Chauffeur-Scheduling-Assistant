@@ -31,6 +31,8 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
   let original = null, adjusted = false, referenceKey = null, lastPin = null;
   let costBuild = null, costSeq = 0, cumulativeCost = 0, pendingCost = null;
   const stepCosts = new Map();
+  const owner = () => step?.id === 'fit' ? getBuild()?.part
+    : getSheets().page_roles.find(r => r.source === step?.source && r.page === step?.page)?.building || getBuild()?.part || 'house';
   function readCosts(build) {
     if (!build) return;
     if (costBuild !== build.id) {
@@ -65,6 +67,7 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
     } finally { disable(false); }
   }
   async function showSheet() {
+    if (!step?.source || !step?.page) return;
     let url = (window.chfBase ?? '../') + `api/house/editor/sheets/${encodeURIComponent(step.source)}/${step.page}.png`;
     if (window.chfAuthUrl) url = window.chfAuthUrl(url);
     const frame = view.plan.buildings.find(b => b.levels.some(l => `${b.id}:${l.id}` === floorKey));
@@ -84,15 +87,15 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
       buildId = build.id; dismissed = false; mode = null; pins = []; masterSize = null; lastPin = null;
       step = build.steps.find(s => s.id === pause.step);
       const preview = view.plan.buildings.find(b => b.id === `editor-preview:${pause.step}`);
-      const owner = getSheets().page_roles.find(r => r.source === step?.source && r.page === step?.page)?.building || 'house';
-      floorKey = preview ? `${preview.id}:${preview.levels[0].id}` : `${owner}:${step?.level || view.plan.buildings.find(b => b.id === owner)?.levels[0]?.id}`;
-      const house = view.plan.buildings.find(b => b.id === owner);
+      const ownerId = owner();
+      floorKey = preview ? `${preview.id}:${preview.levels[0].id}` : `${ownerId}:${step?.level || view.plan.buildings.find(b => b.id === ownerId)?.levels[0]?.id}`;
+      const house = view.plan.buildings.find(b => b.id === ownerId);
       const elevation = preview?.levels[0].elevation ?? house?.levels.find(l => l.id === step?.level)?.elevation ?? Infinity;
       const below = house?.levels.filter(l => l.elevation < elevation - .1).sort((a, b) => b.elevation - a.elevation)[0];
-      referenceKey = below ? `${owner}:${below.id}` : floorKey;
+      referenceKey = below ? `${ownerId}:${below.id}` : floorKey;
       if (view.groups?.levels[floorKey]) {
         view.setView(floorKey);
-        const otherKeys = view.plan.buildings.filter(b => b.id === owner).flatMap(b => b.levels
+        const otherKeys = view.plan.buildings.filter(b => b.id === ownerId).flatMap(b => b.levels
           .filter(l => l.elevation <= (preview?.levels[0].elevation ?? Infinity)).map(l => `${b.id}:${l.id}`));
         view.showLevels([floorKey, ...otherKeys]); view.setCamera('top');
         showSheet().catch(report);
@@ -103,9 +106,11 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
         ? `${feetInches(pause.size_ft[0])} by ${feetInches(pause.size_ft[1])}` : '';
       el('pause-dimension-label').hidden = pause.kind !== 'scale_outline' || !(pause.dimension_ft > 0);
       el('pause-dimension').value = pause.dimension_ft > 0 ? feetInches(pause.dimension_ft) : '';
-      el('pause-turn-label').hidden = pause.kind !== 'lot_placement';
+      const lotPlot = build.part === 'lot' && pause.step === 'plot';
+      el('pause-drag').hidden = lotPlot;
+      el('pause-turn-label').hidden = pause.kind !== 'lot_placement' || lotPlot;
       el('pause-turn').value = pause.transform?.rotation || 0;
-      el('pause-pin').hidden = pause.kind !== 'level_registration';
+      el('pause-pin').hidden = pause.kind !== 'level_registration' || lotPlot;
       instruction();
     }
     step = build.steps.find(s => s.id === pause.step);
@@ -180,8 +185,7 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
   el('pause-turn').addEventListener('change', () => {
     const angle = Number(el('pause-turn').value);
     if (el('pause-turn').value.trim() && Number.isFinite(angle) && pause?.transform) {
-      const owner = getSheets().page_roles.find(r => r.source === step.source && r.page === step.page)?.building || 'house';
-      const house = view.plan.buildings.find(b => b.id === owner);
+      const house = view.plan.buildings.find(b => b.id === owner());
       Object.assign(pause.transform, turnPlacement(pause.transform, snapRotation(angle), house ? localCentre(house) : [0, 0]));
       changed();
     } else report(new Error('Use a finite number of degrees.'));
@@ -255,8 +259,7 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
         el('pause-instruction').textContent = 'Let go to preview this place, then choose Looks right.';
         let points = outline();
         if (pause.kind === 'lot_placement') {
-          const owner = getSheets().page_roles.find(r => r.source === step.source && r.page === step.page)?.building || 'house';
-          const building = view.plan.buildings.find(b => b.id === owner);
+          const building = view.plan.buildings.find(b => b.id === owner());
           points = (building?.levels[0]?.outline || building?.walls.flatMap(w => [w.from, w.to]) || []).map(p => {
             const point = rotate(p, pause.transform.rotation); return point.map((v, i) => v + pause.transform.position[i]);
           });

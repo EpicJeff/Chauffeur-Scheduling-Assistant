@@ -6,6 +6,10 @@ page). Auth enforcement is ON; a parent session is placed in localStorage the
 way admin_gate stores it. The model is a fake reader patched in-process at
 services.twin_reads.read, so a Build streams ghosts with no spend.
 
+Slice 1b-i Task 8 retired the upload card, its Build dropdown and the per-page
+building selector: the scenarios that used them drive Your place (#place-view,
+the DOM contract in that task's brief) and keep what the person sees.
+
 Run from chauffeur/:  python tests/test_house_editor_live.py
 """
 import json
@@ -77,6 +81,38 @@ def _api(page, method, path, body=None):
     }""", [method, path, body])
 
 
+def _open_place(page):
+    if not page.locator('#place-view').is_visible():
+        page.click('#editor-menu')
+        page.click('#editor-manage-sources')
+    page.wait_for_selector('#place-view', state='visible', timeout=10000)
+
+
+def _paid_confirm(page, timeout=3000):
+    """Accept the promptConfirm a paid action may show first; a spending checkpoint is left alone."""
+    try:
+        page.wait_for_selector('#cc-confirm-modal', state='visible', timeout=timeout)
+    except Exception:
+        return None
+    title = page.inner_text('#cc-confirm-title')
+    if title.startswith('Spent $'):
+        return None
+    page.click('#cc-confirm-execute-btn')
+    page.wait_for_selector('#cc-confirm-modal', state='hidden', timeout=5000)
+    return title
+
+
+def _wait_source(page, filename, timeout=30.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        sources = _api(page, 'GET', 'sheets')['body']['sources']
+        found = next((s for s in sources if s['filename'] == filename), None)
+        if found:
+            return found
+        page.wait_for_timeout(300)
+    raise AssertionError(f'{filename} was never uploaded')
+
+
 def _unexpected(errors):
     return [e for e in errors if not e.startswith('Failed to load resource')]
 
@@ -117,9 +153,12 @@ def scenario_build_streams_ghosts_and_log_lines():
         page.set_viewport_size({'width': 1600, 'height': 900})
         _signed_in(page)
         _open(page, s)
+        _open_place(page)
         start = time.time()
-        page.click('#editor-build')
+        page.click('[data-place-build="house"]')
+        _paid_confirm(page)
         page.wait_for_function('window.__editor.ghostCount() > 0', timeout=30000)
+        check(not page.locator('#place-view').is_visible(), 'Your place closes and the editor follows the build')
         check(time.time() - start < 30, 'first ghost within 30 s')
         st = page.evaluate('window.__editor.build()')
         check(st and st['state'] == 'paused' and st['pause']['kind'] == 'scale_outline', st)
@@ -135,7 +174,8 @@ def scenario_build_streams_ghosts_and_log_lines():
             timeout=20000)
         page.wait_for_function(
             "() => document.querySelector('#editor-agent').innerText.toLowerCase().includes('stamp')", timeout=20000)
-        check(page.locator('#editor-build').is_disabled(), 'Build is off while a build is paused')
+        check(page.locator('[data-place-build="house"]').is_disabled() and page.locator('#place-build').is_disabled(),
+              'Build is off while a build is paused')
         page.wait_for_timeout(1500)
         plan = _api(page, 'GET', 'state')['body']['plan']
         walls = [w for w in plan['buildings'][0]['walls'] if w['level'] == 'L1']
@@ -185,7 +225,9 @@ def scenario_checkpoint_asks_to_continue():
         page.route('**/api/house/editor/build', lambda route: route.fulfill(
             status=409, body=json.dumps({'detail': {'checkpoint': 10.0, 'total': 10.12}}),
             headers={'Content-Type': 'application/json'}))
-        page.click('#editor-build')
+        _open_place(page)
+        page.click('[data-place-build="house"]')
+        _paid_confirm(page)
         page.wait_for_function("() => document.body.innerText.includes('Spent $10.12 so far')", timeout=10000)
         page.get_by_role('button', name='Stop', exact=True).click()
 
@@ -220,17 +262,26 @@ def scenario_empty_state_uploads_and_suggests_roles():
         check(r['status'] == 200, r)
         page.reload()
         page.wait_for_function('window.__editor && window.__editor.ready === true', timeout=60000)
-        check(page.locator('#editor-upload').is_visible(), 'the upload card shows on an empty house')
-        check(page.locator('#editor-build').is_disabled(), 'Build waits for confirmed pages')
+        page.wait_for_selector('#place-view', state='visible', timeout=10000)
+        check(page.locator('#place-view').is_visible(), 'Your place shows on an empty house')
+        check(page.locator('#place-build').is_disabled(), 'Build waits for confirmed pages')
+        page.fill('#place-add-name', 'Main house')
+        page.select_option('#place-add-kind', label='Main house')
+        page.click('#place-add')
+        page.wait_for_selector('[data-place-upload="main-house"]', state='attached', timeout=10000)
         pdf = engine_tests._pdf(3)
-        page.set_input_files('#editor-upload input[type=file]', files=[
+        page.set_input_files('[data-place-upload="main-house"]', files=[
             {'name': 'lot58.pdf', 'mimeType': 'application/pdf', 'buffer': pdf}])
-        page.wait_for_function("() => document.querySelectorAll('[data-page-role]').length >= 3", timeout=30000)
-        page.click('#editor-suggest-roles')
         page.wait_for_function(
-            "() => [...document.querySelectorAll('[data-page-role]')].some(s => s.value === 'roof')", timeout=20000)
-        page.click('#editor-confirm-roles')
-        page.wait_for_function("() => !document.querySelector('#editor-build').disabled", timeout=10000)
+            "() => document.querySelectorAll('[data-place-page] select[data-place-role]').length >= 3", timeout=30000)
+        src = _wait_source(page, 'lot58.pdf')['id']
+        page.click(f'[data-place-suggest="{src}"]')
+        _paid_confirm(page)
+        page.wait_for_function(
+            "() => [...document.querySelectorAll('select[data-place-role]')].some(s => s.value === 'roof')", timeout=20000)
+        page.click('#place-confirm-pages')
+        page.wait_for_function("() => !document.querySelector('[data-place-build=\"main-house\"]').disabled"
+                               " && !document.querySelector('#place-build').disabled", timeout=10000)
         page.screenshot(path=os.path.join(tempfile.gettempdir(), 'house_editor_empty.png'))
     check(not _unexpected(s.errors()), s.errors())
 
@@ -888,16 +939,24 @@ def scenario_each_page_belongs_to_a_building_and_build_builds_that_one():
                                                                              headers={'Content-Type': 'application/json'})))
         page.click('#editor-menu')
         page.click('#menu-upload')
-        selects = page.locator('[data-page-building]')
-        check(selects.count() >= 1, 'every page row says which building it shows')
-        selects.first.select_option('pool_house')
-        page.select_option('#editor-build-target', 'pool_house')
-        page.evaluate("() => document.querySelector('#editor-build').click()")
+        page.wait_for_selector('#place-view', state='visible', timeout=10000)
+        rows = page.locator('[data-place-page]')
+        carded = page.locator('[data-place-building] [data-place-page], #place-lot [data-place-page]')
+        check(rows.count() >= 1 and carded.count() == rows.count(), 'every page sits on the card of the part it shows')
+        page.fill('#place-add-name', 'Pool house')
+        page.select_option('#place-add-kind', label='Pool house')
+        page.click('#place-add')
+        page.wait_for_selector('[data-place-building="pool-house"]', state='visible', timeout=10000)
+        page.locator('[data-place-building="main-house"] select[data-place-move]').first.select_option(label='Pool house')
+        page.wait_for_selector('[data-place-building="pool-house"] [data-place-page]', state='visible', timeout=10000)
+        page.wait_for_function("() => !document.querySelector('[data-place-build=\"pool-house\"]').disabled", timeout=10000)
+        page.click('[data-place-build="pool-house"]')
+        _paid_confirm(page)
         again = page.get_by_role('button', name='Build again', exact=True)
         if again.count():
             again.click()
         page.wait_for_timeout(1500)
-    check(posts and posts[-1]['building']['id'] == 'pool_house', posts)
+    check(posts and posts[-1] == {'part': 'pool-house'}, posts)
 
 
 if __name__ == '__main__':

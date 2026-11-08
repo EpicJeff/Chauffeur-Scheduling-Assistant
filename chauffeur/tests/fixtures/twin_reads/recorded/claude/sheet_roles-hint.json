@@ -1,0 +1,54 @@
+{
+  "answer": {
+    "pages": [
+      {
+        "page": 1,
+        "role": "floor",
+        "level": "First floor",
+        "box": null
+      },
+      {
+        "page": 2,
+        "role": "floor",
+        "level": "Second floor",
+        "box": null
+      },
+      {
+        "page": 3,
+        "role": "floor",
+        "level": "Attic",
+        "box": [
+          0.09,
+          0.15,
+          0.39,
+          0.85
+        ]
+      },
+      {
+        "page": 3,
+        "role": "roof",
+        "level": null,
+        "box": [
+          0.4,
+          0.14,
+          0.89,
+          0.87
+        ]
+      }
+    ]
+  },
+  "usage": [
+    {
+      "stage": "step:sheet_roles",
+      "model": "anthropic:claude-opus-5-5",
+      "input_tokens": 11259,
+      "output_tokens": 137,
+      "usd": 0.047776,
+      "priced": true,
+      "basis": "reported",
+      "run": "record-place:2e236f5a28ea43e6a43a5fcadfbce3d2",
+      "at": "2026-11-08T00:41:29.050337+00:00"
+    }
+  ],
+  "model": "anthropic:claude-opus-5-5"
+}

@@ -240,6 +240,11 @@ def move_page(source: str, page: int, part: str, region: int | None = None) -> l
         _check_part(_place(row), part)
         _source_page(row, source, page)
         moved = [p for p in row['page_roles'] if p['source'] == source and p['page'] == page]
+        if not moved:
+            item = {'source': source, 'page': page, 'building': part,
+                    'role': 'other', 'level': None, 'box': None}
+            row['page_roles'].append(item)
+            moved = [item]
         if region is not None:
             if type(region) is not int or not 0 <= region < len(moved):
                 raise ValueError('Choose a region on this page.')
