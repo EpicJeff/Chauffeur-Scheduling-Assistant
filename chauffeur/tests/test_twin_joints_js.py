@@ -113,6 +113,16 @@ if (job.rays || job.bounds || job.triangles) {
   const root = out.root;
   // Work in plan feet: undo the FT scale on the root.
   root.scale.setScalar(1);
+  if (job.levelView) {
+    // Match twin_view.setView: hide the roof/full gables and higher levels;
+    // upper-floor views retain the eight-foot gable cut.
+    const key = `${job.building}:${job.levelView}`;
+    const ids = Object.keys(out.groups.levels).sort((a, b) => out.levelElevations[a] - out.levelElevations[b]);
+    out.groups.roof.visible = out.groups.gableFull.visible = false;
+    out.groups.gableCut.visible = key !== ids.find(id => out.groups.levels[id].userData.buildingId === job.building);
+    for (const id of ids) out.groups.levels[id].visible = out.groups.levels[id].userData.buildingId === job.building && out.levelElevations[id] <= out.levelElevations[key];
+    for (const domain of ['roof', 'gableFull', 'gableCut']) for (const group of out.groups[domain].children) group.visible = group.userData.buildingId === job.building;
+  }
   root.updateMatrixWorld(true);
   const base = out.levelElevations[`${job.building}:${building.levels.slice().sort((a, c) => a.elevation - c.elevation)[0].id}`] -
     building.levels.slice().sort((a, c) => a.elevation - c.elevation)[0].elevation;
@@ -200,7 +210,7 @@ def building(p):
     return next(b for b in p['buildings'] if b['id'] == BID)
 
 
-def run(p, rays=None, heights=None, bounds=None, triangles=None):
+def run(p, rays=None, heights=None, bounds=None, triangles=None, level_view=None):
     d = tempfile.mkdtemp(prefix='twin_joints_js_')
     try:
         driver = os.path.join(d, 'driver.mjs')
@@ -208,7 +218,8 @@ def run(p, rays=None, heights=None, bounds=None, triangles=None):
             f.write(DRIVER)
         job = {'vendor': VENDOR, 'twin': TWIN, 'plan': p, 'building': BID,
                'kit': {**tl.kit('modern_farmhouse'), 'manifest': {}},
-               'rays': rays, 'heights': heights, 'bounds': bounds, 'triangles': triangles}
+               'rays': rays, 'heights': heights, 'bounds': bounds, 'triangles': triangles,
+               'levelView': level_view}
         job_path = os.path.join(d, 'job.json')
         with open(job_path, 'w', encoding='utf-8') as f:
             json.dump(job, f)
@@ -808,6 +819,50 @@ def _tri_normal(t):
     return [c / a for c in n] if a > 1e-12 else None
 
 
+def test_floor_view_wall_and_batten_top_caps():
+    """A roof-hidden floor view closes wall/batten tops, including gable cuts.
+
+    The lower wall is under an upper floor; the upper wall meets the roof;
+    the separate windowed gable is cut eight feet above its plate. Downward
+    rays must hit upward-facing siding at each top with FrontSide materials.
+    """
+    p = plan()
+    b = building(p)
+    outline = [[0, 0], [20, 0], [20, 20], [0, 20]]
+    b['levels'] = [{'id': lid, 'elevation': elevation, 'ceiling': 10,
+                    'outline': copy.deepcopy(outline)}
+                   for lid, elevation in [('L1', 0), ('L2', 10)]]
+    b['walls'] = [
+        {'id': 'lower', 'level': 'L1', 'from': [0, 0], 'to': [20, 0],
+         'height': 10, 'thickness': 0.5, 'exterior': True},
+        {'id': 'upper', 'level': 'L2', 'from': [20, 0], 'to': [20, 20],
+         'height': 10, 'thickness': 0.5, 'exterior': True},
+    ]
+    b['roof']['sections'] = [{'id': 'cap-roof', 'kind': 'gable', 'ridge': 'y',
+                             'rect': [0, 0, 20, 20], 'plate': 20,
+                             'pitch': 12, 'overhang': 1}]
+    b['roof']['extensions'] = []
+    # The window selects the thick gable extrusion; probe clear of its hole.
+    b['openings'] = [{'id': 'gable-window', 'section': 'cap-roof', 'gable': 'front',
+                      'kind': 'window', 'x': 5, 'width': 2, 'sill': 1, 'head': 3}]
+    b['rooms'], b['stairs'], b['fixtures'], b['lights'] = [], [], [], []
+    cases = [
+        ('L1', [('lower wall', 10.25, 0.25, 9.2),
+                ('lower batten', 10.5, -0.045, 9.2)]),
+        ('L2', [('upper wall', 19.75, 10.25, 19.92),
+                ('upper batten', 20.045, 10.5, 19.92),
+                ('gable cut wall', 10.25, 0, 28),
+                ('gable cut batten', 10.5, -0.295, 28)]),
+    ]
+    for lid, probes in cases:
+        rays = [{'o': [x, y, 35], 'd': [0, 0, -1], 'far': 40,
+                 'roles': ['siding'], 'keep': 1} for _, x, y, _ in probes]
+        got = run(p, rays=rays, level_view=lid)
+        for (name, _, _, expected), hits in zip(probes, got['hits']):
+            check(hits and abs(hits[0]['p'][2] - expected) < 0.01 and hits[0]['n'][2] > 0.9,
+                  ('floor-view top cap missing', lid, name, expected, hits))
+
+
 def test_no_siding_on_roof_faces():
     """No siding lies on a roof face. A non-vertical siding triangle
     (|normal.z| > 0.3) fails when its three corners and its centroid all lie
@@ -1011,6 +1066,7 @@ TESTS = (
     test_storey_roof_plate_limits_and_upper_envelope,
     test_uncovered_knee_walls_capped_by_visible_roof,
     test_rear_seams_closed,
+    test_floor_view_wall_and_batten_top_caps,
     test_no_siding_on_roof_faces,
     test_eave_trim_present,
 )
