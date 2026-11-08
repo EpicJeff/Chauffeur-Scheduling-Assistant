@@ -36,6 +36,7 @@ import tempfile
 import threading
 import time
 import traceback
+from unittest.mock import patch
 
 os.environ.setdefault('CHAUFFEUR_DATA_DIR', tempfile.mkdtemp(prefix='chauffeur_twin_build_draft_side_'))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -386,6 +387,62 @@ def test_heartbeat_every_15s():
           ('the heartbeat runs while the draft read is in flight', [e['seq'] for e in beats], settled[:1]))
 
 
+def test_background_failures_are_logged():
+    for failure in ('reply', 'exception'):
+        _drawn_house()
+
+        def outline_hook(run):
+            if failure == 'exception':
+                raise RuntimeError('outline failed')
+            return {'error': 'outline failed'}
+
+        with patch.object(tb.logger, 'info') as info:
+            reader = SideReader(outline_hook=outline_hook)
+            b = tb.start({'part': 'house'}, reader=reader, inline=False)
+            st = _finish(b)
+            check(_wait(lambda: bool(info.call_args_list), 5), 'a failed first look is logged')
+            info.assert_any_call('First-look outline dropped', exc_info=True)
+        check(st['state'] == 'done', ('an outline failure leaves the draft working', failure, st['state']))
+
+    _drawn_house()
+    logged = threading.Event()
+    escaped = []
+    calls = []
+
+    def clock():
+        if threading.current_thread().name.startswith('twin-heartbeat-'):
+            calls.append('heartbeat')
+            raise RuntimeError('heartbeat clock failed')
+        return 1000.0
+
+    def log_failure(message, **options):
+        check(message == 'Draft heartbeat stopped' and options.get('exc_info') is True,
+              ('heartbeat logs its exception', message, options))
+        logged.set()
+
+    reader = SideReader(draft_hook=lambda *args: logged.wait(5) and None)
+    with patch.object(tb, '_clock', clock), patch.object(tb.logger, 'info', side_effect=log_failure), \
+            patch.object(threading, 'excepthook', side_effect=lambda args: escaped.append(args)):
+        b = tb.start({'part': 'house'}, reader=reader, inline=False)
+        st = _finish(b)
+    check(logged.is_set(), 'heartbeat failure was caught and logged')
+    check(calls == ['heartbeat'] and not escaped, ('the heartbeat returns without an uncaught exception', calls, escaped))
+    check(st['state'] == 'done', ('the draft still settles', st['state'], _trouble(st)))
+
+
+def test_patched_default_reader_needs_no_internal_options():
+    _drawn_house()
+    # This strict fake has no checkpoint_checked keyword, even when installed
+    # as the module's default reader after twin_build has been imported.
+    reader = SideReader()
+    with patch.object(tb.twin_reads, 'read', reader):
+        b = tb.start({'part': 'house'}, inline=False)
+        st = _finish(b)
+    check(st['state'] == 'done', ('a replaced default reader keeps its own signature', st['state'], _trouble(st)))
+    check(reader.outline_returned.wait(5), 'the replacement outline reader also runs')
+    check({'draft', 'outline'} <= set(_read_kinds(reader)), ('both reads use the replacement', _read_kinds(reader)))
+
+
 def test_checkpoint_combined_estimate():
     # Ruling R14: twin_cost.require_clear() is called once, before the draft
     # step starts either read; the step records the combined estimate as
@@ -529,6 +586,8 @@ TESTS = (
     test_outline_ghost_first,
     test_outline_late_dropped,
     test_heartbeat_every_15s,
+    test_background_failures_are_logged,
+    test_patched_default_reader_needs_no_internal_options,
     test_checkpoint_combined_estimate,
     test_anchor_registration_upper_floor,
     test_bad_anchors_no_registration,

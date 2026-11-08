@@ -319,6 +319,9 @@ def scenario_build_streams_ghosts_and_log_lines():
             page.wait_for_function(
                 "(why) => document.querySelector('#editor-agent').innerText.includes(why.replace(/\\.$/, ''))",
                 arg=FIRST_LOOK, timeout=10000)
+            log = page.inner_text('#editor-log')
+            check('need checking' not in log, ('the first look is not an unresolved piece', log))
+            check(log.count(FIRST_LOOK) == 1, ('one plain first-look line', log))
             # Log lines stream while the one long read runs: one at least every 15 s.
             page.wait_for_function(f"() => {HEARTBEAT_JS}.test(document.querySelector('#editor-agent').innerText)",
                                    timeout=25000)
@@ -329,6 +332,7 @@ def scenario_build_streams_ghosts_and_log_lines():
             page.wait_for_timeout(1500)
             house = _drawn_walls_check(page, 'L1')
             check(FIRST_LOOK not in json.dumps(_plan(page)), 'a first look never settles into the plan')
+            check(FIRST_LOOK not in page.inner_text('#editor-log'), 'the first-look line clears when the draft settles')
             check({'L1', 'L2'} <= {level['id'] for level in house['levels']}, ('the whole building at once', house['levels']))
             check(any(w['level'] == 'L2' for w in house['walls']), 'the upper floor settles with the first')
             _plain_log_check(page)
@@ -391,6 +395,7 @@ def scenario_a_draft_that_cannot_be_read_pauses_in_plain_words():
             reason = page.inner_text('#pause-card .pause-why').strip()
             check(reason.startswith(FAILED_WHY) and reason.endswith('.'),
                   ('the card says what went wrong in a sentence', reason))
+            check('unsure' not in reason.lower() and reason == FAILED_WHY, ('no confidence sentence on a failed read', reason))
             card = page.inner_text('#pause-card')
             check(not any(w in card.lower() for w in BANNED) and not re.search(r"draft_rooms|outline:L\d|\bL\d\b", card),
                   ('plain words, no step ids', card))

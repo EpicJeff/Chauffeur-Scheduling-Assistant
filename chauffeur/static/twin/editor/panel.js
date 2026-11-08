@@ -1,6 +1,8 @@
 import { request, checkpoint, plain, report } from './api.js';
 import { pauseWords } from './words.js';
 
+const FIRST_LOOK = 'First look at the outline while the drawings are read.';
+
 export function createPanel({ afterSay, acceptPause }) {
   const log = document.getElementById('editor-log');
   const messages = document.getElementById('editor-messages');
@@ -12,6 +14,7 @@ export function createPanel({ afterSay, acceptPause }) {
   const history = [];
   const seen = new Set();
   const reasons = new Map(), pauses = new Set();
+  const firstLooks = new Map();
   let buildId = null, busy = false, selection = null, readOnly = false;
 
   function message(text, speaker = 'argyle') {
@@ -79,10 +82,21 @@ export function createPanel({ afterSay, acceptPause }) {
     },
     dispose() { form.removeEventListener('submit', submit); },
     events(build) {
-      if (buildId !== build.id) { seen.clear(); reasons.clear(); pauses.clear(); log.replaceChildren(); buildId = build.id; }
+      if (buildId !== build.id) { seen.clear(); reasons.clear(); firstLooks.clear(); pauses.clear(); log.replaceChildren(); buildId = build.id; }
       for (const event of build.events || []) {
         if (seen.has(event.seq)) continue;
         seen.add(event.seq);
+        if (event.type === 'ghost' && event.why === FIRST_LOOK) {
+          if (!firstLooks.has(event.step)) {
+            const line = document.createElement('li'); line.textContent = FIRST_LOOK; log.append(line);
+            firstLooks.set(event.step, line);
+          }
+          continue;
+        }
+        if (event.type === 'settled') {
+          firstLooks.get(event.step)?.remove(); firstLooks.delete(event.step);
+        }
+        if (event.type === 'log' && event.text === FIRST_LOOK) continue;
         if (event.type === 'ghost' && event.why) {
           const name = event.piece?.id?.split(':')[0];
           const kind = ['wall', 'opening', 'room'].includes(name) ? name : 'piece';
@@ -116,6 +130,6 @@ export function createPanel({ afterSay, acceptPause }) {
         }
       }
     },
-    reset() { seen.clear(); reasons.clear(); pauses.clear(); log.replaceChildren(); messages.replaceChildren(); history.length = 0; buildId = null; },
+    reset() { seen.clear(); reasons.clear(); firstLooks.clear(); pauses.clear(); log.replaceChildren(); messages.replaceChildren(); history.length = 0; buildId = null; },
   };
 }

@@ -25,6 +25,7 @@ _WORKERS = {}
 _ACTIVE = ('running', 'paused', 'checkpoint')
 _FULL = [0, 0, 1, 1]
 _clock = time.monotonic
+_REAL_READER = twin_reads.read
 logger = logging.getLogger(__name__)
 _LABELS = {'roof': 'Roof sections', 'pitch': 'Roof slopes', 'plot': 'Lot',
            'draft': 'Reading the drawings', 'draft_rooms': 'Rooms',
@@ -1037,7 +1038,7 @@ def _read_draft(build, step, reader, ticket, images, context, sheets):
     clock = _clock
 
     def read(kind, read_images, read_context):
-        options = {'checkpoint_checked': True} if reader is twin_reads.read else {}
+        options = {'checkpoint_checked': True} if reader is _REAL_READER else {}
         return reader(kind, read_images, read_context, run=build['id'], step=step['id'], **options)
 
     def outline():
@@ -1047,7 +1048,7 @@ def _read_draft(build, step, reader, ticket, images, context, sheets):
             raw = read('outline', [images[sheet['image']]],
                        {'level': 'L1', 'box': crop['box'], 'building': context['building']})
             if isinstance(raw, dict) and raw.get('error'):
-                return
+                raise _ReadError(raw['error'])
             fragment, _ = twin_reads.parse('outline', raw)
             reg, _ = _registration(build, _step('outline', sheet, 'L1'),
                                    {'fragment': fragment, 'crop': crop}, None)
@@ -1061,7 +1062,7 @@ def _read_draft(build, step, reader, ticket, images, context, sheets):
                     _save(build)
         except Exception:
             # A first look is disposable, including unusable geometry.
-            pass
+            logger.info('First-look outline dropped', exc_info=True)
         finally:
             with twin_store.LIFECYCLE, _LOCK:
                 if (_BUILDS.get(build['id']) is build
@@ -1073,17 +1074,21 @@ def _read_draft(build, step, reader, ticket, images, context, sheets):
     def heartbeat(started):
         due = 15
         while not finished.wait(0.1):
-            elapsed = max(0, int(clock() - started))
-            if elapsed < due:
-                continue
-            with twin_store.LIFECYCLE, _LOCK:
-                if finished.is_set() or not _live(build, ticket):
-                    return
-                name = context['building']['name']
-                _event(build, 'log', step=step['id'],
-                       text=f'Reading the {name} drawings as one set, {elapsed // 60}:{elapsed % 60:02d} so far.')
-                _save(build)
-            due = elapsed + 15
+            try:
+                elapsed = max(0, int(clock() - started))
+                if elapsed < due:
+                    continue
+                with twin_store.LIFECYCLE, _LOCK:
+                    if finished.is_set() or not _live(build, ticket):
+                        return
+                    name = context['building']['name']
+                    _event(build, 'log', step=step['id'],
+                           text=f'Reading the {name} drawings as one set, {elapsed // 60}:{elapsed % 60:02d} so far.')
+                    _save(build)
+                due = elapsed + 15
+            except Exception:
+                logger.info('Draft heartbeat stopped', exc_info=True)
+                return
 
     threading.Thread(target=outline, daemon=True, name=f"twin-outline-{build['id'][:8]}").start()
     pulse = threading.Thread(target=heartbeat, args=(clock(),), daemon=True,

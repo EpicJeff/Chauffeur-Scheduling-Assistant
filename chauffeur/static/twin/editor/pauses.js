@@ -1,7 +1,7 @@
 import { request, report, checkpoint } from './api.js';
 import { snapRotation } from './snap.js';
 import { feetInches, parseLength } from './cards.js';
-import { pauseWords, sheetMaster, localCentre, turnPlacement } from './words.js';
+import { sentence, pauseWords, sheetMaster, localCentre, turnPlacement } from './words.js';
 
 const rotate = (p, degrees) => {
   const a = degrees * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
@@ -101,7 +101,7 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
         showSheet().catch(report);
       }
       el('pause-title').textContent = step?.label || 'Check this outline';
-      el('pause-reason').textContent = pauseWords(pause);
+      el('pause-reason').textContent = pause.kind === 'draft' ? sentence(pause.why) : pauseWords(pause);
       el('pause-size').textContent = pause.size_ft?.length === 2
         ? `${feetInches(pause.size_ft[0])} by ${feetInches(pause.size_ft[1])}` : '';
       el('pause-dimension-label').hidden = pause.kind !== 'scale_outline' || !(pause.dimension_ft > 0);
