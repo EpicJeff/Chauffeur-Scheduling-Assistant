@@ -59,9 +59,12 @@ class Pool:
         if kind == 'outline':
             return copy.deepcopy(_load(os.path.join(RECORDED, 'outline-1.json')))
         if kind == 'walls':
-            n = self.calls.count('walls') - 1
-            if n < len(self.walls):          # the comparison read the outline's first two wings
-                return copy.deepcopy(self.walls[n])
+            # The comparison recorded the outline's first two wings; route by step, since
+            # the whole floor is now read first (repair R1) and has no recording.
+            step = json.loads(user_prompt).get('step', '')
+            recorded = {'walls:L1:garage': 0, 'walls:L1:left-bedroom-wing': 1}
+            if step in recorded:
+                return copy.deepcopy(self.walls[recorded[step]])
             return {'walls': [], 'confidence': 0.5, 'why': 'not read in the comparison'}
         if kind == 'roof':
             return copy.deepcopy(_load(os.path.join(RECORDED, 'roof-4.json')))

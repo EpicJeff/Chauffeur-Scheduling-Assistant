@@ -18,8 +18,12 @@ export function createSceneTools({ view, getPlan, getSheets, edit, panel, canEdi
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
     canEdit, select, ask: item => panel.focusSelection(item, getLabel(item)) });
   const listen = (node, event, fn, options = {}) => node.addEventListener(event, fn, { ...options, signal });
-  function levels() { return (getPlan()?.buildings || []).flatMap(b => [...b.levels].sort((a, c) => a.elevation - c.elevation)
-    .map((l, i) => ({ key: `${b.id}:${l.id}`, building: b, level: l, label: l.name || `Floor ${i + 1}` }))); }
+  function levels() {
+    const buildings = getPlan()?.buildings || [];
+    return buildings.flatMap(b => [...b.levels].sort((a, c) => a.elevation - c.elevation)
+      .map((l, i) => ({ key: `${b.id}:${l.id}`, building: b, level: l,
+        label: (buildings.length > 1 ? `${b.name || b.id} \u00b7 ` : '') + (l.name || `Floor ${i + 1}`) })));
+  }
   function floor() {
     const list = levels();
     return list.find(l => l.key === levelKey) || list[0];

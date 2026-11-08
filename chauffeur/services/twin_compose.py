@@ -150,6 +150,7 @@ def _building_geometry(buildings, notes):
         porch = building.get('porch') or {}
         if porch.get('polygon'):
             porches.append([twin_register.to_world(building, p) for p in porch['polygon']])
+        skipped = False
         for wall in walls:
             a, b = wall['from'], wall['to']
             length = hypot(*_sub(b, a))
@@ -163,11 +164,14 @@ def _building_geometry(buildings, notes):
             plus = any(_inside(_along(middle, n, half + _EPS * 10), p) for p in loops)
             minus = any(_inside(_along(middle, n, -half - _EPS * 10), p) for p in loops)
             if plus == minus:
-                notes.append(f"Skipped foundation wall {wall['id']}: no unambiguous closed exterior footprint.")
+                skipped = True
                 continue
             if plus:
                 n = [-n[0], -n[1]]
             sides.append((wall, u, n, length, building.get('openings', [])))
+        if skipped:
+            name = building.get('name') or 'building'
+            notes.append(f"Foundations were skipped for the {name}: its outside walls do not close yet.")
     return footprints + porches, porches, sides
 
 

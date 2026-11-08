@@ -471,7 +471,11 @@ def scenario_timeline_previews_and_returns_without_rewriting_history():
         _signed_in(page)
         _open(page, s)
         n = len(_api(page, 'GET', 'state')['body']['rounds'])
-        page.evaluate("(i) => window.__editor.scrubTo(i)", 1)
+        # Return to the step just before now. The scenarios after this one edit
+        # a settled main-floor wall of the house it leaves current; an early
+        # round (the whole-floor walls read, which the fake reader answers with
+        # the crop's own edges) has only ghosts.
+        page.evaluate("(i) => window.__editor.scrubTo(i)", n - 2)
         page.wait_for_selector('#time-chip', state='visible', timeout=10000)
         check(len(_api(page, 'GET', 'state')['body']['rounds']) == n, 'preview only')
         page.click('#time-return')
@@ -959,6 +963,75 @@ def scenario_each_page_belongs_to_a_building_and_build_builds_that_one():
     check(posts and posts[-1] == {'part': 'pool-house'}, posts)
 
 
+# ---- repair after the first live build (repair-brief.md R6, R7) ----
+# These run last: R6 puts a two-building plan in place.
+
+def _two_buildings():
+    from services import twin_plan, twin_store
+
+    def level(lid, name, elevation, w, d):
+        return {'id': lid, 'name': name, 'elevation': elevation, 'ceiling': 9,
+                'outline': [[0, 0], [w, 0], [w, d], [0, d]]}
+
+    def building(bid, name, kind, position, levels):
+        return {'id': bid, 'name': name, 'kind': kind, 'position': position, 'rotation': 0, 'levels': levels,
+                'walls': [], 'openings': [], 'rooms': [], 'roof': {'sections': []}}
+
+    plan = {'units': 'ft', 'site': {}, 'materials': {}, 'buildings': [
+        building('main-house', 'Main house', 'main_house', [0, 0],
+                 [level('L1', 'Main floor', 0, 70, 65), level('L2', 'Second floor', 9, 58, 51)]),
+        building('pool-house', 'Pool house', 'pool_house', [80, 0], [level('L1', 'Main floor', 0, 31, 22)])]}
+    twin_store.push_round(twin_plan.normalize(plan)[0], 'edit')
+
+
+def scenario_floor_buttons_name_their_building():
+    s = _serve()
+    if s is None:
+        return
+    _stop_builds()
+    _two_buildings()
+    with s.browser(launch_args=GPU_ARGS) as page:
+        page.set_viewport_size({'width': 1600, 'height': 900})
+        _signed_in(page)
+        _open(page, s)
+        page.wait_for_function("() => document.querySelectorAll('#editor-floors [data-floor]').length === 3",
+                               timeout=20000)
+        labels = page.eval_on_selector_all('#editor-floors [data-floor]', 'nodes => nodes.map(n => n.textContent.trim())')
+        check(sorted(labels) == ['Main house \u00b7 Main floor', 'Main house \u00b7 Second floor',
+                                 'Pool house \u00b7 Main floor'],
+              ('with two buildings each floor names its building', labels))
+        page.locator('#editor-floors').get_by_role('button', name='Pool house \u00b7 Main floor', exact=True).click()
+        vis = page.evaluate('window.__twin.levelVisibility()')
+        check(vis.get('pool-house:L1') and not vis.get('main-house:L1', False), vis)
+    check(not _unexpected(s.errors()), s.errors())
+
+
+def scenario_download_build_record():
+    s = _serve()
+    if s is None:
+        return
+    dialogs = []
+    with s.browser(launch_args=GPU_ARGS, accept_downloads=True) as page:
+        page.set_viewport_size({'width': 1600, 'height': 900})
+        page.on('dialog', lambda d: (dialogs.append(d.message), d.dismiss()))
+        _signed_in(page)
+        _open(page, s)
+        page.click('#editor-menu')
+        item = page.locator('#editor-menu').get_by_role('button', name='Download build record', exact=True)
+        check(item.is_visible() and item.is_enabled(), 'the menu offers the build record')
+        with page.expect_download(timeout=20000) as info:
+            item.click()
+        download = info.value
+        name = download.suggested_filename
+        with open(download.path(), encoding='utf-8') as f:
+            record = json.load(f)
+    check(name.endswith('.json'), ('one JSON file', name))
+    check({'plan', 'builds', 'place', 'registrations', 'ledger'} <= set(record), sorted(record))
+    check([b['id'] for b in record['plan']['buildings']] == ['main-house', 'pool-house'], 'the current plan')
+    check(not dialogs, ('no browser dialog', dialogs))
+    check(not _unexpected(s.errors()), s.errors())
+
+
 if __name__ == '__main__':
     for fn in (scenario_signed_out_sees_the_sign_in,
                scenario_shell_matches_the_mockup_regions,
@@ -992,6 +1065,8 @@ if __name__ == '__main__':
                scenario_start_over_clears_the_house_and_keeps_the_spend,
                scenario_the_known_width_can_be_typed_at_the_first_pause,
                scenario_empty_state_uploads_and_suggests_roles,
-               scenario_each_page_belongs_to_a_building_and_build_builds_that_one):
+               scenario_each_page_belongs_to_a_building_and_build_builds_that_one,
+               scenario_floor_buttons_name_their_building,
+               scenario_download_build_record):
         fn()
         print('  ok ', fn.__name__)

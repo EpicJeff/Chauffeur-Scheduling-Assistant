@@ -221,7 +221,7 @@ def scenario_first_pause_and_wings_expand_after_the_outline():
     check(any(e['type'] == 'ghost' for e in st['events']), 'the outline shows as a ghost before the pause')
     tb.answer(b, 'outline:L1', {'accept': True})
     ids = [s['id'] for s in tb.status(b)['steps']]
-    check(ids[1:3] == ['walls:L1:garage', 'walls:L1:main'], ids)
+    check(ids[1:3] == ['walls:L1:main', 'walls:L1:garage'], ids)
     logs = [e['text'] for e in tb.status(b)['events'] if e['type'] == 'log']
     check("Main floor outline: 70'-0\" by 65'-4\"" in logs, logs)
     reg = ts.registration(ts.page_roles()[0]['source'], 1, 'L1')

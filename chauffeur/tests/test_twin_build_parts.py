@@ -507,7 +507,9 @@ def scenario_finishes_override_only_answered_valid_roles():
     b = tb.start({'part': 'house'}, reader=FinishesReader(), inline=True)
     check(_accept_all(b)['state'] == 'done', tb.status(b))
     own = _house(ts.current())['materials']
-    check(own == {'siding': {'id': 'board_and_batten', 'color': '#112233'}}, own)
+    check(own == {'siding': {'id': 'board_and_batten', 'color': '#112233'},
+                  'trim': {'id': tb.twin_library.kit('modern_farmhouse')['materials']['trim']['asset'],
+                           'color': tb.twin_library.kit('modern_farmhouse')['materials']['trim']['color']}}, own)
 
     def change_plan_finish(plan):
         plan['materials']['trim'] = {'id': 'board_and_batten', 'color': '#abcdef'}
@@ -516,7 +518,7 @@ def scenario_finishes_override_only_answered_valid_roles():
     ts.update_current(change_plan_finish, kind='director')
     plan = ts.current()
     merged = {**plan['materials'], **_house(plan)['materials']}
-    check(merged['trim'] == plan['materials']['trim'], merged)
+    check(merged['trim'] == own['trim'], merged)
     check(merged['siding'] == own['siding'], merged)
 
 

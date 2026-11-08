@@ -9,7 +9,7 @@ from services.twin_draft import FINISHES_PROMPT
 KINDS = ('sheet_roles', 'outline', 'walls', 'openings', 'rooms', 'registration',
          'roof', 'pitch', 'plot', 'site', 'finishes', 'photo_parts')
 MAX_OUTPUT = {'sheet_roles': 2048, 'outline': 4096, 'walls': 16384,
-              'openings': 16384, 'rooms': 8192, 'registration': 4096,
+              'openings': 16384, 'rooms': 16384, 'registration': 4096,
               'roof': 8192, 'pitch': 2048, 'plot': 8192, 'site': 8192,
               'finishes': 8192, 'photo_parts': 2048}
 
@@ -33,6 +33,8 @@ Architect notation: 70'-0" means 70.0 ft; 65'-4" means 65.333 ft;
 150.20' means 150.2 ft. Convert inches to feet by dividing by 12.
 """
 _FLOOR_RULES = """
+Trace the footprint of enclosed walls only. Exclude open porches and decks
+from outline and lower_outline; they may still be named as wings.
 On a floor sheet, dashed lines show another floor and must never be traced as
 this floor's outline. In registration, return the dashed lower floor as
 lower_outline and the current upper floor as outline, both in this crop.
@@ -75,7 +77,9 @@ visible names; leave an unreadable name blank. Return
                     + 'Return {' + _DIMENSION + ','
                     '"lower_outline":[[0.1,0.1],[0.9,0.1],[0.9,0.9]],'
                     + _OUTLINE + ',' + _WINGS + ',"confidence":0.8,"why":""}.',
-    'roof': 'Read the roof perimeter and individual sections. Section kind is '
+    'roof': 'Read the footprint of enclosed walls beneath the roof and individual sections. '
+            'The outline excludes open porches and decks; section boxes may include their roofs. '
+            'Section kind is '
             "hip, gable or shed. ridge 'x' means the ridge line runs along x "
             "(image horizontal); ridge 'y' means it runs along y (image vertical). "
             'low_side is null except for shed, where it names the eave edge '
@@ -417,7 +421,7 @@ def _usable(kind, fragment, problems):
 
 
 def read(kind, images, context, *, run, step):
-    """Make exactly one provider request, recording its usage even on failure."""
+    """Meter every request; retry a token-truncated reply once at twice the cap."""
     if not isinstance(kind, str) or kind not in KINDS:
         return {'error': 'Unknown twin read kind.'}
     try:
@@ -433,24 +437,28 @@ def read(kind, images, context, *, run, step):
         user_prompt = json.dumps({'step': step, 'context': context}, ensure_ascii=False, allow_nan=False)
     except (TypeError, ValueError, OverflowError) as exc:
         return {'error': str(exc)}
-    usage = []
-    provider_usage = []
-    twin_cost.require_clear()
-    try:
-        # Prefer HTTP-attempt rows: the pool's compatibility usage rows omit
-        # HTTP refusal status. Keep that fallback for mocked/older providers.
-        with llm.collect_usage() as provider_usage:
-            answer = model_pools.call_pool_json(
-                'twin', key, PROMPTS[kind], user_prompt, images=images,
-                strict_json=True, max_models=1, thinking_level='low',
-                max_output_tokens=MAX_OUTPUT[kind], timeout_s=120,
-                usage=usage, settings=settings)
-    except twin_cost.CheckpointReached:
-        raise
-    except Exception as exc:
-        return {'error': str(exc)}
-    finally:
-        twin_cost.record(f'step:{kind}', provider_usage or usage, run)
+    for attempt in range(2):
+        usage, provider_usage = [], []
+        twin_cost.require_clear()
+        try:
+            # HTTP-attempt rows preserve refusal status; keep the compatibility
+            # fallback for mocked/older providers. Each attempt is charged once.
+            with llm.collect_usage() as provider_usage:
+                answer = model_pools.call_pool_json(
+                    'twin', key, PROMPTS[kind], user_prompt, images=images,
+                    strict_json=True, max_models=1, thinking_level='low',
+                    max_output_tokens=MAX_OUTPUT[kind] * (attempt + 1), timeout_s=120,
+                    usage=usage, settings=settings)
+        except twin_cost.CheckpointReached:
+            raise
+        except Exception as exc:
+            answer = {'error': str(exc)}
+        finally:
+            twin_cost.record(f'step:{kind}', provider_usage or usage, run)
+        error = str(answer.get('error', '')) if isinstance(answer, dict) else ''
+        if attempt or not re.search(r'(?:finish\s*=\s*[\"\']?max_tokens\b|reason\s*=\s*max_output_tokens\b)',
+                                    error, re.IGNORECASE):
+            break
     if isinstance(answer, dict) and 'error' in answer:
         return {'error': str(answer['error'])}
     fragment, problems = parse(kind, answer)

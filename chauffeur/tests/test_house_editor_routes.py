@@ -787,6 +787,69 @@ def scenario_suggest_roles_after_moving_one_page_reads_only_remaining_pages():
     check(ts.page_roles() == stored, 'the moved page stays saved and suggestions stay unsaved')
 
 
+# Repair after the first live build (repair-brief.md R7): one download holds
+# everything needed to see why a build came out as it did, and no secret.
+SECRETS = {'llm_anthropic_api_key': 'sk-ant-record-SECRET-0001', 'llm_openai_api_key': 'sk-proj-record-SECRET-0002',
+           'llm_gemini_paid_api_key': 'AIzaRecordSECRET0003', 'llm_gemini_api_key': 'AIzaRecordSECRET0004'}
+
+
+def scenario_build_record_route():
+    _fresh()
+    _setup()
+    sheets = ts.save_source('drawing', 'house.pdf', engine_tests._pdf(1))     # no part: Main house
+    ts.set_page_roles([{'source': sheets, 'page': 1, 'role': 'floor', 'level': 'Main floor', 'box': None,
+                        'building': 'house'}])
+    ts.add_building('Shed', 'shed')
+    ts.update_building('shed', {'footprint': [[100, 0], [110, 0], [110, 12], [100, 12]], 'footprint_from': 'typed'})
+    reader = engine_tests.Reader()
+    first = tb.start({'part': 'place'}, reader=reader, inline=True)
+    st = engine_tests._accept_all(first)
+    check(st['state'] == 'done' and st['next'], ('the house hands on to the shed', st['state'], st.get('next')))
+    second = st['next']
+    check(tb.status(second)['state'] == 'done', tb.status(second)['state'])
+    tc.record('step:outline', [{'model': PRICED, 'input_tokens': 1000, 'output_tokens': 100, 'images': 1,
+                                'prompt_chars': 1, 'max_output_tokens': 4096}], first)
+    previous = {k: (storage.get_settings() or {}).get(k) for k in SECRETS}
+    storage.patch_settings(SECRETS)
+    calls = len(reader.calls)
+    c = _client()
+    try:
+        with _enforced(), patch.object(twin_reads, 'read', reader):
+            r = c.get('/api/house/editor/record', headers=PARENT)
+            others = {list(who)[0] if who else 'nobody': c.get('/api/house/editor/record', headers=who).status_code
+                      for who in (MEMBER, PANEL, {})}
+    finally:
+        storage.patch_settings(previous)
+    check(r.status_code == 200, ('a parent downloads the build record', r.status_code, r.text[:300]))
+    check(all(code in (401, 403) for code in others.values()), ('parents only', others))
+    check(len(reader.calls) == calls, ('a record never reads', reader.calls[calls:]))
+    text = r.text
+    check(not any(secret in text for secret in SECRETS.values()) and 'api_key' not in text.lower(),
+          'no key or settings secret in the record')
+    record = r.json()
+    same = lambda value: json.loads(json.dumps(value))
+    check(record.get('plan') == same(ts.current()), ('the current plan', sorted(record)))
+    check(record.get('place') == same(ts.place()), ('the place, with the lot read and placement', record.get('place')))
+    check(record.get('registrations') == same(ts.registrations()), record.get('registrations'))
+    check(record.get('ledger') == same(tc.entries()) and any(e.get('run') == first for e in record['ledger']),
+          ('the cost ledger rows', record.get('ledger')))
+    builds = record.get('builds')
+    check(isinstance(builds, list) and [b.get('id') for b in builds] == [first, second],
+          ('every build of the latest chain, in order', [b.get('id') for b in builds or []]))
+    for build in builds:
+        status = same(tb.status(build['id']))
+        for key in ('state', 'events', 'pause', 'cost'):
+            check(build.get(key) == status[key], (build['id'], key))
+        check([s['id'] for s in build.get('steps', [])] == [s['id'] for s in status['steps']], build.get('steps'))
+    steps = {s['id']: s for s in builds[0]['steps']}
+    outline = steps['outline:L1']
+    check(outline.get('answer', {}).get('fragment', {}).get('outline') and outline['answer']['crop']['box'] == [0, 0, 1, 1],
+          ('each step carries its cached read answer and crop box', outline.get('answer')))
+    garage = steps['walls:L1:garage']
+    check(garage.get('answer', {}).get('crop', {}).get('box') == [0.55, 0.5, 0.7, 0.1 + engine_tests.DEPTH_V]
+          and garage['answer']['fragment'].get('walls'), ('a wing read keeps its crop', garage.get('answer')))
+
+
 if __name__ == '__main__':
     failed = []
     for fn in (scenario_sheets_migrates_before_returning_sources_and_rows,
@@ -810,7 +873,8 @@ if __name__ == '__main__':
                scenario_suggest_null_elsewhere,
                scenario_suggest_hint,
                scenario_plot_routes,
-               scenario_build_part_route):
+               scenario_build_part_route,
+               scenario_build_record_route):
         try:
             fn()
         except Exception as exc:

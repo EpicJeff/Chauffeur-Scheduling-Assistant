@@ -76,7 +76,7 @@ def scenario_kinds_and_output_caps_are_pinned():
     check(twin_reads.KINDS == ('sheet_roles', 'outline', 'walls', 'openings', 'rooms', 'registration', 'roof',
                                'pitch', 'plot', 'site', 'finishes', 'photo_parts'), twin_reads.KINDS)
     check(twin_reads.MAX_OUTPUT == {'sheet_roles': 2048, 'outline': 4096, 'walls': 16384, 'openings': 16384,
-                                    'rooms': 8192, 'registration': 4096, 'roof': 8192, 'pitch': 2048,
+                                    'rooms': 16384, 'registration': 4096, 'roof': 8192, 'pitch': 2048,
                                     'plot': 8192, 'site': 8192, 'finishes': 8192, 'photo_parts': 2048}, twin_reads.MAX_OUTPUT)
 
 
@@ -238,6 +238,72 @@ def scenario_sheet_roles_elsewhere():
         check(word in prompt, ('the sheet_roles prompt names', word))
 
 
+# ---- repair after the first live build (repair-brief.md R2a, R5a) ----
+
+TRUNCATED = {'error': 'Incomplete Claude JSON response (finish=max_tokens; output_tokens=16384; limit=16384)',
+             'transient': False}       # what call_pool_json returned for the reproduction's rooms read
+
+
+class SeqPool(Pool):
+    """A Pool that answers each call in turn from a list."""
+
+    def __init__(self, answers):
+        super().__init__()
+        self.answers = list(answers)
+
+    def __call__(self, tier, api_key, system_prompt, user_prompt, **kw):
+        self.answer = self.answers[min(len(self.calls), len(self.answers) - 1)]
+        return super().__call__(tier, api_key, system_prompt, user_prompt, **kw)
+
+
+def scenario_rooms_output_cap_is_16384():
+    check(twin_reads.MAX_OUTPUT['rooms'] == 16384, twin_reads.MAX_OUTPUT)
+
+
+def scenario_a_truncated_read_is_retried_once_at_twice_the_limit():
+    _fresh()
+    before = len(tc.entries())
+    with SeqPool([TRUNCATED, fixture('rooms')]) as pool:
+        out = twin_reads.read('rooms', [img()], {'level': 'L1'}, run='r1', step='rooms:L1')
+    check('error' not in out and out.get('rooms'), ('the second read answers', out))
+    limits = [c['max_output_tokens'] for c in pool.calls]
+    check(len(pool.calls) == 2 and limits == [twin_reads.MAX_OUTPUT['rooms'], 2 * twin_reads.MAX_OUTPUT['rooms']],
+          ('retried once, at twice the limit', limits))
+    added = tc.entries()[before:]
+    check(len(added) == 2 and all(e['stage'] == 'step:rooms' and e['run'] == 'r1' for e in added),
+          ('both requests are metered', added))
+    # Gemini says it with its own finish reason.
+    gemini = {'error': 'Gemini request failed: Incomplete Gemini JSON response (finish=MAX_TOKENS; '
+                       'output_tokens=16384; thinking_tokens=0; limit=16384)'}
+    with SeqPool([gemini, fixture('walls')]) as pool:
+        out = twin_reads.read('walls', [img()], {}, run='r1', step='walls:L1:main')
+    check('error' not in out and [c['max_output_tokens'] for c in pool.calls] == [16384, 32768],
+          (out, [c['max_output_tokens'] for c in pool.calls]))
+
+
+def scenario_a_second_truncation_stops_and_other_failures_are_not_retried():
+    _fresh()
+    with SeqPool([TRUNCATED, TRUNCATED, fixture('rooms')]) as pool:
+        out = twin_reads.read('rooms', [img()], {}, run='r1', step='rooms:L1')
+    check('error' in out and len(pool.calls) == 2, ('one retry only, then the build stops', out, len(pool.calls)))
+    with SeqPool([{'error': '429 Too Many Requests: slow down'}, fixture('rooms')]) as pool:
+        out = twin_reads.read('rooms', [img()], {}, run='r1', step='rooms:L1')
+    check('error' in out and len(pool.calls) == 1, ('only a cut-off answer is retried', out, len(pool.calls)))
+    with SeqPool([{'nonsense': True}, fixture('roof')]) as pool:
+        out = twin_reads.read('roof', [img()], {}, run='r1', step='roof')
+    check('error' in out and len(pool.calls) == 1, ('a complete but useless answer is not retried', len(pool.calls)))
+
+
+def scenario_footprint_prompts_agree_on_enclosed_walls():
+    # R2a: the outline, the registration's lower_outline and the roof all trace
+    # the enclosed walls; open porches and decks stay out (as wings at most).
+    for kind in ('outline', 'registration', 'roof'):
+        prompt = twin_reads.PROMPTS[kind].lower()
+        for words in ('enclosed walls', 'porch', 'deck'):
+            check(words in prompt, (kind, 'names', words))
+    check('lower_outline' in twin_reads.PROMPTS['registration'], 'the registration names lower_outline')
+
+
 if __name__ == '__main__':
     for fn in (scenario_kinds_and_output_caps_are_pinned,
                scenario_each_kind_parses_its_fixture,
@@ -253,6 +319,10 @@ if __name__ == '__main__':
                scenario_checkpoint_inside_the_pool_call_is_recorded_once,
                scenario_lot_on_the_crop_border_keeps_its_street_edge,
                scenario_prompts_define_the_terms_models_get_wrong,
-               scenario_sheet_roles_elsewhere):
+               scenario_sheet_roles_elsewhere,
+               scenario_rooms_output_cap_is_16384,
+               scenario_a_truncated_read_is_retried_once_at_twice_the_limit,
+               scenario_a_second_truncation_stops_and_other_failures_are_not_retried,
+               scenario_footprint_prompts_agree_on_enclosed_walls):
         fn()
         print('  ok ', fn.__name__)

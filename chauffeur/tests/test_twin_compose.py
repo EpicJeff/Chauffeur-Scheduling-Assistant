@@ -278,6 +278,42 @@ def scenario_compose_without_buildings():
     check(trees and all(_inside(t['at'], a['site']['lot']) for t in trees), ('the yard is planted on the lot', len(trees)))
 
 
+# ---- repair after the first live build (repair-brief.md R5c) ----
+
+def _open_walled(plan, bid=None, name=None, at=None):
+    """The fixture pool house with its left outside wall missing, as a build
+    leaves a building whose outside walls do not close yet; wall ids are the
+    engine's, never words."""
+    building = copy.deepcopy(plan['buildings'][0])
+    first = 1 if bid is None else 101
+    ids = {w['id']: f'wall:{i:032x}' for i, w in enumerate(building['walls'], start=first)}
+    building['walls'] = [{**w, 'id': ids[w['id']]} for w in building['walls'] if w['id'] != 'left']
+    building['openings'] = [{**o, 'wall': ids[o['wall']]} for o in building['openings']
+                            if o.get('wall') in ids and o['wall'] != 'left']
+    if bid is not None:
+        building.update(id=bid, name=name, position=at)
+        building.pop('porch', None)
+    return building, list(ids.values())
+
+
+def scenario_skipped_foundations_are_one_plain_line_per_building():
+    p = _plan()
+    pool, ids = _open_walled(p)
+    p['buildings'] = [pool]
+    _, notes = tcm.compose(p, KIT, seed=1)
+    line = 'Foundations were skipped for the Pool house: its outside walls do not close yet.'
+    check(notes.count(line) == 1, ('one plain line for the building', notes))
+    check(not any(i in n for n in notes for i in ids), ('never a raw id', notes))
+    check(not any(n.startswith('Skipped foundation wall') for n in notes), notes)
+    main, more = _open_walled(p, bid='main0house', name='Main house', at=[60, -60])
+    p['buildings'] = [pool, main]
+    _, notes = tcm.compose(p, KIT, seed=1)
+    check(notes.count(line) == 1 and notes.count(
+        'Foundations were skipped for the Main house: its outside walls do not close yet.') == 1,
+          ('one line each', notes))
+    check(not any(i in n for n in notes for i in ids + more), ('never a raw id', notes))
+
+
 if __name__ == '__main__':
     for fn in (scenario_rotated_building_moves_its_beds,
                scenario_compose_is_deterministic,
@@ -291,6 +327,7 @@ if __name__ == '__main__':
                scenario_nothing_lands_where_it_cannot,
                scenario_backdrop_lines_far_edges_only,
                scenario_edges_follow_the_lawn,
-               scenario_compose_without_buildings):
+               scenario_compose_without_buildings,
+               scenario_skipped_foundations_are_one_plain_line_per_building):
         fn()
         print('  ok ', fn.__name__)

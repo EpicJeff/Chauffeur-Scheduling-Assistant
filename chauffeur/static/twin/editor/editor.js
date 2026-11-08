@@ -17,7 +17,7 @@ export async function boot() {
   let sheets = { sources: [], page_roles: [] };
   let currentBuild = null, ghostBuild = null, renderedGhosts = 0, lastScene = '';
   let resuming = false, stopping = false;
-  let menuBusy = false, directing = false, advancedBase = null;
+  let menuBusy = false, directing = false, downloading = false, advancedBase = null;
   let tools = null, planView = null, pauses = null, timeline = null, place = null, previewing = false, lastSummary = '';
   const lifecycle = new AbortController();
   const listen = (node, type, handler) => node.addEventListener(type, handler, { signal: lifecycle.signal });
@@ -48,6 +48,9 @@ export async function boot() {
 
   function setStatus(text) { el('editor-status').textContent = plain(text); }
   function syncBuildButton() {
+    // Reaching ready requires successful parent-only editor API requests.
+    el('menu-record').hidden = !hooks.ready || session.signedOut;
+    el('menu-record').disabled = !hooks.ready || session.signedOut || downloading;
     place?.sync(sheets, { ...snapshot, buildState: currentBuild });
     el('editor-check-step').hidden = previewing || currentBuild?.state !== 'paused' || !pauses?.dismissed();
     el('editor-resume').hidden = previewing || !['stopped', 'checkpoint'].includes(currentBuild?.state);
@@ -216,6 +219,20 @@ export async function boot() {
   });
   listen(el('editor-manage-sources'), 'click', () => place.open());
   listen(el('menu-upload'), 'click', () => place.open());
+  listen(el('menu-record'), 'click', async () => {
+    if (!hooks.ready || session.signedOut || downloading) return;
+    downloading = true; syncBuildButton();
+    try {
+      const record = await request('record');
+      const url = URL.createObjectURL(new Blob([JSON.stringify(record, null, 2)], { type: 'application/json' }));
+      const link = document.createElement('a');
+      link.href = url; link.download = `house-build-record-${new Date().toISOString().slice(0, 10)}.json`;
+      try { document.body.append(link); link.click(); }
+      finally { link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
+      el('editor-menu').open = false;
+    } catch (error) { report(error); }
+    finally { downloading = false; syncBuildButton(); }
+  });
   listen(el('menu-director'), 'click', async () => {
     if (!canEdit() || active(currentBuild) || !view || !snapshot.plan?.buildings?.length) return;
     directing = true; syncBuildButton(); timeline?.sync(); el('editor-menu').open = false;
@@ -329,7 +346,7 @@ export async function boot() {
     currentInterval: polling.currentInterval, signOutNotices: () => session.notices, polling: polling.polling,
     isEmpty: () => !snapshot.plan?.buildings?.length && sheets.sources.length === 0,
   });
-  const signedOut = () => { polling.stop(); setStatus('Home Assistant signed the tab out'); };
+  const signedOut = () => { polling.stop(); syncBuildButton(); setStatus('Home Assistant signed the tab out'); };
   const foreground = () => { if (!document.hidden) polling.resume().catch(report); else polling.stop(); };
   window.addEventListener('editor-signed-out', signedOut);
   document.addEventListener('visibilitychange', foreground);

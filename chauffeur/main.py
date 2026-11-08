@@ -7840,6 +7840,12 @@ def house_editor_cost_reset(request: Request, body: dict = Body(default={})):
     return _house_editor_call(twin_cost.reset, by=parent['id'])
 
 
+@app.get('/api/house/editor/record')
+def house_editor_record():
+    from services import twin_record
+    return _house_editor_call(twin_record.record)
+
+
 @app.get('/api/house/editor/state')
 def house_editor_state():
     from services import twin_build, twin_cost, twin_store
