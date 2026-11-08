@@ -38,7 +38,9 @@ import os
 import re
 import sys
 import tempfile
+import time
 import traceback
+from unittest.mock import patch
 
 os.environ.setdefault('CHAUFFEUR_DATA_DIR', tempfile.mkdtemp(prefix='chauffeur_twin_build_draft_fallback_'))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -369,6 +371,120 @@ def test_fallback_stops_and_pauses_on_empty_level():
         check(len(l1) == 22 and all(w.get('state') == 'settled' for w in l1), (name, [w.get('state') for w in l1]))
 
 
+def test_fallback_failed_upper_floor_is_ghost_and_still_reads_roof():
+    _drawn_house()
+    levels = per_level()
+    upper = levels['L2']['building']
+    # The lower floor ends at x=70 here; this readable floor projects 3 ft.
+    outline = [[14.33, 23], [73, 23], [73, 40], [14.33, 40]]
+    upper['levels'][0]['outline'] = outline
+    upper['walls'] = [{'id': f'upper-{i}', 'level': 'L2', 'from': a, 'to': b,
+                       'height': 9, 'thickness': .5, 'exterior': True}
+                      for i, (a, b) in enumerate(zip(outline, outline[1:] + outline[:1]))]
+    upper['openings'] = []
+    reader = FallbackReader(levels=levels)
+    build = tb.start({'part': 'house'}, reader=reader, inline=True)
+    st = tb.status(build)
+    check(st['state'] == 'done' and not st.get('pause'), (st['state'], st.get('pause'), _trouble(st)))
+    check(_draft_reads(reader) == ['draft', 'draft_level L1', 'draft_level L2', 'draft_level roof', 'draft_rooms'],
+          _draft_reads(reader))
+    house = _house(ts.current())
+    upper = next(l for l in house['levels'] if l['id'] == 'L2')
+    why = 'The upper floor extends more than 2 ft beyond the floor below.'
+    check(upper.get('state') == 'ghost' and upper.get('why') == why, upper)
+    walls = [w for w in house['walls'] if w['level'] == 'L2' and w.get('exterior')]
+    check(len(walls) == 4 and all(w.get('state') == 'ghost' and w.get('why') == why for w in walls), walls)
+    roof_context = next(c['context'] for c in reader.seen
+                        if c['kind'] == 'draft_level' and _scope(c['context']) == 'roof')
+    check([l['id'] for l in _settled(roof_context)['levels']] == ['L1'],
+          ('only settled levels reach the next read', _settled(roof_context)))
+    check(not any(e['type'] == 'question' for e in st['events']), _trouble(st))
+
+
+def test_fallback_heartbeat_during_each_level_read():
+    _drawn_house()
+    reader = FallbackReader()
+    now = [1000.0]
+    observed = {}
+    pattern = re.compile(r'^Reading the Main house drawings one floor at a time, (\d+):(\d\d) so far\.$')
+
+    def blocked_read(kind, images, context, *, run, step):
+        if kind == 'draft_level':
+            start_seq = tb.status(run)['events'][-1]['seq']
+            for elapsed in (15, 30, 45, 50):
+                now[0] = 1000.0 + elapsed
+                if elapsed != 50:
+                    deadline = time.monotonic() + 1
+                    while time.monotonic() < deadline:
+                        beats = [e for e in tb.status(run)['events'] if e['seq'] > start_seq
+                                 and e['type'] == 'log' and pattern.match(e.get('text') or '')]
+                        if len(beats) >= elapsed // 15:
+                            break
+                        time.sleep(.01)
+            observed[_scope(context)] = [e for e in tb.status(run)['events'] if e['seq'] > start_seq
+                                        and e['type'] == 'log' and pattern.match(e.get('text') or '')]
+            now[0] = 1000.0
+        return reader(kind, images, context, run=run, step=step)
+
+    with patch.object(tb, '_clock', lambda: now[0]):
+        build = tb.start({'part': 'house'}, reader=blocked_read, inline=True)
+    st = tb.status(build)
+    check(st['state'] == 'done', (st['state'], st.get('pause'), _trouble(st)))
+    check(set(observed) == {'L1', 'L2', 'roof'}, observed)
+    house = _house(ts.current())
+    for scope, beats in observed.items():
+        check(len(beats) >= 3, (scope, '50 s blocked: at least three building-named heartbeats', beats))
+        times = [int(m.group(1)) * 60 + int(m.group(2)) for m in (pattern.match(e['text']) for e in beats)]
+        check(times == sorted(times) and 45 <= max(times) <= 50, (scope, times))
+        check(all(e.get('step') == 'draft' and not _has_raw_id(e['text'], house) for e in beats), beats)
+
+
+def test_fallback_floor_porch_columns_win_over_roof_reply():
+    for field, shift in (('porch', 0), ('porches', .25)):
+        _drawn_house()
+        levels = per_level()
+        floor_porch = levels['L1']['building']['porch']
+        roof_porch = copy.deepcopy(floor_porch)
+        roof_porch['columns'] = []
+        roof_porch['polygon'] = [[x + shift, y] for x, y in roof_porch['polygon']]
+        # A separate roof-only porch is still useful and must be kept.
+        separate = {'polygon': [[80, 0], [90, 0], [90, 8], [80, 8]], 'floor': 0, 'columns': []}
+        roof = levels['roof']['building']
+        roof['porches'] = [separate]
+        if field == 'porch':
+            roof['porch'] = roof_porch
+        else:
+            roof['porches'].append(roof_porch)
+        reader = FallbackReader(levels=levels)
+        build = tb.start({'part': 'house'}, reader=reader, inline=True)
+        st = tb.status(build)
+        check(st['state'] == 'done', (field, st['state'], st.get('pause'), _trouble(st)))
+        porches = tb.twin_plan.porches(_house(ts.current()))
+        check(len(porches) == 2, (field, 'one floor porch and one distinct roof-only porch', porches))
+        porch = next((p for p in porches if p['polygon'] == floor_porch['polygon']), None)
+        check(porch is not None and porch.get('state') == 'settled'
+              and porch['columns'] == floor_porch['columns'] and len(porch['columns']) == 4,
+              (field, 'the floor read owns the four columns', porch))
+        check(any(p['polygon'] == separate['polygon'] for p in porches), (field, porches))
+
+
+def test_fallback_real_reader_checkpoint_already_checked():
+    _drawn_house()
+    reader = FallbackReader()
+    options = []
+
+    def real_read(kind, images, context, *, run, step, checkpoint_checked=False):
+        if kind == 'draft_level':
+            options.append((_scope(context), checkpoint_checked))
+        return reader(kind, images, context, run=run, step=step)
+
+    with patch.object(tb, '_REAL_READER', real_read):
+        build = tb.start({'part': 'house'}, reader=real_read, inline=True)
+    st = tb.status(build)
+    check(st['state'] == 'done', (st['state'], st.get('pause'), _trouble(st)))
+    check(options == [('L1', True), ('L2', True), ('roof', True)], options)
+
+
 def test_rooms_read_settles_rooms_and_interior_walls():
     for name, draft in (('whole draft', spike()), ('one floor at a time', None)):
         _drawn_house()
@@ -473,6 +589,10 @@ TESTS = (
     test_first_floor_failure_runs_per_level,
     test_fallback_level_context_has_lower_levels,
     test_fallback_stops_and_pauses_on_empty_level,
+    test_fallback_failed_upper_floor_is_ghost_and_still_reads_roof,
+    test_fallback_heartbeat_during_each_level_read,
+    test_fallback_floor_porch_columns_win_over_roof_reply,
+    test_fallback_real_reader_checkpoint_already_checked,
     test_rooms_read_settles_rooms_and_interior_walls,
     test_room_outside_outline_is_ghost,
     test_rooms_reply_without_walls_settles_rooms,

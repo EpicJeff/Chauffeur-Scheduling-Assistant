@@ -1083,10 +1083,37 @@ def _images_context(build, step, sheets=None):
     return [{'mime': crop['mime'], 'b64': crop['b64']}], context, {k: crop[k] for k in ('box', 'size', 'master')}
 
 
+def _start_draft_heartbeat(build, step, ticket, context, finished, mode):
+    clock = _clock
+
+    def heartbeat(started):
+        due = 15
+        while not finished.wait(0.1):
+            try:
+                elapsed = max(0, int(clock() - started))
+                if elapsed < due:
+                    continue
+                with twin_store.LIFECYCLE, _LOCK:
+                    if finished.is_set() or not _live(build, ticket):
+                        return
+                    name = context['building']['name']
+                    _event(build, 'log', step=step['id'],
+                           text=f'Reading the {name} drawings {mode}, {elapsed // 60}:{elapsed % 60:02d} so far.')
+                    _save(build)
+                due = elapsed + 15
+            except Exception:
+                logger.info('Draft heartbeat stopped', exc_info=True)
+                return
+
+    pulse = threading.Thread(target=heartbeat, args=(clock(),), daemon=True,
+                             name=f"twin-heartbeat-{build['id'][:8]}")
+    pulse.start()
+    return pulse
+
+
 def _read_draft(build, step, reader, ticket, images, context, sheets):
     """Run the paid pair together; only the draft can publish plan geometry."""
     finished = threading.Event()
-    clock = _clock
 
     def read(kind, read_images, read_context):
         options = {'checkpoint_checked': True} if reader is _REAL_READER else {}
@@ -1122,29 +1149,8 @@ def _read_draft(build, step, reader, ticket, images, context, sheets):
                     _spend(build)
                     _save(build)
 
-    def heartbeat(started):
-        due = 15
-        while not finished.wait(0.1):
-            try:
-                elapsed = max(0, int(clock() - started))
-                if elapsed < due:
-                    continue
-                with twin_store.LIFECYCLE, _LOCK:
-                    if finished.is_set() or not _live(build, ticket):
-                        return
-                    name = context['building']['name']
-                    _event(build, 'log', step=step['id'],
-                           text=f'Reading the {name} drawings as one set, {elapsed // 60}:{elapsed % 60:02d} so far.')
-                    _save(build)
-                due = elapsed + 15
-            except Exception:
-                logger.info('Draft heartbeat stopped', exc_info=True)
-                return
-
     threading.Thread(target=outline, daemon=True, name=f"twin-outline-{build['id'][:8]}").start()
-    pulse = threading.Thread(target=heartbeat, args=(clock(),), daemon=True,
-                             name=f"twin-heartbeat-{build['id'][:8]}")
-    pulse.start()
+    pulse = _start_draft_heartbeat(build, step, ticket, context, finished, 'as one set')
     try:
         return read('draft', images, context)
     finally:
@@ -1221,7 +1227,14 @@ def _read_draft_levels(build, step, reader, ticket, images, context, progress):
             part, issues = reads[index]['fragment'], reads[index]['problems']
         else:
             twin_cost.require_clear()
-            raw = reader('draft_level', images, read_context, run=build['id'], step=step['id'])
+            options = {'checkpoint_checked': True} if reader is _REAL_READER else {}
+            finished = threading.Event()
+            pulse = _start_draft_heartbeat(build, step, ticket, context, finished, 'one floor at a time')
+            try:
+                raw = reader('draft_level', images, read_context, run=build['id'], step=step['id'], **options)
+            finally:
+                finished.set()
+                pulse.join()
             if isinstance(raw, dict) and raw.get('error'):
                 raise _ReadError(raw['error'])
             part, issues = twin_reads.parse('draft_level', raw)
@@ -1256,6 +1269,11 @@ def _read_draft_levels(build, step, reader, ticket, images, context, progress):
             for key in ('walls', 'rooms', 'stairs'):
                 incoming.pop(key, None)
             incoming['openings'] = [o for o in incoming.get('openings', []) if 'gable' in o]
+            # Floor reads own their porches, including columns. A roof read
+            # may add a distinct porch, but cannot replace a nearby floor one.
+            incoming['porches'] = [p for p in twin_plan.porches(incoming) if not any(
+                _matches(p, floor, 'porch', {}) for floor in twin_plan.porches(fragment['building']))]
+            incoming.pop('porch', None)
         for key in ('levels', 'walls', 'openings', 'rooms', 'porches', 'stairs'):
             fragment['building'][key].extend(deepcopy(incoming.get(key, [])))
         if incoming.get('porch'):
@@ -1268,7 +1286,7 @@ def _read_draft_levels(build, step, reader, ticket, images, context, progress):
         fragment['notes'].extend(part.get('notes', []))
         house, first_failed = _draft_preview(build, step, fragment)
         level = next((l for l in house['levels'] if l['id'] == scope), None)
-        if first_failed or (scope != 'roof' and (level is None or level.get('state') == 'ghost')):
+        if first_failed or (scope != 'roof' and level is None):
             return fragment, problems, reads, True
         settled = {key: deepcopy([p for p in house[key] if p.get('state') != 'ghost'
                                   and (key != 'walls' or p.get('exterior'))])
