@@ -443,7 +443,7 @@ def test_build_runs_snap():
     segments[0] = (corners[0], short, True)
     reader = repair.StepReader({'outline': repair._outline(corners),
                                 ('walls', 'L1'): repair.page_walls(segments)})
-    b, st = repair._build('house', reader)
+    b, st = repair._build('house', reader, legacy=True)
     house = repair._building('house')
     l1 = [w for w in house['walls'] if w['level'] == 'L1' and w.get('state') != 'ghost']
     check(len(l1) == 4, ('the four outside walls settle', [(w['from'], w['to'], w.get('state')) for w in l1]))

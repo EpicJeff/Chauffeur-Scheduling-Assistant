@@ -91,6 +91,7 @@ POOL_FINISHES = {'materials': {'wall': {'id': 'board_and_batten', 'color': '#c9c
                                'soffit': {'id': 'painted_wood', 'color': '#f2f2ee'}}}
 
 DEFAULTS = {'openings': {'openings': []}, 'rooms': {'rooms': []}, 'walls': {'walls': []},
+            'draft_rooms': {'rooms': [], 'walls': []},
             'pitch': {'pitches': []}, 'finishes': {'materials': {}}}
 
 
@@ -129,6 +130,10 @@ class StepReader:
 
     def __call__(self, kind, images, context, *, run, step):
         self.calls.append({'kind': kind, 'step': step, 'context': copy.deepcopy(context), 'images': len(images)})
+        if kind == 'draft':
+            # Part-only finishes and placement tests use the same footprint in
+            # feet; crop regressions below explicitly exercise the legacy body.
+            return engine_tests.draft_answer(self.answers.get('outline', {}).get('outline', L1))
         answer = self.answers.get(step)
         if answer is None:
             answer = self.answers.get((kind, context.get('level')))
@@ -171,8 +176,13 @@ def _place(floors=('Main floor',), roof=False, photo=False, building='house', na
     return building, sheet
 
 
-def _build(part, reader):
-    b = tb.start({'part': part}, reader=reader, inline=True)
+def _legacy_inputs(part='house'):
+    building = next(b for b in ts.place()['buildings'] if b['id'] == part)
+    return {'building': {k: building[k] for k in ('id', 'name', 'kind')}, 'photos': ts.photos_for(part)}
+
+
+def _build(part, reader, *, legacy=False):
+    b = tb.start(_legacy_inputs(part) if legacy else {'part': part}, reader=reader, inline=True)
     st = _accept_all(b)
     check(st['state'] == 'done', (st['state'], st.get('pause'),
                                   [e for e in st['events'] if e['type'] in ('error', 'question')][-3:]))
@@ -263,7 +273,7 @@ def _r1_reader():
 def scenario_walls_read_the_whole_floor_and_each_wing():
     _, sheet = _place()
     reader = _r1_reader()
-    b, st = _build('house', reader)
+    b, st = _build('house', reader, legacy=True)
     ids = [s['id'] for s in st['steps']]
     walls = _walls_steps(st, 'L1')
     check({'walls:L1:porch', 'walls:L1:garage'} <= {s['id'] for s in walls},
@@ -283,7 +293,7 @@ def scenario_walls_read_the_whole_floor_and_each_wing():
 
 def scenario_whole_floor_walls_settle_on_the_outline():
     _, sheet = _place()
-    _build('house', _r1_reader())
+    _build('house', _r1_reader(), legacy=True)
     house = _building('house')
     l1 = [w for w in house['walls'] if w['level'] == 'L1']
     for a, b in edges(L1):
@@ -295,7 +305,7 @@ def scenario_whole_floor_walls_settle_on_the_outline():
 
 def scenario_a_wall_two_reads_return_settles_once():
     _, sheet = _place()
-    _build('house', _r1_reader())
+    _build('house', _r1_reader(), legacy=True)
     l1 = [w for w in _building('house')['walls'] if w['level'] == 'L1']
     a, b = (_world(sheet, 1, 'L1', p) for p in PARTITION)
     partition = [w for w in l1 if _same_wall(w, a, b)]
@@ -322,7 +332,7 @@ def scenario_recorded_pool_house_reads_every_floor_whole_and_never_twice():
         'walls:L1:porch': POOL_PORCH_WALLS,
         'walls:L2:stair': POOL_STAIR_WALLS,
     })
-    b, st = _build('house', reader)
+    b, st = _build('house', reader, legacy=True)
     for level, wing, box in (('L1', 'walls:L1:porch', FULL), ('L2', 'walls:L2:stair', FULL)):
         steps = _walls_steps(st, level)
         whole = _whole_floor(st, level, box)
@@ -350,7 +360,7 @@ UPPER = rect(0.2, 0.1, 25.4167, 22)
 def scenario_a_registration_fitted_to_a_bigger_floor_below_says_the_shapes_do_not_match():
     _place(floors=('Main floor', 'Second floor'))
     reader = StepReader({'outline': _outline(L1_31), 'registration': _registration(L1_38, UPPER)})
-    b = tb.start({'part': 'house'}, reader=reader, inline=True)
+    b = tb.start(_legacy_inputs(), reader=reader, inline=True)
     st = tb.status(b)
     check(st['state'] == 'paused' and st['pause']['step'] == 'outline:L1', (st['state'], st.get('pause')))
     tb.answer(b, 'outline:L1', {'accept': True})
@@ -364,7 +374,7 @@ def scenario_a_registration_fitted_to_a_bigger_floor_below_says_the_shapes_do_no
 def scenario_a_registration_onto_an_equal_floor_below_settles():
     _, sheet = _place(floors=('Main floor', 'Second floor'))
     reader = StepReader({'outline': _outline(L1_31), 'registration': _registration(L1_31, UPPER)})
-    b = tb.start({'part': 'house'}, reader=reader, inline=True)
+    b = tb.start(_legacy_inputs(), reader=reader, inline=True)
     tb.answer(b, 'outline:L1', {'accept': True})
     st = tb.status(b)
     check(st['state'] == 'paused' and st['pause']['step'] == 'registration:L2', (st['state'], st.get('pause')))
@@ -386,7 +396,7 @@ def _roof_reader(roof_outline):
 
 def scenario_a_roof_that_includes_the_porch_pauses_and_says_the_shapes_do_not_match():
     _place(roof=True)
-    b = tb.start({'part': 'house'}, reader=_roof_reader(L1_38), inline=True)
+    b = tb.start(_legacy_inputs(), reader=_roof_reader(L1_38), inline=True)
     tb.answer(b, 'outline:L1', {'accept': True})
     st = tb.status(b)
     check(st['state'] == 'paused' and st['pause']['step'] == 'roof',
@@ -401,7 +411,7 @@ def scenario_a_roof_that_includes_the_porch_pauses_and_says_the_shapes_do_not_ma
 
 def scenario_a_roof_over_its_floor_with_eaves_settles_without_a_pause():
     _place(roof=True)
-    b = tb.start({'part': 'house'}, reader=_roof_reader(rect(0.2 - U, 0.1 - V, 33, 24)), inline=True)
+    b = tb.start(_legacy_inputs(), reader=_roof_reader(rect(0.2 - U, 0.1 - V, 33, 24)), inline=True)
     tb.answer(b, 'outline:L1', {'accept': True})
     st = tb.status(b)
     check(st['state'] == 'done', ('equal shapes settle alone', st['state'], st.get('pause')))
@@ -478,7 +488,7 @@ def scenario_openings_left_out_are_named_once_per_step():
             {'at': top, 'kind': 'slider', 'width_ft': 80.0, 'sill_ft': 0.0, 'head_ft': 8.0},
             {'at': bottom, 'kind': 'bifold', 'width_ft': 80.0, 'sill_ft': 0.0, 'head_ft': 8.0}]},
     })
-    b, st = _build('house', reader)
+    b, st = _build('house', reader, legacy=True)
     logs = _logs(st, 'openings:L1')
     sentence = '2 openings were outside their walls and were left out.'
     check(logs.count(sentence) == 1, ('one plain sentence for the step', logs))

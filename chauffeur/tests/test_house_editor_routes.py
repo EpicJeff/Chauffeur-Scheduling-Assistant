@@ -676,7 +676,9 @@ def scenario_plot_routes():
 
             got = c.get('/api/house/editor/sheets', headers=PARENT)
             check(got.status_code == 200, got.text)
-            check(got.json()['estimates'] == {'plot': tc.estimate('plot', 1), 'photos': tc.estimate('photo_parts', 1)},
+            draft, rooms = tc.estimate('draft', 1), tc.estimate('draft_rooms', 1)
+            check(got.json()['estimates'] == {'plot': tc.estimate('plot', 1), 'photos': tc.estimate('photo_parts', 1),
+                  'build': {'house': {'draft': draft, 'draft_rooms': rooms, 'total': draft + rooms}}},
                   got.json()['estimates'])
 
             r = c.post('/api/house/editor/place/photos/suggest', headers=PARENT, json={})
@@ -807,7 +809,7 @@ def scenario_build_record_route():
     check(st['state'] == 'done' and st['next'], ('the house hands on to the shed', st['state'], st.get('next')))
     second = st['next']
     check(tb.status(second)['state'] == 'done', tb.status(second)['state'])
-    tc.record('step:outline', [{'model': PRICED, 'input_tokens': 1000, 'output_tokens': 100, 'images': 1,
+    tc.record('step:draft', [{'model': PRICED, 'input_tokens': 1000, 'output_tokens': 100, 'images': 1,
                                 'prompt_chars': 1, 'max_output_tokens': 4096}], first)
     previous = {k: (storage.get_settings() or {}).get(k) for k in SECRETS}
     storage.patch_settings(SECRETS)
@@ -842,12 +844,16 @@ def scenario_build_record_route():
             check(build.get(key) == status[key], (build['id'], key))
         check([s['id'] for s in build.get('steps', [])] == [s['id'] for s in status['steps']], build.get('steps'))
     steps = {s['id']: s for s in builds[0]['steps']}
-    outline = steps['outline:L1']
-    check(outline.get('answer', {}).get('fragment', {}).get('outline') and outline['answer']['crop']['box'] == [0, 0, 1, 1],
-          ('each step carries its cached read answer and crop box', outline.get('answer')))
-    garage = steps['walls:L1:garage']
-    check(garage.get('answer', {}).get('crop', {}).get('box') == [0.55, 0.5, 0.7, 0.1 + engine_tests.DEPTH_V]
-          and garage['answer']['fragment'].get('walls'), ('a wing read keeps its crop', garage.get('answer')))
+    draft = steps['draft']['answer']
+    check(draft['fragment']['building']['levels'] and len(draft['fragment']['building']['walls']) == 4,
+          ('the whole-building answer is recorded', draft))
+    check(draft['crop'] is None and draft['context']['pages'] ==
+          [{'image': 0, 'role': 'floor', 'level_name': 'Main floor'}],
+          ('the draft records its whole-page context instead of a wing crop', draft))
+    rooms = steps['draft_rooms']['answer']
+    check(rooms['fragment'] == {'rooms': [], 'walls': []}
+          and len(rooms['context']['settled']['walls']) == 4,
+          ('the rooms answer and its settled draft are recorded', rooms))
 
 
 if __name__ == '__main__':

@@ -7507,11 +7507,27 @@ def _house_editor_sheets():
         row['master_size'] = sizes.get((row['source'], row['page']))
     labels = [{'building': b['id'], 'piece': p['id'], 'label': twin_edit._label(k, p, b)}
               for k, p, b, _ in twin_edit._entries(plan) if 'id' in p] if plan else []
+    build_estimates = {}
+    for building in place['buildings']:
+        rows = [r for r in roles if r.get('building') == building['id']
+                and r['role'] in ('floor', 'roof', 'elevation', 'other')]
+        floors = sum(r['role'] == 'floor' for r in rows)
+        if not floors:
+            continue
+        tagged_photos = sum(s['kind'] == 'photo' and building['id'] in
+                            (place['photo_tags'].get(s['id']) or ['lot']) for s in sources)
+        photos = min(4, tagged_photos)
+        draft = twin_cost.estimate('draft', len(rows) + photos)
+        rooms = twin_cost.estimate('draft_rooms', floors)
+        finishes = twin_cost.estimate('finishes', tagged_photos) if photos else 0
+        build_estimates[building['id']] = {'draft': draft, 'draft_rooms': rooms,
+                                           'total': draft + rooms + finishes}
     return {'sources': sources, 'pages': pages, 'page_roles': roles, 'registrations': registrations,
             'piece_labels': labels, 'field_labels': twin_edit.FIELD_LABELS,
             'place': place, 'kinds': [{'id': key, 'label': label} for key, label in twin_place.KINDS.items()],
             'roles': {'building': twin_place.BUILDING_ROLES, 'lot': twin_place.LOT_ROLES},
             'estimates': {'plot': twin_cost.estimate('plot', 1),
+                          'build': build_estimates,
                           'photos': twin_cost.estimate('photo_parts', min(12, sum(s['kind'] == 'photo' for s in sources)))}}
 
 

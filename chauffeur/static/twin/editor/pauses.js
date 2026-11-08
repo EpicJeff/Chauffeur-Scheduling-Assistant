@@ -107,8 +107,9 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
       el('pause-dimension-label').hidden = pause.kind !== 'scale_outline' || !(pause.dimension_ft > 0);
       el('pause-dimension').value = pause.dimension_ft > 0 ? feetInches(pause.dimension_ft) : '';
       const lotPlot = build.part === 'lot' && pause.step === 'plot';
-      el('pause-drag').hidden = lotPlot;
-      el('pause-cancel').hidden = lotPlot;
+      el('pause-drag').hidden = lotPlot || pause.kind === 'draft';
+      el('pause-cancel').hidden = lotPlot || pause.kind === 'draft';
+      el('pause-accept').hidden = pause.kind === 'draft';
       el('pause-turn-label').hidden = pause.kind !== 'lot_placement' || lotPlot;
       el('pause-turn').value = pause.transform?.rotation || 0;
       el('pause-pin').hidden = pause.kind !== 'level_registration' || lotPlot;
@@ -117,6 +118,7 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
     step = build.steps.find(s => s.id === pause.step);
     const lastCost = step?.last_cost ?? step?.cost ?? stepCosts.get(pause.step);
     el('pause-reread').textContent = Number.isFinite(lastCost) ? `Re-read · last $${lastCost.toFixed(2)}` : 'Re-read · last cost $— (unavailable)';
+    if (pause.kind === 'draft') el('pause-reread').textContent = 'Try again';
     el('pause-reread').title = 'Reads this drawing again and adds to the running cost.';
     host.hidden = dismissed || !canEdit();
     disable(busy); anchor(); visibilityChanged?.();

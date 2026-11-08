@@ -20,9 +20,7 @@ then each building with drawings, then each shell, as chained builds.
   with a non-empty then and no next (a crash between the two saves) by
   creating its successor exactly once.
 
-The reader is test_twin_build_parts' PartReader with the L-shaped outline, so
-the house fits its footprint without a fit pause; its only pause is the
-outline's scale pause. Sources are blank 17 x 11 inch PDFs.
+The reader is test_twin_build_parts' PartReader with the L-shaped outline; its footprint is deliberately larger, so its only pause is fit. Sources are blank 17 x 11 inch PDFs.
 
 Run from chauffeur/:  env -u HA_BASE_URL python tests/test_twin_build_chain.py
 """
@@ -54,7 +52,7 @@ SKIPPED_GARAGE = 'Skipped Garage: it has no footprint yet.'
 NOTHING = 'Add a building with drawings or a footprint first.'
 SHED_FOOTPRINT = [[120, 0], [130, 0], [130, 12], [120, 12]]
 GARAGE_FOOTPRINT = [[140, 0], [160, 0], [160, 20], [140, 20]]
-HOUSE_KINDS = ['outline', 'walls', 'openings', 'rooms', 'fit']
+HOUSE_KINDS = ['draft', 'draft_rooms', 'fit']
 
 
 # --- fakes and helpers ---------------------------------------------------------
@@ -91,7 +89,7 @@ def _place():
         {'source': sheets, 'page': 1, 'role': 'floor', 'level': 'Main floor', 'box': None, 'building': 'house'},
         {'source': plot, 'page': 1, 'role': 'plot', 'level': None, 'box': None, 'building': 'lot'}])
     _confirm_lot(plot)
-    footprint = [tr.to_world({'position': [60.0, 80.0], 'rotation': 90}, p) for p in _l_local()]
+    footprint = [tr.to_world({'position': [60.0, 80.0], 'rotation': 90}, p) for p in [[1.5 * x, 1.5 * y] for x, y in _l_local()]]
     ts.update_building('house', {'footprint': footprint, 'footprint_from': 'plot'})
     ts.update_building('shed', {'footprint': SHED_FOOTPRINT, 'footprint_from': 'typed'})
     order = [b['id'] for b in ts.place()['buildings']]
@@ -146,14 +144,14 @@ def scenario_place_chain_order():
     lot = tb.start({'part': 'place'}, reader=reader, inline=True)
 
     # The lot ran inline to done and its successor was created and run inline,
-    # up to the house's outline pause, before start returned.
+    # up to the house's fit pause, before start returned.
     st = tb.status(lot)
     check(st['state'] == 'done' and st['part'] == 'lot', ('the first build is the lot', st['part'], _trouble(st)))
     house = st['next']
     check(isinstance(house, str) and house != lot, ('the lot names its successor', st['next']))
     check(_saved_builds() == sorted([lot, house]), ('two builds so far', _saved_builds()))
     st = tb.status(house)
-    check(st['state'] == 'paused' and st['part'] == 'house' and st['pause']['step'] == 'outline:L1',
+    check(st['state'] == 'paused' and st['part'] == 'house' and st['pause']['step'] == 'fit',
           ('an inline chain runs its successor inline, to its first pause', _trouble(st), st['part']))
     check(st['next'] is None, ('a paused build has no successor yet', st['next']))
     check(reader.threads and set(reader.threads) == {main}, ('every read of an inline chain is inline', reader.threads))
@@ -220,7 +218,7 @@ def scenario_chain_stops_with_build():
     reader = ThreadReader()
     lot = tb.start({'part': 'place'}, reader=reader, inline=True)
     house = tb.status(lot)['next']
-    check(house and tb.status(house)['state'] == 'paused', ('the house pauses at its outline', house))
+    check(house and tb.status(house)['state'] == 'paused', ('the house pauses at fit', house))
     check(_saved_builds() == sorted([lot, house]) and tb.status(house)['next'] is None,
           ('no shed build while the house is paused', _saved_builds()))
     tb.stop(house)
@@ -229,7 +227,7 @@ def scenario_chain_stops_with_build():
           ('a stopped build never starts its next', _saved_builds()))
     tb.resume(house, inline=True)
     st = tb.status(house)
-    check(st['state'] == 'paused' and st['pause']['step'] == 'outline:L1', _trouble(st))
+    check(st['state'] == 'paused' and st['pause']['step'] == 'fit', _trouble(st))
     check(_saved_builds() == sorted([lot, house]), ('still nothing after a resume to the pause', _saved_builds()))
     st = _accept_all(house)
     check(st['state'] == 'done', _trouble(st))
@@ -241,7 +239,7 @@ def scenario_chain_stops_with_build():
 
 def scenario_failed_build_never_chains():
     _place()
-    reader = ThreadReader(fail_at='rooms:L1')
+    reader = ThreadReader(fail_at='draft_rooms')
     lot = tb.start({'part': 'place'}, reader=reader, inline=True)
     house = tb.status(lot)['next']
     st = _accept_all(house)
@@ -259,7 +257,7 @@ def scenario_chain_stops_on_start_over():
     check(house and tb.status(house)['state'] == 'paused', house)
     ts.start_over()
     count = len(tb._BUILDS)
-    for attempt in (lambda: tb.answer(house, 'outline:L1', {'accept': True}),
+    for attempt in (lambda: tb.answer(house, 'fit', {'accept': True}),
                     lambda: tb.resume(house, inline=True)):
         try:
             attempt()
@@ -273,19 +271,14 @@ def scenario_chain_stops_on_start_over():
     # A stale worker: the house's read is in flight when the build is stopped
     # and the house started over. When the read returns, nothing follows.
     _place()
-    reader = ThreadReader(block_at='rooms:L1')
+    reader = ThreadReader(block_at='draft_rooms')
     lot = tb.start({'part': 'place'}, reader=reader, inline=False)
     deadline = time.time() + 20
     while time.time() < deadline and not tb.status(lot).get('next'):
         time.sleep(0.05)
     house = tb.status(lot).get('next')
     check(house, ('the lot hands on to the house', _trouble(tb.status(lot))))
-    deadline = time.time() + 20
-    while time.time() < deadline and tb.status(house)['state'] != 'paused':
-        time.sleep(0.05)
-    check(tb.status(house)['state'] == 'paused', _trouble(tb.status(house)))
-    tb.answer(house, 'outline:L1', {'accept': True})
-    check(reader.blocked.wait(20), 'the house reads its rooms')
+    check(reader.blocked.wait(20), 'the house reads its rooms before fit')
     tb.stop(house)
     ts.start_over()
     count = len(tb._BUILDS)
@@ -326,10 +319,10 @@ def scenario_reread_finished_predecessor_creates_nothing():
     check(st['next'] == house and _state_file(lot)['next'] == house, ('next is recorded once', st['next'], house))
     check(_saved_builds() == before, ('a reread of a finished build creates nothing', _saved_builds(), before))
     check(len(_events(lot, 'next')) == 1, _events(lot, 'next'))
-    # Rereading the house's outline pauses it; answering runs it to done again.
-    tb.reread(house, 'outline:L1', reader=ThreadReader(), inline=True)
+    # Rereading the house's fit pauses it; answering runs it to done again.
+    tb.reread(house, 'fit', reader=ThreadReader(), inline=True)
     st = tb.status(house)
-    check(st['state'] == 'paused' and st['pause']['step'] == 'outline:L1', _trouble(st))
+    check(st['state'] == 'paused' and st['pause']['step'] == 'fit', _trouble(st))
     st = _accept_all(house)
     check(st['state'] == 'done', _trouble(st))
     check(st['next'] == shed and _state_file(house)['next'] == shed, ('next is recorded once', st['next'], shed))
@@ -353,7 +346,7 @@ def scenario_recover_reconciles_crash_window():
     check(_saved_builds() == sorted([lot, house]), _saved_builds())
 
     # A reread of the done house before any recover still creates nothing.
-    tb.reread(house, 'rooms:L1', reader=ThreadReader(), inline=True)
+    tb.reread(house, 'draft_rooms', reader=ThreadReader(), inline=True)
     check(tb.status(house)['state'] == 'done', _trouble(tb.status(house)))
     check(_saved_builds() == sorted([lot, house]) and tb.status(house)['next'] is None,
           ('reread never creates a successor, even in the crash window', _saved_builds()))

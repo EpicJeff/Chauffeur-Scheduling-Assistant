@@ -301,6 +301,12 @@ def _openings(building, walls, sections, notes):
             opening['sill'] = 0
             notes.append(f'Opening {index}: defaulted missing sill to 0 feet.')
         reason = _opening_error(opening, walls, sections)
+        if (reason in ('outside the wall span', 'head is above the wall height')
+                and opening.get('state') == 'ghost' and opening.get('why')
+                and opening.get('src', {}).get('step') == 'draft'):
+            # Draft checks retain readable, referenced failures for hand repair.
+            # They are ghosts and never cut a settled wall.
+            reason = None
         if reason:
             name = (opening.get('wall', opening.get('gable', index))
                     if isinstance(opening, dict) else index)

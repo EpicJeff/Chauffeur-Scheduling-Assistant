@@ -74,6 +74,20 @@ class _Crash(BaseException):
     """Stands in for the add-on process dying mid-build."""
 
 
+def draft_answer(outline):
+    """The same fake first-floor outline expressed directly in building feet."""
+    scale = 70 / .5
+    ox, oy = min(p[0] for p in outline), max(p[1] for p in outline)
+    polygon = [[(p[0] - ox) * scale, (oy - p[1]) * scale * 3300 / 5100] for p in outline]
+    return {'building': {'levels': [{'id': 'L1', 'name': 'Main floor', 'elevation': 0,
+                                     'ceiling': 9, 'outline': polygon}],
+                         'walls': [{'id': f'w{i}', 'level': 'L1', 'from': a, 'to': b,
+                                    'height': 9, 'thickness': .5, 'exterior': True}
+                                   for i, (a, b) in enumerate(zip(polygon, polygon[1:] + polygon[:1]))],
+                         'openings': [], 'rooms': [], 'roof': {'sections': [], 'extensions': []},
+                         'stairs': [], 'porch': None}}
+
+
 class Reader:
     """Stands in for twin_reads.read: answers each step kind in its real shape."""
 
@@ -107,6 +121,10 @@ class Reader:
         if step == self.error_once_at:
             self.error_once_at = None
             return {'error': 'The model did not answer in 120 s.'}
+        if kind == 'draft':
+            return draft_answer(L1)
+        if kind == 'draft_rooms':
+            return {'rooms': [], 'walls': []}
         if kind == 'outline':
             self.outline_reads += 1
             if self.shift_wings_after_first and self.outline_reads > 1:

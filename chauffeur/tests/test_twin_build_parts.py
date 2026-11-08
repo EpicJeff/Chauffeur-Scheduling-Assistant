@@ -7,8 +7,8 @@ its footprint.
   from another page, A8) it reads the plot, pauses at lot_placement and saves
   a confirmed placement and the read into the place; with no plot page it is
   refused. A lot build never adds a building.
-- start({'part': <building id>}) runs slice 1's floor, roof, pitch and
-  finishes steps with that building's tagged photos, then fit when there is a
+- start({'part': <building id>}) runs draft, draft_rooms and optional
+  finishes with that building's tagged photos, then fit when there is a
   lot, then compose. fit settles alone on a good match with the footprint and
   pauses otherwise; settling never moves a building a person placed.
 - a building part's finishes land on the building (A9), each building keeping
@@ -71,6 +71,9 @@ class PartReader(Reader):
         self.sidings = sidings or {}
 
     def __call__(self, kind, images, context, *, run, step):
+        if kind == 'draft' and self.l_outline:
+            super().__call__(kind, images, context, run=run, step=step)
+            return engine_tests.draft_answer(L_UV)
         if kind == 'outline' and self.l_outline:
             self.calls.append({'kind': kind, 'step': step, 'context': copy.deepcopy(context), 'images': len(images)})
             return {'dimension': DIM, 'outline': copy.deepcopy(L_UV), 'confidence': 0.8, 'why': '',
@@ -346,10 +349,10 @@ def scenario_building_part_steps():
     st = _accept_all(b)
     check(st['state'] == 'done', (st['state'], [e for e in st['events'] if e['type'] in ('error', 'question')][-3:]))
     kinds = _kinds(b)
-    check(kinds == ['outline', 'walls', 'walls', 'openings', 'rooms', 'roof', 'pitch', 'finishes', 'fit', 'compose'],
+    check(kinds == ['draft', 'draft_rooms', 'finishes', 'fit', 'compose'],
           kinds)
     check('plot' not in kinds and 'site' not in kinds, kinds)
-    for kind in ('pitch', 'finishes'):
+    for kind in ('finishes',):
         call = next(c for c in reader.calls if c['kind'] == kind)
         check(call['images'] == 1, (f'{kind} sees only the photo tagged to the house', call['images']))
     check('plot' not in _read_kinds(reader) and 'site' not in _read_kinds(reader), _read_kinds(reader))
@@ -366,7 +369,7 @@ def scenario_fit_settles_on_matching_footprint():
     b = tb.start({'part': 'house'}, reader=PartReader(l_outline=True), inline=True)
     seen, st = _pause_kinds(b)
     check(st['state'] == 'done', (st['state'], [e for e in st['events'] if e['type'] in ('error', 'question')][-3:]))
-    check(seen == ['outline'], ('only the outline asks; the fit settles alone', seen))
+    check(seen == [], ('the draft and matching fit settle without asking', seen))
     check('fit' in _kinds(b), _kinds(b))
     house = _house(ts.current())
     check(_turn_gap(house['rotation'], 90) <= 1, ('turned onto the footprint', house['rotation']))
@@ -591,9 +594,12 @@ def scenario_drawing_build_moved_then_deleted_wall_stays_deleted():
 
 def scenario_part_settle_keeps_pause_time_name_and_kind():
     _house_place(roof=False, plot=False, photos=False)
-    b = tb.start({'part': 'house'}, reader=Reader(), inline=True)
-    check(tb.status(b)['state'] == 'paused', tb.status(b))
+    reader = Reader(checkpoint_at='draft')
+    b = tb.start({'part': 'house'}, reader=reader, inline=True)
+    check(tb.status(b)['state'] == 'checkpoint', tb.status(b))
     ts.update_building('house', {'name': 'Farmhouse', 'kind': 'other'})
+    reader.checkpoint_at = None
+    tb.resume(b, reader=reader, inline=True)
     check(_accept_all(b)['state'] == 'done', tb.status(b))
     house = _house(ts.current())
     check((house['name'], house['kind']) == ('Farmhouse', 'other'), house)
