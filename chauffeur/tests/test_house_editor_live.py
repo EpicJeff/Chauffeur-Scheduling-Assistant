@@ -10,13 +10,27 @@ Slice 1b-i Task 8 retired the upload card, its Build dropdown and the per-page
 building selector: the scenarios that used them drive Your place (#place-view,
 the DOM contract in that task's brief) and keep what the person sees.
 
-Run from chauffeur/:  python tests/test_house_editor_live.py
+The whole-building draft (spec docs/superpowers/specs/2026-11-08-house-editor-
+whole-building-draft-design.md sections 1, 5 and 6; plan Tasks 8 and 11): a
+Build from Your place reads a drawn building in one `draft` step. A quick
+outline read on a side thread draws the first ghost, a log line names the read
+and its elapsed time at least every 15 s, and the whole building then settles
+at once. The fake reader answers `draft` with the recorded main-house spike
+answer (its L2 marked as a half storey, page anchors added) and can hold that
+read open or fail its first floor once. The crop chain's own pauses
+(scale_outline, level_registration) are still reachable through the legacy
+build body {building, photos}, which the scenarios after the draft ones drive
+over the API.
+
+Run from chauffeur/:  env -u HA_BASE_URL python tests/test_house_editor_live.py
 """
+import copy
 import json
 import re
 import os
 import sys
 import tempfile
+import threading
 import time
 
 os.environ.setdefault('CHAUFFEUR_DATA_DIR', tempfile.mkdtemp(prefix='chauffeur_house_editor_live_'))
@@ -30,11 +44,90 @@ import test_twin_view_live as p0view  # noqa: E402
 GPU_ARGS = ['--use-angle=gl', '--enable-gpu', '--ignore-gpu-blocklist']
 BANNED = ('mesh', 'extrude', 'gizmo', 'vertex')
 STATE = {}
+SPIKE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures', 'twin_reads', 'recorded', 'claude',
+                     'draft-main-spike-answer.json')
+FIRST_LOOK = 'First look at the outline while the drawings are read.'
+FAILED_WHY = 'The drawings could not be read as one building.'
+HEARTBEAT_JS = r"/Reading the Main house drawings as one set, \d+:\d\d so far\./"
+MASTER = (5100, 3300)          # the 17 x 11 inch blank sheets of test_twin_build at 300 dpi
+PAGE_LEVELS = {'Main floor': 'L1', 'Upper floor': 'L2'}
 
 
 def check(cond, msg):
     if not cond:
         raise AssertionError(msg)
+
+
+def _spike_answer():
+    with open(SPIKE, encoding='utf-8') as f:
+        answer = json.load(f)
+    # Task 11: a storey-and-a-half upper floor is still a level with its own floor button.
+    next(level for level in answer['building']['levels'] if level['id'] == 'L2')['half'] = True
+    return answer
+
+
+def _anchor_uv(point):
+    """One similarity per sheet: 70 ft across half the page width, y up the sheet."""
+    ft_per_px = 70 / (0.5 * MASTER[0])
+    px = 0.25 * MASTER[0] + point[0] / ft_per_px
+    py = 0.8 * MASTER[1] - (point[1] + 1) / ft_per_px
+    return [px / MASTER[0], py / MASTER[1]]
+
+
+class LiveReader(engine_tests.Reader):
+    """test_twin_build's fake reader plus the whole-building draft kinds.
+
+    - 'draft' answers the recorded main-house spike answer with L2 a half
+      storey and a pages[] entry per floor page carrying four outline-corner
+      anchors. While `draft_gate` is set to an Event the read stays open until
+      the scenario releases it (the quick outline ghost and the heartbeat
+      happen meanwhile). `fail_first_floor` answers the spike without its
+      first-floor walls that many times, so the build pauses.
+    - 'draft_rooms' answers nothing new; 'outline' and the crop kinds are the
+      engine fake's (a 70' x 65'-4" first floor).
+    - Keyword options the real twin_reads.read takes (checkpoint_checked) are
+      accepted and ignored.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.draft_gate = None
+        self.fail_first_floor = 0
+
+    def _draft(self, context):
+        answer = _spike_answer()
+        if self.fail_first_floor:
+            self.fail_first_floor -= 1
+            building = answer['building']
+            building['walls'] = [w for w in building['walls'] if w['level'] != 'L1']
+            kept = {w['id'] for w in building['walls']}
+            building['openings'] = [o for o in building['openings'] if 'wall' not in o or o['wall'] in kept]
+            return answer
+        outlines = {level['id']: level['outline'] for level in answer['building']['levels']}
+        floors = [p for p in context.get('pages') or [] if p.get('role') == 'floor']
+        pages = []
+        for index, entry in enumerate(floors):
+            level = PAGE_LEVELS.get(entry.get('level_name')) or f'L{index + 1}'
+            outline = outlines.get(level)
+            if not outline:
+                continue
+            corners = [outline[k * len(outline) // 4] for k in range(4)]
+            pages.append({'image': entry['image'], 'level': level,
+                          'anchors': [{'px': _anchor_uv(p), 'at': list(p)} for p in corners]})
+        answer['pages'] = pages
+        return answer
+
+    def __call__(self, kind, images, context, *, run, step, **_options):
+        if kind == 'draft':
+            self.calls.append({'kind': kind, 'step': step, 'context': copy.deepcopy(context), 'images': len(images)})
+            gate = self.draft_gate
+            if gate is not None:
+                gate.wait(90)
+            return self._draft(context)
+        if kind == 'draft_rooms':
+            self.calls.append({'kind': kind, 'step': step, 'context': copy.deepcopy(context), 'images': len(images)})
+            return {'rooms': [], 'walls': []}
+        return super().__call__(kind, images, context, run=run, step=step)
 
 
 def _seed():
@@ -47,7 +140,7 @@ def _seed():
     engine_tests._fresh()
     _, _, photo = engine_tests._sources()
     STATE['photo'] = photo
-    STATE['reader'] = engine_tests.Reader()
+    STATE['reader'] = LiveReader()
     twin_reads.read = STATE['reader']
 
 
@@ -117,6 +210,41 @@ def _unexpected(errors):
     return [e for e in errors if not e.startswith('Failed to load resource')]
 
 
+def _wait_build(page, predicate_js, timeout=30000):
+    """Wait until the editor's followed build satisfies predicate_js(b); return it."""
+    page.wait_for_function(f"() => {{ const b = window.__editor.build(); return !!(b && ({predicate_js})); }}",
+                           timeout=timeout)
+    return page.evaluate('window.__editor.build()')
+
+
+def _first_look_events(page, build_id):
+    events = _api(page, 'GET', f'build/{build_id}')['body'].get('events') or []
+    return [e for e in events if e.get('type') == 'ghost' and e.get('why') == FIRST_LOOK]
+
+
+def _house_of(plan, bid='house'):
+    return next(b for b in plan['buildings'] if b['id'] == bid)
+
+
+def _drawn_walls_check(page, level='L1', step='draft'):
+    house = _house_of(_plan(page))
+    walls = [w for w in house['walls'] if w['level'] == level and w.get('state') != 'ghost'
+             and (step is None or (w.get('src') or {}).get('step') == step)]
+    drawn = page.evaluate("() => window.__twin.pieceIds('house')")
+    check(walls and all(w['id'] in drawn for w in walls),
+          (f'every settled {level} wall is drawn', len(walls), [w['id'] for w in walls if w['id'] not in drawn][:10]))
+    return house
+
+
+def _plain_log_check(page):
+    """Ghost reasons are summarised once per reason, in words, never piece ids."""
+    text = page.inner_text('#editor-agent')
+    rows = [line for line in text.splitlines() if 'checking:' in line]
+    check(len(rows) == len(set(rows)), ('repeated reasons are summarised, not one line per piece', rows))
+    check('draft-outline' not in text and 'draft_rooms' not in text, ('plain words, no ids', text[-600:]))
+    return text
+
+
 def scenario_signed_out_sees_the_sign_in():
     s = _serve()
     if s is None:
@@ -146,6 +274,75 @@ def scenario_shell_matches_the_mockup_regions():
 
 
 def scenario_build_streams_ghosts_and_log_lines():
+    # The whole-building draft (spec sections 1 and 6; plan Tasks 8 and 11).
+    # The draft read is held open so the quick outline ghost and the
+    # heartbeat can be seen before the whole building settles at once.
+    s = _serve()
+    if s is None:
+        return
+    reader = STATE['reader']
+    gate = threading.Event()
+    reader.draft_gate = gate
+    try:
+        with s.browser(launch_args=GPU_ARGS) as page:
+            page.set_viewport_size({'width': 1600, 'height': 900})
+            _signed_in(page)
+            _open(page, s)
+            _open_place(page)
+            start = time.time()
+            page.click('[data-place-build="house"]')
+            _paid_confirm(page)
+            st = _wait_build(page, "b.state === 'running'", timeout=20000)
+            step = next((x for x in st['steps'] if x['status'] == 'running'), None)
+            check(step and step['id'] == 'draft' and step['label'] == 'Reading the drawings',
+                  ('a drawn building is read as one set', st['steps']))
+            check([x['id'] for x in st['steps']][:2] == ['draft', 'draft_rooms'],
+                  ('the crop chain is gone for a drawn building', [x['id'] for x in st['steps']]))
+            # The engine half of the first ghost: the side outline read lands
+            # while the draft is still open.
+            deadline = start + 30
+            while time.time() < deadline and not _first_look_events(page, st['id']):
+                page.wait_for_timeout(300)
+            check(_first_look_events(page, st['id']),
+                  'the quick outline read sends its first-look ghost while the drawings are read')
+            # The person's half: the editor draws it, within 30 s of Build.
+            try:
+                page.wait_for_function('window.__editor.ghostCount() > 0',
+                                       timeout=max(1000, int((deadline - time.time()) * 1000)))
+            except Exception:
+                raise AssertionError('the first-look ghost reached the build events but the editor drew nothing '
+                                     '(previewPlan draws only ghost events that carry an outline)')
+            check(not page.locator('#place-view').is_visible(), 'Your place closes and the editor follows the build')
+            check(time.time() - start < 30, 'first ghost within 30 s')
+            check(page.locator('[data-place-build="house"]').is_disabled() and page.locator('#place-build').is_disabled(),
+                  'Build is off while a build is running')
+            page.wait_for_function(
+                "(why) => document.querySelector('#editor-agent').innerText.includes(why.replace(/\\.$/, ''))",
+                arg=FIRST_LOOK, timeout=10000)
+            # Log lines stream while the one long read runs: one at least every 15 s.
+            page.wait_for_function(f"() => {HEARTBEAT_JS}.test(document.querySelector('#editor-agent').innerText)",
+                                   timeout=25000)
+            check(time.time() - start < 32, ('the first heartbeat comes about 15 s into the read', time.time() - start))
+            check(page.evaluate('window.__editor.build().state') == 'running', 'still reading')
+            gate.set()
+            st = _wait_build(page, "b.state === 'done'", timeout=30000)
+            page.wait_for_timeout(1500)
+            house = _drawn_walls_check(page, 'L1')
+            check(FIRST_LOOK not in json.dumps(_plan(page)), 'a first look never settles into the plan')
+            check({'L1', 'L2'} <= {level['id'] for level in house['levels']}, ('the whole building at once', house['levels']))
+            check(any(w['level'] == 'L2' for w in house['walls']), 'the upper floor settles with the first')
+            _plain_log_check(page)
+            page.screenshot(path=os.path.join(tempfile.gettempdir(), 'house_editor_building.png'))
+    finally:
+        gate.set()
+        reader.draft_gate = None
+    check(not _unexpected(s.errors()), s.errors())
+
+
+def scenario_a_half_storey_has_its_floor_button_and_every_floor_lines_up():
+    # Plan Task 11: the floor buttons show the half level the draft read.
+    # Plan Task 8: page anchors register each drawn floor's sheet, so the
+    # Sheet tool shows a drawing under the upper floor too.
     s = _serve()
     if s is None:
         return
@@ -153,17 +350,98 @@ def scenario_build_streams_ghosts_and_log_lines():
         page.set_viewport_size({'width': 1600, 'height': 900})
         _signed_in(page)
         _open(page, s)
-        _open_place(page)
-        start = time.time()
-        page.click('[data-place-build="house"]')
-        _paid_confirm(page)
-        page.wait_for_function('window.__editor.ghostCount() > 0', timeout=30000)
-        check(not page.locator('#place-view').is_visible(), 'Your place closes and the editor follows the build')
-        check(time.time() - start < 30, 'first ghost within 30 s')
-        st = page.evaluate('window.__editor.build()')
-        check(st and st['state'] == 'paused' and st['pause']['kind'] == 'scale_outline', st)
+        upper = next(level for level in _house_of(_plan(page))['levels'] if level['id'] == 'L2')
+        check(upper.get('half') is True, ('the upper floor stays a half storey', upper))
+        page.wait_for_selector('#editor-floors [data-floor="house:L2"]', state='visible', timeout=20000)
+        label = page.inner_text('#editor-floors [data-floor="house:L2"]').strip()
+        check(label == upper['name'] and label, ('the half storey has a floor button with its name', label, upper['name']))
+        page.click('#editor-floors [data-floor="house:L2"]')
+        vis = page.evaluate('window.__twin.levelVisibility()')
+        check(vis.get('house:L2') and not vis.get('house:L1', False), ('the half storey shows on its own', vis))
+        regs = _api(page, 'GET', 'sheets')['body'].get('registrations') or []
+        check(any(r['level'] == 'L2' for r in regs), ('the upper floor sheet is lined up from its anchors', regs))
+        page.click('#rail-sheet')
+        page.wait_for_function('() => window.__twin.sheetInfo() && window.__twin.sheetInfo().ready', timeout=20000)
+        check('not have a lined-up drawing' not in page.inner_text('#editor-agent'), 'no "not lined up" note for L2')
+        page.screenshot(path=os.path.join(tempfile.gettempdir(), 'house_editor_half_storey.png'))
+    check(not _unexpected(s.errors()), s.errors())
+
+
+def scenario_a_draft_that_cannot_be_read_pauses_in_plain_words():
+    # The draft flow's only pause (spec section 5): the whole first floor
+    # fails, the card says so in one sentence, offers Try again instead of
+    # Looks right, and a paused build can be stopped.
+    s = _serve()
+    if s is None:
+        return
+    reader = STATE['reader']
+    reader.fail_first_floor = 1
+    try:
+        with s.browser(launch_args=GPU_ARGS) as page:
+            page.set_viewport_size({'width': 1600, 'height': 900})
+            _signed_in(page)
+            _open(page, s)
+            _open_place(page)
+            page.click('[data-place-build="house"]')
+            _paid_confirm(page)
+            st = _wait_build(page, "b.state === 'paused' && b.pause && b.pause.kind === 'draft'", timeout=30000)
+            check(st['pause']['step'] == 'draft' and st['pause']['why'] == FAILED_WHY, st['pause'])
+            page.wait_for_selector('#pause-card', state='visible', timeout=10000)
+            check(not page.locator('#place-view').is_visible(), 'Your place yields to the question')
+            reason = page.inner_text('#pause-card .pause-why').strip()
+            check(reason.startswith(FAILED_WHY) and reason.endswith('.'),
+                  ('the card says what went wrong in a sentence', reason))
+            card = page.inner_text('#pause-card')
+            check(not any(w in card.lower() for w in BANNED) and not re.search(r"draft_rooms|outline:L\d|\bL\d\b", card),
+                  ('plain words, no step ids', card))
+            for sel in ('#pause-accept', '#pause-pin', '#pause-drag'):
+                check(not page.locator(sel).is_visible(), (sel, 'nothing to line up when the drawings were not read'))
+            check(page.inner_text('#pause-reread').strip() == 'Try again', page.inner_text('#pause-reread'))
+            check(page.locator('#editor-stop').is_visible(), 'a paused build can be stopped')
+            check(page.locator('[data-place-build="house"]').is_disabled() and page.locator('#place-build').is_disabled(),
+                  'Build is off while a build is paused')
+            page.click('#pause-reread')
+            _paid_confirm(page)
+            _wait_build(page, "b.state === 'done'", timeout=30000)
+            page.wait_for_timeout(1500)
+            _drawn_walls_check(page, 'L1')
+            page.screenshot(path=os.path.join(tempfile.gettempdir(), 'house_editor_draft_pause.png'))
+    finally:
+        reader.fail_first_floor = 0
+    check(not _unexpected(s.errors()), s.errors())
+
+
+def scenario_the_legacy_body_still_pauses_at_the_scale_outline():
+    # The crop chain's first pause moved here from the Build scenario: a
+    # drawn building no longer reads an outline first, but the legacy build
+    # body {building, photos} still runs the crop steps (spec section 1, "My
+    # call"). This leaves that build paused at registration:L2 with the main
+    # floor settled, which the pause scenarios below rely on. The crop chain
+    # starts from a house with nothing drawn, as it did when it was the Build
+    # path: the draft's walls left in place would sit under the crop walls,
+    # and the drag scenarios below would grab whichever one is on top. (A
+    # plan needs one building, so the house keeps only its first floor.)
+    s = _serve()
+    if s is None:
+        return
+    _stop_builds()
+    from services import twin_plan, twin_store
+    plan = copy.deepcopy(twin_store.current())
+    house = _house_of(plan)
+    house.update(levels=[level for level in house['levels'] if level['id'] == 'L1'],
+                 walls=[], openings=[], rooms=[], stairs=[], porch=None, roof={'sections': []})
+    twin_store.push_round(twin_plan.normalize(plan)[0], 'edit')
+    with s.browser(launch_args=GPU_ARGS) as page:
+        page.set_viewport_size({'width': 1600, 'height': 900})
+        _signed_in(page)
+        _open(page, s)
+        r = _api(page, 'POST', 'build', engine_tests._inputs(STATE['photo']))
+        check(r['status'] == 200, r)
+        page.evaluate('(id) => window.__editor.followBuild(id)', r['body']['id'])
+        st = _wait_build(page, "b.state === 'paused'", timeout=30000)
+        check(st['pause']['kind'] == 'scale_outline' and st['pause']['step'] == 'outline:L1', st['pause'])
         page.wait_for_selector('#pause-card', state='visible', timeout=10000)
-        check(not page.locator('#pause-pin').is_visible(), 'no Pin 2 points when nothing fixed exists yet')
+        check(not page.locator('#pause-pin').is_visible(), 'no Pin 2 points at the first outline')
         card = page.inner_text('#pause-card')
         check("70'-0\"" in card and "65'-4\"" in card, ('the card shows what was read', card))
         check(page.locator('#editor-stop').is_visible(), 'a paused build can be stopped')
@@ -178,12 +456,12 @@ def scenario_build_streams_ghosts_and_log_lines():
               'Build is off while a build is paused')
         page.wait_for_timeout(1500)
         plan = _api(page, 'GET', 'state')['body']['plan']
-        walls = [w for w in plan['buildings'][0]['walls'] if w['level'] == 'L1']
+        walls = [w for w in _house_of(plan)['walls'] if w['level'] == 'L1' and w.get('state') != 'ghost']
         drawn = page.evaluate("() => window.__twin.pieceIds('house')")
         check(walls and all(w['id'] in drawn for w in walls), ('every main-floor wall is drawn', len(walls), drawn[:10]))
         lines = page.inner_text('#editor-agent').splitlines()
         check(sum('more than 2 ft' in line for line in lines) <= 2, 'repeated reasons are summarised, not one line per piece')
-        page.screenshot(path=os.path.join(tempfile.gettempdir(), 'house_editor_building.png'))
+        page.screenshot(path=os.path.join(tempfile.gettempdir(), 'house_editor_legacy_pause.png'))
     check(not _unexpected(s.errors()), s.errors())
 
 
@@ -287,8 +565,9 @@ def scenario_empty_state_uploads_and_suggests_roles():
 
 
 # ---- Tasks 14-17: scene tools, plan view, pauses, timeline -----------------
-# These run after scenario_build_streams_ghosts_and_log_lines, which leaves the
-# build paused at registration:L2 with the main floor settled.
+# These run after scenario_the_legacy_body_still_pauses_at_the_scale_outline,
+# which leaves a legacy-body build paused at registration:L2 with the main
+# floor settled (a drawn building's draft build never pauses there).
 
 def _plan(page):
     return _api(page, 'GET', 'state')['body']['plan']
@@ -1037,6 +1316,9 @@ if __name__ == '__main__':
                scenario_shell_matches_the_mockup_regions,
                scenario_checkpoint_asks_to_continue,
                scenario_build_streams_ghosts_and_log_lines,
+               scenario_a_half_storey_has_its_floor_button_and_every_floor_lines_up,
+               scenario_a_draft_that_cannot_be_read_pauses_in_plain_words,
+               scenario_the_legacy_body_still_pauses_at_the_scale_outline,
                scenario_signed_out_message,
                scenario_idle_poll_is_one_minute_and_building_poll_one_second,
                scenario_no_banned_words,
