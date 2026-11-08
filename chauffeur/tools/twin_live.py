@@ -1,4 +1,4 @@
-"""Local, budgeted twin comparisons. Running compare explicitly spends money.
+"""Local, budgeted twin reads. Running compare or record-place spends money.
 
 Offline callers can supply a reader and a per-kind ceiling. No model request
 is made at import time; the build command is reserved for the later slice.
@@ -198,6 +198,108 @@ def compare(pdf_path, budget, models, *, key_dir, out_dir, key_path,
     return rows
 
 
+def record_place(sheets_path, plot_page, photos, budget, models, *, key_dir,
+                 out_dir, reader=None, ceiling=None):
+    """Record three setup reads without publishing or accepting a place.
+
+    Like compare, use local scratch storage and count only ledger entries
+    appended during this invocation. Each saved answer includes its own
+    metered usage and actual model, including answers reporting an error.
+    """
+    if not math.isfinite(budget) or budget < 0:
+        raise ValueError('Budget must be a finite, non-negative dollar amount.')
+    if type(plot_page) is not int or plot_page < 1:
+        raise ValueError('Choose a positive plot page number.')
+    photos = [Path(photo) for photo in photos]
+    if not 1 <= len(photos) <= 4:
+        raise ValueError('Choose one to four photos.')
+    pools, storage, costs, reads, _, store = _local_services()
+    started = len(costs.entries())
+    run = 'record-place:' + uuid.uuid4().hex
+    read = reader or reads.read
+    sheets_path = Path(sheets_path)
+    pdf = sheets_path.read_bytes()
+    rows, secrets = [], []
+
+    def spent_since(index):
+        return math.fsum(entry['usd'] for entry in costs.entries()[index:])
+
+    for model in models:
+        row = {'model': model, 'cost': 0.0, 'errors': []}
+        rows.append(row)
+        model_started = len(costs.entries())
+        try:
+            if model not in PROVIDERS:
+                raise ValueError('Unknown provider; choose gemini, claude or openai.')
+            provider = PROVIDERS[model]
+            secret = (Path(key_dir) / provider['key_file']).read_text(encoding='utf-8').strip()
+            secrets.append(secret)
+            if not secret:
+                raise ValueError('The provider key file is empty.')
+            storage.patch_settings({'llm_provider': provider['llm_provider'],
+                                    provider['setting']: secret, 'model_pool_pro': ''})
+            source = store.save_source('drawing', sheets_path.name, pdf,
+                                       content_type='application/pdf')
+            # Validate the requested plot page before starting any paid reads.
+            plot = store.crop(source, plot_page, [0, 0, 1, 1])
+            photo_images = []
+            for photo in photos:
+                sid = store.save_source('photo', photo.name, photo.read_bytes())
+                photo_images.extend(store.source_images(sid))
+            part = {'id': 'building-1', 'name': 'Building', 'kind': 'other',
+                    'has_drawings': True}
+            parts = [part, {'id': 'lot', 'name': 'Lot', 'kind': 'lot',
+                            'has_drawings': True}]
+            requests = [
+                ('plot', 'plot-place', [{'mime': plot['mime'], 'b64': plot['b64']}],
+                 {'page': plot_page, 'box': plot['box']}),
+                ('photo_parts', 'photo_parts', photo_images, {'parts': parts}),
+                ('sheet_roles', 'sheet_roles-hint', store.source_images(source),
+                 {'part': part, 'parts': parts}),
+            ]
+            destination = Path(out_dir) / model
+            destination.mkdir(parents=True, exist_ok=True)
+            for kind, step, images, context in requests:
+                try:
+                    if ceiling is None:
+                        candidates = pools.models_for('twin', storage.get_settings(), paid=True)
+                        inputs = 1500 + 1600 * len(images) + math.ceil(
+                            len(json.dumps({'step': step, 'context': context})) / 4)
+                        estimate = max(costs.price(candidate, inputs, reads.MAX_OUTPUT[kind])[0]
+                                       for candidate in candidates)
+                    else:
+                        estimate = ceiling(kind)
+                    if not math.isfinite(estimate) or estimate < 0:
+                        raise ValueError('Read ceiling must be finite and non-negative.')
+                    if spent_since(started) + estimate > budget:
+                        row['stopped'] = 'budget'
+                        break
+                    costs.require_clear()
+                    before = len(costs.entries())
+                    answer = read(kind, images, context, run=run, step=step)
+                    usage = costs.entries()[before:]
+                    recorded = {'answer': answer, 'usage': usage,
+                                'model': usage[-1]['model'] if usage else model}
+                    raw = json.dumps(recorded, ensure_ascii=False, indent=2, allow_nan=False)
+                    (destination / f'{step}.json').write_text(
+                        _redact(raw, secrets) + '\n', encoding='utf-8')
+                    if not isinstance(answer, dict):
+                        raise ValueError(f'{kind} returned no answer object.')
+                    if 'error' in answer:
+                        raise ValueError(str(answer['error']))
+                except Exception as exc:
+                    row['errors'].append(_redact(f'{step}: {type(exc).__name__}: {exc}', secrets))
+                    row['error'] = '; '.join(row['errors'])
+        except Exception as exc:
+            error = _redact(f'{type(exc).__name__}: {exc}', secrets)
+            row['errors'].append(error)
+            row['error'] = '; '.join(row['errors'])
+        finally:
+            row['cost'] = spent_since(model_started)
+    print(f'Spent ${spent_since(started):.4f}')
+    return rows
+
+
 def print_table(rows, key_path=None):
     """Print scores and partial-run status without settings or credentials."""
     key = json.loads(Path(key_path or DEFAULT_KEY).read_text(encoding='utf-8'))
@@ -233,6 +335,15 @@ def main(argv=None):
     comparison.add_argument('--out', type=Path, default=DEFAULT_OUT)
     comparison.add_argument('--data-dir', type=Path,
                             help='Storage directory (default: CHAUFFEUR_DATA_DIR or fresh scratch).')
+    recording = commands.add_parser('record-place', help='Record three paid, budgeted setup reads locally.')
+    recording.add_argument('--sheets', required=True, type=Path)
+    recording.add_argument('--plot-page', required=True, type=int)
+    recording.add_argument('--photos', required=True, nargs='+', type=Path)
+    recording.add_argument('--budget', required=True, type=float)
+    recording.add_argument('--models', required=True, help='Comma-separated gemini,claude,openai.')
+    recording.add_argument('--out', type=Path, default=DEFAULT_OUT)
+    recording.add_argument('--data-dir', type=Path,
+                           help='Storage directory (default: CHAUFFEUR_DATA_DIR or fresh scratch).')
     build = commands.add_parser('build', help='Not yet implemented.')
     build.add_argument('--sheets', type=Path)
     build.add_argument('--budget', type=float)
@@ -248,16 +359,24 @@ def main(argv=None):
     try:
         if args.data_dir is not None:
             os.environ['CHAUFFEUR_DATA_DIR'] = str(args.data_dir.resolve())
-        rows = compare(args.sheets, args.budget, models, key_dir=ROOT,
-                       out_dir=args.out, key_path=DEFAULT_KEY)
-        print_table(rows)
+        if args.command == 'record-place':
+            rows = record_place(args.sheets, args.plot_page, args.photos, args.budget,
+                                models, key_dir=ROOT, out_dir=args.out)
+            for row in rows:
+                status = row.get('error') or row.get('stopped') or 'ok'
+                print(f"{row['model']}: ${row['cost']:.4f} {status}")
+        else:
+            rows = compare(args.sheets, args.budget, models, key_dir=ROOT,
+                           out_dir=args.out, key_path=DEFAULT_KEY)
+            print_table(rows)
         from services import twin_cost as costs
         print(f'Local ledger total: ${costs.total():.4f}')
         return 1 if any(row.get('error') for row in rows) else 0
     except Exception as exc:
         # Do not echo arbitrary exception text from an entry point that can
         # handle credentials. Per-model diagnostics above are already scrubbed.
-        print(f'Comparison could not finish ({type(exc).__name__}).', file=sys.stderr)
+        action = 'Recording' if args.command == 'record-place' else 'Comparison'
+        print(f'{action} could not finish ({type(exc).__name__}).', file=sys.stderr)
         return 1
 
 

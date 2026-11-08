@@ -168,6 +168,75 @@ def scenario_the_table_shows_the_key_and_the_default_data_dir_is_scratch():
     check(not data_dir.startswith(os.path.abspath(ROOT)), data_dir)
 
 
+class PlaceReader:
+    """Stands in for twin_reads.read for record-place: every read costs exactly
+    $0.40 on the ledger (100000 input tokens at $4 per million) and echoes the
+    provider key into its answer, as a leaky provider error might."""
+
+    def __init__(self, secret):
+        self.calls, self.secret = [], secret
+
+    def __call__(self, kind, images, context, *, run, step):
+        from services import twin_cost
+        self.calls.append({'kind': kind, 'images': len(images), 'context': context})
+        twin_cost.record(f'step:{kind}', [{'model': 'anthropic:claude-opus-5-5', 'input_tokens': 100000,
+                                            'output_tokens': 0}], run)
+        with open(os.path.join(FIXTURES, f'{kind}.json'), encoding='utf-8') as f:
+            answer = json.load(f)
+        answer['why'] = 'echoed ' + self.secret
+        return answer
+
+
+def _jpgs(count=2):
+    from PIL import Image
+    d = tempfile.mkdtemp(prefix='twin_live_photos_')
+    paths = []
+    for i in range(count):
+        path = os.path.join(d, f'p{i}.jpg')
+        Image.new('RGB', (64, 48), (120, 140, 160)).save(path, format='JPEG')
+        paths.append(path)
+    return paths
+
+
+def scenario_record_place_budget():
+    """record_place(sheets, plot_page, photos, budget, models, *, key_dir, out_dir, reader, ceiling)
+    makes the plot read, the photo_parts read, then the sheet_roles read, stops before
+    any read whose estimate would pass the budget, writes {answer, usage, model} files
+    under <out>/<model>/ (plot-place.json, photo_parts.json, sheet_roles-hint.json),
+    redacts keys, prints the spend, and returns one row per model like compare."""
+    import re
+    tool = _tool()
+    check(hasattr(tool, 'record_place'), 'tools/twin_live.py has no record_place (the record-place subcommand)')
+    keys = _keys()
+    secret = 'sk-SECRET-claude_api_key.txt'
+    reader = PlaceReader(secret)
+    out = tempfile.mkdtemp(prefix='twin_live_place_out_')
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        rows = tool.record_place(_pdf(3), 2, _jpgs(2), 1.0, ['claude'], key_dir=keys, out_dir=out,
+                                 reader=reader, ceiling=lambda kind: 0.40)
+    kinds = [c['kind'] for c in reader.calls]
+    check(kinds == ['plot', 'photo_parts'], ('two reads, the third refused', kinds))
+    check(len(rows) == 1 and rows[0]['model'] == 'claude' and rows[0].get('stopped') == 'budget', rows)
+    check(abs(rows[0]['cost'] - 0.80) < 0.005, rows[0])
+    check(reader.calls[0]['images'] == 1 and reader.calls[1]['images'] == 2, reader.calls)
+    destination = os.path.join(out, 'claude')
+    check(sorted(os.listdir(destination)) == ['photo_parts.json', 'plot-place.json'], os.listdir(destination))
+    texts = []
+    for name in ('plot-place.json', 'photo_parts.json'):
+        with open(os.path.join(destination, name), encoding='utf-8') as f:
+            text = f.read()
+        texts.append(text)
+        saved = json.loads(text)
+        check(set(saved) == {'answer', 'usage', 'model'}, (name, sorted(saved)))
+        check(isinstance(saved['answer'], dict) and saved['usage'] and saved['model'], (name, saved['model']))
+    for text in texts:
+        check('SECRET' not in text and not re.search(r'\bsk-|sk-ant-|AIza', text), 'a key was written to a fixture')
+    shown = printed.getvalue()
+    check('spent' in shown.lower() and '0.8' in shown, ('the printed spend is reported', shown))
+    check('SECRET' not in shown, 'keys never printed')
+
+
 if __name__ == '__main__':
     for fn in (scenario_providers_and_reads_are_pinned,
                scenario_a_tiny_budget_makes_no_request,
@@ -175,6 +244,7 @@ if __name__ == '__main__':
                scenario_the_budget_counts_what_this_run_spent,
                scenario_a_perfect_outline_scores_zero,
                scenario_one_wing_still_reads_walls_and_roof,
-               scenario_the_table_shows_the_key_and_the_default_data_dir_is_scratch):
+               scenario_the_table_shows_the_key_and_the_default_data_dir_is_scratch,
+               scenario_record_place_budget):
         fn()
         print('  ok ', fn.__name__)
