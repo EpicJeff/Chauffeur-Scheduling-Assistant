@@ -62,6 +62,7 @@ The spike prompts, answers and renders are in the session scratchpad, in `spike_
 ## Goals
 
 - A building with drawings is built from **one whole-building draft read**. That read answers in feet from the printed dimensions, in one frame for every level.
+- **Joints come first.** Walls, floors and roofs meet without gaps or poke-through, even where that means moving a piece a few inches from its measured place (section 6a).
 - Both of this household's buildings come out on the first build:
   - recognisable from all four sides;
   - matching the photos;
@@ -270,6 +271,51 @@ Each of these is a medium read with 32000 output.
   - *My call:* elapsed time rather than a made-up percentage, because the read gives no progress signal.
 - Buildings in the place chain still build one after another. Within a building, only the quick outline read and the draft overlap (section 1).
 
+### 6a. Joints: everything meets
+
+The user's ruling after seeing the main-house render (2026-11-08): what stands out most is the seams. You can see through to the inside, and walls poke through the roof. Being accurate to the inch matters less than everything meeting up and fitting together like a real building. So joints come first: when a measured position and a clean joint disagree by a small amount, the joint wins.
+
+**Causes found in the code (the main-house draft, `plan5.json`, and `static/twin/twin_generator.js`):**
+
+1. **Ground-floor walls never reach the roof.** They stop at their ceiling height (10 ft), but the one-storey roofs bear at plate 10.9. That leaves a 0.9 ft open band under every one-storey eave. Ground-floor walls are only fitted to the roof when they own a gable end (`clipRoof = gables.length > 0 || w.level !== first.id`). A wall's top is never raised to meet a roof above it: `top = min(height, roof)`.
+2. **Ground-floor walls are never trimmed to the roof either.** Where a lower roof crosses a ground-floor wall (porch roofs, wing junctions), the wall pokes through.
+3. **Walls sit on the wrong side of the line, and their corners are open.** The read puts the outside face of each wall on the line. The generator centres the wall on that line instead, so half of every wall stands outside the house and out from under the roof edge. Each wall is also square-ended, so every outside corner is missing a small square notch.
+4. **Roof sections meet in steps with nothing filling them.** Each section is its own rectangle, and the roof shown is the highest one at each point. Where a section ends and a lower neighbour carries on, the roof drops in a vertical step with open air under it. Only gable triangles get filled.
+5. **The roof has no thickness and no edge trim** except on extensions. At the eaves and rakes you see under it into the house.
+
+**The awning (the pool house window, and the garage bay window on the main house):**
+
+The awning code has been wrong since slice 1, which is why that piece of roof always looks off.
+
+- It slopes the wrong way. A node check of the generator's own maths on the pool-house awning gives 8.90 ft at the wall and 9.56 ft at the outer edge, so the awning rises as it leaves the wall. The read means `eave` as the low outer edge, but the code puts the wall side at `eave`.
+- It can only hang from the front edge (`y0`) of the section it names, never from the wall it actually shelters. On the main house that wall is the garage bay, which projects 1 ft in front of the wall line. So the awning sits on the wrong plane and at the wrong depth.
+
+**The fix, in three layers:**
+
+1. **Snap pass, in Python, after normalize and before anything settles** (`twin_plan`, run on every draft, every fallback read and every edit). It moves pieces by at most the tolerances below and logs what it moved.
+   - Wall ends within 1 ft weld into one shared corner.
+   - Walls within 3 degrees of square or of straight are made square or straight.
+   - Coordinates round to the nearest inch.
+   - An upper floor's walls within 1 ft of a wall line on the floor below snap onto that line.
+   - Each roof section's rect edges snap to the wall lines they bear on, within 1.5 ft.
+   - A section's plate snaps to the top of the walls under its eaves, within 1.5 ft. When two sections meet, a plate within 0.5 ft of the other's is made equal to it.
+   - An awning is attached to the exterior wall under its span, found by geometry, wherever that wall faces. It slopes down and away from that wall.
+2. **Generator rules, so every plan joins, including one a person edited:**
+   - Every exterior wall on every level meets the roof above it. It is raised to the roof's underside where the roof is higher and trimmed where the roof is lower. A floor's ceiling height only sets the interior ceiling.
+   - Walls are drawn inside the outline, with their outside face on the line, and corners are filled so they close.
+   - Wherever the roof steps between sections, the vertical face is filled with siding, the same way gable ends are.
+   - The roof gets thickness, a fascia along the eaves, rake trim along gable edges, and a soffit under each overhang.
+   - An awning hangs from its wall's outside face. Its high edge is at the wall and its low edge is at `eave` (with the plate side clamped below the floor above). Its brackets sit under it on the wall.
+3. **A joint check, in the tests and in the build log.** A geometry pass with no renderer reports each of these:
+   - gaps over 1 inch between a wall top and the roof;
+   - open corners;
+   - roof steps with nothing filling them;
+   - walls above the roof.
+
+   A built house should report none. A remaining one is named in the log in plain words.
+
+The read prompt also gets one line: when a drawing is ambiguous, prefer the reading where walls, floors and roofs meet.
+
 ### 7. Rebuilds and a person's edits
 
 - The draft's pieces go through the existing `_merge_list`, so a person's moved, deleted or added pieces survive a rebuild.
@@ -300,6 +346,10 @@ Old levels map to new levels by elevation order.
 - Page anchors give a registration for every drawn floor, including an upper floor. The Sheet tool's overlay data exists for L2.
 - The outline side read draws a ghost and is dropped when it fails or lands late. The checkpoint sees the combined estimate.
 - An old-pipeline building with a person-moved wall and a person placement keeps both after its first draft build. A poor fit leaves them as they were and logs the line.
+
+- Snap pass: two walls whose ends are 0.8 ft apart weld into one corner; a roof rect 1.2 ft off its wall line snaps onto it; a plate 0.9 ft above its wall top snaps to it; nothing moves more than its tolerance.
+- Joint check on the main-house and pool-house replays: no gap between a wall top and the roof, no open corners, no unfilled roof steps, no wall above the roof.
+- Awning: its edge at the wall is higher than its outer edge, and the outer edge is at `eave`. An awning over a wall that projects in front of its section's edge hangs from that wall. A side-facing awning hangs from its side wall.
 
 **Replay**
 - One recorded draft answer per building of this household, recorded once with the product prompt, within $2.
