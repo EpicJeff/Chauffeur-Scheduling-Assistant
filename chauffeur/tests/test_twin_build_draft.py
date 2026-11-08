@@ -483,6 +483,87 @@ def test_draft_cost_estimate_shown():
           ('the total covers both', build))
 
 
+def test_fallback_resume_keeps_completed_reads():
+    _drawn_house(photos=0)
+    building = spike()['building']
+
+    class StoppedReader(DraftReader):
+        def __call__(self, kind, images, context, *, run, step):
+            if kind != 'draft_level':
+                return super().__call__(kind, images, context, run=run, step=step)
+            scope = context['level']
+            self.calls.append({'kind': kind, 'scope': scope})
+            if scope == 'roof':
+                return {'building': {'roof': building['roof'],
+                                     'openings': [o for o in building['openings'] if 'section' in o]}}
+            walls = [w for w in building['walls'] if w['level'] == scope]
+            wall_ids = {w['id'] for w in walls}
+            # Independent reads commonly reuse w1, w2, ... on each floor.
+            rename = {w['id']: f'w{i + 1}' for i, w in enumerate(walls)}
+            partial = {'levels': [l for l in building['levels'] if l['id'] == scope],
+                       'walls': [{**w, 'id': rename[w['id']]} for w in walls],
+                       'openings': [{**o, 'wall': rename[o['wall']]} for o in building['openings']
+                                    if o.get('wall') in wall_ids]}
+            if scope == 'L1':
+                partial.update(porch=building['porch'], stairs=building['stairs'])
+                tb.stop(run)
+            return {'building': partial}
+
+    reader = StoppedReader(answer={'error': 'Cut off at the output limit.', 'truncated': True})
+    b = tb.start({'part': 'house'}, reader=reader, inline=True)
+    check(tb.status(b)['state'] == 'stopped', tb.status(b)['state'])
+    check([c.get('scope') for c in reader.calls if c['kind'] == 'draft_level'] == ['L1'],
+          'a stop does not start another paid read')
+    tb._forget()
+    tb.recover()
+    tb.resume(b, reader=reader, inline=True)
+    st = tb.status(b)
+    check(st['state'] == 'done', ('resume continues the remaining floors', st['state'], _trouble(st)))
+    check([c.get('scope') for c in reader.calls if c['kind'] == 'draft_level'] == ['L1', 'L2', 'roof'],
+          'completed floors are cached across restart')
+    check(_read_kinds(reader).count('draft') == 1 and _read_kinds(reader).count('outline') == 1,
+          'resume reuses the whole read too')
+    house = _house(ts.current())
+    carriers = {w['id']: w['level'] for w in house['walls']}
+    source_levels = {w['id']: w['level'] for w in building['walls']}
+    for level in ('L1', 'L2'):
+        got = sum(carriers.get(o.get('wall')) == level for o in house['openings'])
+        expected = sum(source_levels.get(o.get('wall')) == level for o in building['openings'])
+        check(got == expected, ('reused wall names keep openings on their own floor', level, got, expected))
+    check(sum(e['type'] == 'log' and e.get('text') == 'The drawings were read one floor at a time.'
+              for e in st['events']) == 1, 'resume does not repeat the fallback sentence')
+
+
+def test_rooms_edges_stay_inside_a_concave_floor():
+    _drawn_house(photos=0)
+    outline = [[0, 0], [30, 0], [30, 30], [20, 30], [20, 10], [10, 10], [10, 30], [0, 30]]
+    building = {'levels': [{'id': 'L1', 'name': 'Main floor', 'elevation': 0,
+                            'ceiling': 9, 'outline': outline}],
+                'walls': [{'id': f'edge{i}', 'level': 'L1', 'from': a, 'to': b,
+                           'height': 9, 'thickness': .5, 'exterior': True}
+                          for i, (a, b) in enumerate(zip(outline, outline[1:] + outline[:1]))],
+                'openings': [], 'rooms': [], 'roof': {'sections': []}, 'stairs': []}
+    rooms = {'rooms': [
+        {'name': 'Inside', 'level': 'L1', 'polygon': [[0, 0], [30, 0], [30, 10], [0, 10]]},
+        {'name': 'Across recess', 'level': 'L1', 'polygon': [[5, 20], [25, 20], [15, 5]]}],
+        'walls': [{'level': 'L1', 'from': [5, y], 'to': [25, y], 'height': 9,
+                   'thickness': .33, 'exterior': False} for y in (10, 20)]}
+    reader = DraftReader(answer={'building': building}, rooms=rooms)
+    b = tb.start({'part': 'house'}, reader=reader, inline=True)
+    st = tb.status(b)
+    check(st['state'] == 'done', (st['state'], _trouble(st)))
+    house = _house(ts.current())
+    found = {r['name']: r for r in house['rooms']}
+    check(found['Inside']['state'] == 'settled', 'the outline boundary is inside')
+    check(found['Across recess']['state'] == 'ghost', 'inside vertices cannot hide an edge across a recess')
+    walls = [w for w in house['walls'] if w.get('src', {}).get('step') == 'draft_rooms']
+    check(len(walls) == 2, walls)
+    check({w['from'][1]: w['state'] for w in walls} == {10: 'settled', 20: 'ghost'}, walls)
+    stray_ids = {found['Across recess']['id']} | {w['id'] for w in walls if w['state'] == 'ghost'}
+    check(stray_ids <= {e.get('piece', {}).get('id') for e in st['events']
+                        if e['type'] == 'ghost' and e.get('step') == 'draft_rooms'}, 'strays emit ghosts')
+
+
 TESTS = (
     test_plan_steps_draft,
     test_draft_settles_all_at_once,
@@ -493,6 +574,8 @@ TESTS = (
     test_legacy_body_steps_unchanged,
     test_shell_unchanged,
     test_draft_cost_estimate_shown,
+    test_fallback_resume_keeps_completed_reads,
+    test_rooms_edges_stay_inside_a_concave_floor,
 )
 
 

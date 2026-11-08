@@ -492,6 +492,69 @@ def test_parse_draft_shape():
     check(frag.get('pages') == _pages([a1, a2]), ('only the page with two anchors is kept', frag.get('pages')))
 
 
+def test_parse_draft_level_shape():
+    building = spike_answer()['building']
+    for level in building['levels']:
+        walls = [w for w in building['walls'] if w['level'] == level['id']]
+        wall_ids = {w['id'] for w in walls}
+        partial = {'levels': [level], 'walls': walls,
+                   'openings': [o for o in building['openings'] if o.get('wall') in wall_ids]}
+        pages = [{'image': 0, 'level': level['id'], 'anchors': [
+            {'px': [.1, .9], 'at': [-2, 0]}, {'px': [.9, .1], 'at': [70, 65]}]}]
+        answer = {'building': partial, 'pages': pages}
+        saved = copy.deepcopy(answer)
+        fragment, problems = twin_reads.parse('draft_level', answer)
+        check(problems == [] and fragment == answer, (fragment, problems))
+        check(answer == saved, 'parsing never mutates the partial answer')
+    # A roof-only reply may reference settled walls outside this reply.
+    roof = {'building': {'roof': building['roof'],
+                         'openings': [o for o in building['openings'] if 'section' in o]}}
+    fragment, problems = twin_reads.parse('draft_level', roof)
+    check(problems == [] and fragment['building'] == roof['building'] and fragment['pages'] == [],
+          (fragment, problems))
+    fragment, problems = twin_reads.parse('draft_level', {'building': building})
+    check(fragment['building']['levels'] == [] and any('only one level' in p for p in problems),
+          ('a whole building cannot masquerade as one floor', problems))
+
+
+def test_parse_draft_rooms_shape():
+    room = {'name': '', 'level': 'L2', 'polygon': [[-2, 14], [12, 14], [12, 24], [-2, 24]]}
+    wall = {'id': 'partition', 'level': 'L2', 'from': [-2, 14], 'to': [12, 14],
+            'height': 8, 'thickness': .33, 'exterior': False}
+    answer = {'rooms': [room], 'walls': [wall]}
+    saved = copy.deepcopy(answer)
+    fragment, problems = twin_reads.parse('draft_rooms', answer)
+    check(problems == [] and fragment == answer and answer == saved, (fragment, problems))
+    for bad in ({**wall, 'exterior': True}, {**wall, 'thickness': float('inf')}):
+        fragment, problems = twin_reads.parse('draft_rooms', {'rooms': [room], 'walls': [bad, wall]})
+        check(problems and fragment == answer, ('invalid walls leave valid rooms and siblings intact',
+                                               fragment, problems))
+
+
+def test_parse_draft_rooms_without_walls():
+    room = {'name': 'Kitchen', 'level': 'L1', 'polygon': [[1, 15], [10, 15], [10, 25], [1, 25]]}
+    for rooms in ([room], []):
+        answer = {'rooms': copy.deepcopy(rooms)}
+        fragment, problems = twin_reads.parse('draft_rooms', answer)
+        check(problems == [] and fragment == {'rooms': rooms, 'walls': []}, (fragment, problems))
+        check('walls' not in answer, 'the optional default does not mutate the reply')
+        check(twin_reads._usable('draft_rooms', fragment, problems), 'a rooms-only answer is usable')
+    # Exercise the actual reader too: it must not turn an omitted walls key into an error.
+    _fresh()
+    with Pool(answer={'rooms': [room]}) as pool:
+        result = twin_reads.read('draft_rooms', [img()], {}, run='r1', step='draft_rooms')
+    check(result == {'rooms': [room], 'walls': []} and len(pool.calls) == 1, result)
+
+
+def test_draft_rooms_prompt_scope():
+    prompt = twin_reads.PROMPTS['draft_rooms']
+    for words in ('PRINTED DIMENSION STRINGS', 'INTERIOR walls', 'knee walls', 'level ids',
+                  'thickness is in feet', 'stop reasoning\nby about 20000'):
+        check(words in prompt, ('rooms instructions retain', words))
+    for words in ('PAGE REGISTRATIONS', 'anchors:', 'checks:', 'GABLE ENDS', 'Exterior walls follow'):
+        check(words not in prompt, ('rooms instructions do not request', words))
+
+
 def test_small_output_cap_skips_to_fallback():
     check(twin_reads.OUTPUT_CAP == {'anthropic': 64000, 'openai': 64000, 'gemini': 65536}, twin_reads.OUTPUT_CAP)
     _fresh()
@@ -548,6 +611,10 @@ if __name__ == '__main__':
                test_draft_truncated_no_retry,
                test_draft_prompt_generic,
                test_parse_draft_shape,
+               test_parse_draft_level_shape,
+               test_parse_draft_rooms_shape,
+               test_parse_draft_rooms_without_walls,
+               test_draft_rooms_prompt_scope,
                test_small_output_cap_skips_to_fallback):
         try:
             fn()

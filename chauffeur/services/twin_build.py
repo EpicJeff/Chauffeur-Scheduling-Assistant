@@ -980,6 +980,51 @@ def _check_draft(house):
     return first_failed
 
 
+def _check_draft_rooms(house, step):
+    """Contain complete edges, including crossings of a concave outline."""
+    outlines = {l['id']: l.get('outline', []) for l in house['levels']}
+
+    def cross(a, b):
+        return a[0] * b[1] - a[1] * b[0]
+
+    def contained(points, outline):
+        if not outline:
+            return False
+        edges = list(zip(outline, outline[1:] + outline[:1]))
+
+        def inside(p):
+            return _inside(p, outline) or any(_nearest(p, a, b)[0] <= 1e-6 for a, b in edges)
+
+        if not all(inside(p) for p in points):
+            return False
+        for a, b in zip(points, points[1:]):
+            direction = [b[i] - a[i] for i in (0, 1)]
+            cuts = [0, 1]
+            for c, d in edges:
+                edge = [d[i] - c[i] for i in (0, 1)]
+                offset = [c[i] - a[i] for i in (0, 1)]
+                denominator = cross(direction, edge)
+                if abs(denominator) <= 1e-12:
+                    continue
+                t, u = cross(offset, edge) / denominator, cross(offset, direction) / denominator
+                if 0 <= t <= 1 and 0 <= u <= 1:
+                    cuts.append(t)
+            cuts.sort()
+            if any(not inside([a[i] + direction[i] * (lo + hi) / 2 for i in (0, 1)])
+                   for lo, hi in zip(cuts, cuts[1:])):
+                return False
+        return True
+
+    for key, noun in (('rooms', 'room'), ('walls', 'interior wall')):
+        for piece in house[key]:
+            if piece.get('src', {}).get('step') != step['id'] or piece.get('src', {}).get('person'):
+                continue
+            points = (piece['polygon'] + piece['polygon'][:1] if key == 'rooms'
+                      else [piece['from'], piece['to']])
+            if not contained(points, outlines.get(piece['level'], [])):
+                piece.update(state='ghost', why=f"This {noun} extends outside its floor's outline.")
+
+
 def _pause_draft(build, step):
     build['pause'] = {'kind': 'draft', 'step': step['id'], 'registration': None,
                       'why': 'The drawings could not be read as one building.'}
@@ -1134,14 +1179,125 @@ def _register_draft(result):
         twin_store.set_registration(sheet['source'], sheet['page'], level, reg)
 
 
+def _draft_preview(build, step, fragment):
+    """Check a fresh read without publishing it or reusing a previous draft."""
+    plan = _base(None, build)
+    _merge_draft(build, step, fragment, _house(plan, build))
+    plan, _ = twin_plan.normalize(plan)
+    house = _house(plan, build)
+    twin_joints.snap(house)
+    failed = _check_draft(house)
+    return house, failed
+
+
+def _cache_result(build, step, ticket, result):
+    with twin_store.LIFECYCLE, _LOCK:
+        # A stop keeps paid replies. Only a new generation or worker discards them.
+        if (build['generation'] != twin_store.generation()
+                or _BUILDS.get(build['id']) is not build
+                or _WORKERS.get(build['id'], {}).get('ticket') != ticket):
+            return None
+        _atomic(_cache_path(build, step), result)
+    return result
+
+
+def _read_draft_levels(build, step, reader, ticket, images, context, progress):
+    fragment = {'building': {'levels': [], 'walls': [], 'openings': [], 'rooms': [],
+                             'roof': {'sections': [], 'extensions': []}, 'porches': [], 'stairs': []},
+                'pages': [], 'checks': {}, 'notes': []}
+    problems, reads = [], progress['level_reads']
+    settled = {'levels': [], 'walls': [], 'openings': []}
+    floors = [page for page in context['pages'] if page['role'] == 'floor']
+    scopes = [(f'L{i + 1}', page.get('level_name')) for i, page in enumerate(floors)] + [('roof', None)]
+    with twin_store.LIFECYCLE, _LOCK:
+        if not _live(build, ticket):
+            return None
+        sentence = 'The drawings were read one floor at a time.'
+        if not any(e['type'] == 'log' and e.get('step') == step['id'] and e.get('text') == sentence
+                   for e in build['events']):
+            _event(build, 'log', step=step['id'], text=sentence)
+            _save(build)
+    for index, (scope, name) in enumerate(scopes):
+        with twin_store.LIFECYCLE, _LOCK:
+            if not _live(build, ticket):
+                return None
+        read_context = {**deepcopy(context), 'level': scope, 'level_name': name,
+                        'settled': deepcopy(settled)}
+        if index < len(reads):
+            part, issues = reads[index]['fragment'], reads[index]['problems']
+        else:
+            twin_cost.require_clear()
+            raw = reader('draft_level', images, read_context, run=build['id'], step=step['id'])
+            if isinstance(raw, dict) and raw.get('error'):
+                raise _ReadError(raw['error'])
+            part, issues = twin_reads.parse('draft_level', raw)
+            if isinstance(raw, dict):
+                issues = list(raw.get('problems') or []) + issues
+            reads.append({'context': read_context, 'fragment': part, 'problems': issues})
+            if _cache_result(build, step, ticket, progress) is None:
+                return None
+        problems.extend(issues)
+        incoming = deepcopy(part.get('building', {}))
+        if scope == 'roof':
+            usable = bool(incoming.get('roof', {}).get('sections')) and not incoming.get('levels')
+        else:
+            usable = (len(incoming.get('levels', [])) == 1
+                      and incoming['levels'][0]['id'] == scope)
+        if not usable:
+            return fragment, problems, reads, True
+        if scope != 'roof':
+            # Separate replies may both call their first wall w1. Keep their
+            # references distinct and never revise a settled lower floor.
+            incoming['walls'] = [w for w in incoming.get('walls', []) if w['level'] == scope]
+            wall_ids = {w['id']: f"{scope}:{w['id']}" for w in incoming['walls'] if 'id' in w}
+            for wall in incoming['walls']:
+                if 'id' in wall:
+                    wall['id'] = wall_ids[wall['id']]
+            incoming['openings'] = [{**o, 'wall': wall_ids[o['wall']]}
+                                    for o in incoming.get('openings', []) if o.get('wall') in wall_ids]
+            for key in ('rooms', 'stairs'):
+                incoming[key] = [p for p in incoming.get(key, []) if p['level'] == scope]
+            incoming.pop('roof', None)
+        else:
+            for key in ('walls', 'rooms', 'stairs'):
+                incoming.pop(key, None)
+            incoming['openings'] = [o for o in incoming.get('openings', []) if 'gable' in o]
+        for key in ('levels', 'walls', 'openings', 'rooms', 'porches', 'stairs'):
+            fragment['building'][key].extend(deepcopy(incoming.get(key, [])))
+        if incoming.get('porch'):
+            fragment['building']['porches'].append(deepcopy(incoming['porch']))
+            fragment['building'].setdefault('porch', deepcopy(incoming['porch']))
+        for key in ('sections', 'extensions'):
+            fragment['building']['roof'][key].extend(deepcopy(incoming.get('roof', {}).get(key, [])))
+        fragment['pages'].extend(deepcopy(part.get('pages', [])))
+        fragment['checks'].update(deepcopy(part.get('checks', {})))
+        fragment['notes'].extend(part.get('notes', []))
+        house, first_failed = _draft_preview(build, step, fragment)
+        level = next((l for l in house['levels'] if l['id'] == scope), None)
+        if first_failed or (scope != 'roof' and (level is None or level.get('state') == 'ghost')):
+            return fragment, problems, reads, True
+        settled = {key: deepcopy([p for p in house[key] if p.get('state') != 'ghost'
+                                  and (key != 'walls' or p.get('exterior'))])
+                   for key in settled}
+        with twin_store.LIFECYCLE, _LOCK:
+            if _live(build, ticket):
+                _spend(build)
+                _save(build)
+    return fragment, problems, reads, False
+
+
 def _obtain(build, step, reader, ticket):
     path = _cache_path(build, step)
+    progress = None
     if path.is_file():
         result = json.loads(path.read_text(encoding='utf-8'))
-        if not result.get('error'):
+        if result.get('fallback_pending'):
+            progress = result
+        elif not result.get('error'):
             return result
-        # Older builds may have cached an unsuccessful reply. Resume retries it.
-        path.unlink()
+        else:
+            # Older builds may have cached an unsuccessful reply. Resume retries it.
+            path.unlink()
     if step['kind'] == 'plot' and build.get('plot_read') and not step.get('reread'):
         stored = build['plot_read']
         result = {'fragment': deepcopy(stored['fragment']), 'crop': deepcopy(stored['crop']),
@@ -1162,31 +1318,44 @@ def _obtain(build, step, reader, ticket):
             with twin_store.LIFECYCLE, _LOCK:
                 step['estimate'] = twin_cost.estimate('draft', len(images)) + twin_cost.estimate('outline', 1)
                 _save(build)
-        twin_cost.require_clear()
-        raw = (_read_draft(build, step, reader, ticket, images, context, sheets) if step['kind'] == 'draft'
-               else reader(step['kind'], images, context, run=build['id'], step=step['id']))
-        if isinstance(raw, dict) and raw.get('error'):
+        if progress is not None:
+            raw = progress['whole_draft']['reply']
+            context, sheets = progress['context'], progress['sheets']
+        else:
+            twin_cost.require_clear()
+            raw = (_read_draft(build, step, reader, ticket, images, context, sheets) if step['kind'] == 'draft'
+                   else reader(step['kind'], images, context, run=build['id'], step=step['id']))
+        truncated = step['kind'] == 'draft' and isinstance(raw, dict) and raw.get('truncated')
+        if isinstance(raw, dict) and raw.get('error') and not truncated:
             raise _ReadError(raw['error'])
-        fragment, problems = twin_reads.parse(step['kind'], raw)
-        if isinstance(raw, dict):
+        fragment, problems = twin_reads.parse(step['kind'], raw) if not truncated else ({}, [])
+        if isinstance(raw, dict) and not truncated:
             problems = list(raw.get('problems') or []) + problems
+        fallback = step['kind'] == 'draft' and (progress is not None or truncated or (
+            fragment.get('building', {}).get('levels') and _draft_preview(build, step, fragment)[1]))
+        if fallback:
+            original = (progress['whole_draft'] if progress is not None else
+                        {'fragment': fragment, 'problems': problems, 'reply': raw})
+            if progress is None:
+                progress = {'fallback_pending': True, 'whole_draft': original, 'level_reads': [],
+                            'context': context, 'sheets': sheets, 'fragment': {}, 'problems': []}
+                if _cache_result(build, step, ticket, progress) is None:
+                    return None
+            outcome = _read_draft_levels(build, step, reader, ticket, images, context, progress)
+            if outcome is None:
+                return None
+            fragment, problems, reads, failed = outcome
         result = {'fragment': fragment, 'problems': problems, 'crop': crop,
-                  'error': raw.get('error') if isinstance(raw, dict) else None}
+                  'error': raw.get('error') if isinstance(raw, dict) and not fallback else None}
+        if fallback:
+            result.update(whole_draft=original, level_reads=reads, fallback_failed=failed)
         if step['kind'] in ('draft', 'draft_rooms'):
             result['context'] = context
         if step['kind'] == 'draft':
             result['sheets'] = sheets
         if step['kind'] == 'walls' and isinstance(raw, dict) and isinstance(raw.get('walls'), list):
             result['wall_count'] = len(raw['walls'])
-    with twin_store.LIFECYCLE, _LOCK:
-        # A stop does not throw away a paid read. Resume waits until this
-        # worker exits; only a new generation or worker can invalidate it.
-        if (build['generation'] != twin_store.generation()
-                or _BUILDS.get(build['id']) is not build
-                or _WORKERS.get(build['id'], {}).get('ticket') != ticket):
-            return None
-        _atomic(path, result)
-    return result
+    return _cache_result(build, step, ticket, result)
 
 
 def _registration(build, step, result, plan):
@@ -1646,8 +1815,10 @@ def _settle(build, step, result, decision=None):
         if target is not None:
             notes.extend(twin_joints.snap(target))
             if kind == 'draft':
-                if _check_draft(target):
+                if _check_draft(target) or result.get('fallback_failed'):
                     _pause_draft(build, step)
+            elif kind == 'draft_rooms':
+                _check_draft_rooms(target, step)
             # fit/compose publish placement and landscaping, rather than reads
             # of this building. Check its joints with its last settled read.
             reads = [s for s in build['steps'] if s['kind'] not in

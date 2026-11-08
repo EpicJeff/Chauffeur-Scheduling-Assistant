@@ -279,9 +279,16 @@ Use printed room labels; leave an unreadable name blank. Trace each room inside
 its level's outline, without overlapping other rooms, covering the enclosed
 floor area. Include interior partitions and knee walls, no exterior walls.
 Do not return or revise levels, exterior openings, roofs, porches or stairs.
-The rules below explain the settled geometry; pages/checks/notes and exterior
-geometry are not requested in this reply.
-''' + _DRAFT_RULES + '''
+Measure in decimal feet from PRINTED DIMENSION STRINGS. Chain partial strings
+against the overall dimensions; use nearby strings to scale only undimensioned
+boundaries. Never use pixel distances when a dimension gives the position.
+Keep the settled building's origin: +x runs right along the front, +y toward
+the rear. Upper floors keep their settled offsets; do not use a local origin.
+Wall height is above its own floor and thickness is in feet. Read ceiling and
+knee-wall heights from sheet notes and sections; use a typical height only
+when none is given. Wall endpoints should meet adjoining walls exactly.
+Rooms use at least three polygon corners, without repeating the first point.
+The walls key is optional when there are no interior walls to return.
 Your whole reply, reasoning included, must fit in 32000 tokens: stop reasoning
 by about 20000 and leave the rest for the JSON.
 ''' + _DRAFT_OUTPUT
@@ -543,8 +550,10 @@ def _parse_draft(kind, answer, v):
         return out
 
     if kind == 'draft_rooms':
-        return v.fields(answer, kind, {'rooms': lambda x, p: v.items(x, p, room),
-                                      'walls': lambda x, p: v.items(x, p, wall)}) or {}
+        out = v.fields(answer, kind, {'rooms': lambda x, p: v.items(x, p, room)},
+                       {'walls': lambda x, p: v.items(x, p, wall)}) or {}
+        out.setdefault('walls', [])
+        return out
 
     building_fields = {
         'levels': lambda x, p: v.items(x, p, level),
