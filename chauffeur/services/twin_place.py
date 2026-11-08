@@ -194,17 +194,24 @@ def to_master(crop, uv) -> list:
             (y0 + uv[1] * (y1 - y0)) * height]
 
 
+def plot_street_edge(crop, fragment, edge=None) -> list:
+    """Use the chosen or read street edge, falling back to the longest edge."""
+    if edge is None:
+        edge = fragment.get('street_edge')
+    if edge is None:
+        lot = [to_master(crop, p) for p in fragment['lot']]
+        i = max(range(len(lot)), key=lambda i: math.dist(lot[i], lot[(i + 1) % len(lot)]))
+        edge = [i, (i + 1) % len(lot)]
+    return edge
+
+
 def plot_registration(crop, fragment, edge=None) -> dict:
     """Place the street on the x axis, with the lot behind it at positive y."""
     dim = fragment['scale']
     scale = twin_register.from_dimension(to_master(crop, dim['a']), to_master(crop, dim['b']), dim['feet'])
     lot = [to_master(crop, p) for p in fragment['lot']]
     explicit_edge = edge is not None
-    if edge is None:
-        edge = fragment.get('street_edge')
-    if edge is None:
-        i = max(range(len(lot)), key=lambda i: math.dist(lot[i], lot[(i + 1) % len(lot)]))
-        edge = [i, (i + 1) % len(lot)]
+    edge = plot_street_edge(crop, fragment, edge)
     if explicit_edge and (not isinstance(edge, list) or len(edge) != 2
             or any(type(i) is not int or not 0 <= i < len(lot) for i in edge)
             or (edge[1] - edge[0]) % len(lot) not in (1, len(lot) - 1)):

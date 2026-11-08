@@ -300,7 +300,34 @@ def scenario_shell_roof_draws():
     check(r['points'] > 0 and r['holes'] == 0 and r['wrong'] == 0, ('the roof has no holes', r))
 
 
+def scenario_shell_moved_then_deleted_wall_stays_deleted():
+    _shed_place()
+
+    def rebuild():
+        b = tb.start({'part': 'shed'}, reader=Reader(), inline=True)
+        check(_accept_all(b)['state'] == 'done', tb.status(b))
+        return _plan_building(ts.current(), 'shed')
+
+    shed = rebuild()
+    _, front = _door(shed)
+    original = {'from': front['from'][:], 'to': front['to'][:]}
+    twin_edit.save({'op': 'move', 'building': 'shed', 'piece': front['id'], 'by': [0, -2]}, 'p1')
+    shed = rebuild()
+    check(len(shed['walls']) == 4, shed['walls'])
+    moved = next(w for w in shed['walls'] if w['id'] == front['id'])
+    current = {'from': moved['from'][:], 'to': moved['to'][:]}
+    twin_edit.save({'op': 'delete', 'building': 'shed', 'piece': front['id']}, 'p1')
+    tombstone = next(t for t in ts.tombstones() if t['kind'] == 'wall')
+    check(tombstone['geometry'] == current and tombstone.get('read_geometry') == original, tombstone)
+    shed = rebuild()
+    check(len(shed['walls']) == 3, shed['walls'])
+    check(not shed['openings'], shed['openings'])
+    check(all(_segment(w['from'], w['to']) not in (
+        _segment(*original.values()), _segment(*current.values())) for w in shed['walls']), shed['walls'])
+
+
 SCENARIOS = (
+    scenario_shell_moved_then_deleted_wall_stays_deleted,
     scenario_shell_geometry,
     scenario_shell_two_storeys_hip_left_door,
     scenario_shell_door_on_longest_facing_wall,

@@ -280,7 +280,33 @@ def scenario_turning_about_the_middle_is_one_edit():
     check(close(world_before, world_after, 1e-6), (world_before, world_after))
 
 
+def scenario_tombstone_matches_current_and_read_geometry():
+    from services import twin_build
+    _seed()
+
+    def remember_read(plan):
+        wall = piece(plan, 'wall-1')
+        wall['read_geometry'] = {k: copy.deepcopy(wall[k]) for k in ('from', 'to')}
+        return plan
+
+    ts.update_current(remember_read, kind='build')
+    original = copy.deepcopy(piece(ts.current(), 'wall-1'))
+    twin_edit.save({'op': 'move', 'piece': 'wall-1', 'by': [0, -4]}, 'p1')
+    current = copy.deepcopy(piece(ts.current(), 'wall-1'))
+    twin_edit.save({'op': 'delete', 'piece': 'wall-1'}, 'p1')
+    tombstone = next(t for t in ts.tombstones() if t['kind'] == 'wall')
+    building = ts.current()['buildings'][0]
+    check(tombstone['geometry'] == {k: current[k] for k in ('from', 'to')}, tombstone)
+    check(tombstone['read_geometry'] == original['read_geometry'], tombstone)
+    check(twin_build._deleted(original, 'wall', building, {}), 'original line stays deleted')
+    check(twin_build._deleted(current, 'wall', building, {}), 'moved line stays deleted')
+    check(not twin_build._deleted(original, 'wall', {**building, 'id': 'another-building'}, {}),
+          'a different building keeps its own wall')
+
+
 if __name__ == '__main__':
+    scenario_tombstone_matches_current_and_read_geometry()
+    print('  ok ', scenario_tombstone_matches_current_and_read_geometry.__name__)
     for fn in (scenario_editable_fields_are_pinned,
                scenario_set_pitch_marks_the_person,
                scenario_unknown_field_or_piece_is_refused,

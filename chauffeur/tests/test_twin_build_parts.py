@@ -491,7 +491,107 @@ def scenario_zero_building_plan():
                                                      'site': {'lot': [[0, 0], [10, 0]]}}), NO_BUILDING)
 
 
+def scenario_finishes_override_only_answered_valid_roles():
+    _house_place(roof=False, plot=False)
+
+    class FinishesReader(Reader):
+        def __call__(self, kind, images, context, *, run, step):
+            if kind == 'finishes':
+                return {'materials': {
+                    'siding': {'id': 'board_and_batten', 'color': '#112233'},
+                    'trim': {'id': 'not_in_the_kit', 'color': '#abcdef'},
+                    'roof': {'id': 'board_and_batten', 'color': 'bad'},
+                    'unknown': {'id': 'board_and_batten', 'color': '#abcdef'}}}
+            return super().__call__(kind, images, context, run=run, step=step)
+
+    b = tb.start({'part': 'house'}, reader=FinishesReader(), inline=True)
+    check(_accept_all(b)['state'] == 'done', tb.status(b))
+    own = _house(ts.current())['materials']
+    check(own == {'siding': {'id': 'board_and_batten', 'color': '#112233'}}, own)
+
+    def change_plan_finish(plan):
+        plan['materials']['trim'] = {'id': 'board_and_batten', 'color': '#abcdef'}
+        return plan
+
+    ts.update_current(change_plan_finish, kind='director')
+    plan = ts.current()
+    merged = {**plan['materials'], **_house(plan)['materials']}
+    check(merged['trim'] == plan['materials']['trim'], merged)
+    check(merged['siding'] == own['siding'], merged)
+
+
+def scenario_lot_build_rejects_self_crossing_plot():
+    _lot_only()
+
+    class CrossingReader(Reader):
+        def __call__(self, kind, images, context, *, run, step):
+            if kind == 'plot':
+                answer = fixture('plot')
+                answer['lot'] = [[.1, .1], [.9, .9], [.1, .9], [.9, .1]]
+                return answer
+            return super().__call__(kind, images, context, run=run, step=step)
+
+    b = tb.start({'part': 'lot'}, reader=CrossingReader(), inline=True)
+    try:
+        st = _accept_all(b)
+    except ValueError as exc:
+        check(str(exc) == 'The plot plan could not be read. Try again, or place the buildings by hand.', str(exc))
+    else:
+        check(st['state'] in ('paused', 'stopped', 'failed'), st)
+        check(any(e.get('text') == 'This drawing could not be read. Check the page and try reading it again.'
+                  for e in st['events']), st['events'])
+    check(not (ts.place()['lot'].get('placement') or {}).get('confirmed'), ts.place()['lot'])
+    check(ts.current() is None, ts.current())
+
+
+def scenario_person_placed_fit_never_pauses():
+    for footprint in (None, [[0, 0], [10, 0], [10, 10], [0, 10]]):
+        _, plot, _ = _house_place(roof=False, photos=False)
+        _confirm_lot(plot)
+        b = tb.start({'part': 'house'}, reader=PartReader(l_outline=True), inline=True)
+        check(_accept_all(b)['state'] == 'done', tb.status(b))
+
+        def place_by_hand(plan):
+            _house(plan).update(position=[5, 6], rotation=30, src={'person': True})
+            return plan
+
+        ts.update_current(place_by_hand, kind='edit')
+        if footprint is not None:
+            ts.update_building('house', {'footprint': footprint, 'footprint_from': 'plot'})
+        b = tb.start({'part': 'house'}, reader=PartReader(l_outline=True), inline=True)
+        seen, st = _pause_kinds(b)
+        check(st['state'] == 'done' and 'fit' not in seen, (st['state'], seen))
+        house = _house(ts.current())
+        check(house['position'] == [5, 6] and house['rotation'] == 30, house)
+
+
+def scenario_drawing_build_moved_then_deleted_wall_stays_deleted():
+    from services import twin_edit
+    _house_place(roof=False, plot=False, photos=False)
+
+    def rebuild():
+        b = tb.start({'part': 'house'}, reader=Reader(), inline=True)
+        check(_accept_all(b)['state'] == 'done', tb.status(b))
+        return _house(ts.current())
+
+    house = rebuild()
+    wall = house['walls'][0]
+    original = copy.deepcopy(wall['read_geometry'])
+    count = len(house['walls'])
+    twin_edit.save({'op': 'move', 'building': 'house', 'piece': wall['id'], 'by': [0, -4]}, 'p1')
+    house = rebuild()
+    check(len(house['walls']) == count, house['walls'])
+    twin_edit.save({'op': 'delete', 'building': 'house', 'piece': wall['id']}, 'p1')
+    house = rebuild()
+    check(len(house['walls']) == count - 1, house['walls'])
+    check(not any(tb._near_geometry(tb._geometry(w, 'wall', house), original, 'wall') for w in house['walls']), house['walls'])
+
+
 SCENARIOS = (
+    scenario_drawing_build_moved_then_deleted_wall_stays_deleted,
+    scenario_finishes_override_only_answered_valid_roles,
+    scenario_lot_build_rejects_self_crossing_plot,
+    scenario_person_placed_fit_never_pauses,
     scenario_lot_build_confirmed_placement,
     scenario_lot_build_reads_plot_when_unconfirmed,
     scenario_lot_without_plot_page_refused,

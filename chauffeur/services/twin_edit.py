@@ -504,6 +504,8 @@ def _tombstone(kind, piece, building):
                                               ('to', piece['x'] + piece['width'] / 2))}
             level = section.get('level')
     return {'kind': kind, 'level': level, 'geometry': geometry,
+            'building': building['id'],
+            'read_geometry': deepcopy(piece.get('read_geometry') or geometry),
             'src': deepcopy(piece.get('src') or {})}
 
 

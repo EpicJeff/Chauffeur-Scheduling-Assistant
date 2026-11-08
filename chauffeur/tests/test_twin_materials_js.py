@@ -120,7 +120,19 @@ def scenario_building_finishes_overlay_the_plan_per_building():
           ('a role the shed does not set keeps the plan finish', seen))
 
 
+def scenario_later_plan_finish_reaches_unanswered_building_role():
+    plan = {'units': 'ft', 'materials': {'floor': {'id': 'wood_floor', 'color': '#445566'}},
+            'buildings': [_building('house', 0, {'siding': {'id': 'board_and_batten', 'color': '#112233'}})],
+            'site': {}}
+    before = build(plan)
+    plan['materials']['floor']['color'] = '#778899'
+    after = build(plan)
+    check(before['house']['floor'] == ['#445566'] and after['house']['floor'] == ['#778899'], (before, after))
+    check(after['house']['siding'] == ['#112233'], after)
+
+
 SCENARIOS = (
+    scenario_later_plan_finish_reaches_unanswered_building_role,
     scenario_plan_finishes_alone_reach_every_building,
     scenario_building_finishes_overlay_the_plan_per_building,
 )

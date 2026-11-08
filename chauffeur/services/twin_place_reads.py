@@ -6,7 +6,6 @@ hold LIFECYCLE then _LOCK so plan refits and place changes cannot interleave.
 import base64
 from copy import deepcopy
 import io
-import math
 import threading
 import uuid
 
@@ -34,6 +33,21 @@ def _check_plot(generation, page):
 def _cost(kind, before):
     return sum(e['usd'] for e in twin_cost.entries()[before:]
                if e['run'] == 'place' and e['stage'] == f'step:{kind}')
+
+
+def plot_read_record(page, crop, fragment, *, registration=None, edge=None, cost=0) -> dict:
+    """Validate a plot and construct its read record without reading or publishing."""
+    try:
+        reg = registration if registration is not None else twin_place.plot_registration(crop, fragment, edge=edge)
+        outline = twin_place.check_footprint([
+            twin_register.apply(reg, twin_place.to_master(crop, p)) for p in fragment['lot']])
+        return deepcopy({'id': uuid.uuid4().hex, **page, 'crop': crop, 'fragment': fragment,
+                         'registration': reg, 'lot': outline,
+                         'street_edge': twin_place.plot_street_edge(crop, fragment, edge),
+                         'suggestions': twin_place.plot_suggestions(fragment, crop, reg),
+                         'matrix': twin_place.sheet_matrix(reg, crop), 'cost': cost})
+    except (ValueError, KeyError, TypeError):
+        raise ValueError(_FAILED) from None
 
 
 def read_plot(*, reader=twin_reads.read) -> dict:
@@ -68,22 +82,7 @@ def read_plot(*, reader=twin_reads.read) -> dict:
             placement = lot.get('placement') or {}
             confirmed_edge = (placement['street_edge'] if placement.get('confirmed')
                               and all(placement.get(k) == page[k] for k in ('source', 'page', 'box')) else None)
-            try:
-                reg = twin_place.plot_registration(crop, fragment, edge=confirmed_edge)
-                lot_outline = [twin_register.apply(reg, twin_place.to_master(crop, p)) for p in fragment['lot']]
-                twin_place.check_footprint(lot_outline)
-                suggestions = twin_place.plot_suggestions(fragment, crop, reg)
-            except (ValueError, KeyError, TypeError):
-                raise ValueError(_FAILED) from None
-            edge = confirmed_edge if confirmed_edge is not None else fragment.get('street_edge')
-            if edge is None:
-                pixels = [twin_place.to_master(crop, p) for p in fragment['lot']]
-                i = max(range(len(pixels)), key=lambda i: math.dist(pixels[i], pixels[(i + 1) % len(pixels)]))
-                edge = [i, (i + 1) % len(pixels)]
-            lot['read'] = {'id': uuid.uuid4().hex, **page, 'crop': crop, 'fragment': fragment,
-                           'registration': reg, 'lot': lot_outline, 'street_edge': edge,
-                           'suggestions': suggestions, 'matrix': twin_place.sheet_matrix(reg, crop),
-                           'cost': _cost('plot', before)}
+            lot['read'] = plot_read_record(page, crop, fragment, edge=confirmed_edge, cost=_cost('plot', before))
             if not (lot.get('placement') or {}).get('confirmed'):
                 lot['placement'] = None
             twin_store.set_lot(lot)

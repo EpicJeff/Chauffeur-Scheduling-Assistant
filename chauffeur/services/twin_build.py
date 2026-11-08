@@ -489,9 +489,12 @@ def _deleted(piece, kind, house, build):
         level = next((w['level'] for w in house['walls'] if w['id'] == piece.get('wall')), None)
     src = piece.get('src', {})
     return any(t['kind'] == kind and t['level'] == level
+               and (t.get('building') is None or t['building'] == (house or {}).get('id'))
                and t['src'].get('sheet') == src.get('sheet')
                and t['src'].get('page') == src.get('page')
-               and _near_geometry(_geometry(piece, kind, house), t['geometry'], kind) for t in twin_store.tombstones())
+               and any(_near_geometry(_geometry(piece, kind, house), geometry, kind)
+                       for geometry in (t['geometry'], t.get('read_geometry') or {}))
+               for t in twin_store.tombstones())
 
 
 def _centroid(points):
@@ -712,6 +715,8 @@ def _plot_registration(crop, fragment):
 def _building_fit(build):
     plan = _base(twin_store.current(), build)
     house = _house(plan, build)
+    if house.get('src', {}).get('person'):
+        return {'transform': {'position': deepcopy(house['position']), 'rotation': house['rotation']}, 'why': ''}
     outline = min(house['levels'], key=lambda level: level['elevation']).get('outline', [])
     target = next((b for b in twin_store.place()['buildings'] if b['id'] == house['id']), {})
     footprint = target.get('footprint')
@@ -757,7 +762,11 @@ def _pause(build, step, result):
     else:
         if is_lot:
             _check_lot_page(step)
-        reg = _plot_registration(result['crop'], fragment)
+            from services import twin_place_reads
+            page = {k: step[k] for k in ('source', 'page', 'box')}
+            reg = twin_place_reads.plot_read_record(page, result['crop'], fragment)['registration']
+        else:
+            reg = _plot_registration(result['crop'], fragment)
         if not fragment.get('street_edge'):
             pause['why'] = (pause['why'] + ' The street edge was guessed from the longest lot edge.').strip()
         house = _house(plan, build) if plan else None
@@ -865,24 +874,18 @@ def _settle(build, step, result, decision=None):
     if is_lot and kind == 'lot':
         lot_outline = build['placement']['outline']
     elif is_lot and kind == 'plot':
-        from services import twin_place
+        from services import twin_place_reads
         reg = build['pause']['registration']
-        lot_outline = [_map(crop, reg, p) for p in fragment['lot']]
         page = {k: deepcopy(step[k]) for k in ('source', 'page', 'box')}
-        edge = fragment.get('street_edge')
-        if edge is None:
-            pixels = [twin_place.to_master(crop, p) for p in fragment['lot']]
-            i = max(range(len(pixels)), key=lambda i: math.dist(pixels[i], pixels[(i + 1) % len(pixels)]))
-            edge = [i, (i + 1) % len(pixels)]
+        record = twin_place_reads.plot_read_record(
+            page, crop, fragment, registration=reg,
+            cost=math.fsum(e['usd'] for e in twin_cost.entries()
+                           if e.get('run') == build['id'] and e.get('stage') == 'step:plot'))
+        lot_outline = record['lot']
         lot_state = deepcopy(twin_store.place()['lot'])
-        lot_state['placement'] = {**page, 'outline': lot_outline, 'street_edge': edge,
+        lot_state['placement'] = {**page, 'outline': lot_outline, 'street_edge': record['street_edge'],
                                   'registration': reg, 'confirmed': True}
-        lot_state['read'] = {'id': uuid.uuid4().hex, **page, 'crop': deepcopy(crop),
-                             'fragment': deepcopy(fragment), 'registration': reg, 'lot': lot_outline,
-                             'street_edge': edge, 'suggestions': twin_place.plot_suggestions(fragment, crop, reg),
-                             'matrix': twin_place.sheet_matrix(reg, crop),
-                             'cost': math.fsum(e['usd'] for e in twin_cost.entries()
-                                              if e.get('run') == build['id'] and e.get('stage') == 'step:plot')}
+        lot_state['read'] = record
 
     def mutate(current):
         plan = _base(current, build, lot_outline)
@@ -1029,6 +1032,8 @@ def _settle(build, step, result, decision=None):
         elif kind == 'fit':
             if not house.get('src', {}).get('person'):
                 house.update(deepcopy(decision.get('transform', fragment['transform'])))
+            else:
+                notes.append('Kept the building where you placed it.')
         elif kind == 'site':
             reg = ((twin_store.place()['lot'].get('placement') or build.get('placement'))['registration']
                    if is_lot else twin_store.registration(step['source'], step['page'], None))
@@ -1053,8 +1058,19 @@ def _settle(build, step, result, decision=None):
                                height=w['height_ft'], state='settled') for i, w in enumerate(fragment.get('retaining_walls', []))]
             site['edges'] = _merge_list(site['edges'], incoming, 'site', house, build, step)
         elif kind == 'finishes':
-            materials = twin_draft._materials({'materials': fragment.get('materials', {})}, twin_library.kit('modern_farmhouse'), notes)
-            target_materials = house.setdefault('materials', {}) if build['inputs'].get('part') is not None else plan['materials']
+            kit = twin_library.kit('modern_farmhouse')
+            if build['inputs'].get('part') is not None:
+                materials = {}
+                for role, value in fragment.get('materials', {}).items():
+                    problems = []
+                    validated = twin_draft._materials({'materials': {role: value}}, kit, problems)
+                    notes.extend(problems)
+                    if not problems:
+                        materials[role] = validated[role]
+                target_materials = house.setdefault('materials', {})
+            else:
+                materials = twin_draft._materials({'materials': fragment.get('materials', {})}, kit, notes)
+                target_materials = plan['materials']
             target_materials.update({k: v for k, v in materials.items()
                                      if not (isinstance(target_materials.get(k), dict)
                                              and target_materials[k].get('src', {}).get('person'))})
