@@ -1,6 +1,64 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.767 (2026-11-07).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.768 (2026-11-08).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.768 (2026-11-08, NOT device-verified; checked on renders of the household's own two buildings from a whole-building read): joints first — the house holds together like a real building.**
+
+After the user saw a render that looked like the real house but had rough seams, they ruled that everything meeting cleanly matters more than inch accuracy: no see-through gaps, and no walls through roofs. Spec `docs/superpowers/specs/2026-11-08-house-editor-whole-building-draft-design.md` §6a; plan `docs/superpowers/plans/2026-11-08-house-editor-whole-building-draft.md` Tasks 1-4. Claude wrote the tests first, Codex built it, and every task was Claude-reviewed.
+
+New suites:
+- `tests/test_twin_awning_js.py` 6
+- `tests/test_twin_joints_js.py` 17 (raycasts the generator output under node)
+- `tests/test_twin_joints.py` 20
+
+`tests/test_twin_roof_js.py` was extended to 11.
+
+**Awnings hang from their wall and slope down and away.** The awning code had been wrong since slice 1: it rose as it left the wall, and it could only hang from its roof section's front edge.
+- An awning now hangs from the outside face of the wall it covers. That may be a side wall, or a bay that projects past the section edge.
+- Its high edge is at the wall, at `eave + depth × pitch / 12`. Its low outer edge is at `eave`. Its brackets sit under it.
+- An awning with no wall within 2 ft is left out and noted.
+- `twin_plan` accepts an optional `wall` on the awning.
+
+**Every wall meets the roof.**
+- A wall rises to the roofs that bear on its own storey: sections whose plate is more than 0.5 ft above its floor and no more than 2 ft above its ceiling. It meets their upper envelope, overhangs included.
+- It is sampled at the outside face, taking the lower of its two faces.
+- Nothing ever stands above a roof: every top is capped at the visible roof minus 0.08 ft.
+- A wall no roof covers keeps its own height.
+- Walls under a higher level stop at that level's floor underside.
+
+**Walls sit inside the line, and corners close.**
+- An exterior wall's outside face is on the read line.
+- Wall ends extend by 0 at a convex corner and by the wall thickness at a concave corner.
+- Interior walls stay centred.
+
+**Each floor's slab follows its own outline**, never the ground floor's.
+
+**Lower roofs stay out of upper rooms.** Hidden lower faces are kept only under overhangs, never inside a higher level's outline. A roof that is the visible top over an upper room is never clipped.
+
+**Roof steps are filled, and the roof has substance.**
+- `twin_roof.stepFaces(sections)` fills every vertical drop of more than 0.05 ft between sections with siding.
+- The roof is 0.25 ft thick, with a fascia along the eaves, rake trim on gable edges and a soffit under each overhang.
+- Wall and batten top caps stay in floor views. A cap lying on a roof face tucks just under it.
+- The roof material is FrontSide, set where it is created.
+
+**The snap pass** (`services/twin_joints.py`) runs on every building settle and every editor save, never on load and never on the lot. Its tolerances:
+- wall ends weld within 1 ft;
+- angles square or straighten within 3°;
+- read coordinates round to the inch;
+- upper walls move onto lower wall lines within 1 ft;
+- roof rect edges move onto their bearing walls within 1.5 ft;
+- plates move onto wall tops within 1.5 ft;
+- meeting plates are equalised within 0.5 ft;
+- awnings get the exterior wall of the floor that spans their eave, preferring the section's front wall.
+
+It never moves a person's piece. Shell pieces are not rounded. Windows and doors keep their place when their wall's end moves.
+
+`twin_joints.report` names, in plain sentences with no raw ids, what is still open: corners that do not meet, roof edges or plates off their walls, awnings with no wall. These lines go to the build log when a building's last read settles.
+
+Known limits:
+- A roof the read gave no posts (a rear porch) floats until the person adds them.
+- Steep pitches over 17/12 can let a batten edge show above the roof.
+- The slab edge can show as a thin band between the ground-floor siding and the upper walls over porch roofs.
 
 **v2.499.767 (2026-11-07, NOT device-verified; a local rebuild of the household's own drawings with real reads, $0.78, went from a third of the pieces unsettled to two recognizable buildings): the house editor's first live build repaired.** The first device build of Your place came out rough; a local reproduction ($0.77) found the causes in the build code (Claude tests first, Codex-built; new suite `tests/test_twin_build_repair.py` 13, plus scenarios in `test_twin_reads.py`, `test_twin_compose.py`, `test_house_editor_routes.py` and live `test_house_editor_live.py` 35).
 - **Every floor's walls are read whole.** The walls step read only inside named wings (a porch, a garage, a stair) and never the main body; now each floor gets one read of the whole floor (step `walls:<level>:main`, the id a floor without wings already used) before a closer read of each wing, and a wall two reads return settles once.
