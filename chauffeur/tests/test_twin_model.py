@@ -8,7 +8,7 @@ Module under test: services/twin_model.py.
 
 - SCHEMA = 'chauffeur.twin.plan/3'.
 - normalize(model) -> (model, notes): validates and re-derives.
-- derive(building) -> building: re-derives rooms and flags in place.
+- derive(building) -> list[str]: re-derives rooms and flags in place (R22).
 
 Rules pinned here:
 - Rooms are re-derived on every normalize. A region keeps the identity of the
@@ -37,6 +37,8 @@ import os
 import re
 import sys
 import tempfile
+import statistics
+import time
 import traceback
 
 if not os.environ.get('CHAUFFEUR_DATA_DIR', '').startswith(tempfile.gettempdir()):
@@ -456,10 +458,10 @@ def test_separator_thickness_is_zero():
     check(solids and all(w['thickness'] == 0.5 for w in solids), solids)
 
 
-def test_derive_works_in_place_and_returns_the_building():
+def test_derive_works_in_place_and_returns_notes():
     b = t_box(mid_x=7, rooms=kitchen_dining(split_x=5))
     got = twin_model.derive(b)
-    check(got is b, 'derive must return the same building object')
+    check(isinstance(got, list) and all(isinstance(n, str) for n in got), got)
     named = rooms_by_name(b)
     check(set(named) == {'Kitchen', 'Dining'} and len(b['rooms']) == 2, b['rooms'])
     check(named['Kitchen'][0]['id'] == 'kitchen', named)
@@ -468,6 +470,10 @@ def test_derive_works_in_place_and_returns_the_building():
     g = gap_box([room('kitchen', 'Kitchen', rect(0, 0, 10, 8))])
     twin_model.derive(g)
     check(g['rooms'] == [] and len(closed_flags(g)) == 3, g)
+    capped = building([], [], [room(f'r{i}', f'Room {i}', rect(0, 0, 1, 1))
+                              for i in range(121)])
+    notes = twin_model.derive(capped)
+    check(any('rooms' in n and '120' in n for n in notes), notes)
 
 
 def test_caps_and_bad_hosts_are_refused_with_notes():
@@ -548,6 +554,219 @@ def test_every_list_is_capped_with_a_note():
     capped('items', 600, out, notes)
 
 
+def test_clip_roof_normalizes_settled():
+    b = building(box_joints(), box_walls(), [])
+    b['roofs'] = [{'id': 'clipped-roof', 'area': rect(0, 0, 10, 8),
+                   'edges': [{'setting': 'clip', 'pitch': 6, 'clip': 2}]
+                            + [{'setting': 'sloped', 'pitch': 6} for _ in range(3)],
+                   'plate': 9, 'overhang': 1}]
+    out, notes, _ = run(b)
+    check(out['roofs'][0].get('state', 'settled') == 'settled', out['roofs'])
+    check(not any('clipped-roof' in n for n in notes), notes)
+
+
+def three_rooms():
+    b = t_box(mid_x=2, rooms=[room('a', 'A', rect(0, 0, 2, 8)),
+                             room('b-room', 'B', rect(2, 0, 8, 8)),
+                             room('c', 'C', rect(8, 0, 10, 8))])
+    b['joints'] += [joint('n0', 8, 0), joint('n1', 8, 8)]
+    b['walls'].append(wall('next', 'n0', 'n1'))
+    return b
+
+
+def test_large_drag_keeps_joint_cycle_identities():
+    b, _, _ = run(three_rooms())
+    for j in b['joints']:
+        if j['id'] in ('m0', 'm1'):
+            j['at'][0] = 4.5
+    b, _, _ = run(b)
+    named = rooms_by_name(b)
+    for name, rid, bounds in [('A', 'a', (0, 0, 4.5, 8)),
+                              ('B', 'b-room', (4.5, 0, 8, 8)),
+                              ('C', 'c', (8, 0, 10, 8))]:
+        check(len(named.get(name, [])) == 1, b['rooms'])
+        check(named[name][0]['id'] == rid, named[name])
+        check_room_geometry(b, named[name][0], rect(*bounds))
+    check(b['flags'] == [], b['flags'])
+
+
+def test_large_drag_without_joint_cache_uses_room_fraction():
+    b = three_rooms()
+    for j in b['joints']:
+        if j['id'] in ('m0', 'm1'):
+            j['at'][0] = 4.5
+    b, _, _ = run(b)
+    check({r['name']: min(p[0] for p in r['polygon']) for r in b['rooms']}
+          == {'A': 0, 'B': 4.5, 'C': 8}, b['rooms'])
+    check(b['flags'] == [], b['flags'])
+
+
+def test_joint_cycle_match_survives_without_polygon_overlap():
+    b, _, _ = run(t_box(rooms=kitchen_dining()))
+    for j in b['joints']:
+        j['at'][0] += 100
+    b, _, _ = run(b)
+    check({r['id'] for r in b['rooms']} == {'kitchen', 'dining'}, b['rooms'])
+    check(b['flags'] == [], b['flags'])
+
+
+def test_crossing_drags_do_not_persist_joints_or_change_whole_wall_hosts():
+    b = t_box(rooms=[room('kitchen', 'Kitchen', rect(0, 0, 5, 4))])
+    b['joints'] += [joint('h0', 0, 4), joint('h1', 10, 4), joint('orphan', 5, 2)]
+    b['walls'].append(wall('cross', 'h0', 'h1'))
+    b['openings'] = [{'id': 'door', 'wall': 'mid', 'at': 6, 'width': 1,
+                      'sill': 0, 'head': 7, 'kind': 'door'}]
+    b, _, _ = run(b)
+    count = len(b['joints'])
+    check('orphan' not in joint_at(b), b['joints'])
+    for _ in range(5):
+        for j in b['joints']:
+            if j['id'] in ('h0', 'h1'):
+                j['at'][1] += 0.7
+        b, _, _ = run(b)
+        referenced = {jid for w in b['walls'] for jid in w['joints']}
+        check(set(joint_at(b)) == referenced and len(b['joints']) == count, b['joints'])
+        kitchen = rooms_by_name(b)['Kitchen'][0]
+        check(len(kitchen['polygon']) == 4, kitchen)
+        check(next(w for w in b['walls'] if w['id'] == 'mid')['joints'] == ['m0', 'm1'], b['walls'])
+        check(b['openings'][0]['wall'] == 'mid' and b['openings'][0]['at'] == 6, b['openings'])
+
+
+def test_t_splits_and_explicit_crossing_splits_persist():
+    source = t_box()
+    source['openings'] = [{'id': 'door', 'wall': 'b', 'at': 7, 'width': 1,
+                           'sill': 0, 'head': 7, 'kind': 'door'}]
+    source['anchors'] = [{'id': 'switch', 'kind': 'switch', 'host': {'wall': 'b', 'side': 'left', 'at': 7, 'z': 4},
+                          'offset': 0, 'device': None}]
+    b, _, _ = run(source)
+    check(next(w for w in b['walls'] if w['id'] == 'b')['joints'] == ['c0', 'm0'], b['walls'])
+    check(any(w['joints'] == ['m0', 'c1'] for w in b['walls']), b['walls'])
+    for hosted in [b['openings'][0], b['anchors'][0]['host']]:
+        check(hosted['wall'] == 'b~2' and hosted['at'] == 2, hosted)
+    # An explicitly drawn four-way joint belongs to the stored wall network.
+    b = building([joint('x', 0, 0), joint('a', -4, 0), joint('b', 4, 0),
+                  joint('c', 0, -4), joint('d', 0, 4)],
+                 [wall('left', 'a', 'x'), wall('right', 'x', 'b'),
+                  wall('down', 'c', 'x'), wall('up', 'x', 'd')], [])
+    out, _, _ = run(b)
+    check(out['joints'] == b['joints'] and out['walls'] == b['walls'], out)
+
+
+def test_normalize_ghosts_recover_without_overwriting_reader_why():
+    b = building(box_joints(), box_walls(), [])
+    b['openings'] = [{'id': 'door', 'wall': 'missing', 'at': 2, 'width': 1,
+                      'sill': 0, 'head': 7, 'kind': 'door'},
+                     {'id': 'reader-door', 'wall': 'missing', 'at': 4, 'width': 1,
+                      'sill': 0, 'head': 7, 'kind': 'door', 'why': 'reader saw a swing arc'}]
+    b, _, _ = run(b)
+    for opening in b['openings']:
+        check(opening['state'] == 'ghost' and opening.get('ghost_by') == 'normalize', opening)
+    check(b['openings'][1]['why'] == 'reader saw a swing arc', b['openings'])
+    b['joints'] += [joint('s0', 2, 2), joint('s1', 8, 2)]
+    b['walls'].append(wall('missing', 's0', 's1'))
+    b, _, _ = run(b)
+    for opening in b['openings']:
+        check(opening['state'] == 'settled' and 'ghost_by' not in opening, opening)
+    check('why' not in b['openings'][0], b['openings'])
+    check(b['openings'][1]['why'] == 'reader saw a swing arc', b['openings'])
+
+
+def test_normalize_leaves_lost_surface_hosts_and_reader_ghosts_untouched():
+    b = gap_box([room('kitchen', 'Kitchen', rect(0, 0, 10, 8))])
+    b['items'] = [{'id': 'table', 'asset': 'table', 'host': {'floor': 'kitchen', 'u': 0.5, 'v': 0.5},
+                   'rotation': 0, 'scale': 1}]
+    b['anchors'] = [{'id': 'lamp', 'kind': 'light', 'host': {'ceiling': 'kitchen', 'u': 0.5, 'v': 0.5},
+                     'offset': 0, 'device': None},
+                    {'id': 'switch', 'kind': 'switch', 'host': {'wall': 'lost', 'side': 'left', 'at': 1, 'z': 4},
+                     'offset': 0, 'device': None}]
+    b['walls'][0].update(state='ghost', why='reader wall')
+    b['openings'] = [{'id': 'reader-door', 'wall': 'b', 'at': 2, 'width': 1,
+                      'sill': 0, 'head': 7, 'kind': 'door', 'state': 'ghost', 'why': 'reader door'}]
+    out, _, _ = run(b)
+    check(out['rooms'] == [], out['rooms'])
+    check(out['items'] == b['items'] and out['anchors'] == b['anchors'], out)
+    check(out['openings'] == b['openings'], out['openings'])
+    check(out['walls'][0]['why'] == 'reader wall', out['walls'])
+
+
+def test_reader_ghost_ownership_and_edited_why_survive_host_recovery():
+    b = building(box_joints(), box_walls(), [])
+    b['openings'] = [{'id': 'reader', 'wall': 'missing', 'at': 2, 'width': 1,
+                      'sill': 0, 'head': 7, 'kind': 'door', 'state': 'ghost', 'why': 'reader reason'},
+                     {'id': 'edited', 'wall': 'missing', 'at': 4, 'width': 1,
+                      'sill': 0, 'head': 7, 'kind': 'door'}]
+    original = copy.deepcopy(b['openings'][0])
+    b, _, _ = run(b)
+    check(b['openings'][0] == original, b['openings'])
+    b['openings'][1]['why'] = 'person reason'
+    b['joints'] += [joint('s0', 2, 2), joint('s1', 8, 2)]
+    b['walls'].append(wall('missing', 's0', 's1'))
+    b, _, _ = run(b)
+    check(b['openings'][0] == original, b['openings'])
+    check(b['openings'][1]['state'] == 'settled' and b['openings'][1]['why'] == 'person reason', b['openings'])
+
+
+def test_invalid_pieces_report_notes_without_new_ghosts_or_runtime_errors():
+    b = building(box_joints(), box_walls(), [])
+    b['walls'].append(dict(wall('invalid-wall', 'c0', 'c1'), joints=None))
+    b['roofs'] = [{'id': 'invalid-roof', 'edges': [], 'plate': 9, 'overhang': 1}]
+    b['anchors'] = [{'id': 'roof-lamp', 'kind': 'light', 'host': {'roof': 'invalid-roof', 'edge': 0, 'at': 2}}]
+    b['openings'] = [{'id': 'gable-window', 'gable': {'roof': 'invalid-roof', 'edge': 0},
+                      'at': 2, 'width': 1, 'sill': 1, 'head': 4, 'kind': 'window'}]
+    b['items'] = None
+    out, notes, _ = run(b)
+    for name in ('walls', 'roofs', 'anchors', 'openings'):
+        check(all(p.get('state') != 'ghost' for p in out[name]), out[name])
+    for pid in ('invalid-wall', 'invalid-roof', 'roof-lamp', 'gable-window'):
+        check(any(pid in note for note in notes), (pid, notes))
+
+
+def test_invalid_and_over_cap_stored_rooms_keep_flag_records():
+    invalid = room('broken', 'Broken', [[3, 4], ['bad', 2]], ha_area='broken', floor_material=OAK)
+    empty = room('empty', 'Empty', None)
+    b = building([], [], [invalid, empty])
+    b, _, _ = run(b)
+    for original, position in [(invalid, [3, 4]), (empty, [0, 0])]:
+        flag = room_flags(b, original['name'])
+        check(len(flag) == 1 and flag_room(flag[0]) == original and flag[0]['at'] == position, flag)
+    again, _, _ = run(b)
+    check(again == b, again)
+    stored = [room(f'r{i}', f'Named {i}', rect(i * 2, 0, i * 2 + 1, 1)) for i in range(121)]
+    b, notes, _ = run(building([], [], stored))
+    check(any('rooms' in n and '120' in n for n in notes), notes)
+    check(flag_room(room_flags(b, 'Named 120')[0]) == stored[120], b['flags'])
+    check(room_flags(b, 'Named 120')[0]['at'] == [240, 0], b['flags'])
+    again, _, _ = run(b)
+    check(again == b, again)
+
+
+def test_overlap_reject_keeps_concave_and_angled_intersections_exact():
+    concave = [[0, 0], [4, 0], [4, 1], [1, 1], [1, 4], [0, 4]]
+    check(close(twin_model._overlap(concave, rect(2, 2, 3, 3)), 0), 'disjoint interiors')
+    check(close(twin_model._overlap(concave, rect(0, 0, 2, 2)), 3), 'concave intersection')
+    diamond = [[0, 2], [2, 0], [4, 2], [2, 4]]
+    check(close(twin_model._overlap(diamond, rect(0, 0, 2, 4)), 4), 'angled intersection')
+
+
+def test_grid_normalize_under_25ms():
+    joints = [joint(f'g{x}-{y}', x * 8, y * 8) for x in range(6) for y in range(6)]
+    walls = ([wall(f'h{x}-{y}', f'g{x}-{y}', f'g{x + 1}-{y}') for x in range(5) for y in range(6)]
+             + [wall(f'v{x}-{y}', f'g{x}-{y}', f'g{x}-{y + 1}') for x in range(6) for y in range(5)])
+    rooms = [room(f'r{x}-{y}', f'Room {x}-{y}', rect(x * 8, y * 8, (x + 1) * 8, (y + 1) * 8))
+             for x in range(5) for y in range(5)]
+    source = model(building(joints, walls, rooms))
+    durations = []
+    for _ in range(5):
+        start = time.perf_counter()
+        out, notes = twin_model.normalize(source)
+        durations.append((time.perf_counter() - start) * 1000)
+        check({r['id'] for r in out['buildings'][0]['rooms']} == {r['id'] for r in rooms}, out)
+        check(notes == [], notes)
+    median = statistics.median(durations)
+    print(f'  grid normalize median {median:.2f} ms (5 runs, 60 walls, 25 rooms)')
+    check(median < 25, f'5x5 grid normalize median {median:.2f} ms: {durations}')
+
+
 TESTS = (
     test_schema_is_3_and_site_passes_through,
     test_rooms_are_derived_and_keep_names,
@@ -564,9 +783,22 @@ TESTS = (
     test_rooms_are_derived_per_level,
     test_closing_the_gap_restores_the_room,
     test_separator_thickness_is_zero,
-    test_derive_works_in_place_and_returns_the_building,
+    test_derive_works_in_place_and_returns_notes,
     test_caps_and_bad_hosts_are_refused_with_notes,
     test_every_list_is_capped_with_a_note,
+    test_clip_roof_normalizes_settled,
+    test_large_drag_keeps_joint_cycle_identities,
+    test_large_drag_without_joint_cache_uses_room_fraction,
+    test_joint_cycle_match_survives_without_polygon_overlap,
+    test_crossing_drags_do_not_persist_joints_or_change_whole_wall_hosts,
+    test_t_splits_and_explicit_crossing_splits_persist,
+    test_normalize_ghosts_recover_without_overwriting_reader_why,
+    test_normalize_leaves_lost_surface_hosts_and_reader_ghosts_untouched,
+    test_reader_ghost_ownership_and_edited_why_survive_host_recovery,
+    test_invalid_pieces_report_notes_without_new_ghosts_or_runtime_errors,
+    test_invalid_and_over_cap_stored_rooms_keep_flag_records,
+    test_overlap_reject_keeps_concave_and_angled_intersections_exact,
+    test_grid_normalize_under_25ms,
 )
 
 

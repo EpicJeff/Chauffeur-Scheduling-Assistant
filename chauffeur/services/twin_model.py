@@ -52,17 +52,20 @@ def _centroid(polygon):
             for i in (0, 1)]
 
 
-def _overlap(left, right):
+def _bounds(polygon):
+    return (min(p[0] for p in polygon), min(p[1] for p in polygon),
+            max(p[0] for p in polygon), max(p[1] for p in polygon))
+
+
+def _overlap(left, right, left_bounds=None, right_bounds=None):
     """Integrate shared vertical intervals, including concave or angled rooms.
 
     Between vertices and edge crossings, interval ends are linear in x, so
     the midpoint rule gives the exact area of each strip.
     """
-    if not twin_plan._polygon(left) or not twin_plan._polygon(right):
-        return 0
-    lo = max(min(p[0] for p in left), min(p[0] for p in right))
-    hi = min(max(p[0] for p in left), max(p[0] for p in right))
-    if hi <= lo:
+    lb, rb = left_bounds or _bounds(left), right_bounds or _bounds(right)
+    lo, hi = max(lb[0], rb[0]), min(lb[2], rb[2])
+    if hi <= lo or min(lb[3], rb[3]) <= max(lb[1], rb[1]):
         return 0
     edges = [list(zip(poly, poly[1:] + poly[:1])) for poly in (left, right)]
     cuts = {lo, hi, *(p[0] for poly in (left, right) for p in poly if lo < p[0] < hi)}
@@ -100,12 +103,13 @@ def _cap(items, name, notes):
     return items
 
 
-def _list(owner, name, notes, kind=None):
+def _list(owner, name, notes, kind=None, *, capped=True):
     items = owner.get(name, [])
     if not isinstance(items, list):
         notes.append(f'Dropped invalid {name} list; expected a list.')
         items = []
-    items = _cap(items, name, notes)
+    if capped:
+        items = _cap(items, name, notes)
     kept = [item for item in items if isinstance(item, dict)]
     if len(kept) != len(items):
         notes.append(f'Dropped invalid {name} entries; expected objects.')
@@ -120,6 +124,57 @@ def _flag_room(flag):
     return piece.get('room') if isinstance(piece, dict) else None
 
 
+def _room_position(room, valid):
+    polygon = room.get('polygon')
+    if valid:
+        return _centroid(polygon)
+    if isinstance(polygon, list):
+        return next((list(p) for p in polygon if twin_plan._point(p)), [0, 0])
+    return [0, 0]
+
+
+def _joint_references(walls):
+    return {j for w in walls if isinstance(w.get('joints'), list)
+            for j in w['joints'] if isinstance(j, str)}
+
+
+def _split_t_junctions(building, joints, walls, notes):
+    """Persist only endpoint splits; proper crossings remain a derivation view."""
+    _, split = graph.split_crossings(joints, walls, proper=False)
+    old = {w['id']: w for w in walls}
+    # split_crossings emits each wall's segments consecutively, first with its
+    # original id. Keep hosted distances relative to the segment they land on.
+    segments, source = {}, None
+    for wall in split:
+        if wall['id'] in old:
+            source = wall['id']
+        segments.setdefault(source, []).append(wall)
+    hosted = []
+    for name in ('openings', 'anchors', 'items'):
+        pieces = building.get(name, [])
+        if isinstance(pieces, list):
+            hosted.extend(p if name == 'openings' else p.get('host')
+                          for p in pieces if isinstance(p, dict))
+    for host in hosted:
+        if not isinstance(host, dict):
+            continue
+        parts = segments.get(host.get('wall'), [])
+        if not parts or not twin_plan._number(host.get('at')):
+            continue
+        origin = joints[old[host['wall']]['joints'][0]]
+        at = host['at']
+        for part in parts:
+            start, end = (joints[j] for j in part['joints'])
+            offset = math.dist(origin, start)
+            if at <= offset + math.dist(start, end) + _EPS or part is parts[-1]:
+                host.update(wall=part['id'], at=at - offset)
+                break
+    building['walls'] = _cap([part for w in building.get('walls', [])
+                              for part in segments.get(w['id'], [w])], 'walls', notes)
+    kept = {w['id'] for w in building['walls']}
+    return [w for w in split if w['id'] in kept]
+
+
 def _derive(building, notes):
     stored = list(building.get('rooms', []))
     seen = {room.get('id') for room in stored}
@@ -130,64 +185,78 @@ def _derive(building, notes):
             continue
         room = _flag_room(flag)
         if isinstance(room, dict) and room.get('id') not in seen:
-            if twin_plan._polygon(room.get('polygon')):
-                stored.append(deepcopy(room))
-                seen.add(room.get('id'))
-            else:
-                notes.append('Dropped room flag with an invalid cached polygon.')
+            stored.append(deepcopy(room))
+            seen.add(room.get('id'))
     _piece_meta(stored, 'room', notes)
+    valid = [twin_plan._polygon(room.get('polygon')) for room in stored]
+    bounds = [_bounds(room['polygon']) if ok else None for room, ok in zip(stored, valid)]
+    areas = [_area(room['polygon']) if ok else 0 for room, ok in zip(stored, valid)]
+    stored_kept = _cap(list(range(len(stored))), 'rooms', notes)
+    for room, ok in zip(stored, valid):
+        if not ok:
+            notes.append(f"Room {room['id']}: invalid cached polygon; kept in an unclosed flag.")
 
     candidates, ends = [], []
-    used_joints = {joint['id'] for joint in building.get('joints', [])}
+    referenced = _joint_references(building.get('walls', []))
+    building['joints'] = [j for j in building.get('joints', []) if j['id'] in referenced]
     for level in building.get('levels', []):
         lid = level['id']
         joints = {j['id']: j['at'] for j in building.get('joints', []) if j.get('level') == lid}
         walls = [w for w in building.get('walls', []) if w.get('level') == lid
-                 and w.get('state') != 'ghost' and len(w.get('joints', [])) == 2
-                 and all(j in joints for j in w['joints'])]
+                 and w.get('state') != 'ghost' and isinstance(w.get('joints'), list)
+                 and len(w['joints']) == 2
+                 and all(isinstance(j, str) and j in joints for j in w['joints'])
+                 and math.dist(*(joints[j] for j in w['joints'])) > _EPS]
+        walls = _split_t_junctions(building, joints, walls, notes)
         # Use a split view for faces; original walls retain their host identities.
         split_joints, split_walls = graph.split_crossings(joints, walls)
-        rename = {}
-        for jid, point in split_joints.items():
-            if jid in joints:
-                continue
-            new_id = jid
-            suffix = 1
-            while new_id in used_joints:
-                new_id = f'{jid}:{suffix}'
-                suffix += 1
-            if len(used_joints) >= CAPS['joints']:
-                notes.append('Dropped derived joints; the cap is 800.')
-                continue
-            used_joints.add(new_id)
-            rename[jid] = new_id
-            building.setdefault('joints', []).append({'id': new_id, 'level': lid, 'at': point})
         for region in graph.regions(split_joints, split_walls):
-            if any(j not in joints and j not in rename for j in region['joints']):
+            if not twin_plan._polygon(region['polygon']):
                 continue
-            region['joints'] = [rename.get(j, j) for j in region['joints']]
+            # Temporary crossing ids may be reused at another crossing after a
+            # drag. Only stored joint identities are safe identity evidence.
+            region['identity_joints'] = {j for j in region['joints'] if j in joints}
             region['level'] = lid
             candidates.append(region)
         ends.extend((lid, point) for point in graph.open_ends(split_joints, split_walls))
 
-    # A region chooses its best match first; a contested identity goes to the
-    # larger region, rather than being copied to both sides of a new partition.
-    claims = {}
+    inherited, owners = {}, set()
+    joint_pairs = []
     for index, region in enumerate(candidates):
-        overlaps = [(_overlap(region['polygon'], room.get('polygon')), -_area(room['polygon']), i)
-                    for i, room in enumerate(stored) if room.get('level') == region['level']]
-        if overlaps:
-            # Equal overlap favours the more specific cache. This lets a
-            # swallowed room return when its partition is put back (R7).
-            overlap, _, owner = max(overlaps, key=lambda pair: pair[:2])
+        cycle = region['identity_joints']
+        stored_ids = {j['id'] for j in building['joints'] if j.get('level') == region['level']}
+        for owner in stored_kept:
+            room = stored[owner]
+            if not valid[owner] or room.get('level') != region['level']:
+                continue
+            cached = {j for j in room.get('joints', []) if j in stored_ids}
+            union = cycle | cached
+            score = len(cycle & cached) / len(union) if union else 0
+            if score >= 0.5:
+                joint_pairs.append((score, region['area'], index, owner))
+    for _, _, index, owner in sorted(joint_pairs, reverse=True):
+        if index not in inherited and owner not in owners:
+            inherited[index] = owner
+            owners.add(owner)
+
+    overlap_pairs = []
+    for index, region in enumerate(candidates):
+        if index in inherited:
+            continue
+        rb = _bounds(region['polygon'])
+        for owner in stored_kept:
+            room = stored[owner]
+            if owner in owners or not valid[owner] or areas[owner] <= _EPS or room.get('level') != region['level']:
+                continue
+            overlap = _overlap(region['polygon'], room['polygon'], rb, bounds[owner])
             if overlap + _EPS >= region['area'] * 0.25:
-                claims[index] = owner
-    winners = {}
-    for index, owner in claims.items():
-        if owner not in winners or candidates[index]['area'] > candidates[winners[owner]]['area']:
-            winners[owner] = index
+                overlap_pairs.append((overlap / areas[owner], overlap, region['area'], index, owner))
+    for _, _, _, index, owner in sorted(overlap_pairs, reverse=True):
+        if index not in inherited and owner not in owners:
+            inherited[index] = owner
+            owners.add(owner)
     candidates_kept = _cap(list(range(len(candidates))), 'rooms', notes)
-    inherited = {index: owner for owner, index in winners.items() if index in candidates_kept}
+    inherited = {index: owner for index, owner in inherited.items() if index in candidates_kept}
     rooms = []
     for index in candidates_kept:
         region = candidates[index]
@@ -201,24 +270,27 @@ def _derive(building, notes):
     building['rooms'] = rooms
     for owner, room in enumerate(stored):
         if owner not in inherited.values():
-            flags.append({'level': room.get('level'), 'at': _centroid(room.get('polygon', [])),
+            flags.append({'level': room.get('level'),
+                          'at': _room_position(room, valid[owner] and owner in stored_kept),
                           'text': NOT_CLOSED, 'piece': {'room': deepcopy(room)}})
     for lid, point in ends:
         if not any(f.get('text') == NOT_CLOSED and f.get('level') == lid
                    and math.dist(point, f['at']) <= 1 for f in flags):
             flags.append({'level': lid, 'at': point, 'text': NOT_CLOSED})
     building['flags'] = flags
+    referenced = _joint_references(building.get('walls', []))
+    building['joints'] = [j for j in building['joints'] if j['id'] in referenced]
     return building
 
 
-def derive(building: dict) -> dict:
+def derive(building: dict) -> list[str]:
     """Rebuild room caches and unclosed flags in place, preserving identities."""
-    return _derive(building, [])
+    notes = []
+    _derive(building, notes)
+    return notes
 
 
-def _ghost(piece, kind, reason, notes):
-    piece['state'] = 'ghost'
-    piece['why'] = reason
+def _note(piece, kind, reason, notes):
     notes.append(f"{kind} {piece['id']}: {reason}.")
 
 
@@ -246,7 +318,7 @@ def _network(building, levels, notes):
                 or not twin_plan._number(wall['thickness']) or wall['thickness'] < 0
                 or (wall['kind'] == 'solid' and wall['thickness'] == 0)
                 or ('height' in wall and (not twin_plan._number(wall['height']) or wall['height'] <= 0))):
-            _ghost(wall, 'Wall', 'invalid joints, level or dimensions', notes)
+            _note(wall, 'Wall', 'invalid joints, level or dimensions', notes)
 
 
 def _host_error(host, building):
@@ -265,7 +337,8 @@ def _host_error(host, building):
     if kind == 'wall':
         valid = host.get('side') in ('left', 'right') and all(twin_plan._number(host.get(k)) for k in ('at', 'z'))
     elif kind == 'roof':
-        valid = (type(host.get('edge')) is int and 0 <= host['edge'] < len(target['area'])
+        valid = (isinstance(target.get('area'), list) and type(host.get('edge')) is int
+                 and 0 <= host['edge'] < len(target['area'])
                  and twin_plan._number(host.get('at')))
     else:
         valid = all(twin_plan._number(host.get(k)) and 0 <= host[k] <= 1 for k in ('u', 'v'))
@@ -278,10 +351,10 @@ def _pieces(building, notes):
         edges = roof.get('edges')
         if (not twin_plan._polygon(roof.get('area')) or not isinstance(edges, list)
                 or len(edges) != len(roof['area'])
-                or not all(isinstance(e, dict) and e.get('setting') in ('sloped', 'gable', 'clipped')
+                or not all(isinstance(e, dict) and e.get('setting') in ('sloped', 'gable', 'clip')
                            and twin_plan._numeric_fields(e, ('pitch', 'clip')) for e in edges)
                 or not all(twin_plan._number(roof.get(k)) for k in ('plate', 'overhang'))):
-            _ghost(roof, 'Roof', 'invalid area, edges or dimensions', notes)
+            _note(roof, 'Roof', 'invalid area, edges or dimensions', notes)
     walls = {w['id']: w for w in building['walls']}
     roof_ids = {r['id']: r for r in roofs}
     for opening in _list(building, 'openings', notes, 'opening'):
@@ -289,18 +362,31 @@ def _pieces(building, notes):
         if 'gable' in opening:
             gable = opening['gable']
             roof = twin_plan._lookup(roof_ids, gable.get('roof')) if isinstance(gable, dict) else None
-            if (roof is None or roof.get('state') == 'ghost' or type(gable.get('edge')) is not int
+            if (roof is None or roof.get('state') == 'ghost' or not isinstance(roof.get('area'), list)
+                    or type(gable.get('edge')) is not int
                     or not 0 <= gable['edge'] < len(roof['area'])):
                 reason = 'unknown gable host'
         else:
             wall = twin_plan._lookup(walls, opening.get('wall'))
-            if wall is None or wall.get('state') == 'ghost':
+            if wall is None:
                 reason = f"unknown wall {opening.get('wall')}"
+                if opening.get('state') != 'ghost' or opening.get('ghost_by') == 'normalize':
+                    opening['state'] = 'ghost'
+                    opening['ghost_by'] = 'normalize'
+                    if 'why' not in opening:
+                        opening['why'] = reason
+                        opening['normalize_why'] = reason
+            elif opening.get('ghost_by') == 'normalize':
+                opening['state'] = 'settled'
+                del opening['ghost_by']
+                own_why = opening.pop('normalize_why', None)
+                if own_why is not None and opening.get('why') == own_why:
+                    opening.pop('why', None)
         if not reason and (not all(twin_plan._number(opening.get(k)) for k in ('at', 'width', 'sill', 'head'))
                            or opening['width'] <= 0 or opening['head'] <= opening['sill']):
             reason = 'invalid opening dimensions'
         if reason:
-            _ghost(opening, 'Opening', reason, notes)
+            _note(opening, 'Opening', reason, notes)
     for name, kind in (('anchors', 'anchor'), ('items', 'item')):
         for item in _list(building, name, notes, kind):
             reason = _host_error(item.get('host'), building)
@@ -318,7 +404,7 @@ def _pieces(building, notes):
                         or not twin_plan._number(item['scale']) or item['scale'] <= 0):
                     reason = reason or 'invalid item asset, rotation or scale'
             if reason:
-                _ghost(item, kind.capitalize(), reason, notes)
+                _note(item, kind.capitalize(), reason, notes)
 
 
 def normalize(model: dict) -> tuple[dict, list[str]]:
@@ -344,10 +430,7 @@ def normalize(model: dict) -> tuple[dict, list[str]]:
         building['rotation'] %= 360
         building.setdefault('materials', {})
         _network(building, levels, notes)
-        rooms = _list(building, 'rooms', notes, 'room')
-        building['rooms'] = [room for room in rooms if twin_plan._polygon(room.get('polygon'))]
-        if len(building['rooms']) != len(rooms):
-            notes.append('Dropped rooms with invalid cached polygons.')
+        _list(building, 'rooms', notes, 'room', capped=False)
         for name in ('dormers', 'extensions', 'stairs', 'proposals', 'flags'):
             _list(building, name, notes)
         flags = building['flags']

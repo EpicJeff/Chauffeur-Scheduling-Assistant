@@ -59,8 +59,8 @@ def _interior_parameter(point, a, b):
     return t if math.dist(point, projected) <= _TOL + _EPS else None
 
 
-def split_crossings(joints: dict[str, list], walls: list[dict]) -> tuple[dict, list[dict]]:
-    """Split at existing near-interior joints and proper segment crossings."""
+def split_crossings(joints: dict[str, list], walls: list[dict], *, proper=True) -> tuple[dict, list[dict]]:
+    """Split at endpoint joints and, unless proper=False, proper crossings."""
     result_joints = deepcopy(joints)
     cuts = []
     for wall in walls:
@@ -74,7 +74,7 @@ def split_crossings(joints: dict[str, list], walls: list[dict]) -> tuple[dict, l
         cuts.append(parts)
 
     next_joint = 1
-    for i, wall in enumerate(walls):
+    for i, wall in enumerate(walls) if proper else ():
         a, b = [joints[jid] for jid in wall['joints']]
         vector = _delta(a, b)
         for k in range(i):
