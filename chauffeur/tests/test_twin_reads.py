@@ -412,7 +412,7 @@ def test_draft_call_settings():
     check(len(pool.calls) == 1, ('one request', len(pool.calls)))
     c = pool.calls[0]
     check(c['tier'] == 'twin' and c['system'] == twin_reads.PROMPTS['draft'], (c['tier'], c['system'][:80]))
-    check(c['thinking_level'] == 'medium' and c['max_output_tokens'] == 64000 and c['timeout_s'] == 420
+    check(c['thinking_level'] == 'medium' and c['max_output_tokens'] == 64000 and c['timeout_s'] == 600
           and c['strict_json'] == 'lenient' and c['max_models'] == 1,
           {k: c.get(k) for k in ('thinking_level', 'max_output_tokens', 'timeout_s', 'strict_json', 'max_models')})
     check(len(c['images']) == 2, 'every page image goes in the one request')
@@ -426,7 +426,7 @@ def test_draft_call_settings():
     check(twin_reads.THINKING == {'draft': 'medium', 'draft_level': 'medium', 'draft_rooms': 'medium', 'roof_check': 'medium',
                                 'photo_map': 'low', 'roof_observe': 'medium'},
           twin_reads.THINKING)
-    check(twin_reads.TIMEOUT == {'draft': 420, 'draft_level': 300, 'draft_rooms': 300, 'roof_check': 240,
+    check(twin_reads.TIMEOUT == {'draft': 600, 'draft_level': 300, 'draft_rooms': 300, 'roof_check': 240,
                                'photo_map': 120, 'roof_observe': 240}, twin_reads.TIMEOUT)
     with Pool(answer=fixture('outline')) as pool:
         twin_reads.read('outline', [img()], {'level': 'Main floor'}, run='r1', step='outline:L1')

@@ -251,7 +251,7 @@ def _inherit_unseen(blocks, sections, observations, fixed):
         known.update(inferred)
 
 
-def _dormers(block, section, sides, evidence, flags, place):
+def _dormers(block, section, sides, evidence, flags, place, cross_gables=()):
     result = []
     axis, eaves = _across(section)
     along = 1 - axis
@@ -275,11 +275,13 @@ def _dormers(block, section, sides, evidence, flags, place):
         centre = _number(photo.get('centre'), None)
         target = min(targets, key=lambda d: abs(d['centre'] - centre)) if targets and centre is not None else (
             targets[0] if targets else {})
+        lo, hi = rect[along], rect[along + 2]
         if target and (centre is None or abs(target['centre'] - centre) <= 2):
             centre, width = target['centre'], target.get('width', photo.get('width'))
+        elif side in cross_gables:
+            centre, width = (lo + hi) / 2, (hi - lo) / 3
         else:
             width = photo.get('width')
-        lo, hi = rect[along], rect[along + 2]
         width = max(.5, min(hi - lo, _number(width, (hi - lo) / 3)))
         centre = max(lo + width / 2, min(hi - width / 2, _number(centre, (lo + hi) / 2)))
         dormer_rect = list(rect)
@@ -307,6 +309,8 @@ def derive_roof(blocks, observations, evidence, choices):
     gable; a wholly unseen block follows an adjacent roof and gets one review line.
     """
     sections, flags, fixed = [], [], set()
+    observations = deepcopy(observations)
+    cross_gables = {}
     choices = _roof_entries({'choices': choices}, 'choices')
     used_choices = set()
     for block in blocks:
@@ -314,12 +318,26 @@ def derive_roof(blocks, observations, evidence, choices):
         obs, plan = observations.get(key, {}), evidence.get(key, {})
         sides = obs.get('sides', {})
         kinds = {side: sides.get(side, {}).get('kind', 'hidden') for side in _SIDES}
+        # A gable facing a plain opposite slope is a cross gable on an eave,
+        # never an end of the block's ridge. Normalize before per-end inference.
+        # When a side beside it is seen sloping too, the ridge runs toward the
+        # gable: that is a real gable end with a hipped far end (ruling R22).
+        beside = {'front': ('left', 'right'), 'rear': ('left', 'right'),
+                  'left': ('front', 'rear'), 'right': ('front', 'rear')}
+        cross_gables[key] = [side for side, opposite in (('front', 'rear'), ('rear', 'front'),
+                                                        ('left', 'right'), ('right', 'left'))
+                             if kinds[side] == 'gable_end' and kinds[opposite] == 'slope'
+                             and not any(kinds[b] == 'slope' for b in beside[side])]
+        for side in cross_gables[key]:
+            sides[side]['kind'] = kinds[side] = 'dormer'
         votes = {axis: sum(kinds[side] in ('gable_end', 'clipped_gable_end')
                            for side, end in _SIDES.items() if end.startswith(axis)) for axis in ('x', 'y')}
         fallback = plan.get('ridge')
         if fallback not in ('x', 'y'):
             fallback = 'x' if rect[2] - rect[0] >= rect[3] - rect[1] else 'y'
         ridge = max(votes, key=votes.get) if votes['x'] != votes['y'] else fallback
+        if cross_gables[key]:
+            ridge = 'x' if cross_gables[key][0] in ('front', 'rear') else 'y'
         ends = {_SIDES[side]: _STYLES.get(kind, 'gable') for side, kind in kinds.items()
                 if _SIDES[side].startswith(ridge)}
         kind = 'hip' if all(style == 'hip' for style in ends.values()) else 'gable'
@@ -363,6 +381,10 @@ def derive_roof(blocks, observations, evidence, choices):
                 section['pitch'] = _pitch(section['pitch'])
         else:
             place = _place(block, blocks)
+            for side in cross_gables[key]:
+                opposite = {'front': 'rear', 'rear': 'front', 'left': 'right', 'right': 'left'}[side]
+                flags.append({'block': key, 'side': side, 'text':
+                              f'{place}: the {side} gable was read as a dormer, because the {opposite} slopes; please check it.'})
             if not all(kind in _UNSEEN for kind in kinds.values()):
                 for side, kind in kinds.items():
                     if kind in ('gable_end', 'clipped_gable_end') and not _SIDES[side].startswith(section['ridge']):
@@ -446,7 +468,7 @@ def derive_roof(blocks, observations, evidence, choices):
         if section['kind'] in ('gable', 'hip'):
             dormers.extend(_dormers(block, section, observations.get(block['id'], {}).get('sides', {}),
                                     evidence.get(block['id'], {}), flags if i not in fixed else [],
-                                    _place(block, blocks)))
+                                    _place(block, blocks), cross_gables[block['id']]))
     # A completely unseen roof gets one review line, including any other checks.
     for key in wholly_unseen:
         mine = [f for f in flags if f['block'] == key]

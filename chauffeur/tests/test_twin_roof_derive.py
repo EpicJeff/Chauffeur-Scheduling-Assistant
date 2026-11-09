@@ -721,7 +721,64 @@ def test_shared_end_half_length_and_conflict_lines():
     assert 'not visible' in flags[0]['text'] and 'looks different between photos' in flags[1]['text'], flags
 
 
+def test_real_read_front_gable_opposite_slope_is_a_dormer():
+    from copy import deepcopy
+
+    blocks = [_block('A', (14.33, 13.33, 37.33, 52), 'upper', 20)]
+    observations = {'A': {'sides': {
+        'front': {'kind': 'gable_end', 'photo_index': 0},
+        'rear': {'kind': 'slope', 'photo_index': 3},
+        'left': {'kind': 'hidden'}, 'right': {'kind': 'hidden'},
+    }}}
+    evidence = {'A': {'ridge': 'y', 'dormers': [
+        {'side': 'front', 'centre': 30, 'width': 14.67},
+    ]}}
+    before = deepcopy((blocks, observations, evidence))
+    sections, flags = _derive(blocks, observations, evidence)
+    roof = _section(sections, 'A')
+    assert (roof['kind'], roof['ridge']) == ('gable', 'x'), roof
+    _no_hip(sections)
+    dormers = _dormers(sections, 'A')
+    assert len(dormers) == 1, sections
+    d = dormers[0]
+    assert abs((d['rect'][0] + d['rect'][2]) / 2 - 30) < 1, d
+    assert abs(d['rect'][2] - d['rect'][0] - 14.67) < .01, d
+    assert any(f['text'] == 'The middle upper roof: the front gable was read as a dormer, '
+               'because the rear slopes; please check it.' for f in flags), flags
+    assert (blocks, observations, evidence) == before
+
+
+def test_cross_gable_dormer_positions_and_opposite_gables():
+    for side, opposite, ridge, along in (('front', 'rear', 'x', 0), ('rear', 'front', 'x', 0),
+                                         ('left', 'right', 'y', 1), ('right', 'left', 'y', 1)):
+        blocks = [_block('P', (0, 0, 30, 30))]
+        sides = _sides()
+        sides[side] = {'kind': 'gable_end', 'centre': 10, 'width': 12}
+        sides[opposite] = {'kind': 'slope'}
+        seen = {'P': {'sides': sides}}
+        for distance, expected_centre, expected_width in ((None, 15, 10), (2, 12, 6), (2.1, 15, 10)):
+            plan = {'P': {'ridge': 'y' if ridge == 'x' else 'x'}}
+            if distance is not None:
+                plan['P']['dormers'] = [{'side': side, 'centre': 10 + distance, 'width': 6}]
+            sections, _ = _derive(blocks, seen, plan)
+            roof = _section(sections, 'P')
+            assert (roof['kind'], roof['ridge']) == ('gable', ridge), roof
+            _no_hip(sections)
+            dormers = _dormers(sections, 'P')
+            assert len(dormers) == 1, sections
+            rect = dormers[0]['rect']
+            assert abs((rect[along] + rect[along + 2]) / 2 - expected_centre) < .01, rect
+            assert abs(rect[along + 2] - rect[along] - expected_width) < .01, rect
+        sides[opposite] = {'kind': 'gable_end'}
+        sections, flags = _derive(blocks, seen)
+        assert _section(sections, 'P')['ridge'] != ridge, sections
+        assert not _dormers(sections, 'P'), sections
+        assert not any('was read as a dormer' in f['text'] for f in flags), flags
+
+
 TESTS = (
+    test_real_read_front_gable_opposite_slope_is_a_dormer,
+    test_cross_gable_dormer_positions_and_opposite_gables,
     test_household_flags_only_deciding_ends,
     test_shared_end_half_length_and_conflict_lines,
     test_plan_only_dormer_and_photo_plain_slope,

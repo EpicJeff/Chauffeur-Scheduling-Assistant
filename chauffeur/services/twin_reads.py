@@ -17,7 +17,7 @@ MAX_OUTPUT = {'sheet_roles': 2048, 'outline': 4096, 'walls': 16384,
               'photo_map': 4000, 'roof_observe': 16000}
 THINKING = {'draft': 'medium', 'draft_level': 'medium', 'draft_rooms': 'medium', 'roof_check': 'medium',
             'photo_map': 'low', 'roof_observe': 'medium'}
-TIMEOUT = {'draft': 420, 'draft_level': 300, 'draft_rooms': 300, 'roof_check': 240,
+TIMEOUT = {'draft': 600, 'draft_level': 300, 'draft_rooms': 300, 'roof_check': 240,
            'photo_map': 120, 'roof_observe': 240}
 OUTPUT_CAP = {'anthropic': 64000, 'openai': 64000, 'gemini': 65536}
 
