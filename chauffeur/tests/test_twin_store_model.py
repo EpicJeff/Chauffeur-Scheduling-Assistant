@@ -463,7 +463,55 @@ def test_record_download_includes_model():
     check(body.get('plan') == _same(ts.current()), 'the downloaded record keeps the flat plan')
 
 
+def test_update_model_refuses_stale_generation_before_mutating():
+    _fresh()
+    ts.push_round(_kitchen_dining(), 'build')
+    before = copy.deepcopy(storage.get_settings()['house_twin'])
+    with patch.object(ts, '_append_round', side_effect=AssertionError('must not publish')):
+        try:
+            ts.update_model(lambda _: (_ for _ in ()).throw(AssertionError('must not mutate')),
+                            generation=ts.generation() + 1)
+        except ts.StaleGeneration:
+            pass
+        else:
+            raise AssertionError('stale generation must be refused')
+    check(storage.get_settings()['house_twin'] == before, 'stale edits leave the store unchanged')
+
+
+def test_update_model_refuses_empty_house_before_mutating():
+    _fresh()
+    try:
+        ts.update_model(lambda _: (_ for _ in ()).throw(AssertionError('must not mutate')))
+    except ValueError as exc:
+        check(str(exc) == 'There is no house yet.', str(exc))
+    else:
+        raise AssertionError('empty house must be refused')
+    check(ts.current_id() is None and ts.rounds() == [], 'empty edits publish nothing')
+
+
+def test_update_model_reconciles_registry_name_and_kind():
+    _fresh()
+    building = ts.add_building('Workshop', 'workshop')
+    plan = _kitchen_dining()
+    plan['buildings'][0].update(id=building['id'], name='Old name', kind='main_house')
+    ts.push_round(plan, 'build')
+
+    def edit(model):
+        model['buildings'][0].update(name='Invented name', kind='pool_house')
+        model['buildings'][0]['rooms'][0]['name'] = 'Edited room'
+        return model
+
+    rid = ts.update_model(edit, generation=ts.generation())
+    saved = ts.current_model()['buildings'][0]
+    check(saved['name'] == building['name'] and saved['kind'] == building['kind'], saved)
+    check(any(r['name'] == 'Edited room' for r in saved['rooms']) and ts.current_id() == rid, saved)
+    check(ts.place()['buildings'] == [building], ts.place())
+
+
 TESTS = (
+    test_update_model_refuses_stale_generation_before_mutating,
+    test_update_model_refuses_empty_house_before_mutating,
+    test_update_model_reconciles_registry_name_and_kind,
     test_empty_store_has_no_model_and_no_plan,
     test_old_schema_2_round_reads_as_model_and_flat,
     test_push_round_stores_the_model,

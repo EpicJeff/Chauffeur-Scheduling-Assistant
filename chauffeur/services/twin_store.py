@@ -504,14 +504,19 @@ def update_current(mutator, kind, note='', step=None, cost=None, generation=None
         return _append_round(row, model, kind, note=note, cost=cost, step=step)
 
 
-def update_model(mutator, kind='edit', note='', changes=()) -> int:
+def update_model(mutator, kind='edit', note='', changes=(), generation=None) -> int:
     """Publish a connected-model edit with its paired fix log."""
     with LIFECYCLE, _LOCK:
         row = _state()
+        if generation is not None and generation != row['generation']:
+            raise StaleGeneration('The house was started over. Discard this result.')
         if kind not in _KINDS:
             raise ValueError('Unknown twin round kind.')
-        before = _read_round(row, row['current']) if row['current'] is not None else None
+        if row['current'] is None:
+            raise ValueError('There is no house yet.')
+        before = _read_round(row, row['current'])
         model, _ = twin_model.normalize(mutator(before))
+        _follow_place(row, model)
         return _append_round(row, model, kind, note=note, changes=changes)
 
 

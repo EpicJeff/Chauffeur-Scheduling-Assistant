@@ -600,11 +600,6 @@ def test_rooms_edges_stay_inside_a_concave_floor():
     check(st['state'] == 'done', (st['state'], _trouble(st)))
     house = _house(ts.current())
     found = {r['name']: r for r in house['rooms']}
-    # Rooms without a closed wall cycle survive in their unclosed flags (R7).
-    for flag in house.get('flags', []):
-        room = flag.get('piece', {}).get('room') if isinstance(flag.get('piece'), dict) else None
-        if room is not None:
-            found[room['name']] = room
     check(found['Inside']['state'] == 'settled', 'the outline boundary is inside')
     check(found['Across recess']['state'] == 'ghost', 'inside vertices cannot hide an edge across a recess')
     walls = [w for w in _wall_runs(house['walls']) if w.get('src', {}).get('step') == 'draft_rooms']

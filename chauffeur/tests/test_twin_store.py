@@ -66,6 +66,20 @@ def _client():
     return TestClient(main.app)
 
 
+def _check_saved_plan(actual, pushed):
+    expected = twin_model_bridge.flatten(twin_model_bridge.assemble(pushed)[0])
+    check(actual == expected, 'the complete flat view matches the supplied plan after migration')
+    check(actual['materials'] == pushed['materials'] and actual['site'] == pushed['site'],
+          'supplied materials and site survive the save')
+    for original, saved in zip(pushed['buildings'], actual['buildings']):
+        check((saved['id'], saved['name'], saved['position'], saved['rotation']) ==
+              (original['id'], original['name'], original['position'], original['rotation']),
+              'supplied building identity and placement survive')
+        rooms = {r['id']: r for r in saved['rooms']}
+        check(all(rooms[r['id']]['name'] == r['name'] and rooms[r['id']]['polygon'] == r['polygon']
+                  for r in original['rooms']), 'supplied room identities, names and polygons survive')
+
+
 def scenario_data_dir_sits_beside_the_database():
     check(ts.DATA_DIR == os.path.join(os.path.dirname(storage.DB_PATH), 'twin'), ts.DATA_DIR)
 
@@ -96,6 +110,7 @@ def scenario_rounds_push_and_revert():
     check(ts.current() is None and ts.rounds() == [], 'empty to start')
     r1 = ts.push_round(a, 'draft', note='first', cost=0.5, run='run-1')
     first = ts.current()
+    _check_saved_plan(first, a)
     expected = twin_model_bridge.flatten(twin_model_bridge.assemble(b, previous=ts.current_model())[0])
     r2 = ts.push_round(b, 'director', run='run-1')
     check(ts.current_id() == r2 and ts.current() == expected, 'current is the latest flat view')
@@ -334,9 +349,11 @@ def scenario_routes_round_trip_through_the_app():
     r = c.get('/api/house/twin/sources')
     check(r.status_code == 200 and len(r.json()['sources']) == 1, r.text)
     plan = _plan()
+    supplied = copy.deepcopy(plan)
     r = c.put('/api/house/twin/plan', json={'plan': plan, 'reason': 'first hand save'})
     check(r.status_code == 200 and isinstance(r.json()['round'], int), r.text)
     plan = ts.current()
+    _check_saved_plan(plan, supplied)
     r = c.get('/api/house/twin')
     body = r.json()
     check(r.status_code == 200 and body['plan'] == plan and len(body['rounds']) == 1
