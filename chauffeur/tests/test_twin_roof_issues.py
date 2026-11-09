@@ -270,6 +270,22 @@ def test_synthetic_bears_below_floor_only_over_full_height_walls():
     check(not _of(issues, 'bears_below_floor'), ('over a knee-wall room it is skipped', _summary(issues)))
 
 
+def test_upper_wall_issue_endpoints_are_private_feet_coordinates():
+    building = _box(10)
+    before = copy.deepcopy(building)
+    issues = _of(issues_of(building), 'upper_walls_cut')
+    check(issues, 'test setup: upper walls are cut')
+    walls = {w['id']: w for w in building['walls']}
+    for issue in issues:
+        wall = walls[issue['id'].split(':')[-1]]
+        check(issue.get('from') == wall['from'] and issue.get('to') == wall['to'],
+              ('structured wall endpoints are in building feet', issue))
+        check(WALL_TEXT.match(issue['text']), ('coordinates stay out of the plain text', issue))
+        issue['from'][0] += 100
+        issue['to'][1] += 100
+    check(building == before, 'issue endpoints do not alias or mutate the building')
+
+
 TESTS = (
     test_first_draft_gives_nothing_for_its_storey_and_a_half_rooms,
     test_second_draft_knee_wall_rooms_bear_nothing,
@@ -280,6 +296,7 @@ TESTS = (
     test_synthetic_hip_tolerance,
     test_synthetic_upper_walls_cut,
     test_synthetic_bears_below_floor_only_over_full_height_walls,
+    test_upper_wall_issue_endpoints_are_private_feet_coordinates,
 )
 
 

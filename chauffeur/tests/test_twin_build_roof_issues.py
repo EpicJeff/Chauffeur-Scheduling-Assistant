@@ -40,6 +40,7 @@ import re
 import sys
 import tempfile
 import traceback
+from unittest.mock import patch
 
 # Always a scratch data dir (the engine harness wipes its data dir); keep one
 # an importing test module already made.
@@ -52,7 +53,7 @@ from services import twin_build as tb  # noqa: E402
 from services import twin_store as ts  # noqa: E402
 import test_twin_build as engine_tests  # noqa: E402
 from test_twin_build import Reader, _pdf, check  # noqa: E402
-from test_twin_roof_issues import FINAL_ROOF_2, hip_text  # noqa: E402
+from test_twin_roof_issues import FINAL_ROOF_2, _box, hip_text  # noqa: E402
 
 RECORDED = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures', 'twin_reads', 'recorded', 'claude')
 DRAFT_2 = 'draft-main-house-2.json'
@@ -259,12 +260,84 @@ def test_every_leftover_issue_logs_once():
           ('each line is plain and on the draft step', [e['text'] for e in lines]))
 
 
+def test_missing_fragment_section_never_logs_its_id():
+    issue = {'id': 'hip_point:roof-99', 'section': 'roof-99', 'kind': 'hip_point',
+             'text': hip_text('roof-99')}
+    with patch.object(tb.twin_roof_issues, 'roof_issues', return_value=[issue]):
+        _, st = _run(RoofReader(raw_draft()))
+    lines = _still(st)
+    check(len(lines) == 1, ('the leftover issue is logged', _logs(st)))
+    check('Section ' not in lines[0]['text'] and 'roof-99' not in lines[0]['text'],
+          ('a re-minted section id never reaches the log', lines))
+    check('This section' in lines[0]['text'], ('the section has plain wording', lines))
+
+
+def test_identical_leftover_texts_log_once_without_redundant_place_prefix():
+    texts = [f"The upper floor's wall along the {side} stands above the roof there; "
+             "the roof over it should rest at the upper floor's height."
+             for side in ('left', 'right', 'rear')]
+    issues = [{'id': f'upper_walls_cut:L2:w{i}', 'kind': 'upper_walls_cut',
+               'text': texts[index], 'from': [i, 0], 'to': [i, 10]}
+              for i, index in enumerate((0, 0, 1, 1, 2))]
+    with patch.object(tb.twin_roof_issues, 'roof_issues', return_value=issues):
+        reader = RoofReader(raw_draft())
+        _, st = _run(reader)
+    check(len(_issues(reader)) == 5, 'all five located issues stay in the reader context')
+    lines = [e for e in st['events'] if e['type'] == 'log' and 'stands above the roof' in e.get('text', '')]
+    check([e['text'] for e in lines] == texts,
+          ('five issues with three identical texts log three plain lines, without coordinates or prefix', lines))
+    check(all(e.get('step') == 'draft' for e in lines), ('warnings belong to the draft step', lines))
+
+
+def test_issue_detection_failure_before_or_after_read_never_stops_build():
+    detect = tb.twin_roof_issues.roof_issues
+    for fail_at in (1, 2):
+        calls = []
+
+        def sometimes_raises(house):
+            calls.append(house)
+            if len(calls) == fail_at:
+                raise RuntimeError('geometry warning detection failed')
+            return detect(house)
+
+        with patch.object(tb.twin_roof_issues, 'roof_issues', side_effect=sometimes_raises):
+            reader = RoofReader(hip_draft(), RESOLVE)
+            _, st = _run(reader)
+        check(len(calls) == 2, ('issues checked before and after the roof read', fail_at, len(calls)))
+        check(_issues(reader) == [] if fail_at == 1 else bool(_issues(reader)),
+              ('a failed initial check supplies an empty list', fail_at, _issues(reader)))
+        check(_at(_house(), RIGHT_BLOCK), ('the roof correction still settles', fail_at, _roof(_house())))
+        check(not _still(st), ('a failed warning check leaves no warning', fail_at, _logs(st)))
+
+
+def test_wall_issue_context_has_feet_endpoints_without_log_coordinates():
+    draft = {'building': _box(10)}
+    reader = RoofReader(draft)
+    _, st = _run(reader)
+    issues = [i for i in _issues(reader) if i['kind'] == 'upper_walls_cut']
+    check(issues, 'the low roof cuts full-height upper walls')
+    walls = {w['id']: w for w in draft['building']['walls']}
+    for issue in issues:
+        wall = walls[issue['id'].split(':')[-1]]
+        check(issue.get('from') == wall['from'] and issue.get('to') == wall['to'],
+              ('the reader can locate the wall in building feet', issue, wall))
+    messages = {i['text'] for i in _issues(reader)}
+    lines = [e['text'] for e in st['events'] if e['type'] == 'log'
+             and ('stands above the roof' in e.get('text', '') or 'beneath its full-height' in e.get('text', ''))]
+    check(set(lines) == messages and len(lines) == len(messages),
+          ('place-naming issues log their plain text once, without coordinates', lines, messages))
+
+
 TESTS = (
     test_context_carries_issues,
     test_no_issues_leaves_the_roof_check_unchanged,
     test_resolving_answer_logs_nothing,
     test_one_unresolved_issue_logs_one_line_without_pausing,
     test_every_leftover_issue_logs_once,
+    test_missing_fragment_section_never_logs_its_id,
+    test_identical_leftover_texts_log_once_without_redundant_place_prefix,
+    test_issue_detection_failure_before_or_after_read_never_stops_build,
+    test_wall_issue_context_has_feet_endpoints_without_log_coordinates,
 )
 
 

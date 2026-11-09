@@ -1578,8 +1578,12 @@ def _read_draft_levels(build, step, reader, ticket, images, context, progress):
 
 def _draft_roof_issues(draft):
     # Normalize a private copy, keeping the read ids used by corrections.
-    plan, _ = twin_plan.normalize({'units': 'ft', 'buildings': [draft]})
-    return twin_roof_issues.roof_issues(plan['buildings'][0])
+    try:
+        plan, _ = twin_plan.normalize({'units': 'ft', 'buildings': [draft]})
+        return twin_roof_issues.roof_issues(plan['buildings'][0])
+    except Exception:
+        # Advisory warnings must never prevent the roof read or settlement.
+        return []
 
 
 def _read_roof_check(build, step, reader, ticket, result, images):
@@ -1960,16 +1964,21 @@ def _settle(build, step, result, decision=None):
         _atomic(_cache_path(build, step), result)
     if kind == 'draft' and roof_check.get('issues') and not roof_check.get('issues_logged'):
         sections = {s['id']: s for s in fragment.get('building', {}).get('roof', {}).get('sections', [])}
+        logged = set()
         for issue in roof_check['issues']:
             section = sections.get(issue.get('section'))
             area = 'the upper floor'
             text = issue['text']
+            if issue.get('section'):
+                text = text.replace(f"Section {issue['section']}", 'This section')
             if section:
                 x0, y0, x1, y1 = section['rect']
                 area = f'x {x0:g} to {x1:g} ft, y {y0:g} to {y1:g} ft'
-                text = text.replace(f"Section {section['id']}", 'This section')
-            _event(build, 'log', step=step['id'],
-                   text=f'The roof over {area} still needs checking: {text}')
+            if not text.startswith(("The upper floor's wall", 'The roof over ')):
+                text = f'The roof over {area} still needs checking: {text}'
+            if text not in logged:
+                _event(build, 'log', step=step['id'], text=text)
+                logged.add(text)
         roof_check['issues_logged'] = True
         _atomic(_cache_path(build, step), result)
     if kind == 'draft' and not fragment.get('building', {}).get('levels'):

@@ -140,6 +140,7 @@ def roof_issues(building) -> list[dict]:
                 abs(line - max(p[axis] for p in polygon)) < abs(line - min(p[axis] for p in polygon))]
             issues.append({'id': f"upper_walls_cut:{level['id']}:{wall.get('id', index)}",
                            'kind': 'upper_walls_cut',
+                           'from': list(wall['from']), 'to': list(wall['to']),
                            'text': f"The upper floor's wall along the {side} stands above the roof there; "
                                    "the roof over it should rest at the upper floor's height."})
     for section in sections:
