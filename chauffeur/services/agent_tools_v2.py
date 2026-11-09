@@ -7628,6 +7628,15 @@ class HouseDesignTool(BaseModel):
         "One twin_edit operation: set (piece, field, value), move (piece, by [dx,dy]), "
         "rotate (building, to), delete (piece), accept (pieces), add_wall (level, from, to), "
         "add_opening (wall, kind, at, width), or registration (source, page, level, reg). "
+        "Connected edits also accept move_joint (move a corner), move_wall, move_room, "
+        "split_wall, draw_room, split_room, move_hosted (slide or rehost a piece), "
+        "resize_opening, add_anchor (place a device point), add_item (place a library asset), "
+        "draw_roof (area), roof_over (rooms or null for the top floor), set_roof_edge, "
+        "move_roof_edge (positive by grows the roof; detach clears its wall attachment), "
+        "add_dormer, move_dormer, add_level, move_building (to lot coordinates), "
+        "rotate_building (rotation, optional about in lot feet), set (id, field, value), "
+        "set_material (target surface and material or null to clear), accept_proposal, "
+        "dismiss_proposal, move_site_item, delete_site_item, add_site_item. "
         "Lengths and coordinates are feet; rotation is degrees; pitch is rise in 12. "
         "An optional building id disambiguates pieces."))
     step: Optional[str] = Field(None, description="Build step id to reread.")

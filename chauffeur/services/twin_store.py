@@ -504,7 +504,7 @@ def update_current(mutator, kind, note='', step=None, cost=None, generation=None
         return _append_round(row, model, kind, note=note, cost=cost, step=step)
 
 
-def update_model(mutator, kind='edit', note='', changes=(), generation=None) -> int:
+def update_model(mutator, kind='edit', note='', changes=(), generation=None, *, state_mutator=None) -> int:
     """Publish a connected-model edit with its paired fix log."""
     with LIFECYCLE, _LOCK:
         row = _state()
@@ -516,6 +516,8 @@ def update_model(mutator, kind='edit', note='', changes=(), generation=None) -> 
             raise ValueError('There is no house yet.')
         before = _read_round(row, row['current'])
         model, _ = twin_model.normalize(mutator(before))
+        if state_mutator is not None:
+            state_mutator(row)
         _follow_place(row, model)
         return _append_round(row, model, kind, note=note, changes=changes)
 

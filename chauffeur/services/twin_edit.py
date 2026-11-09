@@ -2,7 +2,6 @@
 
 from copy import deepcopy
 import math
-import uuid
 
 from services import twin_joints, twin_plan, twin_register
 
@@ -414,7 +413,7 @@ def _choose_roof(building, piece):
     return True
 
 
-def apply(plan, edit):
+def _apply_legacy(plan, edit):
     """Return an edited, normalized copy and plain summary; never write storage."""
     if not isinstance(edit, dict):
         raise ValueError('An edit must be an object.')
@@ -559,6 +558,232 @@ def apply(plan, edit):
     return normalized, summary
 
 
+def apply_model(model, edit, validated=None):
+    """Translate the old editor vocabulary at the connected-model boundary."""
+    from services import twin_model_ops as ops, twin_model_bridge as bridge
+    from services import twin_model_hosts as hosts, twin_model_roofs as roofs, twin_model
+
+    if not isinstance(edit, dict):
+        raise ValueError('An edit must be an object.')
+    op = edit.get('op')
+    if (op in ops.MORE_OPS and (op not in ('set', 'add_opening') or 'id' in edit)
+            or op in ('move_joint', 'move_wall', 'move_room', 'split_wall', 'draw_room', 'split_room')
+            or op == 'delete' and 'id' in edit):
+        return ops.apply(model, edit)
+
+    flat = bridge.flatten(model)
+    checked = deepcopy(edit)
+    if op == 'add_opening':
+        checked.setdefault('width', 3)
+    legacy, summary = validated[:2] if validated is not None else _apply_legacy(flat, checked)
+    comparison = validated[2] if validated is not None else flat
+    scope = edit.get('building')
+    if op in ('move', 'set', 'delete', 'rotate', 'add_wall', 'add_opening'):
+        pid = (scope if op == 'rotate' else edit.get('level') if op == 'add_wall'
+               else edit.get('wall') if op == 'add_opening' else edit.get('piece'))
+        kind, piece, flat_building, _ = _find(flat, pid, scope)
+        bid = flat_building['id']
+        translated = {**checked, 'building': bid, 'id': pid}
+        if op == 'move' and kind in ('wall', 'room', 'building', 'opening'):
+            by = _point(edit.get('by'), 'by')
+            if kind == 'building':
+                translated.update(op='move_building', to=[piece['position'][i] + by[i] for i in (0, 1)])
+            elif kind == 'opening':
+                _, moved, _, _ = _find(legacy, pid, bid)
+                translated.update(op='move_hosted', at=moved['at'])
+            else:
+                translated.update(op='move_' + kind)
+                translated[kind] = pid
+            result, _ = ops.apply(model, translated)
+            return result, summary
+        if op == 'rotate':
+            translated.update(op='rotate_building', rotation=edit.get('to'))
+            if 'about' in edit:
+                translated['about'] = twin_register.to_world(flat_building, edit['about'])
+            result, _ = ops.apply(model, translated)
+            return result, summary
+        if op in ('add_wall', 'add_opening') or op == 'set' and kind != 'roof':
+            result, _ = ops.apply(model, translated)
+            return result, summary
+        if op == 'delete' and kind in ('wall', 'room', 'opening', 'roof'):
+            # The legacy delete explicitly removes its dependants. New model
+            # deletes retain lost hosts as ghosts, preserving the new UI's path.
+            result, _ = ops.apply(model, translated)
+            building = next(b for b in result['buildings'] if b['id'] == bid)
+            removed = {p['id'] for _, p, b in _removed(flat, legacy) if b['id'] == bid}
+            for name in ('openings', 'anchors', 'items', 'dormers', 'stairs'):
+                building[name] = [p for p in building.get(name, []) if p['id'] not in removed]
+            building['flags'] = [f for f in building['flags'] if not isinstance(f.get('piece'), str)
+                                 or f['piece'] not in removed]
+            return result, summary
+
+    # Registration and legacy section operations already have validated geometry.
+    # Apply only their changed pieces; never re-read over person-owned geometry.
+    result = deepcopy(model)
+    rebuilt, _ = bridge.assemble(legacy)
+    remaining_buildings = {b['id'] for b in legacy['buildings']}
+    result['buildings'] = [b for b in result['buildings'] if b['id'] in remaining_buildings]
+    for building in result['buildings']:
+        old_flat = next(b for b in comparison['buildings'] if b['id'] == building['id'])
+        new_flat = next(b for b in legacy['buildings'] if b['id'] == building['id'])
+        fresh = next(b for b in rebuilt['buildings'] if b['id'] == building['id'])
+        before = hosts.snapshot(building)
+        placed_hosts = []
+        if op == 'delete':
+            removed = {p['id'] for _, p, b in _removed(comparison, legacy)
+                       if b['id'] == building['id'] and 'id' in p}
+            for name in ('walls', 'rooms', 'roofs', 'dormers', 'openings', 'anchors', 'items', 'levels', 'stairs'):
+                building[name] = [p for p in building.get(name, []) if p['id'] not in removed]
+        remaining_flags = new_flat['roof'].get('flags', [])
+        building['flags'] = [f for f in building['flags'] if 'block_rect' not in f
+                             or any(g.get('block_rect') == f['block_rect'] for g in remaining_flags)]
+        changed_roofs = {p['id'] for p in new_flat['roof']['sections']
+                         if p != next((q for q in old_flat['roof']['sections'] if q['id'] == p['id']), None)}
+        for name in ('roofs', 'dormers'):
+            for piece in building.get(name, []):
+                if piece['id'] not in changed_roofs:
+                    continue
+                replacement = next((p for p in fresh[name] if p['id'] == piece['id']), None)
+                if replacement is not None:
+                    if name == 'roofs':
+                        for edge, old_edge, (a, b), (c, d) in zip(replacement['edges'], piece['edges'],
+                                roofs._segments(replacement['area']), roofs._segments(piece['area'])):
+                            axis = 0 if abs(a[0] - b[0]) < 1e-9 else 1
+                            if 'wall' in old_edge:
+                                edge.update(wall=old_edge['wall'],
+                                            wall_offset=old_edge.get('wall_offset', 0) + a[axis] - c[axis])
+                    piece.clear()
+                    piece.update(deepcopy(replacement))
+                    _mark(piece)
+        for name, source_name in (('openings', 'openings'), ('rooms', 'rooms'), ('levels', 'levels'),
+                                   ('anchors', 'lights'), ('items', 'fixtures'), ('stairs', 'stairs')):
+            old = {p.get('id', i): p for i, p in enumerate(old_flat.get(source_name, []))}
+            changed = {p.get('id', i) for i, p in enumerate(new_flat.get(source_name, []))
+                       if p != old.get(p.get('id', i))}
+            for index, piece in enumerate(building.get(name, [])):
+                if piece['id'] in changed or index in changed:
+                    replacement = next((p for p in fresh.get(name, []) if p['id'] == piece['id']), None)
+                    if replacement is not None:
+                        if name in ('openings', 'anchors', 'items'):
+                            placed_hosts.append((piece, replacement))
+                        else:
+                            piece.update(deepcopy(replacement))
+                            _mark(piece)
+        if op == 'registration':
+            points = {j['id']: j for j in building['joints']}
+            old_walls = {w['id']: w for w in old_flat['walls']}
+            for wall in new_flat['walls']:
+                if wall != old_walls.get(wall['id']):
+                    connected = next((w for w in building['walls'] if w['id'] == wall['id']), None)
+                    if connected:
+                        for jid, key in zip(connected['joints'], ('from', 'to')):
+                            points[jid]['at'] = deepcopy(wall[key])
+                        _mark(connected)
+        notes = twin_model.derive(building)
+        notes.extend(hosts.follow(building, before))
+        # Explicitly registered hosts already use the new sheet coordinates;
+        # following their old surface as well would apply its scale twice.
+        for piece, replacement in placed_hosts:
+            piece.update(deepcopy(replacement))
+            _mark(piece)
+        if op == 'accept':
+            for pid in edit['pieces']:
+                if scope is not None and scope != building['id']:
+                    continue
+                try:
+                    kind, piece = ops._piece(building, pid)
+                except ops.Refused:
+                    continue
+                if kind == 'opening':
+                    hosts.rehost(building, pid, hosts._host(piece, True))
+                piece['state'] = 'settled'
+                _mark(piece)
+        ops._follow_dormers(building, before)
+    return result, summary
+
+
+def _legacy_flat(model, original):
+    """Project migration-only splits back into an older flat caller's wall ids."""
+    from services import twin_model_bridge as bridge
+    flat = bridge.flatten(model)
+    for building in flat['buildings']:
+        source = next(b for b in original['buildings'] if b['id'] == building['id'])
+        if 'joints' in source:
+            continue
+        old_ids = {w['id'] for w in source['walls']}
+        hidden = {w['id'] for w in building['walls'] if w.get('kind') == 'separator'
+                  and w.get('src', {}).get('step') == 'migration' and w['id'] not in old_ids}
+        building['walls'] = [w for w in building['walls'] if w['id'] not in hidden]
+        for old in source['walls']:
+            parts = [w for w in building['walls'] if w['id'] == old['id']
+                     or w['id'] not in old_ids and w['id'].startswith(old['id'] + '~')]
+            if len(parts) < 2:
+                continue
+            unit, _ = _wall_vector(old)
+            parts.sort(key=lambda w: sum((w['from'][i] - old['from'][i]) * unit[i] for i in (0, 1)))
+            a, b = parts[0]['from'], parts[-1]['to']
+            length = math.dist(a, b)
+            if length == 0 or any(abs((p[0] - a[0]) * (b[1] - a[1]) -
+                                     (p[1] - a[1]) * (b[0] - a[0])) > 1e-6
+                                  for part in parts for p in (part['from'], part['to'])):
+                continue
+            merged = deepcopy(parts[0])
+            merged.update(id=old['id'], **{'from': a, 'to': b})
+            for key in ('joints', 'footprint'):
+                merged.pop(key, None)
+            if any(p.get('src', {}).get('person') for p in parts):
+                _mark(merged)
+            by_id = {p['id']: p for p in parts}
+            for opening in building['openings']:
+                part = by_id.get(opening.get('wall'))
+                if part is not None:
+                    direction, _ = _wall_vector(part)
+                    point = [part['from'][i] + direction[i] * opening['at'] for i in (0, 1)]
+                    opening.update(wall=old['id'], at=sum((point[i] - a[i]) * (b[i] - a[i])
+                                                        for i in (0, 1)) / length)
+            building['walls'] = [w for w in building['walls'] if w['id'] not in by_id] + [merged]
+        source_walls = {w['id']: w for w in source['walls']}
+        order = {w['id']: i for i, w in enumerate(source['walls'])}
+        for wall in building['walls']:
+            old = source_walls.get(wall['id'], {})
+            for key in ('joints', 'footprint', 'kind'):
+                if key not in old:
+                    wall.pop(key, None)
+        building['walls'].sort(key=lambda w: order.get(w['id'], len(order)))
+        # This projection is for callers that still own flat geometry. Model
+        # saves retain the full joint graph and separator flags.
+        building.pop('joints', None)
+    return flat
+
+
+def apply(plan, edit):
+    """Edit through the model, returning the caller's schema and plain words."""
+    from services import twin_model_bridge as bridge, twin_model
+    if not isinstance(edit, dict):
+        raise ValueError('An edit must be an object.')
+    if plan.get('schema') == twin_model.SCHEMA:
+        return apply_model(plan, edit)
+    legacy = None
+    if edit.get('op') in ('move', 'rotate', 'registration', 'accept', 'add_wall', 'add_opening') or (
+            edit.get('op') in ('set', 'delete') and 'piece' in edit):
+        checked = deepcopy(edit)
+        if checked.get('op') == 'add_opening':
+            checked.setdefault('width', 3)
+        legacy = (*_apply_legacy(plan, checked), plan)
+    model, _ = bridge.assemble(plan)
+    result, summary = apply_model(model, edit, validated=legacy)
+    flat = _legacy_flat(result, plan)
+    # Old callers still display the legacy roof-choice cards. Choices here are
+    # a compatibility projection; the model keeps ownership on the roof itself.
+    if (edit.get('op') == 'set' and 'piece' in edit) or edit.get('op') == 'accept':
+        legacy, _ = _apply_legacy(plan, edit)
+        for building in flat['buildings']:
+            old = next(b for b in legacy['buildings'] if b['id'] == building['id'])
+            if 'choices' in old['roof']:
+                building['roof']['choices'] = deepcopy(old['roof']['choices'])
+    return flat, summary
+
+
 def _tombstone(kind, piece, building):
     geometry = {k: deepcopy(piece[k]) for k in
                 ('from', 'to', 'polygon', 'rect', 'position', 'at', 'points', 'polyline') if k in piece}
@@ -607,10 +832,12 @@ def save(edit, actor_id, reason=''):
                 raise ValueError('No registration on file for this sheet yet')
             edit['reg'] = _registration(edit.get('reg'))
             twin_store._source_page(twin_store._state(), edit.get('source'), edit.get('page'))
-        after, summary = apply(before, edit)
+        from services import twin_model_bridge
+        model, summary = apply_model(twin_store.current_model(), edit)
+        after = twin_model_bridge.flatten(model)
         place_row = None
         if edit.get('op') == 'set' and edit.get('field') == 'name':
-            kind, piece, building, _ = _find(after, edit.get('piece'), edit.get('building'))
+            kind, piece, building, _ = _find(after, edit.get('piece', edit.get('id')), edit.get('building'))
             if kind == 'building':
                 # Validate the registry name before publishing, and carry the
                 # private snapshot into this same edit's metadata save.
@@ -619,23 +846,21 @@ def save(edit, actor_id, reason=''):
                 piece['name'] = record['name']
                 old_name = next(b['name'] for b in before['buildings'] if b['id'] == building['id'])
                 summary = f'Renamed {old_name} to {piece["name"]}'
-        tombstones = ([_tombstone(*entry) for entry in _removed(before, after)]
+        deletion_after = (_apply_legacy(before, edit)[0]
+                          if edit.get('op') == 'delete' and 'piece' in edit else after)
+        tombstones = ([_tombstone(*entry) for entry in _removed(before, deletion_after)]
                       if edit.get('op') == 'delete' else [])
         changes = [{'path': path, 'kind': twin_store._fix_kind(path),
                     'before': twin_store._leaf(before, path), 'after': twin_store._leaf(after, path),
                     'reason': reason.strip() or summary, 'actor_id': actor_id}
                    for path in twin_plan.diff_paths(before, after)
                    if twin_store._fix_kind(path) is not None]
-        round_id = twin_store.update_current(
-            lambda current: after, 'edit', note=summary,
-            step={'id': f'edit:{uuid.uuid4().hex}', 'label': summary})
-        row = twin_store._state()
-        if place_row is not None:
-            row['place'], row['page_roles'] = place_row['place'], place_row['page_roles']
-            row['sources'] = place_row['sources']
-        at = next(r['created'] for r in row['rounds'] if r['id'] == round_id)
-        row['fixes'].extend({**change, 'round': round_id, 'at': at} for change in changes)
-        twin_store._save(row)
+        def metadata(row):
+            if place_row is not None:
+                row['place'], row['page_roles'] = place_row['place'], place_row['page_roles']
+                row['sources'] = place_row['sources']
+        round_id = twin_store.update_model(
+            lambda current: model, 'edit', note=summary, changes=changes, state_mutator=metadata)
         for tombstone in tombstones:
             twin_store.add_tombstone(tombstone)
         if edit.get('op') == 'registration':

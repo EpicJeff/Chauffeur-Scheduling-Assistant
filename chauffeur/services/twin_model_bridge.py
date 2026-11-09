@@ -663,9 +663,21 @@ def flatten(model: dict) -> dict:
         for dormer in building.get('dormers', []):
             if dormer.get('state') not in ('ghost', 'proposal') and dormer.get('roof') in roof_by_id:
                 sections.extend(_dormer_sections(dormer, roof_by_id[dormer['roof']]))
+        for section in sections:
+            if section.get('ends') and all(style == section['kind'] for style in section['ends'].values()):
+                section.pop('ends')
         building['roof'] = {'sections': sections, 'extensions': deepcopy(building.get('extensions', [])),
                             'flags': [{k: deepcopy(v) for k, v in f.items() if k != 'at'}
                                       for f in building.get('flags', []) if 'block_rect' in f]}
+        choices = [{**{k: deepcopy(s[k]) for k in ('kind', 'ridge', 'ends', 'pitch', 'plate',
+                                                    'overhang', 'low_side') if k in s},
+                    'rect': deepcopy(s['block']), 'src': {'person': True}}
+                   for s in sections if s.get('src', {}).get('person') and s.get('block')
+                   and not s.get('dormer_of')
+                   and max(abs(a - b) for a, b in zip(s['rect'], s['block'])) <= 1]
+        if choices:
+            # Legacy cards read choices; ownership remains the schema-3 truth.
+            building['roof']['choices'] = choices
         openings = []
         for opening in building.get('openings', []):
             if opening.get('state') == 'proposal':
