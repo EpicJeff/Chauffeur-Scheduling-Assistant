@@ -223,8 +223,8 @@ RULES = [
     # HA-relative artwork (entity_picture, area pictures) drawn as a bare
     # <img> by the board's picture tiles; the proxy allowlists its paths.
     ('GET', '/api/ha/image', WALL, None),
-    ('POST', '/api/ha/control/grant', frozenset({DEVICE}), None),
-    ('POST', '/api/ha/control/held/{held_id}', frozenset({DEVICE}), None),
+    ('POST', '/api/ha/control/grant', WALL, None),
+    ('POST', '/api/ha/control/held/{held_id}', WALL, None),
     (ANY, '/api/ha/*', PARENTS, None),
     (ANY, '/api/telemetry/*', PARENTS, None),
     (ANY, '/api/push_subscriptions/*', PARENTS, None),
