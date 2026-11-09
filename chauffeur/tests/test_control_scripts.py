@@ -48,14 +48,27 @@ STATES = [
     state('script.chatty', friendly_name='Chatty'),
     state('script.quiet', friendly_name='Quiet'),
     state('script.open_garage', friendly_name='Open garage'),
+    state('script.mixed', friendly_name='Mixed'),
+    state('script.labelled', friendly_name='Labelled'),
+    state('script.legacy', friendly_name='Legacy'),
+    state('script.no_config', friendly_name='No config'),
+    state('script.kitchen_off', friendly_name='Kitchen off'),
+    state('script.device_action', friendly_name='Device action'),
+    state('script.ha_generic', friendly_name='HA generic'),
+    state('sensor.kitchen_temp'),
+    state('lock.kitchen_door'),
+    state('light.kitchen'),
 ]
 ENTITY_REGISTRY = [
     {'entity_id': 'cover.garage_door', 'device_id': 'dev-garage', 'area_id': None},
+    {'entity_id': 'sensor.garage_temp', 'device_id': 'dev-garage', 'area_id': None},
     {'entity_id': 'lock.side', 'device_id': None, 'area_id': 'garage_area'},
 ]
 DEVICE_REGISTRY = [{'id': 'dev-garage', 'name': 'Garage opener', 'area_id': None}]
 AREAS = [{'id': 'garage_area', 'name': 'Garage', 'entities': ['lock.side']},
-         {'id': 'kitchen', 'name': 'Kitchen', 'entities': ['light.a', 'lock.front']}]
+         {'id': 'kitchen', 'name': 'Kitchen', 'entities': ['light.a', 'lock.front']},
+         {'id': 'kitchen2', 'name': 'Kitchen two',
+          'entities': ['light.kitchen', 'sensor.kitchen_temp', 'lock.kitchen_door']}]
 
 # What HA's search/related answers, keyed by the FULL script entity id.
 RELATED = {
@@ -68,9 +81,20 @@ RELATED = {
     'script.chatty': {},
     'script.quiet': {},
     'script.open_garage': {'entity': ['cover.garage_door']},
+    'script.mixed': {'entity': ['light.a']},
+    'script.labelled': {},
+    'script.legacy': {},
+    'script.no_config': {},
+    # HA's search resolves UPWARD: the room and device of a referenced light come back too.
+    'script.kitchen_off': {'entity': ['light.kitchen'], 'area': ['kitchen2'], 'device': ['dev-garage']},
+    'script.device_action': {'device': ['dev-garage']},
+    'script.ha_generic': {'entity': ['light.a']},
 }
 CONFIGS = {
-    'goodnight': {'sequence': [{'service': 'light.turn_off', 'target': {'entity_id': 'light.a'}}]},
+    'goodnight': {'sequence': [
+        {'service': 'light.turn_off', 'target': {'entity_id': 'light.a'}},
+        {'service': 'cover.close_cover', 'target': {'device_id': 'dev-garage'}},
+        {'service': 'lock.lock', 'target': {'area_id': 'garage_area'}}]},
     'lights_only': {'sequence': [
         {'delay': '00:00:05'},
         {'service': 'notify.mobile', 'data': {'message': 'night'}},
@@ -84,6 +108,18 @@ CONFIGS = {
     # HA's search can answer empty for a script it has not indexed; the config still names the lock.
     'quiet': {'sequence': [{'action': 'lock.unlock', 'target': {'entity_id': 'lock.side'}}]},
     'open_garage': {'sequence': [{'service': 'cover.open_cover', 'target': {'entity_id': 'cover.garage_door'}}]},
+    # A readable light step must not vouch for an unread scene step.
+    'mixed': {'sequence': [
+        {'service': 'light.turn_on', 'target': {'entity_id': 'light.a'}},
+        {'service': 'scene.apply', 'data': {'entities': {'lock.front': 'unlocked'}}}]},
+    'labelled': {'sequence': [
+        {'service': 'light.turn_on', 'target': {'entity_id': 'light.a', 'label_id': 'doors'}}]},
+    'legacy': {'sequence': [
+        {'service': 'lock.unlock', 'data_template': {'entity_id': '{{ states("input_text.d") }}'}}]},
+    'kitchen_off': {'sequence': [{'service': 'light.turn_off', 'target': {'entity_id': 'light.kitchen'}}]},
+    'device_action': {'sequence': [
+        {'type': 'open', 'device_id': 'dev-garage', 'entity_id': '4f1c2d3e5a6b7c8d9e0f', 'domain': 'cover'}]},
+    'ha_generic': {'sequence': [{'service': 'homeassistant.turn_off', 'target': {'entity_id': 'light.a'}}]},
 }
 
 
@@ -104,9 +140,13 @@ class Base(unittest.TestCase):
             self.ws_calls.append((command, fields))
             if command == 'search/related':
                 return copy.deepcopy(RELATED.get(fields.get('item_id'), {}))
+            if command == 'script/config':
+                object_id = str(fields.get('entity_id', '')).partition('.')[2]
+                config = CONFIGS.get(object_id)
+                return {'config': copy.deepcopy(config)} if config is not None else None
             return None
         ha_api.ws_command = ws
-        ha_api.get_script_config = lambda object_id: copy.deepcopy(CONFIGS.get(object_id))
+        ha_api.get_script_config = lambda object_id: None
         cs.clear_cache()
         self.rules = cr.default_rules({})
 
@@ -209,15 +249,82 @@ class Unreadable(Base):
     def test_unreadable_scripts_list(self):
         rows = cs.unreadable_scripts()
         by_id = {r['entity_id']: r for r in rows}
-        self.assertEqual(set(by_id), {'script.templated', 'script.gate', 'script.chatty'})
+        self.assertEqual(set(by_id), {'script.templated', 'script.gate', 'script.chatty',
+                                      'script.labelled', 'script.legacy', 'script.no_config'})
         self.assertEqual(by_id['script.gate']['name'], 'Gate')
         for row in rows:
             self.assertTrue(row['reason'].strip())
 
 
+class ReviewRound1(Base):
+    """Findings from the Claude review of Task 2, each a way past the rules."""
+
+    def test_config_read_through_websocket_wrapper(self):
+        # Live HA answers script/config as {'config': ...}; REST answers nothing here.
+        _, reasons = cs.touched('script.gate')
+        self.assertTrue(any('rest_command' in r for r in reasons), reasons)
+        self.assertEqual(set(cr.kinds_for(['script.chatty'])), set(cr.KINDS))
+
+    def test_rest_fallback_still_works(self):
+        ha_api.ws_command = lambda command, timeout=8, **fields: (
+            copy.deepcopy(RELATED.get(fields.get('item_id'), {})) if command == 'search/related' else None)
+        ha_api.get_script_config = lambda object_id: copy.deepcopy(CONFIGS.get(object_id))
+        cs.clear_cache()
+        _, reasons = cs.touched('script.gate')
+        self.assertTrue(any('rest_command' in r for r in reasons), reasons)
+
+    def test_config_unreadable_is_unreadable(self):
+        # Neither websocket nor REST can read the steps: never "touches nothing".
+        self.assertEqual(set(cr.kinds_for(['script.no_config'])), set(cr.KINDS))
+
+    def test_each_action_judged_alone(self):
+        kinds = set(cr.kinds_for(['script.mixed']))
+        self.assertIn('locks', kinds)            # scene.apply entities are read, not skipped
+        self.assertFalse(cr.check(CHILD, ['script.mixed'], {'ha_control': self.rules}).allowed)
+
+    def test_label_and_floor_targets_unreadable(self):
+        self.assertEqual(set(cr.kinds_for(['script.labelled'])), set(cr.KINDS))
+
+    def test_data_template_unreadable(self):
+        self.assertEqual(set(cr.kinds_for(['script.legacy'])), set(cr.KINDS))
+
+    def test_upward_related_does_not_poison(self):
+        # The kitchen light's room holds a sensor and a lock; turning the light off is lights only.
+        self.assertEqual(set(cr.kinds_for(['script.kitchen_off'])), {'lights'})
+        self.assertTrue(cr.check(CHILD, ['script.kitchen_off'], {'ha_control': self.rules}).allowed)
+        self.assertTrue(cr.check(PARENT, ['script.kitchen_off'], {'ha_control': self.rules}).allowed)
+
+    def test_device_action_uses_its_domain(self):
+        self.assertEqual(set(cr.kinds_for(['script.device_action'])), {'garage'})
+
+    def test_homeassistant_generic_service_reads_targets(self):
+        self.assertEqual(set(cr.kinds_for(['script.ha_generic'])), {'lights'})
+
+    def test_check_refuses_empty_and_coerces_string(self):
+        settings = {'ha_control': self.rules}
+        self.assertFalse(cr.check(PARENT, [], settings).allowed)
+        self.assertFalse(cr.check(CHILD, 'lock.front', settings).allowed)
+        self.assertTrue(cr.check(CHILD, 'light.a', settings).allowed)
+
+
 class Targets(Base):
+    def test_targets_filter_to_the_service_domain(self):
+        self.assertEqual(cr.targets({'area_id': 'kitchen2'}, domain='light'), {'light.kitchen'})
+        self.assertEqual(cr.targets({'device_id': 'dev-garage'}, domain='cover'), {'cover.garage_door'})
+        settings = {'ha_control': self.rules}
+        self.assertTrue(cr.check(CHILD, cr.targets({'area_id': 'kitchen2'}, domain='light'), settings).allowed)
+
+    def test_unresolvable_targets_raise(self):
+        for data in ({'floor_id': 'upstairs'}, {'label_id': 'doors'},
+                     {'entity_id': 'light.a', 'label_id': 'doors'},
+                     {'area_id': 'no_such_room'}, {'device_id': 'no_such_device'}):
+            with self.assertRaises(ValueError, msg=data):
+                cr.targets(data)
+
     def test_targets_area_and_list(self):
         self.assertEqual(cr.targets({'area_id': 'kitchen'}), {'light.a', 'lock.front'})
+        # No domain given: every actuatable entity in the room, never a sensor.
+        self.assertEqual(cr.targets({'area_id': 'kitchen2'}), {'light.kitchen', 'lock.kitchen_door'})
         self.assertEqual(cr.targets({'entity_id': ['light.a', 'lock.front']}), {'light.a', 'lock.front'})
         self.assertEqual(cr.targets({'entity_id': 'light.a'}), {'light.a'})
         self.assertEqual(cr.targets({'device_id': 'dev-garage'}), {'cover.garage_door'})

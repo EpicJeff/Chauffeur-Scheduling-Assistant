@@ -16,7 +16,7 @@ _IGNORED = frozenset({
     'delay', 'wait_template', 'wait_for_trigger', 'notify', 'tts',
     'persistent_notification', 'logbook', 'system_log', 'stop', 'variables', 'condition',
 })
-_TARGET_FIELDS = ('target', 'entity_id', 'device_id', 'area_id')
+_TARGET_FIELDS = ('target', 'entity_id', 'device_id', 'area_id', 'floor_id', 'label_id')
 
 
 def clear_cache() -> None:
@@ -65,15 +65,54 @@ def touched(entity_id: str) -> tuple[set[str], list[str]]:
 
     entities, reasons, visited = set(), [], set()
 
-    def expand(data):
+    def expand(data, domain=None):
+        found = set()
         for source in (data, data.get('data') or {}):
             if any(_templated(source.get(key)) for key in _TARGET_FIELDS):
                 reasons.append('A template target could not be read')
                 continue
-            found = targets(source)
-            if not found and any(source.get(key) for key in _TARGET_FIELDS):
-                reasons.append('The target entities could not be read')
-            yield from found
+            try:
+                found.update(targets(source, domain=domain))
+            except ValueError as exc:
+                reasons.append(str(exc))
+        return found
+
+    def action_targets(action):
+        service = action.get('service', action.get('action', ''))
+        service_domain = service.partition('.')[0]
+        if service_domain in _IGNORED or any(key in action for key in _IGNORED):
+            return set()
+        if 'data_template' in action:
+            reasons.append('The legacy data_template steps could not be read.')
+
+        device_action = 'type' in action and 'device_id' in action and 'domain' in action
+        if device_action:
+            service_domain = action['domain']
+        generic = service in ('homeassistant.turn_on', 'homeassistant.turn_off',
+                              'homeassistant.toggle')
+        if service or device_action:
+            if service_domain in _OPAQUE or (not generic and service_domain not in domains):
+                reasons.append(f'The {service_domain} action could not be read')
+
+        if device_action:
+            # Device automations name an entity-registry UUID, not an entity id.
+            selection = {key: value for key, value in action.items() if key != 'entity_id'}
+        else:
+            selection = action
+        found = expand(selection, domain=None if generic else service_domain or None)
+        if service_domain == 'script' and service and service not in (
+            'script.turn_on', 'script.turn_off', 'script.toggle', 'script.reload',
+        ):
+            found.add(service)
+        if service in ('scene.apply', 'scene.create'):
+            scene_entities = (action.get('data') or {}).get('entities')
+            if isinstance(scene_entities, dict):
+                found.update(expand({'entity_id': list(scene_entities)}))
+            elif scene_entities is not None:
+                reasons.append('The scene entities could not be read.')
+        if (service or device_action) and not found:
+            reasons.append(f'The {service or service_domain} action has targets that could not be read.')
+        return found
 
     def visit(eid):
         if eid in visited:
@@ -89,17 +128,16 @@ def touched(entity_id: str) -> tuple[set[str], list[str]]:
                 if 'entity_id' not in attrs:
                     reasons.append(_UNREAD)
                     return
-                children = set(expand({'entity_id': attrs['entity_id']}))
+                children = expand({'entity_id': attrs['entity_id']})
             else:
                 related = ha_api.ws_command('search/related', item_type='script', item_id=eid)
                 children = set()
                 if not isinstance(related, dict):
                     reasons.append(_UNREAD)
                 else:
-                    children.update(expand({
-                        'entity_id': related.get('entity'), 'device_id': related.get('device'),
-                        'area_id': related.get('area'),
-                    }))
+                    # Search also returns the room/device owning each reference;
+                    # those are not targets of the script's service calls.
+                    children.update(expand({'entity_id': related.get('entity')}))
                     for key in ('script', 'scene'):
                         values = related.get(key) or []
                         if isinstance(values, str):
@@ -108,26 +146,15 @@ def touched(entity_id: str) -> tuple[set[str], list[str]]:
                                         for value in values)
 
                 config = ha_api.ws_command('script/config', entity_id=eid)
-                if not isinstance(config, dict):
+                if isinstance(config, dict) and 'config' in config:
+                    config = config['config']
+                if config is None:
                     config = ha_api.get_script_config(eid.partition('.')[2])
-                device_actions = False
-                if config is not None:
-                    for action in _actions(config.get('sequence') or []):
-                        service = action.get('service', action.get('action', ''))
-                        service_domain = service.partition('.')[0]
-                        if service_domain in _IGNORED or any(key in action for key in _IGNORED):
-                            continue
-                        if service:
-                            if service_domain in _OPAQUE or service_domain not in domains:
-                                reasons.append(f'The {service_domain} action could not be read')
-                            device_actions = True
-                            if service_domain == 'script' and service not in (
-                                'script.turn_on', 'script.turn_off', 'script.toggle', 'script.reload',
-                            ):
-                                children.add(service)
-                        children.update(expand(action))
-                if device_actions and not children:
-                    reasons.append('The script has actions whose targets could not be read')
+                if not isinstance(config, dict) or not isinstance(config.get('sequence'), (list, dict)):
+                    reasons.append("The script's steps could not be read.")
+                else:
+                    for action in _actions(config['sequence']):
+                        children.update(action_targets(action))
             for child in sorted(children):
                 visit(child)
         except Exception:
