@@ -1,6 +1,20 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.769 (2026-11-08).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.770 (2026-11-08).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.770 (2026-11-08, NOT device-verified): the roof check is told what the geometry says is wrong.**
+
+Spec: `docs/superpowers/specs/2026-11-08-house-editor-whole-building-draft-design.md` §2b. Task 13 in the SDD ledger. Claude wrote the tests first, Codex built it, and Claude reviewed it. New suites: `tests/test_twin_roof_issues.py` and `tests/test_twin_build_roof_issues.py`.
+
+Why: the user reviewed the second acceptance build of the household's main house. The reading had put a one-storey hip over the upper block above the garage. Because the hip ran across the block's shorter side, it came to a point instead of being a hip with its ridge parallel to the street.
+
+- **`services/twin_roof_issues.roof_issues(building)`** finds roof contradictions in the read geometry. It is pure.
+  - `hip_point`: a hip whose ridge runs along the shorter side of a clearly elongated section (long minus short is at least 25% of short), so it comes to a point.
+  - `upper_walls_cut`: a full-height upper exterior wall cut more than 2 ft by the visible roof over at least 3 ft of its length. Knee walls never count.
+  - `bears_below_floor`: a roof bearing at or below a floor it covers. Half-storey and knee-wall areas are skipped.
+- **The roof check resolves them.** The issues go into the `roof_check` read's context, with wall coordinates in feet. The read must resolve each one against the roof plan and the photos.
+- **Leftovers are logged, never paused on.** After the corrections, any issue still open is logged once in plain words. The log names the area in feet and never an id, and identical lines are collapsed. The issue finder can never fail a build.
+- **Known limit.** A reading can still choose a wrong roof form that no rule flags. The person fixes it on the roof card. The next design work replaces free-form roof sections with roofs built from the storey footprint and a few constrained choices per block. That is how design tools such as Live Home 3D build roofs, so the roof fits the walls by construction.
 
 **v2.499.769 (2026-11-08, NOT device-verified): a drawn building is read whole, in feet.**
 
