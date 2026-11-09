@@ -24,6 +24,7 @@ Module under test: services/twin_model_graph.py.
 Run from chauffeur/:  env -u HA_BASE_URL python tests/test_twin_model_graph.py
 """
 import copy
+import math
 import os
 import sys
 import tempfile
@@ -246,6 +247,48 @@ def test_closed_box_has_no_open_ends():
     check(open_ends(j, w) == [], f'no open ends: {open_ends(j, w)}')
 
 
+def test_split_overshoot_shorter_than_one_foot_is_dropped():
+    # R15 applies at either end of a split wall, including a proper crossing.
+    for reverse in (False, True):
+        for overshoot in (0.4, 0.999, 1.0, 1.4):
+            j = {k: v for k, v in BOX_JOINTS.items() if k.startswith('c')}
+            j['tip'] = [10 + overshoot, 8.0]
+            top = ['c3', 'tip'] if reverse else ['tip', 'c3']
+            w = copy.deepcopy(BOX_WALLS)
+            w[2] = wall('b2', *top)
+            j2, w2 = split_crossings(j, w)
+            check(areas(regions(j2, w2)) == [80.0], f'one room: {w2}')
+            ends = open_ends(j2, w2)
+            if overshoot < 1.0:
+                check(ends == [], f'{overshoot} ft overshoot must leave no open end: {ends}')
+                check(len(w2) == 4 and 'b2' in by_id(w2), f'keeps the retained wall id: {w2}')
+                check('tip' not in {jid for part in w2 for jid in part['joints']}, w2)
+                check(split_crossings(j2, w2) == (j2, w2), 'trimming is stable on repeat')
+            else:
+                check(ends == [j['tip']], f'{overshoot} ft overshoot stays: {ends}')
+    # Both walls run past the intersection, so the corner is a proper crossing.
+    j = {'a': [0, 0], 'b': [10, 0], 'c': [10, 8.4], 'd': [0, 8], 'tip': [10.4, 8]}
+    w = [wall('b0', 'a', 'b'), wall('b1', 'b', 'c'),
+         wall('b2', 'tip', 'd'), wall('b3', 'd', 'a')]
+    j2, w2 = split_crossings(j, w)
+    check(areas(regions(j2, w2)) == [80.0], f'one room at the crossing: {w2}')
+    check(open_ends(j2, w2) == [], f'neither crossing overshoot is open: {w2}')
+
+
+def test_short_walls_and_connected_split_parts_survive():
+    # R13/R15: a real short wall is not a split overshoot, and a short piece
+    # between two junctions is not dangling.
+    for length in (0.4, 1.0):
+        j = {'a': [0, 0], 'b': [length, 0]}
+        w = [wall('short', 'a', 'b')]
+        check(split_crossings(j, w) == (j, w), f'real {length} ft wall survives')
+    j = {'a': [0, 0], 'b': [10, 0], 'p': [5, 0], 'q': [5.4, 0],
+         'e': [5, 6], 'f': [5.4, 6]}
+    w = [wall('t', 'a', 'b'), wall('s1', 'p', 'e'), wall('s2', 'q', 'f')]
+    j2, w2 = split_crossings(j, w)
+    check(by_id(w2)['t~2']['joints'] == ['p', 'q'], f'connected short piece survives: {w2}')
+
+
 # ---------------------------------------------------------------- weld
 
 def test_weld_merges_within_one_foot_only():
@@ -265,6 +308,22 @@ def test_weld_tolerance_is_a_parameter():
     check(idx[0] != idx[1] and len(pts) == 2, f'0.9 apart stays apart at tol 0.5: {pts} {idx}')
     pts, idx = weld([[0, 0], [0, 1.8]], tol=2.0)
     check(idx[0] == idx[1] and len(pts) == 1, f'1.8 apart merges at tol 2: {pts} {idx}')
+
+
+def test_weld_tolerance_is_strict():
+    for tol in (0.5, 1.0, 2.0):
+        pts, idx = weld([[0, 0], [tol, 0]], tol=tol)
+        check(idx[0] != idx[1] and len(pts) == 2, f'exactly {tol} apart stays apart: {pts}')
+
+
+def test_weld_never_merges_a_walls_own_ends():
+    # Index pairs identify the two ends of each wall. A third nearby point
+    # must not let complete-link clustering merge those ends indirectly.
+    points = [[0, 0], [0.8, 0], [0.4, 0], [3, 0]]
+    pts, idx = weld(points, separate=[(0, 1), (2, 3)])
+    check(idx[0] != idx[1] and idx[2] != idx[3], f'wall endpoints stay separate: {idx}')
+    check(idx[2] in (idx[0], idx[1]) and len(pts) == 3, f'unrelated nearby ends still weld: {idx}')
+    check(points == [[0, 0], [0.8, 0], [0.4, 0], [3, 0]], 'welding preserves the inputs')
 
 
 # ---------------------------------------------------------------- footprints
@@ -339,6 +398,54 @@ def test_four_way_crossing_ends_meet_at_the_faces():
           f'h footprint [from_left, to_left, to_right, from_right]: {h}')
 
 
+def test_near_collinear_t_junction_leaves_no_hole():
+    def contains(poly, p):
+        # Convex footprints include their boundaries.
+        crosses = [(b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
+                   for a, b in zip(poly, poly[1:] + poly[:1])]
+        return min(crosses) >= -1e-9 or max(crosses) <= 1e-9
+
+    for displacement in (-0.03, 0.03):
+        for reverse in (False, True):
+            j = {'a': [0, 0], 'b': [10, 0], 'm': [5, displacement], 'e': [5, 6]}
+            w = [wall('t', *(['b', 'a'] if reverse else ['a', 'b'])),
+                 wall('s', 'm', 'e', exterior=False)]
+            fp = footprints(*split_crossings(j, w))
+            t1, t2 = fp['t'], fp['t~2']
+            check(same_pt(t1[1], t2[0]) and same_pt(t1[2], t2[3]),
+                  f'continuation faces meet at their bisector: {t1} {t2}')
+            # Sample the joint's thickness-square at cell centres, so the
+            # slight tilt of the outside faces does not count as a hole.
+            for ix in range(50):
+                for iy in range(50):
+                    p = [5 - T / 2 + T * (ix + 0.5) / 50,
+                         displacement - T / 2 + T * (iy + 0.5) / 50]
+                    check(any(contains(poly, p) for poly in fp.values()),
+                          f'joint square has an uncovered point {p}: {fp}')
+
+
+def test_two_degree_mitres_fall_back_to_square_ends():
+    for thickness in (T, 0.75):
+        for reverse in (False, True):
+            angle = math.radians(2)
+            j = {'a': [0, 0], 'm': [10, 0],
+                 'b': [10 - 6 * math.cos(angle), 6 * math.sin(angle)]}
+            w = [wall('a', 'a', 'm'), wall('b', 'm', 'b', thickness=thickness)]
+            if reverse:
+                for part in w:
+                    part['joints'].reverse()
+            fp = footprints(j, w)
+            for part in w:
+                at_start = part['joints'][0] == 'm'
+                corners = [fp[part['id']][i] for i in ((0, 3) if at_start else (1, 2))]
+                other = j[part['joints'][1 if at_start else 0]]
+                direction = [other[i] - j['m'][i] for i in (0, 1)]
+                for p in corners:
+                    check(math.dist(p, j['m']) <= 2 * max(T, thickness), f'mitre spike: {p}')
+                    check(close(sum((p[i] - j['m'][i]) * direction[i] for i in (0, 1)), 0),
+                          f'limited side ends square: {p}')
+
+
 TESTS = (
     test_t_junction_splits_and_makes_two_rooms,
     test_split_parts_copy_every_other_field,
@@ -351,13 +458,19 @@ TESTS = (
     test_gap_leaves_no_region_and_reports_open_ends,
     test_dangling_wall_bounds_nothing,
     test_closed_box_has_no_open_ends,
+    test_split_overshoot_shorter_than_one_foot_is_dropped,
+    test_short_walls_and_connected_split_parts_survive,
     test_weld_merges_within_one_foot_only,
     test_weld_tolerance_is_a_parameter,
+    test_weld_tolerance_is_strict,
+    test_weld_never_merges_a_walls_own_ends,
     test_l_corner_footprints_meet_without_a_gap,
     test_free_wall_footprint_is_a_square_ended_rectangle,
     test_t_junction_end_is_square_against_the_through_wall,
     test_t_junction_leaves_no_hole,
     test_four_way_crossing_ends_meet_at_the_faces,
+    test_near_collinear_t_junction_leaves_no_hole,
+    test_two_degree_mitres_fall_back_to_square_ends,
 )
 
 

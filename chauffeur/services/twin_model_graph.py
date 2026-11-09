@@ -17,17 +17,21 @@ def _delta(a, b):
     return [b[0] - a[0], b[1] - a[1]]
 
 
-def weld(points: list[list[float]], tol=1.0) -> tuple[list[list[float]], list[int]]:
-    """Average nearby points without letting a chain weld distant endpoints."""
+def weld(points: list[list[float]], tol=1.0, *, separate=()) -> tuple[list[list[float]], list[int]]:
+    """Average points strictly within tol, keeping separate index pairs apart.
+
+    Wall-aware callers pass each wall's two endpoint indices in separate (R13).
+    """
     owners = list(range(len(points)))
     groups = {i: [i] for i in owners}
+    blocked = {frozenset(pair) for pair in separate}
     pairs = sorted((math.dist(a, b), i, j) for i, a in enumerate(points)
-                   for j, b in enumerate(points[:i]) if math.dist(a, b) <= tol)
+                   for j, b in enumerate(points[:i]) if math.dist(a, b) < tol)
     for _, i, j in pairs:
         a, b = owners[i], owners[j]
         if a == b:
             continue
-        if any(math.dist(points[k], points[l]) > tol
+        if any(math.dist(points[k], points[l]) >= tol or frozenset((k, l)) in blocked
                for k in groups[a] for l in groups[b]):
             continue
         a, b = min(a, b), max(a, b)
@@ -101,14 +105,23 @@ def split_crossings(joints: dict[str, list], walls: list[dict]) -> tuple[dict, l
             cuts[i].setdefault(jid, t)
             cuts[k].setdefault(jid, u)
 
+    segments = [[(a, b) for a, b in zip(ordered, ordered[1:])
+                 if math.dist(result_joints[a], result_joints[b]) > _EPS]
+                for ordered in (sorted(parts, key=parts.get) for parts in cuts)]
+    counts = Counter(jid for parts in segments for pair in parts for jid in pair)
     result_walls = []
     used_ids = {wall['id'] for wall in walls}
-    for wall, parts in zip(walls, cuts):
-        ordered = sorted(parts, key=parts.get)
+    for wall, parts in zip(walls, segments):
+        if len(parts) > 1:
+            # Only a split's terminal, free-ended tail is a read overshoot.
+            # Real short walls and short pieces between junctions survive.
+            parts = [(a, b) for i, (a, b) in enumerate(parts)
+                     if not (i in (0, len(parts) - 1)
+                             and math.dist(result_joints[a], result_joints[b]) < 1.0
+                             and ((counts[a] == 1 and counts[b] >= 3)
+                                  or (counts[b] == 1 and counts[a] >= 3)))]
         suffix = 2
-        for i, (a, b) in enumerate(zip(ordered, ordered[1:])):
-            if math.dist(result_joints[a], result_joints[b]) <= _EPS:
-                continue
+        for i, (a, b) in enumerate(parts):
             part = deepcopy(wall)
             part['joints'] = [a, b]
             if i:
@@ -182,7 +195,8 @@ def _intersection(a, direction, b, other):
 
 
 def _opposite(a, b):
-    return abs(_cross(a, b)) <= _EPS and sum(x * y for x, y in zip(a, b)) < 0
+    return (abs(_cross(a, b)) <= math.sin(math.radians(3)) + _EPS
+            and sum(x * y for x, y in zip(a, b)) < 0)
 
 
 def footprints(joints, walls) -> dict[str, list[list[float]]]:
@@ -211,23 +225,33 @@ def footprints(joints, walls) -> dict[str, list[list[float]]]:
         _, direction, width = edges[index]
         point = joints[jid]
         square = [_offset(point, direction, width, side) for side in (1, -1)]
-        # Both faces of a through wall stay square, even with stems attached.
-        continuation = any(_opposite(direction, other)
-                           for other_id, other, _ in edges if other_id != wid)
-        if len(edges) == 1 or continuation:
+
+        def meet(offset, other, other_width, side):
+            face = _offset(point, other, other_width, side)
+            corner = _intersection(offset, direction, face, other)
+            # Widths are half-thicknesses; limit to twice the larger thickness.
+            return corner if math.dist(point, corner) <= 4 * max(width, other_width) else offset
+
+        if len(edges) == 1:
             return square
+        continuation = next((edge for edge in edges if edge[0] != wid
+                             and _opposite(direction, edge[1])), None)
+        if continuation is not None:
+            # Same-face intersections close a slightly kinked through wall at
+            # its bisector. Exact collinearity retains the square R6 ends.
+            _, other, other_width = continuation
+            return [meet(offset, other, other_width, -side)
+                    for side, offset in zip((1, -1), square)]
         through = next((edge for i, edge in enumerate(edges)
                         if any(_opposite(edge[1], other[1]) for other in edges[i + 1:])), None)
         if through is not None:
             _, other, other_width = through
             side = 1 if _cross(other, direction) > 0 else -1
-            face = _offset(point, other, other_width, side)
-            return [_intersection(offset, direction, face, other) for offset in square]
+            return [meet(offset, other, other_width, side) for offset in square]
         corners = []
         for side, offset in zip((1, -1), square):
             _, other, other_width = edges[(index + side) % len(edges)]
-            adjacent = _offset(point, other, other_width, -side)
-            corners.append(_intersection(offset, direction, adjacent, other))
+            corners.append(meet(offset, other, other_width, -side))
         return corners
 
     result = {}
