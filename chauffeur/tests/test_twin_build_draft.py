@@ -276,6 +276,8 @@ def test_draft_settles_all_at_once():
     check(len(got.get('level', [])) == 2, ('both levels settle', counts))
     check(len(got.get('wall', [])) >= 28, ('the exterior walls settle', counts))
     check(len(got.get('opening', [])) >= 18, ('the openings settle', counts))
+    check(any(o.get('section') and 'gable' in o for o in settled[0]['pieces']),
+          ('at least one gable opening settles with the whole draft', settled[0]['pieces']))
     main_roofs = {'main', 'cross_gable', 'left_wing', 'front_wing', 'right_block',
                   'side_wing', 'rear_gable', 'kitchen_bump'}
     # Ruling R14: the main roof now comes from the blocks; the porch roofs stay as read.

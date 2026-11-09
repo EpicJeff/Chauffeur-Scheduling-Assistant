@@ -7520,9 +7520,11 @@ def _house_editor_sheets():
         floors = sum(r['role'] == 'floor' for r in rows)
         if not floors:
             continue
-        tagged_photos = sum(s['kind'] == 'photo' and building['id'] in
-                            (place['photo_tags'].get(s['id']) or ['lot']) for s in sources)
-        photos = min(4, tagged_photos)
+        photo_counts = [len(twin_store.source_images(s['id'])) for s in sources
+                        if s['kind'] == 'photo' and building['id'] in
+                        (place['photo_tags'].get(s['id']) or ['lot'])]
+        tagged_photos = sum(photo_counts)
+        photos = sum(photo_counts[:4])
         draft = twin_cost.estimate('draft', len(rows) + photos)
         photo_map = tagged_photos * twin_cost.estimate('photo_map', 2)
         roof_observe = twin_cost.estimate('roof_observe', 1 + min(8, tagged_photos)) if tagged_photos else 0

@@ -1012,7 +1012,7 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None):
                 piece['level'] = remap.get(piece.get('level'), piece.get('level'))
 
     def pieces(key, kind, values=None):
-        return [_piece(build, step, kind, i, **{k: v for k, v in p.items() if k != 'id'}, state='settled')
+        return [_piece(build, step, kind, i, **{'state': 'settled', **{k: v for k, v in p.items() if k != 'id'}})
                 for i, p in enumerate(draft.get(key, []) if values is None else values)]
 
     walls = pieces('walls', 'wall')
@@ -1073,6 +1073,13 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None):
     roof = draft.get('roof', {})
     sections = pieces('', 'roof', roof.get('sections', []))
     old_sections = [s['id'] for s in roof.get('sections', [])]
+    # A person's gable window protects its old carrier in _merge_list. Move
+    # the window first so the first block rebuild can retire that old roof.
+    replaced = [s for s in house['roof']['sections'] if not s.get('src', {}).get('person')
+                and any(t.get('block') and _roof_overlap(s['rect'], t['rect']) > 0 for t in sections)
+                and not any(_matches(t, s, 'roof', house) for t in sections)]
+    _remap_roof_attachments(house['openings'], house['roof'].get('extensions', []), replaced, sections)
+    house['roof']['sections'] = [s for s in house['roof']['sections'] if s not in replaced]
     roof_step = {**step, 'removed_steps': [*step.get('removed_steps', []), 'roof_blocks']}
     house['roof']['sections'] = _merge_list(house['roof']['sections'], sections, 'roof', house, build, roof_step,
                                             tombstones=tombstones)
@@ -1191,6 +1198,8 @@ def _check_draft(house):
     walls = {w['id']: w for w in house['walls']}
     sections = {s['id']: s for s in house['roof']['sections']}
     for opening in house['openings']:
+        if opening.get('state') == 'ghost' and opening.get('position') and opening.get('why') and 'section' in opening:
+            continue
         reason = twin_plan._opening_error(opening, walls, sections)
         if reason:
             ghost(opening, 'This opening extends beyond its wall span or height.')
@@ -1593,6 +1602,69 @@ def _roof_overlap(a, b):
     return max(0, min(a[2], b[2]) - max(a[0], b[0])) * max(0, min(a[3], b[3]) - max(a[1], b[1]))
 
 
+def _remap_roof_attachments(openings, extensions, sources, targets):
+    """Move attachments by their physical edge, never by roof area alone."""
+    sources = {s['id']: s for s in sources}
+    target_ids = {s['id'] for s in targets}
+    for opening in openings:
+        source = sources.get(opening.get('section'))
+        if not source or (source['id'] in target_ids and source.get('state') != 'ghost') or 'gable' not in opening:
+            continue
+        along = 0 if source['ridge'] == 'x' else 1
+        across = 1 - along
+        point = [0, 0]
+        point[along] = source['rect'][along + (0 if opening['gable'] == 'front' else 2)]
+        # Older draft replies used x even for the span of a ridge-x gable.
+        # Read that coordinate before rewriting it to the canonical axis.
+        point[across] = opening.get('y' if across else 'x', opening.get('x' if across else 'y'))
+        if point[across] is None:
+            continue
+        matches = []
+        for target in targets:
+            if (_roof_overlap(source['rect'], target['rect']) <= 0
+                    or target.get('state') == 'ghost'
+                    or target['kind'] not in ('gable', 'hip')):
+                continue
+            axis = 0 if target['ridge'] == 'x' else 1
+            span = 1 - axis
+            for end in (0, 1):
+                style = target.get('ends', {}).get(f'{target["ridge"]}{end}', target['kind'])
+                distance = abs(point[axis] - target['rect'][axis + 2 * end])
+                if (style in ('gable', 'clip') and distance <= 1 + 1e-6
+                        and point[span] - opening['width'] / 2 >= target['rect'][span] - 1e-6
+                        and point[span] + opening['width'] / 2 <= target['rect'][span + 2] + 1e-6):
+                    candidate = {**opening, 'section': target['id'], 'gable': 'rear' if end else 'front'}
+                    candidate.pop('x' if span else 'y', None)
+                    candidate['y' if span else 'x'] = point[span]
+                    if twin_plan._opening_error(candidate, {}, {target['id']: target}) is None:
+                        matches.append((distance, abs(source['plate'] - target['plate']), target['id'], candidate))
+        if matches:
+            candidate = min(matches, key=lambda m: m[:3])[3]
+            opening.pop('x' if 'y' in candidate else 'y', None)
+            opening.update(candidate)
+        else:
+            opening.update(state='ghost', position=point,
+                           why='This window has no matching gable on the new roof; please place it.')
+    for extension in extensions:
+        source = sources.get(extension.get('section'))
+        if not source or (source['id'] in target_ids and source.get('state') != 'ghost'):
+            continue
+        candidates = [s for s in targets if s.get('state') != 'ghost'
+                      and _roof_overlap(source['rect'], s['rect']) > 0]
+        if extension.get('kind') == 'awning':
+            # The read awning hangs on this section's front edge. A carrier
+            # must cover its complete span on that same edge.
+            candidates = [s for s in candidates if abs(s['rect'][1] - source['rect'][1]) <= 1
+                          and s['rect'][0] <= extension['x0'] and s['rect'][2] >= extension['x1']]
+        if candidates:
+            target = max(candidates, key=lambda s: _roof_overlap(source['rect'], s['rect']))
+            extension['section'] = target['id']
+        else:
+            extension.update(state='ghost', position=[(source['rect'][0] + source['rect'][2]) / 2,
+                                                       source['rect'][1]],
+                             why='This roof extension has no matching roof edge; please place it.')
+
+
 def _roof_observations(raw, context):
     """Combine per-photo side reports before deriving any roof form.
 
@@ -1613,12 +1685,14 @@ def _roof_observations(raw, context):
                 if value:
                     valid.append(value)
             seen = [r for r in valid if r['kind'] != 'hidden']
-            if len({r['kind'] for r in seen}) > 1 and len({r.get('photo') for r in seen}) > 1:
+            if len({r['kind'] for r in seen}) > 1:
                 conflicts.append((bid, side))
             block['sides'][side] = (seen or valid or [{'kind': 'hidden'}])[0]
     parsed, problems = twin_reads.parse('roof_observe', answer, context)
     for bid, side in conflicts:
-        parsed['blocks'][bid]['sides'][side] = {'kind': 'conflict'}
+        parsed.setdefault('blocks', {}).setdefault(bid, {}).setdefault('sides', {})[side] = {'kind': 'conflict'}
+    for block in context.get('blocks', []):
+        parsed.setdefault('blocks', {}).setdefault(block['id'], {'sides': {}})
     return parsed, problems
 
 
@@ -1628,6 +1702,7 @@ def _roof_photo_selection(mapped, limit=8):
         return list(range(len(mapped)))
     remaining, chosen, covered = set(range(len(mapped))), [], set()
     coverage = [{(b['id'], side) for b in item['fragment'].get('blocks', []) for side in b['sides']}
+                if item['fragment'].get('from_side') != 'none' else set()
                 for item in mapped]
     while remaining and len(chosen) < limit:
         index = min(remaining, key=lambda i: (-len(coverage[i] - covered), -len(coverage[i]), i))
@@ -1690,11 +1765,11 @@ def _read_roof_blocks(build, step, reader, ticket, result):
                 progress['maps'].append(reply)
                 if _cache_result(build, step, ticket, result) is None:
                     return None
-            selected = _roof_photo_selection(progress['maps'])
+            selected = [j for j in _roof_photo_selection(progress['maps'])
+                        if progress['maps'][j]['fragment'].get('from_side') != 'none'
+                        and progress['maps'][j]['fragment'].get('blocks')]
             if photos:
-                photo_map = {i: progress['maps'][j]['fragment'] for i, j in enumerate(selected)
-                             if progress['maps'][j]['fragment'].get('from_side') != 'none'
-                             and progress['maps'][j]['fragment'].get('blocks')}
+                photo_map = {i: progress['maps'][j]['fragment'] for i, j in enumerate(selected)}
                 if 'observe' not in progress:
                     progress['observe'] = read('roof_observe', [diagram, *[photos[j] for j in selected]],
                                                {**read_context, 'photo_map': photo_map})
@@ -1709,9 +1784,18 @@ def _read_roof_blocks(build, step, reader, ticket, result):
 
         roof = deepcopy(draft.get('roof', {}))
         sections = roof.get('sections', [])
+
+        def porch_roof(section):
+            r = section['rect']
+            centre = [(r[0] + r[2]) / 2, (r[1] + r[3]) / 2]
+            return any(_inside(centre, p['polygon']) and section['plate'] <= p.get('floor', 0) + 12
+                       for p in twin_plan.porches(draft))
+
         evidence = {}
         for block in blocks:
-            source = max(sections, key=lambda s: _roof_overlap(block['rect'], s['rect']), default=None)
+            source = max((s for s in sections if not porch_roof(s)
+                          and _roof_overlap(block['rect'], s['rect']) > 0),
+                         key=lambda s: _roof_overlap(block['rect'], s['rect']), default=None)
             plan = {k: deepcopy(source[k]) for k in ('ridge', 'pitch') if k in source} if source else {}
             plan['dormers'] = deepcopy(source.get('dormers', [])) if source else []
             # Cross gables already drawn on this roof carry their plan position.
@@ -1731,17 +1815,17 @@ def _read_roof_blocks(build, step, reader, ticket, result):
         choices = deepcopy(house['roof'].get('choices', []))
         protected = [s for s in house['roof']['sections'] if s.get('src', {}).get('person')]
         for section in protected:
+            block_rect = section.get('block')
+            if (section.get('dormer_of') or (block_rect and
+                    max(abs(a - b) for a, b in zip(section['rect'], block_rect)) > 1)):
+                continue
+            if not block_rect and not section.get('read_geometry'):
+                continue  # Only a legacy read section can migrate to a choice.
             choices.append({**{k: deepcopy(section[k]) for k in
                               ('kind', 'ridge', 'ends', 'pitch', 'plate', 'overhang') if k in section},
                             'rect': deepcopy(section.get('block') or
                                              section.get('read_geometry', {}).get('rect') or section['rect'])})
         derived, flags = twin_roof_derive.derive_roof(blocks, observations, evidence, choices)
-
-        def porch_roof(section):
-            r = section['rect']
-            centre = [(r[0] + r[2]) / 2, (r[1] + r[3]) / 2]
-            return any(_inside(centre, p['polygon']) and section['plate'] <= p.get('floor', 0) + 12
-                       for p in twin_plan.porches(draft))
 
         protected_sources = [s for s in sections if any(
             _near_geometry({'rect': s['rect']}, p.get('read_geometry') or {'rect': p['rect']}, 'roof')
@@ -1752,25 +1836,19 @@ def _read_roof_blocks(build, step, reader, ticket, result):
             p.get('state') == 'ghost' and _near_geometry(
                 {'rect': s['rect']}, p.get('read_geometry') or {'rect': p['rect']}, 'roof')
             for p in house['roof']['sections'])]
+        for source in failed_sources:
+            source.update(state='ghost', why='This roof section does not meet its bearing walls within 3 ft.')
         kept = [s for s in sections if s.get('src', {}).get('person') or s in protected_sources
                 or s in failed_sources or porch_roof(s)]
         carriers = derived[:len(blocks)]
         legacy_ids = {s['id']: old['id'] for s in carriers for old in protected_sources
                       if _near_geometry({'rect': s['rect']}, {'rect': old['rect']}, 'roof')}
-        derived = [s for s in derived if s['id'] not in legacy_ids]
-        # Keep references such as awnings and gable windows attached to the new carrier.
-        remap = {}
-        for source in sections:
-            if source in kept or not carriers:
-                continue
-            target = max(carriers, key=lambda s: _roof_overlap(source['rect'], s['rect']))
-            remap[source['id']] = legacy_ids.get(target['id'], target['id'])
+        dropped_blocks = [s['rect'] for s in carriers if s['id'] in legacy_ids]
+        derived = [s for s in derived if s['id'] not in legacy_ids
+                   and s.get('dormer_of') not in dropped_blocks]
         roof['sections'] = kept + derived
-        for extension in roof.get('extensions', []):
-            extension['section'] = remap.get(extension['section'], extension['section'])
-        for opening in draft.get('openings', []):
-            if 'section' in opening:
-                opening['section'] = remap.get(opening['section'], opening['section'])
+        _remap_roof_attachments(draft.get('openings', []), roof.get('extensions', []),
+                               sections, roof['sections'])
         draft['roof'] = roof
         rects = {b['id']: b['rect'] for b in blocks}
         progress['flags'] = [{**f, 'block_rect': deepcopy(rects[f['block']])} for f in flags]

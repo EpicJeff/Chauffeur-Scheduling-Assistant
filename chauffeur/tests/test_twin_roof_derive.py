@@ -656,7 +656,25 @@ def test_photo_relative_slope_overrides_contradictory_plan_pitches():
     assert roofs[0]['pitch'] == 4 and roofs[0]['pitch_source'] == 'person', roofs
 
 
+def test_plan_only_dormer_and_photo_plain_slope():
+    from services.twin_roof_derive import derive_roof
+    upper = [_block('A', HOUSE[0]['rect'], 'upper', 20)]
+    evidence = {'A': {'ridge': 'x', 'pitch': 6, 'dormers': [_l2_front_jog()]}}
+    sections, flags = derive_roof(upper, {}, evidence, [])
+    dormers = [s for s in sections if s.get('dormer_of')]
+    assert len(dormers) == 1 and dormers[0]['ridge'] == 'y', sections
+    d = dormers[0]
+    assert abs((d['rect'][0] + d['rect'][2]) / 2 - 30) < .1, d
+    assert abs(d['rect'][2] - d['rect'][0] - 14.67) < .1, d
+    assert 'block' not in d and d['dormer_of'] == upper[0]['rect'], d
+    assert any('dormer' in f['text'] and 'drawings only' in f['text'] for f in flags), flags
+    sections, flags = derive_roof(upper, {'A': {'sides': {'front': {'kind': 'slope'}}}}, evidence, [])
+    assert len(sections) == 1, sections
+    assert any('plain slope instead of the drawn dormer' in f['text'] for f in flags), flags
+
+
 TESTS = (
+    test_plan_only_dormer_and_photo_plain_slope,
     test_photo_relative_slope_overrides_contradictory_plan_pitches,
     test_principle_per_end,
     test_household_truth,

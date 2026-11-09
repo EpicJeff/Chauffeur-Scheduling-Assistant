@@ -264,6 +264,14 @@ def _roof(building, notes):
         if migrating and isinstance(extension, dict):
             extension['section'] = 'roof-main'
         section = _lookup(sections, extension.get('section')) if isinstance(extension, dict) else None
+        if (isinstance(extension, dict) and section is None and extension.get('state') == 'ghost'
+                and extension.get('why') and _point(extension.get('position'))
+                and extension.get('kind') == 'awning'
+                and all(_number(extension.get(k)) for k in ('x0', 'x1', 'depth', 'pitch', 'eave'))
+                and extension['x0'] < extension['x1'] and extension['depth'] > 0
+                and 0 < extension['pitch'] <= 24):
+            extensions.append(extension)
+            continue
         valid = section is not None
         if valid and extension.get('kind') == 'shed_continuation':
             valid = (all(_number(extension.get(k)) for k in ('to_x', 'pitch'))
@@ -346,6 +354,12 @@ def _openings(building, walls, sections, notes):
             opening['sill'] = 0
             notes.append(f'Opening {index}: defaulted missing sill to 0 feet.')
         reason = _opening_error(opening, walls, sections)
+        if (reason in ('unknown gable section', 'outside the roof gable span', 'head is above the clipped gable height')
+                and opening.get('state') == 'ghost' and opening.get('why')
+                and _point(opening.get('position'))):
+            # A replaced roof may leave an opening without a matching end.
+            # Keep its located diagnostic for a person to place, not a hole.
+            reason = None
         if (reason in ('outside the wall span', 'head is above the wall height')
                 and opening.get('state') == 'ghost' and opening.get('why')
                 and opening.get('src', {}).get('step') == 'draft'):

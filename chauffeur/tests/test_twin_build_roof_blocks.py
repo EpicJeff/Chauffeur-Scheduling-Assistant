@@ -466,6 +466,7 @@ def test_unrelated_photo_ignored():
           ('every tagged photo, the pool-house one too, gets a photo_map read', [c['photos'] for c in maps]))
     observe = _calls(reader, 'roof_observe')
     check(len(observe) == 1, ('one roof_observe read', reader.kinds))
+    check(observe[0]['images'] == 5, ('only the diagram and four house photos are observed', observe[0]))
     ids = {_letter(g['rect']): g['id'] for g in observe[0]['context'].get('blocks') or [] if _letter(g['rect'])}
     entries = _map_entries(observe[0])
     check('pool' not in [label for label, _ in entries],
@@ -560,6 +561,170 @@ def test_estimate_and_checkpoint():
     check(abs(build_estimate['total'] - total) < 0.005, ('the total adds the photo reads', build_estimate, total))
 
 
+def test_conflicts_without_photo_indices_and_missing_block():
+    labels = _main_house()
+
+    class PartialReader(BlocksReader):
+        def __call__(self, kind, images, context, **kwargs):
+            out = super().__call__(kind, images, context, **kwargs)
+            if kind == 'roof_observe':
+                ids = self._ids(context)
+                out['blocks'][ids['C']]['sides']['left'] = [{'kind': 'gable_end'}, {'kind': 'slope'}]
+                del out['blocks'][ids['F']]
+            return out
+
+    reader = PartialReader(labels)
+    _, st = _build(reader)
+    by = _main_sections(_house())
+    flags = _flags(st)
+    check(any('looks different between photos' in f['text'] for f in _flag_for(flags, TRUTH['C'])), flags)
+    check(any('not visible' in f['text'] for f in _flag_for(flags, TRUTH['F'])), flags)
+    check(by['A']['ridge'] == 'x' and by['D']['ridge'] == 'y',
+          ('a missing block does not discard the other observations', by))
+    check(not any('could not be checked' in e.get('text', '') for e in st['events']), st['events'])
+
+
+def test_plan_evidence_requires_overlapping_nonporch_source():
+    _main_house(photos=())
+    reader = BlocksReader({})
+    # A low porch roof remains, but there is no main roof anywhere in the read.
+    reader.draft['building']['roof']['sections'] = [s for s in reader.draft['building']['roof']['sections']
+                                                   if s['id'] == 'r_porch_shed']
+    reader.draft['building']['roof']['sections'].append(
+        {'id': 'unrelated', 'kind': 'gable', 'ridge': 'x', 'rect': [1000, 1000, 1020, 1020],
+         'plate': 10, 'pitch': 13, 'overhang': 1})
+    reader.draft['building']['roof']['extensions'] = []
+    real = tb.twin_roof_derive.derive_roof
+    seen = []
+
+    def derive(blocks, observations, evidence, choices):
+        seen.append(copy.deepcopy(evidence))
+        return real(blocks, observations, evidence, choices)
+
+    with patch.object(tb.twin_roof_derive, 'derive_roof', side_effect=derive):
+        _build(reader)
+    check(seen and all(not e.get('ridge') and 'pitch' not in e for e in seen[0].values()), seen)
+    check(all(s['pitch'] != 3 for s in _house()['roof']['sections'] if s.get('block')),
+          ('a porch pitch is never assigned to an unroofed block', _roof(_house())))
+
+
+def test_person_dormer_edit_does_not_choose_block():
+    from services import twin_edit
+    labels = _main_house()
+    _build(BlocksReader(labels))
+    before = _house()
+    dormer = next(s for s in before['roof']['sections'] if s.get('dormer_of'))
+    check('block' not in dormer, ('a dormer is marked only with dormer_of', dormer))
+    baseline = {letter: (s['kind'], s['ridge'], s['pitch']) for letter, s in _main_sections(before).items()}
+    twin_edit.save({'op': 'set', 'piece': dormer['id'], 'building': 'house', 'field': 'pitch', 'value': 11}, 'tester')
+    # Also exercise a dormer saved by the previous version, which copied block.
+    def legacy(plan):
+        d = next(s for s in plan['buildings'][0]['roof']['sections'] if s['id'] == dormer['id'])
+        d['block'] = list(d.pop('dormer_of'))
+        return plan
+    ts.update_current(legacy, 'edit')
+    _build(BlocksReader(labels))
+    after = _house()
+    check({letter: (s['kind'], s['ridge'], s['pitch']) for letter, s in _main_sections(after).items()} == baseline,
+          ('editing a dormer leaves every block choice unchanged', _roof(after)))
+    kept = [s for s in after['roof']['sections'] if s['id'] == dormer['id']]
+    check(len(kept) == 1 and kept[0]['pitch'] == 11 and kept[0]['src'].get('person'), kept)
+
+
+def test_first_block_rebuild_moves_person_gable_window():
+    from services import twin_edit
+    from test_twin_build_draft import DraftReader, _drawn_house, _accept_all
+    _drawn_house(photos=0)
+    reader = DraftReader()
+    # In this legacy read the garage carrier continues rearward; the plan
+    # evidence agrees with the window's front-facing gable.
+    next(s for s in reader.answer['building']['roof']['sections'] if s['id'] == 'right_block')['ridge'] = 'y'
+    # Seed the pre-block building through the real draft merge/build path.
+    with patch.object(tb, '_read_roof_blocks', side_effect=lambda build, step, reader, ticket, result: result):
+        bid = tb.start({'part': 'house'}, reader=reader, inline=True)
+        check(_accept_all(bid)['state'] == 'done', 'legacy draft builds')
+    opening = next(o for o in _house()['openings'] if o.get('section'))
+    twin_edit.save({'op': 'set', 'piece': opening['id'], 'building': 'house', 'field': 'sill',
+                    'value': opening['sill'] + .1}, 'tester')
+    saved = next(o for o in _house()['openings'] if o['id'] == opening['id'])
+    bid = tb.start({'part': 'house'}, reader=reader, inline=True)
+    check(_accept_all(bid)['state'] == 'done', 'the first block rebuild finishes')
+    after = _house()
+    kept = next(o for o in after['openings'] if o['id'] == opening['id'])
+    check(kept.get('state') != 'ghost' and kept['sill'] == saved['sill'] and kept['src'].get('person'), kept)
+    host = next(s for s in after['roof']['sections'] if s['id'] == kept['section'])
+    check(host.get('block') and host['id'] != opening['section'], ('the window moves to a block carrier', host))
+    for block in twin_blocks.blocks(after):
+        roofs = [s for s in after['roof']['sections'] if _near(_read_rect(s), block['rect'])]
+        check(len(roofs) == 1, ('one roof per block after the first migration', block, roofs))
+    check(not any(s['id'] == opening['section'] for s in after['roof']['sections']),
+          'the person window does not protect an obsolete roof')
+
+
+def test_legacy_person_carrier_drops_generated_dormer():
+    from services import twin_edit
+    from test_twin_build_draft import DraftReader, _drawn_house, _accept_all
+    _drawn_house(photos=0)
+    with patch.object(tb, '_read_roof_blocks', side_effect=lambda build, step, reader, ticket, result: result):
+        bid = tb.start({'part': 'house'}, reader=DraftReader(), inline=True)
+        check(_accept_all(bid)['state'] == 'done', 'legacy draft builds')
+    main = next(s for s in _house()['roof']['sections'] if s['plate'] > 15 and s['ridge'] == 'x')
+    twin_edit.save({'op': 'set', 'piece': main['id'], 'building': 'house', 'field': 'pitch', 'value': 7}, 'tester')
+    bid = tb.start({'part': 'house'}, reader=DraftReader(), inline=True)
+    check(_accept_all(bid)['state'] == 'done', 'legacy person carrier rebuilds')
+    house = _house()
+    check(any(s['id'] == main['id'] and s['pitch'] == 7 for s in house['roof']['sections']),
+          ('the legacy person carrier survives', _roof(house)))
+    check(not any(s.get('dormer_of') and _near(s['dormer_of'], main['rect'])
+                  and not s.get('src', {}).get('person') for s in house['roof']['sections']),
+          ('a dropped generated carrier does not leave its dormer', _roof(house)))
+
+
+def test_unmatched_attachments_stay_located_ghosts():
+    _main_house(photos=())
+    from test_twin_build_draft import DraftReader
+    reader = DraftReader()
+    # Put the original garage roof far away, retaining its window and awning.
+    source = next(s for s in reader.answer['building']['roof']['sections'] if s['id'] == 'front_wing')
+    source['rect'] = [137, 0, 159, 30]
+    for o in reader.answer['building']['openings']:
+        if o.get('section') == 'front_wing':
+            o['x'] += 100
+    extension = reader.answer['building']['roof']['extensions'][0]
+    extension['x0'] += 100
+    extension['x1'] += 100
+    _, st = _build(reader)
+    house = _house()
+    windows = [o for o in house['openings'] if o.get('section') and o.get('x', 0) > 100]
+    check(windows and all(o.get('state') == 'ghost' and o.get('position') and o.get('why') for o in windows), windows)
+    awnings = house['roof']['extensions']
+    check(len(awnings) == 1 and awnings[0].get('state') == 'ghost' and awnings[0].get('why'), awnings)
+    check(all(not s.get('block') or s['id'] != awnings[0]['section'] for s in house['roof']['sections']),
+          'an unrelated extension never binds to the first carrier')
+
+
+def test_multi_image_photo_estimates_match_build():
+    labels = _main_house(photos=('front',))
+    real = ts.source_images
+
+    def images(source, *args, **kwargs):
+        result = real(source, *args, **kwargs)
+        return result * 6 if result and result[0].get('b64') in labels else result
+
+    with patch.object(ts, 'source_images', side_effect=images):
+        reader = BlocksReader(labels)
+        _, st = _build(reader)
+        import main
+        estimate = main._house_editor_sheets()['estimates']['build']['house']
+    check(len(_calls(reader, 'photo_map')) == 6, reader.kinds)
+    check(estimate['photo_map'] == 6 * tc.estimate('photo_map', 2)
+          and estimate['roof_observe'] == tc.estimate('roof_observe', 7)
+          and estimate['draft'] == tc.estimate('draft', _calls(reader, 'draft')[0]['images']), estimate)
+    expected = tc.estimate('draft', _calls(reader, 'draft')[0]['images']) + tc.estimate('outline', 1)
+    check(abs(_draft_step(st)['estimate'] - expected - estimate['photo_map'] - estimate['roof_observe']) < .005,
+          ('both estimates count images', _draft_step(st), estimate))
+
+
 TESTS = (
     test_reads_in_order,
     test_derived_roof_replaces_draft_roof,
@@ -567,6 +732,13 @@ TESTS = (
     test_unrelated_photo_ignored,
     test_unseen_end_flagged_never_pauses,
     test_estimate_and_checkpoint,
+    test_conflicts_without_photo_indices_and_missing_block,
+    test_plan_evidence_requires_overlapping_nonporch_source,
+    test_person_dormer_edit_does_not_choose_block,
+    test_first_block_rebuild_moves_person_gable_window,
+    test_legacy_person_carrier_drops_generated_dormer,
+    test_unmatched_attachments_stay_located_ghosts,
+    test_multi_image_photo_estimates_match_build,
 )
 
 

@@ -378,6 +378,10 @@ def test_main_house_roof_sections_settle():
               and s['rect'][0] >= 13 and s['rect'][2] <= 38.5]
     check(centre, ('the centre two-storey block is roofed at the upper plate',
                    [(s['kind'], s.get('ridge'), s['rect'], s['plate']) for s in derived]))
+    check(any(s.get('state') != 'ghost' and s['kind'] == 'gable' and s.get('ridge') == 'y'
+              and s['plate'] >= 15 and s['rect'][0] >= 13 and s['rect'][2] <= 38.5
+              and s['rect'][1] <= 16 for s in sections),
+          ('the centre front gable from the drawings settles', sections))
 
 
 def test_main_house_upper_walls_close():

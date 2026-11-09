@@ -56,3 +56,4 @@ azure_speech_key.txt
 # "probe_shots" relative to chauffeur/). Probe output, never source.
 probe_shots/
 chauffeur/probe_shots/
+.argyle-test-tmp/

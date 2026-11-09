@@ -212,7 +212,7 @@ def _inherit_unseen(blocks, sections, observations, fixed):
         known.update(inferred)
 
 
-def _dormers(block, section, sides, evidence):
+def _dormers(block, section, sides, evidence, flags, place):
     result = []
     axis, eaves = _across(section)
     along = 1 - axis
@@ -220,11 +220,20 @@ def _dormers(block, section, sides, evidence):
     ridge_at, _ = _ridge(section)
     for side, end in _SIDES.items():
         photo = sides.get(side, {})
-        if photo.get('kind') != 'dormer' or end not in eaves:
-            continue
-        centre = _number(photo.get('centre'), None)
         targets = [d for d in evidence.get('dormers', [])
                    if d.get('side') == side and _number(d.get('centre'), None) is not None]
+        if end not in eaves:
+            continue
+        if photo.get('kind') == 'slope' and targets:
+            flags.append({'block': block['id'], 'side': side, 'text':
+                          f'{place} shows a plain slope instead of the drawn dormer on its {side} side; please check it.'})
+        drawings_only = photo.get('kind', 'hidden') in _UNSEEN and bool(targets)
+        if photo.get('kind') != 'dormer' and not drawings_only:
+            continue
+        if drawings_only:
+            flags.append({'block': block['id'], 'side': side, 'text':
+                          f'{place} has a dormer on its {side} side from the drawings only; please check it.'})
+        centre = _number(photo.get('centre'), None)
         target = min(targets, key=lambda d: abs(d['centre'] - centre)) if targets and centre is not None else (
             targets[0] if targets else {})
         if target and (centre is None or abs(target['centre'] - centre) <= 2):
@@ -246,6 +255,8 @@ def _dormers(block, section, sides, evidence):
         # The cross gable has its own two plain gable ends and symmetric pitch.
         result[-1].pop('ends', None)
         result[-1].pop('pitches', None)
+        result[-1].pop('block', None)
+        result[-1]['dormer_of'] = list(block['rect'])
     return result
 
 
@@ -313,7 +324,9 @@ def derive_roof(blocks, observations, evidence, choices):
         else:
             place = _place(block, blocks)
             if all(kind in _UNSEEN for kind in kinds.values()):
-                flags.append({'block': key, 'text': f'{place} was not visible in the photos; please check its roof form.'})
+                reason = ('looks different between photos' if 'conflict' in kinds.values()
+                          else 'was not visible in the photos')
+                flags.append({'block': key, 'text': f'{place} {reason}; please check its roof form.'})
             else:
                 for side, kind in kinds.items():
                     if kind in _UNSEEN:
@@ -379,8 +392,9 @@ def derive_roof(blocks, observations, evidence, choices):
                 break
 
     dormers = []
-    for block, section in zip(blocks, sections):
+    for i, (block, section) in enumerate(zip(blocks, sections)):
         if section['kind'] in ('gable', 'hip'):
             dormers.extend(_dormers(block, section, observations.get(block['id'], {}).get('sides', {}),
-                                    evidence.get(block['id'], {})))
+                                    evidence.get(block['id'], {}), flags if i not in fixed else [],
+                                    _place(block, blocks)))
     return sections + dormers, flags

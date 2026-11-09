@@ -459,7 +459,7 @@ def test_two_photo_kinds_become_conflict_before_derive():
     with patch.object(tb.twin_roof_derive, 'derive_roof', side_effect=derive):
         _, st = _build(ConflictReader())
     check(seen and all(b['sides']['left']['kind'] == 'conflict' for b in seen[0].values()), seen)
-    check(any('looks different between photos' in f['text'] or 'not visible' in f['text']
+    check(any('looks different between photos' in f['text']
               for f in next(s for s in st['steps'] if s['kind'] == 'draft')['roof_flags']), st['steps'])
 
 
