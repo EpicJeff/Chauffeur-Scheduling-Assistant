@@ -340,7 +340,35 @@ def scenario_accept_out_of_span_window_refused():
     check(ts.current_id() == before, 'refusal publishes nothing')
 
 
+def scenario_accept_invalid_door_names_kind_and_plain_reason():
+    for reason in ('span', 'height'):
+        _seed()
+        plan = ts.current()
+        b = plan['buildings'][0]
+        opening = next(o for o in b['openings'] if 'wall' in o)
+        opening.update(kind='door', state='ghost',
+                       why='This opening extends beyond its wall span or height.')
+        opening['src']['step'] = 'draft'
+        if reason == 'span':
+            opening['at'] = 1000
+            expected = 'This door does not fit on its wall. Move it onto the wall or delete it.'
+        else:
+            wall = next(w for w in b['walls'] if w['id'] == opening['wall'])
+            opening.update(at=5, width=2, head=wall['height'] + 10)
+            expected = 'This door is taller than its wall. Lower its top or delete it.'
+        ts.push_round(plan, 'build')
+        before = ts.current_id()
+        try:
+            twin_edit.save({'op': 'accept', 'pieces': [opening['id']]}, 'p1')
+        except ValueError as exc:
+            check(str(exc) == expected, str(exc))
+        else:
+            raise AssertionError('invalid door accepted')
+        check(ts.current_id() == before, 'refusal publishes nothing')
+
+
 if __name__ == '__main__':
+    scenario_accept_invalid_door_names_kind_and_plain_reason()
     scenario_ridge_x_gable_moves_and_deletes()
     scenario_accept_out_of_span_window_refused()
     scenario_tombstone_matches_current_and_read_geometry()

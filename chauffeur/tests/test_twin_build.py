@@ -244,6 +244,8 @@ def scenario_first_pause_and_wings_expand_after_the_outline():
     check("Main floor outline: 70'-0\" by 65'-4\"" in logs, logs)
     reg = ts.registration(ts.page_roles()[0]['source'], 1, 'L1')
     check(reg and abs(reg['scale'] - 70.0 / 2550) < 1e-6, reg)
+    check(reg.get('source') != 'person' and not reg.get('src', {}).get('person'),
+          'accept-only settle keeps automatic registration provenance')
 
 
 def scenario_events_since_and_rounds_per_settle():
@@ -393,6 +395,7 @@ def scenario_registration_answer_moves_the_level():
     tb.answer(b, 'registration:L2', {'registration': reg})
     saved = ts.registration(sheets, 2, 'L2')
     check(abs(saved['offset'][0] - reg['offset'][0]) < 1e-9, saved)
+    check(saved.get('source') == 'person', saved)
 
 
 def scenario_one_build_at_a_time():

@@ -99,7 +99,7 @@ export function createPanel({ afterSay, acceptPause }) {
         if (event.type === 'log' && event.text === FIRST_LOOK) continue;
         if (event.type === 'ghost' && event.why) {
           const name = event.piece?.id?.split(':')[0];
-          const kind = ['wall', 'opening', 'room'].includes(name) ? name : 'piece';
+          const kind = name === 'roof' ? 'roof section' : ['wall', 'opening', 'room'].includes(name) ? name : 'piece';
           const reason = event.why.replace(/^This opening is /i, '').replace(/^Wall ends are /i, '').replace(/\.$/, '');
           const key = `${event.step}:${reason}`;
           let row = reasons.get(key);
@@ -111,8 +111,20 @@ export function createPanel({ afterSay, acceptPause }) {
           row.kinds.add(kind);
           const n = row.ids.size;
           const noun = row.kinds.size === 1 ? kind : 'piece';
-          const why = n === 1 ? reason : reason.replace(/^This opening extends /, 'These openings extend ')
-            .replace(/^This roof section does /, 'These roof sections do ');
+          const why = n === 1 ? reason : reason
+            .replace(/\bThis (opening|roof section|porch roof|interior wall|wall|room) (extends|does|has|is|needs)\b/g,
+              (_, subject, verb) => `These ${subject}s ${{ extends: 'extend', does: 'do', has: 'have', is: 'are', needs: 'need' }[verb]}`)
+            .replace(/\bits floor's outline\b/g, "their floors' outlines")
+            .replace(/\bits bearing walls\b/g, 'their bearing walls')
+            .replace(/\bits wall span\b/g, 'their wall span')
+            .replace(/\bbeneath it\b/g, 'beneath them')
+            .replace(/\bthis opening\b/g, 'these openings')
+            .replace(/\bThe opening was\b/g, 'The openings were')
+            .replace(/\bthis floor\b/g, 'these floors')
+            .replace(/^This floor's/, "These floors'")
+            .replace(/^The upper floor extends/, 'The upper floors extend')
+            .replace(/^The upper floor is/, 'The upper floors are')
+            .replace(/\bthe floor below\b/g, 'the floors below');
           row.node.textContent = `${n} ${noun}${n === 1 ? '' : 's'} ${n === 1 ? 'needs' : 'need'} checking: ${why}`;
         } else if (event.type === 'log') {
           // Older build records also carry raw ghost reasons as log events.

@@ -557,7 +557,61 @@ def test_engine_does_not_repeat_ghost_summaries():
     check(not any('needs checking' in line or 'need checking' in line for line in logs), logs)
 
 
+def test_rooms_partition_keeps_person_door_across_rebuilds():
+    _drawn_house()
+    answer = _l_answer()
+    rooms = {'rooms': [], 'walls': [{'id': 'partition', 'level': 'L1',
+        'from': [10, 0], 'to': [10, 12], 'height': 9, 'thickness': .33, 'exterior': False}]}
+    _build(DraftReader(answer=answer, rooms=rooms))
+    partition = next(w for w in _house(ts.current())['walls'] if _same_wall(w, [10, 0], [10, 12]))
+    check(partition['src']['step'] == 'draft_rooms', partition)
+    twin_edit.save({'op': 'add_opening', 'wall': partition['id'], 'at': 1.5, 'width': 2.5,
+                    'sill': 0, 'head': 7, 'kind': 'door'}, 'p1')
+    door = next(o for o in _house(ts.current())['openings'] if o['src'].get('person'))
+    for _ in range(2):
+        _, st = _build(DraftReader(answer=answer, rooms=rooms))
+        house = _house(ts.current())
+        kept = next(o for o in house['openings'] if o['id'] == door['id'])
+        check(kept['wall'] == partition['id'] and kept['at'] == door['at'], kept)
+        check(any(w['id'] == partition['id'] and _same_wall(w, [10, 0], [10, 12])
+                  for w in house['walls']), house['walls'])
+        check(not [e for e in st['events'] if 'replacement wall' in e.get('text', '')], st['events'])
+
+
+def test_crop_window_near_corner_uses_parallel_carrier():
+    # The perpendicular wall is nearer the opening centre; it cannot carry it.
+    for angle in (0, 9, 11, 90):
+        a = math.radians(angle)
+        carrier = {'id': 'old', 'level': 'L1', 'from': [-.5, 1.5], 'to': [9.5, 1.5],
+                   'height': 9, 'exterior': True, 'src': {'step': 'walls:L1:main'}}
+        opening = {'id': 'mine', 'kind': 'window', 'wall': 'old', 'at': 1, 'width': 1,
+                   'sill': 2, 'head': 5, 'src': {'person': True}}
+        if angle == 90:
+            opening['kind'] = 'door'
+        house = {'id': 'house', 'levels': [{'id': 'L1', 'elevation': 0, 'src': {'person': True}}],
+                 'walls': [carrier], 'openings': [opening], 'rooms': [], 'stairs': [],
+                 'roof': {'sections': [], 'extensions': []}}
+        draft = {'building': {'levels': [{'id': 'L1', 'name': 'Main floor', 'elevation': 0}], 'walls': [
+            {'id': 'parallel', 'level': 'L1', 'from': [0, 0], 'to': [10 * math.cos(a), 10 * math.sin(a)],
+             'height': 9, 'exterior': True},
+            {'id': 'corner', 'level': 'L1', 'from': [0, 0], 'to': [0, 10],
+             'height': 9, 'exterior': True}]}}
+        notes = []
+        tb._merge_draft({'id': 'test', 'inputs': {'building': {'id': 'house'}}},
+                        {'id': 'draft', 'kind': 'draft', 'source': '', 'page': 1}, draft, house, notes=notes,
+                        tombstones=[])
+        if angle <= 10:
+            target = next(w for w in house['walls'] if w['id'] == opening['wall'])
+            check(target['to'][0] > 9 and target['from'] == [0, 0], (angle, target))
+            check(not any(w['id'] == 'old' for w in house['walls']) and not notes, (house, notes))
+        else:
+            check(opening['wall'] == 'old' and len(notes) == 1, (angle, opening, notes))
+            check('your opening' in notes[0] and 'window' not in notes[0], notes)
+
+
 TESTS = (
+    test_rooms_partition_keeps_person_door_across_rebuilds,
+    test_crop_window_near_corner_uses_parallel_carrier,
     test_reread_at_person_moved_wall_and_deleted_position,
     test_person_window_changes_carrier_or_logs_once,
     test_porch_included_migration_cannot_rotate,

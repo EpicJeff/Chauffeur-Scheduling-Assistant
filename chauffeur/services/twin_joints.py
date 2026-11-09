@@ -551,6 +551,8 @@ def report(building: dict) -> list[str]:
 
     for section in sections:
         tops = []
+        porch_supported = (bool(twin_plan.porches(building)) and section_outside_outline(building, section)
+                           and porch_supports_section(building, section))
         for edge in _edges(section):
             axis, line, start, end = edge
             candidates = _bearing(building, section, edge)
@@ -560,7 +562,7 @@ def report(building: dict) -> list[str]:
             # Inner joins are not unsupported eaves. Their bearing walls still
             # supply plate contacts (e.g. a cross-gable on the front wall).
             # Require full coverage so partial joins cannot conceal open ends.
-            if internal(section, edge) or porch_supports_section(building, section):
+            if internal(section, edge) or porch_supported:
                 continue
             distance = min((abs(w['from'][axis] - line) for w in candidates), default=None)
             side = _side(bounds, axis, line)
@@ -587,6 +589,26 @@ def report(building: dict) -> list[str]:
                 f'{{count}} awnings {location} have no wall to hang from.')
     return [singular if count == 1 else plural.replace('{count}', str(count))
             for (singular, plural), count in messages.items()]
+
+
+def section_outside_outline(building, section):
+    """True when less than half the roof lies inside each floor's outline."""
+    x0, y0, x1, y1 = section['rect']
+    # Cell centres avoid counting a shared boundary as occupied room area.
+    nx, ny = [max(1, min(64, math.ceil(span))) for span in (x1 - x0, y1 - y0)]
+    samples = [[x0 + (i + .5) * (x1 - x0) / nx, y0 + (j + .5) * (y1 - y0) / ny]
+               for i in range(nx) for j in range(ny)]
+    def within(p, polygon):
+        x, y = p
+        inside = False
+        for a, b in zip(polygon, polygon[1:] + polygon[:1]):
+            if (a[1] > y) != (b[1] > y) and x < a[0] + (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]):
+                inside = not inside
+            if math.dist(p, _project(p, {'from': a, 'to': b}, segment=True)) <= 1e-6:
+                return True
+        return inside
+    return all(sum(within(p, level.get('outline', [])) for p in samples) < len(samples) / 2
+               for level in building.get('levels', []))
 
 
 def porch_supports_section(building, section):

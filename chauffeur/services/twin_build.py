@@ -1027,6 +1027,15 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None):
         for carrier in house['walls']:
             if carrier['id'] in incoming_ids or carrier.get('src', {}).get('person'):
                 continue
+            source_step = carrier.get('src', {}).get('step', '')
+            if source_step != 'draft' and not source_step.startswith(('walls:', 'outline:')):
+                continue
+            vector = [carrier['to'][i] - carrier['from'][i] for i in (0, 1)]
+            carrier_length = math.hypot(*vector)
+            def parallel(wall):
+                direction = [wall['to'][i] - wall['from'][i] for i in (0, 1)]
+                return carrier_length > 0 and abs(sum(a * b for a, b in zip(vector, direction))) >= (
+                    math.cos(math.radians(10)) * carrier_length * math.hypot(*direction))
             openings = [o for o in house['openings'] if o.get('wall') == carrier['id']
                         and o.get('src', {}).get('person')]
             if not openings:
@@ -1037,6 +1046,7 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None):
                 center = [(geometry['from'][i] + geometry['to'][i]) / 2 for i in (0, 1)]
                 hit = min(((*_nearest(center, w['from'], w['to']), w) for w in house['walls']
                            if w['id'] in incoming_ids and w['level'] == carrier['level']
+                           and parallel(w)
                            and math.dist(w['from'], w['to']) >= opening['width']),
                           key=lambda h: h[0], default=None)
                 if hit is None or hit[0] > 2:
@@ -1050,7 +1060,7 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None):
                     opening.update(wall=wall_id, at=at)
                 retired.add(carrier['id'])
             elif notes is not None:
-                line = 'Kept an earlier wall because your window has no replacement wall within 2 ft.'
+                line = 'Kept an earlier wall because your opening has no replacement wall within 2 ft.'
                 if line not in notes:
                     notes.append(line)
         house['walls'] = [w for w in house['walls'] if w['id'] not in retired]
@@ -1170,15 +1180,7 @@ def _check_draft(house):
         # Inner edges can join other roof sections over the house interior.
         if any(all(within(p, l.get('outline', []), 3) for p in boundary(corners)) for l in bearing):
             continue
-        x0, y0, x1, y1 = section['rect']
-        # Cell centres estimate occupied area, rather than treating a porch's
-        # shared wall edge as evidence that most of its roof covers a room.
-        nx, ny = [max(1, min(64, math.ceil(span))) for span in (x1 - x0, y1 - y0)]
-        samples = [[x0 + (i + .5) * (x1 - x0) / nx, y0 + (j + .5) * (y1 - y0) / ny]
-                   for i in range(nx) for j in range(ny)]
-        outside = all(sum(within(p, l.get('outline', []), 0) for p in samples) < len(samples) / 2
-                      for l in levels)
-        if outside:
+        if twin_joints.section_outside_outline(house, section):
             if not twin_joints.porch_supports_section(house, section):
                 ghost(section, 'This porch roof has no porch or columns beneath it.')
         else:
@@ -1421,7 +1423,7 @@ def _register_draft(result):
     sheets = {s['image']: s for s in result.get('sheets', []) if s['role'] == 'floor'}
     anchored = set()
     def person(reg):
-        return reg and (reg.get('source') in (None, 'person', 'answer', 'edit')
+        return reg and (reg.get('source') == 'person'
                         or reg.get('src', {}).get('person'))
     for page in fragment.get('pages', []):
         sheet = sheets.get(page['image'])
@@ -2304,7 +2306,8 @@ def _settle(build, step, result, decision=None):
         _register_draft(result)
     if kind in ('outline', 'registration', 'plot') and not is_lot:
         reg = decision.get('registration', build['pause']['registration']) if kind != 'plot' else build['pause']['registration']
-        reg = {**reg, 'source': 'person'}
+        if 'registration' in decision:
+            reg = {**reg, 'source': 'person'}
         twin_store.set_registration(step['source'], step['page'], step['level'], reg)
     if kind in ('outline', 'registration'):
         _expand(build, step, result)

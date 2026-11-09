@@ -385,9 +385,15 @@ def apply(plan, edit):
             if kind == 'opening':
                 reason = twin_plan._opening_error(piece, {w['id']: w for w in building['walls']},
                                                   {s['id']: s for s in building['roof']['sections']})
-                if reason == 'outside the wall span':
-                    raise ValueError('This window does not fit on its wall. Move it onto the wall or delete it.')
-                _opening_valid(building, piece)
+                if reason:
+                    noun = {'window': 'window', 'door': 'door', 'slider': 'sliding door',
+                            'garage_door': 'garage door', 'passage': 'passage'}.get(piece.get('kind'), 'opening')
+                    detail = {
+                        'outside the wall span': 'does not fit on its wall. Move it onto the wall or delete it.',
+                        'head is above the wall height': 'is taller than its wall. Lower its top or delete it.',
+                        'outside the roof gable span': 'does not fit on its gable. Move it onto the gable or delete it.',
+                    }.get(reason, 'could not be accepted. Adjust it or delete it.')
+                    raise ValueError(f'This {noun} {detail}')
             if piece.get('state', 'settled') != 'settled':
                 piece['state'] = 'settled'
                 _mark(piece)

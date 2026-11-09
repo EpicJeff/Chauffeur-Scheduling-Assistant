@@ -611,7 +611,35 @@ def test_registration_keeps_person_clears_stale_and_survives_write_error():
           'one failed page does not block another page')
 
 
+def test_draft_anchors_replace_only_nonperson_registrations():
+    for origin in (None, 'person'):
+        sheets = _drawn_house(sized=True)
+        old = twin_register.make(.1, offset=[100, 200])
+        if origin:
+            old['source'] = origin
+        ts.set_registration(sheets, 1, 'L1', old)
+        reader = SideReader()
+        expected = {}
+        def draft_hook(run, images, context):
+            answer, found = _anchored_answer(sheets, images, context)
+            expected.update(found)
+            return answer
+        reader.draft_hook = draft_hook
+        b = tb.start({'part': 'house'}, reader=reader, inline=True)
+        check(tb.status(b)['state'] == 'done', _trouble(tb.status(b)))
+        saved = ts.registration(sheets, 1, 'L1')
+        if origin == 'person':
+            check(saved == old, saved)
+        else:
+            level, crop, anchors = expected[1]
+            check(saved != old and saved['source'] == 'draft', saved)
+            for anchor in anchors:
+                check(math.dist(twin_register.apply(saved, ts.crop_to_master(crop, anchor['px'])),
+                                anchor['at']) < .01, (saved, anchor))
+
+
 TESTS = (
+    test_draft_anchors_replace_only_nonperson_registrations,
     test_registration_keeps_person_clears_stale_and_survives_write_error,
     test_outline_ghost_first,
     test_outline_late_dropped,

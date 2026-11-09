@@ -91,7 +91,31 @@ panel.events({ id: 'upper-failure', state: 'running', events: [
     piece: { id }, why: 'The upper floor extends more than 2 ft beyond the floor below.' }))] });
 assert.equal(el('editor-log').children.length, 1);
 assert.match(el('editor-log').children[0].textContent, /^3 pieces need checking:/);
-console.log('5/5 passed (draft pause, reread wording, first look, cleanup, one reason summary)');
+const reasons = [
+  ['roof', 'This porch roof has no porch or columns beneath it.', 'These porch roofs have no porch or columns beneath them'],
+  ['roof', 'This roof section does not meet its bearing walls within 3 ft.', 'These roof sections do not meet their bearing walls within 3 ft'],
+  ['opening', 'This opening extends beyond its wall span or height.', 'These openings extend beyond their wall span or height'],
+  ['room', "This room extends outside its floor's outline.", "These rooms extend outside their floors' outlines"],
+  ['wall', "This wall extends outside its floor's outline.", "These walls extend outside their floors' outlines"],
+  ['L2', 'The upper floor extends more than 2 ft beyond the floor below.', 'The upper floors extend more than 2 ft beyond the floors below'],
+  ['L2', 'The upper floor is less than a fifth of the floor below.', 'The upper floors are less than a fifth of the floors below'],
+  ['wall', "This floor's exterior walls do not close.", "These floors' exterior walls do not close"],
+  ['opening', 'No replacement wall is within 1 ft of this opening.', 'No replacement wall is within 1 ft of these openings'],
+  ['opening', 'The opening was clamped to the replacement wall span.', 'The openings were clamped to the replacement wall span'],
+  ['opening', 'There is no wall on this floor.', 'There is no wall on these floors'],
+];
+for (const [kind, why, plural] of reasons) {
+  const events = [0, 1].map(i => ({ seq: i + 1, type: 'ghost', step: 'draft', piece: { id: `${kind}:${i}` }, why }));
+  panel.events({ id: why, state: 'running', events: events.slice(0, 1) });
+  const singular = el('editor-log').children[0].textContent;
+  assert.match(singular, new RegExp(`^1 ${kind === 'roof' ? 'roof section' : kind === 'L2' ? 'piece' : kind} needs checking:`));
+  panel.events({ id: why, state: 'running', events });
+  const noun = kind === 'roof' ? 'roof sections' : kind === 'L2' ? 'pieces' : `${kind}s`;
+  assert.equal(el('editor-log').children[0].textContent, `2 ${noun} need checking: ${plural}`);
+  panel.events({ id: why, state: 'running', events });
+  assert.equal(el('editor-log').children.length, 1);
+}
+console.log('6/6 passed (draft pause, reread wording, first look, cleanup, one reason summary, plural reasons)');
 '''
 
 EDITOR_STUBS = r'''

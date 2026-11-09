@@ -483,7 +483,29 @@ def test_edit_runs_snap():
     check(same(r['from'], moved['to']), ('the rear wall end 0.4 ft away is saved welded', r['from'], moved['to']))
 
 
+def test_inset_porch_cannot_hide_missing_front_wall():
+    walls = rect_walls(0, 0, 30, 20)
+    walls = walls[1:]  # front is missing; an interior line is 8 ft behind it
+    wall = copy.deepcopy(walls[0])
+    wall.update(id='inset', level='L1', **{'from': [0, 8], 'to': [30, 8]}, height=9)
+    walls.append(wall)
+    for w in walls:
+        w['height'] = 9
+    building = {'levels': [{'id': 'L1', 'name': 'Main floor', 'elevation': 0, 'ceiling': 9,
+                           'outline': [[0, 0], [30, 0], [30, 20], [0, 20]]}],
+                'walls': walls, 'openings': [], 'rooms': [], 'roof': {'extensions': [], 'sections': [
+                    {'id': 'main-roof', 'kind': 'gable', 'ridge': 'x', 'rect': [0, 0, 30, 20],
+                     'plate': 9, 'pitch': 6, 'overhang': 0}]}}
+    before = tj().report(building)
+    building['porches'] = [{'id': 'inset-porch', 'polygon': [[2, 2], [10, 2], [10, 6], [2, 6]],
+                           'columns': [{'at': [2, 2]}]}]
+    after = tj().report(building)
+    check(after == before and any('front' in line and '8 ft from any wall' in line for line in after),
+          (before, after))
+
+
 SCENARIOS = (
+    test_inset_porch_cannot_hide_missing_front_wall,
     test_weld_close_ends,
     test_no_weld_beyond_tolerance,
     test_square_within_3_degrees,
