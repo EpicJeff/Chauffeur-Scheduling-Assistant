@@ -858,9 +858,26 @@ def scenario_build_record_route():
           ('the rooms answer and its settled draft are recorded', rooms))
 
 
+def scenario_lot_build_estimate_tracks_paid_reads():
+    _fresh()
+    plot = ts.save_source('drawing', 'plot.pdf', engine_tests._pdf(1), part='lot')
+    ts.set_page_roles([{'source': plot, 'page': 1, 'role': 'plot', 'level': None, 'box': None, 'building': 'lot'}])
+    import main
+    check(main._house_editor_sheets()['lot_build_estimate'] == tc.estimate('plot', 1) + tc.estimate('site', 1),
+          'a fresh lot pays for plot and yard reads')
+    from services import twin_place_reads
+    page = {'source': plot, 'page': 1, 'box': None}
+    crop = {'box': [0, 0, 1, 1], 'master': [5100, 3300]}
+    record = twin_place_reads.plot_read_record(page, crop, engine_tests.fixture('plot'))
+    ts.set_lot({'read': record, 'placement': None})
+    check(main._house_editor_sheets()['lot_build_estimate'] == tc.estimate('site', 1),
+          'an existing lot read is reused')
+
+
 if __name__ == '__main__':
     failed = []
-    for fn in (scenario_sheets_migrates_before_returning_sources_and_rows,
+    for fn in (scenario_lot_build_estimate_tracks_paid_reads,
+               scenario_sheets_migrates_before_returning_sources_and_rows,
                scenario_suggest_roles_after_moving_one_page_reads_only_remaining_pages,
                scenario_every_editor_route_is_parents_only,
                scenario_page_renders_for_anyone,

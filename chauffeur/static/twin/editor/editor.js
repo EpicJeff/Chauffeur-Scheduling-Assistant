@@ -25,6 +25,7 @@ export async function boot() {
   const panel = createPanel({ afterSay: async () => { await polling.pollNow(true); },
     acceptPause: async () => {
       if (currentBuild?.state !== 'paused' || !currentBuild.pause) return false;
+      if (currentBuild.pause.kind === 'draft') { pauses?.show(); return true; }
       await pauses?.accept(); return true;
     } });
   const canEdit = () => !previewing && !session.signedOut && !menuBusy && !directing;
@@ -92,7 +93,7 @@ export async function boot() {
       if (event.piece.lot) plan.site.lot = outline;
       const step = currentBuild?.steps.find(item => item.id === stepId);
       const owner = sheets.page_roles.find(row => row.source === step?.source && row.page === step?.page);
-      const house = plan.buildings.find(item => item.id === (owner?.building || 'house'));
+      const house = plan.buildings.find(item => item.id === (owner?.building || currentBuild?.part || 'house'));
       const level = house?.levels.find(item => item.id === step?.level);
       const elevation = level?.elevation ?? Math.max(0, Number((step?.level || 'L1').slice(1)) - 1) * 9;
       plan.buildings.push({
@@ -152,6 +153,11 @@ export async function boot() {
       for (const event of build.events || []) {
         if (event.type === 'ghost') ghosts.set(event.step, event);
         if (event.type === 'settled') ghosts.delete(event.step);
+      }
+      if (['paused', 'stopped', 'failed'].includes(build.state)) {
+        for (const [step, event] of ghosts) {
+          if (event.why === 'First look at the outline while the drawings are read.') ghosts.delete(step);
+        }
       }
       panel.events(build); drawTimeline(build); syncBuildButton();
       const step = build.steps.find(step => step.status === 'running' || step.status === 'paused');

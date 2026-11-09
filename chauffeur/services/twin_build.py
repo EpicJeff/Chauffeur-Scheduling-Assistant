@@ -667,6 +667,9 @@ def _deleted(piece, kind, house, build, tombstones=None):
                and t['src'].get('page') == src.get('page')
                and _near_geometry(_match_geometry(piece, kind, house),
                                   t.get('read_geometry') or t['geometry'], kind)
+               or (kind == 'wall' and t['kind'] == kind and t['level'] == level
+                   and t.get('building') in (None, house.get('id'))
+                   and _near_geometry(_geometry(piece, kind, house), t['geometry'], kind))
                for t in (twin_store.tombstones() if tombstones is None else tombstones))
 
 
@@ -689,7 +692,9 @@ def _matches(a, b, kind, house, *, original=False):
         return p.get('level')
     if level(a) != level(b) or (kind == 'site' and a.get('kind') != b.get('kind')):
         return False
-    ga, gb = _match_geometry(a, kind, house), _match_geometry(b, kind, house)
+    ga = _match_geometry(a, kind, house)
+    gb = (_geometry(b, kind, house) if kind == 'wall' and not original
+          else _match_geometry(b, kind, house))
     if original:
         gb = b.get('read_geometry') or gb
     if kind == 'wall':
@@ -841,6 +846,41 @@ def _draft_pages(build, *, floors_only=False):
 
 
 def _migrate_crop_draft(house, draft, step, tombstones, notes):
+    before, stones, old_notes = deepcopy(house), deepcopy(tombstones), list(notes)
+    try:
+        _migrate_crop_draft_frame(house, draft, step, tombstones, notes)
+    except Exception:
+        logger.info('Crop-frame migration could not fit the drawings', exc_info=True)
+        house.clear()
+        house.update(before)
+        tombstones[:] = stones
+        notes[:] = old_notes
+        _crop_draft_poor_fit(house, step, notes)
+
+
+def _crop_draft_poor_fit(house, step, notes):
+    line = 'Some of your changes may need moving: the new reading of the drawings sits differently.'
+    if line not in notes:
+        notes.append(line)
+    levels = sorted((l for l in house.get('levels', []) if l.get('outline')),
+                    key=lambda l: l['elevation'])
+    remap = {level['id']: f'L{i + 1}' for i, level in enumerate(levels)}
+    collections = [house.get(key, []) for key in
+                   ('walls', 'openings', 'rooms', 'stairs', 'fixtures', 'lights')]
+    collections += [house['roof'].get('sections', []), house['roof'].get('extensions', []),
+                    twin_plan.porches(house), levels]
+    for collection in collections:
+        for piece in collection:
+            if 'level' in piece:
+                piece['level'] = remap.get(piece['level'], piece['level'])
+            if not piece.get('src', {}).get('person') and piece.get('src', {}).get('step'):
+                piece['src'] = {'sheet': '', 'page': 1, 'step': step['id']}
+    for level in levels:
+        level['id'] = remap[level['id']]
+    house['levels'] = levels
+
+
+def _migrate_crop_draft_frame(house, draft, step, tombstones, notes):
     """Change the old read frame once, alongside publication of the draft."""
     steps = {(w.get('src') or {}).get('step', '') for w in house['walls']}
     if 'draft' in steps or not any(s.startswith(('walls:', 'outline:')) for s in steps):
@@ -854,9 +894,10 @@ def _migrate_crop_draft(house, draft, step, tombstones, notes):
         move, rms = twin_register.fit_outline(old_levels[0]['outline'], new_levels[0]['outline'])
     except (IndexError, ValueError):
         move, rms = None, math.inf
-    good = rms <= 2
+    good = rms <= 2 and abs(move['angle']) <= 1
     if not good:
-        notes.append('Some of your changes may need moving: the new reading of the drawings sits differently.')
+        _crop_draft_poor_fit(house, step, notes)
+        return
     level_ids = {level['id']: f'L{i + 1}' for i, level in enumerate(old_levels)}
 
     def point(p):
@@ -941,7 +982,7 @@ def _migrate_crop_draft(house, draft, step, tombstones, notes):
             house['position'] = [house['position'][i] - delta[i] for i in (0, 1)]
 
 
-def _merge_draft(build, step, fragment, house, *, tombstones=None):
+def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None):
     """The read already uses building feet. Merge identities before references."""
     draft = deepcopy(fragment.get('building', {}) if step['kind'] == 'draft' else fragment)
     pages = _draft_pages(build, floors_only=True)
@@ -980,6 +1021,39 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None):
     existing = [w for w in house['walls'] if not w.get('exterior')] if exterior else house['walls']
     house['walls'] = exterior + _merge_list(existing, walls, 'wall', house, build, step, tombstones=tombstones)
     wall_ids = dict(zip(old_ids, (w['id'] for w in walls)))
+    if step['kind'] == 'draft':
+        incoming_ids = set(wall_ids.values())
+        retired = set()
+        for carrier in house['walls']:
+            if carrier['id'] in incoming_ids or carrier.get('src', {}).get('person'):
+                continue
+            openings = [o for o in house['openings'] if o.get('wall') == carrier['id']
+                        and o.get('src', {}).get('person')]
+            if not openings:
+                continue
+            replacements = []
+            for opening in openings:
+                geometry = _geometry(opening, 'opening', house)
+                center = [(geometry['from'][i] + geometry['to'][i]) / 2 for i in (0, 1)]
+                hit = min(((*_nearest(center, w['from'], w['to']), w) for w in house['walls']
+                           if w['id'] in incoming_ids and w['level'] == carrier['level']
+                           and math.dist(w['from'], w['to']) >= opening['width']),
+                          key=lambda h: h[0], default=None)
+                if hit is None or hit[0] > 2:
+                    break
+                _, at, wall = hit
+                length = math.dist(wall['from'], wall['to'])
+                replacements.append((opening, wall['id'], max(opening['width'] / 2,
+                    min(length - opening['width'] / 2, at))))
+            if len(replacements) == len(openings):
+                for opening, wall_id, at in replacements:
+                    opening.update(wall=wall_id, at=at)
+                retired.add(carrier['id'])
+            elif notes is not None:
+                line = 'Kept an earlier wall because your window has no replacement wall within 2 ft.'
+                if line not in notes:
+                    notes.append(line)
+        house['walls'] = [w for w in house['walls'] if w['id'] not in retired]
     rooms = pieces('rooms', 'room')
     house['rooms'] = _merge_list(house['rooms'], rooms, 'room', house, build, step, tombstones=tombstones)
     if step['kind'] != 'draft':
@@ -1105,14 +1179,7 @@ def _check_draft(house):
         outside = all(sum(within(p, l.get('outline', []), 0) for p in samples) < len(samples) / 2
                       for l in levels)
         if outside:
-            supported = False
-            for porch in twin_plan.porches(house):
-                polygon = porch.get('polygon', [])
-                supported = supported or (polygon and (
-                    all(within(p, corners, 0) for p in polygon)
-                    or all(within(p, polygon, 0) for p in boundary(corners))))
-                supported = supported or any(within(c['at'], corners, 0) for c in porch.get('columns', []))
-            if not supported:
+            if not twin_joints.porch_supports_section(house, section):
                 ghost(section, 'This porch roof has no porch or columns beneath it.')
         else:
             ghost(section, 'This roof section does not meet its bearing walls within 3 ft.')
@@ -1268,7 +1335,7 @@ def _images_context(build, step, sheets=None):
     return [{'mime': crop['mime'], 'b64': crop['b64']}], context, {k: crop[k] for k in ('box', 'size', 'master')}
 
 
-def _start_draft_heartbeat(build, step, ticket, context, finished, mode):
+def _start_draft_heartbeat(build, step, ticket, context, finished, mode, *, started=None):
     clock = _clock
 
     def heartbeat(started):
@@ -1293,7 +1360,7 @@ def _start_draft_heartbeat(build, step, ticket, context, finished, mode):
                 logger.info('Draft heartbeat stopped', exc_info=True)
                 return
 
-    pulse = threading.Thread(target=heartbeat, args=(clock(),), daemon=True,
+    pulse = threading.Thread(target=heartbeat, args=(clock() if started is None else started,), daemon=True,
                              name=f"twin-heartbeat-{build['id'][:8]}")
     pulse.start()
     return pulse
@@ -1352,19 +1419,38 @@ def _register_draft(result):
     levels = sorted(fragment['building'].get('levels', []), key=lambda l: l['elevation'])
     remap = {level['id']: f'L{i + 1}' for i, level in enumerate(levels)}
     sheets = {s['image']: s for s in result.get('sheets', []) if s['role'] == 'floor'}
+    anchored = set()
+    def person(reg):
+        return reg and (reg.get('source') in (None, 'person', 'answer', 'edit')
+                        or reg.get('src', {}).get('person'))
     for page in fragment.get('pages', []):
         sheet = sheets.get(page['image'])
         level = remap.get(page['level'])
         if sheet is None or level is None:
             continue
-        anchors = page['anchors']
         try:
+            key = (sheet['source'], sheet['page'], level)
+            if person(twin_store.registration(*key)):
+                anchored.add(key)
+                continue
+            anchors = page['anchors']
             reg, _ = twin_register.from_points(
                 [twin_store.crop_to_master(sheet['crop'], a['px']) for a in anchors],
                 [a['at'] for a in anchors])
-        except ValueError:
+            reg['source'] = 'draft'
+            twin_store.set_registration(*key, reg)
+            anchored.add(key)
+        except Exception:
+            logger.info('Draft sheet could not be lined up', exc_info=True)
             continue
-        twin_store.set_registration(sheet['source'], sheet['page'], level, reg)
+    drawn = {(s['source'], s['page']) for s in sheets.values()}
+    for row in twin_store.registrations():
+        key = (row['source'], row['page'], row['level'])
+        if key[:2] in drawn and key not in anchored and not person(row['reg']):
+            try:
+                twin_store.clear_registration(*key)
+            except Exception:
+                logger.info('Old draft sheet placement could not be cleared', exc_info=True)
 
 
 def _draft_preview(build, step, fragment):
@@ -1390,6 +1476,7 @@ def _cache_result(build, step, ticket, result):
 
 
 def _read_draft_levels(build, step, reader, ticket, images, context, progress):
+    started = _clock()
     fragment = {'building': {'levels': [], 'walls': [], 'openings': [], 'rooms': [],
                              'roof': {'sections': [], 'extensions': []}, 'porches': [], 'stairs': []},
                 'pages': [], 'checks': {}, 'notes': []}
@@ -1417,7 +1504,8 @@ def _read_draft_levels(build, step, reader, ticket, images, context, progress):
             twin_cost.require_clear()
             options = {'checkpoint_checked': True} if reader is _REAL_READER else {}
             finished = threading.Event()
-            pulse = _start_draft_heartbeat(build, step, ticket, context, finished, 'one floor at a time')
+            pulse = _start_draft_heartbeat(build, step, ticket, context, finished, 'one floor at a time',
+                                            started=started)
             try:
                 raw = reader('draft_level', images, read_context, run=build['id'], step=step['id'], **options)
             finally:
@@ -1628,8 +1716,8 @@ def _obtain(build, step, reader, ticket):
         fragment, problems = twin_reads.parse(step['kind'], raw) if not truncated else ({}, [])
         if isinstance(raw, dict) and not truncated:
             problems = list(raw.get('problems') or []) + problems
-        fallback = step['kind'] == 'draft' and (progress is not None or truncated or (
-            fragment.get('building', {}).get('levels') and _draft_preview(build, step, fragment)[1]))
+        fallback = step['kind'] == 'draft' and (progress is not None or truncated
+            or not fragment.get('building', {}).get('levels') or _draft_preview(build, step, fragment)[1])
         if fallback:
             original = (progress['whole_draft'] if progress is not None else
                         {'fragment': fragment, 'problems': problems, 'reply': raw})
@@ -1854,7 +1942,7 @@ def _settle(build, step, result, decision=None):
     is_lot = build['inputs'].get('part') == 'lot'
     lot_state = None
     lot_outline = None
-    draft_tombstones = twin_store.tombstones() if kind == 'draft' else None
+    draft_tombstones = None
     if is_lot and kind in ('lot', 'plot', 'site'):
         _check_lot_page(step)
     if is_lot and kind == 'lot':
@@ -1880,6 +1968,9 @@ def _settle(build, step, result, decision=None):
         lot_state['read'] = record
 
     def mutate(current):
+        nonlocal draft_tombstones
+        if kind == 'draft':
+            draft_tombstones = twin_store.tombstones()
         plan = _base(current, build, lot_outline)
         house = _house(plan, build)
         level = next((l for l in (house or {}).get('levels', []) if l['id'] == step['level']), None)
@@ -1887,7 +1978,7 @@ def _settle(build, step, result, decision=None):
         if kind in ('draft', 'draft_rooms'):
             if kind == 'draft':
                 _migrate_crop_draft(house, fragment.get('building', {}), step, draft_tombstones, notes)
-            _merge_draft(build, step, fragment, house, tombstones=draft_tombstones)
+            _merge_draft(build, step, fragment, house, tombstones=draft_tombstones, notes=notes)
         elif kind == 'shell':
             shell = deepcopy(fragment)
             generated_levels = {w['level'] for w in house['walls']
@@ -2032,7 +2123,7 @@ def _settle(build, step, result, decision=None):
             plan['site']['lot'] = [_map(crop, reg, p) for p in fragment['lot']]
             if house is not None:
                 transform = decision.get('transform', build['pause']['transform'])
-                if not house.get('src', {}).get('person'):
+                if house.get('position_from') != 'person':
                     house.update(deepcopy(transform))
                     if 'transform' in decision:
                         house['position_from'] = 'person'
@@ -2187,11 +2278,11 @@ def _settle(build, step, result, decision=None):
         return normalized
 
     def publish_state(row):
+        if draft_tombstones is not None:
+            row['tombstones'] = deepcopy(draft_tombstones)
         if lot_state is not None:
             row['place']['lot'] = deepcopy(lot_state)
             twin_store._set_registration(row, step['source'], step['page'], None, build['pause']['registration'])
-        if draft_tombstones is not None:
-            row['tombstones'] = draft_tombstones
 
     twin_store.update_current(mutate, kind='build', step={'id': step['id'], 'label': step['label']},
                               generation=build['generation'], cost=build['cost'],
@@ -2200,6 +2291,7 @@ def _settle(build, step, result, decision=None):
         _register_draft(result)
     if kind in ('outline', 'registration', 'plot') and not is_lot:
         reg = decision.get('registration', build['pause']['registration']) if kind != 'plot' else build['pause']['registration']
+        reg = {**reg, 'source': 'person'}
         twin_store.set_registration(step['source'], step['page'], step['level'], reg)
     if kind in ('outline', 'registration'):
         _expand(build, step, result)
@@ -2208,19 +2300,8 @@ def _settle(build, step, result, decision=None):
     step.pop('removed_steps', None)
     for note in notes:
         _event(build, 'log', step=step['id'], text=note)
-    reasons = {}
     for ghost in {p['id']: p for p in ghosts}.values():
         _ghost(build, step, ghost, ghost.get('why', ''))
-        if ghost.get('why'):
-            reasons.setdefault(ghost['why'], []).append(ghost)
-    for why, pieces in reasons.items():
-        count = len(pieces)
-        nouns = {'roof section' if 'rect' in p else 'opening' if 'head' in p
-                 else 'wall' if 'from' in p and 'to' in p else 'piece' for p in pieces}
-        noun = nouns.pop() if len(nouns) == 1 else 'piece'
-        _event(build, 'log', step=step['id'], text=(
-            f"{count} {noun}{'s' if count != 1 else ''} "
-            f"{'need' if count != 1 else 'needs'} checking. {why}"))
     _event(build, 'settled', step=step['id'], pieces=settled)
 
 
@@ -2397,7 +2478,8 @@ def _run(build, ticket, reader):
                 step['status'] = 'pending'
                 logger.exception('%s could not finish.', step['label'])
                 _event(build, 'question' if retryable else 'error', step=step['id'],
-                       text='This drawing could not be read. Check the page and try reading it again.')
+                       text=('The drawings could not be read.' if step['kind'] == 'draft' else
+                             'This drawing could not be read. Check the page and try reading it again.'))
                 if cached and step['pause'] and isinstance(result, dict) and not result.get('error'):
                     try:
                         _pause(build, step, result)

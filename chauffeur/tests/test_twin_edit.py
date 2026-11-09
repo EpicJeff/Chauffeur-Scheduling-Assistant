@@ -304,7 +304,45 @@ def scenario_tombstone_matches_current_and_read_geometry():
           'a different building keeps its own wall')
 
 
+def scenario_ridge_x_gable_moves_and_deletes():
+    _seed()
+    plan = ts.current()
+    b = plan['buildings'][0]
+    section = b['roof']['sections'][0]
+    section.update(kind='gable', ridge='x', rect=[0, 0, 30, 20])
+    b['openings'].append({'id': 'ridge-x-window', 'kind': 'window', 'section': section['id'],
+                          'gable': 'front', 'y': 8, 'width': 2, 'sill': 1, 'head': 3})
+    ts.push_round(plan, 'build')
+    twin_edit.save({'op': 'move', 'piece': section['id'], 'by': [4, 3]}, 'p1')
+    opening = piece(ts.current(), 'ridge-x-window')
+    check(opening['y'] == 11 and 'x' not in opening, opening)
+    twin_edit.save({'op': 'delete', 'piece': opening['id']}, 'p1')
+    check(piece(ts.current(), opening['id']) is None, 'delete publishes')
+    stone = next(t for t in ts.tombstones() if t['kind'] == 'opening')
+    check(stone['geometry'] == {'from': [4, 10], 'to': [4, 12]}, stone)
+
+
+def scenario_accept_out_of_span_window_refused():
+    _seed()
+    plan = ts.current()
+    b = plan['buildings'][0]
+    opening = next(o for o in b['openings'] if 'wall' in o)
+    opening.update(at=1000, state='ghost', why='This opening extends beyond its wall span or height.')
+    opening['src']['step'] = 'draft'
+    ts.push_round(plan, 'build')
+    before = ts.current_id()
+    try:
+        twin_edit.save({'op': 'accept', 'pieces': [opening['id']]}, 'p1')
+    except ValueError as exc:
+        check(str(exc) == 'This window does not fit on its wall. Move it onto the wall or delete it.', str(exc))
+    else:
+        raise AssertionError('bad opening accepted')
+    check(ts.current_id() == before, 'refusal publishes nothing')
+
+
 if __name__ == '__main__':
+    scenario_ridge_x_gable_moves_and_deletes()
+    scenario_accept_out_of_span_window_refused()
     scenario_tombstone_matches_current_and_read_geometry()
     print('  ok ', scenario_tombstone_matches_current_and_read_geometry.__name__)
     for fn in (scenario_editable_fields_are_pinned,

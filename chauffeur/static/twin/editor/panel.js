@@ -1,5 +1,5 @@
 import { request, checkpoint, plain, report } from './api.js';
-import { pauseWords } from './words.js';
+import { pauseWords, sentence } from './words.js';
 
 const FIRST_LOOK = 'First look at the outline while the drawings are read.';
 
@@ -101,28 +101,44 @@ export function createPanel({ afterSay, acceptPause }) {
           const name = event.piece?.id?.split(':')[0];
           const kind = ['wall', 'opening', 'room'].includes(name) ? name : 'piece';
           const reason = event.why.replace(/^This opening is /i, '').replace(/^Wall ends are /i, '').replace(/\.$/, '');
-          const key = `${event.step}:${kind}:${reason}`;
+          const key = `${event.step}:${reason}`;
           let row = reasons.get(key);
           if (!row) {
             const node = document.createElement('li'); log.append(node);
-            row = { node, ids: new Set() }; reasons.set(key, row);
+            row = { node, ids: new Set(), kinds: new Set() }; reasons.set(key, row);
           }
           row.ids.add(event.piece.id);
+          row.kinds.add(kind);
           const n = row.ids.size;
-          row.node.textContent = `${n} ${kind}${n === 1 ? '' : 's'} ${n === 1 ? 'needs' : 'need'} checking: ${reason}`;
+          const noun = row.kinds.size === 1 ? kind : 'piece';
+          const why = n === 1 ? reason : reason.replace(/^This opening extends /, 'These openings extend ')
+            .replace(/^This roof section does /, 'These roof sections do ');
+          row.node.textContent = `${n} ${noun}${n === 1 ? '' : 's'} ${n === 1 ? 'needs' : 'need'} checking: ${why}`;
         } else if (event.type === 'log') {
-          // The engine also emits each ghost's reason as a log event. Its
-          // per-step summary above owns that copy, across poll batches too.
+          // Older build records also carry raw ghost reasons as log events.
+          // The summary above owns that copy across poll batches too.
           const reason = (event.text || '').replace(/^This opening is /i, '').replace(/^Wall ends are /i, '').replace(/\.$/, '');
           if ([...reasons.keys()].some(key => key.startsWith(`${event.step}:`) && key.endsWith(`:${reason}`))) continue;
           const line = document.createElement('li'); line.textContent = plain(event.text); log.append(line);
-        } else if (event.type === 'question') message(event.text);
+        } else if (event.type === 'question') {
+          if (!(build.pause?.kind === 'draft' && event.step === build.pause.step
+            && event.text === build.pause.why)) message(event.text);
+        }
         else if (event.type === 'error') report(new Error(event.text));
+      }
+      if (['paused', 'stopped', 'failed'].includes(build.state)) {
+        for (const line of firstLooks.values()) line.remove();
+        firstLooks.clear();
       }
       if (build.state === 'paused' && build.pause) {
         const pause = build.pause, key = `${build.id}:${pause.step}:${pause.why}:${pause.confidence}`;
         if (!pauses.has(key)) {
           pauses.add(key);
+          if (pause.kind === 'draft') {
+            message(`${sentence(pause.why)} Choose Try again to read the drawings again, or Stop.`);
+            replies(['What needs checking?']);
+            return;
+          }
           message(`${pauseWords(pause)} ${pause.kind === 'level_registration' ? 'Does the blue outline line up with the floor below? Use Drag or Pin 2 points to adjust it, then Looks right.'
             : pause.kind === 'lot_placement' ? 'Is the house in the right place? Drag or turn it, then choose Looks right.'
               : 'Does the blue outline match your drawing? Use Drag to slide it, then Looks right.'}`);

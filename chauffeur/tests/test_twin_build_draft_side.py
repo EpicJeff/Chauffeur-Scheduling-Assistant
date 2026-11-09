@@ -583,7 +583,36 @@ def test_bad_anchors_no_registration():
         check(len(house['walls']) >= 28, (name, 'the building still settles', len(house['walls'])))
 
 
+def test_registration_keeps_person_clears_stale_and_survives_write_error():
+    from unittest.mock import patch
+    sheets = _drawn_house()
+    crop = ts.crop(sheets, 1, FULL, max_side=2576)
+    result = {'fragment': spike(), 'sheets': [
+        {'image': 0, 'role': 'floor', 'source': sheets, 'page': 1, 'crop': crop},
+        {'image': 1, 'role': 'floor', 'source': sheets, 'page': 2, 'crop': crop}]}
+    anchors = [{'px': [0, 0], 'at': [0, 0]}, {'px': [1, 0], 'at': [70, 0]}]
+    result['fragment']['pages'] = [{'image': 0, 'level': 'L1', 'anchors': anchors}]
+    person = dict(twin_register.make(.1), source='person')
+    ts.set_registration(sheets, 1, 'L1', person)
+    ts.set_registration(sheets, 2, 'L2', dict(twin_register.make(.2), source='draft'))
+    tb._register_draft(result)
+    check(ts.registration(sheets, 1, 'L1') == person, 'keep the person registration')
+    check(ts.registration(sheets, 2, 'L2') is None, 'unanchored floor loses stale registration')
+    ts.clear_registration(sheets, 1, 'L1')
+    result['fragment']['pages'].append({'image': 1, 'level': 'L2', 'anchors': anchors})
+    saved = ts.set_registration
+    def write(source, page, level, reg):
+        if page == 1:
+            raise OSError('sheet registration unavailable')
+        return saved(source, page, level, reg)
+    with patch.object(ts, 'set_registration', side_effect=write):
+        tb._register_draft(result)
+    check(ts.registration(sheets, 1, 'L1') is None and ts.registration(sheets, 2, 'L2') is not None,
+          'one failed page does not block another page')
+
+
 TESTS = (
+    test_registration_keeps_person_clears_stale_and_survives_write_error,
     test_outline_ghost_first,
     test_outline_late_dropped,
     test_heartbeat_every_15s,

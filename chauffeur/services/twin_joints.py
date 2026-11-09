@@ -384,10 +384,10 @@ def snap(building: dict) -> list[str]:
         building.update(deepcopy(before))
 
 
-def _open_corners(walls):
+def _open_corners(walls, closing=None):
     ends = [(wall, key) for wall in walls for key in ('from', 'to')
             if not any(other is not wall and math.dist(wall[key], _project(wall[key], other, segment=True)) <= _EPS
-                       for other in walls)]
+                       for other in (walls if closing is None else closing))]
     # Two separated ends approaching the same intersection are one open
     # corner. Match the nearest such pair first; do not pair a wall with itself
     # or ends whose intersection is back inside either wall's span.
@@ -513,7 +513,15 @@ def report(building: dict) -> list[str]:
     walls = [w for w in building.get('walls', []) if w.get('exterior') and w.get('state') != 'ghost']
     for level in building.get('levels', []):
         floor = [w for w in walls if w['level'] == level['id']]
-        corners = _open_corners(floor)
+        outline = level.get('outline', [])
+        edges = [{'from': a, 'to': b} for a, b in zip(outline, outline[1:] + outline[:1])]
+        knees = [w for w in building.get('walls', []) if w['level'] == level['id']
+                 and not w.get('exterior') and w.get('state') != 'ghost' and edges
+                 and all(min(math.dist(p, _project(p, e, segment=True)) for e in edges) <= .1 + _EPS
+                         for p in [w['from'], w['to'],
+                                   *[[w['from'][i] + (w['to'][i] - w['from'][i]) * t / 20
+                                      for i in (0, 1)] for t in range(1, 20)]])]
+        corners = _open_corners(floor, floor + knees)
         if corners:
             name = level.get('name') or 'floor'
             add(f'1 outside corner on the {name} does not meet.',
@@ -552,7 +560,7 @@ def report(building: dict) -> list[str]:
             # Inner joins are not unsupported eaves. Their bearing walls still
             # supply plate contacts (e.g. a cross-gable on the front wall).
             # Require full coverage so partial joins cannot conceal open ends.
-            if internal(section, edge):
+            if internal(section, edge) or porch_supports_section(building, section):
                 continue
             distance = min((abs(w['from'][axis] - line) for w in candidates), default=None)
             side = _side(bounds, axis, line)
@@ -579,3 +587,32 @@ def report(building: dict) -> list[str]:
                 f'{{count}} awnings {location} have no wall to hang from.')
     return [singular if count == 1 else plural.replace('{count}', str(count))
             for (singular, plural), count in messages.items()]
+
+
+def porch_supports_section(building, section):
+    """Use the draft's porch polygon/column support rule for a roof rectangle."""
+    x0, y0, x1, y1 = section['rect']
+    corners = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+    def in_rect(p):
+        return x0 - _EPS <= p[0] <= x1 + _EPS and y0 - _EPS <= p[1] <= y1 + _EPS
+    for porch in twin_plan.porches(building):
+        polygon = porch.get('polygon', [])
+        if polygon and all(in_rect(p) for p in polygon):
+            return True
+        if any(in_rect(c['at']) for c in porch.get('columns', [])):
+            return True
+        if polygon:
+            edges = [{'from': a, 'to': b} for a, b in zip(polygon, polygon[1:] + polygon[:1])]
+            samples = [p for a, b in zip(corners, corners[1:] + corners[:1])
+                       for p in [[a[i] + (b[i] - a[i]) * t / max(1, math.ceil(math.dist(a, b) * 2))
+                                  for i in (0, 1)] for t in range(max(1, math.ceil(math.dist(a, b) * 2)))]]
+            def inside(p):
+                x, y = p
+                hit = False
+                for a, b in zip(polygon, polygon[1:] + polygon[:1]):
+                    if (a[1] > y) != (b[1] > y) and x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]:
+                        hit = not hit
+                return hit or any(math.dist(p, _project(p, e, segment=True)) <= _EPS for e in edges)
+            if all(inside(p) for p in samples):
+                return True
+    return False

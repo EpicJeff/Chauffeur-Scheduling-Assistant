@@ -584,7 +584,47 @@ def test_rooms_reply_without_walls_settles_rooms():
           ('a reply without interior walls is a whole answer, not a problem', rooms_logs))
 
 
+def test_empty_whole_draft_uses_per_floor_fallback():
+    _drawn_house()
+    reader = FallbackReader(draft={'building': {'levels': []}})
+    b = tb.start({'part': 'house'}, reader=reader, inline=True)
+    check(tb.status(b)['state'] == 'done', tb.status(b))
+    check(_draft_reads(reader) == ['draft', 'draft_level L1', 'draft_level L2', 'draft_level roof', 'draft_rooms'],
+          _draft_reads(reader))
+
+
+def test_fallback_heartbeat_uses_one_start_time_across_floors():
+    _drawn_house()
+    reader = FallbackReader()
+    now, starts = [1000.0], []
+    original = tb._start_draft_heartbeat
+    def heartbeat(*args, **kwargs):
+        if args[-1] == 'one floor at a time':
+            starts.append(kwargs['started'])
+        return original(*args, **kwargs)
+    def read(kind, images, context, **kwargs):
+        if kind == 'draft_level':
+            now[0] += 45
+        return reader(kind, images, context, **kwargs)
+    with patch.object(tb, '_clock', lambda: now[0]), patch.object(tb, '_start_draft_heartbeat', side_effect=heartbeat):
+        b = tb.start({'part': 'house'}, reader=read, inline=True)
+    check(tb.status(b)['state'] == 'done', tb.status(b))
+    check(starts == [1000.0, 1000.0, 1000.0], starts)
+
+
+def test_draft_read_error_names_the_drawings():
+    _drawn_house()
+    b = tb.start({'part': 'house'}, reader=FallbackReader(draft={'error': 'read timed out'}), inline=True)
+    st = tb.status(b)
+    check(st['state'] == 'stopped', st)
+    lines = [e['text'] for e in st['events'] if e['type'] == 'question' and e.get('step') == 'draft']
+    check(lines == ['The drawings could not be read.'], lines)
+
+
 TESTS = (
+    test_empty_whole_draft_uses_per_floor_fallback,
+    test_fallback_heartbeat_uses_one_start_time_across_floors,
+    test_draft_read_error_names_the_drawings,
     test_truncated_draft_runs_per_level,
     test_first_floor_failure_runs_per_level,
     test_fallback_level_context_has_lower_levels,

@@ -226,10 +226,11 @@ def _transform(piece, transform):
 
 def _shift_gables(building, section, old_rect):
     axis = 0 if section['ridge'] == 'y' else 1
+    field = 'y' if section['ridge'] == 'x' else 'x'
     delta = section['rect'][axis] - old_rect[axis]
     for opening in building['openings']:
         if 'gable' in opening and opening.get('section') == section['id'] and delta:
-            opening['x'] = _number(opening['x'] + delta, 'Gable opening x')
+            opening[field] = _number(opening[field] + delta, f'Gable opening {field}')
             _mark(opening)
 
 
@@ -380,7 +381,13 @@ def apply(plan, edit):
         if not isinstance(ids, list) or not ids:
             raise ValueError('Accept needs a list of piece ids.')
         for pid in ids:
-            _, piece, _, _ = _find(result, pid, scope)
+            kind, piece, building, _ = _find(result, pid, scope)
+            if kind == 'opening':
+                reason = twin_plan._opening_error(piece, {w['id']: w for w in building['walls']},
+                                                  {s['id']: s for s in building['roof']['sections']})
+                if reason == 'outside the wall span':
+                    raise ValueError('This window does not fit on its wall. Move it onto the wall or delete it.')
+                _opening_valid(building, piece)
             if piece.get('state', 'settled') != 'settled':
                 piece['state'] = 'settled'
                 _mark(piece)
@@ -509,10 +516,11 @@ def _tombstone(kind, piece, building):
         else:
             section = next(s for s in building['roof']['sections'] if s['id'] == piece['section'])
             axis = 0 if section['ridge'] == 'y' else 1
+            field = 'y' if section['ridge'] == 'x' else 'x'
             edge = section['rect'][(1 - axis) + (0 if piece['gable'] == 'front' else 2)]
             geometry = {key: ([distance, edge] if axis == 0 else [edge, distance])
-                        for key, distance in (('from', piece['x'] - piece['width'] / 2),
-                                              ('to', piece['x'] + piece['width'] / 2))}
+                        for key, distance in (('from', piece[field] - piece['width'] / 2),
+                                              ('to', piece[field] + piece['width'] / 2))}
             level = section.get('level')
     return {'kind': kind, 'level': level, 'geometry': geometry,
             'building': building['id'],
@@ -573,5 +581,6 @@ def save(edit, actor_id, reason=''):
         for tombstone in tombstones:
             twin_store.add_tombstone(tombstone)
         if edit.get('op') == 'registration':
+            edit['reg']['source'] = 'person'
             twin_store.set_registration(edit['source'], edit['page'], edit['level'], edit['reg'])
         return {'round': round_id, 'summary': summary}

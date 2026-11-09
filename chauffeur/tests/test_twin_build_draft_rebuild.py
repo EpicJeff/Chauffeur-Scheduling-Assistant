@@ -443,7 +443,127 @@ def test_old_crop_walls_replaced_by_draft():
                                                                 [l.get('src') for l in house['levels']]))
 
 
+def test_reread_at_person_moved_wall_and_deleted_position():
+    for delete in (False, True):
+        _drawn_house()
+        answer = _l_answer()
+        _build(DraftReader(answer=answer))
+        wall = next(w for w in _house(ts.current())['walls'] if _same_wall(w, *INTERIOR['i1']))
+        twin_edit.save({'op': 'move', 'piece': wall['id'], 'by': [0, 3]}, 'p1')
+        moved = next(w for w in _house(ts.current())['walls'] if w['id'] == wall['id'])
+        if delete:
+            twin_edit.save({'op': 'delete', 'piece': wall['id']}, 'p1')
+        reread = next(w for w in answer['building']['walls'] if w['id'] == 'i1')
+        reread.update({k: copy.deepcopy(moved[k]) for k in ('from', 'to')})
+        b, _ = _build(DraftReader(answer=answer))
+        for attempt in range(2):
+            house = _house(ts.current())
+            matches = _walls_at(house, 'L1', moved['from'], moved['to'])
+            check(len(matches) == (0 if delete else 1), (delete, matches))
+            if not delete:
+                check(matches[0]['id'] == wall['id'] and matches[0]['src']['person'], matches)
+            if attempt == 0:
+                tb.reread(b, 'draft', reader=DraftReader(answer=answer), inline=True)
+
+
+def test_person_window_changes_carrier_or_logs_once():
+    for distance in (1.5, 3):
+        _drawn_house()
+        answer = _l_answer()
+        _build(DraftReader(answer=answer))
+        wall = next(w for w in _house(ts.current())['walls'] if _same_wall(w, *INTERIOR['i1']))
+        def misread(plan):
+            carrier = next(w for w in _house(plan)['walls'] if w['id'] == wall['id'])
+            for key in ('from', 'to'):
+                carrier[key][1] += distance
+            carrier['read_geometry'] = {key: copy.deepcopy(carrier[key]) for key in ('from', 'to')}
+            return plan
+        ts.update_current(misread, kind='build')
+        twin_edit.save({'op': 'add_opening', 'wall': wall['id'], 'at': 8, 'width': 2,
+                        'sill': 2, 'head': 5, 'kind': 'window'}, 'p1')
+        opening = next(o for o in _house(ts.current())['openings'] if o['src'].get('person'))
+        _, st = _build(DraftReader(answer=answer))
+        house = _house(ts.current())
+        kept = next(o for o in house['openings'] if o['id'] == opening['id'])
+        carriers = [w for w in house['walls'] if w['id'] == wall['id']]
+        lines = [e['text'] for e in st['events'] if 'no replacement wall within 2 ft' in e.get('text', '')]
+        if distance <= 2:
+            check(not carriers and kept['wall'] != wall['id'] and abs(kept['at'] - 8) < .01,
+                  (carriers, kept))
+            check(kept['src']['person'] and not lines, (kept, lines))
+        else:
+            check(carriers and kept['wall'] == wall['id'] and len(lines) == 1, (carriers, kept, lines))
+
+
+def test_porch_included_migration_cannot_rotate():
+    _seed_old_pipeline()
+    plan = ts.current()
+    house = _house(plan)
+    house['levels'][0]['outline'] = [[0, 0], [31, 0], [31, 28], [0, 28]]
+    house.update(position=[50, 70], rotation=37, position_from='person')
+    notes = []
+    tb._migrate_crop_draft(house, {'levels': [{'id': 'L1', 'elevation': 0,
+        'outline': [[0, 0], [31, 0], [31, 22], [0, 22]]}]}, {'id': 'draft'}, [], notes)
+    check(house['rotation'] == 37, (house['rotation'], notes))
+    check(notes == [MAY_NEED_MOVING], notes)
+
+
+def test_migration_exception_settles_with_one_plain_line():
+    from unittest.mock import patch
+    _seed_old_pipeline()
+    with patch.object(tb.twin_register, 'fit_outline', side_effect=RuntimeError('bad fit')):
+        _, st = _build(DraftReader(answer=_l_answer()))
+    check(st['state'] == 'done', st)
+    lines = [e['text'] for e in st['events'] if e.get('text') == MAY_NEED_MOVING]
+    check(lines == [MAY_NEED_MOVING], lines)
+
+
+def test_plot_placement_uses_position_provenance():
+    _drawn_house(lot=True)
+    bid, _ = _build(DraftReader())
+    build = tb._get(bid)
+    plot = next(r for r in ts.page_roles() if r['role'] == 'plot')
+    step = tb._step('plot', plot, pause='lot_placement')
+    reg, _ = _plot_lot()
+    transform = {'position': [123, 234], 'rotation': 17}
+    build['pause'] = {'registration': reg, 'transform': transform}
+    result = {'fragment': fixture('plot'), 'crop': FULL_CROP, 'problems': []}
+    for placed in (True, False):
+        def provenance(plan):
+            house = _house(plan)
+            house.update(position=[10, 20], rotation=37, src={'person': True})
+            if placed:
+                house['position_from'] = 'person'
+            else:
+                house.pop('position_from', None)
+            return plan
+        ts.update_current(provenance, kind='edit')
+        with ts.LIFECYCLE, tb._LOCK:
+            tb._settle(build, copy.deepcopy(step), copy.deepcopy(result))
+        house = _house(ts.current())
+        check(house['position'] == ([10, 20] if placed else [123, 234]), (placed, house['position']))
+        check(house['rotation'] == (37 if placed else 17), (placed, house['rotation']))
+
+
+def test_engine_does_not_repeat_ghost_summaries():
+    _drawn_house()
+    answer = _l_answer()
+    answer['building']['openings'] = [{'id': 'bad-window', 'wall': 'i1', 'kind': 'window',
+        'at': 1000, 'width': 2, 'sill': 2, 'head': 5}]
+    _, st = _build(DraftReader(answer=answer))
+    ghosts = [e for e in st['events'] if e['type'] == 'ghost' and 'span or height' in e.get('why', '')]
+    logs = [e['text'] for e in st['events'] if e['type'] == 'log']
+    check(len(ghosts) == 1, ghosts)
+    check(not any('needs checking' in line or 'need checking' in line for line in logs), logs)
+
+
 TESTS = (
+    test_reread_at_person_moved_wall_and_deleted_position,
+    test_person_window_changes_carrier_or_logs_once,
+    test_porch_included_migration_cannot_rotate,
+    test_migration_exception_settles_with_one_plain_line,
+    test_plot_placement_uses_position_provenance,
+    test_engine_does_not_repeat_ghost_summaries,
     test_person_moved_wall_not_duplicated,
     test_person_deleted_wall_stays_deleted,
     test_person_placed_building_not_moved_by_fit,

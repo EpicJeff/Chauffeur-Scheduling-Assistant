@@ -4,7 +4,7 @@ import sys
 import traceback
 
 from test_twin_build_draft_rebuild import (
-    DraftReader, INTERIOR, _build, _house, _l_answer, _near, _same_wall,
+    DraftReader, INTERIOR, MAY_NEED_MOVING, _build, _house, _l_answer, _near, _same_wall,
     _seed_old_pipeline, _walls_at, check, engine_tests, tb, tr, ts, twin_edit,
 )
 
@@ -34,9 +34,19 @@ def test_each_person_piece_matches_only_its_read_geometry():
         incoming = dict(copy.deepcopy(shape), id='read', src={'step': 'draft'})
         merged = tb._merge_list([person], [incoming], kind, house, {}, step)
         check(len(merged) == 1 and merged[0] == person, (kind, merged))
-        # A separate read at the edited position is a different piece.
         separate = dict(copy.deepcopy(person), id='other', src={'step': 'draft'})
         separate.pop('read_geometry')
+        if kind == 'wall':
+            # A wall read within 1 ft of where the person moved it, on the same
+            # level, is that wall: the person's version stays, with no second wall.
+            for offset in (0, .5):
+                near = copy.deepcopy(separate)
+                twin_edit._transform(near, lambda p: [p[0], p[1] + offset])
+                merged = tb._merge_list([person], [near], kind, house, {}, step)
+                check(len(merged) == 1 and merged[0] == person, (kind, offset, merged))
+            # More than 1 ft away it is a different wall.
+            twin_edit._transform(separate, lambda p: [p[0], p[1] + 2])
+        # Any other piece read at the edited position is a different piece.
         merged = tb._merge_list([person], [separate], kind, house, {}, step)
         check(len(merged) == 2 and merged[0] == person, (kind, merged))
 
@@ -77,25 +87,31 @@ def test_rotated_migration_preserves_world_placement_and_runs_once():
     before = _house(ts.current())
     wall = next(w for w in before['walls'] if w['id'] == 'wall:old-i1')
     world = [tr.to_world(before, wall[k]) for k in ('from', 'to')]
+    kept = [copy.deepcopy(wall[k]) for k in ('from', 'to')]
+    roof_before = copy.deepcopy(next(s for s in before['roof']['sections'] if s['id'] == 'person-roof'))
+    gable_before = copy.deepcopy(next(o for o in before['openings'] if o['id'] == 'person-gable'))
+    stones = copy.deepcopy(ts.tombstones())
     move, rms = tr.fit_outline(before['levels'][0]['outline'], _l_answer()['building']['levels'][0]['outline'])
     check(rms < .1 and abs(move['angle']) > 80, (move, rms))
-    expected = [tr.to_world({'position': move['offset'], 'rotation': move['angle']}, wall[k])
-                for k in ('from', 'to')]
+    # The migration fit is translation-only, so this turned fit is a poor fit:
+    # the person's pieces are kept as they were and one plain line says so.
     placement = None
     for attempt in range(2):
-        _build(DraftReader(answer=_l_answer()))
+        _, st = _build(DraftReader(answer=_l_answer()))
         house = _house(ts.current())
         wall = next(w for w in house['walls'] if w['id'] == 'wall:old-i1')
-        check(wall['level'] == 'L1' and _same_wall(wall, *expected), wall)
+        check(wall['level'] == 'L1' and _same_wall(wall, *kept, .05), wall)
         check(all(_near(tr.to_world(house, wall[k]), p, .05)
                   for k, p in zip(('from', 'to'), world)), ('world placement', house, wall))
-        check(not _walls_at(house, 'L1', *INTERIOR['i3']), 'migrated deletion survives the next build')
-        check(ts.tombstones()[0]['level'] == 'L1', ts.tombstones())
+        check(ts.tombstones() == stones, ('the deletion is kept as it was', ts.tombstones()))
         roof = next(s for s in house['roof']['sections'] if s['id'] == 'person-roof')
-        check(roof['ridge'] == 'y' and all(abs(a - b) < .05
-              for a, b in zip(roof['rect'], [0, 0, 40, 20])), roof)
+        check(roof['ridge'] == roof_before['ridge'] and all(abs(a - b) < .05
+              for a, b in zip(roof['rect'], roof_before['rect'])), (roof, roof_before))
         opening = next(o for o in house['openings'] if o['id'] == 'person-gable')
-        check(opening['gable'] == 'front' and abs(opening['x'] - 5) < .05, opening)
+        check(opening['gable'] == gable_before['gable'] and abs(opening['y'] - gable_before['y']) < .05,
+              (opening, gable_before))
+        lines = [e['text'] for e in st['events'] if e['type'] == 'log' and e.get('text') == MAY_NEED_MOVING]
+        check(len(lines) == (0 if attempt else 1), ('one plain line, on the first build only', attempt, lines))
         current_placement = (house['position'], house['rotation'])
         if placement:
             check(current_placement == placement, ('migration runs once', placement, current_placement))

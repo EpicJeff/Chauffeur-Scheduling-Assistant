@@ -74,7 +74,7 @@ def test_checks_follow_snap_and_reread_invalidates_rooms():
     tb.reread(build, 'draft', reader=again, inline=True)
     check(tb.status(build)['state'] == 'done', tb.status(build)['pause'])
     check(_read_kinds(again).count('outline') == 1
-          and [kind for kind in _read_kinds(again) if kind != 'outline'] == ['draft', 'draft_rooms'],
+          and [kind for kind in _read_kinds(again) if kind != 'outline'] == ['draft', 'roof_check', 'draft_rooms'],
           _read_kinds(again))
 
 
@@ -85,9 +85,13 @@ def test_empty_reread_cannot_settle_the_previous_building():
     reader = DraftReader(answer={'building': {'levels': []}})
     tb.reread(build, 'draft', reader=reader, inline=True)
     check(tb.status(build)['state'] == 'paused', tb.status(build)['pause'])
+    # A draft with no levels takes the floor-by-floor fallback. The first floor
+    # read is empty as well, so the fallback stops there and the build pauses.
     check(_read_kinds(reader).count('outline') == 1
-          and [kind for kind in _read_kinds(reader) if kind != 'outline'] == ['draft'],
+          and [kind for kind in _read_kinds(reader) if kind != 'outline'] == ['draft', 'draft_level'],
           _read_kinds(reader))
+    check(next(c for c in reader.seen if c['kind'] == 'draft_level')['context']['level'] == 'L1',
+          'the fallback starts with the first floor')
 
 
 def test_page_level_mapping_controls_names():
@@ -156,8 +160,12 @@ def test_ghost_logs_group_reasons_and_exclude_model_notes():
     house = _house(ts.current())
     check(len([o for o in house['openings'] if o['state'] == 'ghost']) == 5, house['openings'])
     logs = [e['text'] for e in st['events'] if e['type'] == 'log']
-    matching = [line for line in logs if 'opening' in line and 'span or height' in line]
-    check(len(matching) == 1 and matching[0].startswith('5 openings'), matching)
+    # The panel groups ghost events, so the engine logs no grouped summary.
+    ghost_ids = {o['id'] for o in house['openings'] if o['state'] == 'ghost'}
+    ghosts = [e for e in st['events'] if e['type'] == 'ghost' and 'span or height' in e.get('why', '')]
+    check(len(ghosts) == 5 and {e['piece']['id'] for e in ghosts} == ghost_ids, ghosts)
+    check(not [line for line in logs if 'span or height' in line
+               or (line[:1].isdigit() and 'checking' in line)], logs)
     raw_ids = [p['id'] for key in ('walls', 'openings', 'levels') for p in house[key]]
     check(not any(raw in line for line in logs for raw in [*raw_ids, 'raw-piece-id']), logs)
     state = tb._get(build)

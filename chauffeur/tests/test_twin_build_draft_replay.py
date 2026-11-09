@@ -27,7 +27,7 @@ Spec section 8 tolerances, checked on the settled plan:
   cover at least 85% of the level's outline; every room settles unless its
   polygon lies more than 0.5 ft outside its level's outline.
 
-twin_joints.report after the build is printed by the runner, not asserted.
+twin_joints.report after the build must be empty for both buildings.
 
 Run from chauffeur/:  env -u HA_BASE_URL python tests/test_twin_build_draft_replay.py
 """
@@ -439,7 +439,13 @@ def test_main_house_rooms_settle():
     rooms_settle('main-house')
 
 
+def test_both_buildings_have_no_joint_report():
+    for slug in ('pool-house', 'main-house'):
+        check(not build(slug)['report'], (slug, build(slug)['report']))
+
+
 TESTS = (
+    test_both_buildings_have_no_joint_report,
     test_pool_house_first_floor_31_by_22,
     test_pool_house_upper_floor_offset,
     test_pool_house_half_storey_settles,

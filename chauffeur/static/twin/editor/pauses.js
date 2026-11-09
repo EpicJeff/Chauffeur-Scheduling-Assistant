@@ -195,7 +195,7 @@ export function createPauses({ view, getBuild, getGhost, getSheets, refresh, pre
   }, { signal });
   el('pause-reread').addEventListener('click', async () => {
     if (busy || !canEdit()) return;
-    if (!await window.promptConfirm('Re-read this drawing?', `${el('pause-reread').textContent}. Reading again adds to the running cost.`, 'Re-read', 'Cancel')) return;
+    if (!await window.promptConfirm(pause?.kind === 'draft' ? 'Read the drawings again?' : 'Re-read this drawing?', `${el('pause-reread').textContent}. Reading again adds to the running cost.`, 'Re-read', 'Cancel')) return;
     disable(true);
     try {
       await request(`build/${encodeURIComponent(buildId)}/reread`, 'POST', { step: pause.step });

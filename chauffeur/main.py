@@ -7508,6 +7508,12 @@ def _house_editor_sheets():
     labels = [{'building': b['id'], 'piece': p['id'], 'label': twin_edit._label(k, p, b)}
               for k, p, b, _ in twin_edit._entries(plan) if 'id' in p] if plan else []
     build_estimates = {}
+    lot_plot = next((r for r in roles if r.get('building') == 'lot' and r['role'] == 'plot'), None)
+    lot_build = 0
+    if lot_plot:
+        lot_build = twin_cost.estimate('site', 1)
+        if not (place['lot'].get('placement') or place['lot'].get('read')):
+            lot_build += twin_cost.estimate('plot', 1)
     for building in place['buildings']:
         rows = [r for r in roles if r.get('building') == building['id']
                 and r['role'] in ('floor', 'roof', 'elevation', 'other')]
@@ -7524,6 +7530,7 @@ def _house_editor_sheets():
         build_estimates[building['id']] = {'draft': draft, 'draft_rooms': rooms, 'roof_check': roof_check,
                                            'total': draft + roof_check + rooms + finishes}
     return {'sources': sources, 'pages': pages, 'page_roles': roles, 'registrations': registrations,
+            'lot_build_estimate': lot_build,
             'piece_labels': labels, 'field_labels': twin_edit.FIELD_LABELS,
             'place': place, 'kinds': [{'id': key, 'label': label} for key, label in twin_place.KINDS.items()],
             'roles': {'building': twin_place.BUILDING_ROLES, 'lot': twin_place.LOT_ROLES},

@@ -98,10 +98,16 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     return result;
   }
   const patch = (id, body) => mutate(`place/buildings/${encodeURIComponent(id)}`, 'PATCH', body);
-  async function paid(title, key, action) {
-    const estimate = sheets.estimates?.[key];
+  async function paid(title, key, action, part = null) {
+    const estimates = sheets.estimates || {};
+    const estimate = key === 'build' ? part === 'place'
+      ? Object.values(estimates.build || {}).reduce((sum, row) => sum + (row.total || 0), 0) + (sheets.lot_build_estimate || 0)
+      : part === 'lot' ? sheets.lot_build_estimate : estimates.build?.[part]?.total : estimates[key];
     const cost = Number.isFinite(estimate) ? `about $${estimate.toFixed(2)}` : null;
-    if (await window.promptConfirm(title, cost ? `This will cost ${cost}. Continue?`
+    const name = place().buildings.find(b => b.id === part)?.name || 'building';
+    const description = part === 'place' ? 'This reads the drawings and photos for your place'
+      : part === 'lot' ? 'This reads the lot drawings' : `This reads the ${name} drawings and photos`;
+    if (await window.promptConfirm(title, cost ? key === 'build' ? `${description}, ${cost} at most. Continue?` : `This will cost ${cost}. Continue?`
       : 'This reads your documents and adds to the running cost. Continue?', 'Continue', 'Cancel')) await action();
   }
   function close() {
@@ -298,7 +304,7 @@ export function createPlace({ request, getSheets, reload, follow, canEdit, panel
     await paid(part === 'place' ? 'Build your place?' : part === 'lot' ? 'Build the lot?' : 'Build this building?', 'build', async () => {
       const result = await request('build', 'POST', { part });
       close(); await follow(result.id);
-    });
+    }, part);
   }
   function plotSuggestions() {
     const host = el('place-suggestions'); host.replaceChildren();

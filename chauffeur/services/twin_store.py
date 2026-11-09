@@ -780,6 +780,14 @@ def registration(source_id, page, level) -> dict | None:
                      if (r['source'], r['page'], r['level']) == (source_id, page, level)), None)
 
 
+def clear_registration(source_id, page, level) -> None:
+    with _LOCK:
+        row = _state()
+        row['registrations'] = [r for r in row['registrations']
+                                if (r['source'], r['page'], r['level']) != (source_id, page, level)]
+        _save(row)
+
+
 def page_image(source_id, page) -> bytes:
     """Return the model-sized PNG for the sheet underlay."""
     with _LOCK:
