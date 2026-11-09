@@ -501,6 +501,135 @@ def test_flat_and_shed_choices_are_protected_and_inputs_unchanged():
         assert (blocks, obs, choices) == inputs, 'derivation mutated its inputs'
 
 
+def test_review_places_use_building_extent_and_are_distinct():
+    from services.twin_roof_derive import derive_roof
+    sections, flags = derive_roof(HOUSE, {}, {}, [])
+    assert len(sections) == len(HOUSE), sections
+    places = {b['id']: re.split(r' was|:', _flags_for(flags, HOUSE, b['id'])[0]['text'])[0]
+              for b in HOUSE}
+    assert len(set(places.values())) == len(HOUSE), places
+    assert 'middle' in places['A'].lower(), places
+    assert 'front' in places['D'].lower() and 'rear' in places['E'].lower(), places
+    _flag_texts_plain(flags, HOUSE)
+
+    # Same third and storey still need distinct, plain qualifiers.
+    blocks = [_block('P', (0, 0, 100, 100)), _block('Q', (10, 10, 20, 20)),
+              _block('R', (20, 10, 25, 20))]
+    _, flags = derive_roof(blocks, {}, {}, [])
+    names = [re.split(r' was|:', _flags_for(flags, blocks, b['id'])[0]['text'])[0] for b in blocks]
+    assert len(set(names)) == len(blocks), names
+    _flag_texts_plain(flags, blocks)
+
+
+def test_review_ridge_choice_uses_new_observed_ends():
+    from services.twin_roof_derive import derive_roof
+    blocks = [_block('P', (0, 0, 30, 20))]
+    observations = {'P': {'sides': _sides('slope', 'slope', 'clipped_gable_end', 'slope')}}
+    sections, flags = derive_roof(blocks, observations, {}, [{'rect': blocks[0]['rect'], 'ridge': 'y'}])
+    roof = _section(sections, 'P')
+    assert roof['ridge'] == 'y' and roof['kind'] == 'gable', roof
+    assert roof.get('ends') == {'y0': 'hip', 'y1': 'hip'}, roof
+    assert 'clip' not in roof.get('ends', {}).values() and flags == [], (roof, flags)
+    # Newly selected gable or unseen ends are plain gables, without an override.
+    for front in ('gable_end', 'hidden'):
+        observations['P']['sides'] = _sides(front, 'hidden', 'clipped_gable_end', 'gable_end')
+        sections, _ = derive_roof(blocks, observations, {}, [{'rect': blocks[0]['rect'], 'ridge': 'y'}])
+        assert 'ends' not in _section(sections, 'P'), sections
+
+
+def test_review_person_pitch_is_clamped_before_geometry():
+    from services.twin_roof_derive import derive_roof
+    blocks = [_block('P', (0, 0, 30, 20))]
+    for kind in ('gable', 'hip'):
+        for pitch, expected in ((0, 3), (-5, 3), (25, 14)):
+            choices = [{'rect': blocks[0]['rect'], 'kind': kind, 'pitch': pitch}]
+            sections, flags = derive_roof(blocks, {}, {}, choices)
+            roof = _section(sections, 'P')
+            assert roof['pitch'] == expected and roof['pitch_source'] == 'person', roof
+            assert _ridge_line(roof)[1] > roof['plate'] and flags == [], (roof, flags)
+
+
+def test_review_invalid_plan_pitch_falls_back_to_photo():
+    from services.twin_roof_derive import derive_roof
+    blocks = [_block('P', (0, 0, 30, 20))]
+    observations = {'P': {'sides': _sides('slope', 'slope', 'gable_end', 'gable_end'), 'pitch': 6}}
+    for pitch in (None, 'unknown', float('nan'), float('inf'), False):
+        sections, _ = derive_roof(blocks, observations, {'P': {'pitch': pitch}}, [])
+        roof = _section(sections, 'P')
+        assert roof['pitch'] == 6 and roof['pitch_source'] == 'photos', roof
+
+
+def test_review_incompatible_row_aligns_largest_subrun_and_flags():
+    from services.twin_roof_derive import derive_roof
+    observations = _house_observations()
+    observations['C']['pitch'] = observations['B']['pitch'] = 14
+    sections, flags = derive_roof(HOUSE, observations, _house_evidence(), [])
+    lines = {k: _ridge_line(_section(sections, k))[0] for k in ('C', 'A', 'B')}
+    aligned = [k for k in ('C', 'B') if abs(lines[k] - lines['A']) < .01]
+    assert len(aligned) == 1, lines
+    left_out = ({'C', 'B'} - set(aligned)).pop()
+    ridge_flags = [f for f in flags if 'could not line up' in f['text']]
+    assert {f['block'] for f in ridge_flags} == {left_out}, flags
+    _flag_texts_plain(flags, HOUSE)
+    for section in sections:
+        assert all(3 <= _slope(section, end) <= 14 for end in ('x0', 'x1', 'y0', 'y1')), section
+
+    # A non-contiguous pair cannot win over a real two-block run.
+    blocks = [_block('P', (0, 0, 10, 20)), _block('Q', (10, 10, 20, 30)),
+              _block('R', (20, 20, 30, 40)), _block('S', (30, 20, 40, 40))]
+    obs = {b['id']: {'sides': _sides('slope', 'slope', 'gable_end', 'gable_end'), 'pitch': 14}
+           for b in blocks}
+    _, flags = derive_roof(blocks, obs, {}, [])
+    assert {f['block'] for f in flags if 'could not line up' in f['text']} == {'P', 'Q'}, flags
+
+
+def test_review_unrepresented_gables_and_dormers_are_flagged():
+    from services.twin_roof_derive import derive_roof
+    blocks = [_block('P', (0, 0, 30, 20))]
+    observations = {'P': {'sides': _sides('gable_end', 'slope', 'gable_end', 'slope')}}
+    _, flags = derive_roof(blocks, observations, {}, [])
+    assert any(f.get('side') == 'front' and 'front' in f['text'] and 'gable' in f['text'] for f in flags), flags
+    _flag_texts_plain(flags, blocks)
+
+    # Left is an end on ridge x; front is an end on ridge y.
+    for ridge, side in (('x', 'left'), ('y', 'front')):
+        sides = _sides('slope', 'slope', 'slope', 'slope')
+        sides[side] = {'kind': 'dormer', 'centre': 10, 'width': 6}
+        sections, flags = derive_roof(blocks, {'P': {'sides': sides}}, {'P': {'ridge': ridge}}, [])
+        assert not _dormers(sections, 'P'), sections
+        assert any(f.get('side') == side and side in f['text'] and 'dormer' in f['text'] for f in flags), flags
+        _flag_texts_plain(flags, blocks)
+
+    # Left is an eave on ridge y: keep this valid dormer rather than flagging it.
+    sides = _sides('gable_end', 'gable_end', 'dormer', 'slope')
+    sections, flags = derive_roof(blocks, {'P': {'sides': sides}}, {}, [])
+    assert len(_dormers(sections, 'P')) == 1 and flags == [], (sections, flags)
+    # A person's explicit correction suppresses contradictory-observation flags.
+    _, flags = derive_roof(blocks, observations, {}, [{'rect': blocks[0]['rect'], 'ridge': 'y'}])
+    assert flags == [], flags
+
+
+def test_review_unseen_block_inherits_longest_adjacent_form():
+    from services.twin_roof_derive import derive_roof
+    blocks = [_block('P', (0, 0, 30, 20)), _block('Q', (30, 0, 40, 20)),
+              _block('R', (0, 20, 30, 35))]
+    observations = {'P': {'sides': _sides()},
+                    'Q': {'sides': _sides('slope', 'slope', 'gable_end', 'gable_end')},
+                    'R': {'sides': _sides('gable_end', 'gable_end', 'slope', 'slope')}}
+    for ordered in (blocks, list(reversed(blocks))):
+        sections, flags = derive_roof(ordered, observations, {'P': {'ridge': 'x'}}, [])
+        roof = _section(sections, 'P')
+        assert (roof['kind'], roof['ridge']) == ('gable', 'y'), roof
+        assert len(_flags_for(flags, blocks, 'P')) == 1, flags
+        _flag_texts_plain(flags, blocks)
+    observations['R']['sides'] = _sides('slope', 'slope', 'slope', 'slope')
+    sections, flags = derive_roof(blocks, observations, {'R': {'ridge': 'y'}}, [])
+    roof = _section(sections, 'P')
+    assert (roof['kind'], roof['ridge']) == ('hip', 'y'), roof
+    assert _end(roof, 'y0') == _end(roof, 'y1') == 'hip', roof
+    assert len(_flags_for(flags, blocks, 'P')) == 1, flags
+
+
 TESTS = (
     test_principle_per_end,
     test_household_truth,
@@ -512,6 +641,13 @@ TESTS = (
     test_unseen_block_flag_text,
     test_mixed_ends_and_sliver_use_the_same_principle,
     test_flat_and_shed_choices_are_protected_and_inputs_unchanged,
+    test_review_places_use_building_extent_and_are_distinct,
+    test_review_ridge_choice_uses_new_observed_ends,
+    test_review_person_pitch_is_clamped_before_geometry,
+    test_review_invalid_plan_pitch_falls_back_to_photo,
+    test_review_incompatible_row_aligns_largest_subrun_and_flags,
+    test_review_unrepresented_gables_and_dormers_are_flagged,
+    test_review_unseen_block_inherits_longest_adjacent_form,
 )
 
 
