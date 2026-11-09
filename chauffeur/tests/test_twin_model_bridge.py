@@ -938,6 +938,102 @@ def test_grouped_separator_flag_tracks_remaining_members():
     check(flags[0]['text'] == 'I added an invisible wall here to keep two rooms apart; check it.', flags)
 
 
+def test_extra_closure_room_and_detail_hosts_survive_every_path():
+    from services import twin_model, twin_model_hosts
+    flat = _flat(_box_walls(20) + [_wall('p', (10, 0), (10, 5))], [
+        {'id': 'a', 'name': 'A', 'level': 'L1', 'polygon': _rect_poly(0, 0, 10, 10)}],
+        lights=[{'id': 'lamp', 'level': 'L1', 'at': [15, 5]}],
+        fixtures=[{'id': 'table', 'level': 'L1', 'kind': 'table', 'rect': [14, 2, 16, 4]}])
+    model, _ = _b().assemble(flat)
+    for path in ('assemble', 'normalize', 'derive', 'raw', 'flat', 'raw'):
+        if path == 'normalize':
+            model, _ = twin_model.normalize(model)
+        elif path == 'derive':
+            twin_model.derive(model['buildings'][0])
+        elif path in ('raw', 'flat'):
+            model, _ = _b().assemble(flat if path == 'raw' else _b().flatten(model), model)
+        house = model['buildings'][0]
+        rooms = _by_id(house['rooms'])
+        check(set(rooms) == {'a', 'room-1'} and rooms['room-1']['name'] == 'Room', (path, rooms))
+        for name, kind, point in (('anchors', 'ceiling', [15, 5]), ('items', 'floor', [15, 3])):
+            piece = house[name][0]
+            check(piece['host'][kind] == 'room-1' and piece.get('state') != 'ghost', (path, piece))
+            check(_near(twin_model_hosts.world_point(house, piece['host'])[:2], point), (path, piece))
+            check(all(p['host'][kind] in rooms for p in house[name]), (path, house[name]))
+
+
+def test_cleared_separator_flags_stay_cleared_and_new_separators_get_flags():
+    from services import twin_model
+    flat = _flat(_box_walls(30), [
+        {'id': 'k', 'name': 'Kitchen', 'level': 'L1', 'polygon': _rect_poly(0, 0, 10, 10)},
+        {'id': 'd', 'name': 'Dining', 'level': 'L1', 'polygon': _rect_poly(10, 0, 30, 10)}])
+    model, _ = _b().assemble(flat)
+    house = model['buildings'][0]
+    old_ids = {w['id'] for w in house['walls'] if w['kind'] == 'separator'}
+    check(len(old_ids) == 1 and all(w.get('flagged') is True for w in house['walls']
+                                  if w['id'] in old_ids), house['walls'])
+    house['flags'] = [f for f in house['flags'] if not f.get('text', '').startswith('I added ')]
+    model, _ = twin_model.normalize(model)
+    legacy = copy.deepcopy(model)
+    for wall in legacy['buildings'][0]['walls']:
+        wall.pop('flagged', None)
+    for read in (_b().flatten(legacy), flat):
+        restored, _ = _b().assemble(read, legacy)
+        check(not any(f.get('text', '').startswith('I added ') for f in restored['buildings'][0]['flags']), restored)
+    for read in (_b().flatten(model), flat):
+        model, _ = _b().assemble(read, model)
+        house = model['buildings'][0]
+        check(not any(f.get('text', '').startswith('I added ') for f in house['flags']), house['flags'])
+        check({w['id'] for w in house['walls'] if w['kind'] == 'separator'} == old_ids, house['walls'])
+    flat['buildings'][0]['rooms'][1]['polygon'] = _rect_poly(10, 0, 20, 10)
+    flat['buildings'][0]['rooms'].append(
+        {'id': 's', 'name': 'Study', 'level': 'L1', 'polygon': _rect_poly(20, 0, 30, 10)})
+    model, _ = _b().assemble(flat, model)
+    for read in (None, _b().flatten(model), flat):
+        if read is not None:
+            model, _ = _b().assemble(read, model)
+        house = model['buildings'][0]
+        separators = [w for w in house['walls'] if w['kind'] == 'separator']
+        flags = [f for f in house['flags'] if f.get('text', '').startswith('I added ')]
+        check(len(separators) == 2 and all(w.get('flagged') is True for w in separators), separators)
+        check(len(flags) == 1 and flags[0]['piece'] not in old_ids, flags)
+        check('invisible wall here' in flags[0]['text'] and flags[0]['at'] == [20, 5], flags)
+
+
+def test_separator_flag_groups_do_not_absorb_new_members():
+    flat = _flat(_box_walls(40), [
+        {'id': f'r{i}', 'name': 'Room', 'level': 'L1', 'polygon': _rect_poly(i * 10, 0, (i + 1) * 10, 10)}
+        for i in range(3)])
+    flat['buildings'][0]['rooms'][2]['polygon'] = _rect_poly(20, 0, 40, 10)
+    model, _ = _b().assemble(flat)
+    original = next(f for f in model['buildings'][0]['flags'] if f.get('text', '').startswith('I added '))
+    flat['buildings'][0]['rooms'].append(
+        {'id': 'r3', 'name': 'Room', 'level': 'L1', 'polygon': _rect_poly(25, 0, 40, 10)})
+    # Shorten the last original room so the later read needs a genuinely new boundary.
+    flat['buildings'][0]['rooms'][2]['polygon'] = _rect_poly(20, 0, 25, 10)
+    model, _ = _b().assemble(flat, model)
+    flags = [f for f in model['buildings'][0]['flags'] if f.get('text', '').startswith('I added ')]
+    check(len(flags) == 2, flags)
+    check(next(f for f in flags if f['piece'] == original['piece'])['text'] ==
+          'I added 2 invisible walls on the main floor to keep rooms apart; check them.', flags)
+    model['buildings'][0]['flags'].remove(next(f for f in flags if f['piece'] == original['piece']))
+    model, _ = _b().assemble(flat, model)
+    flags = [f for f in model['buildings'][0]['flags'] if f.get('text', '').startswith('I added ')]
+    check(len(flags) == 1 and flags[0]['at'] == [25, 5], flags)
+
+
+def test_separator_flags_accept_a_flag_without_text():
+    model, _ = _b().assemble(_flat(_box_walls(20), []))
+    house = model['buildings'][0]
+    house['flags'].append({'at': [5, 5], 'level': 'L1'})
+    _b()._separator_flags(house)
+    check(house['flags'] == [{'at': [5, 5], 'level': 'L1'}], house['flags'])
+    _b().assemble(_b().flatten(model), model)
+    flat = _household()
+    flat['buildings'][0]['flags'] = [{'at': [5, 5], 'level': 'L1'}]
+    _b().assemble(flat)
+
+
 def test_ghost_rooms_never_add_or_reuse_separators():
     outline = [[0, 0], [30, 0], [30, 30], [20, 30], [20, 10], [10, 10], [10, 30], [0, 30]]
     walls = [_wall(f'edge{i}', a, b, True) for i, (a, b) in enumerate(_segments_for_test(outline))]
@@ -949,7 +1045,34 @@ def test_ghost_rooms_never_add_or_reuse_separators():
     flat = _flat(walls, rooms)
     previous, _ = _b().assemble(flat)
     house = previous['buildings'][0]
-    check({r['name'] for r in house['rooms']} == {'Inside', 'Across recess'}, house['rooms'])
+
+    def check_rooms(house, has_ghost):
+        by_id = _by_id(house['rooms'])
+        check(by_id['inside']['name'] == 'Inside', by_id)
+        if has_ghost:
+            check(by_id['across']['name'] == 'Across recess' and by_id['across']['state'] == 'ghost', by_id)
+        else:
+            check('across' not in by_id, by_id)
+        extras = [r for r in house['rooms'] if r['id'] not in ('inside', 'across')]
+        check(len(extras) == 2 and all(r['name'] == 'Room' for r in extras), extras)
+        check(all(twin_model._overlap(r['polygon'], by_id['inside']['polygon']) <= TOL
+                  and _area(r['polygon']) < _area(outline) for r in extras), extras)
+
+    from services import twin_model
+    check_rooms(house, True)
+    normalized = copy.deepcopy(previous)
+    for path in ('normalize', 'derive', 'flat', 'raw'):
+        if path == 'normalize':
+            normalized, _ = twin_model.normalize(normalized)
+        elif path == 'derive':
+            twin_model.derive(normalized['buildings'][0])
+        else:
+            normalized, _ = _b().assemble(flat if path == 'raw' else _b().flatten(normalized), normalized)
+        check_rooms(normalized['buildings'][0], True)
+        check({r['id'] for r in normalized['buildings'][0]['rooms']} ==
+              {r['id'] for r in house['rooms']}, (path, normalized))
+        check(not any(isinstance(f.get('piece'), dict) and f['piece'].get('room', {}).get('id') == 'across'
+                      for f in normalized['buildings'][0]['flags']), (path, normalized))
     separators = {w['id']: _ends(house, w) for w in house['walls'] if w['kind'] == 'separator'}
     check(all(a[1] == b[1] == 10 for a, b in separators.values()), separators)
     # Simulate a legacy closure around the ghost, then drop that read room.
@@ -959,7 +1082,7 @@ def test_ghost_rooms_never_add_or_reuse_separators():
                            'kind': 'separator', 'thickness': 0, 'src': {'step': 'rooms'}})
     flat['buildings'][0]['rooms'] = rooms[:1]
     model, _ = _b().assemble(flat, previous)
-    check({r['name'] for r in model['buildings'][0]['rooms']} == {'Inside'}, model)
+    check_rooms(model['buildings'][0], False)
     house = model['buildings'][0]
     check({w['id']: _ends(house, w) for w in house['walls'] if w['kind'] == 'separator'} == separators, house)
 
@@ -969,6 +1092,10 @@ def _segments_for_test(poly):
 
 
 TESTS = (
+    test_extra_closure_room_and_detail_hosts_survive_every_path,
+    test_cleared_separator_flags_stay_cleared_and_new_separators_get_flags,
+    test_separator_flag_groups_do_not_absorb_new_members,
+    test_separator_flags_accept_a_flag_without_text,
     test_t_splits_persist_on_migration_and_reread,
     test_proposals_have_top_level_ids,
     test_person_split_keeps_siblings_on_flat_and_whole_reads,

@@ -70,6 +70,11 @@ def _walls(building, incoming, previous, replaced):
     old_walls = [_flat_wall(w, old_joints) for w in previous.get('walls', [])]
     live = []
     for wall in incoming:
+        old = next((w for w in old_walls if w['id'] == wall['id']), None)
+        # Before R37 every migration separator was flagged at creation.
+        if old and old.get('kind') == 'separator' and old.get('flagged',
+                old.get('src', {}).get('step') == 'migration'):
+            wall['flagged'] = True
         same_level = [p for p in pinned if p['level'] == wall['level']]
         exact = next((p for p in same_level if p['id'] == wall['id']), None)
         siblings = [w for w in old_walls if w['level'] == wall['level']
@@ -127,6 +132,8 @@ def _walls(building, incoming, previous, replaced):
         if wall.get('kind') != 'separator' or any(w['id'] == wall['id'] for w in walls):
             continue
         piece = _flat_wall(wall, old_joints)
+        if piece.get('src', {}).get('step') == 'migration':
+            piece.setdefault('flagged', True)
         if _coverage(piece['from'], piece['to'], walls, piece['level']):
             walls.append(piece)
     return walls
@@ -187,13 +194,14 @@ def _separators(building, walls, rooms, *, migration, replaced=()):
                                 'step': 'porch' if room.get('kind') == 'porch' else 'migration' if migration else 'rooms'},
                         'height': next(l['ceiling'] for l in building['levels'] if l['id'] == room['level'])}
                 walls.append(wall)
-                if migration and room.get('kind') != 'porch':
+                if room.get('kind') != 'porch':
                     neighbours = [r for r in rooms if r is not room and r['level'] == room['level']
                                   and any(not _coverage(*ends, [{'level': room['level'], 'from': p, 'to': q}],
                                                         room['level']) for p, q in _segments(r['polygon']))]
                     names = [room.get('name', 'Room'), neighbours[0].get('name', 'Room') if neighbours else 'Room']
                     text = (_SEPARATOR if 'Room' in names else
                             f'I added an invisible wall here to keep the {names[0]} and the {names[1]} apart; check it.')
+                    wall['flagged'] = True
                     added.setdefault(room['level'], []).append((wall, text))
     for lid, pieces in added.items():
         wall, text = pieces[0]
@@ -201,7 +209,8 @@ def _separators(building, walls, rooms, *, migration, replaced=()):
             name = next(l['name'] for l in building['levels'] if l['id'] == lid)
             text = f'I added {len(pieces)} invisible walls on the {name} to keep rooms apart; check them.'
         building['flags'].append({'level': lid, 'at': [(a + b) / 2 for a, b in zip(wall['from'], wall['to'])],
-                                  'text': text, 'piece': wall['id']})
+                                  'text': text, 'piece': wall['id'],
+                                  'separators': [w['id'] for w, _ in pieces]})
 
 
 def _network(building, walls, previous):
@@ -366,7 +375,7 @@ def _roofs(building, flat_roof, previous, cached_dormers, notes):
     for flag in flat_roof.get('flags', []):
         x0, y0, x1, y1 = flag['block_rect']
         converted = {**deepcopy(flag), 'at': [(x0 + x1) / 2, (y0 + y1) / 2]}
-        existing = next((f for f in building['flags'] if f['text'] == converted['text'] and f['at'] == converted['at']), None)
+        existing = next((f for f in building['flags'] if f.get('text') == converted['text'] and f.get('at') == converted['at']), None)
         if existing is None:
             building['flags'].append(converted)
         else:
@@ -502,21 +511,41 @@ def _restore_polygons(building, stored, replaced):
 
 
 def _separator_flags(building):
-    flags = [f for f in building['flags'] if f['text'].startswith('I added ') and 'invisible wall' in f['text']]
+    flags = [f for f in building['flags'] if f.get('text', '').startswith('I added ')
+             and 'invisible wall' in f.get('text', '')]
     building['flags'] = [f for f in building['flags'] if f not in flags]
-    for level in building['levels']:
-        pieces = [w for w in building['walls'] if w['level'] == level['id']
-                  and w.get('kind') == 'separator' and w.get('src', {}).get('step') == 'migration']
+    joints = {j['id']: j['at'] for j in building['joints']}
+    separators = [w for w in building['walls'] if w.get('kind') == 'separator'
+                  and w.get('src', {}).get('step') in ('migration', 'rooms')]
+    for old in flags:
+        members = old.get('separators')
+        pieces = [w for w in separators if w['level'] == old.get('level')
+                  and (any(w['id'] == wid or w['id'].startswith(wid + '~') for wid in members)
+                       if members is not None else w.get('src', {}).get('step') == 'migration')]
         if not pieces:
             continue
-        old = next((f for f in flags if f.get('level') == level['id']), None)
-        text = (_SEPARATOR if old is None or ' invisible walls on the ' in old['text'] else old['text'])
+        for wall in pieces:
+            wall['flagged'] = True
+        text = _SEPARATOR if ' invisible walls on the ' in old['text'] else old['text']
         if len(pieces) > 1:
+            level = next(l for l in building['levels'] if l['id'] == old['level'])
             text = f"I added {len(pieces)} invisible walls on the {level['name']} to keep rooms apart; check them."
-        joints = {j['id']: j['at'] for j in building['joints']}
+        a, b = _line(pieces[0], joints)
+        building['flags'].append({**old, 'at': [(x + y) / 2 for x, y in zip(a, b)],
+                                  'text': text, 'piece': pieces[0]['id'],
+                                  'separators': [w['id'] for w in pieces]})
+    for level in building['levels']:
+        pieces = [w for w in separators if w['level'] == level['id'] and not w.get('flagged')]
+        if not pieces:
+            continue
+        for wall in pieces:
+            wall['flagged'] = True
+        text = (_SEPARATOR if len(pieces) == 1 else
+                f"I added {len(pieces)} invisible walls on the {level['name']} to keep rooms apart; check them.")
         a, b = _line(pieces[0], joints)
         building['flags'].append({'level': level['id'], 'at': [(x + y) / 2 for x, y in zip(a, b)],
-                                  'text': text, 'piece': pieces[0]['id']})
+                                  'text': text, 'piece': pieces[0]['id'],
+                                  'separators': [w['id'] for w in pieces]})
 
 
 def assemble(flat: dict, previous: dict | None = None) -> tuple[dict, list[str]]:
@@ -561,9 +590,8 @@ def assemble(flat: dict, previous: dict | None = None) -> tuple[dict, list[str]]
         before = hosts.snapshot(building)
         ghosts = [r for r in building['rooms'] if r.get('state') == 'ghost']
         building['rooms'] = [r for r in building['rooms'] if r.get('state') != 'ghost']
-        stored_rooms = deepcopy(building['rooms'])
-        stored_polygons = {r['id']: r.get('polygon') for r in stored_rooms}
-        room_reads[building['id']] = (stored_rooms, ghosts, replaced)
+        stored_polygons = {r['id']: r.get('polygon') for r in building['rooms']}
+        room_reads[building['id']] = (ghosts, replaced)
         notes.extend(twin_model.derive(building))
         _restore_polygons(building, stored_polygons, replaced)
         _details(building, source, old)
@@ -586,21 +614,9 @@ def assemble(flat: dict, previous: dict | None = None) -> tuple[dict, list[str]]
     sources = {b['id']: b for b in flat['buildings']}
     for building in normalized['buildings']:
         source = sources[building['id']]
-        stored_rooms, ghosts, replaced = room_reads[building['id']]
-        stored = {r['id'] for r in stored_rooms}
+        ghosts, replaced = room_reads[building['id']]
         polygons = {r['id']: r.get('polygon') for r in source['rooms']}
         _restore_polygons(building, polygons, replaced)
-        # A closure can also enclose leftover floor outside all read rooms.
-        # It is not an extra room cut out of a stored room (R19).
-        valid = [r for r in stored_rooms if twin_plan._polygon(r.get('polygon'))]
-        if valid:
-            building['rooms'] = [r for r in building['rooms'] if r['id'] in stored
-                                 or any(r['level'] == read['level'] and
-                                        twin_model._overlap(r['polygon'], read['polygon']) > _EPS for read in valid)
-                                 or not any(w.get('kind') == 'separator'
-                                            and w.get('src', {}).get('step') in ('migration', 'rooms', 'porch')
-                                            and len(set(w['joints']) & set(r['joints'])) == 2
-                                            for w in building['walls'])]
         building['rooms'].extend(deepcopy(ghosts))
         _separator_flags(building)
         live_ids = {p['id'] for name in ('walls', 'rooms', 'roofs', 'dormers', 'openings', 'anchors', 'items')

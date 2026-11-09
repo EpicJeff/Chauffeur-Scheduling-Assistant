@@ -159,8 +159,9 @@ def _split_t_junctions(building, joints, walls, notes):
 
 
 def _derive(building, notes, *, persist_t_splits=True):
-    stored = list(building.get('rooms', []))
-    seen = {room.get('id') for room in stored}
+    ghosts = [room for room in building.get('rooms', []) if room.get('state') == 'ghost']
+    stored = [room for room in building.get('rooms', []) if room.get('state') != 'ghost']
+    seen = {room.get('id') for room in stored + ghosts}
     flags = []
     for flag in building.get('flags', []):
         if flag.get('text') != NOT_CLOSED:
@@ -170,7 +171,7 @@ def _derive(building, notes, *, persist_t_splits=True):
         if isinstance(room, dict) and room.get('id') not in seen:
             stored.append(deepcopy(room))
             seen.add(room.get('id'))
-    _piece_meta(stored, 'room', notes)
+    _piece_meta(stored + ghosts, 'room', notes)
     valid = [twin_plan._polygon(room.get('polygon')) for room in stored]
     bounds = [_bounds(room['polygon']) if ok else None for room, ok in zip(stored, valid)]
     areas = [_area(room['polygon']) if ok else 0 for room, ok in zip(stored, valid)]
@@ -254,9 +255,10 @@ def _derive(building, notes, *, persist_t_splits=True):
         room.setdefault('kind', 'room')
         rooms.append(room)
     # Reserve even lost identities, so a newly discovered Room cannot take one.
-    _piece_meta(stored + [room for index, room in zip(candidates_kept, rooms)
+    _piece_meta(stored + ghosts + [room for index, room in zip(candidates_kept, rooms)
                          if index not in inherited], 'room', notes)
-    building['rooms'] = rooms
+    # Located read ghosts do not claim floor regions or disappear on an edit.
+    building['rooms'] = rooms + ghosts
     for owner, room in enumerate(stored):
         if owner not in inherited.values():
             flags.append({'level': room.get('level'),
