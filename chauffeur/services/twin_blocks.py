@@ -12,6 +12,7 @@ from io import BytesIO
 
 _SNAP = 0.5
 _MIN_SIDE = 7.0
+_OVERHANG = 1.0
 _EPS = 1e-8
 
 
@@ -139,12 +140,61 @@ def _shared_edge(a, b):
     return vertical + horizontal
 
 
-def _merge_slivers(rects):
-    """Absorb thin pieces into touching neighbours, keeping every covered point.
+def _overlap(a, b):
+    return (max(0, min(a[2], b[2]) - max(a[0], b[0]))
+            * max(0, min(a[3], b[3]) - max(a[1], b[1])))
 
-    The rectangular envelope can bridge a small concave setback or extend
-    under a higher roof. Prefer the merge adding the least area. A genuinely
-    isolated narrow wing is retained rather than silently losing its roof.
+
+def _within_footprint(rect, poly):
+    """Prove the envelope is inside an orthogonal footprint plus 1 ft.
+
+    Split at every wall line, so each cell is wholly inside or outside.
+    An outside cell must fit within one edge's Euclidean overhang: distance
+    to a segment is convex, so checking all its corners bounds the whole
+    cell. Ambiguous cells conservatively prevent a merge.
+    """
+    xs = sorted({rect[0], rect[2]} | {p[0] for p in poly if rect[0] < p[0] < rect[2]})
+    ys = sorted({rect[1], rect[3]} | {p[1] for p in poly if rect[1] < p[1] < rect[3]})
+    edges = list(zip(poly, poly[1:] + poly[:1]))
+
+    def distance2(p, a, b):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        length2 = dx * dx + dy * dy
+        t = max(0, min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length2)) if length2 else 0
+        return (p[0] - a[0] - t * dx) ** 2 + (p[1] - a[1] - t * dy) ** 2
+
+    for x0, x1 in zip(xs, xs[1:]):
+        for y0, y1 in zip(ys, ys[1:]):
+            if _inside(poly, (x0 + x1) / 2, (y0 + y1) / 2):
+                continue
+            corners = ((x0, y0), (x0, y1), (x1, y0), (x1, y1))
+            if not any(all(distance2(p, a, b) <= _OVERHANG ** 2 + _EPS
+                           for p in corners) for a, b in edges):
+                return False
+    return True
+
+
+def _clip_upper(rects, upper):
+    """Re-clip merged envelopes, retaining rectangular pieces outside upper roofs."""
+    for roof in upper:
+        clipped = []
+        for r in rects:
+            if _overlap(r, roof) <= _EPS:
+                clipped.append(r)
+                continue
+            x0, y0 = max(r[0], roof[0]), max(r[1], roof[1])
+            x1, y1 = min(r[2], roof[2]), min(r[3], roof[3])
+            pieces = ([r[0], r[1], x0, r[3]], [x1, r[1], r[2], r[3]],
+                      [x0, r[1], x1, y0], [x0, y1, x1, r[3]])
+            clipped.extend(p for p in pieces if p[2] - p[0] > _EPS and p[3] - p[1] > _EPS)
+        rects = clipped
+    return rects
+
+
+def _merge_slivers(rects, footprint, upper):
+    """Merge only envelopes within the overhang and clear of all other roofs.
+
+    A narrow piece with no safe touching neighbour keeps its own roof.
     """
     rects = sorted(rects, key=lambda r: (_area(r), r))
     while True:
@@ -160,20 +210,19 @@ def _merge_slivers(rects):
                     continue
                 merged = [min(a[0], b[0]), min(a[1], b[1]),
                           max(a[2], b[2]), max(a[3], b[3])]
+                if (any(_overlap(merged, r) > _EPS for r in upper)
+                        or any(_overlap(merged, r) > _EPS for k, r in enumerate(rects)
+                               if k not in (i, j))
+                        or not _within_footprint(merged, footprint)):
+                    continue
                 narrow = min(merged[2] - merged[0], merged[3] - merged[1])
-                overlap = (max(0, min(a[2], b[2]) - max(a[0], b[0]))
-                           * max(0, min(a[3], b[3]) - max(a[1], b[1])))
-                added = _area(merged) - _area(a) - _area(b) + overlap
+                added = _area(merged) - _area(a) - _area(b) + _overlap(a, b)
                 choices.append((narrow < _MIN_SIDE - _EPS, added, -edge,
                                 merged, i, j))
         if not choices:
             return rects
         _, _, _, merged, i, j = min(choices)
         rects = [r for k, r in enumerate(rects) if k not in (i, j)] + [merged]
-        # An envelope may have swallowed another rectangle completely.
-        rects = [r for r in rects if r is merged or not (
-            merged[0] <= r[0] and merged[1] <= r[1]
-            and r[2] <= merged[2] and r[3] <= merged[3])]
 
 
 def _letter(index):
@@ -221,10 +270,16 @@ def blocks(building: dict) -> list[dict]:
     result, above = [], set()
     for index in range(len(levels) - 1, -1, -1):
         lv = levels[index]
-        rects = _merge_slivers(_partition(occupied[index] - above, xs, ys))
+        upper = [b['rect'] for b in result]
+        rects = _merge_slivers(_partition(occupied[index] - above, xs, ys),
+                               lv['outline'], upper)
+        rects = _clip_upper(rects, upper)
         for rect in rects:
-            result.append({'rect': rect, 'storey': 'lower' if index == 0 else 'upper',
-                           'level': lv['id'], 'plate': float(lv['elevation'] + lv['ceiling'])})
+            block = {'rect': rect, 'storey': 'lower' if index == 0 else 'upper',
+                     'level': lv['id'], 'plate': float(lv['elevation'] + lv['ceiling'])}
+            if min(rect[2] - rect[0], rect[3] - rect[1]) < _MIN_SIDE - _EPS:
+                block['sliver'] = True
+            result.append(block)
         # Subtract final envelopes too: a merged upper sliver owns its roof area.
         above.update((i, j) for i in range(len(xs) - 1) for j in range(len(ys) - 1)
                      if any(r[0] <= (xs[i] + xs[i + 1]) / 2 <= r[2]

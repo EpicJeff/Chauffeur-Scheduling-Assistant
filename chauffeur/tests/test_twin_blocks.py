@@ -10,6 +10,8 @@ blocks are the ground floor not under an upper block. Knee-wall rooms
 (storey-and-a-half, low interior walls on the upper level) stay inside the
 lower block beneath them. Slivers narrower than 7 ft merge into a neighbour.
 Ids run A, B, C... in order of area, largest first.
+A block may reach up to 1.0 ft past its level's outline (ruling R5: inside a
+standard 1 ft roof overhang, so a 1 ft front jog stays one block).
 
 services.twin_blocks.block_diagram(building, blocks) draws a PNG top view.
 
@@ -113,7 +115,13 @@ def test_household_blocks():
     for b in blocks:
         r = b['rect']
         narrow = min(r[2] - r[0], r[3] - r[1])
-        assert narrow >= 7 - 1e-6, f"block {b['id']} {r} is {narrow:.2f} ft wide (slivers under 7 ft merge)"
+        if narrow < 7 - 1e-6:
+            assert b.get('sliver') is True, f"block {b['id']} {r} is {narrow:.2f} ft wide and not flagged sliver"
+        if not b.get('sliver'):
+            assert r[2] - r[0] >= 7 - 1e-6 and r[3] - r[1] >= 7 - 1e-6,                 f"block {b['id']} {r} is under 7 ft without the sliver flag"
+    kept = [b for b in blocks if _near(b['rect'], [37.33, 43, 43.33, 59])]
+    assert kept, f'the rear low-slope sliver [37.33, 43, 43.33, 59] is missing: {_show(blocks)}'
+    assert all(b['storey'] == 'lower' for b in kept), f'rear sliver is not lower: {_show(blocks)}'
 
 
 def test_knee_wall_rooms_stay_in_lower_block():
@@ -170,12 +178,65 @@ def test_diagram_png():
     assert len(png) > 1000, len(png)
 
 
+def _in_poly(poly, x, y):
+    inside = False
+    n = len(poly)
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        if (y1 > y) != (y2 > y) and x < (x2 - x1) * (y - y1) / (y2 - y1) + x1:
+            inside = not inside
+    return inside
+
+
+def _dist_to_poly(poly, x, y):
+    best = float('inf')
+    n = len(poly)
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        dx, dy = x2 - x1, y2 - y1
+        seg = dx * dx + dy * dy
+        t = 0.0 if seg == 0 else max(0.0, min(1.0, ((x - x1) * dx + (y - y1) * dy) / seg))
+        best = min(best, ((x - (x1 + t * dx)) ** 2 + (y - (y1 + t * dy)) ** 2) ** 0.5)
+    return best
+
+
+def test_no_blocks_overlap():
+    blocks = _blocks()
+    for i, a in enumerate(blocks):
+        for b in blocks[i + 1:]:
+            ov = _overlap(a['rect'], b['rect'])
+            assert ov <= 0.25,                 f"blocks {a['id']} {a['rect']} and {b['id']} {b['rect']} overlap by {ov:.2f} sq ft: {_show(blocks)}"
+
+
+def test_blocks_lie_within_their_footprint():
+    building = _building()
+    levels = [lv for lv in building['levels'] if lv.get('state') != 'ghost' and lv.get('outline')]
+    levels.sort(key=lambda lv: (lv['elevation'], lv['id']))
+    ground = levels[0]
+    by_id = {lv['id']: lv for lv in levels}
+    blocks = _blocks(building)
+    for b in blocks:
+        lv = ground if b['storey'] == 'lower' else by_id[b['level']]
+        poly = [tuple(map(float, p)) for p in lv['outline']]
+        x0, y0, x1, y1 = b['rect']
+        nx, ny = int((x1 - x0) / 0.5), int((y1 - y0) / 0.5)
+        for i in range(nx + 1):
+            for j in range(ny + 1):
+                x, y = x0 + i * 0.5, y0 + j * 0.5
+                assert _in_poly(poly, x, y) or _dist_to_poly(poly, x, y) <= 1.0 + 1e-6, (
+                    f"block {b['id']} {b['rect']} covers ({x:.2f}, {y:.2f}) outside the {lv['id']} outline: {_show(blocks)}")
+
+
 TESTS = (
     test_household_blocks,
     test_knee_wall_rooms_stay_in_lower_block,
     test_plate_from_storey,
     test_stable_ids,
     test_diagram_png,
+    test_no_blocks_overlap,
+    test_blocks_lie_within_their_footprint,
 )
 
 
