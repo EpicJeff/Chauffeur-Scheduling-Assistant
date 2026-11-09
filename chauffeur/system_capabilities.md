@@ -1,6 +1,79 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.770 (2026-11-08).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.771 (2026-11-09).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.771 (2026-11-09, NOT device-verified): a drawn building's roof comes from its blocks and what the photos show.**
+
+Spec: `docs/superpowers/specs/2026-11-08-house-editor-roofs-from-photos-design.md`. Plan: `docs/superpowers/plans/2026-11-08-house-editor-roofs-from-photos.md`, Tasks 1-7, with rulings R1-R23 in the SDD ledger. Claude wrote the tests first, Codex built the code, and every task was Claude-reviewed. A whole-branch review was followed by one fix wave.
+
+New suites:
+- `tests/test_twin_blocks.py` and `test_twin_blocks_performance.py`
+- `test_twin_roof_ends.py`
+- `test_twin_roof_derive.py`
+- `test_twin_build_roof_blocks.py`
+- `test_twin_build_roof_blocks_replay.py`, which replays the household's own recorded photo reads, three runs
+- `test_twin_roof_choices.py`
+- `test_twin_roof_flags_js.py`
+
+Why: walls and floors came out within inches on every read, but roof forms came out differently every time. The plan's roof symbols are ambiguous: the household's sheet draws clipped-gable marks where the house was built with plain gables. Asking the model what it *sees* in the photos, one side at a time, and deriving the form in code got every main block right in spikes. Asking it to *infer* the form did not.
+
+- **Blocks from the walls (`services/twin_blocks.py`).**
+  - `blocks(building)` splits each storey's settled outline into the fewest large rectangles, snapping coordinates within 0.5 ft.
+  - Upper blocks are the upper storey. Lower blocks are the ground floor not under an upper block.
+  - A strip narrower than 7 ft merges into a neighbour only when the merge stays inside the outline and overlaps nothing. Otherwise it stays its own block, marked `sliver`.
+  - The exact search has a time budget and falls back to a deterministic greedy cover, so a many-jogged outline never stalls the build.
+  - `block_diagram` draws the lettered top view the photo reads are given.
+- **Per-end roof styles.**
+  - A gable or hip section can carry `ends: {x0|x1|y0|y1: 'gable'|'hip'|'clip'}`, where `clip` is a clipped gable (half-hip).
+  - twin_plan validates it with plain notes ("the left end").
+  - The generator, `twin_roof.js`, `roof_issues` and the roof card (Left end / Right end, or Front end / Back end) all honour it.
+  - Switching kind to shed or flat drops `ends`. Switching to hip drops all-gable ends.
+  - A window in a clipped end must sit below two-thirds of the rise.
+  - A change that would take away a gable holding a window is refused: "A window sits in that gable; move or delete it first."
+- **Two photo reads.**
+  - `photo_map`, one per tagged photo (low effort, 4000 output, 120 s), answers which side the photo was taken from, which blocks it shows and which of their sides are visible. A photo of something else answers `from_side: 'none'` and is left out.
+  - `roof_observe`, one per building (medium effort, 16000 output, 240 s), reports exactly one of these for each block side: `gable_end`, `clipped_gable_end`, `dormer` (with centre and width), `slope` or `hidden`. It also gives a rough pitch and whether the slope looks lower, the same or steeper than the neighbours'.
+  - Both are worst-case costed, at about $0.02 and $0.10.
+  - If two photos disagree on a side, that side becomes `conflict`.
+- **Deriving the roof (`services/twin_roof_derive.py`, `derive_roof(blocks, observations, evidence, choices)`).** One principle applies to every end:
+  - seen as a triangle, it is a gable end;
+  - seen as a clipped triangle, it is a half-hip;
+  - seen sloping, it is a hipped end;
+  - unseen, it is a gable end, and it is flagged.
+
+  How the rest follows:
+  - The ridge runs between the gable or half-hip ends.
+  - A gable end reported opposite a seen slope, with neither side beside it seen sloping, is a dormer and never a ridge end. It is noted ("the front gable was read as a dormer, because the rear slopes").
+  - The plan's roof sections are evidence only: ridge direction, pitch (photos win when their relative slope contradicts the plan) and dormer positions. The plan never decides kind or clip.
+  - Dormers become cross gables from the eave to the ridge, snapped to the plan's position within 2 ft. A drawn dormer with no photo report is still built, and flagged as drawings-only.
+  - Adjacent side-gable blocks in a row share one ridge line in plan. A block the photos never show takes its neighbour's form.
+  - Pitch is clamped to 3-14.
+- **The draft step.**
+  - After the drawings settle, the step computes blocks, maps each photo (up to 8 are chosen by block-side coverage), runs one observation read, and derives the roof.
+  - The derived sections replace every drawn roof section except porch roofs and person sections. Awnings and gable windows move to the derived roof whose gable end holds them. A window with no such end stays as a located ghost with a plain why.
+  - The heartbeat reads "Checking the roofs against the photos, M:SS so far."
+  - A failed photo read never pauses. The roof follows the drawings, and one line is logged: "The roofs could not be checked against the photos; they follow the drawings."
+  - `roof_check` is retired. Its kind stays only for old caches.
+  - The draft read's timeout is now 600 s.
+  - The build estimate in `main.py` and the step estimate both count photo images the same way.
+- **Notes, the marker and person choices.**
+  - A roof gets a note only when something is really in doubt:
+    - an unseen or conflicting end that isn't shared with a neighbour for at least half its length, one line per block ("The right roof: its right end was not visible in the photos; I made it a gable.");
+    - a ridge more than 6 ft above a same-storey neighbour's;
+    - a dormer from the drawings only;
+    - a ridge that could not line up.
+  - Notes are on the build status as `roof_flags` and in the plan as `roof.flags`.
+  - In the editor, a flagged block's roof wears the dashed needs-checking outline. Tapping it opens the roof card, which shows the note and a **Looks right** button. That button keeps the roof as it is.
+  - Any roof-card change to a derived roof (kind, ridge, ends, pitch, plate, overhang) is stored as a choice on its block (rect within 1 ft). Every rebuild applies it first, and that block is never noted again. Setting the pitch drops the aligned per-side pitches, so the ridge really moves.
+  - A dormer edit stays a person section and never becomes its block's choice.
+  - A building built before this release keeps its hand-edited roofs on its first rebuild. Each one becomes the choice of the block it covers most, and one line says so.
+- **Recorded fixtures.** The household main house's photo reads (photos 22, 26, 23 and 20) were recorded three times and key-checked: `tests/fixtures/twin_reads/recorded/claude/photo_map-main-house[-runN]-1..4.json` and `roof_observe-main-house[-runN].json`. Across all three runs, every main block gets the right form: middle side gable with its front dormer within 1 ft, left wing, right upper, garage front gable, third garage, rear right. There are no hips on main blocks, the gable windows settle, and the forms are identical.
+- **Known limits.**
+  - The photos never read the middle block's slope as lower than the wings', so it comes out at the drawn pitch. It is noted ("stands more than six feet above a neighbouring ridge") for one card edit.
+  - The small rear strips vary between reads.
+  - A fresh real build can read the walls slightly differently. In the local acceptance build, the left wing split into three blocks.
+  - The deep-block valley split is not built.
+  - Local acceptance spend was $3.24 for both buildings. The pool house was a simple gable with a shed porch.
 
 **v2.499.770 (2026-11-08, NOT device-verified): the roof check is told what the geometry says is wrong.**
 
