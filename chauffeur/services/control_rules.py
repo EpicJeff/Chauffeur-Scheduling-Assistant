@@ -185,7 +185,7 @@ def take_held(held_id: str) -> dict | None:
 
 def who_from_request(headers, query) -> Who:
     """Only personal sign-ins or a consumed panel grant prove a person."""
-    from services import auth, storage
+    from services import storage
     from tinydb import Query
 
     panel = Who(None, None, 'panel', False)
@@ -219,10 +219,6 @@ def who_from_request(headers, query) -> Who:
             return panel
         if device or grant:
             return panel
-        identity = auth.identify(headers, query)
-        if (identity.get('tier') == auth.SERVICE and not identity.get('member')
-                and auth.arrived_via_ingress(headers)):
-            return Who(None, None, None, False, admin=True)
     except Exception:
         # A failed identity read is never evidence of an admin or a person.
         return panel
@@ -370,6 +366,14 @@ def targets(data: dict, domain: str | None = None) -> set[str]:
     return set(_entity_ids(entities))
 
 
+def call_targets(domain: str, service: str, data: dict) -> set[str]:
+    """Named script services always include the script, even with forged variables."""
+    entity_ids = targets(data, domain)
+    if domain == 'script' and service not in ('turn_on', 'turn_off', 'toggle'):
+        entity_ids.add(f'script.{service}')
+    return entity_ids
+
+
 def kinds_for(entity_ids: Iterable[str]) -> tuple[str, ...]:
     """Use live attributes and recursively judge scripts/scenes by their effects."""
     from services import control_scripts, ha_api
@@ -399,12 +403,51 @@ def kinds_for(entity_ids: Iterable[str]) -> tuple[str, ...]:
     return tuple(kind for kind in (*KINDS, 'unsupported') if kind in kinds)
 
 
+def _check_kinds(who: Who, kinds: Iterable[str], settings: dict | None) -> Decision:
+    from services import scope, storage
+
+    kinds = tuple(kinds)
+    decision = decide(who, kinds, rules(settings))
+    if not decision.allowed and decision.needs is None:
+        return decision
+    if 'media' in kinds and who.member_id:
+        member = storage.get_member(who.member_id)
+        if not member or not scope.can_see(member, 'music'):
+            return Decision(False, None, kinds, 'Your access does not include music control; ask a parent.')
+    return decision
+
+
+def check_kind(who: Who, kind: str, settings: dict | None = None) -> Decision:
+    """Authorize an entity-less control frame against the current household grid."""
+    try:
+        return _check_kinds(who, (kind,), settings)
+    except Exception:
+        return Decision(False, None, (kind,), 'Home Assistant could not answer that request.')
+
+
 def check(who: Who, entity_ids: Iterable[str], settings: dict | None = None) -> Decision:
     """A failed HA or settings read must never grant control or escape to callers."""
     try:
         entity_ids = _entity_ids(entity_ids)
         if not entity_ids:
             return Decision(False, None, (), 'Name the device to control.')
-        return decide(who, kinds_for(entity_ids), rules(settings))
+        return _check_kinds(who, kinds_for(entity_ids), settings)
     except Exception:
         return Decision(False, None, (), 'Home Assistant could not answer that request.')
+
+
+def guard(request, entity_ids: Iterable[str]) -> None:
+    """Consume identity only for an action, returning the shared HTTP refusal."""
+    from fastapi import HTTPException
+
+    decision = check(who_from_request(request.headers, request.query_params), entity_ids)
+    if not decision.allowed:
+        raise HTTPException(status_code=403, detail={
+            'message': decision.message, 'needs': decision.needs, 'kinds': decision.kinds,
+        })
+
+
+def offered(who: Who, entity_id: str, settings: dict | None = None) -> bool:
+    """A tile offers an action when allowed now or available after identification."""
+    decision = check(who, (entity_id,), settings)
+    return decision.allowed or decision.needs is not None

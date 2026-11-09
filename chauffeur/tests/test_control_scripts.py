@@ -24,6 +24,11 @@ from services.control_rules import Who
 
 CHILD = Who(role='child', member_id='kid-1', place=None, proven=True)
 PARENT = Who(role='parent', member_id='mum-1', place=None, proven=True)
+# check() applies each person's own scope too, so the people must exist.
+from services import storage  # noqa: E402
+for _mid, _role in (('kid-1', 'child'), ('mum-1', 'parent')):
+    if not storage.get_member(_mid):
+        storage.add_member({'id': _mid, 'name': _mid, 'role': _role, 'status': 'active'})
 
 
 def state(eid, **attrs):

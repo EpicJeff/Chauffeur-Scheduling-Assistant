@@ -1740,24 +1740,13 @@ class HAToggleRequest(BaseModel):
     entity_id: str
 
 @app.post("/api/ha/toggle")
-def ha_toggle(req: HAToggleRequest):
-    """Toggle one entity from the board's Home Assistant tile.
-
-    Domain-allowlisted at the SERVER, not only in the tile that offers the
-    button. The tile decides what to draw a control for; this decides what may
-    actually be operated, and the two are different jobs — a wall panel in a
-    kitchen is reachable by everybody in the house, and `lock`, `cover` and
-    `alarm_*` are not things a mis-tap or a crafted request should work.
-    """
-    from services import home_board, ha_api
+def ha_toggle(req: HAToggleRequest, request: Request):
+    """Toggle a board entity only when the household rulebook permits it."""
+    from services import control_rules, home_board, ha_api
     entity_id = (req.entity_id or '').strip()
-    domain = entity_id.split('.', 1)[0] if '.' in entity_id else ''
-    if domain not in home_board.toggle_domains():
-        raise HTTPException(status_code=400,
-                            detail=f"{domain or 'that'} entities cannot be "
-                                   f"toggled from the board")
     if not home_board.ha_available():
         raise HTTPException(status_code=503, detail="Home Assistant is not reachable")
+    control_rules.guard(request, [entity_id])
     result = ha_api.call_service('homeassistant', 'toggle', {'entity_id': entity_id})
     if result is None:
         raise HTTPException(status_code=502, detail="Home Assistant refused that")
@@ -11455,7 +11444,7 @@ class HaClimateStepRequest(BaseModel):
     step: int          # -1 or +1; the SIZE comes from the entity, not the caller
 
 @app.post("/api/ha/card/climate")
-def ha_card_climate(req: HaClimateStepRequest):
+def ha_card_climate(req: HaClimateStepRequest, request: Request):
     """Nudge a thermostat's setpoint, from a thermostat card.
 
     Deliberately NOT the generic service endpoint with `climate` added to its
@@ -11470,12 +11459,13 @@ def ha_card_climate(req: HaClimateStepRequest):
     guessed at: moving one end of a range without saying which end is a
     coin flip with somebody's heating bill.
     """
-    from services import ha_api, home_board
+    from services import control_rules, ha_api, home_board
     if not home_board.ha_available():
         raise HTTPException(status_code=503, detail="Home Assistant is not reachable")
     entity_id = (req.entity_id or '').strip()
     if not entity_id.startswith('climate.'):
         raise HTTPException(status_code=400, detail="Not a thermostat")
+    control_rules.guard(request, [entity_id])
     state = ha_api.get_state(entity_id) or {}
     attrs = state.get('attributes') or {}
     if attrs.get('target_temp_low') is not None:
@@ -11504,20 +11494,28 @@ class HaCardServiceRequest(BaseModel):
     data: Optional[dict] = None
 
 @app.post("/api/ha/card/service")
-def ha_card_service(req: HaCardServiceRequest):
+def ha_card_service(req: HaCardServiceRequest, request: Request):
     """A hosted card calling a service.
 
-    Allowlisted at the SERVER against the same domains the entity tile's toggle
-    uses. The tile has its own 'let the card control things' switch, but that
+    Authorized at the SERVER against the household grid. The tile has its
+    own 'let the card control things' switch, but that
     switch lives in the browser and this does not: a card is somebody else's
     JavaScript running on a screen in a kitchen, and what it may operate is not
     a decision to leave in its hands.
     """
-    from services import home_board, ha_api
+    from services import control_rules, home_board, ha_api
     domain = (req.domain or '').strip()
     service = (req.service or '').strip()
     data = dict(req.data or {})
-    # Climate rides its own rules rather than the toggle list: HA's real
+    if (domain in control_rules.NEVER_DOMAINS
+            or not re.fullmatch(r'[a-z_]+', domain)
+            or control_rules.kind_of(f'{domain}.card', {}) is None
+            or not re.fullmatch(r'[a-z0-9_]+', service)
+            or service == 'reload' or service.startswith('reload_')):
+        raise HTTPException(status_code=400,
+                            detail=f"{domain or 'that'} services cannot be "
+                                   f"called from a board card")
+    # Climate keeps its own service validation and clamping: HA's real
     # thermostat card (hosted via services/ha_frontend) speaks whole services
     # — set_temperature, set_hvac_mode — not nudges. The safety story the
     # step endpoint told still holds, so the SERVER clamps: a setpoint is
@@ -11548,12 +11546,17 @@ def ha_card_service(req: HaCardServiceRequest):
                 except (TypeError, ValueError):
                     raise HTTPException(status_code=400,
                                         detail=f"{key} is not a number")
-    elif domain not in home_board.toggle_domains():
-        raise HTTPException(status_code=400,
-                            detail=f"{domain or 'that'} services cannot be "
-                                   f"called from a board card")
     if not home_board.ha_available():
         raise HTTPException(status_code=503, detail="Home Assistant is not reachable")
+    try:
+        entity_ids = control_rules.call_targets(domain, service, data)
+        if any(not re.fullmatch(r'[a-z_]+\.[a-z0-9_]+', eid) for eid in entity_ids):
+            raise ValueError('Not an entity id')
+    except Exception:
+        raise HTTPException(status_code=400, detail="This card's device targets could not be read.")
+    if not entity_ids:
+        raise HTTPException(status_code=400, detail='Name the device this card controls.')
+    control_rules.guard(request, entity_ids)
     if ha_api.call_service(domain, service, data) is None:
         raise HTTPException(status_code=502, detail="Home Assistant refused that")
     return {'ok': True}
@@ -12119,8 +12122,10 @@ class MediaCommandRequest(BaseModel):
     repeat: Optional[str] = None  # off | all | one
 
 @app.post("/api/ha/media_players/{entity_id}/command")
-def ha_media_command(entity_id: str, req: MediaCommandRequest):
-    from services import ha_api
+def ha_media_command(entity_id: str, req: MediaCommandRequest, request: Request):
+    from services import control_rules, ha_api
+    if not re.fullmatch(r'media_player\.[a-z0-9_]+', entity_id):
+        raise HTTPException(status_code=400, detail="Not a media player")
     service_map = {
         'play': ('media_play', {}),
         'pause': ('media_pause', {}),
@@ -12139,6 +12144,7 @@ def ha_media_command(entity_id: str, req: MediaCommandRequest):
         raise HTTPException(status_code=400, detail="volume required for volume_set")
     if req.command == 'repeat_set' and req.repeat not in ('off', 'all', 'one'):
         raise HTTPException(status_code=400, detail="repeat must be off|all|one")
+    control_rules.guard(request, [entity_id])
     result = ha_api.call_service('media_player', service,
                                  {'entity_id': entity_id, **extra})
     if result is None:
@@ -12209,8 +12215,11 @@ class QueueCommandRequest(BaseModel):
     index: Optional[int] = None
 
 @app.post("/api/music/queue/command")
-def music_queue_command(req: QueueCommandRequest):
-    from services import music_queue as mq
+def music_queue_command(req: QueueCommandRequest, request: Request):
+    from services import control_rules, music_queue as mq
+    if not re.fullmatch(r'media_player\.[a-z0-9_]+', req.entity_id):
+        raise HTTPException(status_code=400, detail="Not a media player")
+    control_rules.guard(request, [req.entity_id])
     ok, detail = mq.command(req.entity_id, req.action,
                             queue_item_id=req.queue_item_id, index=req.index)
     if not ok:
@@ -12356,8 +12365,11 @@ class MusicPlayRequest(BaseModel):
     item: Optional[MusicItemSnapshot] = None
 
 @app.post("/api/music/play")
-def music_play(req: MusicPlayRequest):
-    from services import ha_api
+def music_play(req: MusicPlayRequest, request: Request):
+    from services import control_rules, ha_api
+    if not re.fullmatch(r'media_player\.[a-z0-9_]+', req.entity_id):
+        raise HTTPException(status_code=400, detail="Not a media player")
+    control_rules.guard(request, [req.entity_id])
     payload = {'entity_id': req.entity_id, 'media_id': req.media_id}
     if req.media_type:
         payload['media_type'] = req.media_type
@@ -14565,6 +14577,8 @@ async def _resolve_ma_ws_url():
 @app.websocket("/api/sendspin/ws")
 async def sendspin_relay(websocket: WebSocket):
     import websockets as _ws
+    from services import control_rules
+    who = control_rules.who_from_request(websocket.headers, websocket.query_params)
     await websocket.accept()
     url = await _resolve_ma_ws_url()
     if not url:
@@ -14588,6 +14602,13 @@ async def sendspin_relay(websocket: WebSocket):
             if msg.get('type') == 'websocket.disconnect':
                 break
             if msg.get('text') is not None:
+                try:
+                    frame = json.loads(msg['text'])
+                except (ValueError, TypeError):
+                    frame = None
+                if (isinstance(frame, dict) and frame.get('type') == 'client/command'
+                        and not control_rules.check_kind(who, 'media').allowed):
+                    continue
                 await upstream.send(msg['text'])
             elif msg.get('bytes') is not None:
                 await upstream.send(msg['bytes'])

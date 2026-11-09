@@ -8,7 +8,7 @@ is down, or who picked an entity that has since been renamed. Every one of
 those has to produce a sentence somebody can act on, never a blank card, a
 spinner, or a tile that silently disappears.
 
-The other thing worth pinning is the ALLOWLIST. The tile decides what to draw a
+The other thing worth pinning is the household GRID. The tile decides what to draw a
 control for; the server decides what may actually be operated. Those are
 different jobs, and a wall panel in a kitchen is reachable by everybody in the
 house including the people who cannot read yet.
@@ -29,7 +29,7 @@ TPL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                    'templates')
 
 import tpl_source  # noqa: E402
-from services import home_board  # noqa: E402
+from services import control_rules as cr, home_board  # noqa: E402
 
 NOW = datetime.datetime(2026, 9, 7, 17, 30)
 
@@ -146,29 +146,36 @@ def scenario_locks_are_a_decision_not_a_default():
     that works from a native card and not from the entity tile is worse than
     one that works from neither.
     """
-    check('lock' not in home_board.toggle_domains({}),
+    panel = cr.Who(None, None, 'panel', False)
+    check(not cr.decide(panel, ('locks',), cr.rules({})).allowed,
           "locks are operable by default")
-    allowed = home_board.toggle_domains({'panel_allow_unsafe_controls': True})
-    for domain in ('lock', 'cover', 'light', 'switch'):
-        check(domain in allowed, f"{domain} is not operable once allowed")
+    migrated = cr.rules({'panel_allow_unsafe_controls': True})
+    decision = cr.decide(panel, ('locks',), migrated)
+    check(not decision.allowed and decision.needs == 'identify',
+          "the legacy lock switch must offer identification, not an anonymous unlock")
+    for kind in ('lights', 'switches', 'blinds'):
+        check(cr.decide(panel, (kind,), migrated).allowed,
+              f"{kind} is no longer operable from the panel")
+    check(not cr.decide(panel, ('alarm',), migrated).allowed,
+          "the legacy lock switch allowed alarms")
 
-    # Alarms are not covered and are not a toggle away. Disarming one is the
-    # single control here whose failure mode is not "somebody opened a door
-    # they could have opened anyway".
-    check('alarm_control_panel' not in allowed,
-          "an alarm became operable from a wall panel")
-
-    # And the converter asks home_board rather than keeping its own copy — two
-    # lists is how a lock ends up working from one card and not another.
+    # A native card offers the same askable lock as the entity tile.
     from services import ha_card_convert
     real = home_board.storage.get_settings
     try:
         home_board.storage.get_settings = lambda: {'panel_allow_unsafe_controls': True}
-        row = ha_card_convert.convert(
+        row = _with_ha(_HA(states=STATES), lambda: ha_card_convert.convert(
             {'type': 'entities', 'entities': ['lock.front']},
             {'lock.front': {'entity_id': 'lock.front', 'state': 'locked',
-                            'attributes': {}}})['rows'][0]
+                            'attributes': {}}})['rows'][0])
         check(row['toggleable'], "a native card refused a lock the household allowed")
+        grid = cr.default_rules({})
+        grid['enabled'] = False
+        home_board.storage.get_settings = lambda: {'ha_control': grid}
+        row = _with_ha(_HA(states=STATES), lambda: ha_card_convert.convert(
+            {'type': 'entities', 'entities': ['light.kitchen']},
+            {s['entity_id']: s for s in STATES})['rows'][0])
+        check(not row['toggleable'], "a native card ignored the household off switch")
     finally:
         home_board.storage.get_settings = real
 
@@ -292,17 +299,32 @@ def scenario_a_tile_nobody_configured_says_so():
 
 # --- what a tap may do -----------------------------------------------------
 
-def scenario_only_safe_domains_are_ever_toggleable():
-    """A wall panel in a kitchen is reachable by everybody in the house,
-    including the people who cannot read yet. Locks, covers and garages are off
-    this list by DEFAULT and a household can add them deliberately (see
-    scenario_locks_are_a_decision_not_a_default); alarms never can."""
-    for domain in ('lock', 'cover', 'alarm_control_panel', 'climate', 'scene'):
-        check(domain not in home_board.HA_TOGGLE_DOMAINS,
-              f"'{domain}' entities can be toggled from the wall by default")
-    for domain in ('light', 'switch', 'fan', 'input_boolean'):
-        check(domain in home_board.HA_TOGGLE_DOMAINS,
-              f"'{domain}' is no longer toggleable, which is most of the point")
+def scenario_tile_controls_follow_the_grid():
+    """Default panel controls include blinds, climate and other device kinds;
+    a saved grid can refuse any of them or offer identification for locks."""
+    states = STATES + [
+        {'entity_id': 'cover.shade', 'state': 'closed', 'attributes': {'device_class': 'shade'}},
+        {'entity_id': 'climate.hall', 'state': 'heat', 'attributes': {}},
+        {'entity_id': 'valve.garden', 'state': 'closed', 'attributes': {}},
+    ]
+    entities = ['light.kitchen', 'cover.shade', 'climate.hall', 'valve.garden', 'lock.front_door']
+    config = {'entities': entities, 'interactive': True}
+    def rows(settings):
+        return _with_ha(_HA(states=states), lambda: {
+            r['entity_id']: r for r in home_board._tile_ha(NOW, config=config, settings=settings)['rows']})
+    defaults = rows({})
+    for eid in entities[:-1]:
+        check(defaults[eid]['toggleable'], f'{eid} lost its default panel control')
+    check(not defaults['lock.front_door']['toggleable'], 'a default panel offered locks')
+    grid = cr.default_rules({})
+    grid['places']['panel']['lights'] = 'no'
+    grid['places']['panel']['locks'] = 'ask'
+    changed = rows({'ha_control': grid})
+    check(not changed['light.kitchen']['toggleable'], 'the tile ignored a saved No')
+    check(changed['lock.front_door']['toggleable'], 'the tile hid an askable lock')
+    grid['enabled'] = False
+    check(not any(r['toggleable'] for r in rows({'ha_control': grid}).values()),
+          'tiles ignored the household off switch')
 
 
 def scenario_a_lock_gets_no_button_even_when_tapping_is_on():
@@ -340,13 +362,9 @@ def scenario_the_server_checks_the_domain_too_not_only_the_tile():
     src = open(os.path.join(os.path.dirname(TPL), 'main.py'), encoding='utf-8').read()
     block = src[src.index('def ha_toggle('):]
     block = block[:block.index('\n@app.')]
-    # `toggle_domains()`, not the bare constant: the allowlist is a SETTING
-    # now (a household can allow locks), and an endpoint reading the constant
-    # would refuse what the tiles offer — or, far worse if the names were ever
-    # swapped, allow what they do not.
-    check('toggle_domains()' in block,
-          "the toggle endpoint no longer checks the domain allowlist, so any "
-          "entity in the house can be operated by a crafted request")
+    # Runtime allow/refuse requests are covered by test_control_endpoints.py.
+    check('control_rules.guard(request, [entity_id])' in block,
+          "the toggle endpoint no longer checks the shared household grid")
     check('ha_available()' in block,
           "the toggle endpoint no longer checks that HA is reachable")
 

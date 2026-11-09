@@ -87,18 +87,6 @@ _DOMAIN_ICON = {
     'number': 'mdi:ray-vertex', 'select': 'mdi:format-list-bulleted',
 }
 
-def _toggle_domains():
-    """Domains a tap may operate, asked of home_board so the answer is the same
-    on every surface — the entity tile, a native card, a hosted card's service
-    call. It is a SETTING now (a household can allow locks), and a second copy
-    of the list here would mean a lock that works from one card and not another.
-
-    Imported inside the function because home_board imports this module.
-    """
-    from services import home_board
-    return home_board.toggle_domains()
-
-
 # What an entity MEASURES, which is what Home Assistant picks its icon from.
 #
 # The domain map below only knows that something is a `sensor`, and a board of
@@ -237,9 +225,10 @@ def _row(entity_id, states, name=None, icon=None, secondary=None):
     plain entity tile follows: a row quietly vanishing from a wall is how a
     household stops trusting the wall.
     """
+    from services import control_rules
+    who = control_rules.Who(None, None, 'panel', False)
     st = (states or {}).get(entity_id)
     attrs = (st or {}).get('attributes') or {}
-    domain = _domain(entity_id)
     return {
         'entity_id': entity_id,
         'name': name or attrs.get('friendly_name') or entity_id,
@@ -253,7 +242,7 @@ def _row(entity_id, states, name=None, icon=None, secondary=None):
         'precision': attrs.get('suggested_display_precision'),
         'secondary': secondary,
         'missing': st is None,
-        'toggleable': domain in _toggle_domains(),
+        'toggleable': bool(st is not None and control_rules.offered(who, entity_id)),
         'on': str((st or {}).get('state') or '').lower() == 'on',
     }
 

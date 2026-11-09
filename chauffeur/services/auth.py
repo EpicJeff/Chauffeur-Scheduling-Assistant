@@ -220,6 +220,10 @@ RULES = [
     ('GET', '/api/ha/card/resource', WALL, None),
     ('GET', '/api/ha/card/mdi/{name}', WALL, None),
     ('POST', '/api/ha/card/service', WALL, None),
+    # Device actuation follows the household grid inside the endpoint; panels
+    # and signed-in children must reach it for the same decision as cards.
+    ('POST', '/api/ha/toggle', WALL, None),
+    ('POST', '/api/ha/card/climate', WALL, None),
     # HA-relative artwork (entity_picture, area pictures) drawn as a bare
     # <img> by the board's picture tiles; the proxy allowlists its paths.
     ('GET', '/api/ha/image', WALL, None),

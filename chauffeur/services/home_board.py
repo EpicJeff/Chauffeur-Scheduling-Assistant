@@ -3270,40 +3270,6 @@ def _tile_map(now, runs=None, config=None, **_):
         return None
 
 
-# Domains a tap may act on. An allowlist rather than "anything with a toggle
-# service": a wall panel in a kitchen is reachable by everybody in the house
-# including the people who cannot read yet, and `lock`, `cover` and `alarm_*`
-# are not things a mis-tap should operate.
-HA_TOGGLE_DOMAINS = ('light', 'switch', 'fan', 'input_boolean')
-
-# What a household can ADD to that, deliberately and in one place.
-#
-# These were refused outright, on the reasoning that a wall panel in a kitchen
-# is reachable by everybody in the house including the people who cannot read
-# yet — which is a good reason to make it a decision rather than a default, and
-# not a good enough reason to make it impossible. A household that wants to
-# unlock the pool house from the panel it walks past knows more about its own
-# doors than this file does.
-#
-# `alarm_control_panel` is NOT here and is not a toggle away. Disarming an
-# alarm is the one control on this list whose failure mode is not "somebody
-# opened a door they could have opened anyway".
-HA_UNSAFE_DOMAINS = ('lock', 'cover', 'garage', 'valve')
-
-
-def toggle_domains(settings: dict = None) -> tuple:
-    """Which domains a tap may operate, for THIS household.
-
-    A function rather than a constant because the answer is now a setting, and
-    every caller — the tile, the board endpoint, the hosted-card service
-    endpoint — has to get the same answer or the lock works from one surface
-    and not another.
-    """
-    settings = settings if settings is not None else (storage.get_settings() or {})
-    if settings.get('panel_allow_unsafe_controls'):
-        return HA_TOGGLE_DOMAINS + HA_UNSAFE_DOMAINS
-    return HA_TOGGLE_DOMAINS
-
 def _tile_music(now, config=None, **_):
     """Music Assistant, as a card on the wall.
 
@@ -3536,8 +3502,9 @@ def _tile_ha(now, config=None, settings=None, **_):
     if not ha_available():
         return {'empty': "Needs Home Assistant."}
     try:
-        from services import ha_api
+        from services import control_rules, ha_api
         by_id = {s.get('entity_id'): s for s in (ha_api.get_states(ttl=30) or [])}
+        who = control_rules.Who(None, None, 'panel', False)
         rows = []
         for eid in wanted:
             s = by_id.get(eid)
@@ -3556,8 +3523,8 @@ def _tile_ha(now, config=None, settings=None, **_):
                 # gone" is the only thing that leads anybody to fix it.
                 'missing': s is None,
                 'on': state in ('on', 'home', 'open', 'unlocked', 'playing'),
-                'toggleable': bool(interactive and domain in toggle_domains(settings)
-                                   and s is not None),
+                'toggleable': bool(interactive and s is not None
+                                   and control_rules.offered(who, eid, settings)),
             })
         return {'rows': rows,
                 'state_only': _cfg_bool(config, 'show_state_only', False),
