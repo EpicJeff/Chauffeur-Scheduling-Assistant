@@ -191,7 +191,8 @@ def _derive(building, notes):
     valid = [twin_plan._polygon(room.get('polygon')) for room in stored]
     bounds = [_bounds(room['polygon']) if ok else None for room, ok in zip(stored, valid)]
     areas = [_area(room['polygon']) if ok else 0 for room, ok in zip(stored, valid)]
-    stored_kept = _cap(list(range(len(stored))), 'rooms', notes)
+    room_cap_notes = []
+    stored_kept = _cap(list(range(len(stored))), 'rooms', room_cap_notes)
     for room, ok in zip(stored, valid):
         if not ok:
             notes.append(f"Room {room['id']}: invalid cached polygon; kept in an unclosed flag.")
@@ -229,7 +230,10 @@ def _derive(building, notes):
             room = stored[owner]
             if not valid[owner] or room.get('level') != region['level']:
                 continue
-            cached = {j for j in room.get('joints', []) if j in stored_ids}
+            cached = room.get('joints', [])
+            if not isinstance(cached, list):
+                cached = []
+            cached = {j for j in cached if isinstance(j, str) and j in stored_ids}
             union = cycle | cached
             score = len(cycle & cached) / len(union) if union else 0
             if score >= 0.5:
@@ -255,7 +259,8 @@ def _derive(building, notes):
         if index not in inherited and owner not in owners:
             inherited[index] = owner
             owners.add(owner)
-    candidates_kept = _cap(list(range(len(candidates))), 'rooms', notes)
+    candidates_kept = _cap(list(range(len(candidates))), 'rooms', room_cap_notes)
+    notes.extend(room_cap_notes[:1])
     inherited = {index: owner for index, owner in inherited.items() if index in candidates_kept}
     rooms = []
     for index in candidates_kept:
