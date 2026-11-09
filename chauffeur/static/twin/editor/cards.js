@@ -6,7 +6,7 @@ const report = error => {
 // Keep this list aligned with twin_edit.EDITABLE; the server validates every save.
 const fields = {
   wall: ['height', 'thickness', 'exterior'], opening: ['width', 'sill', 'head', 'kind', 'panels', 'at'],
-  room: ['name', 'ha_area'], roof: ['kind', 'pitch', 'plate', 'overhang', 'ridge', 'low_side'],
+  room: ['name', 'ha_area'], roof: ['kind', 'pitch', 'plate', 'overhang', 'ridge', 'low_side', 'ends'],
   building: ['name', 'position', 'rotation', 'base'], level: ['name', 'elevation', 'ceiling'],
 };
 const lengths = new Set(['height', 'thickness', 'width', 'sill', 'head', 'at', 'plate', 'overhang', 'base', 'elevation', 'ceiling']);
@@ -40,7 +40,9 @@ export function findPiece(plan, pieceId, buildingId) {
 
 export function createCards({ getPlan, getLabel, getFieldLabels = () => ({}), edit, ask, canEdit, select }) {
   const host = document.getElementById('piece-card');
-  let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null;
+  let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
+  const endNames = { x0: 'Left end', x1: 'Right end', y0: 'Front end', y1: 'Back end' };
+  const fieldValue = (piece, field) => field.startsWith('ends.') ? (piece.ends?.[field.slice(5)] ?? piece.kind) : piece[field];
   const title = ({ kind, piece }) => kind === 'opening' ? (piece.kind === 'window' ? 'Window' : 'Door')
     : piece.name || (kind === 'roof' ? 'Roof section' : kind[0].toUpperCase() + kind.slice(1));
   const display = (field, value) => lengths.has(field) ? feetInches(value || 0)
@@ -48,8 +50,9 @@ export function createCards({ getPlan, getLabel, getFieldLabels = () => ({}), ed
   const raw = input => input.type === 'checkbox' ? input.checked : input.value;
   function draw(next = selection) {
     const record = next && findPiece(getPlan(), next.pieceId, next.buildingId);
+    const nextLayout = record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}` : record?.kind;
     host.hidden = !record;
-    if (record && selection?.pieceId === next.pieceId && selection?.buildingId === next.buildingId) {
+    if (record && layout === nextLayout && selection?.pieceId === next.pieceId && selection?.buildingId === next.buildingId) {
       headingNode.textContent = title(record);
       if (pitchNote) pitchNote.hidden = record.piece.pitch_source !== 'photos';
       if (acceptButton) acceptButton.hidden = record.piece.state !== 'ghost';
@@ -59,14 +62,14 @@ export function createCards({ getPlan, getLabel, getFieldLabels = () => ({}), ed
         const { input } = state;
         if (document.activeElement !== input && raw(input) === state.baseline && !state.queued) {
           if (field === 'exterior') input.checked = !!record.piece[field];
-          else input.value = display(field, record.piece[field]);
+          else input.value = display(field, fieldValue(record.piece, field));
           state.baseline = raw(input);
         }
         input.disabled = !canEdit();
       }
       return;
     }
-    selection = next; host.replaceChildren(); inputs = new Map(); acceptButton = null; pitchNote = null;
+    selection = next; layout = nextLayout; host.replaceChildren(); inputs = new Map(); acceptButton = null; pitchNote = null;
     if (!record) return;
     const { piece, kind, building } = record;
     const heading = headingNode = document.createElement('h3'); heading.textContent = title(record);
@@ -78,22 +81,26 @@ export function createCards({ getPlan, getLabel, getFieldLabels = () => ({}), ed
     }
     const form = document.createElement('form'); form.addEventListener('submit', event => event.preventDefault()); host.append(form);
     const more = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'More'; more.append(summary);
-    for (const field of fields[kind] || []) {
-      const label = document.createElement('label'); label.textContent = getFieldLabels()[field] || labels[field] || field[0].toUpperCase() + field.slice(1);
+    const cardFields = (fields[kind] || []).flatMap(field => field !== 'ends' ? [field]
+      : ['gable', 'hip'].includes(piece.kind) ? [`ends.${piece.ridge}0`, `ends.${piece.ridge}1`] : []);
+    for (const field of cardFields) {
+      const end = field.startsWith('ends.') ? field.slice(5) : null;
+      const label = document.createElement('label'); label.textContent = end ? endNames[end]
+        : getFieldLabels()[field] || labels[field] || field[0].toUpperCase() + field.slice(1);
       let input;
       const choices = field === 'kind' ? (kind === 'roof' ? ['hip', 'gable', 'shed', 'flat'] : ['window', 'door', 'slider', 'bifold', 'passage', 'garage'])
-        : field === 'ridge' ? ['x', 'y'] : field === 'low_side' ? ['x0', 'x1', 'y0', 'y1'] : null;
+        : end ? ['gable', 'hip', 'clip'] : field === 'ridge' ? ['x', 'y'] : field === 'low_side' ? ['x0', 'x1', 'y0', 'y1'] : null;
       if (choices) {
         input = document.createElement('select');
         choices.forEach(value => {
           const option = document.createElement('option'); option.value = value;
           option.textContent = ({ x: 'Left to right', y: 'Front to back', x0: 'Left', x1: 'Right', y0: 'Front', y1: 'Back',
-            hip: 'Hip', gable: 'Gable', shed: 'One slope', flat: 'Flat', window: 'Window', door: 'Door', slider: 'Sliding door',
+            hip: 'Hip', gable: 'Gable', clip: 'Clipped gable', shed: 'One slope', flat: 'Flat', window: 'Window', door: 'Door', slider: 'Sliding door',
             bifold: 'Folding door', passage: 'Open passage', garage: 'Garage door' })[value];
           input.append(option);
         });
       } else { input = document.createElement('input'); input.type = field === 'exterior' ? 'checkbox' : 'text'; }
-      const initial = piece[field];
+      const initial = fieldValue(piece, field);
       input.value = display(field, initial);
       if (field === 'exterior') input.checked = !!initial;
       input.disabled = !canEdit();
@@ -114,8 +121,10 @@ export function createCards({ getPlan, getLabel, getFieldLabels = () => ({}), ed
           ++state.queued; state.lastQueued = typed;
           pending = pending.then(async () => {
             const current = findPiece(getPlan(), piece.id, building.id)?.piece;
-            if (current && JSON.stringify(current[field]) !== JSON.stringify(value))
-              await edit({ op: 'set', building: building.id, piece: piece.id, field, value });
+            const savedField = end ? 'ends' : field;
+            const savedValue = end ? { ...current?.ends, [end]: value } : value;
+            if (current && JSON.stringify(current[savedField]) !== JSON.stringify(savedValue))
+              await edit({ op: 'set', building: building.id, piece: piece.id, field: savedField, value: savedValue });
             state.baseline = typed;
           }).catch(report).finally(() => {
             --state.queued;

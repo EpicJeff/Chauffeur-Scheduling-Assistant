@@ -71,6 +71,11 @@ if (job.cover) {
   // stepFaces(sections): triangles in plan feet, z up, nine floats each.
   const q = roof.stepFaces(job.steps);
   console.log(JSON.stringify({float32: q instanceof Float32Array, positions: Array.from(q)}));
+} else if (job.raw) {
+  // roofMesh(sections) as plain arrays: roof triangles and every gable end's triangles.
+  const mesh = roof.roofMesh(job.raw);
+  console.log(JSON.stringify({positions: Array.from(mesh.positions), section: Array.from(mesh.section),
+    gables: (mesh.gables || []).map(g => ({section: g.section, positions: Array.from(g.positions)}))}));
 } else if (job.call) {
   console.log(JSON.stringify(job.args.map(a => roof[job.call](...a))));
 } else {
@@ -282,6 +287,145 @@ def test_no_step_where_continuous(js):
         check(area < 1e-6, (name, 'step faces where the roof is continuous', len(r['positions']) // 9, round(area, 4)))
 
 
+# ---- per-end roof ends (.superpowers/sdd/2026-11-08-house-editor-roofs-from-photos task 2):
+# a gable or hip section may carry ends {<end>: 'gable'|'hip'|'clip'}; ridge x has
+# ends x0 and x1, ridge y has y0 and y1. Absent ends: a gable has gable ends and a
+# hip hipped ends. A clip end is a gable end whose top third of the rise is a small hip.
+
+def _gable_tris(raw):
+    return [t for g in raw['gables'] for t in _triangles(g['positions'])]
+
+
+def _tris_on_plane(tris, axis, value, tol=1e-3):
+    """Triangles whose three vertices all lie on the vertical plane axis = value
+    (axis 0 is x, 1 is y)."""
+    return [t for t in tris if all(abs(t[i + axis] - value) <= tol for i in (0, 3, 6))]
+
+
+def test_mixed_ends_gable_then_hip(js):
+    """Ridge-x gable 40 x 20, 12:12, plate 10, rise 10: ends x0 gable, x1 hip.
+    The x0 end is a vertical gable triangle (plane x = 0, 20 wide x 10 high);
+    the x1 end slopes like a hip, so near x1 at mid-depth the roof is below
+    the ridge, and no gable stands at x = 40."""
+    section = {**GABLE_X, 'ends': {'x0': 'gable', 'x1': 'hip'}}
+    h = js.call('heightAt', [[section], 39, 10], [[section], 38, 10], [[section], 1, 10],
+                [[section], 20, 10], [[section], 20, 3])
+    check(close(h, [11, 12, 20, 20, 13]), ('x1 hips down at 12:12; x0 keeps the ridge to the wall', h))
+    raw = js.run({'raw': [section]})
+    tris = _gable_tris(raw)
+    at_x0, at_x1 = _tris_on_plane(tris, 0, 0), _tris_on_plane(tris, 0, 40)
+    check(len(at_x0) == len(tris) and tris, ('every gable triangle stands in the plane x = 0', len(tris), len(at_x0)))
+    check(not at_x1, ('no gable end at the hipped x1 end', at_x1[:2]))
+    check(abs(sum(_normal(t)[1] for t in at_x0) - 100) < 1e-3, ('x0 gable is the whole 20 x 10 triangle',
+                                                              sum(_normal(t)[1] for t in at_x0)))
+    outward = [t for t in at_x0 if _normal(t)[0][0] > -0.99]
+    check(not outward, ('the x0 gable faces -x, out of the section', outward[:2]))
+    r = js.mesh([section])
+    check(r['maxError'] < 0.01 and r['uncovered'] == 0 and r['downward'] == 0 and r['gableAbove'] == 0, r)
+    r = js.run({'cover': [section]})
+    check(r['points'] > 0 and r['holes'] == 0 and r['wrong'] == 0, r)
+    # the same on a ridge-y section: y1 gable, y0 hip
+    ridge_y = {'kind': 'gable', 'rect': [0, 0, 20, 40], 'ridge': 'y', 'pitch': 12, 'plate': 10, 'overhang': 0,
+               'ends': {'y0': 'hip', 'y1': 'gable'}}
+    h = js.call('heightAt', [[ridge_y], 10, 1], [[ridge_y], 10, 39])
+    check(close(h, [11, 20]), ('ridge y: y0 hips down, y1 keeps the ridge to the wall', h))
+    tris = _gable_tris(js.run({'raw': [ridge_y]}))
+    check(tris and len(_tris_on_plane(tris, 1, 40)) == len(tris), ('ridge y: only a gable at y = 40', len(tris)))
+
+
+def test_a_hip_can_end_in_a_gable(js):
+    """A hip with ends {x0: 'gable'} keeps its x1 hip and stands a gable at x0."""
+    section = {**HIP, 'ends': {'x0': 'gable'}}
+    h = js.call('heightAt', [[section], 1, 10], [[section], 39, 10])
+    check(close(h, [20, 11]), ('x0 now a gable, x1 still a hip', h))
+    tris = _gable_tris(js.run({'raw': [section]}))
+    check(tris and len(_tris_on_plane(tris, 0, 0)) == len(tris), ('a gable at x = 0 only', len(tris)))
+
+
+def test_clip_end_is_a_wall_to_two_thirds_then_slopes(js):
+    """Ridge-x gable 40 x 20, 12:12, plate 10, rise 10, ends x0 clip. The x0 end
+    is a vertical wall up to plate + 2/3 rise = 16.667 and slopes above it: at
+    the wall line mid-depth the roof is 16.667 and it climbs to the ridge (20)
+    going in; where the rake is below 16.667 it is the plain gable slope. The
+    x0 gable is the 100 sq ft triangle less its top third (3.333 high, 6.667
+    wide: 11.11), so 88.89; the x1 gable stays whole (100)."""
+    top = 10 + 10 * 2 / 3
+    section = {**GABLE_X, 'ends': {'x0': 'clip'}}
+    h = js.call('heightAt', [[section], 0, 10], [[section], 0, 3], [[section], 0.5, 10],
+                [[section], 20, 10], [[section], 40, 10])
+    check(abs(h[0] - top) < 0.01, ('the clip wall tops out at two-thirds of the rise', h[0], top))
+    check(abs(h[1] - 13) < 1e-6, ('below the clip the end is the plain gable rake', h[1]))
+    check(top < h[2] < 20, ('above the wall the clip slopes up towards the ridge', h[2]))
+    check(abs(h[3] - 20) < 1e-6 and abs(h[4] - 20) < 1e-6, ('ridge intact; x1 still a full gable', h))
+    raw = js.run({'raw': [section]})
+    tris = _gable_tris(raw)
+    at_x0, at_x1 = _tris_on_plane(tris, 0, 0), _tris_on_plane(tris, 0, 40)
+    check(len(at_x0) + len(at_x1) == len(tris), ('gable triangles are vertical, at x = 0 or x = 40', len(tris)))
+    a0 = sum(_normal(t)[1] for t in at_x0)
+    a1 = sum(_normal(t)[1] for t in at_x1)
+    check(abs(a0 - (100 - 100 / 9)) < 0.01, ('clipped gable area', a0, 'want', 100 - 100 / 9))
+    check(abs(a1 - 100) < 1e-3, ('the plain x1 gable is whole', a1))
+    zmax = max(t[i] for t in at_x0 for i in (2, 5, 8))
+    check(abs(zmax - top) < 0.01, ('the clipped gable wall stops at two-thirds of the rise', zmax))
+    r = js.mesh([section])
+    check(r['maxError'] < 0.01 and r['uncovered'] == 0 and r['downward'] == 0 and r['gableAbove'] == 0, r)
+    r = js.run({'cover': [section]})
+    check(r['points'] > 0 and r['holes'] == 0 and r['wrong'] == 0, r)
+
+
+def _canonical(flat, nd=3):
+    """Order-independent form of a triangle list: vertices rounded, each
+    triangle rotated (winding kept) to start at its smallest vertex, sorted."""
+    out = []
+    for t in _triangles(flat):
+        v = [tuple(round(c, nd) + 0.0 for c in t[i:i + 3]) for i in (0, 3, 6)]
+        k = v.index(min(v))
+        out.append(v[k:] + v[:k])
+    return sorted(out)
+
+
+def _mesh_digest(js, sections):
+    import hashlib
+    raw = js.run({'raw': sections})
+    body = json.dumps({'roof': _canonical(raw['positions']),
+                       'gables': sorted((g['section'], _canonical(g['positions'])) for g in raw['gables'])})
+    return hashlib.sha256(body.encode()).hexdigest()[:16], len(raw['positions']) // 9
+
+
+_NO_ENDS_DIGESTS = {
+    # Recorded 2026-11-08 from twin_roof.js before per-end support (commit 213cf85a).
+    'gable_x': '6edc33826ab12030',
+    'hip': '362b091e6acac903',
+    'hip_cross': '0202616e36183dd5',
+    'uneven': '8fff4b69eade93c1',
+    'ridge_y_overhang': 'd3111f06ec4ffe0c',
+    'lot58': '4a78c3fb07546dd6',
+}
+
+
+def _no_ends_cases():
+    with open(LOT58, encoding='utf-8') as f:
+        lot58 = json.load(f)['sections']
+    ridge_y = {'kind': 'gable', 'rect': [0, 0, 20, 40], 'ridge': 'y', 'pitch': 9, 'plate': 10, 'overhang': 1.5}
+    return {'gable_x': [GABLE_X], 'hip': [HIP], 'hip_cross': [HIP, CROSS], 'uneven': [UNEVEN],
+            'ridge_y_overhang': [ridge_y], 'lot58': lot58}
+
+
+def test_no_ends_is_unchanged(js):
+    """Without ends every mesh (roof and gable triangles) is exactly today's, and
+    ends that only restate the default (gable ends on a gable, hip ends on a hip)
+    change nothing."""
+    cases = _no_ends_cases()
+    for name, sections in cases.items():
+        digest, n = _mesh_digest(js, sections)
+        check(digest == _NO_ENDS_DIGESTS[name], (name, 'mesh changed without ends', digest, n))
+    default_ends = {'x': ('x0', 'x1'), 'y': ('y0', 'y1')}
+    for name, sections in cases.items():
+        restated = [{**s, 'ends': {e: s['kind'] for e in default_ends[s['ridge']]}}
+                    if s['kind'] in ('gable', 'hip') else s for s in sections]
+        check(_mesh_digest(js, restated)[0] == _NO_ENDS_DIGESTS[name], (name, 'default ends changed the mesh'))
+
+
 if __name__ == '__main__':
     if not shutil.which('node'):
         print('  ..  skipped (node not available)')
@@ -298,7 +442,11 @@ if __name__ == '__main__':
                    scenario_gable_ends_exist_and_face_out,
                    scenario_every_roof_triangle_faces_up,
                    test_step_face_between_overlapping_hips,
-                   test_no_step_where_continuous):
+                   test_no_step_where_continuous,
+                   test_mixed_ends_gable_then_hip,
+                   test_a_hip_can_end_in_a_gable,
+                   test_clip_end_is_a_wall_to_two_thirds_then_slopes,
+                   test_no_ends_is_unchanged):
             try:
                 fn(js)
             except Exception:

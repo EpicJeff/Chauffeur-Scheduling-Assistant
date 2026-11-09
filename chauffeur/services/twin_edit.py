@@ -11,7 +11,7 @@ EDITABLE = {
     'wall': ('height', 'thickness', 'exterior'),
     'opening': ('width', 'sill', 'head', 'kind', 'panels', 'at'),
     'room': ('name', 'ha_area'),
-    'roof': ('kind', 'pitch', 'plate', 'overhang', 'ridge', 'low_side'),
+    'roof': ('kind', 'pitch', 'plate', 'overhang', 'ridge', 'low_side', 'ends'),
     'building': ('name', 'position', 'rotation', 'base'),
     'level': ('name', 'elevation', 'ceiling'),
 }
@@ -157,6 +157,12 @@ def _set(kind, piece, building, field, value):
     elif field == 'exterior':
         if type(value) is not bool:
             raise ValueError('exterior must be true or false.')
+    elif field == 'ends':
+        allowed = (f"{piece.get('ridge')}0", f"{piece.get('ridge')}1")
+        if (piece['kind'] not in ('gable', 'hip') or not isinstance(value, dict)
+                or any(end not in allowed or style not in ('gable', 'hip', 'clip')
+                       for end, style in value.items())):
+            raise ValueError('Roof ends must be gable, hip or clipped gable on the ridge ends.')
     elif field in ('kind', 'ridge', 'low_side'):
         choices = (_OPENING_KINDS if kind == 'opening' else
                    ('hip', 'gable', 'shed', 'flat') if field == 'kind' else
@@ -185,6 +191,8 @@ def _set(kind, piece, building, field, value):
         raise ValueError('Nothing changed')
     piece[field] = deepcopy(value)
     if kind == 'roof':
+        if field == 'ridge' and piece.get('ends'):
+            piece['ends'] = {f'{value}{end[-1]}': style for end, style in piece['ends'].items()}
         if field == 'pitch':
             piece['pitch_source'] = 'person'
         # A kind switch needs usable directions without an intermediate bad roof.
@@ -342,6 +350,10 @@ def _register(plan, edit):
 
 
 def _value_words(field, value):
+    if field == 'ends':
+        sides = {'x0': 'left', 'x1': 'right', 'y0': 'front', 'y1': 'back'}
+        styles = {'gable': 'gable', 'hip': 'hip', 'clip': 'clipped gable'}
+        return ', '.join(f'{sides[end]} {styles[style]}' for end, style in value.items()) or 'the roof defaults'
     if field == 'ridge':
         return {'x': 'left to right', 'y': 'front to back'}.get(value, value)
     if field == 'low_side':

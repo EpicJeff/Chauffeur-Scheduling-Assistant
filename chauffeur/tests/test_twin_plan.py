@@ -283,6 +283,62 @@ def scenario_test_ridge_y_gable_opening_unchanged():
     check(any('outside' in n for n in notes), notes)
 
 
+# ---- per-end roof ends (plan .superpowers/sdd/2026-11-08-house-editor-roofs-from-photos
+# task 2): a gable or hip section may carry ends {<end>: 'gable'|'hip'|'clip'};
+# ridge x has ends x0 and x1, ridge y has ends y0 and y1.
+
+def _sections(plan):
+    return {s['id']: s for s in plan['buildings'][0]['roof']['sections']}
+
+
+def _set_ends(raw, section_id, ends):
+    next(s for s in raw['buildings'][0]['roof']['sections'] if s['id'] == section_id)['ends'] = ends
+    return raw
+
+
+def scenario_test_roof_ends_survive_normalize():
+    _, base_notes = tp.normalize(_draft())
+    raw = _set_ends(_draft(), 'left_wing', {'x0': 'gable', 'x1': 'hip'})      # ridge x
+    raw = _set_ends(raw, 'front_wing', {'y0': 'clip', 'y1': 'gable'})          # ridge y
+    raw = _set_ends(raw, 'main', {'x0': 'hip', 'x1': 'clip'})                  # a hip may end in a clip
+    plan, notes = tp.normalize(raw)
+    s = _sections(plan)
+    check(s['left_wing'].get('ends') == {'x0': 'gable', 'x1': 'hip'}, s['left_wing'])
+    check(s['front_wing'].get('ends') == {'y0': 'clip', 'y1': 'gable'}, s['front_wing'])
+    check(s['main'].get('ends') == {'x0': 'hip', 'x1': 'clip'}, s['main'])
+    check(notes == base_notes, f'valid ends add no notes: {notes}')
+    plan, _ = tp.normalize(_draft())
+    check('ends' not in _sections(plan)['left_wing'], 'no ends unless given')
+
+
+def scenario_test_roof_invalid_end_dropped_with_note():
+    _, base_notes = tp.normalize(_draft())
+    raw = _set_ends(_draft(), 'left_wing', {'x0': 'gable', 'x1': 'dome'})
+    plan, notes = tp.normalize(raw)
+    s = _sections(plan)['left_wing']
+    check(s.get('ends') == {'x0': 'gable'}, f'the bad value is dropped, the good one kept: {s}')
+    extra = [n for n in notes if n not in base_notes]
+    check(len(extra) == 1 and 'end' in extra[0].lower(), f'one plain note about the end: {extra}')
+    check('dome' in extra[0] or 'x1' in extra[0] or 'right' in extra[0].lower(), extra)
+
+    # an end the ridge does not have: ridge x has no y0 end
+    raw = _set_ends(_draft(), 'left_wing', {'y0': 'hip', 'x1': 'hip'})
+    plan, notes = tp.normalize(raw)
+    s = _sections(plan)['left_wing']
+    check(s.get('ends') == {'x1': 'hip'}, f'an end off the ridge axis is dropped: {s}')
+    extra = [n for n in notes if n not in base_notes]
+    check(len(extra) == 1 and 'end' in extra[0].lower(), extra)
+
+    # ends that are not a mapping at all
+    raw = _set_ends(_draft(), 'left_wing', 'hip')
+    plan, notes = tp.normalize(raw)
+    s = _sections(plan)['left_wing']
+    check('ends' not in s, f'non-mapping ends dropped: {s}')
+    extra = [n for n in notes if n not in base_notes]
+    check(len(extra) == 1 and 'end' in extra[0].lower(), extra)
+    check(s['kind'] == 'gable' and s['ridge'] == 'x', 'the section itself survives')
+
+
 if __name__ == '__main__':
     failed = []
     for fn in (scenario_the_fixture_normalizes_clean,
@@ -303,7 +359,9 @@ if __name__ == '__main__':
                scenario_test_half_level_kept,
                scenario_test_ridge_x_gable_opening_valid,
                scenario_test_ridge_x_gable_opening_outside_dropped,
-               scenario_test_ridge_y_gable_opening_unchanged):
+               scenario_test_ridge_y_gable_opening_unchanged,
+               scenario_test_roof_ends_survive_normalize,
+               scenario_test_roof_invalid_end_dropped_with_note):
         try:
             fn()
         except Exception as e:

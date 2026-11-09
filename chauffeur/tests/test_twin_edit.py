@@ -77,7 +77,7 @@ def scenario_editable_fields_are_pinned():
         'wall': ('height', 'thickness', 'exterior'),
         'opening': ('width', 'sill', 'head', 'kind', 'panels', 'at'),
         'room': ('name', 'ha_area'),
-        'roof': ('kind', 'pitch', 'plate', 'overhang', 'ridge', 'low_side'),
+        'roof': ('kind', 'pitch', 'plate', 'overhang', 'ridge', 'low_side', 'ends'),
         'building': ('name', 'position', 'rotation', 'base'),
         'level': ('name', 'elevation', 'ceiling')}, twin_edit.EDITABLE)
 
@@ -367,6 +367,48 @@ def scenario_accept_invalid_door_names_kind_and_plain_reason():
         check(ts.current_id() == before, 'refusal publishes nothing')
 
 
+# ---- per-end roof ends (.superpowers/sdd/2026-11-08-house-editor-roofs-from-photos task 2):
+# the roof card sets ends {<end>: 'gable'|'hip'|'clip'} on a section with one set
+# edit (the whole mapping as the value); roof-1 is a ridge-x hip, ends x0 and x1.
+
+def scenario_test_card_sets_roof_ends():
+    before = house()
+    plan, summary = twin_edit.apply(before, {'op': 'set', 'piece': 'roof-1', 'field': 'ends',
+                                             'value': {'x0': 'gable', 'x1': 'hip'}})
+    s = piece(plan, 'roof-1')
+    check(s.get('ends') == {'x0': 'gable', 'x1': 'hip'} and s['src']['person'] is True, s)
+    check('ends' not in piece(before, 'roof-1'), 'apply never mutates its input')
+    check(summary.startswith('Set ') and '{' not in summary and 'x0' not in summary,
+          f'a plain summary, no raw mapping or end ids: {summary}')
+    renormalized, notes = tp.normalize(plan)
+    check(piece(renormalized, 'roof-1').get('ends') == {'x0': 'gable', 'x1': 'hip'}, ('ends survive normalize', notes))
+
+    _seed()
+    out = twin_edit.save({'op': 'set', 'piece': 'roof-1', 'field': 'ends', 'value': {'x0': 'clip', 'x1': 'gable'}}, 'p1')
+    check(ts.current_id() == out['round'] and ts.rounds()[-1]['kind'] == 'edit', ts.rounds()[-1])
+    s = piece(ts.current(), 'roof-1')
+    check(s.get('ends') == {'x0': 'clip', 'x1': 'gable'} and s['src']['person'] is True, f'persisted: {s}')
+    check(s['kind'] == 'hip' and s['ridge'] == 'x' and s['pitch'] == 6, 'nothing else changed')
+
+
+def scenario_test_invalid_roof_ends_refused():
+    for bad in ({'x0': 'dome'},          # not gable, hip or clip
+                {'y0': 'hip'},           # roof-1 runs left to right: its ends are x0 and x1
+                'hip',                   # not a mapping
+                ['x0', 'gable']):
+        expect_value_error(lambda bad=bad: twin_edit.apply(
+            house(), {'op': 'set', 'piece': 'roof-1', 'field': 'ends', 'value': bad}))
+    _seed()
+    before = ts.current_id()
+    try:
+        twin_edit.save({'op': 'set', 'piece': 'roof-1', 'field': 'ends', 'value': {'x1': 'dome'}}, 'p1')
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('invalid end accepted')
+    check(ts.current_id() == before, 'refusal publishes nothing')
+
+
 if __name__ == '__main__':
     scenario_accept_invalid_door_names_kind_and_plain_reason()
     scenario_ridge_x_gable_moves_and_deletes()
@@ -393,3 +435,16 @@ if __name__ == '__main__':
                scenario_turning_about_the_middle_is_one_edit):
         fn()
         print('  ok ', fn.__name__)
+    # Per-end roof ends: each reported on its own so one failure does not hide the other.
+    failed = []
+    for fn in (scenario_test_card_sets_roof_ends,
+               scenario_test_invalid_roof_ends_refused):
+        try:
+            fn()
+        except Exception as e:
+            failed.append(fn.__name__)
+            print('  FAIL', fn.__name__, repr(e)[:300])
+        else:
+            print('  ok ', fn.__name__)
+    if failed:
+        raise SystemExit(1)

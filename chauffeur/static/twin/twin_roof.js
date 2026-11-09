@@ -13,6 +13,12 @@ function covers(rect, x, y) {
   return x >= rect[0] && y >= rect[1] && x <= rect[2] && y <= rect[3];
 }
 
+/** Effective ridge-end style; omitted ends inherit the section's form. */
+export function endKind(section, end) {
+  if (!['gable', 'hip'].includes(section.kind)) return null;
+  return section.ends?.[end] ?? section.kind;
+}
+
 // A section is the minimum of its side planes, restricted to its footprint.
 // Distances are signed: extending a plane past the plate lowers the eave.
 function planes(section) {
@@ -27,10 +33,21 @@ function planes(section) {
   };
   if (section.kind === 'flat') return [[0, 0, plate]];
   if (section.kind === 'shed') return [edges[section.low_side]()];
-  const sides = section.kind === 'gable'
+  let sides = section.kind === 'gable'
     ? (section.ridge === 'y' ? ['x0', 'x1'] : ['y0', 'y1'])
     : ['x0', 'x1', 'y0', 'y1'];
-  return sides.map(name => edges[name]());
+  const ends = section.ridge === 'y' ? ['y0', 'y1'] : ['x0', 'x1'];
+  sides = sides.filter(name => !ends.includes(name) || endKind(section, name) !== 'gable');
+  for (const end of ends) if (endKind(section, end) !== 'gable' && !sides.includes(end)) sides.push(end);
+  const across = section.ridge === 'y' ? ['x0', 'x1'] : ['y0', 'y1'];
+  const width = section.ridge === 'y' ? x1 - x0 : y1 - y0;
+  const a = side(across[0]), b = side(across[1]);
+  const rise = width * a * b / (a + b);
+  return sides.map(name => {
+    const plane = edges[name]();
+    if (ends.includes(name) && endKind(section, name) === 'clip') plane[2] += rise * 2 / 3;
+    return plane;
+  });
 }
 
 /** Height of one section, including its signed-slope overhang. */
@@ -150,16 +167,20 @@ function gableEnds(sections, index) {
   const alongX = section.ridge !== 'y';
   const start = alongX ? y0 : x0;
   const width = alongX ? y1 - y0 : x1 - x0;
-  const [first, second] = planes(section);
-  const slope0 = alongX ? first[1] : first[0];
-  const slope1 = -(alongX ? second[1] : second[0]);
+  const slope0 = (section.pitches?.[alongX ? 'y0' : 'x0'] ?? section.pitch) / 12;
+  const slope1 = (section.pitches?.[alongX ? 'y1' : 'x1'] ?? section.pitch) / 12;
   if (slope0 <= 0 || slope1 <= 0) return [];
   const apex = width * slope1 / (slope0 + slope1);
   const plate = section.plate;
   const positions = [];
-  for (const end of (alongX ? [x0, x1] : [y0, y1])) {
+  for (const [i, end] of (alongX ? [x0, x1] : [y0, y1]).entries()) {
+    if (endKind(section, `${alongX ? 'x' : 'y'}${i}`) === 'hip') continue;
     const xy = u => alongX ? [end, start + u] : [start + u, end];
     let pieces = [[[0, plate], [width, plate], [apex, plate + apex * slope0]]];
+    for (const plane of planes(section)) {
+      pieces = pieces.map(piece => clip(piece,
+        [alongX ? plane[1] : plane[0], -1, valueAt(plane, ...xy(0))])).filter(piece => piece.length);
+    }
     for (let j = 0; j < sections.length; j++) {
       if (j === index) continue;
       const other = sections[j], rect = bounds(other);
@@ -205,7 +226,8 @@ export function stepFaces(sections, { section: only = null, exclude = [], wallCo
     for (let axis = 0; axis < 2; axis++) for (const sign of [-1, 1]) {
       // Rake ends are closed at the wall line by gableEnds, beneath their
       // overhang. Do not put another gable out at the roof's outer edge.
-      if (section.kind === 'gable' && axis === (section.ridge === 'y' ? 1 : 0)) continue;
+      if (axis === (section.ridge === 'y' ? 1 : 0)
+          && ['gable', 'clip'].includes(endKind(section, `${axis === 0 ? 'x' : 'y'}${sign > 0 ? 1 : 0}`))) continue;
       const along = 1 - axis, end = rect[axis + (sign > 0 ? 2 : 0)];
       const lo = rect[along], hi = rect[along + 2];
       const xy = u => axis === 0 ? [end, u] : [u, end];
@@ -320,7 +342,7 @@ export function roofMesh(sections, { retainLower = false, exclude = [] } = {}) {
     }
   }
   sections.forEach((section, index) => {
-    if (section.kind !== 'gable') return;
+    if (!['gable', 'hip'].includes(section.kind)) return;
     const ends = gableEnds(sections, index);
     if (ends.length) gables.push({ section: index, positions: new Float32Array(ends) });
   });

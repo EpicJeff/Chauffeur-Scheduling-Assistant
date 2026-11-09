@@ -5,6 +5,12 @@ import math
 _EPS = 1e-9
 
 
+def _end_kind(section, end):
+    if section['kind'] not in ('gable', 'hip'):
+        return None
+    return section.get('ends', {}).get(end, section['kind'])
+
+
 def _planes(section):
     """Match twin_roof.js: signed side planes, including below-plate eaves."""
     x0, y0, x1, y1 = section['rect']
@@ -20,8 +26,17 @@ def _planes(section):
         return [(0, 0, plate)]
     if section['kind'] == 'shed':
         return [edges[section['low_side']]]
-    sides = (('x0', 'x1') if section.get('ridge') == 'y' else ('y0', 'y1'))
-    return [edges[side] for side in (sides if section['kind'] == 'gable' else edges)]
+    across = ('x0', 'x1') if section.get('ridge') == 'y' else ('y0', 'y1')
+    ends = ('y0', 'y1') if section.get('ridge') == 'y' else ('x0', 'x1')
+    sides = list(across) if section['kind'] == 'gable' else list(edges)
+    sides = [side for side in sides if side not in ends or _end_kind(section, side) != 'gable']
+    sides.extend(end for end in ends if _end_kind(section, end) != 'gable' and end not in sides)
+    width = x1 - x0 if section.get('ridge') == 'y' else y1 - y0
+    a, b = [slopes[side] for side in across]
+    rise = width * a * b / (a + b)
+    return [(edges[side][0], edges[side][1], edges[side][2] +
+             (rise * 2 / 3 if side in ends and _end_kind(section, side) == 'clip' else 0))
+            for side in sides]
 
 
 def _cut_length(wall, top, roofs):
@@ -148,7 +163,9 @@ def roof_issues(building) -> list[dict]:
         width, depth = [section['rect'][i + 2] - section['rect'][i] for i in (0, 1)]
         short, long = sorted((width, depth))
         across_short = width < depth if section.get('ridge') == 'x' else depth < width
-        if section['kind'] == 'hip' and across_short and long - short >= .25 * short - _EPS:
+        ends = ('y0', 'y1') if section.get('ridge') == 'y' else ('x0', 'x1')
+        if (all(_end_kind(section, end) == 'hip' for end in ends)
+                and across_short and long - short >= .25 * short - _EPS):
             issues.append({'id': f'hip_point:{sid}', 'section': sid, 'kind': 'hip_point',
                            'text': f'Section {sid} is a hip with its ridge across its shorter side, so it comes to a point; '
                                    "check the ridge direction and the section's extent against the roof plan."})

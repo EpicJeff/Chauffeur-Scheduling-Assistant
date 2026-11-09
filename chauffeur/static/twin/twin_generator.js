@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { kitMaterial } from './twin_library.js';
-import { roofMesh, heightAt, stepFaces } from './twin_roof.js';
+import { roofMesh, heightAt, stepFaces, endKind } from './twin_roof.js';
 import { groundAt } from './twin_ground.js';
 
 export const FT = 0.3048;
@@ -484,9 +484,10 @@ export function buildTwin(plan, kit, tier) {
       const next = ordered[ordered.indexOf(l) + 1], above = next ? outlines.get(next.id) : [];
       const storeyRoof = storeyRoofs.get(l.id);
       const at = (u, face) => [w.from[0] + dx * u + face[0], w.from[1] + dy * u + face[1]];
-      const gables = sections.filter(s => s.kind === 'gable').flatMap(section => {
+      const gables = sections.filter(s => ['gable', 'hip'].includes(s.kind)).flatMap(section => {
         const axis = section.ridge === 'y' ? 1 : 0;
-        return [section.rect[axis], section.rect[axis + 2]].filter(end => ownsGable(w, section, end)).map(end => ({ section, end, axis }));
+        return [section.rect[axis], section.rect[axis + 2]].filter((end, i) =>
+          endKind(section, `${section.ridge}${i}`) !== 'hip' && ownsGable(w, section, end)).map(end => ({ section, end, axis }));
       });
       const limits = (u, toward = u) => {
         // Stay on this side of a discontinuity, including a section rect's
@@ -631,6 +632,7 @@ export function buildTwin(plan, kit, tier) {
       use(section, 'roof', `roof:${gable.section}`);
       for (const end of (alongX ? [x0, x1] : [y0, y1])) {
         const axis = alongX ? 0 : 1;
+        if (endKind(section, `${section.ridge}${end === section.rect[axis] ? 0 : 1}`) === 'hip') continue;
         // Walls own gable fill wherever a top-level wall already follows it.
         const owned = b.walls.some(w => ownsGable(w, section, end));
         if (owned) continue;

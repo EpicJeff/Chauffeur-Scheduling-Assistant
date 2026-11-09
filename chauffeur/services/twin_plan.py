@@ -225,6 +225,17 @@ def _roof(building, notes):
             notes.append(f'Dropped roof section {name}: invalid bounds, kind, direction or plate.')
             continue
         section['pitch'] = 0 if section['kind'] == 'flat' else pitch_value(section.get('pitch'), name)
+        if 'ends' in section:
+            ends = section.pop('ends')
+            if isinstance(ends, dict) and section['kind'] in ('gable', 'hip'):
+                allowed = (f"{section['ridge']}0", f"{section['ridge']}1")
+                section['ends'] = {end: style for end, style in ends.items()
+                                   if end in allowed and style in ('gable', 'hip', 'clip')}
+                for end, style in ends.items():
+                    if end not in section['ends']:
+                        notes.append(f'Roof section {name}: dropped invalid end {end}.')
+            else:
+                notes.append(f'Roof section {name}: dropped invalid ends.')
         if 'pitches' in section:
             pitches = section.pop('pitches')
             if isinstance(pitches, dict):
@@ -301,7 +312,10 @@ def _opening_error(opening, walls, sections):
         if opening['gable'] not in ('front', 'rear'):
             return 'unknown gable (expected front or rear)'
         section = _lookup(sections, opening.get('section'))
-        if section is None or section['kind'] != 'gable':
+        if section is None or section['kind'] not in ('gable', 'hip'):
+            return 'unknown gable section'
+        end = f"{section['ridge']}{0 if opening['gable'] == 'front' else 1}"
+        if section.get('ends', {}).get(end, section['kind']) not in ('gable', 'clip'):
             return 'unknown gable section'
         axis = 1 if section['ridge'] == 'x' else 0
         centre = opening.get('y' if axis else 'x')
