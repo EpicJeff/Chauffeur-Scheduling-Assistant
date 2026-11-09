@@ -99,6 +99,15 @@ def get_state(entity_id: str):
     return None
 
 
+def get_script_config(object_id: str) -> dict | None:
+    """UI-managed script configuration; YAML scripts and absent HA return None."""
+    try:
+        data = _request('GET', f'/config/script/config/{object_id}')
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
 def get_entities(domain: str) -> list:
     """[{entity_id, name, state}] for a domain ('person', 'media_player', ...),
     sorted by friendly name. Backed by the states cache."""

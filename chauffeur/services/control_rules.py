@@ -3,7 +3,7 @@
 Places are not people, and knowing a person's role is not proof of identity.
 Keep those decisions here so tiles, cards and Argyle can give the same answer.
 The legacy panel switch supplies defaults only until a household saves a grid.
-Classification and decisions are pure; no Home Assistant calls belong here.
+Classification and decisions are pure; request expansion reads Home Assistant.
 """
 from collections.abc import Iterable
 from copy import deepcopy
@@ -172,3 +172,68 @@ def decide(who: Who, kinds: Iterable[str], rules: dict) -> Decision:
     if needs == 'pin':
         return Decision(False, needs, kinds, 'Enter your PIN to confirm who you are.')
     return Decision(True, None, kinds, '')
+
+
+def targets(data: dict) -> set[str]:
+    """Expand both service-data and modern target selectors into entity ids."""
+    from services import ha_api
+
+    def ids(value):
+        if isinstance(value, str):
+            return {value}
+        return set(value or [])
+
+    entities, devices, areas = set(), set(), set()
+    for source in (data, data.get('target') or {}):
+        entities.update(ids(source.get('entity_id')))
+        devices.update(ids(source.get('device_id')))
+        areas.update(ids(source.get('area_id')))
+    if 'all' in entities:
+        entities.remove('all')
+        entities.update(row['entity_id'] for row in ha_api.get_states())
+    if devices or areas:
+        registry = ha_api.get_entity_registry()
+        device_areas = {row['id']: row.get('area_id')
+                        for row in ha_api.get_device_registry()} if areas else {}
+        for row in registry:
+            area = row.get('area_id') or device_areas.get(row.get('device_id'))
+            if row.get('device_id') in devices or area in areas:
+                entities.add(row['entity_id'])
+        if areas:
+            for area in ha_api.get_area_map():
+                if area.get('id') in areas:
+                    entities.update(area.get('entities') or [])
+    return entities
+
+
+def kinds_for(entity_ids: Iterable[str]) -> tuple[str, ...]:
+    """Use live attributes and recursively judge scripts/scenes by their effects."""
+    from services import control_scripts, ha_api
+
+    states = {row['entity_id']: row for row in ha_api.get_states()}
+    kinds = set()
+
+    def classify(entity_id):
+        state = states.get(entity_id)
+        kind = kind_of(entity_id, (state.get('attributes') or {}) if state else None)
+        # Keep unsupported/never-control targets a refusal, even in mixed calls.
+        kinds.add(kind if kind is not None else 'unsupported')
+
+    for entity_id in entity_ids:
+        if entity_id.partition('.')[0] in ('script', 'scene'):
+            touched, reasons = control_scripts.touched(entity_id)
+            if reasons:
+                kinds.update(KINDS)
+            for target in touched:
+                classify(target)
+        else:
+            classify(entity_id)
+    return tuple(kind for kind in (*KINDS, 'unsupported') if kind in kinds)
+
+
+def check(who: Who, entity_ids: Iterable[str], settings: dict | None = None) -> Decision:
+    """A failed HA or settings read must never grant control or escape to callers."""
+    try:
+        return decide(who, kinds_for(entity_ids), rules(settings))
+    except Exception:
+        return Decision(False, None, (), 'Home Assistant could not answer that request.')
