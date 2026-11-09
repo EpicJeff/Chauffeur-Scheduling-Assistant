@@ -257,6 +257,8 @@ def kinds_for(entity_ids: Iterable[str]) -> tuple[str, ...]:
             if reasons:
                 kinds.update(KINDS)
             for target in touched:
+                # Script analysis already marks directly named, unclassifiable
+                # effects unreadable; kind-less search/expansion leaves can drop.
                 classify(target)
         else:
             classify(entity_id, direct=True)

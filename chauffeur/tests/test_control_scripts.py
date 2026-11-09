@@ -55,6 +55,12 @@ STATES = [
     state('script.kitchen_off', friendly_name='Kitchen off'),
     state('script.device_action', friendly_name='Device action'),
     state('script.ha_generic', friendly_name='HA generic'),
+    state('script.trigger_auto', friendly_name='Trigger automation'),
+    state('script.group_on', friendly_name='Group on'),
+    state('script.svc_template', friendly_name='Service template'),
+    state('script.scene_short', friendly_name='Scene shorthand'),
+    state('automation.unlock_front'),
+    state('group.garage', entity_id=['cover.garage_door']),
     state('sensor.kitchen_temp'),
     state('lock.kitchen_door'),
     state('light.kitchen'),
@@ -89,6 +95,10 @@ RELATED = {
     'script.kitchen_off': {'entity': ['light.kitchen'], 'area': ['kitchen2'], 'device': ['dev-garage']},
     'script.device_action': {'device': ['dev-garage']},
     'script.ha_generic': {'entity': ['light.a']},
+    'script.trigger_auto': {'entity': ['automation.unlock_front']},
+    'script.group_on': {'entity': ['group.garage']},
+    'script.svc_template': {},
+    'script.scene_short': {},
 }
 CONFIGS = {
     'goodnight': {'sequence': [
@@ -120,6 +130,12 @@ CONFIGS = {
     'device_action': {'sequence': [
         {'type': 'open', 'device_id': 'dev-garage', 'entity_id': '4f1c2d3e5a6b7c8d9e0f', 'domain': 'cover'}]},
     'ha_generic': {'sequence': [{'service': 'homeassistant.turn_off', 'target': {'entity_id': 'light.a'}}]},
+    'trigger_auto': {'sequence': [
+        {'service': 'automation.trigger', 'target': {'entity_id': 'automation.unlock_front'}}]},
+    'group_on': {'sequence': [
+        {'service': 'homeassistant.turn_on', 'target': {'entity_id': 'group.garage'}}]},
+    'svc_template': {'sequence': [{'service_template': '{{ "script.open_garage" }}'}]},
+    'scene_short': {'sequence': [{'scene': 'scene.night'}]},
 }
 
 
@@ -250,7 +266,8 @@ class Unreadable(Base):
         rows = cs.unreadable_scripts()
         by_id = {r['entity_id']: r for r in rows}
         self.assertEqual(set(by_id), {'script.templated', 'script.gate', 'script.chatty',
-                                      'script.labelled', 'script.legacy', 'script.no_config'})
+                                      'script.labelled', 'script.legacy', 'script.no_config',
+                                      'script.trigger_auto', 'script.group_on', 'script.svc_template'})
         self.assertEqual(by_id['script.gate']['name'], 'Gate')
         for row in rows:
             self.assertTrue(row['reason'].strip())
@@ -305,6 +322,25 @@ class ReviewRound1(Base):
         self.assertFalse(cr.check(PARENT, [], settings).allowed)
         self.assertFalse(cr.check(CHILD, 'lock.front', settings).allowed)
         self.assertTrue(cr.check(CHILD, 'light.a', settings).allowed)
+
+
+class ReviewRound2(Base):
+    """A step that names something Chauffeur cannot classify is never harmless."""
+
+    def test_automation_trigger_unreadable(self):
+        self.assertEqual(set(cr.kinds_for(['script.trigger_auto'])), set(cr.KINDS))
+        self.assertFalse(cr.check(CHILD, ['script.trigger_auto'], {'ha_control': self.rules}).allowed)
+
+    def test_named_group_unreadable(self):
+        self.assertEqual(set(cr.kinds_for(['script.group_on'])), set(cr.KINDS))
+
+    def test_service_template_unreadable(self):
+        self.assertEqual(set(cr.kinds_for(['script.svc_template'])), set(cr.KINDS))
+
+    def test_scene_shorthand_is_read(self):
+        kinds = set(cr.kinds_for(['script.scene_short']))
+        self.assertTrue({'lights', 'locks'} <= kinds, kinds)
+        self.assertFalse(cr.check(CHILD, ['script.scene_short'], {'ha_control': self.rules}).allowed)
 
 
 class Targets(Base):
