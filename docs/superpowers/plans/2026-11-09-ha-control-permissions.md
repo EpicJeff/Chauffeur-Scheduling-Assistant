@@ -48,7 +48,7 @@
 **Interfaces:**
 - Produces:
   - `KINDS: tuple[str, ...]`, `ROLES`, `PLACES`, `NEVER_DOMAINS: frozenset[str]`
-  - `kind_of(entity_id: str, attributes: dict | None) -> str | None` (None for a domain that is not device control; script/scene ids return `'script'`/`'scene'` markers handled by Task 2)
+  - `kind_of(entity_id: str, attributes: dict | None) -> str | None` (None for a domain that is not device control; script/scene ids return `'script'`/`'scene'` markers handled by Task 2; `attributes=None` means unread: a cover is then `'garage'`)
   - `default_rules(settings: dict) -> dict` and `rules(settings: dict | None = None) -> dict` (stored `settings['ha_control']` if present, else defaults)
   - `validate_rules(raw: dict) -> dict` (raises `ValueError` with a sentence on a bad cell)
   - `@dataclass(frozen=True) class Who: role: str | None; member_id: str | None; place: str | None; proven: bool; admin: bool = False; voice_id: bool = True`
@@ -67,7 +67,7 @@ Stored shape of `settings['ha_control']`:
 
 - [ ] **Step 1: Write the failing tests** in `tests/test_control_rules.py` (unittest, `from harness import check` first like `tests/test_house_tool.py`):
   - `test_kinds`: `kind_of('light.k', {}) == 'lights'`; `switch`, `fan`, `input_boolean` → `'switches'`; `media_player`, `remote` → `'media'`; `climate`, `water_heater` → `'climate'`; `cover` with `device_class` `garage`/`door`/`gate` → `'garage'`, `cover` with `shade` or none → `'blinds'`; `lock` → `'locks'`; `alarm_control_panel` → `'alarm'`; `valve`, `vacuum`, `siren`, `button` → `'other'`; `homeassistant.x`, `notify.x`, `sensor.x` → `None`.
-  - `test_defaults_switch_off`: `default_rules({})` has `enabled` True; `proof` True only for `locks`, `garage`, `alarm`; parent/adult all `'yes'`; child/helper/guest `'no'` on locks/garage/alarm, `'yes'` elsewhere; unknown_voice `'ask'` on locks/garage/alarm, `'yes'` elsewhere; panel `'yes'` on lights/switches/media/climate, `'no'` on blinds/garage/locks/alarm/other.
+  - `test_defaults_switch_off`: `default_rules({})` has `enabled` True; `proof` True only for `locks`, `garage`, `alarm`; parent/adult all `'yes'`; child/helper/guest `'no'` on locks/garage/alarm, `'yes'` elsewhere; unknown_voice `'ask'` on locks/garage/alarm, `'yes'` elsewhere; panel `'yes'` on lights/switches/media/climate/blinds/other, `'no'` on garage/locks/alarm.
   - `test_defaults_switch_on`: `default_rules({'panel_allow_unsafe_controls': True})` panel: blinds `'yes'`, other `'yes'`, locks `'ask'`, garage `'ask'`, alarm `'no'`.
   - `test_stored_rules_win`: `rules({'ha_control': X})` returns X.
   - `test_validate_rejects`: an unknown kind, a person cell `'ask'`, a place cell `'maybe'` each raise `ValueError`; a valid grid round-trips.
@@ -103,10 +103,10 @@ Expected: all pass.
   - `control_scripts.touched(entity_id: str) -> tuple[set[str], list[str]]`: entity ids a `script.*`/`scene.*` reaches (recursively through called scripts and scenes, devices and areas expanded to entities), and a list of unreadable reasons (empty when fully read). Cached 300 s keyed by entity id.
   - `control_scripts.unreadable_scripts() -> list[dict]` each `{'entity_id', 'name', 'reason'}`, for the settings page.
   - `control_rules.targets(data: dict) -> set[str]`: entity ids named by a service call's `entity_id` (str or list), `device_id`, `area_id` (expanded through `ha_api.get_entity_registry()` / `get_device_registry()` / `get_area_map()`).
-  - `control_rules.kinds_for(entity_ids: Iterable[str]) -> tuple[str, ...]`: each id's kind; a script/scene contributes the kinds of what it touches, plus `'alarm'` when any reason is unreadable (the spec's "strictest kind").
+  - `control_rules.kinds_for(entity_ids: Iterable[str]) -> tuple[str, ...]`: each id's kind; a script/scene contributes the kinds of what it touches, plus EVERY kind in `KINDS` when any reason is unreadable (the spec's "strictest": it must pass every kind).
   - `control_rules.check(who: Who, entity_ids: Iterable[str], settings: dict | None = None) -> Decision`: `decide(who, kinds_for(ids), rules(settings))`; never raises (any exception refuses with `'Home Assistant could not answer that request.'`).
 
-Script reading: scene → its state's `attributes.entity_id`. Script → `ha_api.ws_command('search/related', item_type='script', item_id=<object id>)`; take `entity`, `device`, `area`, `script`, `scene` keys. Unreadable when: `ha_api.ws_command` returns None; the script config (`ha_api.ws_command('script/config', entity_id=...)`, or REST `config/script/config/<id>` when the websocket command is unavailable) contains a `{{` template in any `target`/`entity_id`/`device_id`/`area_id`, or an action whose service domain is in `('rest_command', 'shell_command', 'pyscript', 'python_script', 'hassio')` or is not a domain HA lists for any entity. Actions in `('delay', 'wait_template', 'wait_for_trigger', 'notify', 'tts', 'persistent_notification', 'conversation', 'logbook', 'system_log', 'stop', 'variables', 'condition')` are ignored. Following automations triggered by touched entities is out (spec leaves it to the builder; not doing it, and Task 6's page says so).
+Script reading: scene → its state's `attributes.entity_id`. Script → `ha_api.ws_command('search/related', item_type='script', item_id=<FULL entity id, e.g. 'script.goodnight'>)`, unioned with the targets read from the script's own config; an existing script whose config has device-capable actions but whose search and config yield no targets is unreadable; take `entity`, `device`, `area`, `script`, `scene` keys. Unreadable when: `ha_api.ws_command` returns None; the script config (`ha_api.ws_command('script/config', entity_id=...)`, or REST `config/script/config/<id>` when the websocket command is unavailable) contains a `{{` template in any `target`/`entity_id`/`device_id`/`area_id`, or an action whose service domain is in `('rest_command', 'shell_command', 'pyscript', 'python_script', 'hassio', 'conversation')` or is not a domain HA lists for any entity. Actions in `('delay', 'wait_template', 'wait_for_trigger', 'notify', 'tts', 'persistent_notification', 'logbook', 'system_log', 'stop', 'variables', 'condition')` are ignored. Following automations triggered by touched entities is out (spec leaves it to the builder; not doing it, and Task 6's page says so).
 
 - [ ] **Step 1: Write the failing tests** (stub `ha_api.ws_command`, `get_states`, registries the way `tests/test_house_tool.py` stubs `ha_api`):
   - `test_scene_reads_entity_list`: scene with `entity_id: ['light.a', 'lock.front']` → `touched` = both, no reasons; `kinds_for(['scene.night'])` contains `'locks'` and `'lights'`.
@@ -114,6 +114,9 @@ Script reading: scene → its state's `attributes.entity_id`. Script → `ha_api
   - `test_script_calls_script`: script A relates to script B, B relates to `lock.front` → A's kinds include `'locks'`; a cycle A↔B terminates.
   - `test_template_target_unreadable`: config action target `{'entity_id': '{{ states(\"input_text.x\") }}'}` → reason mentions "template"; `kinds_for` includes `'alarm'`.
   - `test_rest_command_unreadable`: action `service: rest_command.open_gate` → reason names `rest_command`.
+  - `test_conversation_process_unreadable`: a script whose only action is `conversation.process` → unreadable, kinds = every kind.
+  - `test_unreadable_is_every_kind`: a grid where children may use Alarm but not Locks → a child running an unreadable script is refused.
+  - `test_search_uses_full_entity_id`: the stubbed `ws_command` records its arguments; `item_id == 'script.goodnight'`. A stub that answers an empty result for an existing script with a `lock.unlock` action in its config still yields `'locks'` (config targets unioned).
   - `test_harmless_actions_ignored`: script with only `delay` and `notify.mobile` plus `light.turn_on` → no reasons, kinds `('lights',)`.
   - `test_no_ha`: `ws_command` returns None and `get_states` returns [] → `touched` returns `(set(), ['Home Assistant could not be read'])`, `check()` does not raise and refuses a child on that script.
   - `test_targets_area_and_list`: `targets({'area_id': 'kitchen'})` expands; `targets({'entity_id': ['light.a', 'lock.front']})` returns both; `check(child, targets(...))` refuses.
@@ -147,7 +150,7 @@ Expected: ImportError on `services.control_scripts`.
     - valid `x-control-grant` (consumed here: one request, one action) → that member's role, `proven=True`;
     - member token whose token row has `house_session` → `Who(place='panel', ...)`;
     - member token arriving WITH a valid device token (a person at a panel) → `Who(place='panel', ...)` (Review Focus 2: only a grant proves on a panel);
-    - member token alone → member role, `proven=True`;
+    - member token alone → member role, `proven=True` ONLY when the token row says it was minted on a personal device with a password or PIN (`proof in ('password', 'pin')` and `minted_on != 'panel'`); any other member token (minted on a panel, or `proof == 'none'`) → `place='panel'` (Codex review: a dropped device header must not upgrade a panel token);
     - device token alone → `place='panel'`;
     - admin ingress (whatever `auth.identify` returns for the admin page with no member) → `admin=True`;
     - anything else → `place='panel'` (most restrictive non-person).
@@ -156,6 +159,7 @@ Expected: ImportError on `services.control_scripts`.
     - `access.is_house(acting_member)` (panel chat, HOUSE or HOUSE_PARENT) → `place='panel'`;
     - `acting_member is None and source == 'admin'` → `admin=True`;
     - real member → role, proven.
+  - Token provenance: `storage.create_member_token(member_id, house_session=False, proof='none', minted_on='personal')` records both on the row. Every existing caller passes the truth: password sign-in `proof='password'`; `/api/members/{id}/auth` `proof='pin'`, or `'none'` when the member has no PIN; `minted_on='panel'` when that request carried a valid panel device token. Legacy rows with neither field: treat as `proof='password', minted_on='personal'` (ruling: before this change only personal sign-ins were long-lived; costs a stale avatar-step token counting as proof until it expires).
   - `mint_grant(member_id: str, device_id: str) -> str`; `consume_grant(token: str, device_id: str) -> dict | None` (member row or None; single use; 60 s; bound to device).
   - `hold(tool: str, args: dict) -> str` and `take_held(held_id: str) -> dict | None` (120 s, single use).
   - Routes:
@@ -170,7 +174,9 @@ Expected: ImportError on `services.control_scripts`.
   - `test_grant_expires`: monkeypatch time +61 s → not proven.
   - `test_member_token_on_panel_is_panel`: avatar-style member token plus panel device token → `place == 'panel'` (Review Focus 2).
   - `test_house_session_is_panel`: token minted with `create_member_token(id, house_session=True)` → `place == 'panel'`.
-  - `test_phone_member_is_proven`: member token alone → role, proven.
+  - `test_phone_member_is_proven`: member token minted by password sign-in, alone → role, proven.
+  - `test_panel_token_without_header`: a token minted through `/api/members/{id}/auth` while carrying the panel device token, then presented WITHOUT the device header → `place == 'panel'`.
+  - `test_pinless_token_not_proof`: a PIN-less member's `/auth` token → `place == 'panel'`.
   - `test_who_from_agent_voice`: verified ctx → proven; fingerprint-recognised ctx → unproven; named by claim (`level='named'`, `recognized_this_turn=False`) → unknown_voice; unpaired → `voice_id False`.
   - `test_held_runs_once`: `hold('house', {...lock args...})` then POST held with a parent grant → the stubbed `house.house` receives `acting_member` = that parent; a second POST → 404.
 
@@ -188,16 +194,16 @@ Run: `python tests/test_control_identity.py`
 ### Task 4: Every HTTP control endpoint obeys
 
 **Files:**
-- Modify: `chauffeur/main.py`: `ha_toggle` (`/api/ha/toggle`, ~1742), `/api/ha/card/climate` (~11383), `ha_card_service` (`/api/ha/card/service`, ~11432), `/api/ha/media_players/{entity_id}/command` (~12047), `/api/music/queue/command` (~12137), `/api/music/play` (~12284). Each gains `request: Request`.
+- Modify: `chauffeur/main.py`: the Sendspin websocket (`/api/sendspin/ws`, ~14460-14530: authorize client command frames as `media` per frame against current rules; stream and read traffic untouched), `ha_toggle` (`/api/ha/toggle`, ~1742), `/api/ha/card/climate` (~11383), `ha_card_service` (`/api/ha/card/service`, ~11432), `/api/ha/media_players/{entity_id}/command` (~12047), `/api/music/queue/command` (~12137), `/api/music/play` (~12284). Each gains `request: Request`.
 - Modify: `chauffeur/services/home_board.py:3273-3306` (retire `HA_TOGGLE_DOMAINS`/`HA_UNSAFE_DOMAINS`/`toggle_domains` as the gate; the tile's `toggleable` at ~3559 asks the rulebook), `chauffeur/services/ha_card_convert.py:90-99, 256` (same).
 - Modify: `chauffeur/tests/test_board_ha_tiles.py` (assertions at ~151, ~166, ~341 that pin the old allowlist are rewritten to the grid; the spec supersedes them).
 - Test: `chauffeur/tests/test_control_endpoints.py`
 
 **Interfaces:**
 - Consumes: Task 3 `who_from_request` and the refusal shape; Task 2 `check`, `targets`; Task 1 `NEVER_DOMAINS`.
-- Produces: `control_rules.guard(request, entity_ids) -> None` raising `HTTPException(403, detail=...)` per Task 3's shape; `control_rules.offered(who: Who, entity_id: str) -> bool` (true when `check` is allowed or `needs` is set) for tiles.
+- Produces: `control_rules.check` also applies the effective member's scope (`media` needs the `music` facet; reuse the scope helper the auth middleware uses, for `who.member_id`), so grants, held actions and the facet-less card route are covered; `control_rules.guard(request, entity_ids) -> None` raising `HTTPException(403, detail=...)` per Task 3's shape; `control_rules.offered(who: Who, entity_id: str) -> bool` (true when `check` is allowed or `needs` is set) for tiles.
 
-`ha_card_service`: refuse `NEVER_DOMAINS` first (400, unchanged wording style), keep the climate clamping, then `guard(request, targets(data) or {data.get('entity_id')})`. A service call that names no target at all is refused (400 `'Name the device this card controls.'`). Music `/api/music/play` and queue command guard the target player as `media`.
+`ha_card_service`: refuse `NEVER_DOMAINS` first (400, unchanged wording style), keep the climate clamping, then `guard(request, control_rules.call_targets(domain, service, data))`. `call_targets(domain: str, service: str, data: dict) -> set[str]` = `targets(data)`, plus `script.<service>` when `domain == 'script'` and the service is not `turn_on`/`turn_off`/`toggle` (a named script call's payload is its variables, not its target; Codex review). A service call that names no target at all is refused (400 `'Name the device this card controls.'`). Music `/api/music/play` and queue command guard the target player as `media`.
 
 Tiles: `toggleable` = `offered(who_from_request(...), entity_id)` where the board endpoint has the request; where it does not, the panel `Who`. The browser's own switch stays cosmetic; the server decides.
 
@@ -207,6 +213,9 @@ Tiles: `toggleable` = `offered(who_from_request(...), entity_id)` where the boar
   - `test_toggle_phone_child_lock`: child member token on `lock.front`, switch on → 403 (approved migration change 3).
   - `test_toggle_phone_parent_lock`: parent member token, switch off → 200 (widening).
   - `test_card_service_list_with_lock`: panel, `{'entity_id': ['light.a', 'lock.front']}` → 403 (Review Focus 1); `{'area_id': 'kitchen'}` where kitchen holds a lock → 403.
+  - `test_named_script_forged_payload`: child token posts `domain='script', service='open_garage', data={'entity_id': 'light.a'}` where `script.open_garage` touches `cover.garage_door` → 403.
+  - `test_sendspin_command_frames`: over a TestClient websocket to `/api/sendspin/ws` with the MA upstream stubbed, a playback/volume command frame from a requester whose media cell is `'no'` (or with control switched off) is dropped, not forwarded; stream/read frames still pass; changing the rules mid-connection takes effect on the next frame.
+  - `test_media_scope_every_lane`: one guest with music scope none and grid media `'yes'` is refused on `/api/ha/card/service` (media_player), `/api/ha/media_players/.../command`, `/api/music/play`, and via a panel grant.
   - `test_card_service_never_domains`: `homeassistant.restart`, `hassio.addon_stop`, `automation.turn_off` → 400 for a parent token too.
   - `test_card_service_no_target`: `light.turn_on` with no target → 400.
   - `test_climate_and_media_guarded`: child token with `climate` set to `'no'` in a stored grid → `/api/ha/card/climate` 403; panel with media `'no'` → `/api/ha/media_players/media_player.k/command` 403.
@@ -229,7 +238,7 @@ Run: `python tests/test_control_endpoints.py`
 ### Task 5: Argyle obeys (house tool, TV apps, music tool, voice)
 
 **Files:**
-- Modify: `chauffeur/services/house.py:892-962` (`_trusted` goes; `house()` act and `open_app` call `control_rules.check(who_from_agent(...), ids)`)
+- Modify: `chauffeur/services/house.py:892-962` (`_trusted` STAYS for the private child-location read at ~528, unchanged; only its device-control use at ~962 is replaced: `house()` act and `open_app` call `control_rules.check(who_from_agent(...), ids)`) and `chauffeur/services/voice_tools.py` (its `house` dispatch path must reach the same check)
 - Modify: `chauffeur/services/music_tool.py:165-250` (play/pause/volume guard the resolved player as `media`)
 - Modify: `chauffeur/services/agent_tools_v2.py:1383-1400, 9660-9665` (thread `voice_context` and `source` into both tools if the handler drops them today; confirm against the router's dispatch)
 - Modify: `chauffeur/services/agent_router.py` (a tool result carrying `control_held` is surfaced on the router's return dict under `control_held`)
@@ -246,6 +255,8 @@ Voice messages: `needs == 'pin'` → `'Say your PIN first, then ask again.'`; un
 Scripts through Argyle: `house` act on `script.*`/`scene.*` checks `kinds_for` like any entity.
 
 - [ ] **Step 1: Write the failing tests** (pattern of `tests/test_house_tool.py`: stubbed `ha_api`, real `services.house`, real tool entry point):
+  - `test_private_location_unchanged`: the existing private child-location assertions in `tests/test_house_tool.py` (~884-903) pass untouched.
+  - `test_panel_chat_blinds_kept`: `acting_member=access.HOUSE`, switch off, `cover.office_shade` (shade) and `valve.sprinkler` → allowed (migration keeps them).
   - `test_panel_chat_lock_defaults`: `acting_member=access.HOUSE` unlocking `lock.front`, switch off → refused, `needs is None`; switch on → refused with `needs == 'identify'` and a `control_held` id.
   - `test_held_unlock_runs_as_parent`: POST `/api/ha/control/held/{id}` with a parent grant → `lock.unlock` called once.
   - `test_voice_recognised_parent`: ctx `level='named'`, `recognized_this_turn=True`, parent → light allowed; lock refused with `needs == 'pin'` and the PIN sentence.
