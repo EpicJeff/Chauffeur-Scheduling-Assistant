@@ -436,7 +436,7 @@ class _Validator:
         return out
 
 
-def _parse_draft(kind, answer, v):
+def _parse_draft(kind, answer, v, context=None):
     """Check world-coordinate shapes; settling/normalize owns geometric gates.
 
     Partial level/roof reads may reference pieces in the settled context, so
@@ -578,6 +578,23 @@ def _parse_draft(kind, answer, v):
         return out
 
     if kind == 'roof_check':
+        def additions(value, path):
+            if context is None or not isinstance(value, list):
+                return v.items(value, path, section)
+            known = {s['id'] for s in context.get('sections', [])}
+            parsed, dropped = [], set()
+            for i, item in enumerate(value):
+                checked = section(item, f'{path}[{i}]')
+                parsed.append(checked)
+                if checked is None:
+                    dropped.add(i)
+                elif checked['id'] in known:
+                    v.bad(f'{path}[{i}]', f'duplicate section id {checked["id"]!r}')
+                    dropped.add(i)
+                else:
+                    known.add(checked['id'])
+            return [s for i, s in enumerate(parsed) if i not in dropped]
+
         def change(value, path):
             if v.object(value, path) is None:
                 return None
@@ -593,7 +610,7 @@ def _parse_draft(kind, answer, v):
 
         return v.fields(answer, kind, {
             'changes': lambda x, p: v.items(x, p, change),
-            'add': lambda x, p: v.items(x, p, section),
+            'add': additions,
             'remove': lambda x, p: v.items(x, p, v.text)}, {
             'notes': lambda x, p: v.items(x, p, v.text)}) or {}
 
@@ -653,7 +670,7 @@ def parse(kind, answer, context=None):
     if v.object(answer, kind) is None:
         return {}, v.problems
     if kind in THINKING:
-        fragment = _parse_draft(kind, answer, v)
+        fragment = _parse_draft(kind, answer, v, context)
         if kind == 'roof_check' and context is not None:
             known = {s['id'] for s in context.get('sections', [])}
             for key in ('changes', 'remove'):
@@ -666,13 +683,6 @@ def parse(kind, answer, context=None):
                         kept.append(item)
                 if key in fragment:
                     fragment[key] = kept
-            for i, item in enumerate(fragment.get('add', [])):
-                if item['id'] in known:
-                    v.bad(f'roof_check.add[{i}]', f'duplicate section id {item["id"]!r}')
-                else:
-                    known.add(item['id'])
-            fragment['add'] = [s for i, s in enumerate(fragment.get('add', []))
-                               if not any(p.startswith(f'roof_check.add[{i}]:') for p in v.problems)]
         return fragment, v.problems
 
     positive = lambda value, path: v.numeric(value, path, positive=True)

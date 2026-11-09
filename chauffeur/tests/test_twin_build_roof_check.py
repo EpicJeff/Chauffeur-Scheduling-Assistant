@@ -40,6 +40,7 @@ import sys
 import tempfile
 import time
 import traceback
+from unittest.mock import patch
 
 # Always a scratch data dir (the engine harness wipes its data dir); keep one
 # an importing test module already made.
@@ -51,6 +52,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from services import twin_build as tb  # noqa: E402
 from services import twin_edit  # noqa: E402
 from services import twin_store as ts  # noqa: E402
+from services import twin_cost as tc, twin_reads  # noqa: E402
 import test_twin_build as engine_tests  # noqa: E402
 from test_twin_build import Reader, _accept_all, _pdf, check  # noqa: E402
 
@@ -407,12 +409,134 @@ def test_roof_check_failure_keeps_roof():
         _roof_as_read(_house(), name)
 
 
+def test_add_after_invalid_original_index():
+    answer = {'changes': [], 'add': ['junk', copy.deepcopy(DORMER)], 'remove': []}
+    before = copy.deepcopy(answer)
+    fragment, problems = twin_reads.parse('roof_check', answer, {'sections': [{'id': 'r_main'}]})
+    check(fragment.get('add') == [DORMER], ('a valid dormer after junk survives', fragment, problems))
+    check(any(p.startswith('roof_check.add[0]:') for p in problems), problems)
+    check(twin_reads._usable('roof_check', fragment, problems), ('the remaining dormer is usable', problems))
+    check(answer == before, 'parsing never mutates the reply')
+    # Duplicates also refer to original indices after earlier invalid entries.
+    other = {**copy.deepcopy(DORMER), 'id': 'r_other'}
+    answer['add'] += [copy.deepcopy(DORMER), {**DORMER, 'id': 'r_main'}, other]
+    fragment, problems = twin_reads.parse('roof_check', answer, {'sections': [{'id': 'r_main'}]})
+    check(fragment.get('add') == [DORMER, other], (fragment, problems))
+    for i in (2, 3):
+        check(any(p.startswith(f'roof_check.add[{i}]:') and 'duplicate' in p for p in problems), problems)
+
+
+def test_failed_roof_check_logs_once_across_cached_settles():
+    _main_house()
+    reader = RoofReader(roof_answer={'error': 'The roof check timed out.'})
+    bid, _ = _build(reader)
+    build = tb._BUILDS[bid]
+    step = next(s for s in build['steps'] if s['kind'] == 'draft')
+    for _ in range(2):
+        result = json.loads(tb._cache_path(build, step).read_text(encoding='utf-8'))
+        with ts.LIFECYCLE, tb._LOCK:
+            tb._settle(build, step, result)
+    lines = [e for e in build['events'] if e['type'] == 'log' and e.get('text') == NOT_CHECKED]
+    check(len(lines) == 1, ('the same cached failure is logged once', lines))
+    check(reader.kinds.count('roof_check') == 1, 'settling a cached result never rereads')
+    _roof_as_read(_house(), 'repeated settles')
+    tb.reread(bid, 'draft', reader=reader, inline=True)
+    check(tb.status(bid)['state'] == 'done', tb.status(bid))
+    lines = [e for e in build['events'] if e['type'] == 'log' and e.get('text') == NOT_CHECKED]
+    check(len(lines) == 2 and reader.kinds.count('roof_check') == 2,
+          ('a fresh read logs its own failure once', lines, reader.kinds))
+
+
+def test_add_roof_when_draft_omits_roof():
+    _main_house()
+    reader = RoofReader(roof_answer={'changes': [], 'add': [copy.deepcopy(DORMER)], 'remove': []})
+    reader.draft['building'].pop('roof')
+    bid, _ = _build(reader)
+    house = _house()
+    dormer = _at(house, DORMER['rect'])
+    check(len(house['roof']['sections']) == 1 and len(dormer) == 1, ('the added roof survives', house['roof']))
+    check(dormer[0]['kind'] == 'gable' and dormer[0]['ridge'] == 'y'
+          and dormer[0].get('state') != 'ghost', dormer[0])
+    build = tb._BUILDS[bid]
+    step = next(s for s in build['steps'] if s['kind'] == 'draft')
+    result = json.loads(tb._cache_path(build, step).read_text(encoding='utf-8'))
+    check(result['fragment']['building']['roof']['sections'] == [DORMER], result['fragment'])
+
+
+def test_roof_apply_exceptions_keep_original_draft():
+    for stage in ('migration', 'matching', 'validation'):
+        _main_house()
+        if stage == 'matching':
+            _build(RoofReader())
+            main = _at(_house(), recorded_sections()['r_main']['rect'])[0]
+            twin_edit.save({'op': 'set', 'building': 'house', 'piece': main['id'],
+                            'field': 'pitch', 'value': 6}, 'p1')
+        reader = RoofReader(CORRECTIONS)
+        target = {'migration': '_migrate_crop_draft', 'matching': '_matches', 'validation': 'parse'}[stage]
+        owner = twin_reads if stage == 'validation' else tb
+        real = getattr(owner, target)
+        calls = []
+
+        def fail_apply(*args, **kwargs):
+            # Matching also runs during preview; fail only inside the roof check.
+            import inspect
+            applying = any(frame.function == '_read_roof_check' for frame in inspect.stack())
+            if applying and not calls and (stage != 'validation' or args[0] == 'draft_level'):
+                calls.append(stage)
+                raise RuntimeError('roof correction application failed')
+            return real(*args, **kwargs)
+
+        with patch.object(owner, target, side_effect=fail_apply):
+            _, st = _build(reader)
+        check(calls == [stage], ('the apply failure was exercised', stage, calls))
+        check(not _trouble(st), (stage, 'no question or error', _trouble(st)))
+        check(sum(e['type'] == 'log' and e.get('text') == NOT_CHECKED for e in st['events']) == 1,
+              (stage, st['events']))
+        check(_order(reader) == ['draft', 'roof_check', 'draft_rooms'], (stage, reader.kinds))
+        _roof_as_read(_house(), stage)
+
+
+def test_no_roof_images_skips_read_and_cost():
+    engine_tests._fresh()
+    source = ts.save_source('drawing', 'floors.pdf', _pdf(2))
+    ts.set_page_roles([
+        {'source': source, 'page': i, 'role': 'floor', 'level': name, 'box': None, 'building': 'house'}
+        for i, name in ((1, 'Main floor'), (2, 'Second floor'))])
+    reader = RoofReader(CORRECTIONS)
+    checks = []
+    real = tc.require_clear
+
+    def checkpoint():
+        build = next(iter(tb._BUILDS.values()))
+        stages = [e['step'] for e in build['events'] if e['type'] == 'stage']
+        checks.append(stages[-1])
+        return real()
+
+    with patch.object(tc, 'require_clear', side_effect=checkpoint):
+        bid, st = _build(reader)
+    check(_order(reader) == ['draft', 'draft_rooms'], ('no image-less paid read', reader.kinds))
+    check(checks.count('draft') == 1, ('no roof-check spend checkpoint', checks))
+    step = next(s for s in st['steps'] if s['kind'] == 'draft')
+    check(step['estimate'] == tc.estimate('draft', 2) + tc.estimate('outline', 1), step)
+    check(sum(e['type'] == 'log' and e.get('text') == NOT_CHECKED for e in st['events']) == 1, st['events'])
+    check(tc.entries() == [], 'stub reads and a skipped roof check incur no cost')
+    _roof_as_read(_house(), 'no roof images')
+    build = tb._BUILDS[bid]
+    result = json.loads(tb._cache_path(build, step).read_text(encoding='utf-8'))
+    check(result['roof_check']['error'] is not None and not result.get('roof_check_pending'), result)
+
+
 TESTS = (
     test_corrections_settle_hip_and_dormer,
     test_roof_check_between_draft_and_rooms,
     test_roof_check_heartbeat,
     test_person_edited_section_left_alone,
     test_roof_check_failure_keeps_roof,
+    test_add_after_invalid_original_index,
+    test_failed_roof_check_logs_once_across_cached_settles,
+    test_add_roof_when_draft_omits_roof,
+    test_roof_apply_exceptions_keep_original_draft,
+    test_no_roof_images_skips_read_and_cost,
 )
 
 

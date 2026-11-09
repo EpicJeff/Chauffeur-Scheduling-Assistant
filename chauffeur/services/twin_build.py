@@ -1591,6 +1591,11 @@ def _read_roof_check(build, step, reader, ticket, result, images):
     read_images = [images[i] for i in indices]
     read_context['pages'] = [{**deepcopy(p), 'image': indices.index(p['image'])}
                              for p in context['pages'] if p['image'] in indices]
+    if not read_images:
+        result.pop('roof_check_pending', None)
+        result['roof_check'] = {'context': read_context, 'reply': None, 'fragment': {},
+                                'problems': [], 'error': 'No roof check images.'}
+        return _cache_result(build, step, ticket, result)
     # Retain the draft across a checkpoint before this additional paid read.
     result['roof_check_pending'] = True
     if _cache_result(build, step, ticket, result) is None:
@@ -1625,30 +1630,35 @@ def _read_roof_check(build, step, reader, ticket, result, images):
                 or _BUILDS.get(build['id']) is not build
                 or _WORKERS.get(build['id'], {}).get('ticket') != ticket):
             return None
-        house = _house(_base(twin_store.current(), build), build)
-        # Compare in the incoming frame even on the first migration from crops.
-        # This is a private copy; publication still owns the actual migration.
-        _migrate_crop_draft(house, draft, step, [], [])
-        protected = {s['id'] for s in sections if any(
-            p.get('src', {}).get('person') and (
-                _matches(s, p, 'roof', house) or _matches(s, p, 'roof', house, original=True))
-            for p in house['roof']['sections'])}
-        changes = {c['id']: c for c in fragment.get('changes', [])}
-        removed = set(fragment.get('remove', [])) - protected
-        corrected = []
-        for section in sections:
-            if section['id'] in removed:
-                continue
-            candidate = {**section, **changes.get(section['id'], {})} if section['id'] not in protected else section
-            # A partial change must still describe a complete, usable section.
-            checked, issues = twin_reads.parse('draft_level', {'building': {'roof': {'sections': [candidate]}}})
-            if checked.get('building', {}).get('roof', {}).get('sections'):
-                corrected.append(candidate)
-            else:
-                corrected.append(section)
-                problems.extend(issues)
-        if 'roof' in draft:
-            draft['roof']['sections'] = corrected + deepcopy(fragment.get('add', []))
+        if failure is None:
+            try:
+                house = _house(_base(twin_store.current(), build), build)
+                # Compare in the incoming frame even on the first migration from crops.
+                # This is a private copy; publication still owns the actual migration.
+                _migrate_crop_draft(house, draft, step, [], [])
+                protected = {s['id'] for s in sections if any(
+                    p.get('src', {}).get('person') and (
+                        _matches(s, p, 'roof', house) or _matches(s, p, 'roof', house, original=True))
+                    for p in house['roof']['sections'])}
+                changes = {c['id']: c for c in fragment.get('changes', [])}
+                removed = set(fragment.get('remove', [])) - protected
+                corrected = []
+                for section in sections:
+                    if section['id'] in removed:
+                        continue
+                    candidate = {**section, **changes.get(section['id'], {})} if section['id'] not in protected else section
+                    # A partial change must still describe a complete, usable section.
+                    checked, issues = twin_reads.parse('draft_level', {'building': {'roof': {'sections': [candidate]}}})
+                    if checked.get('building', {}).get('roof', {}).get('sections'):
+                        corrected.append(candidate)
+                    else:
+                        corrected.append(section)
+                        problems.extend(issues)
+                draft.setdefault('roof', {}).setdefault('sections', [])
+                draft['roof']['sections'] = corrected + deepcopy(fragment.get('add', []))
+            except Exception as exc:
+                failure = str(exc)
+                fragment = {}
         result.pop('roof_check_pending', None)
         result['roof_check'] = {'context': read_context, 'reply': raw, 'fragment': fragment,
                                 'problems': problems, 'error': failure}
@@ -1691,7 +1701,7 @@ def _obtain(build, step, reader, ticket):
                 roof_images = sum(p['role'] in ('roof', 'elevation') for p in context['pages'])
                 roof_images += len(images) - len(context['pages'])
                 step['estimate'] = (twin_cost.estimate('draft', len(images)) + twin_cost.estimate('outline', 1)
-                                    + twin_cost.estimate('roof_check', roof_images))
+                                    + (twin_cost.estimate('roof_check', roof_images) if roof_images else 0))
                 _save(build)
         if progress is not None:
             raw = progress['whole_draft']['reply']
@@ -1931,9 +1941,12 @@ def _settle(build, step, result, decision=None):
     """Merge against the latest round while LIFECYCLE and the module lock are held."""
     fragment, crop = result['fragment'], result.get('crop')
     kind = step['kind']
-    if kind == 'draft' and result.get('roof_check', {}).get('error') is not None:
+    roof_check = result.get('roof_check', {})
+    if kind == 'draft' and roof_check.get('error') is not None and not roof_check.get('logged'):
         _event(build, 'log', step=step['id'],
                text='The roof could not be double-checked; it is shown as first read.')
+        roof_check['logged'] = True
+        _atomic(_cache_path(build, step), result)
     if kind == 'draft' and not fragment.get('building', {}).get('levels'):
         _pause_draft(build, step)
         return

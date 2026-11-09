@@ -677,7 +677,7 @@ def scenario_plot_routes():
             got = c.get('/api/house/editor/sheets', headers=PARENT)
             check(got.status_code == 200, got.text)
             draft, rooms = tc.estimate('draft', 1), tc.estimate('draft_rooms', 1)
-            roof_check = tc.estimate('roof_check', 0)
+            roof_check = 0
             check(got.json()['estimates'] == {'plot': tc.estimate('plot', 1), 'photos': tc.estimate('photo_parts', 1),
                   'build': {'house': {'draft': draft, 'draft_rooms': rooms, 'roof_check': roof_check,
                                       'total': draft + roof_check + rooms}}},
