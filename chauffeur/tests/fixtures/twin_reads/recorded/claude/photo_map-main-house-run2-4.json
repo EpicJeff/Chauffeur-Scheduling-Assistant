@@ -1,0 +1,37 @@
+{
+ "from_side": "rear",
+ "blocks": [
+  {
+   "id": "E",
+   "sides": [
+    "rear",
+    "left"
+   ]
+  },
+  {
+   "id": "G",
+   "sides": [
+    "rear"
+   ]
+  },
+  {
+   "id": "H",
+   "sides": [
+    "rear"
+   ]
+  },
+  {
+   "id": "A",
+   "sides": [
+    "rear"
+   ]
+  },
+  {
+   "id": "B",
+   "sides": [
+    "rear",
+    "left"
+   ]
+  }
+ ]
+}

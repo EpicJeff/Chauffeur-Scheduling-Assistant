@@ -1,0 +1,31 @@
+{
+ "from_side": "front-right",
+ "blocks": [
+  {
+   "id": "A",
+   "sides": [
+    "front"
+   ]
+  },
+  {
+   "id": "D",
+   "sides": [
+    "front",
+    "right"
+   ]
+  },
+  {
+   "id": "C",
+   "sides": [
+    "right"
+   ]
+  },
+  {
+   "id": "F",
+   "sides": [
+    "front",
+    "right"
+   ]
+  }
+ ]
+}

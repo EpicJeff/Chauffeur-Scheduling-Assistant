@@ -1,0 +1,165 @@
+{
+ "blocks": {
+  "A": {
+   "sides": {
+    "front": {
+     "kind": "dormer",
+     "centre": 29,
+     "width": 15,
+     "photo": 0
+    },
+    "rear": {
+     "kind": "slope",
+     "photo": 3
+    },
+    "left": {
+     "kind": "gable_end",
+     "photo": 2
+    },
+    "right": {
+     "kind": "hidden"
+    }
+   },
+   "pitch": 9,
+   "slope_vs_neighbours": "same"
+  },
+  "B": {
+   "sides": {
+    "front": {
+     "kind": "slope",
+     "photo": 0
+    },
+    "rear": {
+     "kind": "hidden"
+    },
+    "left": {
+     "kind": "hidden"
+    },
+    "right": {
+     "kind": "hidden"
+    }
+   },
+   "pitch": 6,
+   "slope_vs_neighbours": "lower"
+  },
+  "C": {
+   "sides": {
+    "front": {
+     "kind": "slope",
+     "photo": 2
+    },
+    "rear": {
+     "kind": "hidden"
+    },
+    "left": {
+     "kind": "hidden"
+    },
+    "right": {
+     "kind": "gable_end",
+     "photo": 1
+    }
+   },
+   "pitch": 10,
+   "slope_vs_neighbours": "same"
+  },
+  "D": {
+   "sides": {
+    "front": {
+     "kind": "gable_end",
+     "photo": 0
+    },
+    "rear": {
+     "kind": "hidden"
+    },
+    "left": {
+     "kind": "slope",
+     "photo": 2
+    },
+    "right": {
+     "kind": "slope",
+     "photo": 1
+    }
+   },
+   "pitch": 10,
+   "slope_vs_neighbours": "same"
+  },
+  "E": {
+   "sides": {
+    "front": {
+     "kind": "hidden"
+    },
+    "rear": {
+     "kind": "gable_end",
+     "photo": 3
+    },
+    "left": {
+     "kind": "slope",
+     "photo": 3
+    },
+    "right": {
+     "kind": "hidden"
+    }
+   },
+   "pitch": 8,
+   "slope_vs_neighbours": "lower"
+  },
+  "F": {
+   "sides": {
+    "front": {
+     "kind": "slope",
+     "photo": 1
+    },
+    "rear": {
+     "kind": "hidden"
+    },
+    "left": {
+     "kind": "hidden"
+    },
+    "right": {
+     "kind": "gable_end",
+     "photo": 1
+    }
+   },
+   "pitch": 6,
+   "slope_vs_neighbours": "lower"
+  },
+  "G": {
+   "sides": {
+    "front": {
+     "kind": "hidden"
+    },
+    "rear": {
+     "kind": "gable_end",
+     "photo": 3
+    },
+    "left": {
+     "kind": "hidden"
+    },
+    "right": {
+     "kind": "hidden"
+    }
+   },
+   "pitch": 6,
+   "slope_vs_neighbours": "lower"
+  },
+  "H": {
+   "sides": {
+    "front": {
+     "kind": "hidden"
+    },
+    "rear": {
+     "kind": "gable_end",
+     "photo": 3
+    },
+    "left": {
+     "kind": "hidden"
+    },
+    "right": {
+     "kind": "hidden"
+    }
+   },
+   "pitch": 6,
+   "slope_vs_neighbours": "lower"
+  }
+ }
+}
