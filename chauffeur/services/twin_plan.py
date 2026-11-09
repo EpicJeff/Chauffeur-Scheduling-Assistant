@@ -81,7 +81,7 @@ def _lookup(items, key):
 def _piece_meta(items, kind, notes):
     """Reserve supplied identities before silently filling gaps, per kind."""
     def valid_id(value):
-        return isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_.:-]{1,64}', value)
+        return isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_.:~-]{1,64}', value)
 
     pieces = [item for item in items if isinstance(item, dict)]
     reserved = {item['id'] for item in pieces if valid_id(item.get('id'))}
@@ -171,7 +171,9 @@ def _walls(building, levels, notes):
         else:
             wall.setdefault('exterior', False)
             wall.setdefault('thickness', 0.5 if wall['exterior'] else 0.33)
-            if not _number(wall['thickness']) or wall['thickness'] <= 0:
+            if wall.get('kind') == 'separator':
+                wall['thickness'] = 0
+            elif not _number(wall['thickness']) or wall['thickness'] <= 0:
                 reason = 'invalid thickness'
         if reason:
             notes.append(f'Dropped wall {name}: {reason}.')
@@ -366,6 +368,15 @@ def _openings(building, walls, sections, notes):
             opening['sill'] = 0
             notes.append(f'Opening {index}: defaulted missing sill to 0 feet.')
         reason = _opening_error(opening, walls, sections)
+        if (reason in ('unknown wall', 'outside the wall span', 'head is above the wall height',
+                       'unknown gable (expected front or rear)', 'unknown gable section',
+                       'outside the roof gable span', 'head is above the clipped gable height')
+                and isinstance(opening, dict) and opening.get('state') == 'ghost'
+                and opening.get('why') and _point(opening.get('position'))
+                and any(f.get('piece') == opening.get('id')
+                        for f in building.get('flags', []) if isinstance(f, dict))):
+            # The connected bridge retains located failures for hand repair.
+            reason = None
         if (reason in ('unknown gable section', 'outside the roof gable span', 'head is above the clipped gable height')
                 and opening.get('state') == 'ghost' and opening.get('why')
                 and _point(opening.get('position'))):
@@ -514,6 +525,8 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
     Caps retain the first entries, with one aggregate note per truncated list.
     Gable coordinates use plan x; wall offsets and opening heights are local to
     the referenced wall, regardless of its level's elevation.
+    Connected-model extras (joints, footprints, faces, hosts, materials,
+    proposals and flags) remain on the copied records without filtering.
     """
     raw = deepcopy(raw)
     if not isinstance(raw, dict) or raw.get('units') != 'ft':

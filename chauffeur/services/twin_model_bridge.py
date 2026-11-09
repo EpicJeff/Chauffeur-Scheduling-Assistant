@@ -1,0 +1,505 @@
+"""Compatibility boundary between flat reads and the connected house model."""
+
+from copy import deepcopy
+import math
+
+from services import twin_model, twin_model_graph as graph
+from services import twin_model_hosts as hosts, twin_model_roofs as roofs, twin_plan
+
+
+_EPS = 1e-6
+_SEPARATOR = 'I added an invisible wall here to keep two rooms apart; check it.'
+_DORMER = 'This dormer lost its roof; place it again.'
+
+
+def _person(piece):
+    return piece.get('src', {}).get('person') is True
+
+
+def _segments(poly):
+    return zip(poly, poly[1:] + poly[:1])
+
+
+def _line(wall, joints):
+    return [joints[j] for j in wall['joints']]
+
+
+def _flat_wall(wall, joints):
+    return {**deepcopy(wall), 'from': list(joints[wall['joints'][0]]),
+            'to': list(joints[wall['joints'][1]])}
+
+
+def _near_wall(a, b):
+    return min(max(math.dist(a['from'], b['from']), math.dist(a['to'], b['to'])),
+               max(math.dist(a['from'], b['to']), math.dist(a['to'], b['from']))) < 1
+
+
+def _wall_overlap(a, b):
+    p, q = a['from'], a['to']
+    length = math.dist(p, q)
+    if length <= _EPS:
+        return False
+    direction = [(q[i] - p[i]) / length for i in (0, 1)]
+    ends = [b['from'], b['to']]
+    if any(abs((r[0] - p[0]) * direction[1] - (r[1] - p[1]) * direction[0]) >= 1
+           for r in ends):
+        return False
+    lo, hi = sorted(sum((r[i] - p[i]) * direction[i] for i in (0, 1)) for r in ends)
+    return min(length, hi) - max(0, lo) > length / 2
+
+
+def _proposal(building, kind, piece, against):
+    piece = deepcopy(piece)
+    piece['state'] = 'proposal'
+    proposal = {'kind': kind, 'against': against['id'], 'piece': piece}
+    if proposal not in building['proposals']:
+        building['proposals'].append(proposal)
+
+
+def _walls(building, incoming, previous):
+    old_joints = {j['id']: j['at'] for j in previous.get('joints', [])}
+    pinned = [_flat_wall(w, old_joints) for w in previous.get('walls', []) if _person(w)]
+    live = []
+    for wall in incoming:
+        same_level = [p for p in pinned if p['level'] == wall['level']]
+        if any(_near_wall(wall, p) for p in same_level):
+            continue
+        against = next((p for p in same_level if _wall_overlap(wall, p)), None)
+        if against is not None:
+            _proposal(building, 'wall', wall, against)
+        else:
+            live.append(wall)
+    return pinned + live
+
+
+def _coverage(a, b, walls, level):
+    """Intervals along a stored edge covered by the union of nearby walls."""
+    length = math.dist(a, b)
+    if length <= _EPS:
+        return []
+    d = [(b[i] - a[i]) / length for i in (0, 1)]
+    intervals = []
+    for wall in walls:
+        if wall['level'] != level or wall.get('state') == 'ghost':
+            continue
+        p, q = wall['from'], wall['to']
+        if any(abs((r[0] - a[0]) * d[1] - (r[1] - a[1]) * d[0]) > 1 for r in (p, q)):
+            continue
+        lo, hi = sorted(sum((r[i] - a[i]) * d[i] for i in (0, 1)) for r in (p, q))
+        if hi > 0 and lo < length:
+            intervals.append((max(0, lo), min(length, hi)))
+    uncovered, end = [], 0
+    for lo, hi in sorted(intervals):
+        if lo - end > _EPS:
+            uncovered.append((end, lo))
+        end = max(end, hi)
+    if length - end > _EPS:
+        uncovered.append((end, length))
+    # An end gap shorter than the weld tolerance is already within a foot of
+    # the covering segment. A wholly uncovered short edge still needs a wall.
+    return [(lo, hi) for lo, hi in uncovered
+            if hi - lo > _EPS and (hi - lo >= 1 or not intervals)]
+
+
+def _separators(building, walls, rooms, *, migration):
+    ids = {w['id'] for w in walls}
+    for room in rooms:
+        if not twin_plan._polygon(room.get('polygon')):
+            continue
+        for a, b in _segments(room['polygon']):
+            length = math.dist(a, b)
+            for lo, hi in _coverage(a, b, walls, room['level']):
+                ends = [[a[i] + (b[i] - a[i]) * t / length for i in (0, 1)] for t in (lo, hi)]
+                wid = f'separator-{len(ids) + 1}'
+                while wid in ids:
+                    wid += ':'
+                ids.add(wid)
+                wall = {'id': wid, 'level': room['level'], 'from': ends[0], 'to': ends[1],
+                        'kind': 'separator', 'thickness': 0, 'exterior': False,
+                        'height': next(l['ceiling'] for l in building['levels'] if l['id'] == room['level'])}
+                walls.append(wall)
+                if migration:
+                    neighbours = [r for r in rooms if r is not room and r['level'] == room['level']
+                                  and any(not _coverage(*ends, [{'level': room['level'], 'from': p, 'to': q}],
+                                                        room['level']) for p, q in _segments(r['polygon']))]
+                    names = [room.get('name', 'Room'), neighbours[0].get('name', 'Room') if neighbours else 'Room']
+                    text = (_SEPARATOR if 'Room' in names else
+                            f'I added an invisible wall here to keep the {names[0]} and the {names[1]} apart; check it.')
+                    building['flags'].append({'level': room['level'],
+                                              'at': [(p + q) / 2 for p, q in zip(*ends)],
+                                              'text': text, 'piece': wid})
+
+
+def _network(building, walls, previous):
+    """Weld per storey, reserving previous identities and all pinned positions."""
+    previous_joints = previous.get('joints', [])
+    pinned = {j for w in previous.get('walls', []) if _person(w) for j in w['joints']}
+    pinned.update(j['id'] for j in previous_joints if _person(j))
+    used = {j['id'] for j in previous_joints}
+    building['joints'], building['walls'] = [], []
+    counter = 0
+    for level in building['levels']:
+        lid = level['id']
+        group = [w for w in walls if w['level'] == lid]
+        points = [w[key] for w in group for key in ('from', 'to')]
+        # Separator ends on the interior of an existing wall need a T-joint,
+        # rather than a second, almost parallel room boundary.
+        for i, wall in enumerate(group):
+            if wall.get('kind') != 'separator':
+                continue
+            for k in (0, 1):
+                point = points[2 * i + k]
+                candidates = []
+                for other in group:
+                    if other is wall or other.get('kind') == 'separator':
+                        continue
+                    a, b = other['from'], other['to']
+                    length2 = sum((b[t] - a[t]) ** 2 for t in (0, 1))
+                    if length2 <= _EPS:
+                        continue
+                    at = max(0, min(1, sum((point[t] - a[t]) * (b[t] - a[t]) for t in (0, 1)) / length2))
+                    q = [a[t] + at * (b[t] - a[t]) for t in (0, 1)]
+                    if math.dist(point, q) < 1:
+                        candidates.append((math.dist(point, q), q))
+                if candidates:
+                    points[2 * i + k] = min(candidates)[1]
+            if math.dist(*points[2 * i:2 * i + 2]) <= _EPS:
+                points[2 * i:2 * i + 2] = [wall['from'], wall['to']]
+        positions, indices = graph.weld(points, separate=[(i, i + 1) for i in range(0, len(points), 2)])
+        ids, claimed = [], set()
+        for index, point in enumerate(positions):
+            members = [points[i] for i, owner in enumerate(indices) if owner == index]
+            candidates = [j for j in previous_joints if j.get('level') == lid and j['id'] not in claimed
+                          and any(math.dist(j['at'], p) < 1 for p in members)]
+            if candidates:
+                old = min(candidates, key=lambda j: (j['id'] not in pinned, math.dist(j['at'], point), j['id']))
+                jid, point = old['id'], list(old['at'])
+                claimed.add(jid)
+                joint = dict(deepcopy(old), at=point)
+                joint.pop('derived', None)
+            else:
+                counter += 1
+                jid = f'joint-{counter}'
+                while jid in used:
+                    counter += 1
+                    jid = f'joint-{counter}'
+                joint = {'id': jid, 'level': lid, 'at': point}
+            used.add(jid)
+            ids.append(jid)
+            building['joints'].append(joint)
+        for i, wall in enumerate(group):
+            piece = {k: deepcopy(v) for k, v in wall.items() if k not in ('from', 'to', 'footprint')}
+            piece['joints'] = [ids[indices[2 * i]], ids[indices[2 * i + 1]]]
+            piece.setdefault('kind', 'solid')
+            piece.setdefault('thickness', .5 if piece.get('exterior') else .33)
+            if piece['kind'] == 'separator':
+                piece['thickness'] = 0
+            building['walls'].append(piece)
+
+
+def _bearing_level(building, plate):
+    candidates = [l for l in building['levels']
+                  if l['elevation'] + .5 < plate <= l['elevation'] + l.get('ceiling', 9) + 2]
+    return max(candidates, key=lambda l: l['elevation'])['id'] if candidates else None
+
+
+def _roof_form(roof):
+    return [(s['rect'], s['kind'], s.get('ridge'), s.get('ends'), s.get('pitches'),
+             s['pitch'], s['plate'], s['overhang']) for s in roofs.to_sections(roof)]
+
+
+def _dormer_sections(dormer, parent):
+    edge = dormer.get('edge')
+    if (parent is None or type(edge) is not int or not 0 <= edge < len(parent['area'])
+            or not twin_plan._number(dormer.get('at'))
+            or not 0 <= dormer['at'] <= math.dist(parent['area'][edge], parent['area'][(edge + 1) % len(parent['area'])])):
+        return []
+    return roofs.dormer_sections(dormer, parent)
+
+
+def _roofs(building, flat_roof, previous, cached_dormers, notes):
+    pinned = [deepcopy(r) for r in previous.get('roofs', []) if _person(r)]
+    building['roofs'] = pinned
+    sections = flat_roof.get('sections', [])
+    for section in sections:
+        if section.get('dormer_of') or section.get('state') == 'proposal':
+            continue
+        roof = roofs.from_section(section)
+        roof.setdefault('overhang', 1)
+        if not roof.get('level'):
+            roof['level'] = _bearing_level(building, roof['plate'])
+        if any(all(abs(a - b) <= 1 for a, b in zip(section['rect'], c['rect']))
+               for c in flat_roof.get('choices', [])):
+            roof['src'] = {**roof.get('src', {}), 'person': True}
+        against = next((p for p in pinned if twin_model._overlap(p['area'], roof['area'])
+                        >= twin_model._area(roof['area']) * .5), None)
+        if against is not None:
+            if _roof_form(roof) != _roof_form(against):
+                _proposal(building, 'roof', roof, against)
+            continue
+        old = next((r for r in previous.get('roofs', []) if r['id'] == roof['id']), None)
+        if old is None:
+            roof = roofs.attach_edges(roof, building['walls'], building['joints'])
+        else:
+            # A detached edge stays detached through a flat build write (R23).
+            for edge, was in zip(roof['edges'], old['edges']):
+                for key in ('wall', 'wall_offset'):
+                    if key in was:
+                        edge[key] = was[key]
+        building['roofs'].append(roof)
+    building['dormers'] = [deepcopy(d) for d in previous.get('dormers', []) if _person(d)]
+    # A lost dormer has no drawable section, but its record still crosses the
+    # flat boundary so it can be placed again on a later save.
+    section_ids = {s['id'] for s in sections if s.get('dormer_of')}
+    building['dormers'].extend(deepcopy(d) for d in cached_dormers
+                               if d['id'] not in section_ids
+                               and not any(p['id'] == d['id'] for p in building['dormers']))
+    for section in sections:
+        if not section.get('dormer_of') or any(d['id'] == section['id'] for d in building['dormers']):
+            continue
+        target = section['dormer_of']
+        parent = next((r for r in building['roofs']
+                       if all(abs(a - b) <= _EPS for a, b in zip(twin_model._bounds(r['area']), target))), None)
+        if parent is not None:
+            try:
+                building['dormers'].append(roofs.dormer_from_section(section, parent))
+                continue
+            except ValueError:
+                pass
+        # Retain the complete failed read so placing it again loses no data.
+        building['dormers'].append(dict(deepcopy(section), state='ghost'))
+    by_id = {r['id']: r for r in building['roofs']}
+    for dormer in building['dormers']:
+        parent = by_id.get(dormer.get('roof'))
+        if _dormer_sections(dormer, parent):
+            continue
+        dormer['state'], dormer['why'] = 'ghost', _DORMER
+        at = twin_model._centroid(parent['area']) if parent else [0, 0]
+        flag = {'text': _DORMER, 'at': at, 'piece': dormer['id'],
+                'level': parent.get('level') if parent else dormer.get('level')}
+        if flag not in building['flags']:
+            building['flags'].append(flag)
+            notes.append(_DORMER)
+    for flag in flat_roof.get('flags', []):
+        x0, y0, x1, y1 = flag['block_rect']
+        converted = {'text': flag['text'], 'at': [(x0 + x1) / 2, (y0 + y1) / 2]}
+        if not any(f['text'] == converted['text'] and f['at'] == converted['at'] for f in building['flags']):
+            building['flags'].append(converted)
+
+
+def _openings(building, incoming, previous):
+    pinned = [deepcopy(o) for o in previous.get('openings', []) if _person(o)]
+    building['openings'] = pinned
+    roof_ids = {r['id']: r for r in building['roofs']}
+    for opening in incoming:
+        piece = deepcopy(opening)
+        if isinstance(piece.get('gable'), str):
+            roof = roof_ids.get(piece.get('section'))
+            if roof:
+                # Section ends run from the lower to the higher ridge coordinate.
+                axis = 0 if roof.get('ridge') == 'x' else 1
+                value = min(p[axis] for p in roof['area']) if piece['gable'] == 'front' else max(p[axis] for p in roof['area'])
+                edge = next(i for i, (a, b) in enumerate(_segments(roof['area']))
+                            if abs(a[axis] - value) < _EPS and abs(b[axis] - value) < _EPS)
+                a, b = list(_segments(roof['area']))[edge]
+                centre = piece.get('y' if axis == 0 else 'x', (a[1 - axis] + b[1 - axis]) / 2)
+                piece['at'] = abs(centre - a[1 - axis])
+                piece['gable'] = {'roof': roof['id'], 'edge': edge}
+            else:
+                piece['gable'] = {'roof': piece.get('section'), 'edge': 0}
+                piece.setdefault('at', 0)
+        def same_host(p):
+            return ((piece.get('wall') is not None and piece.get('wall') == p.get('wall'))
+                    or (piece.get('gable') is not None and piece.get('gable') == p.get('gable')))
+        if any(same_host(p) and abs(piece['at'] - p['at']) < 1 for p in pinned):
+            continue
+        against = next((p for p in pinned if same_host(p)
+                        and min(piece['at'] + piece['width'] / 2, p['at'] + p['width'] / 2)
+                        - max(piece['at'] - piece['width'] / 2, p['at'] - p['width'] / 2)
+                        > piece['width'] / 2), None)
+        if against is not None:
+            _proposal(building, 'opening', piece, against)
+        else:
+            building['openings'].append(piece)
+
+
+def _surface_host(building, point, level, kind):
+    for room in building['rooms']:
+        if room['level'] != level:
+            continue
+        # A tiny square also counts boundary points without another polygon API.
+        x, y = point
+        sample = [[x - _EPS, y - _EPS], [x + _EPS, y - _EPS],
+                  [x + _EPS, y + _EPS], [x - _EPS, y + _EPS]]
+        if twin_model._overlap(room['polygon'], sample) > 0:
+            x0, y0, x1, y1 = twin_model._bounds(room['polygon'])
+            return {kind: room['id'], 'u': (x - x0) / (x1 - x0), 'v': (y - y0) / (y1 - y0)}
+    return None
+
+
+def _details(building, flat, previous):
+    for name in ('anchors', 'items'):
+        pinned = [deepcopy(p) for p in previous.get(name, []) if _person(p)]
+        ids = {p['id'] for p in pinned}
+        building[name] = pinned + [deepcopy(p) for p in flat.get(name, []) if p.get('id') not in ids]
+    for name, target, surface in (('lights', 'anchors', 'ceiling'), ('fixtures', 'items', 'floor')):
+        for index, detail in enumerate(flat.get(name, [])):
+            piece = deepcopy(detail)
+            piece.setdefault('id', f'{name}-{index + 1}')
+            if any(p['id'] == piece['id'] for p in building[target]):
+                continue
+            if name == 'lights':
+                point = piece['at']
+                piece.update(kind='light', offset=0, device=None)
+            else:
+                x0, y0, x1, y1 = piece['rect']
+                point = [(x0 + x1) / 2, (y0 + y1) / 2]
+                piece.setdefault('asset', piece.get('kind', 'fixture'))
+                piece.setdefault('rotation', 0)
+                piece.setdefault('scale', piece.get('size', max(x1 - x0, y1 - y0)))
+            host = _surface_host(building, point, piece['level'], surface)
+            if host is not None:
+                piece['host'] = host
+            else:
+                piece.update(host={}, state='ghost', position=list(point))
+                text = f"This {piece.get('kind', piece.get('asset', 'item'))} lost its surface; place it again."
+                piece['why'] = text
+                building['flags'].append({'level': piece['level'], 'at': list(point),
+                                          'text': text, 'piece': piece['id']})
+            building[target].append(piece)
+
+
+def assemble(flat: dict, previous: dict | None = None) -> tuple[dict, list[str]]:
+    """Migrate a flat read, preserving person-owned pieces from the last model."""
+    flat = deepcopy(flat)
+    if flat.get('units') != 'ft':
+        raise ValueError('Twin plan units must be ft.')
+    notes = []
+    old_buildings = {b['id']: b for b in (previous or {}).get('buildings', [])}
+    for building in flat.get('buildings', []):
+        old = old_buildings.get(building['id'], {})
+        source = deepcopy(building)
+        building['proposals'] = deepcopy(old.get('proposals', source.get('proposals', [])))
+        building['flags'] = deepcopy(source.get('flags', old.get('flags', [])))
+        building['rooms'] = deepcopy(source.get('rooms', []))
+        for room in old.get('rooms', []):
+            if _person(room):
+                building['rooms'] = [r for r in building['rooms'] if r['id'] != room['id']] + [deepcopy(room)]
+        porches = deepcopy(twin_plan.porches(source))
+        building['porches_detail'] = porches
+        for index, porch in enumerate(porches):
+            porch.setdefault('id', f'porch-{index + 1}')
+            room = {k: deepcopy(v) for k, v in porch.items() if k in ('id', 'polygon', 'src', 'state')}
+            room.update(kind='porch', name=porch.get('name', 'Porch'),
+                        level=porch.get('level', building['levels'][0]['id']))
+            if not any(r['id'] == room['id'] for r in building['rooms']):
+                building['rooms'].append(room)
+        walls = _walls(building, source.get('walls', []), old)
+        if previous is None:
+            _separators(building, walls, building['rooms'], migration=True)
+        else:
+            # Porch closure is also needed for new reads; stored rooms are derived.
+            _separators(building, walls, [r for r in building['rooms'] if r.get('kind') == 'porch'], migration=False)
+        _network(building, walls, old)
+        _roofs(building, source.get('roof', {}), old, source.get('dormers', []), notes)
+        building['extensions'] = deepcopy(source.get('roof', {}).get('extensions', []))
+        _openings(building, source.get('openings', []), old)
+        building['anchors'], building['items'] = [], []
+        before = hosts.snapshot(building)
+        notes.extend(twin_model.derive(building))
+        # derive carries openings at T-splits without changing their centres.
+        _details(building, source, old)
+        # A read straddling a T cannot be cut into two windows or silently moved.
+        # Flag it at its read location rather than invoking the editing clamp.
+        geometry = hosts.snapshot(building)
+        for opening in building['openings']:
+            host = hosts._host(opening, True)
+            available = hosts._available(geometry, host, 'gable' in opening)
+            line = hosts._line(geometry, host) if available else None
+            fits = line is not None and (opening['at'] - opening['width'] / 2 >= -_EPS
+                                         and opening['at'] + opening['width'] / 2 <= math.dist(*line) + _EPS)
+            if not available or not fits:
+                hosts._lost(building, opening, host, before, notes, fits=not available)
+                opening.setdefault('position', next(f['at'] for f in building['flags']
+                                                     if f.get('piece') == opening['id']))
+        for key in ('roof', 'lights', 'fixtures', 'porch', 'porches'):
+            building.pop(key, None)
+        building.setdefault('stairs', [])
+    normalized, validation_notes = twin_model.normalize(flat)
+    # The bridge must not rewrite site facts while changing the building schema.
+    normalized['site'] = deepcopy(flat.get('site', {}))
+    return normalized, notes + validation_notes
+
+
+def flatten(model: dict) -> dict:
+    """Return renderer-compatible schema 2 geometry and connected-model extras."""
+    flat = deepcopy(model)
+    flat['schema'] = twin_plan.SCHEMA
+    for building in flat.get('buildings', []):
+        building['walls'] = [w for w in building.get('walls', []) if w.get('state') != 'proposal']
+        points = {j['id']: j['at'] for j in building.get('joints', [])}
+        for level in building['levels']:
+            joints = {j['id']: j['at'] for j in building['joints'] if j['level'] == level['id']}
+            walls = [w for w in building['walls'] if w['level'] == level['id']]
+            derived, _ = graph.split_crossings(joints, [w for w in walls if w.get('state') != 'ghost'])
+            for jid, at in derived.items():
+                if jid not in joints:
+                    building['joints'].append({'id': jid, 'level': level['id'], 'at': at, 'derived': True})
+            footprints = graph.footprints(joints, walls)
+            for wall in walls:
+                wall.update({'from': list(points[wall['joints'][0]]), 'to': list(points[wall['joints'][1]])})
+                if wall['id'] in footprints:
+                    wall['footprint'] = footprints[wall['id']]
+        roof_by_id = {r['id']: r for r in building.get('roofs', []) if r.get('state') != 'proposal'}
+        sections = [s for roof in roof_by_id.values() for s in roofs.to_sections(roof)]
+        for dormer in building.get('dormers', []):
+            if dormer.get('state') not in ('ghost', 'proposal') and dormer.get('roof') in roof_by_id:
+                sections.extend(_dormer_sections(dormer, roof_by_id[dormer['roof']]))
+        building['roof'] = {'sections': sections, 'extensions': deepcopy(building.get('extensions', []))}
+        openings = []
+        for opening in building.get('openings', []):
+            if opening.get('state') == 'proposal':
+                continue
+            if isinstance(opening.get('gable'), dict):
+                host = opening['gable']
+                roof = roof_by_id.get(host.get('roof'))
+                if roof is not None and type(host.get('edge')) is int and 0 <= host['edge'] < len(roof['area']):
+                    a, b = list(_segments(roof['area']))[host['edge']]
+                    length = math.dist(a, b)
+                    axis = 0 if abs(a[0] - b[0]) < _EPS else 1
+                    point = [a[i] + (b[i] - a[i]) * opening['at'] / length for i in (0, 1)]
+                    section = next((s for s in sections if s.get('roof') == roof['id']
+                                    and all(s['rect'][i] - _EPS <= point[i] <= s['rect'][i + 2] + _EPS for i in (0, 1))), None)
+                    opening.update(gable='front' if a[axis] == min(p[axis] for p in roof['area']) else 'rear',
+                                   section=section['id'] if section else roof['id'])
+                    opening['y' if axis == 0 else 'x'] = point[1 - axis]
+            openings.append(opening)
+        building['openings'] = openings
+        building['lights'], building['fixtures'] = [], []
+        geometry = hosts.snapshot(building)
+        for name, target in (('anchors', 'lights'), ('items', 'fixtures')):
+            for piece in building.get(name, []):
+                if name == 'anchors' and piece.get('kind') != 'light':
+                    continue
+                if name == 'items' and 'rect' not in piece:
+                    continue
+                detail = deepcopy(piece)
+                surface = hosts._surface(geometry, piece.get('host', {}))
+                if surface is not None:
+                    detail['level'] = surface.get('level')
+                try:
+                    point = hosts.world_point(building, piece['host'], piece.get('offset', 0))[:2]
+                except ValueError:
+                    point = piece.get('position', piece.get('at'))
+                if point is None:
+                    continue
+                if name == 'anchors':
+                    detail['at'] = list(point)
+                else:
+                    x0, y0, x1, y1 = detail['rect']
+                    width, depth = x1 - x0, y1 - y0
+                    detail['rect'] = [point[0] - width / 2, point[1] - depth / 2,
+                                      point[0] + width / 2, point[1] + depth / 2]
+                building[target].append(detail)
+        building['porches'] = deepcopy(building.get('porches_detail', []))
+    return flat

@@ -48,6 +48,8 @@
   - Unclosed room: `This room isn't closed: a wall is missing here.`
   - Migration separator: `I added an invisible wall here to keep the {a} and the {b} apart; check it.` If either name is the generic `Room`, use `I added an invisible wall here to keep two rooms apart; check it.`
   - Unhosted item: `This {kind} lost its wall; place it again.` Use `lost its surface` when the host was a floor, ceiling or roof.
+  - Item too big for its host (R27 fallback): `This {kind} no longer fits on its wall; place it again.` (`surface` for roof hosts).
+  - Dormer off its edge (R24): `This dormer lost its roof; place it again.`
   - Proposal buttons: `Use this` and `Dismiss`.
   - Material source on the card: `{Material name}, from the {building|level|room}`. A surface override reads `{Material name}, set here`.
 - **Ownership (§4.6a):** a piece touched by a person's operation carries `src.person: true`. A re-read never overwrites it. A disagreeing read becomes a proposal.

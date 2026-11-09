@@ -1,0 +1,8509 @@
+{
+ "schema": "chauffeur.twin.plan/2",
+ "units": "ft",
+ "materials": {},
+ "buildings": [
+  {
+   "id": "main-house",
+   "name": "Main House",
+   "kind": "main_house",
+   "levels": [
+    {
+     "id": "L1",
+     "name": "main floor",
+     "elevation": 0,
+     "ceiling": 10,
+     "outline": [
+      [
+       0,
+       14.333333333333334
+      ],
+      [
+       22.666666666666668,
+       14.333333333333334
+      ],
+      [
+       22.666666666666668,
+       13.333333333333334
+      ],
+      [
+       37,
+       13.333333333333334
+      ],
+      [
+       37,
+       0
+      ],
+      [
+       59,
+       0
+      ],
+      [
+       59,
+       22
+      ],
+      [
+       70,
+       22
+      ],
+      [
+       70,
+       42
+      ],
+      [
+       59,
+       42
+      ],
+      [
+       59,
+       65.33333333333333
+      ],
+      [
+       43.333333333333336,
+       65.33333333333333
+      ],
+      [
+       43.333333333333336,
+       59
+      ],
+      [
+       30.666666666666668,
+       59
+      ],
+      [
+       30.666666666666668,
+       52
+      ],
+      [
+       14.333333333333334,
+       52
+      ],
+      [
+       14.333333333333334,
+       54
+      ],
+      [
+       0,
+       54
+      ]
+     ],
+     "state": "settled",
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "L2",
+     "name": "second floor",
+     "elevation": 11,
+     "ceiling": 9,
+     "outline": [
+      [
+       14.333333333333334,
+       14.333333333333334
+      ],
+      [
+       22.666666666666668,
+       14.333333333333334
+      ],
+      [
+       22.666666666666668,
+       13.333333333333334
+      ],
+      [
+       37,
+       13.333333333333334
+      ],
+      [
+       37,
+       19.333333333333332
+      ],
+      [
+       41,
+       19.333333333333332
+      ],
+      [
+       41,
+       0
+      ],
+      [
+       55,
+       0
+      ],
+      [
+       55,
+       19.333333333333332
+      ],
+      [
+       59,
+       19.333333333333332
+      ],
+      [
+       59,
+       43
+      ],
+      [
+       37,
+       43
+      ],
+      [
+       37,
+       52
+      ],
+      [
+       14.333333333333334,
+       52
+      ],
+      [
+       14.333333333333334,
+       44.666666666666664
+      ],
+      [
+       0,
+       44.666666666666664
+      ],
+      [
+       0,
+       25.333333333333332
+      ],
+      [
+       14.333333333333334,
+       25.333333333333332
+      ]
+     ],
+     "state": "settled",
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "L3",
+     "name": "third floor and roof",
+     "elevation": 21,
+     "ceiling": 8,
+     "outline": [
+      [
+       14.333333333333334,
+       21.833333333333332
+      ],
+      [
+       37,
+       21.833333333333332
+      ],
+      [
+       37,
+       44.5
+      ],
+      [
+       14.333333333333334,
+       44.5
+      ]
+     ],
+     "half": true,
+     "state": "settled",
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    }
+   ],
+   "position": [
+    16.33545053864968,
+    33.32679776062368
+   ],
+   "rotation": 357.60202969404907,
+   "walls": [
+    {
+     "id": "wall:04dec8d079704999b6ceddac5686d4bd",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      0,
+      14.333333333333334
+     ],
+     "to": [
+      22.666666666666668,
+      14.333333333333334
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       0,
+       14.33
+      ],
+      "to": [
+       22.67,
+       14.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:4e3818d568914babaa59b72e80b2cde1",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      22.666666666666668,
+      14.333333333333334
+     ],
+     "to": [
+      22.666666666666668,
+      13.333333333333334
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       22.67,
+       14.33
+      ],
+      "to": [
+       22.67,
+       13.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:ce253aeb0c0540028a1d4eecf3e551a3",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      22.666666666666668,
+      13.333333333333334
+     ],
+     "to": [
+      37,
+      13.333333333333334
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       22.67,
+       13.33
+      ],
+      "to": [
+       37,
+       13.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:5a975aa500aa44b99a812eeeaa2a7a7e",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      37,
+      13.333333333333334
+     ],
+     "to": [
+      37,
+      0
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       37,
+       13.33
+      ],
+      "to": [
+       37,
+       0
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:6f92a7c2f95e4d2681f0588c448bd560",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      37,
+      0
+     ],
+     "to": [
+      59,
+      0
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       37,
+       0
+      ],
+      "to": [
+       59,
+       0
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:66d9683b676a4851865c97fed7cf14be",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      59,
+      0
+     ],
+     "to": [
+      59,
+      22
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       59,
+       0
+      ],
+      "to": [
+       59,
+       22
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:db49430f94d04c1ba0379c26089c43fa",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      59,
+      22
+     ],
+     "to": [
+      70,
+      22
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       59,
+       22
+      ],
+      "to": [
+       70,
+       22
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:6285929ad87644f8a4a5ddc68b8bccf3",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      70,
+      22
+     ],
+     "to": [
+      70,
+      42
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       70,
+       22
+      ],
+      "to": [
+       70,
+       42
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:026ec7419a4b49e3b41675e4ed166120",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      70,
+      42
+     ],
+     "to": [
+      59,
+      42
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       70,
+       42
+      ],
+      "to": [
+       59,
+       42
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:d6209c7f57c04df191cddae6b3060259",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      59,
+      42
+     ],
+     "to": [
+      59,
+      65.33333333333333
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       59,
+       42
+      ],
+      "to": [
+       59,
+       65.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:455bedb97bb04b97bf75a3446e9cb809",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      59,
+      65.33333333333333
+     ],
+     "to": [
+      43.333333333333336,
+      65.33333333333333
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       59,
+       65.33
+      ],
+      "to": [
+       43.33,
+       65.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:de001756a88f4b15a9c2c0a8ff347e4a",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      43.333333333333336,
+      65.33333333333333
+     ],
+     "to": [
+      43.333333333333336,
+      59
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       43.33,
+       65.33
+      ],
+      "to": [
+       43.33,
+       59
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:fc9726590ac24113b7f59c158d771bc1",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      43.333333333333336,
+      59
+     ],
+     "to": [
+      30.666666666666668,
+      59
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       43.33,
+       59
+      ],
+      "to": [
+       30.67,
+       59
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:6929748d35f041b7ba1c4f624b315f66",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      30.666666666666668,
+      59
+     ],
+     "to": [
+      30.666666666666668,
+      52
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       30.67,
+       59
+      ],
+      "to": [
+       30.67,
+       52
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:3a275d1fbdf14401959ad93dbc6893f3",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      30.666666666666668,
+      52
+     ],
+     "to": [
+      14.333333333333334,
+      52
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       30.67,
+       52
+      ],
+      "to": [
+       14.33,
+       52
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:a79abc3163914dcda36d39fd407ed2fb",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      14.333333333333334,
+      52
+     ],
+     "to": [
+      14.333333333333334,
+      54
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       14.33,
+       52
+      ],
+      "to": [
+       14.33,
+       54
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:13c24ca82d1c4fa7acb667c66185cf5f",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      14.333333333333334,
+      54
+     ],
+     "to": [
+      0,
+      54
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       14.33,
+       54
+      ],
+      "to": [
+       0,
+       54
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:e4176a469465436e9a2b332f4a1fd9da",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      0,
+      54
+     ],
+     "to": [
+      0,
+      14.333333333333334
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       0,
+       54
+      ],
+      "to": [
+       0,
+       14.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:51a30d154b9d44c3b51c6d77ac84fd69",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      14.333333333333334,
+      14.333333333333334
+     ],
+     "to": [
+      22.666666666666668,
+      14.333333333333334
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       14.33,
+       14.33
+      ],
+      "to": [
+       22.67,
+       14.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:8c92f796f73741c98325d434f1169733",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      22.666666666666668,
+      14.333333333333334
+     ],
+     "to": [
+      22.666666666666668,
+      13.333333333333334
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       22.67,
+       14.33
+      ],
+      "to": [
+       22.67,
+       13.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:6a9d80145b514b969b15540eb1d3e1ac",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      22.666666666666668,
+      13.333333333333334
+     ],
+     "to": [
+      37,
+      13.333333333333334
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       22.67,
+       13.33
+      ],
+      "to": [
+       37,
+       13.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:2e505485bfa14e73b95e75afadd61400",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      37,
+      13.333333333333334
+     ],
+     "to": [
+      37,
+      19.333333333333332
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       37,
+       13.33
+      ],
+      "to": [
+       37,
+       19.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:0781b043302441bca232eddf005fd6ef",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      37,
+      19.333333333333332
+     ],
+     "to": [
+      41,
+      19.333333333333332
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       37,
+       19.33
+      ],
+      "to": [
+       41,
+       19.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:e4e51244ac06411481a4e246a33d4957",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      55,
+      19.333333333333332
+     ],
+     "to": [
+      59,
+      19.333333333333332
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       55,
+       19.33
+      ],
+      "to": [
+       59,
+       19.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:5952972db280458bbce8e80783dbf870",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      59,
+      19.333333333333332
+     ],
+     "to": [
+      59,
+      43
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       59,
+       19.33
+      ],
+      "to": [
+       59,
+       43
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:738710adb7fb4b6ba3cdb8ac94d6001a",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      59,
+      43
+     ],
+     "to": [
+      37,
+      43
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       59,
+       43
+      ],
+      "to": [
+       37,
+       43
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:93bf9c45a5b74c9aae33e2bba95ab4ca",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      37,
+      43
+     ],
+     "to": [
+      37,
+      52
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       37,
+       43
+      ],
+      "to": [
+       37,
+       52
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:170fd49f10bf45008f9392dcbf902a3e",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      37,
+      52
+     ],
+     "to": [
+      14.333333333333334,
+      52
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       37,
+       52
+      ],
+      "to": [
+       14.33,
+       52
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:ef1bf43a0ee14809bbf0889932f04e37",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      14.333333333333334,
+      52
+     ],
+     "to": [
+      14.333333333333334,
+      44.666666666666664
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       14.33,
+       52
+      ],
+      "to": [
+       14.33,
+       44.67
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:a9d0c9d28e7f4e179b8ce4788ac29be6",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      14.333333333333334,
+      25.333333333333332
+     ],
+     "to": [
+      14.333333333333334,
+      14.333333333333334
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       14.33,
+       25.33
+      ],
+      "to": [
+       14.33,
+       14.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:e718c2e3c8f645048a486b60aaa70065",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      41,
+      19.333333333333332
+     ],
+     "to": [
+      41,
+      0
+     ],
+     "height": 3,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       41,
+       19.33
+      ],
+      "to": [
+       41,
+       0
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:835289f33f3c4fdb8987df085f237976",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      55,
+      0
+     ],
+     "to": [
+      55,
+      19.333333333333332
+     ],
+     "height": 3,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       55,
+       0
+      ],
+      "to": [
+       55,
+       19.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:3aafe7634b2843789c62e04d2c2f55e6",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      14.333333333333334,
+      44.666666666666664
+     ],
+     "to": [
+      0,
+      44.666666666666664
+     ],
+     "height": 6.78,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       14.33,
+       44.67
+      ],
+      "to": [
+       0,
+       44.67
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:8f19ac0733ef49e19bd70d775f683c1e",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      0,
+      25.333333333333332
+     ],
+     "to": [
+      14.333333333333334,
+      25.333333333333332
+     ],
+     "height": 8.17,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       0,
+       25.33
+      ],
+      "to": [
+       14.33,
+       25.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:91d09d5a771a48538f5641cbb36636ba",
+     "state": "settled",
+     "level": "L3",
+     "from": [
+      14.333333333333334,
+      21.833333333333332
+     ],
+     "to": [
+      37,
+      21.833333333333332
+     ],
+     "height": 6.08,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       14.33,
+       21.83
+      ],
+      "to": [
+       37,
+       21.83
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:c3304a8492fd42168c6c1440ea38c683",
+     "state": "settled",
+     "level": "L3",
+     "from": [
+      37,
+      44.5
+     ],
+     "to": [
+      14.333333333333334,
+      44.5
+     ],
+     "height": 5.25,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       37,
+       44.5
+      ],
+      "to": [
+       14.33,
+       44.5
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:872e7c2f5f9043d5aff504d2e52443a1",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      0,
+      35.666666666666664
+     ],
+     "to": [
+      14.333333333333334,
+      35.666666666666664
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       0,
+       35.67
+      ],
+      "to": [
+       14.33,
+       35.67
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:738a2cbddd52469a968bac0b57b29ebc",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      0,
+      26.333333333333332
+     ],
+     "to": [
+      14.333333333333334,
+      26.333333333333332
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       0,
+       26.33
+      ],
+      "to": [
+       14.33,
+       26.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:35dd05ad7922438a9e7fd78bbbb77f1d",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      14.333333333333334,
+      14.333333333333334
+     ],
+     "to": [
+      14.333333333333334,
+      52
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       14.33,
+       14.33
+      ],
+      "to": [
+       14.33,
+       52
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:2a79d4429f3a46ea8c5d0066c8d377b6",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      22.666666666666668,
+      14.333333333333334
+     ],
+     "to": [
+      22.666666666666668,
+      28
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       22.67,
+       14.33
+      ],
+      "to": [
+       22.67,
+       28
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:e0a22e57953548f1ac78e10798f43187",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      22.666666666666668,
+      28
+     ],
+     "to": [
+      37,
+      28
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       22.67,
+       28
+      ],
+      "to": [
+       37,
+       28
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:06e50fec18604bfdbc2d0fa28a027c46",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      37,
+      13.333333333333334
+     ],
+     "to": [
+      37,
+      28
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       37,
+       13.33
+      ],
+      "to": [
+       37,
+       28
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:71eaf90bdb0a4db5a9d4abb6583a89d2",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      37,
+      24.666666666666668
+     ],
+     "to": [
+      59,
+      24.666666666666668
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       37,
+       24.67
+      ],
+      "to": [
+       59,
+       24.67
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:6aa9d4868e5045f798a6f9193c372bab",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      59,
+      22
+     ],
+     "to": [
+      59,
+      42
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       59,
+       22
+      ],
+      "to": [
+       59,
+       42
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:29939bc5cd2e42718a4d19fcb1bb97b3",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      46.333333333333336,
+      24.666666666666668
+     ],
+     "to": [
+      46.333333333333336,
+      52.833333333333336
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       46.33,
+       24.67
+      ],
+      "to": [
+       46.33,
+       52.83
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:adc7de5bf8994291a771a5a2f173053d",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      46.333333333333336,
+      32.5
+     ],
+     "to": [
+      59,
+      32.5
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       46.33,
+       32.5
+      ],
+      "to": [
+       59,
+       32.5
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:27baac0e440145c2aaeab79271823cba",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      46.333333333333336,
+      43.416666666666664
+     ],
+     "to": [
+      59,
+      43.416666666666664
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       46.33,
+       43.4
+      ],
+      "to": [
+       59,
+       43.4
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:45beb1641d1748789f2c6c8729f2445d",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      46.333333333333336,
+      52.833333333333336
+     ],
+     "to": [
+      59,
+      52.833333333333336
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       46.33,
+       52.83
+      ],
+      "to": [
+       59,
+       52.83
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:58844aab780b456f8440557deb215c16",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      14.333333333333334,
+      25.333333333333332
+     ],
+     "to": [
+      14.333333333333334,
+      44.666666666666664
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       14.33,
+       25.33
+      ],
+      "to": [
+       14.33,
+       44.67
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:2312461ac49947138fb1967e96ce038e",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      0,
+      40.333333333333336
+     ],
+     "to": [
+      14.333333333333334,
+      40.333333333333336
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       0,
+       40.33
+      ],
+      "to": [
+       14.33,
+       40.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:c77d4adc1179486d9fd24865a8784979",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      21,
+      36.666666666666664
+     ],
+     "to": [
+      21,
+      52
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       21,
+       36.67
+      ],
+      "to": [
+       21,
+       52
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:947c4da74caa419b93ed710ee9c139c6",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      14.333333333333334,
+      36.666666666666664
+     ],
+     "to": [
+      37,
+      36.666666666666664
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       14.33,
+       36.67
+      ],
+      "to": [
+       37,
+       36.67
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:203cf0d790da46f9a96eebc1fded5485",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      14.333333333333334,
+      28.833333333333332
+     ],
+     "to": [
+      37,
+      28.833333333333332
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       14.33,
+       29
+      ],
+      "to": [
+       37,
+       29
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:d031a7d0928b4b8490b295da86817f7b",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      22.666666666666668,
+      14.333333333333334
+     ],
+     "to": [
+      22.666666666666668,
+      29
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       22.67,
+       14.33
+      ],
+      "to": [
+       22.67,
+       29
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:f2b0bab6937d45798effd265f22c111c",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      14.333333333333334,
+      21.333333333333332
+     ],
+     "to": [
+      22.666666666666668,
+      21.333333333333332
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       14.33,
+       21.33
+      ],
+      "to": [
+       22.67,
+       21.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:189094cb46fb4bf98f6cd047513181b0",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      37,
+      19.333333333333332
+     ],
+     "to": [
+      37,
+      43
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       37,
+       19.33
+      ],
+      "to": [
+       37,
+       43
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:71ce5001c9c94691be95b3abc79615bc",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      41,
+      19.333333333333332
+     ],
+     "to": [
+      41,
+      43
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       41,
+       19.33
+      ],
+      "to": [
+       41,
+       43
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:31d4626e2c2345feb1dfdd82ea2d87ef",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      37,
+      28.833333333333332
+     ],
+     "to": [
+      41,
+      28.833333333333332
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       37,
+       28.67
+      ],
+      "to": [
+       41,
+       28.67
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:7068ee45641a44289d428dad50088ae1",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      37,
+      34.333333333333336
+     ],
+     "to": [
+      41,
+      34.333333333333336
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       37,
+       34.33
+      ],
+      "to": [
+       41,
+       34.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:12f70b14f5244c04bfbffa4955d50dba",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      41,
+      19.333333333333332
+     ],
+     "to": [
+      55,
+      19.333333333333332
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       41,
+       19.33
+      ],
+      "to": [
+       55,
+       19.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    }
+   ],
+   "openings": [
+    {
+     "id": "opening:03f04bb2de2f498f8daea858f77850a2",
+     "state": "settled",
+     "kind": "window",
+     "width": 4,
+     "sill": 2,
+     "head": 8,
+     "wall": "wall:04dec8d079704999b6ceddac5686d4bd",
+     "at": 7.17,
+     "read_geometry": {
+      "from": [
+       5.17,
+       14.33
+      ],
+      "to": [
+       9.17,
+       14.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:54b9a291f81c44e68f9b1a6efcc98aa3",
+     "state": "settled",
+     "kind": "door",
+     "width": 5,
+     "sill": 0,
+     "head": 8,
+     "wall": "wall:04dec8d079704999b6ceddac5686d4bd",
+     "at": 18.92,
+     "read_geometry": {
+      "from": [
+       16.42,
+       14.33
+      ],
+      "to": [
+       21.42,
+       14.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:b962d253588848f5960f308972563488",
+     "state": "settled",
+     "kind": "window",
+     "width": 6,
+     "sill": 1.5,
+     "head": 8,
+     "wall": "wall:ce253aeb0c0540028a1d4eecf3e551a3",
+     "at": 7.333333333333332,
+     "read_geometry": {
+      "from": [
+       27,
+       13.33
+      ],
+      "to": [
+       33,
+       13.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:84f5beb8152847a89ed850ee48b1d8af",
+     "state": "settled",
+     "kind": "window",
+     "width": 2.67,
+     "sill": 2.5,
+     "head": 8,
+     "wall": "wall:6f92a7c2f95e4d2681f0588c448bd560",
+     "at": 3,
+     "read_geometry": {
+      "from": [
+       38.665,
+       0
+      ],
+      "to": [
+       41.335,
+       0
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:0d86ad238d0a449eae91239d3ebb87a5",
+     "state": "settled",
+     "kind": "window",
+     "width": 3,
+     "sill": 3.5,
+     "head": 8.5,
+     "gable": "front",
+     "section": "roof:762cceb645364f28ac69dca54c63e1d4",
+     "x": 48,
+     "read_geometry": {
+      "from": [
+       46.5,
+       0
+      ],
+      "to": [
+       49.5,
+       0
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:e199bd8912bb4a3e8dbe598ed8d36f32",
+     "state": "settled",
+     "kind": "window",
+     "width": 2.67,
+     "sill": 2.5,
+     "head": 8,
+     "wall": "wall:6f92a7c2f95e4d2681f0588c448bd560",
+     "at": 19,
+     "read_geometry": {
+      "from": [
+       54.665,
+       0
+      ],
+      "to": [
+       57.335,
+       0
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:df687e2c4b2d421bbd8951525f4b82d8",
+     "state": "settled",
+     "kind": "garage",
+     "width": 16,
+     "sill": 0,
+     "head": 8,
+     "wall": "wall:66d9683b676a4851865c97fed7cf14be",
+     "at": 11,
+     "read_geometry": {
+      "from": [
+       59,
+       3
+      ],
+      "to": [
+       59,
+       19
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:b87fbf62d5e8410aaccf3cbd9ffa6c05",
+     "state": "settled",
+     "kind": "door",
+     "width": 2.67,
+     "sill": 0,
+     "head": 6.67,
+     "wall": "wall:6285929ad87644f8a4a5ddc68b8bccf3",
+     "at": 3.7,
+     "read_geometry": {
+      "from": [
+       70,
+       24.365000000000002
+      ],
+      "to": [
+       70,
+       27.035
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:73d1e3ef6f2f416cbf1c0f5215a9dd0b",
+     "state": "settled",
+     "kind": "garage",
+     "width": 9,
+     "sill": 0,
+     "head": 8,
+     "wall": "wall:6285929ad87644f8a4a5ddc68b8bccf3",
+     "at": 12,
+     "read_geometry": {
+      "from": [
+       70,
+       29.5
+      ],
+      "to": [
+       70,
+       38.5
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:f244c24ebe324008ac49185e6af4198d",
+     "state": "settled",
+     "kind": "window",
+     "width": 3,
+     "sill": 2.5,
+     "head": 8,
+     "wall": "wall:d6209c7f57c04df191cddae6b3060259",
+     "at": 2.5,
+     "read_geometry": {
+      "from": [
+       59,
+       43
+      ],
+      "to": [
+       59,
+       46
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:9b258ec3788b433cac6a5053d2925261",
+     "state": "settled",
+     "kind": "window",
+     "width": 3,
+     "sill": 2.5,
+     "head": 8,
+     "wall": "wall:d6209c7f57c04df191cddae6b3060259",
+     "at": 8.600000000000001,
+     "read_geometry": {
+      "from": [
+       59,
+       49.1
+      ],
+      "to": [
+       59,
+       52.1
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:1b4d6955e28341dea10b1568ebacf3c4",
+     "state": "settled",
+     "kind": "window",
+     "width": 9,
+     "sill": 2,
+     "head": 8,
+     "wall": "wall:455bedb97bb04b97bf75a3446e9cb809",
+     "at": 7.829999999999998,
+     "read_geometry": {
+      "from": [
+       55.67,
+       65.33
+      ],
+      "to": [
+       46.67,
+       65.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:087be755caf649b9bdfd4db368ccf096",
+     "state": "settled",
+     "kind": "window",
+     "width": 3,
+     "sill": 2.5,
+     "head": 8,
+     "wall": "wall:de001756a88f4b15a9c2c0a8ff347e4a",
+     "at": 3.3333333333333286,
+     "read_geometry": {
+      "from": [
+       43.33,
+       63.5
+      ],
+      "to": [
+       43.33,
+       60.5
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:44063d9e8e724028be73d05304a20f1b",
+     "state": "settled",
+     "kind": "window",
+     "width": 6,
+     "sill": 2.5,
+     "head": 8,
+     "wall": "wall:fc9726590ac24113b7f59c158d771bc1",
+     "at": 6.333333333333336,
+     "read_geometry": {
+      "from": [
+       40,
+       59
+      ],
+      "to": [
+       34,
+       59
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:14ff72815ae44cb6ab7b605c63ef5e49",
+     "state": "settled",
+     "kind": "door",
+     "width": 3,
+     "sill": 0,
+     "head": 8,
+     "wall": "wall:6929748d35f041b7ba1c4f624b315f66",
+     "at": 3.5,
+     "read_geometry": {
+      "from": [
+       30.67,
+       57
+      ],
+      "to": [
+       30.67,
+       54
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:4272cc72b1b4427095ab9255c3a9dc8d",
+     "state": "settled",
+     "kind": "window",
+     "width": 8,
+     "sill": 2,
+     "head": 8,
+     "wall": "wall:3a275d1fbdf14401959ad93dbc6893f3",
+     "at": 8.166666666666668,
+     "read_geometry": {
+      "from": [
+       26.5,
+       52
+      ],
+      "to": [
+       18.5,
+       52
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:608d2885ac0a4cf0b9d2c30718677683",
+     "state": "settled",
+     "kind": "window",
+     "width": 9,
+     "sill": 2,
+     "head": 8,
+     "wall": "wall:13c24ca82d1c4fa7acb667c66185cf5f",
+     "at": 7.003333333333334,
+     "read_geometry": {
+      "from": [
+       11.83,
+       54
+      ],
+      "to": [
+       2.83,
+       54
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:d6a5a49440734e739596ec29f12cfbd4",
+     "state": "settled",
+     "kind": "window",
+     "width": 3,
+     "sill": 3,
+     "head": 8,
+     "wall": "wall:e4176a469465436e9a2b332f4a1fd9da",
+     "at": 12.399999999999999,
+     "read_geometry": {
+      "from": [
+       0,
+       43.1
+      ],
+      "to": [
+       0,
+       40.1
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:910e19e18a1c4f4bbb7a66e45265de68",
+     "state": "settled",
+     "kind": "window",
+     "width": 2.67,
+     "sill": 3,
+     "head": 7.5,
+     "wall": "wall:51a30d154b9d44c3b51c6d77ac84fd69",
+     "at": 4.576666666666666,
+     "read_geometry": {
+      "from": [
+       17.575,
+       14.33
+      ],
+      "to": [
+       20.245,
+       14.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:b729b760e84947c98c5d1211a5858444",
+     "state": "settled",
+     "kind": "window",
+     "width": 3,
+     "sill": 2.5,
+     "head": 7.5,
+     "wall": "wall:6a9d80145b514b969b15540eb1d3e1ac",
+     "at": 4.003333333333334,
+     "read_geometry": {
+      "from": [
+       25.17,
+       13.33
+      ],
+      "to": [
+       28.17,
+       13.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:adcfe8df6f264720b50d9ea70c8362f4",
+     "state": "settled",
+     "kind": "window",
+     "width": 3,
+     "sill": 2.5,
+     "head": 7.5,
+     "wall": "wall:6a9d80145b514b969b15540eb1d3e1ac",
+     "at": 10.673333333333337,
+     "read_geometry": {
+      "from": [
+       31.840000000000003,
+       13.33
+      ],
+      "to": [
+       34.84,
+       13.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:ba722c6aff18468a81ca99588dda18a7",
+     "state": "settled",
+     "kind": "window",
+     "width": 3,
+     "sill": 2.5,
+     "head": 7.5,
+     "wall": "wall:170fd49f10bf45008f9392dcbf902a3e",
+     "at": 3.0000000000000004,
+     "read_geometry": {
+      "from": [
+       35.5,
+       52
+      ],
+      "to": [
+       32.5,
+       52
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:97edd3fa5981417bafcd08504c1f8e30",
+     "state": "settled",
+     "kind": "window",
+     "width": 3,
+     "sill": 2.5,
+     "head": 7.5,
+     "wall": "wall:170fd49f10bf45008f9392dcbf902a3e",
+     "at": 13,
+     "read_geometry": {
+      "from": [
+       25.5,
+       52
+      ],
+      "to": [
+       22.5,
+       52
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:0c210b9c44714403bafd2ac60d0e75a1",
+     "state": "settled",
+     "kind": "window",
+     "width": 3,
+     "sill": 2.5,
+     "head": 7.5,
+     "wall": "wall:5952972db280458bbce8e80783dbf870",
+     "at": 7.246666666666666,
+     "read_geometry": {
+      "from": [
+       59,
+       25.08
+      ],
+      "to": [
+       59,
+       28.08
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:850f35893cad4d91a9e708799367a317",
+     "state": "settled",
+     "kind": "window",
+     "width": 3,
+     "sill": 2.5,
+     "head": 7.5,
+     "wall": "wall:5952972db280458bbce8e80783dbf870",
+     "at": 18.076666666666664,
+     "read_geometry": {
+      "from": [
+       59,
+       35.91
+      ],
+      "to": [
+       59,
+       38.91
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:ce51c67e1e364a108983c3585a50f067",
+     "state": "settled",
+     "kind": "window",
+     "width": 2.5,
+     "sill": 3.5,
+     "head": 8,
+     "gable": "front",
+     "section": "roof:144ace50d4fb4ac88429a44513e3d83c",
+     "y": 27.4,
+     "read_geometry": {
+      "from": [
+       0,
+       26.15
+      ],
+      "to": [
+       0,
+       28.65
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:4090e2cc6a6f41d58dc605d9fd110335",
+     "state": "settled",
+     "kind": "window",
+     "width": 2.5,
+     "sill": 3.5,
+     "head": 8,
+     "gable": "front",
+     "section": "roof:144ace50d4fb4ac88429a44513e3d83c",
+     "y": 39,
+     "read_geometry": {
+      "from": [
+       0,
+       37.75
+      ],
+      "to": [
+       0,
+       40.25
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    }
+   ],
+   "rooms": [
+    {
+     "id": "room:942bc5d1218848bcac98523057e20e11",
+     "state": "settled",
+     "name": "Room",
+     "level": "L1",
+     "polygon": [
+      [
+       0,
+       35.67
+      ],
+      [
+       14.33,
+       35.67
+      ],
+      [
+       14.33,
+       54
+      ],
+      [
+       0,
+       54
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        0,
+        35.67
+       ],
+       [
+        14.33,
+        35.67
+       ],
+       [
+        14.33,
+        54
+       ],
+       [
+        0,
+        54
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:6ae35a0dcd044566b9f9956dd1b2b4e3",
+     "state": "settled",
+     "name": "Room",
+     "level": "L1",
+     "polygon": [
+      [
+       0,
+       26.330000000000002
+      ],
+      [
+       14.33,
+       26.33
+      ],
+      [
+       14.33,
+       35.67
+      ],
+      [
+       0,
+       35.67
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        0,
+        26.33
+       ],
+       [
+        14.33,
+        26.33
+       ],
+       [
+        14.33,
+        35.67
+       ],
+       [
+        0,
+        35.67
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:070aa0ca32b94170968a5e2cbf0fcc6f",
+     "state": "settled",
+     "name": "Room",
+     "level": "L1",
+     "polygon": [
+      [
+       0,
+       14.333333333333334
+      ],
+      [
+       14.33,
+       14.333333333333334
+      ],
+      [
+       14.33,
+       26.33
+      ],
+      [
+       0,
+       26.330000000000002
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        0,
+        14.33
+       ],
+       [
+        14.33,
+        14.33
+       ],
+       [
+        14.33,
+        26.33
+       ],
+       [
+        0,
+        26.33
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:691a32b2fa634bfcbde221ca85594cdc",
+     "state": "settled",
+     "name": "Room",
+     "level": "L1",
+     "polygon": [
+      [
+       14.33,
+       35.67
+      ],
+      [
+       30.67,
+       35.67
+      ],
+      [
+       30.67,
+       52
+      ],
+      [
+       14.330000000000002,
+       52
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        14.33,
+        35.67
+       ],
+       [
+        30.67,
+        35.67
+       ],
+       [
+        30.67,
+        52
+       ],
+       [
+        14.33,
+        52
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:f8061e29361c441290a4e6a87a01e7ee",
+     "state": "settled",
+     "name": "Room",
+     "level": "L1",
+     "polygon": [
+      [
+       14.33,
+       14.333333333333334
+      ],
+      [
+       22.666666666666668,
+       14.33
+      ],
+      [
+       22.67,
+       28
+      ],
+      [
+       37,
+       28
+      ],
+      [
+       37,
+       24.67
+      ],
+      [
+       46.33,
+       24.67
+      ],
+      [
+       46.33,
+       33
+      ],
+      [
+       30.67,
+       33
+      ],
+      [
+       30.67,
+       35.67
+      ],
+      [
+       14.33,
+       35.67
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        14.33,
+        14.33
+       ],
+       [
+        22.67,
+        14.33
+       ],
+       [
+        22.67,
+        28
+       ],
+       [
+        37,
+        28
+       ],
+       [
+        37,
+        24.67
+       ],
+       [
+        46.33,
+        24.67
+       ],
+       [
+        46.33,
+        33
+       ],
+       [
+        30.67,
+        33
+       ],
+       [
+        30.67,
+        35.67
+       ],
+       [
+        14.33,
+        35.67
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:f8f08c2b125d4b24bf5b3435e052aa9f",
+     "state": "settled",
+     "name": "Room",
+     "level": "L1",
+     "polygon": [
+      [
+       22.67,
+       13.333333333333334
+      ],
+      [
+       37,
+       13.33
+      ],
+      [
+       37,
+       28
+      ],
+      [
+       22.67,
+       28
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        22.67,
+        13.33
+       ],
+       [
+        37,
+        13.33
+       ],
+       [
+        37,
+        28
+       ],
+       [
+        22.67,
+        28
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:6ce76d8d66c442c1a48afbab91c7bd5e",
+     "state": "settled",
+     "name": "Room",
+     "level": "L1",
+     "polygon": [
+      [
+       30.67,
+       33
+      ],
+      [
+       46.33,
+       33
+      ],
+      [
+       46.33,
+       52.83
+      ],
+      [
+       59,
+       52.83
+      ],
+      [
+       59,
+       65.33
+      ],
+      [
+       43.333333333333336,
+       65.33
+      ],
+      [
+       43.33,
+       59
+      ],
+      [
+       30.67,
+       59
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        30.67,
+        33
+       ],
+       [
+        46.33,
+        33
+       ],
+       [
+        46.33,
+        52.83
+       ],
+       [
+        59,
+        52.83
+       ],
+       [
+        59,
+        65.33
+       ],
+       [
+        43.33,
+        65.33
+       ],
+       [
+        43.33,
+        59
+       ],
+       [
+        30.67,
+        59
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:e7b4abf892a4489ba8142fe31395d15c",
+     "state": "settled",
+     "name": "Room",
+     "level": "L1",
+     "polygon": [
+      [
+       46.33,
+       43.4
+      ],
+      [
+       59,
+       43.4
+      ],
+      [
+       59,
+       52.83
+      ],
+      [
+       46.33,
+       52.83
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        46.33,
+        43.4
+       ],
+       [
+        59,
+        43.4
+       ],
+       [
+        59,
+        52.83
+       ],
+       [
+        46.33,
+        52.83
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:b3fc2ad6ea584ed3a9ac77f47983dd61",
+     "state": "settled",
+     "name": "Room",
+     "level": "L1",
+     "polygon": [
+      [
+       46.33,
+       32.5
+      ],
+      [
+       59,
+       32.5
+      ],
+      [
+       59,
+       43.4
+      ],
+      [
+       46.33,
+       43.4
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        46.33,
+        32.5
+       ],
+       [
+        59,
+        32.5
+       ],
+       [
+        59,
+        43.4
+       ],
+       [
+        46.33,
+        43.4
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:56144f5bfc4d44b0b2796a3c7d7d20a7",
+     "state": "settled",
+     "name": "Room",
+     "level": "L1",
+     "polygon": [
+      [
+       46.33,
+       24.67
+      ],
+      [
+       59,
+       24.67
+      ],
+      [
+       59,
+       32.5
+      ],
+      [
+       46.33,
+       32.5
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        46.33,
+        24.67
+       ],
+       [
+        59,
+        24.67
+       ],
+       [
+        59,
+        32.5
+       ],
+       [
+        46.33,
+        32.5
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:14e8bce101b54e1aba698138e2a56ddb",
+     "state": "settled",
+     "name": "Room",
+     "level": "L1",
+     "polygon": [
+      [
+       37,
+       0
+      ],
+      [
+       59,
+       0
+      ],
+      [
+       59,
+       24.67
+      ],
+      [
+       37,
+       24.67
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        37,
+        0
+       ],
+       [
+        59,
+        0
+       ],
+       [
+        59,
+        24.67
+       ],
+       [
+        37,
+        24.67
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:5eb18d0e92c14062a83ddf9727ea4c3c",
+     "state": "settled",
+     "name": "Room",
+     "level": "L1",
+     "polygon": [
+      [
+       59,
+       22
+      ],
+      [
+       70,
+       22
+      ],
+      [
+       70,
+       42
+      ],
+      [
+       59,
+       42
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        59,
+        22
+       ],
+       [
+        70,
+        22
+       ],
+       [
+        70,
+        42
+       ],
+       [
+        59,
+        42
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:3d4617fdce454791b7c8e479b694273a",
+     "state": "settled",
+     "name": "Room",
+     "level": "L2",
+     "polygon": [
+      [
+       0,
+       25.333333333333332
+      ],
+      [
+       14.33,
+       25.333333333333332
+      ],
+      [
+       14.33,
+       40.33
+      ],
+      [
+       0,
+       40.33
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        0,
+        25.33
+       ],
+       [
+        14.33,
+        25.33
+       ],
+       [
+        14.33,
+        40.33
+       ],
+       [
+        0,
+        40.33
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:a16a6d273d6045e183768af60787ef0b",
+     "state": "settled",
+     "name": "Room",
+     "level": "L2",
+     "polygon": [
+      [
+       0,
+       40.33
+      ],
+      [
+       14.33,
+       40.33
+      ],
+      [
+       14.333333333333334,
+       44.67
+      ],
+      [
+       0,
+       44.666666666666664
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        0,
+        40.33
+       ],
+       [
+        14.33,
+        40.33
+       ],
+       [
+        14.33,
+        44.67
+       ],
+       [
+        0,
+        44.67
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:232de4692dff495c80ae8cbd70c5630b",
+     "state": "settled",
+     "name": "Room",
+     "level": "L2",
+     "polygon": [
+      [
+       14.33,
+       36.67
+      ],
+      [
+       21,
+       36.67
+      ],
+      [
+       21,
+       52
+      ],
+      [
+       14.333333333333334,
+       52
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        14.33,
+        36.67
+       ],
+       [
+        21,
+        36.67
+       ],
+       [
+        21,
+        52
+       ],
+       [
+        14.33,
+        52
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:82af76688f0f4dfeb20f4a82151f4a00",
+     "state": "settled",
+     "name": "Room",
+     "level": "L2",
+     "polygon": [
+      [
+       21,
+       36.67
+      ],
+      [
+       37,
+       36.67
+      ],
+      [
+       37,
+       52
+      ],
+      [
+       21,
+       52
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        21,
+        36.67
+       ],
+       [
+        37,
+        36.67
+       ],
+       [
+        37,
+        52
+       ],
+       [
+        21,
+        52
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:ef8bd041182342b28871ad178de511a6",
+     "state": "settled",
+     "name": "Room",
+     "level": "L2",
+     "polygon": [
+      [
+       14.33,
+       29
+      ],
+      [
+       37,
+       29
+      ],
+      [
+       37,
+       28.67
+      ],
+      [
+       41,
+       28.67
+      ],
+      [
+       41,
+       34.33
+      ],
+      [
+       37,
+       34.33
+      ],
+      [
+       37,
+       36.67
+      ],
+      [
+       14.33,
+       36.67
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        14.33,
+        29
+       ],
+       [
+        37,
+        29
+       ],
+       [
+        37,
+        28.67
+       ],
+       [
+        41,
+        28.67
+       ],
+       [
+        41,
+        34.33
+       ],
+       [
+        37,
+        34.33
+       ],
+       [
+        37,
+        36.67
+       ],
+       [
+        14.33,
+        36.67
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:70e732ca372344819e70454c92e85918",
+     "state": "settled",
+     "name": "Room",
+     "level": "L2",
+     "polygon": [
+      [
+       14.333333333333334,
+       21.33
+      ],
+      [
+       22.67,
+       21.33
+      ],
+      [
+       22.67,
+       29
+      ],
+      [
+       14.33,
+       29
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        14.33,
+        21.33
+       ],
+       [
+        22.67,
+        21.33
+       ],
+       [
+        22.67,
+        29
+       ],
+       [
+        14.33,
+        29
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:b7fbd6b4e2b34f968dc8097051f5a17d",
+     "state": "settled",
+     "name": "Room",
+     "level": "L2",
+     "polygon": [
+      [
+       14.333333333333334,
+       14.333333333333334
+      ],
+      [
+       22.666666666666668,
+       14.33
+      ],
+      [
+       22.67,
+       21.33
+      ],
+      [
+       14.333333333333334,
+       21.33
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        14.33,
+        14.33
+       ],
+       [
+        22.67,
+        14.33
+       ],
+       [
+        22.67,
+        21.33
+       ],
+       [
+        14.33,
+        21.33
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:48bcc32861704cc6b6edc5291031c3f8",
+     "state": "settled",
+     "name": "Room",
+     "level": "L2",
+     "polygon": [
+      [
+       22.67,
+       13.333333333333334
+      ],
+      [
+       37,
+       13.333333333333334
+      ],
+      [
+       37,
+       29
+      ],
+      [
+       22.67,
+       29
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        22.67,
+        13.33
+       ],
+       [
+        37,
+        13.33
+       ],
+       [
+        37,
+        29
+       ],
+       [
+        22.67,
+        29
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:e50d866ebf7544dca6eb6597063d12c3",
+     "state": "settled",
+     "name": "Room",
+     "level": "L2",
+     "polygon": [
+      [
+       37,
+       34.33
+      ],
+      [
+       41,
+       34.33
+      ],
+      [
+       41,
+       43
+      ],
+      [
+       37,
+       43
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        37,
+        34.33
+       ],
+       [
+        41,
+        34.33
+       ],
+       [
+        41,
+        43
+       ],
+       [
+        37,
+        43
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:3053b19d4c3e440e838e7261f0edb204",
+     "state": "settled",
+     "name": "Room",
+     "level": "L2",
+     "polygon": [
+      [
+       37,
+       19.33
+      ],
+      [
+       41,
+       19.33
+      ],
+      [
+       41,
+       28.67
+      ],
+      [
+       37,
+       28.67
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        37,
+        19.33
+       ],
+       [
+        41,
+        19.33
+       ],
+       [
+        41,
+        28.67
+       ],
+       [
+        37,
+        28.67
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:b887df08cac643bdafca8ca47f1bf4ae",
+     "state": "settled",
+     "name": "Room",
+     "level": "L2",
+     "polygon": [
+      [
+       41,
+       19.33
+      ],
+      [
+       59,
+       19.333333333333332
+      ],
+      [
+       59,
+       43
+      ],
+      [
+       41,
+       43
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        41,
+        19.33
+       ],
+       [
+        59,
+        19.33
+       ],
+       [
+        59,
+        43
+       ],
+       [
+        41,
+        43
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:582c2ee4133145ff8c22b4af02690cc9",
+     "state": "settled",
+     "name": "Room",
+     "level": "L2",
+     "polygon": [
+      [
+       41,
+       0
+      ],
+      [
+       55,
+       0
+      ],
+      [
+       55,
+       19.33
+      ],
+      [
+       41,
+       19.33
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        41,
+        0
+       ],
+       [
+        55,
+        0
+       ],
+       [
+        55,
+        19.33
+       ],
+       [
+        41,
+        19.33
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:16d975d5056e4f74810ed1e0cdaf716f",
+     "state": "settled",
+     "name": "Room",
+     "level": "L3",
+     "polygon": [
+      [
+       14.333333333333334,
+       21.833333333333332
+      ],
+      [
+       37,
+       21.833333333333332
+      ],
+      [
+       37,
+       44.5
+      ],
+      [
+       14.333333333333334,
+       44.5
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        14.33,
+        21.83
+       ],
+       [
+        37,
+        21.83
+       ],
+       [
+        37,
+        44.5
+       ],
+       [
+        14.33,
+        44.5
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    }
+   ],
+   "roof": {
+    "sections": [
+     {
+      "id": "roof:522b18c4e1f84feebab4c99e86b8201e",
+      "state": "settled",
+      "kind": "gable",
+      "rect": [
+       14.333333333333334,
+       50,
+       30.666666666666668,
+       66
+      ],
+      "pitch": 8,
+      "plate": 10,
+      "overhang": 1,
+      "pitch_source": "photos",
+      "ridge": "y",
+      "read_geometry": {
+       "rect": [
+        14.33,
+        50,
+        30.67,
+        66
+       ]
+      },
+      "src": {
+       "sheet": "",
+       "page": 1,
+       "step": "draft"
+      }
+     },
+     {
+      "id": "roof:16659f38b2ee4f5ebe70301836716200",
+      "state": "settled",
+      "kind": "gable",
+      "rect": [
+       14.333333333333334,
+       6.333333333333333,
+       22.666666666666668,
+       14.333333333333334
+      ],
+      "pitch": 8,
+      "plate": 10,
+      "overhang": 0.5,
+      "pitch_source": "photos",
+      "ridge": "y",
+      "read_geometry": {
+       "rect": [
+        14.33,
+        6.33,
+        22.67,
+        14.33
+       ]
+      },
+      "src": {
+       "sheet": "",
+       "page": 1,
+       "step": "draft"
+      }
+     },
+     {
+      "id": "roof:0cb2f1dc8ea84e48bd4f9250a65d0c4f",
+      "state": "settled",
+      "kind": "shed",
+      "rect": [
+       22.666666666666668,
+       6.333333333333333,
+       37,
+       13.333333333333334
+      ],
+      "pitch": 3,
+      "plate": 10,
+      "overhang": 0.5,
+      "pitch_source": "photos",
+      "low_side": "y0",
+      "read_geometry": {
+       "rect": [
+        22.67,
+        6.33,
+        37,
+        13.33
+       ]
+      },
+      "src": {
+       "sheet": "",
+       "page": 1,
+       "step": "draft"
+      }
+     },
+     {
+      "id": "roof:c8d939d2e6974824af1367e641db38f5",
+      "state": "settled",
+      "rect": [
+       14.333333333333334,
+       13.333333333333334,
+       37,
+       52
+      ],
+      "block": [
+       14.333333333333334,
+       13.333333333333334,
+       37,
+       52
+      ],
+      "level": "L2",
+      "kind": "gable",
+      "ridge": "x",
+      "plate": 20,
+      "pitch": 10,
+      "overhang": 1,
+      "pitch_source": "drawn",
+      "read_geometry": {
+       "rect": [
+        14.333333333333334,
+        13.333333333333334,
+        37,
+        52
+       ]
+      },
+      "src": {
+       "sheet": "",
+       "page": 0,
+       "step": "roof_blocks"
+      },
+      "ends": {
+       "x0": "gable",
+       "x1": "gable"
+      }
+     },
+     {
+      "id": "roof:2f47054ab66e45edb7ff1de9b4c880d9",
+      "state": "settled",
+      "rect": [
+       37,
+       19.333333333333332,
+       59,
+       43
+      ],
+      "block": [
+       37,
+       19.333333333333332,
+       59,
+       43
+      ],
+      "level": "L2",
+      "kind": "gable",
+      "ridge": "x",
+      "plate": 20,
+      "pitch": 10,
+      "overhang": 1,
+      "pitch_source": "drawn",
+      "read_geometry": {
+       "rect": [
+        37,
+        19.333333333333332,
+        59,
+        43
+       ]
+      },
+      "src": {
+       "sheet": "",
+       "page": 0,
+       "step": "roof_blocks"
+      },
+      "ends": {
+       "x0": "gable",
+       "x1": "gable"
+      },
+      "pitches": {
+       "y0": 8.732394366197184,
+       "y1": 11.267605633802814
+      }
+     },
+     {
+      "id": "roof:762cceb645364f28ac69dca54c63e1d4",
+      "state": "settled",
+      "rect": [
+       37,
+       0,
+       59,
+       19.333333333333332
+      ],
+      "block": [
+       37,
+       0,
+       59,
+       19.333333333333332
+      ],
+      "level": "L1",
+      "kind": "gable",
+      "ridge": "y",
+      "plate": 10,
+      "pitch": 12,
+      "overhang": 1,
+      "pitch_source": "drawn",
+      "read_geometry": {
+       "rect": [
+        37,
+        0,
+        59,
+        19.333333333333332
+       ]
+      },
+      "src": {
+       "sheet": "",
+       "page": 0,
+       "step": "roof_blocks"
+      },
+      "ends": {
+       "y0": "gable",
+       "y1": "gable"
+      }
+     },
+     {
+      "id": "roof:fde45f929a86417688eb1cd20650c66f",
+      "state": "settled",
+      "rect": [
+       37,
+       43,
+       59,
+       59
+      ],
+      "block": [
+       37,
+       43,
+       59,
+       59
+      ],
+      "level": "L1",
+      "kind": "gable",
+      "ridge": "y",
+      "plate": 10,
+      "pitch": 8,
+      "overhang": 1,
+      "pitch_source": "photos",
+      "read_geometry": {
+       "rect": [
+        37,
+        43,
+        59,
+        59
+       ]
+      },
+      "src": {
+       "sheet": "",
+       "page": 0,
+       "step": "roof_blocks"
+      },
+      "ends": {
+       "y0": "gable",
+       "y1": "gable"
+      },
+      "pitches": {
+       "x0": 6.848484848484847,
+       "x1": 9.151515151515154
+      }
+     },
+     {
+      "id": "roof:144ace50d4fb4ac88429a44513e3d83c",
+      "state": "settled",
+      "rect": [
+       0,
+       25.333333333333332,
+       14.333333333333334,
+       44.5
+      ],
+      "block": [
+       0,
+       25.333333333333332,
+       14.333333333333334,
+       44.5
+      ],
+      "level": "L2",
+      "kind": "gable",
+      "ridge": "x",
+      "plate": 19,
+      "pitch": 10,
+      "overhang": 1,
+      "pitch_source": "drawn",
+      "read_geometry": {
+       "rect": [
+        0,
+        25.333333333333332,
+        14.333333333333334,
+        44.5
+       ]
+      },
+      "src": {
+       "person": true,
+       "sheet": "",
+       "page": 0
+      },
+      "pitches": {
+       "y0": 12.347826086956523,
+       "y1": 7.652173913043476
+      }
+     },
+     {
+      "id": "roof:f73870c8e8c84286bcda73bab1d6681a",
+      "state": "settled",
+      "rect": [
+       59,
+       22,
+       70,
+       42
+      ],
+      "block": [
+       59,
+       21.833333333333332,
+       70,
+       42
+      ],
+      "level": "L1",
+      "kind": "gable",
+      "ridge": "x",
+      "plate": 10,
+      "pitch": 6,
+      "overhang": 1,
+      "pitch_source": "photos",
+      "read_geometry": {
+       "rect": [
+        59,
+        21.833333333333332,
+        70,
+        42
+       ]
+      },
+      "src": {
+       "sheet": "",
+       "page": 0,
+       "step": "roof_blocks"
+      },
+      "ends": {
+       "x0": "gable",
+       "x1": "gable"
+      },
+      "pitches": {
+       "y0": 5.553719008264464,
+       "y1": 6.446280991735537
+      }
+     },
+     {
+      "id": "roof:905e3819882643e492a49df73a702172",
+      "state": "settled",
+      "rect": [
+       0,
+       14.333333333333334,
+       14.333333333333334,
+       25.333333333333332
+      ],
+      "block": [
+       0,
+       14.333333333333334,
+       14.333333333333334,
+       25.333333333333332
+      ],
+      "level": "L1",
+      "kind": "gable",
+      "ridge": "x",
+      "plate": 10,
+      "pitch": 8,
+      "overhang": 1,
+      "pitch_source": "photos",
+      "read_geometry": {
+       "rect": [
+        0,
+        14.333333333333334,
+        14.333333333333334,
+        25.333333333333332
+       ]
+      },
+      "src": {
+       "sheet": "",
+       "page": 0,
+       "step": "roof_blocks"
+      },
+      "ends": {
+       "x0": "gable",
+       "x1": "gable"
+      }
+     },
+     {
+      "id": "roof:2494468c211c46a180d5b130e2440c05",
+      "state": "settled",
+      "rect": [
+       0,
+       44.5,
+       14.333333333333334,
+       54
+      ],
+      "block": [
+       0,
+       44.5,
+       14.333333333333334,
+       54
+      ],
+      "level": "L1",
+      "kind": "gable",
+      "ridge": "x",
+      "plate": 10,
+      "pitch": 8,
+      "overhang": 1,
+      "pitch_source": "photos",
+      "read_geometry": {
+       "rect": [
+        0,
+        44.5,
+        14.333333333333334,
+        54
+       ]
+      },
+      "src": {
+       "sheet": "",
+       "page": 0,
+       "step": "roof_blocks"
+      },
+      "ends": {
+       "x0": "gable",
+       "x1": "gable"
+      }
+     },
+     {
+      "id": "roof:1f72b7b65a7b4b79b351a3257ab913ad",
+      "state": "settled",
+      "rect": [
+       43.333333333333336,
+       59,
+       59,
+       65.33333333333333
+      ],
+      "block": [
+       43.333333333333336,
+       59,
+       59,
+       65.33333333333333
+      ],
+      "level": "L1",
+      "kind": "gable",
+      "ridge": "y",
+      "plate": 10,
+      "pitch": 10,
+      "overhang": 1,
+      "pitch_source": "drawn",
+      "read_geometry": {
+       "rect": [
+        43.333333333333336,
+        59,
+        59,
+        65.33333333333333
+       ]
+      },
+      "src": {
+       "sheet": "",
+       "page": 0,
+       "step": "roof_blocks"
+      },
+      "ends": {
+       "y0": "gable",
+       "y1": "hip"
+      },
+      "pitches": {
+       "x0": 12.021276595744679,
+       "x1": 7.97872340425532
+      }
+     },
+     {
+      "id": "roof:de54efb32257498193ca000b198fef3c",
+      "state": "settled",
+      "rect": [
+       30.666666666666668,
+       52,
+       37,
+       59
+      ],
+      "block": [
+       30.666666666666668,
+       52,
+       37,
+       59
+      ],
+      "level": "L1",
+      "kind": "gable",
+      "ridge": "y",
+      "plate": 10,
+      "pitch": 8,
+      "overhang": 1,
+      "pitch_source": "drawn",
+      "read_geometry": {
+       "rect": [
+        30.666666666666668,
+        52,
+        37,
+        59
+       ]
+      },
+      "src": {
+       "sheet": "",
+       "page": 0,
+       "step": "roof_blocks"
+      },
+      "ends": {
+       "y0": "gable",
+       "y1": "gable"
+      }
+     },
+     {
+      "id": "roof:f1f3ece25959462e93d48fb341b3ce3b",
+      "state": "settled",
+      "rect": [
+       21,
+       13.333333333333334,
+       33,
+       32.666666666666664
+      ],
+      "level": "L2",
+      "kind": "gable",
+      "ridge": "y",
+      "plate": 20,
+      "pitch": 10,
+      "overhang": 1,
+      "pitch_source": "drawn",
+      "dormer_of": [
+       14.333333333333334,
+       13.333333333333334,
+       37,
+       52
+      ],
+      "read_geometry": {
+       "rect": [
+        21,
+        13.333333333333334,
+        33,
+        32.66666666666667
+       ]
+      },
+      "src": {
+       "sheet": "",
+       "page": 0,
+       "step": "roof_blocks"
+      }
+     }
+    ],
+    "extensions": [
+     {
+      "id": "extension:3d1f7929bc2547129d9f7c3055a30d3c",
+      "state": "settled",
+      "src": {
+       "sheet": "",
+       "page": 1,
+       "step": "draft"
+      },
+      "kind": "awning",
+      "section": "roof:762cceb645364f28ac69dca54c63e1d4",
+      "pitch": 4,
+      "x0": 42.5,
+      "x1": 53.5,
+      "depth": 2.5,
+      "eave": 9,
+      "brackets": 0,
+      "read_geometry": {},
+      "wall": "wall:6f92a7c2f95e4d2681f0588c448bd560"
+     }
+    ],
+    "choices": [
+     {
+      "kind": "gable",
+      "ridge": "x",
+      "pitch": 10,
+      "plate": 19,
+      "overhang": 1,
+      "rect": [
+       0,
+       25.333333333333332,
+       14.333333333333334,
+       44.5
+      ],
+      "src": {
+       "person": true
+      }
+     }
+    ],
+    "flags": [
+     {
+      "block": "G",
+      "sides": [
+       "left"
+      ],
+      "text": "The left front roof: its left end was not visible in the photos; I made it a gable.",
+      "side": "left",
+      "block_rect": [
+       0,
+       14.333333333333334,
+       14.333333333333334,
+       25.333333333333332
+      ]
+     },
+     {
+      "block": "H",
+      "sides": [
+       "left"
+      ],
+      "text": "The left rear roof: its left end was not visible in the photos; I made it a gable.",
+      "side": "left",
+      "block_rect": [
+       0,
+       44.5,
+       14.333333333333334,
+       54
+      ]
+     },
+     {
+      "block": "G",
+      "text": "The left front roof: its ridge could not line up with its neighbours; please check its slope.",
+      "block_rect": [
+       0,
+       14.333333333333334,
+       14.333333333333334,
+       25.333333333333332
+      ]
+     },
+     {
+      "block": "H",
+      "text": "The left rear roof: its ridge could not line up with its neighbours; please check its slope.",
+      "block_rect": [
+       0,
+       44.5,
+       14.333333333333334,
+       54
+      ]
+     },
+     {
+      "block": "A",
+      "text": "The middle upper roof stands more than six feet above a neighbouring ridge; please check its height.",
+      "block_rect": [
+       14.333333333333334,
+       13.333333333333334,
+       37,
+       52
+      ]
+     }
+    ]
+   },
+   "base": 0,
+   "stairs": [
+    {
+     "id": "stair:92e75b5ced1a4c15b3777b528d87807d",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      20.5,
+      30.67
+     ],
+     "to": [
+      32.5,
+      30.67
+     ],
+     "width": 3.5,
+     "risers": 16,
+     "rise_to": 11,
+     "read_geometry": {
+      "from": [
+       20.5,
+       30.67
+      ],
+      "to": [
+       32.5,
+       30.67
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "stair:9ec8708e5d91498183c1e6f7af313bf8",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      32.67,
+      30.33
+     ],
+     "to": [
+      23.92,
+      30.33
+     ],
+     "width": 4,
+     "risers": 14,
+     "rise_to": 21,
+     "read_geometry": {
+      "from": [
+       32.67,
+       30.33
+      ],
+      "to": [
+       23.92,
+       30.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    }
+   ],
+   "fixtures": [],
+   "lights": [],
+   "porches": [
+    {
+     "id": "porch:2d8254b624784d7da6dd356f0bf16989",
+     "state": "settled",
+     "polygon": [
+      [
+       14.33,
+       6.33
+      ],
+      [
+       37,
+       6.33
+      ],
+      [
+       37,
+       13.33
+      ],
+      [
+       22.67,
+       13.33
+      ],
+      [
+       22.67,
+       14.33
+      ],
+      [
+       14.33,
+       14.33
+      ]
+     ],
+     "screened": false,
+     "floor": 1.5,
+     "columns": [
+      {
+       "at": [
+        14.75,
+        6.75
+       ],
+       "size": 0.83
+      },
+      {
+       "at": [
+        23.17,
+        6.75
+       ],
+       "size": 1
+      },
+      {
+       "at": [
+        30.25,
+        6.75
+       ],
+       "size": 1
+      },
+      {
+       "at": [
+        36.75,
+        6.75
+       ],
+       "size": 0.5
+      }
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        14.33,
+        6.33
+       ],
+       [
+        37,
+        6.33
+       ],
+       [
+        37,
+        13.33
+       ],
+       [
+        22.67,
+        13.33
+       ],
+       [
+        22.67,
+        14.33
+       ],
+       [
+        14.33,
+        14.33
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "porch:0afda420586347609a3e90fc5ee72439",
+     "state": "settled",
+     "polygon": [
+      [
+       14.33,
+       52
+      ],
+      [
+       30.67,
+       52
+      ],
+      [
+       30.67,
+       66
+      ],
+      [
+       14.33,
+       66
+      ]
+     ],
+     "screened": true,
+     "floor": 0,
+     "columns": [
+      {
+       "at": [
+        14.6,
+        65.7
+       ],
+       "size": 0.5
+      },
+      {
+       "at": [
+        22.5,
+        65.7
+       ],
+       "size": 0.5
+      },
+      {
+       "at": [
+        30.4,
+        65.7
+       ],
+       "size": 0.5
+      }
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        14.33,
+        52
+       ],
+       [
+        30.67,
+        52
+       ],
+       [
+        30.67,
+        66
+       ],
+       [
+        14.33,
+        66
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    }
+   ],
+   "porch": null,
+   "materials": {
+    "siding": {
+     "id": "board_and_batten",
+     "color": "#c9c4b8"
+    },
+    "trim": {
+     "id": "painted_trim",
+     "color": "#f2efe6"
+    },
+    "window_frame": {
+     "id": "painted_trim",
+     "color": "#f4f3ef"
+    },
+    "roof": {
+     "id": "standing_seam",
+     "color": "#2f3133"
+    },
+    "porch_ceiling": {
+     "id": "beadboard",
+     "color": "#f4f3ef"
+    },
+    "base": {
+     "id": "stacked_stone_wall",
+     "color": "#e6e3dc"
+    },
+    "door": {
+     "id": "mocha_oak_veneer",
+     "color": "#3a2418"
+    },
+    "paving": {
+     "id": "stone_tiles",
+     "color": "#d6d2c8"
+    },
+    "lawn": {
+     "id": "leafy_grass",
+     "color": "#8a8a55"
+    },
+    "mulch": {
+     "id": "yellow_flower_mulch",
+     "color": "#3a2a20"
+    },
+    "patio_concrete": {
+     "id": "concrete_floor_02",
+     "color": "#cfcac0"
+    }
+   },
+   "position_from": "person"
+  },
+  {
+   "id": "pool-house",
+   "name": "Pool House",
+   "kind": "pool_house",
+   "levels": [
+    {
+     "id": "L1",
+     "name": "main floor",
+     "elevation": 0,
+     "ceiling": 10,
+     "outline": [
+      [
+       0,
+       0
+      ],
+      [
+       31,
+       0
+      ],
+      [
+       31,
+       22
+      ],
+      [
+       0,
+       22
+      ]
+     ],
+     "state": "settled",
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "L2",
+     "name": "second floor",
+     "elevation": 11,
+     "ceiling": 9,
+     "outline": [
+      [
+       5.666666666666667,
+       0
+      ],
+      [
+       25.333333333333332,
+       0
+      ],
+      [
+       25.333333333333332,
+       22
+      ],
+      [
+       0,
+       22
+      ],
+      [
+       0,
+       17.333333333333332
+      ],
+      [
+       5.666666666666667,
+       17.333333333333332
+      ]
+     ],
+     "half": true,
+     "state": "settled",
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    }
+   ],
+   "position": [
+    70.55075907197178,
+    142.2029205053073
+   ],
+   "rotation": 270,
+   "walls": [
+    {
+     "id": "wall:44b42dc9c06144adbeaeb88ce33b0430",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      0,
+      0
+     ],
+     "to": [
+      31,
+      0
+     ],
+     "height": 11,
+     "thickness": 0.5,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       0,
+       0
+      ],
+      "to": [
+       31,
+       0
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:5ddee7b8c6774d5e963194b44eb8126c",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      31,
+      0
+     ],
+     "to": [
+      31,
+      22
+     ],
+     "height": 11,
+     "thickness": 0.5,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       31,
+       0
+      ],
+      "to": [
+       31,
+       22
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:066fd0b4f0044afc972a7a5c39a2f883",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      31,
+      22
+     ],
+     "to": [
+      0,
+      22
+     ],
+     "height": 11,
+     "thickness": 0.5,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       31,
+       22
+      ],
+      "to": [
+       0,
+       22
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:17ec2a8dad9e47d0aefbfe143524c1c2",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      0,
+      22
+     ],
+     "to": [
+      0,
+      0
+     ],
+     "height": 11,
+     "thickness": 0.5,
+     "exterior": true,
+     "read_geometry": {
+      "from": [
+       0,
+       22
+      ],
+      "to": [
+       0,
+       0
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:d9e6e23557cc453fb63736dfcee0bf8e",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      5.666666666666667,
+      0
+     ],
+     "to": [
+      5.666666666666667,
+      17.333333333333332
+     ],
+     "height": 5.33,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       5.67,
+       0
+      ],
+      "to": [
+       5.67,
+       17.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:d6893654236c43b4a07b82444d15e735",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      25.333333333333332,
+      0
+     ],
+     "to": [
+      25.333333333333332,
+      22
+     ],
+     "height": 5.33,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       25.33,
+       0
+      ],
+      "to": [
+       25.33,
+       22
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "wall:d60289b4c26b487db5145bdeb22d530e",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      0,
+      17.333333333333332
+     ],
+     "to": [
+      17.75,
+      17.333333333333332
+     ],
+     "height": 10,
+     "thickness": 0.5,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       0,
+       17.33
+      ],
+      "to": [
+       17.75,
+       17.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:b46a95026995451d86e283a019b71367",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      17.75,
+      12.166666666666666
+     ],
+     "to": [
+      17.75,
+      22
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       17.75,
+       12.17
+      ],
+      "to": [
+       17.75,
+       22
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:9adea4c38eb2430697cf47d4ddee9d2a",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      17.75,
+      12.166666666666666
+     ],
+     "to": [
+      31,
+      12.166666666666666
+     ],
+     "height": 10,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       17.75,
+       12.17
+      ],
+      "to": [
+       31,
+       12.17
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:b139d9a5cf544deca3143a7b369b25cd",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      24.333333333333332,
+      12.166666666666666
+     ],
+     "to": [
+      24.333333333333332,
+      22
+     ],
+     "height": 10,
+     "thickness": 0.5,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       24.33,
+       12.17
+      ],
+      "to": [
+       24.33,
+       22
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:beb7d52281404fe3b8f0647f9183b2b5",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      5.666666666666667,
+      17.333333333333332
+     ],
+     "to": [
+      10.583333333333334,
+      17.333333333333332
+     ],
+     "height": 9,
+     "thickness": 0.5,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       5.67,
+       17.33
+      ],
+      "to": [
+       10.6,
+       17.33
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:d1fea9a80d0943b08a76f1bba48b86d3",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      22.166666666666668,
+      17.75
+     ],
+     "to": [
+      25.333333333333332,
+      17.75
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       22.13,
+       17.78
+      ],
+      "to": [
+       25.33,
+       17.78
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "wall:dd72b1311ffb40afaf9f344380ddab25",
+     "state": "settled",
+     "level": "L2",
+     "from": [
+      22.166666666666668,
+      17.75
+     ],
+     "to": [
+      22.166666666666668,
+      22
+     ],
+     "height": 9,
+     "thickness": 0.33,
+     "exterior": false,
+     "read_geometry": {
+      "from": [
+       22.13,
+       17.78
+      ],
+      "to": [
+       22.13,
+       22
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    }
+   ],
+   "openings": [
+    {
+     "id": "opening:af6c177e05504507965c31beefadf95a",
+     "state": "settled",
+     "kind": "slider",
+     "width": 12,
+     "sill": 0,
+     "head": 8,
+     "wall": "wall:44b42dc9c06144adbeaeb88ce33b0430",
+     "at": 9.08,
+     "read_geometry": {
+      "from": [
+       3.08,
+       0
+      ],
+      "to": [
+       15.08,
+       0
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:11fd38a1131d44668dc7eb1d46550acc",
+     "state": "settled",
+     "kind": "bifold",
+     "width": 10,
+     "sill": 3.5,
+     "head": 8,
+     "wall": "wall:44b42dc9c06144adbeaeb88ce33b0430",
+     "at": 23.67,
+     "read_geometry": {
+      "from": [
+       18.67,
+       0
+      ],
+      "to": [
+       28.67,
+       0
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:d3aebbe0b48e4d37a4027d3815a68bde",
+     "state": "settled",
+     "kind": "door",
+     "width": 2.67,
+     "sill": 0,
+     "head": 8,
+     "wall": "wall:5ddee7b8c6774d5e963194b44eb8126c",
+     "at": 10.33,
+     "read_geometry": {
+      "from": [
+       31,
+       8.995000000000001
+      ],
+      "to": [
+       31,
+       11.665
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:31805aaf07f646bdba15608a7e709b50",
+     "state": "settled",
+     "kind": "door",
+     "width": 2.67,
+     "sill": 0,
+     "head": 8,
+     "wall": "wall:5ddee7b8c6774d5e963194b44eb8126c",
+     "at": 14.17,
+     "read_geometry": {
+      "from": [
+       31,
+       12.835
+      ],
+      "to": [
+       31,
+       15.504999999999999
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:318404f824b84dc4b6ea24b316128495",
+     "state": "settled",
+     "kind": "window",
+     "width": 4,
+     "sill": 5.57,
+     "head": 7.57,
+     "gable": "rear",
+     "section": "roof:c32cf56375f64ea9aeaa8b82fd39b4a9",
+     "x": 15.5,
+     "read_geometry": {
+      "from": [
+       13.5,
+       22
+      ],
+      "to": [
+       17.5,
+       22
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:4009c0058fbc4f09bd0edbc4b2b0e4b5",
+     "state": "settled",
+     "kind": "window",
+     "width": 10.67,
+     "sill": 1.5,
+     "head": 8,
+     "wall": "wall:17ec2a8dad9e47d0aefbfe143524c1c2",
+     "at": 13.17,
+     "read_geometry": {
+      "from": [
+       0,
+       14.165
+      ],
+      "to": [
+       0,
+       3.495000000000001
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:47d0ed72035d4f298e7852de323cea5b",
+     "state": "settled",
+     "kind": "window",
+     "width": 2.67,
+     "sill": 2.4,
+     "head": 7.57,
+     "gable": "front",
+     "section": "roof:c32cf56375f64ea9aeaa8b82fd39b4a9",
+     "x": 11.83,
+     "read_geometry": {
+      "from": [
+       10.495000000000001,
+       0
+      ],
+      "to": [
+       13.165,
+       0
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    },
+    {
+     "id": "opening:5eb6a77c350549b695988a8389c04a6c",
+     "state": "settled",
+     "kind": "window",
+     "width": 2.67,
+     "sill": 2.4,
+     "head": 7.57,
+     "gable": "front",
+     "section": "roof:c32cf56375f64ea9aeaa8b82fd39b4a9",
+     "x": 19.17,
+     "read_geometry": {
+      "from": [
+       17.835,
+       0
+      ],
+      "to": [
+       20.505000000000003,
+       0
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    }
+   ],
+   "rooms": [
+    {
+     "id": "room:5d7de10ca48340ae85c407d22337c6f7",
+     "state": "settled",
+     "name": "Pool Lounge",
+     "level": "L1",
+     "polygon": [
+      [
+       0,
+       0
+      ],
+      [
+       31,
+       0
+      ],
+      [
+       31,
+       12.17
+      ],
+      [
+       17.75,
+       12.17
+      ],
+      [
+       17.75,
+       17.33
+      ],
+      [
+       0,
+       17.33
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        0,
+        0
+       ],
+       [
+        31,
+        0
+       ],
+       [
+        31,
+        12.17
+       ],
+       [
+        17.75,
+        12.17
+       ],
+       [
+        17.75,
+        17.33
+       ],
+       [
+        0,
+        17.33
+       ]
+      ]
+     },
+     "ha_area": "Pool Lounge",
+     "src": {
+      "person": true,
+      "sheet": "",
+      "page": 1
+     }
+    },
+    {
+     "id": "room:a80d7712a6724446a8f023e76e90bb7c",
+     "state": "settled",
+     "name": "Room",
+     "level": "L1",
+     "polygon": [
+      [
+       0,
+       17.33
+      ],
+      [
+       17.75,
+       17.33
+      ],
+      [
+       17.75,
+       22
+      ],
+      [
+       0,
+       22
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        0,
+        17.33
+       ],
+       [
+        17.75,
+        17.33
+       ],
+       [
+        17.75,
+        22
+       ],
+       [
+        0,
+        22
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:1016634444d841108f3eab9cc74e62e8",
+     "state": "settled",
+     "name": "SHWR.",
+     "level": "L1",
+     "polygon": [
+      [
+       17.75,
+       18.67
+      ],
+      [
+       24.33,
+       18.67
+      ],
+      [
+       24.33,
+       22
+      ],
+      [
+       17.75,
+       22
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        17.75,
+        18.67
+       ],
+       [
+        24.33,
+        18.67
+       ],
+       [
+        24.33,
+        22
+       ],
+       [
+        17.75,
+        22
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:f94386f3da524031b4530a0847d7bc75",
+     "state": "settled",
+     "name": "Room",
+     "level": "L1",
+     "polygon": [
+      [
+       17.75,
+       12.17
+      ],
+      [
+       24.33,
+       12.17
+      ],
+      [
+       24.33,
+       18.67
+      ],
+      [
+       17.75,
+       18.67
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        17.75,
+        12.17
+       ],
+       [
+        24.33,
+        12.17
+       ],
+       [
+        24.33,
+        18.67
+       ],
+       [
+        17.75,
+        18.67
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:aa3a66806205434ca794927a6d66dd22",
+     "state": "settled",
+     "name": "CHANGING",
+     "level": "L1",
+     "polygon": [
+      [
+       24.33,
+       12.17
+      ],
+      [
+       31,
+       12.17
+      ],
+      [
+       31,
+       22
+      ],
+      [
+       24.33,
+       22
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        24.33,
+        12.17
+       ],
+       [
+        31,
+        12.17
+       ],
+       [
+        31,
+        22
+       ],
+       [
+        24.33,
+        22
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:6cf4e27bd45149c6a1e0deb50a6bbc39",
+     "state": "settled",
+     "name": "EXERCISE",
+     "level": "L2",
+     "polygon": [
+      [
+       5.67,
+       0
+      ],
+      [
+       25.33,
+       0
+      ],
+      [
+       25.333333333333332,
+       17.78
+      ],
+      [
+       22.13,
+       17.78
+      ],
+      [
+       22.13,
+       22
+      ],
+      [
+       10.599999999999998,
+       22
+      ],
+      [
+       10.6,
+       17.33
+      ],
+      [
+       5.666666666666667,
+       17.33
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        5.67,
+        0
+       ],
+       [
+        25.33,
+        0
+       ],
+       [
+        25.33,
+        17.78
+       ],
+       [
+        22.13,
+        17.78
+       ],
+       [
+        22.13,
+        22
+       ],
+       [
+        10.6,
+        22
+       ],
+       [
+        10.6,
+        17.33
+       ],
+       [
+        5.67,
+        17.33
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:f6475752af0948c4871d6fe20ddbaa69",
+     "state": "settled",
+     "name": "Room",
+     "level": "L2",
+     "polygon": [
+      [
+       0,
+       17.333333333333332
+      ],
+      [
+       10.6,
+       17.33
+      ],
+      [
+       10.599999999999998,
+       22
+      ],
+      [
+       0,
+       22
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        0,
+        17.33
+       ],
+       [
+        10.6,
+        17.33
+       ],
+       [
+        10.6,
+        22
+       ],
+       [
+        0,
+        22
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    },
+    {
+     "id": "room:9f9b0718ccc047e284a1126a4311319e",
+     "state": "settled",
+     "name": "CLOSET",
+     "level": "L2",
+     "polygon": [
+      [
+       22.13,
+       17.78
+      ],
+      [
+       25.333333333333332,
+       17.78
+      ],
+      [
+       25.33,
+       22
+      ],
+      [
+       22.13,
+       22
+      ]
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        22.13,
+        17.78
+       ],
+       [
+        25.33,
+        17.78
+       ],
+       [
+        25.33,
+        22
+       ],
+       [
+        22.13,
+        22
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft_rooms"
+     }
+    }
+   ],
+   "roof": {
+    "sections": [
+     {
+      "id": "roof:828b7880b4d64f3faf6c04b32d80f6ec",
+      "state": "settled",
+      "kind": "shed",
+      "rect": [
+       31,
+       0,
+       38,
+       22
+      ],
+      "pitch": 3,
+      "plate": 9.35,
+      "overhang": 1,
+      "low_side": "x1",
+      "read_geometry": {
+       "rect": [
+        31,
+        0,
+        38,
+        22
+       ]
+      },
+      "pitch_source": "default",
+      "src": {
+       "sheet": "",
+       "page": 1,
+       "step": "draft"
+      }
+     },
+     {
+      "id": "roof:c32cf56375f64ea9aeaa8b82fd39b4a9",
+      "state": "settled",
+      "rect": [
+       0,
+       0,
+       31,
+       22
+      ],
+      "block": [
+       0,
+       0,
+       31,
+       22
+      ],
+      "level": "L1",
+      "kind": "gable",
+      "ridge": "y",
+      "plate": 11,
+      "pitch": 11,
+      "overhang": 1,
+      "pitch_source": "drawn",
+      "read_geometry": {
+       "rect": [
+        0,
+        0,
+        31,
+        22
+       ]
+      },
+      "src": {
+       "sheet": "",
+       "page": 0,
+       "step": "roof_blocks"
+      },
+      "ends": {
+       "y0": "gable",
+       "y1": "gable"
+      }
+     }
+    ],
+    "extensions": [
+     {
+      "id": "extension:103ff1d90abc4dd19f5e47540cdf41ea",
+      "state": "settled",
+      "src": {
+       "sheet": "",
+       "page": 1,
+       "step": "draft"
+      },
+      "kind": "awning",
+      "section": "roof:c32cf56375f64ea9aeaa8b82fd39b4a9",
+      "pitch": 2,
+      "x0": 17.2,
+      "x1": 30.2,
+      "depth": 4,
+      "eave": 8.7,
+      "brackets": 2,
+      "read_geometry": {},
+      "wall": "wall:44b42dc9c06144adbeaeb88ce33b0430"
+     }
+    ],
+    "choices": [],
+    "flags": [
+     {
+      "block": "A",
+      "sides": [
+       "rear"
+      ],
+      "text": "The middle roof: its rear end was not visible in the photos; I made it a gable.",
+      "side": "rear",
+      "block_rect": [
+       0,
+       0,
+       31,
+       22
+      ]
+     }
+    ]
+   },
+   "base": 0,
+   "stairs": [
+    {
+     "id": "stair:c9a470915ee64d96bd57456da81dba3e",
+     "state": "settled",
+     "level": "L1",
+     "from": [
+      3.5,
+      19.67
+     ],
+     "to": [
+      16.17,
+      19.67
+     ],
+     "width": 3.67,
+     "risers": 17,
+     "rise_to": 11,
+     "read_geometry": {
+      "from": [
+       3.5,
+       19.67
+      ],
+      "to": [
+       16.17,
+       19.67
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    }
+   ],
+   "fixtures": [],
+   "lights": [],
+   "porches": [
+    {
+     "id": "porch:631f93c719a24ca1a2087def5f707255",
+     "state": "settled",
+     "polygon": [
+      [
+       31,
+       0
+      ],
+      [
+       38,
+       0
+      ],
+      [
+       38,
+       22
+      ],
+      [
+       31,
+       22
+      ]
+     ],
+     "screened": false,
+     "floor": 0,
+     "columns": [
+      {
+       "at": [
+        37.67,
+        0.33
+       ],
+       "size": 0.67
+      },
+      {
+       "at": [
+        37.67,
+        21.67
+       ],
+       "size": 0.67
+      }
+     ],
+     "read_geometry": {
+      "polygon": [
+       [
+        31,
+        0
+       ],
+       [
+        38,
+        0
+       ],
+       [
+        38,
+        22
+       ],
+       [
+        31,
+        22
+       ]
+      ]
+     },
+     "src": {
+      "sheet": "",
+      "page": 1,
+      "step": "draft"
+     }
+    }
+   ],
+   "porch": null,
+   "materials": {
+    "siding": {
+     "id": "board_and_batten",
+     "color": "#c5c7c1"
+    },
+    "trim": {
+     "id": "painted_trim",
+     "color": "#f4f3ef"
+    },
+    "window_frame": {
+     "id": "painted_trim",
+     "color": "#f4f3ef"
+    },
+    "roof": {
+     "id": "standing_seam",
+     "color": "#4a3a32"
+    },
+    "porch_ceiling": {
+     "id": "beadboard",
+     "color": "#f4f3ef"
+    },
+    "base": {
+     "id": "stacked_stone_wall",
+     "color": "#d8d0c2"
+    },
+    "door": {
+     "id": "mocha_oak_veneer",
+     "color": "#4a2a1c"
+    },
+    "paving": {
+     "id": "stone_tiles",
+     "color": "#e0d5c6"
+    },
+    "lawn": {
+     "id": "leafy_grass",
+     "color": "#3f6a2e"
+    },
+    "counter": {
+     "id": "granite_tile",
+     "color": "#3a3c3e"
+    },
+    "stainless": {
+     "id": "metal_plate",
+     "color": "#b8bcc0"
+    },
+    "floor": {
+     "id": "wood_floor",
+     "color": "#a4835f"
+    },
+    "interior_wall": {
+     "id": "white_plaster_02",
+     "color": "#f4f1ea"
+    }
+   },
+   "position_from": "person"
+  }
+ ],
+ "site": {
+  "lot": [
+   [
+    101.02194418298883,
+    150.19962252381896
+   ],
+   [
+    100.68520436904555,
+    6.1651906626024365e-15
+   ],
+   [
+    0,
+    0
+   ],
+   [
+    0.33673981394328445,
+    151.0703449732324
+   ]
+  ],
+  "beds": [
+   {
+    "id": "cmp-bed-1",
+    "by": "compose",
+    "polygon": [
+     [
+      81.62190069803711,
+      80.58824944038136
+     ],
+     [
+      81.62190069803711,
+      81.08824944038136
+     ],
+     [
+      86.62190069803711,
+      81.08824944038136
+     ],
+     [
+      86.62190069803711,
+      80.58824944038136
+     ]
+    ],
+    "material": "mulch",
+    "read_geometry": {
+     "polygon": [
+      [
+       81.62190069803711,
+       80.58824944038136
+      ],
+      [
+       81.62190069803711,
+       81.08824944038136
+      ],
+      [
+       86.62190069803711,
+       81.08824944038136
+      ],
+      [
+       86.62190069803711,
+       80.58824944038136
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-bed-2",
+    "by": "compose",
+    "polygon": [
+     [
+      11.2919006980371,
+      93.08824944038136
+     ],
+     [
+      11.2919006980371,
+      53.4215827737147
+     ],
+     [
+      6.2919006980371,
+      53.4215827737147
+     ],
+     [
+      6.2919006980371,
+      93.08824944038136
+     ]
+    ],
+    "material": "mulch",
+    "read_geometry": {
+     "polygon": [
+      [
+       11.2919006980371,
+       93.08824944038136
+      ],
+      [
+       11.2919006980371,
+       53.4215827737147
+      ],
+      [
+       6.2919006980371,
+       53.4215827737147
+      ],
+      [
+       6.2919006980371,
+       93.08824944038136
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-bed-3",
+    "by": "compose",
+    "polygon": [
+     [
+      92.80075907197178,
+      111.2029205053073
+     ],
+     [
+      92.80075907197178,
+      142.2029205053073
+     ],
+     [
+      97.80075907197178,
+      142.2029205053073
+     ],
+     [
+      97.80075907197178,
+      111.2029205053073
+     ]
+    ],
+    "material": "mulch",
+    "read_geometry": {
+     "polygon": [
+      [
+       92.80075907197178,
+       111.2029205053073
+      ],
+      [
+       92.80075907197178,
+       142.2029205053073
+      ],
+      [
+       97.80075907197178,
+       142.2029205053073
+      ],
+      [
+       97.80075907197178,
+       111.2029205053073
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-bed-4",
+    "by": "compose",
+    "polygon": [
+     [
+      92.55075907197178,
+      142.4529205053073
+     ],
+     [
+      70.55075907197178,
+      142.4529205053073
+     ],
+     [
+      70.55075907197178,
+      147.4529205053073
+     ],
+     [
+      92.55075907197178,
+      147.4529205053073
+     ]
+    ],
+    "material": "mulch",
+    "read_geometry": {
+     "polygon": [
+      [
+       92.55075907197178,
+       142.4529205053073
+      ],
+      [
+       70.55075907197178,
+       142.4529205053073
+      ],
+      [
+       70.55075907197178,
+       147.4529205053073
+      ],
+      [
+       92.55075907197178,
+       147.4529205053073
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   }
+  ],
+  "planting": [
+   {
+    "id": "cmp-shrub-1",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     83.37190069803711,
+     80.83824944038136
+    ],
+    "preset": "Bush 1",
+    "height": 3.3826035386091324,
+    "seed": 2127877499,
+    "read_geometry": {
+     "at": [
+      83.37190069803711,
+      80.83824944038136
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-2",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     8.7919006980371,
+     55.1715827737147
+    ],
+    "preset": "Bush 2",
+    "height": 3.9773894590841445,
+    "seed": 901749037,
+    "read_geometry": {
+     "at": [
+      8.7919006980371,
+      55.1715827737147
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-3",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     8.7919006980371,
+     58.6715827737147
+    ],
+    "preset": "Bush 2",
+    "height": 3.1407893801613525,
+    "seed": 121751464,
+    "read_geometry": {
+     "at": [
+      8.7919006980371,
+      58.6715827737147
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-4",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     8.7919006980371,
+     62.1715827737147
+    ],
+    "preset": "Bush 2",
+    "height": 4.339975563836452,
+    "seed": 1674216077,
+    "read_geometry": {
+     "at": [
+      8.7919006980371,
+      62.1715827737147
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-5",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     8.7919006980371,
+     65.6715827737147
+    ],
+    "preset": "Bush 2",
+    "height": 3.6491506018575803,
+    "seed": 9045414,
+    "read_geometry": {
+     "at": [
+      8.7919006980371,
+      65.6715827737147
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-6",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     8.7919006980371,
+     69.1715827737147
+    ],
+    "preset": "Bush 2",
+    "height": 4.043749300152665,
+    "seed": 1143881027,
+    "read_geometry": {
+     "at": [
+      8.7919006980371,
+      69.1715827737147
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-7",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     8.7919006980371,
+     72.6715827737147
+    ],
+    "preset": "Bush 1",
+    "height": 4.352141186417225,
+    "seed": 131383004,
+    "read_geometry": {
+     "at": [
+      8.7919006980371,
+      72.6715827737147
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-8",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     8.7919006980371,
+     76.1715827737147
+    ],
+    "preset": "Bush 1",
+    "height": 3.033483166531986,
+    "seed": 39534911,
+    "read_geometry": {
+     "at": [
+      8.7919006980371,
+      76.1715827737147
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-9",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     8.7919006980371,
+     79.6715827737147
+    ],
+    "preset": "Bush 1",
+    "height": 4.408723744167766,
+    "seed": 1637259727,
+    "read_geometry": {
+     "at": [
+      8.7919006980371,
+      79.6715827737147
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-10",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     8.7919006980371,
+     83.1715827737147
+    ],
+    "preset": "Bush 2",
+    "height": 4.088778902169773,
+    "seed": 952158461,
+    "read_geometry": {
+     "at": [
+      8.7919006980371,
+      83.1715827737147
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-11",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     8.7919006980371,
+     86.6715827737147
+    ],
+    "preset": "Bush 2",
+    "height": 4.145551492697234,
+    "seed": 2129497364,
+    "read_geometry": {
+     "at": [
+      8.7919006980371,
+      86.6715827737147
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-12",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     8.7919006980371,
+     90.1715827737147
+    ],
+    "preset": "Bush 2",
+    "height": 3.8292893644394477,
+    "seed": 1484771968,
+    "read_geometry": {
+     "at": [
+      8.7919006980371,
+      90.1715827737147
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-13",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     95.30075907197178,
+     112.9529205053073
+    ],
+    "preset": "Bush 1",
+    "height": 4.141421606312731,
+    "seed": 1244602538,
+    "read_geometry": {
+     "at": [
+      95.30075907197178,
+      112.9529205053073
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-14",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     95.30075907197178,
+     116.4529205053073
+    ],
+    "preset": "Bush 1",
+    "height": 4.389759935678799,
+    "seed": 1787479226,
+    "read_geometry": {
+     "at": [
+      95.30075907197178,
+      116.4529205053073
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-15",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     95.30075907197178,
+     119.9529205053073
+    ],
+    "preset": "Bush 1",
+    "height": 4.256366963493859,
+    "seed": 429497919,
+    "read_geometry": {
+     "at": [
+      95.30075907197178,
+      119.9529205053073
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-16",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     95.30075907197178,
+     123.4529205053073
+    ],
+    "preset": "Bush 2",
+    "height": 3.1813349397087096,
+    "seed": 1428914934,
+    "read_geometry": {
+     "at": [
+      95.30075907197178,
+      123.4529205053073
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-17",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     95.30075907197178,
+     126.9529205053073
+    ],
+    "preset": "Bush 2",
+    "height": 4.343363091962237,
+    "seed": 1812935769,
+    "read_geometry": {
+     "at": [
+      95.30075907197178,
+      126.9529205053073
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-18",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     95.30075907197178,
+     130.4529205053073
+    ],
+    "preset": "Bush 2",
+    "height": 3.761575875766974,
+    "seed": 815398389,
+    "read_geometry": {
+     "at": [
+      95.30075907197178,
+      130.4529205053073
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-19",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     95.30075907197178,
+     133.9529205053073
+    ],
+    "preset": "Bush 2",
+    "height": 3.455052766399376,
+    "seed": 2144743702,
+    "read_geometry": {
+     "at": [
+      95.30075907197178,
+      133.9529205053073
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-20",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     95.30075907197178,
+     137.4529205053073
+    ],
+    "preset": "Bush 2",
+    "height": 4.26929612764247,
+    "seed": 1689440956,
+    "read_geometry": {
+     "at": [
+      95.30075907197178,
+      137.4529205053073
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-21",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     95.30075907197178,
+     140.9529205053073
+    ],
+    "preset": "Bush 1",
+    "height": 3.3641099603146016,
+    "seed": 1736404157,
+    "read_geometry": {
+     "at": [
+      95.30075907197178,
+      140.9529205053073
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-22",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     72.30075907197178,
+     144.9529205053073
+    ],
+    "preset": "Bush 2",
+    "height": 3.550685747140632,
+    "seed": 1609337231,
+    "read_geometry": {
+     "at": [
+      72.30075907197178,
+      144.9529205053073
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-23",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     75.80075907197178,
+     144.9529205053073
+    ],
+    "preset": "Bush 2",
+    "height": 3.1297013845923725,
+    "seed": 463561237,
+    "read_geometry": {
+     "at": [
+      75.80075907197178,
+      144.9529205053073
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-24",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     79.30075907197178,
+     144.9529205053073
+    ],
+    "preset": "Bush 2",
+    "height": 4.1676639225002186,
+    "seed": 1689017785,
+    "read_geometry": {
+     "at": [
+      79.30075907197178,
+      144.9529205053073
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-25",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     82.80075907197178,
+     144.9529205053073
+    ],
+    "preset": "Bush 3",
+    "height": 4.099148713382799,
+    "seed": 2015714664,
+    "read_geometry": {
+     "at": [
+      82.80075907197178,
+      144.9529205053073
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-26",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     86.30075907197178,
+     144.9529205053073
+    ],
+    "preset": "Bush 3",
+    "height": 3.065230935534791,
+    "seed": 1690497763,
+    "read_geometry": {
+     "at": [
+      86.30075907197178,
+      144.9529205053073
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-shrub-27",
+    "by": "compose",
+    "kind": "shrub",
+    "at": [
+     89.80075907197178,
+     144.9529205053073
+    ],
+    "preset": "Bush 3",
+    "height": 3.970734247978954,
+    "seed": 724106992,
+    "read_geometry": {
+     "at": [
+      89.80075907197178,
+      144.9529205053073
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-tree-1",
+    "by": "compose",
+    "kind": "tree",
+    "at": [
+     92.68520436904555,
+     6.000000000000005
+    ],
+    "preset": "Pine Medium",
+    "height": 69.55191593846335,
+    "seed": 856916273,
+    "read_geometry": {
+     "at": [
+      92.68520436904555,
+      6.000000000000005
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-tree-2",
+    "by": "compose",
+    "kind": "tree",
+    "at": [
+     76.36826478144732,
+     6.000000000000004
+    ],
+    "preset": "Pine Medium",
+    "height": 55.111371709736375,
+    "seed": 1476720930,
+    "read_geometry": {
+     "at": [
+      76.36826478144732,
+      6.000000000000004
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-tree-3",
+    "by": "compose",
+    "kind": "tree",
+    "at": [
+     56.74852567530117,
+     6.0000000000000036
+    ],
+    "preset": "Oak Large",
+    "height": 56.47829329776671,
+    "seed": 1156546539,
+    "read_geometry": {
+     "at": [
+      56.74852567530117,
+      6.0000000000000036
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-tree-4",
+    "by": "compose",
+    "kind": "tree",
+    "at": [
+     39.47480716634257,
+     6.000000000000003
+    ],
+    "preset": "Pine Large",
+    "height": 54.592240822251,
+    "seed": 555122063,
+    "read_geometry": {
+     "at": [
+      39.47480716634257,
+      6.000000000000003
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-tree-5",
+    "by": "compose",
+    "kind": "tree",
+    "at": [
+     23.325380898158556,
+     6.000000000000002
+    ],
+    "preset": "Pine Medium",
+    "height": 55.65226699220376,
+    "seed": 241047738,
+    "read_geometry": {
+     "at": [
+      23.325380898158556,
+      6.000000000000002
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-tree-6",
+    "by": "compose",
+    "kind": "tree",
+    "at": [
+     7.476566358844636,
+     6.000000000000001
+    ],
+    "preset": "Oak Large",
+    "height": 59.2499833469095,
+    "seed": 858303752,
+    "read_geometry": {
+     "at": [
+      7.476566358844636,
+      6.000000000000001
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-tree-7",
+    "by": "compose",
+    "kind": "tree",
+    "at": [
+     92.68520436904555,
+     16.000000000000007
+    ],
+    "preset": "Ash Large",
+    "height": 57.12312780569336,
+    "seed": 1532401219,
+    "read_geometry": {
+     "at": [
+      92.68520436904555,
+      16.000000000000007
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-tree-8",
+    "by": "compose",
+    "kind": "tree",
+    "at": [
+     30.744698678441182,
+     16.000000000000004
+    ],
+    "preset": "Oak Large",
+    "height": 56.45367000249311,
+    "seed": 120151618,
+    "read_geometry": {
+     "at": [
+      30.744698678441182,
+      16.000000000000004
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-tree-9",
+    "by": "compose",
+    "kind": "tree",
+    "at": [
+     12.308142802328902,
+     16
+    ],
+    "preset": "Pine Medium",
+    "height": 58.76890662768127,
+    "seed": 776461326,
+    "read_geometry": {
+     "at": [
+      12.308142802328902,
+      16
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   }
+  ],
+  "furniture": [],
+  "edges": [
+   {
+    "id": "site:db56a4d8fc2e4b9fa240b683e7376b98",
+    "state": "settled",
+    "points": [
+     [
+      86.8788719973704,
+      140.18631435556438
+     ],
+     [
+      56.57228874247375,
+      140.18631435556438
+     ]
+    ],
+    "height": 2,
+    "read_geometry": {
+     "points": [
+      [
+       86.8788719973704,
+       140.18631435556438
+      ],
+      [
+       56.57228874247375,
+       140.18631435556438
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "297375fe610940b1a78dbff23d40bb05",
+     "page": 1,
+     "step": "site"
+    }
+   },
+   {
+    "id": "site:8e2a78bbee4647e8820e21221da2293e",
+    "state": "settled",
+    "points": [
+     [
+      86.87887199737041,
+      92.296579637825
+     ],
+     [
+      73.40927943963855,
+      92.296579637825
+     ]
+    ],
+    "height": 2,
+    "read_geometry": {
+     "points": [
+      [
+       86.87887199737041,
+       92.296579637825
+      ],
+      [
+       73.40927943963855,
+       92.296579637825
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "297375fe610940b1a78dbff23d40bb05",
+     "page": 1,
+     "step": "site"
+    }
+   },
+   {
+    "id": "cmp-edge-1",
+    "by": "compose",
+    "points": [
+     [
+      71.0521007420355,
+      95.34410821077206
+     ],
+     [
+      70.62190069803711,
+      95.34410821077206
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       71.0521007420355,
+       95.34410821077206
+      ],
+      [
+       70.62190069803711,
+       95.34410821077206
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-3",
+    "by": "compose",
+    "points": [
+     [
+      53.87837023092737,
+      98.25324944038137
+     ],
+     [
+      53.87837023092737,
+      104.92205515431993
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       53.87837023092737,
+       98.25324944038137
+      ],
+      [
+       53.87837023092737,
+       104.92205515431993
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-4",
+    "by": "compose",
+    "points": [
+     [
+      53.87837023092737,
+      104.92205515431993
+     ],
+     [
+      42.126900698037105,
+      104.92205515431993
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       53.87837023092737,
+       104.92205515431993
+      ],
+      [
+       42.126900698037105,
+       104.92205515431993
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-5",
+    "by": "compose",
+    "points": [
+     [
+      38.05159897559246,
+      105.08824944038136
+     ],
+     [
+      38.05159897559246,
+      111.88783474962747
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       38.05159897559246,
+       105.08824944038136
+      ],
+      [
+       38.05159897559246,
+       111.88783474962747
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-6",
+    "by": "compose",
+    "points": [
+     [
+      53.87837023092737,
+      138.8802306814442
+     ],
+     [
+      70.30075907197178,
+      138.8802306814442
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       53.87837023092737,
+       138.8802306814442
+      ],
+      [
+       70.30075907197178,
+       138.8802306814442
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-7",
+    "by": "compose",
+    "points": [
+     [
+      96.9810664156693,
+      48.76045716715283
+     ],
+     [
+      96.9810664156693,
+      20.461977561215953
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       96.9810664156693,
+       48.76045716715283
+      ],
+      [
+       96.9810664156693,
+       20.461977561215953
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-8",
+    "by": "compose",
+    "points": [
+     [
+      68.35818223048912,
+      20.46197756121595
+     ],
+     [
+      68.35818223048912,
+      21.33270001062937
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       68.35818223048912,
+       20.46197756121595
+      ],
+      [
+       68.35818223048912,
+       21.33270001062937
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-10",
+    "by": "compose",
+    "points": [
+     [
+      68.35818223048912,
+      27.863118381230247
+     ],
+     [
+      68.35818223048912,
+      38.923249440381355
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       68.35818223048912,
+       27.863118381230247
+      ],
+      [
+       68.35818223048912,
+       38.923249440381355
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-11",
+    "by": "compose",
+    "points": [
+     [
+      70.62190069803711,
+      48.76045716715283
+     ],
+     [
+      96.9810664156693,
+      48.76045716715283
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       70.62190069803711,
+       48.76045716715283
+      ],
+      [
+       96.9810664156693,
+       48.76045716715283
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-12",
+    "by": "compose",
+    "points": [
+     [
+      68.35818223048912,
+      21.33270001062937
+     ],
+     [
+      24.58200641786064,
+      21.332700010629367
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       68.35818223048912,
+       21.33270001062937
+      ],
+      [
+       24.58200641786064,
+       21.332700010629367
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-13",
+    "by": "compose",
+    "points": [
+     [
+      24.582006417860637,
+      21.332700010629367
+     ],
+     [
+      24.582006417860637,
+      27.863118381230244
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       24.582006417860637,
+       21.332700010629367
+      ],
+      [
+       24.582006417860637,
+       27.863118381230244
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-14",
+    "by": "compose",
+    "points": [
+     [
+      24.582006417860637,
+      27.863118381230244
+     ],
+     [
+      68.35818223048912,
+      27.863118381230247
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       24.582006417860637,
+       27.863118381230244
+      ],
+      [
+       68.35818223048912,
+       27.863118381230247
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-15",
+    "by": "compose",
+    "points": [
+     [
+      86.62190069803711,
+      81.08824944038136
+     ],
+     [
+      86.62190069803711,
+      80.58824944038136
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       86.62190069803711,
+       81.08824944038136
+      ],
+      [
+       86.62190069803711,
+       80.58824944038136
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-17",
+    "by": "compose",
+    "points": [
+     [
+      86.62190069803711,
+      80.58824944038136
+     ],
+     [
+      81.62190069803711,
+      80.58824944038136
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       86.62190069803711,
+       80.58824944038136
+      ],
+      [
+       81.62190069803711,
+       80.58824944038136
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-18",
+    "by": "compose",
+    "points": [
+     [
+      11.2919006980371,
+      53.4215827737147
+     ],
+     [
+      6.2919006980371,
+      53.4215827737147
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       11.2919006980371,
+       53.4215827737147
+      ],
+      [
+       6.2919006980371,
+       53.4215827737147
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-19",
+    "by": "compose",
+    "points": [
+     [
+      6.2919006980371,
+      53.4215827737147
+     ],
+     [
+      6.2919006980371,
+      93.08824944038136
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       6.2919006980371,
+       53.4215827737147
+      ],
+      [
+       6.2919006980371,
+       93.08824944038136
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-20",
+    "by": "compose",
+    "points": [
+     [
+      6.2919006980371,
+      93.08824944038136
+     ],
+     [
+      11.2919006980371,
+      93.08824944038136
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       6.2919006980371,
+       93.08824944038136
+      ],
+      [
+       11.2919006980371,
+       93.08824944038136
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-21",
+    "by": "compose",
+    "points": [
+     [
+      92.80075907197178,
+      142.2029205053073
+     ],
+     [
+      97.80075907197178,
+      142.2029205053073
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       92.80075907197178,
+       142.2029205053073
+      ],
+      [
+       97.80075907197178,
+       142.2029205053073
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-22",
+    "by": "compose",
+    "points": [
+     [
+      97.80075907197178,
+      142.2029205053073
+     ],
+     [
+      97.80075907197178,
+      111.2029205053073
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       97.80075907197178,
+       142.2029205053073
+      ],
+      [
+       97.80075907197178,
+       111.2029205053073
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-23",
+    "by": "compose",
+    "points": [
+     [
+      97.80075907197178,
+      111.2029205053073
+     ],
+     [
+      92.80075907197178,
+      111.2029205053073
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       97.80075907197178,
+       111.2029205053073
+      ],
+      [
+       92.80075907197178,
+       111.2029205053073
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-24",
+    "by": "compose",
+    "points": [
+     [
+      70.55075907197178,
+      142.4529205053073
+     ],
+     [
+      70.55075907197178,
+      147.4529205053073
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       70.55075907197178,
+       142.4529205053073
+      ],
+      [
+       70.55075907197178,
+       147.4529205053073
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-25",
+    "by": "compose",
+    "points": [
+     [
+      70.55075907197178,
+      147.4529205053073
+     ],
+     [
+      92.55075907197178,
+      147.4529205053073
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       70.55075907197178,
+       147.4529205053073
+      ],
+      [
+       92.55075907197178,
+       147.4529205053073
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   },
+   {
+    "id": "cmp-edge-26",
+    "by": "compose",
+    "points": [
+     [
+      92.55075907197178,
+      147.4529205053073
+     ],
+     [
+      92.55075907197178,
+      142.4529205053073
+     ]
+    ],
+    "read_geometry": {
+     "points": [
+      [
+       92.55075907197178,
+       147.4529205053073
+      ],
+      [
+       92.55075907197178,
+       142.4529205053073
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "",
+     "page": 1,
+     "step": "compose"
+    }
+   }
+  ],
+  "hardscape": [
+   {
+    "id": "site:8caf897d40f8465fbdd8bdf6051aaa5b",
+    "state": "settled",
+    "kind": "patio",
+    "polygon": [
+     [
+      71.05210074203549,
+      138.8802306814442
+     ],
+     [
+      71.0521007420355,
+      95.34410821077206
+     ],
+     [
+      53.87837023092737,
+      95.34410821077206
+     ],
+     [
+      53.87837023092737,
+      104.92205515431993
+     ],
+     [
+      38.05159897559246,
+      104.92205515431993
+     ],
+     [
+      38.05159897559246,
+      111.88783474962747
+     ],
+     [
+      53.87837023092737,
+      111.88783474962747
+     ],
+     [
+      53.87837023092737,
+      138.8802306814442
+     ]
+    ],
+    "read_geometry": {
+     "polygon": [
+      [
+       71.05210074203549,
+       138.8802306814442
+      ],
+      [
+       71.0521007420355,
+       95.34410821077206
+      ],
+      [
+       53.87837023092737,
+       95.34410821077206
+      ],
+      [
+       53.87837023092737,
+       104.92205515431993
+      ],
+      [
+       38.05159897559246,
+       104.92205515431993
+      ],
+      [
+       38.05159897559246,
+       111.88783474962747
+      ],
+      [
+       53.87837023092737,
+       111.88783474962747
+      ],
+      [
+       53.87837023092737,
+       138.8802306814442
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "297375fe610940b1a78dbff23d40bb05",
+     "page": 1,
+     "step": "site"
+    }
+   },
+   {
+    "id": "site:9b4cd20fc7fa47c295ff76ea40567f3c",
+    "state": "settled",
+    "kind": "driveway",
+    "polygon": [
+     [
+      96.9810664156693,
+      48.76045716715283
+     ],
+     [
+      96.9810664156693,
+      20.461977561215953
+     ],
+     [
+      68.35818223048912,
+      20.46197756121595
+     ],
+     [
+      68.35818223048912,
+      48.76045716715283
+     ]
+    ],
+    "read_geometry": {
+     "polygon": [
+      [
+       96.9810664156693,
+       48.76045716715283
+      ],
+      [
+       96.9810664156693,
+       20.461977561215953
+      ],
+      [
+       68.35818223048912,
+       20.46197756121595
+      ],
+      [
+       68.35818223048912,
+       48.76045716715283
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "297375fe610940b1a78dbff23d40bb05",
+     "page": 1,
+     "step": "site"
+    }
+   },
+   {
+    "id": "site:47e877cd6af34be586e3f61c5492c617",
+    "state": "settled",
+    "kind": "walkway",
+    "polygon": [
+     [
+      68.35818223048912,
+      27.863118381230247
+     ],
+     [
+      68.35818223048912,
+      21.33270001062937
+     ],
+     [
+      24.582006417860637,
+      21.332700010629367
+     ],
+     [
+      24.582006417860637,
+      27.863118381230244
+     ]
+    ],
+    "read_geometry": {
+     "polygon": [
+      [
+       68.35818223048912,
+       27.863118381230247
+      ],
+      [
+       68.35818223048912,
+       21.33270001062937
+      ],
+      [
+       24.582006417860637,
+       21.332700010629367
+      ],
+      [
+       24.582006417860637,
+       27.863118381230244
+      ]
+     ]
+    },
+    "src": {
+     "sheet": "297375fe610940b1a78dbff23d40bb05",
+     "page": 1,
+     "step": "site"
+    }
+   }
+  ],
+  "terraces": [],
+  "fence": null,
+  "compose_overrides": {
+   "removed": [],
+   "moved": {}
+  },
+  "pool": {
+   "id": "site:d15d48d25690467b8be845d11dca1a37",
+   "state": "settled",
+   "polygon": [
+    [
+     53.87837023092737,
+     138.8802306814442
+    ],
+    [
+     53.87837023092737,
+     111.88783474962747
+    ],
+    [
+     38.05159897559246,
+     111.88783474962747
+    ],
+    [
+     38.05159897559246,
+     138.8802306814442
+    ]
+   ],
+   "depth": 5,
+   "read_geometry": {
+    "polygon": [
+     [
+      53.87837023092737,
+      138.8802306814442
+     ],
+     [
+      53.87837023092737,
+      111.88783474962747
+     ],
+     [
+      38.05159897559246,
+      111.88783474962747
+     ],
+     [
+      38.05159897559246,
+      138.8802306814442
+     ]
+    ]
+   },
+   "src": {
+    "sheet": "297375fe610940b1a78dbff23d40bb05",
+    "page": 1,
+    "step": "site"
+   }
+  },
+  "fire_pit": {
+   "id": "site:0325e1ed093542b49903041887179f2c",
+   "state": "settled",
+   "at": [
+    62.63360539345307,
+    132.7851735355501
+   ],
+   "radius": 2,
+   "read_geometry": {
+    "at": [
+     62.63360539345307,
+     132.7851735355501
+    ]
+   },
+   "src": {
+    "sheet": "297375fe610940b1a78dbff23d40bb05",
+    "page": 1,
+    "step": "site"
+   }
+  }
+ }
+}
