@@ -1,35 +1,8 @@
-"""A roof check after the draft (brief
-.superpowers/sdd/2026-11-08-house-editor-whole-building-draft/task-12-brief.md;
-spec docs/superpowers/specs/2026-11-08-house-editor-whole-building-draft-design.md
-section 2b).
+"""Roof-build protections retargeted under roofs-from-photos rulings R8-R10.
 
-The recorded main-house draft made the two-storey centre block r_main a gable
-with ridge y and has no dormer; the photo and roof plan show a hip with its
-ridge side to side and a front gable dormer. After the draft read (and after
-the per-level fallback when it ran) and before the draft settles, the draft
-step makes one more read, 'roof_check', and applies its corrections to the
-draft fragment's roof before normalize, snap and the checks:
-
-- {changes:[{id:"r_main", kind:"hip", ridge:"x"}], add:[r_dormer]} settles
-  r_main as a hip with ridge x and the dormer as its own settled section; the
-  reads go draft, roof_check, draft_rooms; while the roof check runs a log line
-  "Checking the roof of the <building name> drawings, M:SS so far." goes out
-  (on the injectable clock twin_build._clock).
-- A section whose settled piece a person edited (src.person) is never changed
-  or removed by a correction that names it; a reread of the draft reruns the
-  roof check.
-- A failed roof check leaves the roof as first read, logs one plain line "The
-  roof could not be double-checked; it is shown as first read." and never
-  pauses the build.
-
-The reader is a stub keyed by kind (its first argument), built on
-test_twin_build's fake like test_twin_build_draft_replay.py: 'draft' answers
-the recorded main-house fragment, 'draft_rooms' answers no rooms, 'outline'
-answers an error (the quick first look is disposable), 'finishes' answers an
-empty materials answer, 'roof_check' answers the test's corrections (or runs a
-hook that may block, raise or answer).
-
-Run from chauffeur/:  env -u HA_BASE_URL python tests/test_twin_build_roof_check.py
+The old correction and ordering tests are retired (R9): derive tests and
+test_twin_build_roof_blocks.test_reads_in_order own those contracts now.
+The roof_check parser regression remains for old caches.
 """
 import copy
 import io
@@ -57,14 +30,14 @@ import test_twin_build as engine_tests  # noqa: E402
 from test_twin_build import Reader, _accept_all, _pdf, check  # noqa: E402
 
 RECORDED = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures', 'twin_reads', 'recorded', 'claude')
-NOT_CHECKED = 'The roof could not be double-checked; it is shown as first read.'
-ROOF_BEAT = re.compile(r'^Checking the roof of the Main house drawings, (\d+):(\d\d) so far\.$')
+NOT_CHECKED = 'The roofs could not be checked against the photos; they follow the drawings.'
+ROOF_BEAT = re.compile(r'^Checking the roofs against the photos, (\d+):(\d\d) so far\.$')
 NO_CORRECTIONS = {'changes': [], 'add': [], 'remove': [], 'notes': []}
 DORMER = {'id': 'r_dormer', 'kind': 'gable', 'ridge': 'y', 'rect': [22.67, 13.33, 37.33, 26],
           'plate': 20, 'pitch': 12, 'overhang': 1}
 CORRECTIONS = {'changes': [{'id': 'r_main', 'kind': 'hip', 'ridge': 'x'}], 'add': [copy.deepcopy(DORMER)],
                'remove': [], 'notes': ['The centre block is a hip with a front gable dormer.']}
-READS = ('draft', 'draft_level', 'roof_check', 'draft_rooms')
+READS = ('draft', 'draft_level', 'photo_map', 'roof_observe', 'draft_rooms')
 
 
 # --- fixtures, reader and helpers ----------------------------------------------
@@ -86,7 +59,7 @@ class RoofReader(Reader):
     def __init__(self, roof_answer=None, roof_hook=None):
         super().__init__()
         self.draft = recorded('draft-main-house.json')
-        self.roof_answer = copy.deepcopy(NO_CORRECTIONS if roof_answer is None else roof_answer)
+        self.roof_answer = copy.deepcopy(roof_answer)
         self.roof_hook = roof_hook
         self.kinds = []
         self.seen = []
@@ -102,9 +75,14 @@ class RoofReader(Reader):
             return {'error': 'The model did not answer in 120 s.'}
         if kind == 'finishes':
             return {'materials': {}}
-        if kind == 'roof_check':
-            answer = self.roof_hook(run, images, context) if self.roof_hook else None
-            return copy.deepcopy(self.roof_answer if answer is None else answer)
+        if kind == 'photo_map':
+            return {'from_side': 'front', 'blocks': [{'id': b['id'], 'sides': ['front']} for b in context['blocks']]}
+        if kind == 'roof_observe':
+            answer = self.roof_hook(run, images, context) if self.roof_hook else self.roof_answer
+            return copy.deepcopy(answer) if answer is not None else {'blocks': {
+                b['id']: {'sides': {side: {'kind': 'hidden'} for side in ('front', 'rear', 'left', 'right')}}
+                for b in context['blocks']}}
+
         return super().__call__(kind, images, context, run=run, step=step)
 
 
@@ -231,82 +209,18 @@ def _restore_clock(saved):
 
 # --- tests ---------------------------------------------------------------------
 
-def test_corrections_settle_hip_and_dormer():
-    wanted = recorded_sections()
-    check(wanted['r_main']['kind'] == 'gable' and wanted['r_main']['ridge'] == 'y' and 'r_dormer' not in wanted,
-          ('test setup: the recorded centre block is a front gable with no dormer', wanted['r_main']))
-    _main_house()
-    reader = RoofReader(CORRECTIONS)
-    _, st = _build(reader)
-    check(reader.kinds.count('roof_check') == 1, ('one roof check read', reader.kinds))
-    house = _house()
-
-    main = _at(house, wanted['r_main']['rect'])
-    check(len(main) == 1, ('the centre block is one section', _roof(house)))
-    check(main[0]['kind'] == 'hip' and main[0].get('ridge') == 'x',
-          ('r_main settles as a hip with its ridge side to side', main[0]['kind'], main[0].get('ridge')))
-    check(main[0].get('state') != 'ghost', ('the corrected centre block settles', main[0].get('why')))
-
-    dormer = _at(house, DORMER['rect'])
-    check(len(dormer) == 1, ('the added dormer is its own section', _roof(house)))
-    d = dormer[0]
-    check(d['kind'] == 'gable' and d.get('ridge') == 'y' and abs(d['plate'] - 20) <= 0.01,
-          ('the dormer is a gable, ridge toward the main ridge, at the upper plate',
-           d['kind'], d.get('ridge'), d['plate']))
-    check(d.get('state') != 'ghost', ('the dormer settles', d.get('why')))
-    check(d.get('src', {}).get('step') == 'draft', ('the dormer is part of the draft', d.get('src')))
-
-    # Every other section is left as read.
-    for sid, section in wanted.items():
-        if sid == 'r_main':
-            continue
-        found = _at(house, section['rect'])
-        check(len(found) == 1 and found[0]['kind'] == section['kind']
-              and found[0].get('ridge') == section.get('ridge') and found[0].get('state') != 'ghost',
-              (sid, 'a section the check does not name is left as read', [(s['kind'], s.get('ridge'), s.get('state'))
-                                                                         for s in found]))
-    check(len(house['roof']['sections']) == len(wanted) + 1, ('ten read sections and the dormer', _roof(house)))
-    check(not [e for e in st['events'] if e['type'] == 'log' and e.get('text') == NOT_CHECKED],
-          'a roof check that answered is not reported as failed')
+# R9: retired; covered by derivation and block-build ordering tests.
 
 
-def test_roof_check_between_draft_and_rooms():
-    _main_house()
-    reader = RoofReader(CORRECTIONS)
-    _build(reader)
-    check(_order(reader) == ['draft', 'roof_check', 'draft_rooms'],
-          ('the reads go draft, roof_check, draft_rooms', reader.kinds))
-    call = next(c for c in reader.seen if c['kind'] == 'roof_check')
-    check(call['step'] == 'draft', ('the roof check runs inside the draft step', call['step']))
-    # Images: the roof page and the tagged photo (no floor pages, no elevations here).
-    check(call['images'] == 2, ('the roof check sees the roof page and the photo', call['images']))
-    context = call['context']
-    check((context.get('building') or {}).get('name') == 'Main house',
-          ('the roof check context names the building', context.get('building')))
-    sections = context.get('sections')
-    check(isinstance(sections, list), ('the read roof sections go in context["sections"]', sorted(context)))
-    wanted = recorded_sections()
-    check(sorted(s.get('id') for s in sections) == sorted(wanted),
-          ('every read section is offered by its draft id', [s.get('id') for s in sections]))
-    for section in sections:
-        source = wanted[section['id']]
-        for field in ('kind', 'rect', 'plate', 'pitch', 'overhang'):
-            check(section.get(field) == source[field],
-                  (section['id'], field, 'is given as read', section.get(field), source[field]))
-        check(section.get('ridge') == source.get('ridge') and section.get('low_side') == source.get('low_side'),
-              (section['id'], 'ridge and low side as read', section))
-    levels = context.get('levels')
-    check(isinstance(levels, list) and len(levels) == 2
-          and all(isinstance(l.get('outline'), list) and 'elevation' in l for l in levels),
-          ('each level\'s outline and elevation go in the context', levels))
+# R9: retired; covered by derivation and block-build ordering tests.
 
 
-def test_roof_check_heartbeat():
+def test_roof_observe_heartbeat():
     _main_house()
     now, saved = _fake_clock()
     try:
         def roof_hook(run, images, context):
-            # The roof check is blocked for 20 s on the fake clock; at the 15 s
+            # The roof observation is blocked for 20 s on the fake clock; at the 15 s
             # mark give the heartbeat a moment (real time) to go out.
             for elapsed in range(1, 21):
                 now[0] += 1.0
@@ -317,19 +231,19 @@ def test_roof_check_heartbeat():
                     time.sleep(0.005)
             return None
 
-        reader = RoofReader(NO_CORRECTIONS, roof_hook=roof_hook)
+        reader = RoofReader(None, roof_hook=roof_hook)
         b = tb.start({'part': 'house'}, reader=reader, inline=False)
         st = _finish(b)
     finally:
         _restore_clock(saved)
     check(st['state'] == 'done', (st['state'], st.get('pause'), _trouble(st)))
-    check(reader.kinds.count('roof_check') == 1, ('test setup: the roof check was read', reader.kinds))
+    check(reader.kinds.count('roof_observe') == 1, ('test setup: the roof observation was read', reader.kinds))
     events = tb.status(b)['events']
     beats = [e for e in events if e['type'] == 'log' and ROOF_BEAT.match(e.get('text') or '')]
     logs = [e.get('text') for e in events if e['type'] == 'log']
-    check(beats, ('20 s of roof check: a heartbeat line naming the building', logs))
+    check(beats, ('20 s of roof observation: a heartbeat line checking photos', logs))
     times = [int(m.group(1)) * 60 + int(m.group(2)) for m in (ROOF_BEAT.match(e['text']) for e in beats)]
-    check(all(15 <= t <= 21 for t in times), ('M:SS counts the roof check so far', [e['text'] for e in beats]))
+    check(all(15 <= t <= 21 for t in times), ('M:SS counts the roof observation so far', [e['text'] for e in beats]))
     check(all(e.get('step') == 'draft' for e in beats), ('the heartbeat belongs to the draft step', beats))
     settled = _draft_settled(events)
     check(settled and all(e['seq'] < settled[0]['seq'] for e in beats),
@@ -339,74 +253,49 @@ def test_roof_check_heartbeat():
 def test_person_edited_section_left_alone():
     wanted = recorded_sections()
     _main_house()
-    b, _ = _build(RoofReader(NO_CORRECTIONS))
-    house = _house()
+    # A pre-block building has the old read sections; a first rebuild keeps edits.
+    with patch.object(tb.twin_roof_derive, 'derive_roof', side_effect=RuntimeError('old draft')):
+        b, _ = _build(RoofReader())
     mine = {}
     for sid in ('r_main', 'r_left'):
-        found = _at(house, wanted[sid]['rect'])
-        check(len(found) == 1, ('test setup: the read section settled', sid, _roof(house)))
+        found = _at(_house(), wanted[sid]['rect'])
+        check(len(found) == 1, ('the original section settled', sid, _roof(_house())))
         twin_edit.save({'op': 'set', 'building': 'house', 'piece': found[0]['id'], 'field': 'pitch', 'value': 6}, 'p1')
         mine[sid] = found[0]['id']
-    house = _house()
-    for sid, pid in mine.items():
-        piece = next(s for s in house['roof']['sections'] if s['id'] == pid)
-        check((piece.get('src') or {}).get('person') and piece['pitch'] == 6,
-              ('test setup: the person edited the section', sid, piece.get('src'), piece['pitch']))
-
-    # The roof check names both: it would turn r_main into a smaller hip and
-    # remove r_left. It also corrects r_garage, which nobody edited.
-    shrunk = [14.33, 13.33, 37.33, 46]
-    answer = {'changes': [{'id': 'r_main', 'kind': 'hip', 'ridge': 'x', 'rect': shrunk},
-                          {'id': 'r_garage', 'kind': 'hip'}],
-              'add': [], 'remove': ['r_left'], 'notes': []}
-    reader = RoofReader(answer)
+    reader = RoofReader()
     tb.reread(b, 'draft', reader=reader, inline=True)
-    st = _accept_all(b)
-    check(st['state'] == 'done', ('the reread finishes', st['state'], st.get('pause'), _trouble(st)))
-    check(reader.kinds.count('roof_check') == 1, ('a reread of the draft reruns the roof check', reader.kinds))
-    house = _house()
-    by_id = {s['id']: s for s in house['roof']['sections']}
-
+    check(tb.status(b)['state'] == 'done', tb.status(b)['state'])
+    check(reader.kinds.count('roof_observe') == 1, reader.kinds)
+    by_id = {s['id']: s for s in _house()['roof']['sections']}
     for sid, kind, ridge in (('r_main', 'gable', 'y'), ('r_left', 'gable', 'x')):
         piece = by_id.get(mine[sid])
-        check(piece is not None, (sid, 'a person-edited section is never removed', _roof(house)))
+        check(piece is not None, (sid, 'a person-edited section is never removed', _roof(_house())))
         check(piece['kind'] == kind and piece.get('ridge') == ridge and piece['pitch'] == 6
-              and (piece.get('src') or {}).get('person'),
-              (sid, 'a person-edited section is never changed', piece['kind'], piece.get('ridge'),
-               piece['pitch'], piece.get('src')))
-        check(all(abs(a - b) <= 0.05 for a, b in zip(_read_rect(piece), wanted[sid]['rect'])),
+              and (piece.get('src') or {}).get('person'), (sid, 'a person edit never changes', piece))
+        check(all(abs(a - b) <= .05 for a, b in zip(_read_rect(piece), wanted[sid]['rect'])),
               (sid, 'it keeps its place', _read_rect(piece)))
-        check([s['id'] for s in _at(house, wanted[sid]['rect'], tol=1.0)] == [mine[sid]],
-              (sid, 'no second section beside the person\'s', _roof(house)))
-    check(not _at(house, shrunk, tol=0.5), ('the correction to the person\'s section is not added beside it',
-                                            _roof(house)))
-    garage = _at(house, wanted['r_garage']['rect'])
-    check(len(garage) == 1 and garage[0]['kind'] == 'hip',
-          ('a correction to a section nobody edited still applies', [(s['kind'], s.get('ridge')) for s in garage]))
+        check([s['id'] for s in _at(_house(), wanted[sid]['rect'], tol=1)] == [mine[sid]],
+              (sid, 'no duplicate beside the person section', _roof(_house())))
+    check(not _at(_house(), wanted['r_garage']['rect']), 'unprotected draft sections are replaced')
 
 
-def test_roof_check_failure_keeps_roof():
+def test_roof_observe_failure_uses_drawings():
     def error_reply(run, images, context):
         return {'error': 'The model did not answer in 240 s.'}
 
     def raises(run, images, context):
-        raise RuntimeError('the roof check broke')
+        raise RuntimeError('the observation broke')
 
     for name, hook in (('error reply', error_reply), ('raises', raises)):
         _main_house()
         reader = RoofReader(roof_hook=hook)
-        b = tb.start({'part': 'house'}, reader=reader, inline=True)
-        st = tb.status(b)
-        check(reader.kinds.count('roof_check') == 1, (name, 'test setup: the roof check was read', reader.kinds))
-        check(st['state'] == 'done', (name, 'a failed roof check never pauses or stops the build',
-                                      st['state'], st.get('pause'), _trouble(st)))
-        check(not _trouble(st), (name, 'no error and no question', _trouble(st)))
+        _, st = _build(reader)
+        check(reader.kinds.count('roof_observe') == 1, (name, reader.kinds))
+        check(st['state'] == 'done' and not _trouble(st), (name, st['state'], _trouble(st)))
         lines = [e for e in st['events'] if e['type'] == 'log' and e.get('text') == NOT_CHECKED]
-        check(len(lines) == 1, (name, 'one plain line says the roof was not double-checked',
-                                [e.get('text') for e in st['events'] if e['type'] == 'log']))
-        check(lines[0].get('step') == 'draft', (name, 'the line belongs to the draft step', lines[0]))
-        check(_order(reader) == ['draft', 'roof_check', 'draft_rooms'], (name, 'the rooms read still runs', reader.kinds))
-        _roof_as_read(_house(), name)
+        check(len(lines) == 1 and lines[0].get('step') == 'draft', (name, lines))
+        check(_order(reader) == ['draft', 'photo_map', 'roof_observe', 'draft_rooms'], (name, reader.kinds))
+        _roof_from_drawings(st)
 
 
 def test_add_after_invalid_original_index():
@@ -426,10 +315,10 @@ def test_add_after_invalid_original_index():
         check(any(p.startswith(f'roof_check.add[{i}]:') and 'duplicate' in p for p in problems), problems)
 
 
-def test_failed_roof_check_logs_once_across_cached_settles():
+def test_failed_roof_observe_logs_once_across_cached_settles():
     _main_house()
-    reader = RoofReader(roof_answer={'error': 'The roof check timed out.'})
-    bid, _ = _build(reader)
+    reader = RoofReader(roof_answer={'error': 'The roof observation timed out.'})
+    bid, st = _build(reader)
     build = tb._BUILDS[bid]
     step = next(s for s in build['steps'] if s['kind'] == 'draft')
     for _ in range(2):
@@ -438,71 +327,62 @@ def test_failed_roof_check_logs_once_across_cached_settles():
             tb._settle(build, step, result)
     lines = [e for e in build['events'] if e['type'] == 'log' and e.get('text') == NOT_CHECKED]
     check(len(lines) == 1, ('the same cached failure is logged once', lines))
-    check(reader.kinds.count('roof_check') == 1, 'settling a cached result never rereads')
-    _roof_as_read(_house(), 'repeated settles')
+    check(reader.kinds.count('roof_observe') == 1, 'settling a cached result never rereads')
+    _roof_from_drawings(st)
     tb.reread(bid, 'draft', reader=reader, inline=True)
-    check(tb.status(bid)['state'] == 'done', tb.status(bid))
+    check(tb.status(bid)['state'] == 'done', tb.status(bid)['state'])
     lines = [e for e in build['events'] if e['type'] == 'log' and e.get('text') == NOT_CHECKED]
-    check(len(lines) == 2 and reader.kinds.count('roof_check') == 2,
+    check(len(lines) == 2 and reader.kinds.count('roof_observe') == 2,
           ('a fresh read logs its own failure once', lines, reader.kinds))
 
 
 def test_add_roof_when_draft_omits_roof():
     _main_house()
-    reader = RoofReader(roof_answer={'changes': [], 'add': [copy.deepcopy(DORMER)], 'remove': []})
+    reader = RoofReader()
     reader.draft['building'].pop('roof')
-    bid, _ = _build(reader)
-    house = _house()
-    dormer = _at(house, DORMER['rect'])
-    check(len(house['roof']['sections']) == 1 and len(dormer) == 1, ('the added roof survives', house['roof']))
-    check(dormer[0]['kind'] == 'gable' and dormer[0]['ridge'] == 'y'
-          and dormer[0].get('state') != 'ghost', dormer[0])
+    bid, st = _build(reader)
     build = tb._BUILDS[bid]
     step = next(s for s in build['steps'] if s['kind'] == 'draft')
     result = json.loads(tb._cache_path(build, step).read_text(encoding='utf-8'))
-    check(result['fragment']['building']['roof']['sections'] == [DORMER], result['fragment'])
+    sections = result['fragment']['building']['roof']['sections']
+    from services import twin_blocks
+    blocks = twin_blocks.blocks(_house())
+    check(len(sections) == len(blocks) > 0, ('every block gets a roof', sections, blocks))
+    for block in blocks:
+        found = _at(_house(), block['rect'], tol=1)
+        check(len(found) == 1 and found[0]['kind'] == 'gable' and found[0].get('state') != 'ghost', found)
+    emitted = [p for e in st['events'] if e['type'] == 'settled' and e.get('step') == 'draft'
+               for p in e['pieces'] if p.get('src', {}).get('step') == 'roof_blocks']
+    check(len(emitted) == len(blocks), ('derived roofs appear in the draft settlement event', emitted))
 
 
-def test_roof_apply_exceptions_keep_original_draft():
-    for stage in ('migration', 'matching', 'validation'):
-        _main_house()
-        if stage == 'matching':
-            _build(RoofReader())
-            main = _at(_house(), recorded_sections()['r_main']['rect'])[0]
-            twin_edit.save({'op': 'set', 'building': 'house', 'piece': main['id'],
-                            'field': 'pitch', 'value': 6}, 'p1')
-        reader = RoofReader(CORRECTIONS)
-        target = {'migration': '_migrate_crop_draft', 'matching': '_matches', 'validation': 'parse'}[stage]
-        owner = twin_reads if stage == 'validation' else tb
-        real = getattr(owner, target)
-        calls = []
-
-        def fail_apply(*args, **kwargs):
-            # Matching also runs during preview; fail only inside the roof check.
-            import inspect
-            applying = any(frame.function == '_read_roof_check' for frame in inspect.stack())
-            if applying and not calls and (stage != 'validation' or args[0] == 'draft_level'):
-                calls.append(stage)
-                raise RuntimeError('roof correction application failed')
-            return real(*args, **kwargs)
-
-        with patch.object(owner, target, side_effect=fail_apply):
-            _, st = _build(reader)
-        check(calls == [stage], ('the apply failure was exercised', stage, calls))
-        check(not _trouble(st), (stage, 'no question or error', _trouble(st)))
-        check(sum(e['type'] == 'log' and e.get('text') == NOT_CHECKED for e in st['events']) == 1,
-              (stage, st['events']))
-        check(_order(reader) == ['draft', 'roof_check', 'draft_rooms'], (stage, reader.kinds))
-        _roof_as_read(_house(), stage)
+def test_derive_exceptions_keep_original_draft():
+    _main_house()
+    reader = RoofReader()
+    with patch.object(tb.twin_roof_derive, 'derive_roof', side_effect=RuntimeError('derivation failed')) as derive:
+        bid, st = _build(reader)
+    check(derive.call_count == 1, 'the failure path ran')
+    check(not _trouble(st), _trouble(st))
+    text = 'The roofs could not be built from the walls; they are shown as first read.'
+    check(sum(e.get('text') == text for e in st['events']) == 1, st['events'])
+    check(_order(reader) == ['draft', 'photo_map', 'roof_observe', 'draft_rooms'], reader.kinds)
+    _roof_as_read(_house(), 'derive exception')
+    build = tb._BUILDS[bid]
+    step = next(s for s in build['steps'] if s['kind'] == 'draft')
+    for _ in range(2):
+        result = json.loads(tb._cache_path(build, step).read_text(encoding='utf-8'))
+        with ts.LIFECYCLE, tb._LOCK:
+            tb._settle(build, step, result)
+    check(sum(e.get('text') == text for e in build['events']) == 1, build['events'])
 
 
-def test_no_roof_images_skips_read_and_cost():
+def test_no_photos_skips_reads_and_cost():
     engine_tests._fresh()
     source = ts.save_source('drawing', 'floors.pdf', _pdf(2))
     ts.set_page_roles([
         {'source': source, 'page': i, 'role': 'floor', 'level': name, 'box': None, 'building': 'house'}
         for i, name in ((1, 'Main floor'), (2, 'Second floor'))])
-    reader = RoofReader(CORRECTIONS)
+    reader = RoofReader()
     checks = []
     real = tc.require_clear
 
@@ -518,25 +398,138 @@ def test_no_roof_images_skips_read_and_cost():
     check(checks.count('draft') == 1, ('no roof-check spend checkpoint', checks))
     step = next(s for s in st['steps'] if s['kind'] == 'draft')
     check(step['estimate'] == tc.estimate('draft', 2) + tc.estimate('outline', 1), step)
-    check(sum(e['type'] == 'log' and e.get('text') == NOT_CHECKED for e in st['events']) == 1, st['events'])
+    check(not any(e.get('text') == NOT_CHECKED for e in st['events']), st['events'])
     check(tc.entries() == [], 'stub reads and a skipped roof check incur no cost')
-    _roof_as_read(_house(), 'no roof images')
+    _roof_from_drawings(st)
     build = tb._BUILDS[bid]
     result = json.loads(tb._cache_path(build, step).read_text(encoding='utf-8'))
-    check(result['roof_check']['error'] is not None and not result.get('roof_check_pending'), result)
+    check(not result['roof_blocks'].get('error') and not result.get('roof_blocks_pending'), result)
+    check('roof_check' not in result and not result['roof_blocks']['maps'], result)
+
+
+def _roof_from_drawings(st):
+    from services import twin_blocks
+    blocks = twin_blocks.blocks(_house())
+    flags = next(s for s in st['steps'] if s['kind'] == 'draft')['roof_flags']
+    for block in blocks:
+        found = _at(_house(), block['rect'], tol=1)
+        check(len(found) == 1 and found[0]['kind'] == 'gable' and found[0].get('state') != 'ghost', found)
+        check(any(f['block_rect'] == block['rect'] for f in flags), ('every block flagged', block, flags))
+
+
+def test_photo_map_failure_uses_drawings():
+    _main_house()
+    class FailedMap(RoofReader):
+        def __call__(self, kind, images, context, **kwargs):
+            if kind == 'photo_map':
+                self.kinds.append(kind)
+                return {'error': 'map failed'}
+            return super().__call__(kind, images, context, **kwargs)
+    reader = FailedMap()
+    _, st = _build(reader)
+    check(not _trouble(st) and 'roof_observe' not in reader.kinds, (reader.kinds, _trouble(st)))
+    check(sum(e.get('text') == NOT_CHECKED for e in st['events']) == 1, st['events'])
+    _roof_from_drawings(st)
+
+
+def test_two_photo_kinds_become_conflict_before_derive():
+    context = {'blocks': [{'id': 'A', 'rect': [0, 0, 20, 20]}]}
+    answer = {'blocks': {'A': {'sides': {'left': [
+        {'kind': 'gable_end', 'photo': 0}, {'kind': 'slope', 'photo': 1}]}}}}
+    before = copy.deepcopy(answer)
+    # The real reader parses once too; preserve all reports until wiring combines them.
+    parsed, problems = twin_reads.parse('roof_observe', answer, context)
+    check(not problems and parsed == answer, (parsed, problems))
+    observations, problems = tb._roof_observations(parsed, context)
+    check(not problems and observations['blocks']['A']['sides']['left']['kind'] == 'conflict', observations)
+    check(answer == before, 'combining does not mutate the reply')
+    _main_house()
+    class ConflictReader(RoofReader):
+        def __call__(self, kind, images, context, **kwargs):
+            out = super().__call__(kind, images, context, **kwargs)
+            if kind == 'roof_observe':
+                for block in out['blocks'].values():
+                    block['sides']['left'] = copy.deepcopy(answer['blocks']['A']['sides']['left'])
+            return out
+    real = tb.twin_roof_derive.derive_roof
+    seen = []
+    def derive(blocks, observations, evidence, choices):
+        seen.append(copy.deepcopy(observations))
+        return real(blocks, observations, evidence, choices)
+    with patch.object(tb.twin_roof_derive, 'derive_roof', side_effect=derive):
+        _, st = _build(ConflictReader())
+    check(seen and all(b['sides']['left']['kind'] == 'conflict' for b in seen[0].values()), seen)
+    check(any('looks different between photos' in f['text'] or 'not visible' in f['text']
+              for f in next(s for s in st['steps'] if s['kind'] == 'draft')['roof_flags']), st['steps'])
+
+
+def test_photo_selection_uses_coverage():
+    mapped = [{'fragment': {'from_side': 'front', 'blocks': [{'id': 'A', 'sides': ['front']}]}} for _ in range(9)]
+    mapped[-1]['fragment']['blocks'] = [{'id': 'B', 'sides': ['rear', 'left']}]
+    selected = tb._roof_photo_selection(mapped)
+    check(len(selected) == 8 and 8 in selected and 0 in selected, selected)
+
+
+def test_checkpoint_keeps_paid_photo_maps():
+    _main_house()
+    reader = RoofReader()
+    real = tc.require_clear
+    calls = []
+
+    def checkpoint():
+        calls.append(True)
+        if len(calls) == 3:
+            raise tc.CheckpointReached(10, 10)
+        return real()
+
+    with patch.object(tc, 'require_clear', side_effect=checkpoint):
+        bid = tb.start({'part': 'house'}, reader=reader, inline=True)
+    check(tb.status(bid)['state'] == 'checkpoint', tb.status(bid)['state'])
+    check(_order(reader) == ['draft', 'photo_map'], reader.kinds)
+    tb.resume(bid, reader=reader, inline=True)
+    check(tb.status(bid)['state'] == 'done', tb.status(bid)['state'])
+    check(_order(reader) == ['draft', 'photo_map', 'roof_observe', 'draft_rooms'],
+          ('resuming keeps both paid replies', reader.kinds))
+
+
+def test_stored_block_choices_reach_derivation():
+    _main_house()
+    bid, _ = _build(RoofReader())
+    target = next(s for s in _house()['roof']['sections'] if s.get('block') and s.get('level') == 'L2')
+    choice = {'rect': copy.deepcopy(target['block']), 'kind': 'hip', 'ridge': 'x', 'pitch': 5,
+              'ends': {'x0': 'hip', 'x1': 'hip'}, 'plate': 20, 'overhang': 2}
+
+    def choose(plan):
+        next(b for b in plan['buildings'] if b['id'] == 'house')['roof']['choices'] = [choice]
+        return plan
+
+    ts.update_current(choose, kind='edit')
+    reader = RoofReader()
+    tb.reread(bid, 'draft', reader=reader, inline=True)
+    st = tb.status(bid)
+    check(st['state'] == 'done', st['state'])
+    found = _at(_house(), choice['rect'], tol=1)
+    check(len(found) == 1, found)
+    for field in ('kind', 'ridge', 'pitch', 'ends', 'plate', 'overhang'):
+        check(found[0][field] == choice[field], (field, found[0], choice))
+    flags = next(s for s in st['steps'] if s['kind'] == 'draft')['roof_flags']
+    check(not any(f['block_rect'] == choice['rect'] for f in flags), ('person choices are never flagged', flags))
 
 
 TESTS = (
-    test_corrections_settle_hip_and_dormer,
-    test_roof_check_between_draft_and_rooms,
-    test_roof_check_heartbeat,
+    test_roof_observe_heartbeat,
     test_person_edited_section_left_alone,
-    test_roof_check_failure_keeps_roof,
+    test_roof_observe_failure_uses_drawings,
     test_add_after_invalid_original_index,
-    test_failed_roof_check_logs_once_across_cached_settles,
+    test_failed_roof_observe_logs_once_across_cached_settles,
     test_add_roof_when_draft_omits_roof,
-    test_roof_apply_exceptions_keep_original_draft,
-    test_no_roof_images_skips_read_and_cost,
+    test_derive_exceptions_keep_original_draft,
+    test_no_photos_skips_reads_and_cost,
+    test_photo_map_failure_uses_drawings,
+    test_two_photo_kinds_become_conflict_before_derive,
+    test_photo_selection_uses_coverage,
+    test_checkpoint_keeps_paid_photo_maps,
+    test_stored_block_choices_reach_derivation,
 )
 
 

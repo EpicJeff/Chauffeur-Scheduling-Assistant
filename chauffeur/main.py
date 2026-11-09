@@ -7524,12 +7524,13 @@ def _house_editor_sheets():
                             (place['photo_tags'].get(s['id']) or ['lot']) for s in sources)
         photos = min(4, tagged_photos)
         draft = twin_cost.estimate('draft', len(rows) + photos)
-        roof_images = sum(r['role'] in ('roof', 'elevation') for r in rows) + photos
-        roof_check = twin_cost.estimate('roof_check', roof_images) if roof_images else 0
+        photo_map = tagged_photos * twin_cost.estimate('photo_map', 2)
+        roof_observe = twin_cost.estimate('roof_observe', 1 + min(8, tagged_photos)) if tagged_photos else 0
         rooms = twin_cost.estimate('draft_rooms', floors)
         finishes = twin_cost.estimate('finishes', tagged_photos) if photos else 0
-        build_estimates[building['id']] = {'draft': draft, 'draft_rooms': rooms, 'roof_check': roof_check,
-                                           'total': draft + roof_check + rooms + finishes}
+        build_estimates[building['id']] = {'draft': draft, 'draft_rooms': rooms,
+                                           'photo_map': photo_map, 'roof_observe': roof_observe,
+                                           'total': draft + photo_map + roof_observe + rooms + finishes}
     return {'sources': sources, 'pages': pages, 'page_roles': roles, 'registrations': registrations,
             'lot_build_estimate': lot_build,
             'piece_labels': labels, 'field_labels': twin_edit.FIELD_LABELS,

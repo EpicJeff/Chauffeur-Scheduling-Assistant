@@ -160,6 +160,8 @@ Judge every side from visible evidence, never assume an unseen end matches
 another. Include photo, the zero-based index of the photo used for each seen
 side. Dormer centre is a building coordinate along that side (x for front/rear,
 y for left/right), and width is feet along it, using the diagram's block rect.
+If two photos show different kinds on one side, report that side as a list
+of observations, each with its kind and photo index; code checks the conflict.
 Give a rough pitch per block as numeric rise per 12 when visible. Also give
 slope_vs_neighbours as lower, same or steeper when the comparison is visible.
 Return {"blocks":{"block-id":{"sides":{"front":{"kind":"slope","photo":0},
@@ -768,7 +770,8 @@ def _parse_photo_read(kind, answer, v, context):
         for side, item in value.items():
             if v.choice(side, path + '.' + str(side), sides) is None:
                 continue
-            checked = observation(item, path + '.' + side)
+            checked = (v.items(item, path + '.' + side, observation) if isinstance(item, list)
+                       else observation(item, path + '.' + side))
             if checked is not None:
                 out[side] = checked
         return out

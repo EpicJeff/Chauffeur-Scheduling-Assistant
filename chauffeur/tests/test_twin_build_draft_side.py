@@ -444,9 +444,9 @@ def test_patched_default_reader_needs_no_internal_options():
 
 
 def test_checkpoint_combined_estimate():
-    # R30: check once before draft/outline, then again before roof_check.
+    # R9: no photos means only the paired draft/outline checkpoint.
     # Three draft pages, one roof page, no photos.
-    combined = tc.estimate('draft', 3) + tc.estimate('outline', 1) + tc.estimate('roof_check', 1)
+    combined = tc.estimate('draft', 3) + tc.estimate('outline', 1)
     real = tc.require_clear
     calls = []
     reader = None
@@ -491,11 +491,9 @@ def test_checkpoint_combined_estimate():
     kinds = [c['kind'] for c in reader.seen]
     check(kinds.count('draft') == 1 and kinds.count('outline') == 1, ('both reads are made once', kinds))
     for_draft = [c for c in calls if c['stage'] == 'draft']
-    check(len(for_draft) == 2, ('require_clear is called before the pair and before roof_check', calls))
+    check(len(for_draft) == 1, ('require_clear is called before the pair; no photo reads', calls))
     check(for_draft[0]['reads_before'] == [], ('it is called before either read starts', for_draft))
-    check(for_draft[1]['reads_before'].count('draft') == 1
-          and 'roof_check' not in for_draft[1]['reads_before'],
-          ('the second check is after the draft and before roof_check; the side read may still run', for_draft))
+    check('roof_check' not in kinds, ('the retired read never runs', kinds))
     step = next(s for s in st['steps'] if s['id'] == 'draft')
     check(isinstance(step.get('estimate'), (int, float)) and abs(step['estimate'] - combined) < 1e-6,
           ('the draft step carries the combined estimate as step["estimate"]', step.get('estimate'), combined))

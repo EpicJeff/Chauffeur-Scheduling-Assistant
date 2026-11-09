@@ -237,12 +237,14 @@ def _check_whole_house(house, label):
     l2 = [w for w in house['walls'] if w['level'] == 'L2' and w.get('src', {}).get('step') == 'draft']
     check(len(l2) == 12, (label, 'every upper-floor wall is in the plan', len(l2)))
     sections = house['roof']['sections']
-    check(len(sections) == 11, (label, 'every roof section is in the plan', len(sections)))
-    expected = {tuple(s['rect']) for s in spike()['building']['roof']['sections'] if s['id'] in MAIN_ROOFS}
+    # Ruling R14: after the fallback too, the main roof comes from the blocks and the porch roofs stay as read.
+    problems, block_ids = _block_roofs_cover(house)
+    check(not problems, (label, 'one settled block roof over every block', problems))
+    expected = {tuple(s['rect']) for s in spike()['building']['roof']['sections'] if s['id'] not in MAIN_ROOFS}
     settled_rects = {tuple(s.get('read_geometry', {}).get('rect', s['rect'])) for s in sections
-                     if s.get('state') != 'ghost'}
-    check(expected <= settled_rects, (label, 'the eight main-roof sections settle',
-                                      [(s['rect'], s.get('state'), s.get('why')) for s in sections]))
+                     if (s.get('src') or {}).get('step') != 'roof_blocks'}
+    check(len(expected) == 3 and expected <= settled_rects,
+          (label, 'the three porch roofs are in the plan as read', [(s['rect'], s.get('state'), s.get('why')) for s in sections]))
     check(len(house['openings']) >= 20, (label, 'wall and gable openings', len(house['openings'])))
     check(sum('section' in o for o in house['openings']) >= 1, (label, 'the gable windows come with the roof',
                                                                 [o for o in house['openings'] if 'section' in o]))
@@ -252,8 +254,26 @@ def _check_whole_house(house, label):
     check(len(extensions) == 1 and extensions[0].get('wall'), (label, 'snap attached the awning', extensions))
     for piece in [*house['walls'], *house['openings'], *sections]:
         if piece.get('src', {}).get('step') != 'draft_rooms':
-            check((piece.get('src') or {}).get('step') == 'draft',
+            allowed = ('draft', 'roof_blocks') if piece in sections else ('draft',)
+            check((piece.get('src') or {}).get('step') in allowed,
                   (label, 'every piece names the draft step', piece.get('src')))
+
+
+def _block_roofs_cover(house):
+    """Ruling R14 (roofs from blocks): one settled block roof over every block of the
+    settled walls, tagged roof_blocks; returns (problems, block_roof_ids)."""
+    from services import twin_blocks
+    blocks = twin_blocks.blocks(house)
+    derived = [s for s in house['roof']['sections'] if (s.get('src') or {}).get('step') == 'roof_blocks']
+    problems, ids = [], set()
+    for b in blocks:
+        over = [s for s in derived if all(abs(a - c) <= 1 for a, c in zip(s['rect'], b['rect']))]
+        if len(over) != 1 or over[0].get('state') == 'ghost':
+            problems.append((b['rect'], [(s['rect'], s.get('state'), s.get('why')) for s in over]))
+        ids.update(s['id'] for s in over)
+    if not blocks:
+        problems.append('no blocks')
+    return problems, ids
 
 
 # --- tests ---------------------------------------------------------------------

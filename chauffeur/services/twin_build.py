@@ -4,6 +4,7 @@ The lifecycle lock covers publication, never a reader call. A stopped worker
 can cache its paid answer, but only the active worker may publish plan changes.
 """
 from copy import deepcopy
+import base64
 import json
 import logging
 import math
@@ -16,8 +17,9 @@ import time
 from urllib.parse import quote
 import uuid
 
-from services import (twin_compose, twin_cost, twin_draft, twin_library,
-                      twin_joints, twin_place, twin_plan, twin_reads, twin_register, twin_roof_issues, twin_store)
+from services import (twin_blocks, twin_compose, twin_cost, twin_draft, twin_library,
+                      twin_joints, twin_place, twin_plan, twin_reads, twin_register,
+                      twin_roof_derive, twin_roof_issues, twin_store)
 
 _LOCK = threading.RLock()
 _BUILDS = {}
@@ -1071,7 +1073,8 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None):
     roof = draft.get('roof', {})
     sections = pieces('', 'roof', roof.get('sections', []))
     old_sections = [s['id'] for s in roof.get('sections', [])]
-    house['roof']['sections'] = _merge_list(house['roof']['sections'], sections, 'roof', house, build, step,
+    roof_step = {**step, 'removed_steps': [*step.get('removed_steps', []), 'roof_blocks']}
+    house['roof']['sections'] = _merge_list(house['roof']['sections'], sections, 'roof', house, build, roof_step,
                                             tombstones=tombstones)
     section_ids = dict(zip(old_sections, (s['id'] for s in sections)))
     openings = pieces('openings', 'opening')
@@ -1351,7 +1354,7 @@ def _start_draft_heartbeat(build, step, ticket, context, finished, mode, *, star
                     if finished.is_set() or not _live(build, ticket):
                         return
                     name = context['building']['name']
-                    text = (f'Checking the roof of the {name} drawings, ' if mode == 'roof_check'
+                    text = ('Checking the roofs against the photos, ' if mode == 'roof_observe'
                             else f'Reading the rooms of the {name} drawings, ' if step['kind'] == 'draft_rooms'
                             else f'Reading the {name} drawings {mode}, ')
                     _event(build, 'log', step=step['id'],
@@ -1577,7 +1580,7 @@ def _read_draft_levels(build, step, reader, ticket, images, context, progress):
 
 
 def _draft_roof_issues(draft):
-    # Normalize a private copy, keeping the read ids used by corrections.
+    # Normalize a private copy, retaining read ids for located warnings.
     try:
         plan, _ = twin_plan.normalize({'units': 'ft', 'buildings': [draft]})
         return twin_roof_issues.roof_issues(plan['buildings'][0])
@@ -1586,97 +1589,199 @@ def _draft_roof_issues(draft):
         return []
 
 
-def _read_roof_check(build, step, reader, ticket, result, images):
-    """Correct the read frame before any of its geometry settles."""
+def _roof_overlap(a, b):
+    return max(0, min(a[2], b[2]) - max(a[0], b[0])) * max(0, min(a[3], b[3]) - max(a[1], b[1]))
+
+
+def _roof_observations(raw, context):
+    """Combine per-photo side reports before deriving any roof form.
+
+    Ordinary sides are single reports. A side seen differently in multiple
+    photos can carry a list; validate each report through the shipped parser.
+    """
+    answer = deepcopy(raw)
+    conflicts = []
+    for bid, block in answer.get('blocks', {}).items():
+        for side, reports in block.get('sides', {}).items():
+            if not isinstance(reports, list):
+                continue
+            valid = []
+            for report in reports:
+                parsed, _ = twin_reads.parse('roof_observe', {
+                    'blocks': {bid: {'sides': {side: report}}}}, context)
+                value = parsed.get('blocks', {}).get(bid, {}).get('sides', {}).get(side)
+                if value:
+                    valid.append(value)
+            seen = [r for r in valid if r['kind'] != 'hidden']
+            if len({r['kind'] for r in seen}) > 1 and len({r.get('photo') for r in seen}) > 1:
+                conflicts.append((bid, side))
+            block['sides'][side] = (seen or valid or [{'kind': 'hidden'}])[0]
+    parsed, problems = twin_reads.parse('roof_observe', answer, context)
+    for bid, side in conflicts:
+        parsed['blocks'][bid]['sides'][side] = {'kind': 'conflict'}
+    return parsed, problems
+
+
+def _roof_photo_selection(mapped, limit=8):
+    """Greedily cover new block sides, with stable ties and unrelated photos last."""
+    if len(mapped) <= limit:
+        return list(range(len(mapped)))
+    remaining, chosen, covered = set(range(len(mapped))), [], set()
+    coverage = [{(b['id'], side) for b in item['fragment'].get('blocks', []) for side in b['sides']}
+                for item in mapped]
+    while remaining and len(chosen) < limit:
+        index = min(remaining, key=lambda i: (-len(coverage[i] - covered), -len(coverage[i]), i))
+        chosen.append(index)
+        covered.update(coverage[index])
+        remaining.remove(index)
+    return sorted(chosen)
+
+
+def _read_roof_blocks(build, step, reader, ticket, result):
+    """Cache paid observations separately; publish only the complete derived roof."""
     context = result['context']
     draft = result['fragment'].get('building', {})
-    sections = draft.get('roof', {}).get('sections', [])
-    read_context = {
-        'issues': _draft_roof_issues(draft),
-        'building': deepcopy(context['building']),
-        'sections': [{k: deepcopy(s[k]) for k in
-                      ('id', 'kind', 'ridge', 'low_side', 'rect', 'plate', 'pitch', 'overhang') if k in s}
-                     for s in sections],
-        'levels': [{k: deepcopy(l[k]) for k in ('id', 'outline', 'elevation', 'ceiling') if k in l}
-                   for l in draft.get('levels', [])]}
-    indices = [p['image'] for p in context['pages'] if p['role'] in ('roof', 'elevation')]
-    indices.extend(range(len(context['pages']), len(images)))
-    read_images = [images[i] for i in indices]
-    read_context['pages'] = [{**deepcopy(p), 'image': indices.index(p['image'])}
-                             for p in context['pages'] if p['image'] in indices]
-    if not read_images:
-        result.pop('roof_check_pending', None)
-        result['roof_check'] = {'context': read_context, 'reply': None, 'fragment': {},
-                                'problems': [], 'error': 'No roof check images.',
-                                'issues': read_context['issues']}
-        return _cache_result(build, step, ticket, result)
-    # Retain the draft across a checkpoint before this additional paid read.
-    result['roof_check_pending'] = True
+    progress = result.setdefault('roof_blocks', {'maps': []})
+    result['roof_blocks_pending'] = True
     if _cache_result(build, step, ticket, result) is None:
         return None
-    with twin_store.LIFECYCLE, _LOCK:
-        if not _live(build, ticket):
-            return None
-    twin_cost.require_clear()
-    finished = threading.Event()
-    pulse = _start_draft_heartbeat(build, step, ticket, context, finished, 'roof_check')
-    raw, fragment, problems, failure = None, {}, [], None
     try:
-        options = {'checkpoint_checked': True} if reader is _REAL_READER else {}
-        raw = reader('roof_check', read_images, read_context, run=build['id'], step=step['id'], **options)
-        if isinstance(raw, dict) and raw.get('error'):
-            raise _ReadError(raw['error'])
-        fragment, problems = twin_reads.parse('roof_check', raw, read_context)
-        if isinstance(raw, dict):
-            problems = list(raw.get('problems') or []) + problems
-        if not twin_reads._usable('roof_check', fragment, problems):
-            raise _ReadError('No usable roof check.')
+        house = _house(_base(twin_store.current(), build), build)
+        _migrate_crop_draft(house, draft, step, [], [])
+        _merge_draft(build, step, result['fragment'], house)
+        normalized, _ = twin_plan.normalize({'units': 'ft', 'buildings': [house]})
+        house = normalized['buildings'][0]
+        twin_joints.snap(house)
+        _check_draft(house)
+        blocks = twin_blocks.blocks(house)
+        read_context = {'building': deepcopy(context['building']), 'blocks': blocks}
+        photos = [image for source in build['inputs'].get('photos', [])
+                  for image in twin_store.source_images(source)]
+        diagram = ({'mime': 'image/png', 'b64': base64.b64encode(
+            twin_blocks.block_diagram(house, blocks)).decode('ascii')} if photos else None)
+
+        def read(kind, read_images, ctx):
+            with twin_store.LIFECYCLE, _LOCK:
+                if not _live(build, ticket):
+                    return None
+            twin_cost.require_clear()
+            finished = threading.Event()
+            pulse = _start_draft_heartbeat(build, step, ticket, context, finished, 'roof_observe')
+            try:
+                options = {'checkpoint_checked': True} if reader is _REAL_READER else {}
+                raw = reader(kind, read_images, ctx, run=build['id'], step=step['id'], **options)
+                if isinstance(raw, dict) and raw.get('error'):
+                    raise _ReadError(raw['error'])
+                fragment, problems = (_roof_observations(raw, ctx) if kind == 'roof_observe'
+                                      else twin_reads.parse(kind, raw, ctx))
+                if not twin_reads._usable(kind, fragment, problems):
+                    raise _ReadError('No usable photo observations.')
+                return {'fragment': fragment, 'problems': problems, 'reply': raw}
+            finally:
+                finished.set()
+                pulse.join()
+
+        observations = {}
+        try:
+            for photo in photos[len(progress['maps']):]:
+                reply = read('photo_map', [diagram, photo], read_context)
+                if reply is None:
+                    return None
+                progress['maps'].append(reply)
+                if _cache_result(build, step, ticket, result) is None:
+                    return None
+            selected = _roof_photo_selection(progress['maps'])
+            if photos:
+                photo_map = {i: progress['maps'][j]['fragment'] for i, j in enumerate(selected)
+                             if progress['maps'][j]['fragment'].get('from_side') != 'none'
+                             and progress['maps'][j]['fragment'].get('blocks')}
+                if 'observe' not in progress:
+                    progress['observe'] = read('roof_observe', [diagram, *[photos[j] for j in selected]],
+                                               {**read_context, 'photo_map': photo_map})
+                    if progress['observe'] is None or _cache_result(build, step, ticket, result) is None:
+                        return None
+                observations = progress['observe']['fragment'].get('blocks', {})
+        except twin_cost.CheckpointReached:
+            raise
+        except Exception as exc:
+            progress['error'] = str(exc)
+            observations = {}
+
+        roof = deepcopy(draft.get('roof', {}))
+        sections = roof.get('sections', [])
+        evidence = {}
+        for block in blocks:
+            source = max(sections, key=lambda s: _roof_overlap(block['rect'], s['rect']), default=None)
+            plan = {k: deepcopy(source[k]) for k in ('ridge', 'pitch') if k in source} if source else {}
+            plan['dormers'] = deepcopy(source.get('dormers', [])) if source else []
+            # Cross gables already drawn on this roof carry their plan position.
+            for section in sections:
+                if (source and section is not source and section.get('kind') == 'gable'
+                        and section.get('ridge') != source.get('ridge')
+                        and abs(section['plate'] - source['plate']) < .5
+                        and _roof_overlap(block['rect'], section['rect']) > 0
+                        and _roof_overlap(block['rect'], section['rect']) < _roof_overlap(block['rect'], source['rect']) / 2):
+                    r, b = section['rect'], block['rect']
+                    axis = 0 if source.get('ridge') == 'x' else 1
+                    side = ('front' if (r[1] + r[3]) / 2 < (b[1] + b[3]) / 2 else 'rear') if axis == 0 else (
+                        'left' if (r[0] + r[2]) / 2 < (b[0] + b[2]) / 2 else 'right')
+                    plan['dormers'].append({'side': side, 'centre': (r[axis] + r[axis + 2]) / 2,
+                                            'width': r[axis + 2] - r[axis]})
+            evidence[block['id']] = plan
+        choices = deepcopy(house['roof'].get('choices', []))
+        protected = [s for s in house['roof']['sections'] if s.get('src', {}).get('person')]
+        for section in protected:
+            choices.append({**{k: deepcopy(section[k]) for k in
+                              ('kind', 'ridge', 'ends', 'pitch', 'plate', 'overhang') if k in section},
+                            'rect': deepcopy(section.get('block') or
+                                             section.get('read_geometry', {}).get('rect') or section['rect'])})
+        derived, flags = twin_roof_derive.derive_roof(blocks, observations, evidence, choices)
+
+        def porch_roof(section):
+            r = section['rect']
+            centre = [(r[0] + r[2]) / 2, (r[1] + r[3]) / 2]
+            return any(_inside(centre, p['polygon']) and section['plate'] <= p.get('floor', 0) + 12
+                       for p in twin_plan.porches(draft))
+
+        protected_sources = [s for s in sections if any(
+            _near_geometry({'rect': s['rect']}, p.get('read_geometry') or {'rect': p['rect']}, 'roof')
+            for p in protected)]
+        # Invalid read pieces remain visible as diagnostic ghosts. They must
+        # not supply a footprint for new, apparently settled roofs.
+        failed_sources = [s for s in sections if any(
+            p.get('state') == 'ghost' and _near_geometry(
+                {'rect': s['rect']}, p.get('read_geometry') or {'rect': p['rect']}, 'roof')
+            for p in house['roof']['sections'])]
+        kept = [s for s in sections if s.get('src', {}).get('person') or s in protected_sources
+                or s in failed_sources or porch_roof(s)]
+        carriers = derived[:len(blocks)]
+        legacy_ids = {s['id']: old['id'] for s in carriers for old in protected_sources
+                      if _near_geometry({'rect': s['rect']}, {'rect': old['rect']}, 'roof')}
+        derived = [s for s in derived if s['id'] not in legacy_ids]
+        # Keep references such as awnings and gable windows attached to the new carrier.
+        remap = {}
+        for source in sections:
+            if source in kept or not carriers:
+                continue
+            target = max(carriers, key=lambda s: _roof_overlap(source['rect'], s['rect']))
+            remap[source['id']] = legacy_ids.get(target['id'], target['id'])
+        roof['sections'] = kept + derived
+        for extension in roof.get('extensions', []):
+            extension['section'] = remap.get(extension['section'], extension['section'])
+        for opening in draft.get('openings', []):
+            if 'section' in opening:
+                opening['section'] = remap.get(opening['section'], opening['section'])
+        draft['roof'] = roof
+        rects = {b['id']: b['rect'] for b in blocks}
+        progress['flags'] = [{**f, 'block_rect': deepcopy(rects[f['block']])} for f in flags]
     except twin_cost.CheckpointReached:
         raise
     except Exception as exc:
-        failure = str(exc)
-        fragment = {}
-    finally:
-        finished.set()
-        pulse.join()
-    with twin_store.LIFECYCLE, _LOCK:
-        if (build['generation'] != twin_store.generation()
-                or _BUILDS.get(build['id']) is not build
-                or _WORKERS.get(build['id'], {}).get('ticket') != ticket):
-            return None
-        if failure is None:
-            try:
-                house = _house(_base(twin_store.current(), build), build)
-                # Compare in the incoming frame even on the first migration from crops.
-                # This is a private copy; publication still owns the actual migration.
-                _migrate_crop_draft(house, draft, step, [], [])
-                protected = {s['id'] for s in sections if any(
-                    p.get('src', {}).get('person') and (
-                        _matches(s, p, 'roof', house) or _matches(s, p, 'roof', house, original=True))
-                    for p in house['roof']['sections'])}
-                changes = {c['id']: c for c in fragment.get('changes', [])}
-                removed = set(fragment.get('remove', [])) - protected
-                corrected = []
-                for section in sections:
-                    if section['id'] in removed:
-                        continue
-                    candidate = {**section, **changes.get(section['id'], {})} if section['id'] not in protected else section
-                    # A partial change must still describe a complete, usable section.
-                    checked, issues = twin_reads.parse('draft_level', {'building': {'roof': {'sections': [candidate]}}})
-                    if checked.get('building', {}).get('roof', {}).get('sections'):
-                        corrected.append(candidate)
-                    else:
-                        corrected.append(section)
-                        problems.extend(issues)
-                draft.setdefault('roof', {}).setdefault('sections', [])
-                draft['roof']['sections'] = corrected + deepcopy(fragment.get('add', []))
-            except Exception as exc:
-                failure = str(exc)
-                fragment = {}
-        result.pop('roof_check_pending', None)
-        result['roof_check'] = {'context': read_context, 'reply': raw, 'fragment': fragment,
-                                'problems': problems, 'error': failure,
-                                'issues': _draft_roof_issues(draft)}
+        # Derivation is advisory too: retain the unmodified draft on an internal failure.
+        progress['derive_error'] = str(exc)
+    progress['issues'] = _draft_roof_issues(draft)
+    result.pop('roof_blocks_pending', None)
+    result.pop('roof_check_pending', None)
     return _cache_result(build, step, ticket, result)
 
 
@@ -1685,9 +1790,8 @@ def _obtain(build, step, reader, ticket):
     progress = None
     if path.is_file():
         result = json.loads(path.read_text(encoding='utf-8'))
-        if result.get('roof_check_pending'):
-            images, _, _ = _images_context(build, step)
-            return _read_roof_check(build, step, reader, ticket, result, images)
+        if result.get('roof_blocks_pending') or result.get('roof_check_pending'):
+            return _read_roof_blocks(build, step, reader, ticket, result)
         if result.get('fallback_pending'):
             progress = result
         elif not result.get('error'):
@@ -1713,10 +1817,10 @@ def _obtain(build, step, reader, ticket):
         images, context, crop = _images_context(build, step, sheets)
         if step['kind'] == 'draft':
             with twin_store.LIFECYCLE, _LOCK:
-                roof_images = sum(p['role'] in ('roof', 'elevation') for p in context['pages'])
-                roof_images += len(images) - len(context['pages'])
+                photos = sum(len(twin_store.source_images(source)) for source in build['inputs'].get('photos', []))
                 step['estimate'] = (twin_cost.estimate('draft', len(images)) + twin_cost.estimate('outline', 1)
-                                    + (twin_cost.estimate('roof_check', roof_images) if roof_images else 0))
+                                    + photos * twin_cost.estimate('photo_map', 2)
+                                    + (twin_cost.estimate('roof_observe', 1 + min(8, photos)) if photos else 0))
                 _save(build)
         if progress is not None:
             raw = progress['whole_draft']['reply']
@@ -1764,7 +1868,7 @@ def _obtain(build, step, reader, ticket):
         if step['kind'] == 'draft':
             result['sheets'] = sheets
             if fragment.get('building', {}).get('levels') and not result.get('fallback_failed'):
-                return _read_roof_check(build, step, reader, ticket, result, images)
+                return _read_roof_blocks(build, step, reader, ticket, result)
         if step['kind'] == 'walls' and isinstance(raw, dict) and isinstance(raw.get('walls'), list):
             result['wall_count'] = len(raw['walls'])
     return _cache_result(build, step, ticket, result)
@@ -1956,16 +2060,28 @@ def _settle(build, step, result, decision=None):
     """Merge against the latest round while LIFECYCLE and the module lock are held."""
     fragment, crop = result['fragment'], result.get('crop')
     kind = step['kind']
-    roof_check = result.get('roof_check', {})
-    if kind == 'draft' and roof_check.get('error') is not None and not roof_check.get('logged'):
-        _event(build, 'log', step=step['id'],
-               text='The roof could not be double-checked; it is shown as first read.')
-        roof_check['logged'] = True
-        _atomic(_cache_path(build, step), result)
-    if kind == 'draft' and roof_check.get('issues') and not roof_check.get('issues_logged'):
+    def from_step(piece):
+        source = piece.get('src', {}).get('step')
+        return source == step['id'] or (kind == 'draft' and source == 'roof_blocks')
+
+    roof_blocks = result.get('roof_blocks', {})
+    if kind == 'draft':
+        step['roof_flags'] = deepcopy(roof_blocks.get('flags', []))
+        if not roof_blocks.get('logged'):
+            if 'error' in roof_blocks:
+                _event(build, 'log', step=step['id'], text=
+                       'The roofs could not be checked against the photos; they follow the drawings.')
+            if 'derive_error' in roof_blocks:
+                _event(build, 'log', step=step['id'], text=
+                       'The roofs could not be built from the walls; they are shown as first read.')
+            for text in dict.fromkeys(f['text'] for f in step['roof_flags']):
+                _event(build, 'log', step=step['id'], text=text)
+            roof_blocks['logged'] = True
+            _atomic(_cache_path(build, step), result)
+    if kind == 'draft' and roof_blocks.get('issues') and not roof_blocks.get('issues_logged'):
         sections = {s['id']: s for s in fragment.get('building', {}).get('roof', {}).get('sections', [])}
         logged = set()
-        for issue in roof_check['issues']:
+        for issue in roof_blocks['issues']:
             section = sections.get(issue.get('section'))
             area = 'the upper floor'
             text = issue['text']
@@ -1979,7 +2095,7 @@ def _settle(build, step, result, decision=None):
             if text not in logged:
                 _event(build, 'log', step=step['id'], text=text)
                 logged.add(text)
-        roof_check['issues_logged'] = True
+        roof_blocks['issues_logged'] = True
         _atomic(_cache_path(build, step), result)
     if kind == 'draft' and not fragment.get('building', {}).get('levels'):
         _pause_draft(build, step)
@@ -2244,7 +2360,7 @@ def _settle(build, step, result, decision=None):
                     people, [p for p in plan['site'][name] if not p.get('src', {}).get('person')],
                     'site', house, build)
         collections = [house['walls'], house['openings'], house['rooms'], house['roof']['sections']] if house else []
-        generated = [p for pieces in collections for p in pieces if p.get('src', {}).get('step') == step['id']]
+        generated = [p for pieces in collections for p in pieces if from_step(p)]
         for piece in generated:
             if 'confidence' in fragment:
                 if not piece.get('src', {}).get('person'):
@@ -2273,7 +2389,7 @@ def _settle(build, step, result, decision=None):
             extra = target['levels'] + target['roof'].get('extensions', []) + target.get('stairs', [])
             extra.extend(twin_plan.porches(target))
             ghosts.extend(p for p in [*extra, *(p for c in target_collections for p in c)]
-                          if p.get('src', {}).get('step') == step['id'] and p.get('state') == 'ghost')
+                          if from_step(p) and p.get('state') == 'ghost')
             settled.extend(p for p in extra if p.get('src', {}).get('step') == step['id']
                            and p.get('state') != 'ghost')
         if kind == 'walls' and result.get('wall_count', len(incoming)):
@@ -2281,7 +2397,7 @@ def _settle(build, step, result, decision=None):
             if sum(w['id'] in settled_ids for w in incoming) < result.get('wall_count', len(incoming)) / 2:
                 _event(build, 'question', step=step['id'], text='Fewer than half of these walls could settle. Please check the walls.')
         for collection in target_collections:
-            settled.extend(p for p in collection if p.get('src', {}).get('step') == step['id'] and p.get('state') != 'ghost')
+            settled.extend(p for p in collection if from_step(p) and p.get('state') != 'ghost')
         checked = list(zip(collections, target_collections,
                            ('wall', 'opening', 'room', 'roof section'),
                            ('walls', 'openings', 'rooms', 'roof sections')))

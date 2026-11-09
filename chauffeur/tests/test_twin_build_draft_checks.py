@@ -74,7 +74,7 @@ def test_checks_follow_snap_and_reread_invalidates_rooms():
     tb.reread(build, 'draft', reader=again, inline=True)
     check(tb.status(build)['state'] == 'done', tb.status(build)['pause'])
     check(_read_kinds(again).count('outline') == 1
-          and [kind for kind in _read_kinds(again) if kind != 'outline'] == ['draft', 'roof_check', 'draft_rooms'],
+          and [kind for kind in _read_kinds(again) if kind != 'outline'] == ['draft', 'draft_rooms'],
           _read_kinds(again))
 
 

@@ -630,7 +630,34 @@ def test_review_unseen_block_inherits_longest_adjacent_form():
     assert len(_flags_for(flags, blocks, 'P')) == 1, flags
 
 
+def test_photo_relative_slope_overrides_contradictory_plan_pitches():
+    from services.twin_roof_derive import derive_roof
+    observations = _house_observations()
+    evidence = _house_evidence()
+    evidence['A']['pitch'] = 10
+    evidence['C']['pitch'] = 8
+    sections, _ = derive_roof(HOUSE, observations, evidence, [])
+    by = {b['id']: _section(sections, b['id']) for b in HOUSE}
+    assert by['A']['pitch_source'] == 'photos', by['A']
+    assert _effective_pitch(by['A']) < min(_effective_pitch(by[k]) for k in ('B', 'C')), by
+    assert by['A']['pitch'] == observations['A']['pitch'], by['A']
+    # The opposite comparison obeys the same rule, with person choices still first.
+    blocks = [_block('P', (0, 0, 20, 20)), _block('Q', (20, 0, 40, 20))]
+    obs = {'P': {'sides': _sides('slope', 'slope', 'gable_end', 'gable_end'),
+                 'pitch': 12, 'slope_vs_neighbours': 'steeper'},
+           'Q': {'sides': _sides('slope', 'slope', 'gable_end', 'gable_end'), 'pitch': 6}}
+    plan = {'P': {'pitch': 5}, 'Q': {'pitch': 9}}
+    roofs, _ = derive_roof(blocks, obs, plan, [])
+    assert roofs[0]['pitch'] == 12 and roofs[1]['pitch'] == 9, roofs
+    obs['Q'].pop('pitch')
+    roofs, _ = derive_roof(blocks, obs, plan, [])
+    assert roofs[0]['pitch'] == 12 and roofs[1]['pitch'] == 9, roofs
+    roofs, _ = derive_roof(blocks, obs, plan, [{'rect': blocks[0]['rect'], 'pitch': 4}])
+    assert roofs[0]['pitch'] == 4 and roofs[0]['pitch_source'] == 'person', roofs
+
+
 TESTS = (
+    test_photo_relative_slope_overrides_contradictory_plan_pitches,
     test_principle_per_end,
     test_household_truth,
     test_plan_never_decides_kind,

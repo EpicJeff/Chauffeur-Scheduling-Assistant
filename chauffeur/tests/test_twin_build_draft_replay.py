@@ -87,9 +87,14 @@ class ReplayReader(Reader):
             return {'error': 'The model did not answer in 120 s.'}
         if kind == 'finishes':
             return {'materials': {}}
-        if kind == 'roof_check':
-            # Task 12: the roof check answers that the roof is right.
-            return {'changes': [], 'add': [], 'remove': [], 'notes': []}
+        if kind == 'photo_map':
+            return {'from_side': 'front', 'blocks': [{'id': b['id'], 'sides': ['front']} for b in context['blocks']]}
+        if kind == 'roof_observe':
+            # Recorded photos have no new recorded observation yet: explicit hidden
+            # sides exercise the plan-evidence fallback without a failed read.
+            return {'blocks': {b['id']: {'sides': {side: {'kind': 'hidden'}
+                              for side in ('front', 'rear', 'left', 'right')}} for b in context['blocks']}}
+
         return super().__call__(kind, images, context, run=run, step=step)
 
 
@@ -355,20 +360,24 @@ def test_main_house_roof_sections_settle():
     draft = recorded('draft-main-house.json')
     house = build('main-house')['house']
     sections = house['roof']['sections']
-    by_read = {tuple(s.get('read_geometry', {}).get('rect', s['rect'])): s for s in sections}
-    wanted = {s['id']: tuple(s['rect']) for s in draft['building']['roof']['sections']}
-    check(len(wanted) == 10, ('test setup: ten recorded roof sections', sorted(wanted)))
-    missing = sorted(sid for sid, rect in wanted.items() if rect not in by_read)
-    check(not missing, ('every recorded roof section is in the plan', missing))
-    ghosts = sorted((sid, by_read[rect].get('why')) for sid, rect in wanted.items()
-                    if by_read[rect].get('state') == 'ghost')
-    check(not ghosts, ('every recorded roof section settles', ghosts))
-    # The spike check script's 6a: a two-storey gable, ridge along y, on the centre front.
-    front_gable = [s for s in sections if s.get('state') != 'ghost' and s['kind'] == 'gable'
-                   and s.get('ridge') == 'y' and s['plate'] >= 15 and s['rect'][0] >= 13
-                   and s['rect'][2] <= 38.5 and s['rect'][1] <= 16]
-    check(front_gable, ('the centre front gable is present',
-                        [(s['kind'], s.get('ridge'), s['rect'], s['plate']) for s in sections]))
+    check(len(draft['building']['roof']['sections']) == 10, ('test setup: ten recorded roof sections',
+                                                              len(draft['building']['roof']['sections'])))
+    # Ruling R14: the roof now comes from the blocks of the settled walls. Every block
+    # gets exactly one settled roof, and nothing on the roof is a ghost.
+    from services import twin_blocks
+    blocks = twin_blocks.blocks(house)
+    derived = [s for s in sections if (s.get('src') or {}).get('step') == 'roof_blocks']
+    bad = [(b['rect'], [(s['rect'], s.get('state')) for s in derived
+                        if all(abs(a - c) <= 1 for a, c in zip(s['rect'], b['rect']))]) for b in blocks]
+    bad = [row for row in bad if len(row[1]) != 1 or row[1][0][1] == 'ghost']
+    check(blocks and not bad, ('one settled block roof over every block', bad))
+    ghosts = [(s['rect'], s.get('why')) for s in sections if s.get('state') == 'ghost']
+    check(not ghosts, ('every roof section settles', ghosts))
+    # The centre two-storey block has its roof at the upper plate.
+    centre = [s for s in derived if s.get('state') != 'ghost' and s['plate'] >= 15
+              and s['rect'][0] >= 13 and s['rect'][2] <= 38.5]
+    check(centre, ('the centre two-storey block is roofed at the upper plate',
+                   [(s['kind'], s.get('ridge'), s['rect'], s['plate']) for s in derived]))
 
 
 def test_main_house_upper_walls_close():
@@ -406,25 +415,26 @@ def test_main_house_front_jog_survives_snap():
         check(not off, (lid, 'every settled exterior wall end lies on the outline within 0.1 ft', off[:4]))
 
 
-def test_main_house_roof_check_keeps_a_right_roof():
-    # Task 12 (brief .superpowers/sdd/2026-11-08-house-editor-whole-building-draft/
-    # task-12-brief.md): the draft step runs a roof check after the draft read;
-    # an answer with no corrections leaves every recorded section as read.
+def test_main_house_photo_reads_replace_roof_check():
     built = build('main-house')
-    reads = [k for k in built['kinds'] if k in ('draft', 'draft_level', 'roof_check', 'draft_rooms')]
-    check(reads == ['draft', 'roof_check', 'draft_rooms'], ('the roof check runs between the draft and rooms reads',
-                                                            built['kinds']))
-    sections = built['house']['roof']['sections']
-    wanted = recorded('draft-main-house.json')['building']['roof']['sections']
-    check(len(sections) == len(wanted), ('no section added or lost', len(sections), len(wanted)))
-    for section in wanted:
+    reads = [k for k in built['kinds'] if k in ('draft', 'draft_level', 'photo_map', 'roof_observe', 'roof_check', 'draft_rooms')]
+    check(reads == ['draft', 'photo_map', 'roof_observe', 'draft_rooms'], ('photo reads precede rooms', built['kinds']))
+    house = built['house']
+    from services import twin_blocks
+    blocks = twin_blocks.blocks(house)
+    sections = house['roof']['sections']
+    for block in blocks:
+        found = [s for s in sections if all(abs(a - b) < 1 for a, b in zip(
+            s.get('read_geometry', {}).get('rect', s['rect']), block['rect']))]
+        check(len(found) == 1 and found[0]['kind'] == 'gable', ('block form from hidden photos', block, found))
+    for section in recorded('draft-main-house.json')['building']['roof']['sections']:
+        if section['id'] not in {'r_porch_shed', 'r_porch_gable', 'r_screen'}:
+            continue
         found = [s for s in sections if tuple(s.get('read_geometry', {}).get('rect', s['rect'])) == tuple(section['rect'])]
         check(len(found) == 1 and (found[0]['kind'], found[0].get('ridge'), found[0].get('low_side'))
-              == (section['kind'], section.get('ridge'), section.get('low_side')),
-              (section['id'], 'is left as read', [(s['kind'], s.get('ridge'), s.get('low_side')) for s in found]))
-    lines = [e.get('text') for e in built['status']['events'] if e['type'] == 'log'
-             and e.get('text') == 'The roof could not be double-checked; it is shown as first read.']
-    check(not lines, ('a roof check that answered is not reported as failed', lines))
+              == (section['kind'], section.get('ridge'), section.get('low_side')), (section, found))
+    check(not any(e.get('text') == 'The roofs could not be checked against the photos; they follow the drawings.'
+                  for e in built['status']['events']), 'a usable observation is not reported as failed')
 
 
 def test_main_house_room_names():
@@ -457,7 +467,7 @@ TESTS = (
     test_main_house_roof_sections_settle,
     test_main_house_upper_walls_close,
     test_main_house_front_jog_survives_snap,
-    test_main_house_roof_check_keeps_a_right_roof,
+    test_main_house_photo_reads_replace_roof_check,
     test_main_house_room_names,
     test_main_house_rooms_cover_without_overlap,
     test_main_house_rooms_settle,

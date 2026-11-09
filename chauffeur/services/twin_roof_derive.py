@@ -328,6 +328,33 @@ def derive_roof(blocks, observations, evidence, choices):
                                       f'{place}: the {side} side shows a dormer where this roof has an end; please check it.'})
         sections.append(section)
 
+    # Photos decide as-built relative slopes. If plan pitches contradict a
+    # visible comparison, use that block's own photo estimate. A neighbour's
+    # photo pitch is needed only when its plan pitch still reverses the pair.
+    photo_pitches = set()
+    for i, block in enumerate(blocks):
+        obs = observations.get(block['id'], {})
+        relative = obs.get('slope_vs_neighbours')
+        if i in fixed or relative not in ('lower', 'steeper'):
+            continue
+        for j, neighbour in enumerate(blocks):
+            if i == j or not _neighbours(block['rect'], neighbour['rect']):
+                continue
+            own = _number(obs.get('pitch'), None)
+            other = _number(observations.get(neighbour['id'], {}).get('pitch'), None)
+            if own is None:
+                continue
+            direction = 1 if relative == 'lower' else -1
+            if direction * (sections[i]['pitch'] - sections[j]['pitch']) >= 0:
+                photo_pitches.add(i)
+                if (j not in fixed and other is not None
+                        and direction * (_pitch(own) - sections[j]['pitch']) >= 0
+                        and direction * (_pitch(own) - _pitch(other)) < 0):
+                    photo_pitches.add(j)
+    for i in photo_pitches:
+        sections[i]['pitch'] = _pitch(observations[blocks[i]['id']]['pitch'])
+        sections[i]['pitch_source'] = 'photos'
+
     _inherit_unseen(blocks, sections, observations, fixed)
     for i in sorted(_align_ridges(sections, fixed) - fixed):
         block = blocks[i]

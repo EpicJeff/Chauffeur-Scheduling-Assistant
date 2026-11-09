@@ -1,36 +1,8 @@
-"""The roof check is told what is wrong (brief
-.superpowers/sdd/2026-11-08-house-editor-whole-building-draft/task-13-brief.md,
-with ruling R36).
+"""Final roof consistency warnings after block derivation (R9 retarget).
 
-twin_build._read_roof_check puts `issues` (services.twin_roof_issues.roof_issues
-on the draft fragment after normalize, before the read) in the roof_check
-context. After the corrections apply it recomputes roof_issues; every issue
-left is logged in one plain line ("The roof over <area> still needs checking:
-...") on the draft step, and the build never pauses for it. With no issues
-and nothing else wrong, the behaviour is unchanged.
-
-The drafts come from the recorded second-build main-house draft
-(draft-main-house-2.json, build 2's raw draft before its roof check):
-- RAW: as recorded. Under R36 it gives no issues: its right block, left
-  bedroom and bonus room are knee-wall rooms, and it has no hip. (The visible
-  roof is the envelope with overhangs, as twin_roof.js heightAt draws it; see
-  test_twin_roof_issues.py.)
-- HIP: r_right is a hip with ridge x, as build 2's roof check made it
-  (accept/out2 plan_final.json). Over [35, 13.33, 59, 52] (24 x 38.67) it comes
-  to a point, which is exactly one issue: hip_point r_right.
-- FINAL: every roof section as in build 2's final plan (FINAL_ROOF_2). r_left
-  and r_right both come to a point, so there are two issues.
-
-Roof check answers:
-- RESOLVE fits r_right to the second floor's right block
-  [37.33, 19.33, 59, 43] at plate 20, keeping the plan's ridge x (parallel to
-  the street). The block is 21.67 x 23.67, within R36's tolerance, so nothing
-  is left and no line is logged.
-- NO_CORRECTIONS leaves every issue, and there is one line for each.
-
-The reader stub and harness are copied from test_twin_build_roof_check.py.
-
-Run from chauffeur/:  env -u HA_BASE_URL python tests/test_twin_build_roof_issues.py
+Stub derivation supplies deliberately inconsistent roofs, so warning logging
+is tested independently of the derivation's form decisions. The cached final
+issues replace the retired roof_check context; warning protections remain.
 """
 import copy
 import io
@@ -112,8 +84,11 @@ class RoofReader(Reader):
             return {'error': 'The model did not answer in 120 s.'}
         if kind == 'finishes':
             return {'materials': {}}
-        if kind == 'roof_check':
-            return copy.deepcopy(self.roof_answer)
+        if kind == 'photo_map':
+            return {'from_side': 'front', 'blocks': [{'id': b['id'], 'sides': ['front']} for b in context['blocks']]}
+        if kind == 'roof_observe':
+            return {'blocks': {b['id']: {'sides': {'front': {'kind': 'hidden'}}} for b in context['blocks']}}
+
         return super().__call__(kind, images, context, run=run, step=step)
 
 
@@ -162,9 +137,16 @@ def _roof(house):
 def _run(reader):
     """One inline build of the Main house; it must finish without a pause."""
     _main_house()
-    b = tb.start({'part': 'house'}, reader=reader, inline=True)
+    def derived(blocks, observations, evidence, choices):
+        sections = copy.deepcopy(reader.draft['building'].get('roof', {}).get('sections', []))
+        changes = {c['id']: c for c in reader.roof_answer.get('changes', [])}
+        return [{**section, **changes.get(section['id'], {})} for section in sections], []
+    with patch.object(tb.twin_roof_derive, 'derive_roof', side_effect=derived):
+        b = tb.start({'part': 'house'}, reader=reader, inline=True)
+    reader.build = b
+
     st = tb.status(b)
-    check(reader.kinds.count('roof_check') == 1, ('test setup: the roof check was read', reader.kinds))
+    check(reader.kinds.count('roof_observe') == 1, ('test setup: the roof check was read', reader.kinds))
     check(st['state'] == 'done', ('roof issues never pause or stop the build',
                                   st['state'], st.get('pause'), _trouble(st)))
     check(not _trouble(st), ('no error and no question', _trouble(st)))
@@ -174,12 +156,17 @@ def _run(reader):
 
 
 def _context(reader):
-    return next(c for c in reader.seen if c['kind'] == 'roof_check')['context']
+    build = tb._BUILDS[reader.build]
+    step = next(s for s in build['steps'] if s['kind'] == 'draft')
+    result = json.loads(tb._cache_path(build, step).read_text(encoding='utf-8'))
+    return {'issues': result['roof_blocks']['issues'],
+            'sections': result['fragment']['building']['roof']['sections']}
+
 
 
 def _issues(reader):
     context = _context(reader)
-    check('issues' in context, ('the roof check context carries issues', sorted(context)))
+    check('issues' in context, ('the final cached result carries issues', sorted(context)))
     issues = context['issues']
     check(isinstance(issues, list), ('issues is a list', type(issues)))
     for issue in issues:
@@ -226,7 +213,7 @@ def test_no_issues_leaves_the_roof_check_unchanged():
 def test_resolving_answer_logs_nothing():
     reader = RoofReader(hip_draft(), RESOLVE)
     _, st = _run(reader)
-    check(_issues(reader), 'test setup: the draft had an issue for the roof check to resolve')
+    check(not _issues(reader), 'the final consistency check sees the corrected roof')
     check(not _still(st), ('the issue is resolved: no "still needs checking" line', _logs(st)))
     house = _house()
     found = _at(house, RIGHT_BLOCK)
@@ -282,32 +269,21 @@ def test_identical_leftover_texts_log_once_without_redundant_place_prefix():
     with patch.object(tb.twin_roof_issues, 'roof_issues', return_value=issues):
         reader = RoofReader(raw_draft())
         _, st = _run(reader)
-    check(len(_issues(reader)) == 5, 'all five located issues stay in the reader context')
+    check(len(_issues(reader)) == 5, 'all five located issues stay in the final result')
     lines = [e for e in st['events'] if e['type'] == 'log' and 'stands above the roof' in e.get('text', '')]
     check([e['text'] for e in lines] == texts,
           ('five issues with three identical texts log three plain lines, without coordinates or prefix', lines))
     check(all(e.get('step') == 'draft' for e in lines), ('warnings belong to the draft step', lines))
 
 
-def test_issue_detection_failure_before_or_after_read_never_stops_build():
-    detect = tb.twin_roof_issues.roof_issues
-    for fail_at in (1, 2):
-        calls = []
-
-        def sometimes_raises(house):
-            calls.append(house)
-            if len(calls) == fail_at:
-                raise RuntimeError('geometry warning detection failed')
-            return detect(house)
-
-        with patch.object(tb.twin_roof_issues, 'roof_issues', side_effect=sometimes_raises):
-            reader = RoofReader(hip_draft(), RESOLVE)
-            _, st = _run(reader)
-        check(len(calls) == 2, ('issues checked before and after the roof read', fail_at, len(calls)))
-        check(_issues(reader) == [] if fail_at == 1 else bool(_issues(reader)),
-              ('a failed initial check supplies an empty list', fail_at, _issues(reader)))
-        check(_at(_house(), RIGHT_BLOCK), ('the roof correction still settles', fail_at, _roof(_house())))
-        check(not _still(st), ('a failed warning check leaves no warning', fail_at, _logs(st)))
+def test_issue_detection_failure_never_stops_build():
+    with patch.object(tb.twin_roof_issues, 'roof_issues', side_effect=RuntimeError('geometry warning detection failed')) as detect:
+        reader = RoofReader(hip_draft(), RESOLVE)
+        _, st = _run(reader)
+    check(detect.call_count == 1, ('issues checked once, after derivation', detect.call_count))
+    check(_issues(reader) == [], ('a failed final check supplies an empty list', _issues(reader)))
+    check(_at(_house(), RIGHT_BLOCK), ('the derived roof still settles', _roof(_house())))
+    check(not _still(st), ('a failed warning check leaves no warning', _logs(st)))
 
 
 def test_wall_issue_context_has_feet_endpoints_without_log_coordinates():
@@ -336,7 +312,7 @@ TESTS = (
     test_every_leftover_issue_logs_once,
     test_missing_fragment_section_never_logs_its_id,
     test_identical_leftover_texts_log_once_without_redundant_place_prefix,
-    test_issue_detection_failure_before_or_after_read_never_stops_build,
+    test_issue_detection_failure_never_stops_build,
     test_wall_issue_context_has_feet_endpoints_without_log_coordinates,
 )
 

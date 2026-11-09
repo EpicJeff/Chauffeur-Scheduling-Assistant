@@ -284,6 +284,8 @@ def _roof(building, notes):
         else:
             notes.append(f'Dropped roof extension {index}: malformed extension.')
     building['roof'] = {'sections': list(sections.values()), 'extensions': extensions}
+    if isinstance(roof.get('choices'), list):
+        building['roof']['choices'] = deepcopy(roof['choices'])
     return sections
 
 

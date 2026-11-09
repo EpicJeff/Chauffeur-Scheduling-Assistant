@@ -207,6 +207,23 @@ def _spike_no_first_floor_walls():
     return answer
 
 
+def _block_roofs_cover(house):
+    """Ruling R14 (roofs from blocks): one settled block roof over every block of the
+    settled walls, tagged roof_blocks; returns (problems, block_roof_ids)."""
+    from services import twin_blocks
+    blocks = twin_blocks.blocks(house)
+    derived = [s for s in house['roof']['sections'] if (s.get('src') or {}).get('step') == 'roof_blocks']
+    problems, ids = [], set()
+    for b in blocks:
+        over = [s for s in derived if all(abs(a - c) <= 1 for a, c in zip(s['rect'], b['rect']))]
+        if len(over) != 1 or over[0].get('state') == 'ghost':
+            problems.append((b['rect'], [(s['rect'], s.get('state'), s.get('why')) for s in over]))
+        ids.update(s['id'] for s in over)
+    if not blocks:
+        problems.append('no blocks')
+    return problems, ids
+
+
 # --- tests ---------------------------------------------------------------------
 
 def test_plan_steps_draft():
@@ -261,12 +278,12 @@ def test_draft_settles_all_at_once():
     check(len(got.get('opening', [])) >= 18, ('the openings settle', counts))
     main_roofs = {'main', 'cross_gable', 'left_wing', 'front_wing', 'right_block',
                   'side_wing', 'rear_gable', 'kitchen_bump'}
-    # Merge assigns stable piece ids, so identify the recorded sections by rect.
-    expected_rects = {tuple(s['rect']) for s in spike()['building']['roof']['sections']
-                      if s['id'] in main_roofs}
-    check(len(expected_rects) == 8 and expected_rects <= {
-              tuple(s.get('read_geometry', {}).get('rect', s['rect'])) for s in got.get('roof', [])},
-          ('all eight main-roof sections settle', got.get('roof', [])))
+    # Ruling R14: the main roof now comes from the blocks; the porch roofs stay as read.
+    other_rects = {tuple(s['rect']) for s in spike()['building']['roof']['sections']
+                   if s['id'] not in main_roofs}
+    check(len(other_rects) == 3, ('test setup: three porch roofs', other_rects))
+    check(any((s.get('src') or {}).get('step') == 'roof_blocks' for s in got.get('roof', [])),
+          ('the block roofs settle in the draft event', got.get('roof', [])))
     check(not any('bearing walls' in e.get('text', '') for e in st['events']
                   if e['type'] == 'log' and e.get('step') == 'draft'),
           'no bearing-wall failures for the main roof')
@@ -277,12 +294,19 @@ def test_draft_settles_all_at_once():
     check((house['id'], house['name'], house.get('kind')) == ('house', 'Main house', 'main_house'),
           ('the building keeps its own identity, not the answer\'s', house['id'], house['name']))
     check(len(house['walls']) == 34, ('every wall of the draft is in the plan', len(house['walls'])))
-    check(len(house['roof']['sections']) == 11, ('every roof section is in the plan', len(house['roof']['sections'])))
+    problems, block_ids = _block_roofs_cover(house)
+    check(not problems, ('one settled block roof over every block', problems))
+    read_roofs = [s for s in house['roof']['sections'] if s['id'] not in block_ids
+                  and (s.get('src') or {}).get('step') != 'roof_blocks']
+    check(len(read_roofs) == 3 and {tuple(s.get('read_geometry', {}).get('rect', s['rect'])) for s in read_roofs}
+          == {tuple(s['rect']) for s in spike()['building']['roof']['sections'] if s['id'] not in main_roofs},
+          ('the three porch roofs are in the plan as read', [s['rect'] for s in read_roofs]))
     check(len(house['openings']) >= 20, len(house['openings']))
     check(house.get('porch') and len(house['porch'].get('columns') or []) == 4, house.get('porch'))
     check(len(house.get('stairs') or []) == 1, house.get('stairs'))
     for piece in [*house['walls'], *house['openings'], *house['roof']['sections']]:
-        check((piece.get('src') or {}).get('step') == 'draft', ('every piece names the draft step', piece.get('src')))
+        allowed = ('draft', 'roof_blocks') if piece in house['roof']['sections'] else ('draft',)
+        check((piece.get('src') or {}).get('step') in allowed, ('every piece names the draft step', piece.get('src')))
     # In feet as is: no registration mapping moved it.
     l1 = next(l for l in house['levels'] if l['id'] == 'L1')
     box = _bounds(l1['outline'])
