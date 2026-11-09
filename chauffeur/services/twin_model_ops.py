@@ -260,7 +260,58 @@ def _weld_move(building, moved):
         building['joints'] = [j for j in building['joints'] if j['id'] not in replacements]
 
 
-def _move(building, op, before):
+def _promote_crossings(building, op, actor):
+    kind = op['op']
+    if kind == 'move_room':
+        piece = _find(building, 'rooms', op.get('room'))
+        moved = set(piece['joints'])
+        level = piece['level']
+    elif kind == 'move_wall':
+        piece = _find(building, 'walls', op.get('wall'))
+        moved = set(piece['joints'])
+        level = piece['level']
+    else:
+        moved = {op.get('joint')}
+        joint = next((j for j in building['joints'] if j['id'] in moved), None)
+        # Room caches can expose a derived crossing as a draggable joint.
+        room = next((r for r in building['rooms'] if moved.intersection(r['joints'])), None)
+        if joint is None and room is None:
+            raise Refused('That joint is missing.')
+        level = (joint or room)['level']
+    positions = _positions(building, level)
+    walls = [w for w in building['walls'] if w['level'] == level and w.get('state') != 'ghost']
+    derived, _ = graph.split_crossings(positions, walls)
+    affected = [w for w in walls if moved.intersection(w['joints'])]
+    replacements = {}
+    wall_points = []
+    for jid, point in derived.items():
+        if jid in positions:
+            continue
+        incident = [w for w in affected if graph._interior_parameter(
+            point, *(positions[j] for j in w['joints'])) is not None]
+        if jid not in moved and not incident:
+            continue
+        replacements[jid] = _joint(building, level, point)['id']
+        if kind == 'move_wall' and piece in incident:
+            wall_points.append(replacements[jid])
+    if not replacements:
+        return None
+    for room in building['rooms']:
+        if room['level'] == level:
+            room['joints'] = [replacements.get(j, j) for j in room['joints']]
+    if kind == 'move_joint':
+        op['joint'] = replacements.get(op['joint'], op['joint'])
+    _split_drawing(building, actor)
+    referenced = {j for wall in building['walls'] for j in wall['joints']}
+    building['joints'] = [j for j in building['joints'] if j['id'] in referenced]
+    # A perpendicular wall drag carries every promoted point on that wall,
+    # including the shared endpoint of a discarded read overshoot (R15/R38).
+    if kind == 'move_wall':
+        return [j for j in [*piece['joints'], *moved, *wall_points] if j in referenced]
+    return []
+
+
+def _move(building, op, before, wall_ids=None):
     kind = op['op']
     if kind == 'move_joint':
         joint = _find(building, 'joints', op.get('joint'))
@@ -268,9 +319,9 @@ def _move(building, op, before):
     else:
         if kind == 'move_wall':
             wall = _find(building, 'walls', op.get('wall'))
-            ids = wall['joints']
+            ids = wall_ids or wall['joints']
             positions = _positions(building)
-            a, b = (positions[j] for j in ids)
+            a, b = (positions[j] for j in wall['joints'])
             length = math.dist(a, b)
             if length < 1 - _EPS:
                 raise Refused(_SHORT)
@@ -281,8 +332,6 @@ def _move(building, op, before):
             ids = room['joints']
             delta = _point(op.get('by'))
             positions = _positions(building)
-            if any(j not in positions for j in ids):
-                raise Refused('Split the crossing walls before moving this room.')
         destinations = {j: [positions[j][i] + delta[i] for i in (0, 1)] for j in ids}
     for joint in building['joints']:
         if joint['id'] in destinations:
@@ -307,7 +356,54 @@ def _forget_merged_rooms(building):
     building['rooms'] = [r for r in building['rooms'] if r['id'] not in removed]
 
 
-def _delete(building, pid):
+def _merge_joint(building, joint, before):
+    pid = joint['id']
+    walls = [w for w in building['walls'] if pid in w['joints']]
+    text = 'Only a straight joint between two walls can be removed.'
+    if len(walls) != 2 or any(w.get('state') == 'ghost' for w in walls):
+        raise Refused(text)
+    positions = _positions(building)
+    ends = [next(j for j in w['joints'] if j != pid) for w in walls]
+    vectors = [graph._delta(joint['at'], positions[j]) for j in ends]
+    lengths = [math.hypot(*v) for v in vectors]
+    dot = sum(a * b for a, b in zip(*vectors))
+    if min(lengths) <= _EPS or dot > -math.cos(math.radians(3)) * math.prod(lengths):
+        raise Refused(text)
+    keep, removed = walls
+    keep['joints'] = [ends[1] if j == pid else j for j in keep['joints']]
+    building['walls'].remove(removed)
+    building['joints'].remove(joint)
+    geometry = hosts.snapshot(building)
+    line = geometry['walls'][keep['id']]
+    length = math.dist(line['a'], line['b'])
+    for name in ('openings', 'anchors', 'items'):
+        for piece in building.get(name, []):
+            host = hosts._host(piece, name == 'openings')
+            if host.get('wall') not in (keep['id'], removed['id']):
+                continue
+            point = hosts._point(before, host)
+            at = sum((point[i] - line['a'][i]) * (line['b'][i] - line['a'][i])
+                     for i in (0, 1)) / length
+            hosts.rehost(building, piece['id'], {**host, 'wall': keep['id'], 'at': at})
+    for roof in building.get('roofs', []):
+        for edge in roof['edges']:
+            if edge.get('wall') == removed['id']:
+                edge['wall'] = keep['id']
+    # Hosts have already been placed on the merged line, so follow must not
+    # apply the wall's change in length to their distances a second time.
+    before['walls'][keep['id']] = line
+
+
+def _bounds_wall(room, wall, positions):
+    if room['level'] != wall['level'] or room.get('state') == 'ghost':
+        return False
+    a, b = (positions[j] for j in wall['joints'])
+    polygon = room['polygon']
+    return any(_collinear_overlap(a, b, c, d) is not None
+               for c, d in zip(polygon, polygon[1:] + polygon[:1]))
+
+
+def _delete(building, pid, before):
     wall = next((w for w in building['walls'] if w['id'] == pid), None)
     if wall is not None:
         building['walls'].remove(wall)
@@ -315,20 +411,21 @@ def _delete(building, pid):
         return
     joint = next((j for j in building['joints'] if j['id'] == pid), None)
     if joint is not None:
-        building['walls'] = [w for w in building['walls'] if pid not in w['joints']]
-        building['joints'].remove(joint)
-        _forget_merged_rooms(building)
+        _merge_joint(building, joint, before)
         return
     room = next((r for r in building['rooms'] if r['id'] == pid), None)
     if room is not None:
         # Keep boundaries shared with a neighbour, so deleting one room does
         # not open that neighbour as a side effect.
-        ids = set(room['joints'])
-        shared = {j for r in building['rooms'] if r is not room for j in r['joints']}
-        building['walls'] = [w for w in building['walls']
-                             if not (set(w['joints']) <= ids and not set(w['joints']) <= shared)]
+        positions = _positions(building)
+        exclusive = [w for w in building['walls'] if _bounds_wall(room, w, positions)
+                     and not any(_bounds_wall(other, w, positions)
+                                 for other in building['rooms'] if other is not room)]
+        if not exclusive:
+            raise Refused('This room shares every wall; delete a wall to merge it.')
+        building['walls'] = [w for w in building['walls'] if w not in exclusive]
         building['rooms'].remove(room)
-        return
+        return f"Deleted the {room['name']}."
     for name in ('openings', 'anchors', 'items', 'roofs', 'dormers', 'extensions', 'stairs'):
         piece = next((p for p in building.get(name, []) if p['id'] == pid), None)
         if piece is not None:
@@ -337,7 +434,7 @@ def _delete(building, pid):
     raise Refused('That piece is missing.')
 
 
-def _mark_touched(building, previous):
+def _mark_touched(building, previous, op):
     old_geometry, geometry = hosts.snapshot(previous), hosts.snapshot(building)
     for name in ('joints', 'walls', 'rooms', 'openings', 'anchors', 'items', 'roofs'):
         old = {p['id']: p for p in previous.get(name, [])}
@@ -345,12 +442,10 @@ def _mark_touched(building, previous):
             prior = old.get(piece['id'])
             changed = prior != piece
             if prior is not None and name in ('openings', 'anchors', 'items'):
-                host = piece if name == 'openings' else piece.get('host', {})
-                prior_host = prior if name == 'openings' else prior.get('host', {})
-                try:
-                    changed |= hosts._point(geometry, host) != hosts._point(old_geometry, prior_host)
-                except (ValueError, KeyError):
-                    pass
+                host = hosts._host(piece, name == 'openings')
+                prior_host = hosts._host(prior, name == 'openings')
+                changed = (piece['id'] == op.get('id') or
+                           hosts.surface_changed(old_geometry, geometry, host, prior_host))
             if prior is not None and name == 'walls':
                 changed |= geometry['walls'].get(piece['id']) != old_geometry['walls'].get(piece['id'])
             if changed:
@@ -365,15 +460,21 @@ def apply(model, op: dict, actor: str = 'person') -> tuple[dict, str]:
     if kind not in ('move_joint', 'move_wall', 'move_room', 'add_wall',
                     'split_wall', 'draw_room', 'split_room', 'delete'):
         raise Refused('That operation is not available.')
+    op = deepcopy(op)
     model, notes = twin_model.normalize(model)
     building = _find(model, 'buildings', op.get('building'))
     before = hosts.snapshot(building)
     _roof_offsets(building, before)
     previous = deepcopy(building)
+    deleted_words = None
     if kind in ('move_joint', 'move_wall', 'move_room'):
-        _move(building, op, before)
+        wall_ids = _promote_crossings(building, op, actor)
+        if wall_ids is not None:
+            notes.extend(hosts.follow(building, before))
+            before = hosts.snapshot(building)
+        _move(building, op, before, wall_ids)
     elif kind == 'delete':
-        _delete(building, op.get('id'))
+        deleted_words = _delete(building, op.get('id'), before)
     else:
         if kind == 'split_wall':
             wall = _find(building, 'walls', op.get('wall'))
@@ -411,9 +512,10 @@ def apply(model, op: dict, actor: str = 'person') -> tuple[dict, str]:
     building['roofs'] = [roofs.follow_walls(r, building['walls'], building['joints'])
                          for r in building.get('roofs', [])]
     if actor == 'person':
-        _mark_touched(building, previous)
+        _mark_touched(building, previous, op)
     words = {'move_joint': 'Moved the corner.', 'move_wall': 'Moved the wall.',
              'move_room': 'Moved the room.', 'add_wall': 'Added the wall.',
              'split_wall': 'Split the wall.', 'draw_room': 'Drew the room.',
              'split_room': 'Split the room.', 'delete': 'Deleted the piece.'}[kind]
+    words = deleted_words or words
     return model, ' '.join(dict.fromkeys([words, *notes]))
