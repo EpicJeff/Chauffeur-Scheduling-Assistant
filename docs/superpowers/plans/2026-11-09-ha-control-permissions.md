@@ -195,6 +195,8 @@ Run: `python tests/test_control_identity.py`
 
 ### Task 4: Every HTTP control endpoint obeys
 
+**Carried from Task 3 review (rulings):** remove the request-side admin derivation from `who_from_request` (a forged ingress header must not make `admin=True`; admin comes only from the agent's `source='admin'` with no member). Call `who_from_request` (which consumes grants) only on actuation paths, never on reads or tile renders.
+
 **Files:**
 - Modify: `chauffeur/main.py`: the Sendspin websocket (`/api/sendspin/ws`, ~14460-14530: authorize client command frames as `media` per frame against current rules; stream and read traffic untouched), `ha_toggle` (`/api/ha/toggle`, ~1742), `/api/ha/card/climate` (~11383), `ha_card_service` (`/api/ha/card/service`, ~11432), `/api/ha/media_players/{entity_id}/command` (~12047), `/api/music/queue/command` (~12137), `/api/music/play` (~12284). Each gains `request: Request`.
 - Modify: `chauffeur/services/home_board.py:3273-3306` (retire `HA_TOGGLE_DOMAINS`/`HA_UNSAFE_DOMAINS`/`toggle_domains` as the gate; the tile's `toggleable` at ~3559 asks the rulebook), `chauffeur/services/ha_card_convert.py:90-99, 256` (same).
@@ -239,6 +241,8 @@ Run: `python tests/test_control_endpoints.py`
 ---
 
 ### Task 5: Argyle obeys (house tool, TV apps, music tool, voice)
+
+**Carried from Task 3 review (rulings):** `who_from_agent(acting_member, voice_context, source, proven: bool = True)`; `/api/chat` computes `proven` from the member token row's provenance (a panel-minted or house-session token is not proven) and passes it. `hold(tool, args, device_id)` stores the creating panel's device id and `take_held(held_id, device_id)` refuses another device; held args are whitelisted to each tool's parameters (unknown keys dropped).
 
 **Files:**
 - Modify: `chauffeur/services/house.py:892-962` (`_trusted` STAYS for the private child-location read at ~528, unchanged; only its device-control use at ~962 is replaced: `house()` act and `open_app` call `control_rules.check(who_from_agent(...), ids)`) and `chauffeur/services/voice_tools.py` (its `house` dispatch path must reach the same check)
@@ -326,6 +330,8 @@ Run: `python tests/test_control_rules_page.py`
 ---
 
 ### Task 7: "Ask who" on the wall panel
+
+**Carried from Task 3 review (ruling):** the fetch wrappers in `templates/nav.html` (~593-603) and `templates/components/admin_gate.html` (~73) delete `X-Device-Token` whenever a house session or admin token is present; keep it for `api/ha/control/*` and every control request, so Ask who works during a parent's house session. Test it with a node run of the wrapper.
 
 **Files:**
 - Modify: `chauffeur/templates/components/control_center.html` (beside `chfMemberToken`, ~1545-1600: new `window.chfControlGrant`; chat send ~976-1000 handles `control_held`)
