@@ -300,28 +300,40 @@ def scenario_a_tile_nobody_configured_says_so():
 # --- what a tap may do -----------------------------------------------------
 
 def scenario_tile_controls_follow_the_grid():
-    """Default panel controls include blinds, climate and other device kinds;
-    a saved grid can refuse any of them or offer identification for locks."""
+    """A row becomes a button only when it is a thing a toggle can operate AND
+    the grid lets the wall operate it. Climate, numbers and selects keep their
+    reading: a heating system in 'heat' is not 'Off', and HA ignores a toggle
+    sent to a number. Defaults keep what the wall had, plus blinds and valves."""
     states = STATES + [
         {'entity_id': 'cover.shade', 'state': 'closed', 'attributes': {'device_class': 'shade'}},
         {'entity_id': 'climate.hall', 'state': 'heat', 'attributes': {}},
         {'entity_id': 'valve.garden', 'state': 'closed', 'attributes': {}},
+        {'entity_id': 'switch.kettle', 'state': 'off', 'attributes': {}},
+        {'entity_id': 'input_number.target', 'state': '21', 'attributes': {}},
+        {'entity_id': 'alarm_control_panel.house', 'state': 'armed_home', 'attributes': {}},
     ]
-    entities = ['light.kitchen', 'cover.shade', 'climate.hall', 'valve.garden', 'lock.front_door']
+    toggles = ['light.kitchen', 'cover.shade', 'valve.garden', 'switch.kettle']
+    readings = ['climate.hall', 'input_number.target', 'alarm_control_panel.house']
+    entities = toggles + readings + ['lock.front_door']
     config = {'entities': entities, 'interactive': True}
     def rows(settings):
         return _with_ha(_HA(states=states), lambda: {
             r['entity_id']: r for r in home_board._tile_ha(NOW, config=config, settings=settings)['rows']})
     defaults = rows({})
-    for eid in entities[:-1]:
+    for eid in toggles:
         check(defaults[eid]['toggleable'], f'{eid} lost its default panel control')
+    for eid in readings:
+        check(not defaults[eid]['toggleable'], f'{eid} became an on/off button')
     check(not defaults['lock.front_door']['toggleable'], 'a default panel offered locks')
     grid = cr.default_rules({})
     grid['places']['panel']['lights'] = 'no'
     grid['places']['panel']['locks'] = 'ask'
+    grid['places']['panel']['alarm'] = 'yes'
     changed = rows({'ha_control': grid})
     check(not changed['light.kitchen']['toggleable'], 'the tile ignored a saved No')
     check(changed['lock.front_door']['toggleable'], 'the tile hid an askable lock')
+    check(not changed['alarm_control_panel.house']['toggleable'],
+          'an alarm became a toggle because the grid allowed it')
     grid['enabled'] = False
     check(not any(r['toggleable'] for r in rows({'ha_control': grid}).values()),
           'tiles ignored the household off switch')

@@ -1744,6 +1744,10 @@ def ha_toggle(req: HAToggleRequest, request: Request):
     """Toggle a board entity only when the household rulebook permits it."""
     from services import control_rules, home_board, ha_api
     entity_id = (req.entity_id or '').strip()
+    domain = entity_id.partition('.')[0]
+    if domain not in home_board.TOGGLE_DOMAINS:
+        raise HTTPException(status_code=400,
+                            detail=f"{domain or 'that'} entities cannot be toggled from the board")
     if not home_board.ha_available():
         raise HTTPException(status_code=503, detail="Home Assistant is not reachable")
     control_rules.guard(request, [entity_id])
@@ -11465,7 +11469,6 @@ def ha_card_climate(req: HaClimateStepRequest, request: Request):
     entity_id = (req.entity_id or '').strip()
     if not entity_id.startswith('climate.'):
         raise HTTPException(status_code=400, detail="Not a thermostat")
-    control_rules.guard(request, [entity_id])
     state = ha_api.get_state(entity_id) or {}
     attrs = state.get('attributes') or {}
     if attrs.get('target_temp_low') is not None:
@@ -11483,6 +11486,7 @@ def ha_card_climate(req: HaClimateStepRequest, request: Request):
     hi = float(attrs.get('max_temp') if attrs.get('max_temp') is not None else 95)
     direction = 1 if (req.step or 0) > 0 else -1
     wanted = max(lo, min(hi, current + direction * step))
+    control_rules.guard(request, [entity_id])
     if ha_api.call_service('climate', 'set_temperature',
                            {'entity_id': entity_id, 'temperature': wanted}) is None:
         raise HTTPException(status_code=502, detail="Home Assistant refused that")
@@ -12219,6 +12223,11 @@ def music_queue_command(req: QueueCommandRequest, request: Request):
     from services import control_rules, music_queue as mq
     if not re.fullmatch(r'media_player\.[a-z0-9_]+', req.entity_id):
         raise HTTPException(status_code=400, detail="Not a media player")
+    valid_action = (req.action == 'clear'
+                    or (req.action == 'play_index' and req.index is not None)
+                    or (req.action in ('move_up', 'move_down', 'remove') and req.queue_item_id))
+    if not valid_action:
+        raise HTTPException(status_code=502, detail=f'Unknown queue action {req.action}')
     control_rules.guard(request, [req.entity_id])
     ok, detail = mq.command(req.entity_id, req.action,
                             queue_item_id=req.queue_item_id, index=req.index)
@@ -14604,7 +14613,7 @@ async def sendspin_relay(websocket: WebSocket):
             if msg.get('text') is not None:
                 try:
                     frame = json.loads(msg['text'])
-                except (ValueError, TypeError):
+                except Exception:
                     frame = None
                 if (isinstance(frame, dict) and frame.get('type') == 'client/command'
                         and not control_rules.check_kind(who, 'media').allowed):

@@ -213,9 +213,9 @@ RULES = [
     # static/ha_card_host.js), found the day after the flip: a wall mounts
     # the card, so it fetches the card's own JavaScript, its icons and the
     # live state refresher on the panel's tier, and an interactive tile calls
-    # a service — allowlisted at the SERVER against the toggle domains, which
-    # is what makes a kitchen screen a safe caller. The editor's reads (the
-    # catalog, the resource registry) stay administration below.
+    # a service — decided at the SERVER by the household control grid.
+    # The editor's reads (the catalog, the resource registry) stay
+    # administration below.
     ('GET', '/api/ha/card/states', WALL, None),
     ('GET', '/api/ha/card/resource', WALL, None),
     ('GET', '/api/ha/card/mdi/{name}', WALL, None),

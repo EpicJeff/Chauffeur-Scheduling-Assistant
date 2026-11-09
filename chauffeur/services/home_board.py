@@ -3270,6 +3270,11 @@ def _tile_map(now, runs=None, config=None, **_):
         return None
 
 
+# Presentation capability only; the household grid still decides permission.
+TOGGLE_DOMAINS = ('light', 'switch', 'fan', 'input_boolean', 'cover', 'lock',
+                 'valve', 'siren', 'humidifier')
+
+
 def _tile_music(now, config=None, **_):
     """Music Assistant, as a card on the wall.
 
@@ -3523,7 +3528,7 @@ def _tile_ha(now, config=None, settings=None, **_):
                 # gone" is the only thing that leads anybody to fix it.
                 'missing': s is None,
                 'on': state in ('on', 'home', 'open', 'unlocked', 'playing'),
-                'toggleable': bool(interactive and s is not None
+                'toggleable': bool(interactive and s is not None and domain in TOGGLE_DOMAINS
                                    and control_rules.offered(who, eid, settings)),
             })
         return {'rows': rows,

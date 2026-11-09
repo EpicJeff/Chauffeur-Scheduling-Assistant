@@ -35,6 +35,8 @@ STATES = [
     state('cover.office_shade', 'closed', device_class='shade'),
     state('cover.garage_door', 'closed', device_class='garage'),
     state('climate.hall', 'heat', temperature=68, target_temp_step=1, min_temp=45, max_temp=95),
+    state('climate.range', 'heat_cool', target_temp_low=66, target_temp_high=74, min_temp=45, max_temp=95),
+    state('input_number.target', '21'),
     state('media_player.kitchen', 'playing'),
     state('valve.sprinkler', 'closed'),
     state('script.open_garage', friendly_name='Open garage'),
@@ -239,6 +241,39 @@ class Endpoints(unittest.TestCase):
         finally:
             storage.update_member('visitor', {'scope': {'overrides': {'music': 'all'}}})
 
+    def test_toggle_refuses_non_toggle_domains(self):
+        # Permission is not capability: a toggle sent to a thermostat turns the heating off.
+        for eid in ('climate.hall', 'input_number.target', 'media_player.kitchen'):
+            r = self.toggle(eid, **{'X-Member-Token': self.mum})
+            self.assertEqual(r.status_code, 400, (eid, r.text))
+        self.assertEqual(self.calls, [])
+
+    def test_grant_survives_a_refused_validation(self):
+        # The PIN is spent only on a tap that reaches Home Assistant.
+        rules = cr.default_rules({})
+        rules['places']['panel']['climate'] = 'ask'
+        self.extra = {'ha_control': rules}
+        g = self.grant()
+        headers = {'X-Device-Token': self.panel, 'X-Control-Grant': g}
+        r = self.client.post('/api/ha/card/climate', json={'entity_id': 'climate.range', 'step': 1}, headers=headers)
+        self.assertEqual(r.status_code, 400, r.text)
+        r = self.client.post('/api/ha/card/climate', json={'entity_id': 'climate.hall', 'step': 1}, headers=headers)
+        self.assertEqual(r.status_code, 200, r.text)
+
+    def test_media_scope_through_a_grant(self):
+        _member('visitor2', 'guest', scope={'overrides': {'music': 'none'}})
+        storage.set_member_pin('visitor2', '2468')
+        rules = cr.default_rules({})
+        rules['places']['panel']['media'] = 'ask'
+        self.extra = {'ha_control': rules}
+        r = self.client.post('/api/ha/control/grant', json={'member_id': 'visitor2', 'pin': '2468'},
+                             headers={'X-Device-Token': self.panel})
+        self.assertEqual(r.status_code, 200, r.text)
+        r = self.service('media_player', 'media_pause', {'entity_id': 'media_player.kitchen'},
+                         **{'X-Device-Token': self.panel, 'X-Control-Grant': r.json()['grant']})
+        self.assertEqual(r.status_code, 403, r.text)
+        self.assertEqual(self.calls, [])
+
     def test_no_ha(self):
         ha_api.mode = lambda: 'unconfigured'
         ha_api.is_available = lambda: False
@@ -339,6 +374,32 @@ class Sendspin(unittest.TestCase):
         self.extra = {'ha_control': rules}
         self.frames(self.COMMAND)
         self.assertFalse(any('client/command' in s for s in self.sent), self.sent)
+
+    def test_rules_change_mid_connection(self):
+        client = TestClient(main.app)
+        nxt = {'type': 'client/command', 'payload': {'controller': {'command': 'next'}}}
+        prev = {'type': 'client/command', 'payload': {'controller': {'command': 'previous'}}}
+        with client.websocket_connect('/api/sendspin/ws', headers={'X-Device-Token': self.panel}) as ws:
+            ws.send_text(json.dumps(nxt))
+            ws.send_bytes(b'\x00\x01audio')
+            self._wait(lambda: any('next' in str(m) for m in self.sent))
+            rules = cr.default_rules({})
+            rules['places']['panel']['media'] = 'no'
+            self.extra = {'ha_control': rules}
+            ws.send_text(json.dumps(prev))
+            ws.send_text(json.dumps({'type': 'client/time', 'payload': {}}))
+            self._wait(lambda: any('client/time' in str(m) for m in self.sent))
+        self.assertTrue(any('next' in str(m) for m in self.sent), self.sent)
+        self.assertIn(b'\x00\x01audio', self.sent)
+        self.assertFalse(any('previous' in str(m) for m in self.sent), self.sent)
+
+    @staticmethod
+    def _wait(cond):
+        import time
+        for _ in range(100):
+            if cond():
+                return
+            time.sleep(0.02)
 
     def test_check_kind_helper(self):
         who = cr.Who(role=None, member_id=None, place='panel', proven=False)

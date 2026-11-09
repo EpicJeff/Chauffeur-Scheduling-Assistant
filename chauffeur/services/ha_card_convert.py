@@ -218,7 +218,7 @@ def _state_label(entity_id, attrs, state):
     return raw
 
 
-def _row(entity_id, states, name=None, icon=None, secondary=None):
+def _row(entity_id, states, name=None, icon=None, secondary=None, settings=None):
     """One entity, as a reading. The shape every list-ish card here uses.
 
     A MISSING entity is named rather than dropped, which is the same rule the
@@ -226,6 +226,7 @@ def _row(entity_id, states, name=None, icon=None, secondary=None):
     household stops trusting the wall.
     """
     from services import control_rules
+    from services.home_board import TOGGLE_DOMAINS
     who = control_rules.Who(None, None, 'panel', False)
     st = (states or {}).get(entity_id)
     attrs = (st or {}).get('attributes') or {}
@@ -242,7 +243,8 @@ def _row(entity_id, states, name=None, icon=None, secondary=None):
         'precision': attrs.get('suggested_display_precision'),
         'secondary': secondary,
         'missing': st is None,
-        'toggleable': bool(st is not None and control_rules.offered(who, entity_id)),
+        'toggleable': bool(st is not None and _domain(entity_id) in TOGGLE_DOMAINS
+                           and control_rules.offered(who, entity_id, settings)),
         'on': str((st or {}).get('state') or '').lower() == 'on',
     }
 
@@ -308,7 +310,7 @@ def markdown_to_html(text):
 
 # --- the cards --------------------------------------------------------------
 
-def _entities_card(config, states, kind='entities'):
+def _entities_card(config, states, kind='entities', settings=None):
     rows = []
     for item in (config.get('entities') or []):
         entity_id, extra = _entity_of(item)
@@ -321,7 +323,7 @@ def _entities_card(config, states, kind='entities'):
             continue
         rows.append(dict(_row(entity_id, states,
                               name=extra.get('name'), icon=extra.get('icon'),
-                              secondary=extra.get('secondary_info')),
+                              secondary=extra.get('secondary_info'), settings=settings),
                          kind='entity'))
     return {'kind': kind, 'title': config.get('title'), 'rows': rows,
             'columns': _num(config.get('columns')) or None,
@@ -329,17 +331,17 @@ def _entities_card(config, states, kind='entities'):
             'show_state': config.get('show_state', True)}
 
 
-def _tile_card(config, states):
+def _tile_card(config, states, settings=None):
     entity_id = str(config.get('entity') or '').strip()
-    row = _row(entity_id, states, name=config.get('name'), icon=config.get('icon'))
+    row = _row(entity_id, states, name=config.get('name'), icon=config.get('icon'), settings=settings)
     return {'kind': 'tile', **row,
             'vertical': bool(config.get('vertical')),
             'features': []}
 
 
-def _gauge_card(config, states):
+def _gauge_card(config, states, settings=None):
     entity_id = str(config.get('entity') or '').strip()
-    row = _row(entity_id, states, name=config.get('name'))
+    row = _row(entity_id, states, name=config.get('name'), settings=settings)
     value = _num(row.get('state'))
     lo = _num(config.get('min'))
     hi = _num(config.get('max'))
@@ -400,9 +402,9 @@ def _markdown_card(config, states):
             'html': markdown_to_html(rendered)}
 
 
-def _picture_entity_card(config, states):
+def _picture_entity_card(config, states, settings=None):
     entity_id = str(config.get('entity') or '').strip()
-    row = _row(entity_id, states, name=config.get('name'))
+    row = _row(entity_id, states, name=config.get('name'), settings=settings)
     st = (states or {}).get(entity_id) or {}
     attrs = st.get('attributes') or {}
     # An explicit `image:` wins; otherwise the entity's own picture, which is
@@ -417,9 +419,9 @@ def _picture_entity_card(config, states):
             'show_state': config.get('show_state', True)}
 
 
-def _button_card(config, states):
+def _button_card(config, states, settings=None):
     entity_id = str(config.get('entity') or '').strip()
-    row = _row(entity_id, states, name=config.get('name'), icon=config.get('icon'))
+    row = _row(entity_id, states, name=config.get('name'), icon=config.get('icon'), settings=settings)
     tap = config.get('tap_action') if isinstance(config.get('tap_action'), dict) else {}
     return {'kind': 'button', 'name': row['name'], 'icon': row['icon'],
             'state': row['state'], 'entity_id': entity_id,
@@ -434,7 +436,7 @@ def _button_card(config, states):
             'show_state': config.get('show_state', False)}
 
 
-def _sensor_card(config, states):
+def _sensor_card(config, states, settings=None):
     """The mini graph card: a reading, and where it has been.
 
     The only card here that needs HISTORY, which is why it arrived later than
@@ -450,7 +452,7 @@ def _sensor_card(config, states):
     """
     from services import ha_api
     entity_id = str(config.get('entity') or '').strip()
-    row = _row(entity_id, states, name=config.get('name'), icon=config.get('icon'))
+    row = _row(entity_id, states, name=config.get('name'), icon=config.get('icon'), settings=settings)
     hours = int(_num(config.get('hours_to_show')) or 24)
     hours = max(1, min(168, hours))
     # HA's own `detail`: 1 is hourly, 2 is finer. The cap is what keeps a week
@@ -501,7 +503,7 @@ _HVAC_ACTION_COLOUR = {
 }
 
 
-def _thermostat_card(config, states):
+def _thermostat_card(config, states, settings=None):
     """A climate entity, as a dial.
 
     Read-only unless the tile's own interactive switch is on, and even then
@@ -512,7 +514,7 @@ def _thermostat_card(config, states):
     entity_id = str(config.get('entity') or '').strip()
     st = (states or {}).get(entity_id) or {}
     attrs = st.get('attributes') or {}
-    row = _row(entity_id, states, name=config.get('name'))
+    row = _row(entity_id, states, name=config.get('name'), settings=settings)
     current = _num(attrs.get('current_temperature'))
     target = _num(attrs.get('temperature'))
     lo = _num(attrs.get('target_temp_low'))
@@ -566,7 +568,7 @@ def area_entities(area_ref):
     return []
 
 
-def _area_card(config, states):
+def _area_card(config, states, settings=None):
     ref = config.get('area') or config.get('area_id') or ''
     ids = area_entities(ref)
     sensor_classes = config.get('sensor_classes') or _AREA_SENSORS
@@ -606,7 +608,7 @@ def _area_card(config, states):
                                'icon': _icon_for(entity_id, attrs, st.get('state')),
                                'name': attrs.get('friendly_name') or entity_id})
         elif domain in _AREA_TOGGLES and wants_controls:
-            toggles.append(_row(entity_id, states))
+            toggles.append(_row(entity_id, states, settings=settings))
 
     # The room's own name and PHOTOGRAPH, from the area registry. HA's area
     # card leads with the picture when `display_type: picture`, and side by
@@ -831,7 +833,7 @@ def _grid_options(config):
 
 
 
-def convert(config, states, depth=0, hosts=None):
+def convert(config, states, depth=0, hosts=None, settings=None):
     """A card config -> a drawing instruction, or None.
 
     Recursive, because the stacks hold other cards. `depth` is a fuse: a config
@@ -854,9 +856,12 @@ def convert(config, states, depth=0, hosts=None):
     """
     if not isinstance(config, dict) or depth > 4:
         return None
+    if settings is None:
+        from services import storage
+        settings = storage.get_settings() or {}
     kind = str(config.get('type') or '').strip().lower()
 
-    node = _convert_one(config, states, depth, hosts, kind)
+    node = _convert_one(config, states, depth, hosts, kind, settings)
     if node is not None:
         # What the card asked for its own size, carried on whatever it turned
         # out to be — a stack, a gauge, a hosted card, a placeholder. The cell
@@ -867,7 +872,7 @@ def convert(config, states, depth=0, hosts=None):
     return node
 
 
-def _convert_one(config, states, depth, hosts, kind):
+def _convert_one(config, states, depth, hosts, kind, settings):
     if kind.startswith('custom:'):
         tag = kind[len('custom:'):].strip()
         if not tag:
@@ -879,7 +884,7 @@ def _convert_one(config, states, depth, hosts, kind):
         return node
 
     if kind in STACKS:
-        cards = [convert(c, states, depth + 1, hosts)
+        cards = [convert(c, states, depth + 1, hosts, settings=settings)
                  for c in (config.get('cards') or [])]
         cards = [c for c in cards if c]
         if not cards:
@@ -898,7 +903,7 @@ def _convert_one(config, states, depth, hosts, kind):
     # a type this converter never learned to draw is the same 'unsupported'
     # line it always drew — which the runtime now usually replaces with the
     # actual card, so 'unsupported' finally means what it says.
-    fallback = _draw_leaf(config, states, kind)
+    fallback = _draw_leaf(config, states, kind, settings)
     if hosts is None or kind not in HOSTED_BUILTINS:
         return fallback
     node = {'kind': 'host', 'builtin': kind, 'host_id': f'h{len(hosts)}'}
@@ -908,27 +913,27 @@ def _convert_one(config, states, depth, hosts, kind):
     return node
 
 
-def _draw_leaf(config, states, kind):
+def _draw_leaf(config, states, kind, settings):
     if kind == 'entities':
-        return _entities_card(config, states)
+        return _entities_card(config, states, settings=settings)
     if kind == 'glance':
-        return _entities_card(config, states, kind='glance')
+        return _entities_card(config, states, kind='glance', settings=settings)
     if kind == 'tile':
-        return _tile_card(config, states)
+        return _tile_card(config, states, settings=settings)
     if kind == 'gauge':
-        return _gauge_card(config, states)
+        return _gauge_card(config, states, settings=settings)
     if kind == 'markdown':
         return _markdown_card(config, states)
     if kind == 'picture-entity':
-        return _picture_entity_card(config, states)
+        return _picture_entity_card(config, states, settings=settings)
     if kind == 'button':
-        return _button_card(config, states)
+        return _button_card(config, states, settings=settings)
     if kind == 'sensor':
-        return _sensor_card(config, states)
+        return _sensor_card(config, states, settings=settings)
     if kind == 'thermostat':
-        return _thermostat_card(config, states)
+        return _thermostat_card(config, states, settings=settings)
     if kind == 'area':
-        return _area_card(config, states)
+        return _area_card(config, states, settings=settings)
     # Named, and it keeps its place in the layout. This is the same rule the
     # top level follows — a card that vanishes silently is indistinguishable
     # from a card that failed — except that inside a stack it also matters that
