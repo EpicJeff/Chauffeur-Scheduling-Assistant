@@ -102,6 +102,24 @@ def _house(plan, bid='house'):
     return next(b for b in plan['buildings'] if b['id'] == bid)
 
 
+def _wall_runs(walls):
+    """Compare read walls across the connected model's persistent T splits."""
+    runs = {}
+    for wall in walls:
+        if wall.get('kind') == 'separator':
+            continue
+        wid = wall['id'].split('~')[0]
+        if wid not in runs:
+            runs[wid] = copy.deepcopy(wall)
+        else:
+            run = runs[wid]
+            check(run['to'] == wall['from'], ('split wall stays connected', wid, run, wall))
+            check(run.get('state') == wall.get('state') and run.get('src') == wall.get('src'),
+                  ('split wall keeps its state and source', wid, run, wall))
+            run['to'] = list(wall['to'])
+    return list(runs.values())
+
+
 def _trouble(st):
     return [e for e in st['events'] if e['type'] in ('error', 'question')][-3:]
 
@@ -295,7 +313,7 @@ def test_draft_settles_all_at_once():
     house = _house(plan)
     check((house['id'], house['name'], house.get('kind')) == ('house', 'Main house', 'main_house'),
           ('the building keeps its own identity, not the answer\'s', house['id'], house['name']))
-    check(len(house['walls']) == 34, ('every wall of the draft is in the plan', len(house['walls'])))
+    check(len(_wall_runs(house['walls'])) == 34, ('every wall of the draft is in the plan', len(house['walls'])))
     problems, block_ids = _block_roofs_cover(house)
     check(not problems, ('one settled block roof over every block', problems))
     read_roofs = [s for s in house['roof']['sections'] if s['id'] not in block_ids
@@ -304,9 +322,9 @@ def test_draft_settles_all_at_once():
           == {tuple(s['rect']) for s in spike()['building']['roof']['sections'] if s['id'] not in main_roofs},
           ('the three porch roofs are in the plan as read', [s['rect'] for s in read_roofs]))
     check(len(house['openings']) >= 20, len(house['openings']))
-    check(house.get('porch') and len(house['porch'].get('columns') or []) == 4, house.get('porch'))
+    check(len(house['porches']) == 1 and len(house['porches'][0].get('columns') or []) == 4, house['porches'])
     check(len(house.get('stairs') or []) == 1, house.get('stairs'))
-    for piece in [*house['walls'], *house['openings'], *house['roof']['sections']]:
+    for piece in [*_wall_runs(house['walls']), *house['openings'], *house['roof']['sections']]:
         allowed = ('draft', 'roof_blocks') if piece in house['roof']['sections'] else ('draft',)
         check((piece.get('src') or {}).get('step') in allowed, ('every piece names the draft step', piece.get('src')))
     # In feet as is: no registration mapping moved it.
@@ -315,7 +333,8 @@ def test_draft_settles_all_at_once():
     check(all(abs(a - b) <= 0.5 for a, b in zip(box, [0, -1, 70, 65.33])), ('L1 stays in feet', box))
     l2 = next(l for l in house['levels'] if l['id'] == 'L2')
     check(abs(l2['elevation'] - 10.9) <= 0.5, l2)
-    walls = {(round(w['from'][0]), round(w['from'][1]), round(w['to'][0]), round(w['to'][1])) for w in house['walls']}
+    walls = {(round(w['from'][0]), round(w['from'][1]), round(w['to'][0]), round(w['to'][1]))
+             for w in _wall_runs(house['walls'])}
     check((0, 14, 23, 14) in walls and (70, 22, 70, 42) in walls, ('walls keep their feet', sorted(walls)[:6]))
     # The snap pass ran on the settle: the awning hangs from its wall.
     extensions = house['roof'].get('extensions') or []
@@ -409,7 +428,8 @@ def test_draft_levels_named_from_pages():
     check([(l['id'], l['name']) for l in levels] == [('L1', 'Main floor'), ('L2', 'Upper floor')]
           and abs(levels[0]['elevation']) <= 0.5 and abs(levels[1]['elevation'] - 10.9) <= 0.5,
           [(l['id'], l['name'], l['elevation']) for l in levels])
-    check(sum(w['level'] == 'L1' for w in house['walls']) == 22, ('the first floor keeps its walls', len(house['walls'])))
+    check(sum(w['level'] == 'L1' for w in _wall_runs(house['walls'])) == 22,
+          ('the first floor keeps its walls', len(house['walls'])))
 
 
 def test_open_upper_walls_become_ghost_with_why():
@@ -419,8 +439,8 @@ def test_open_upper_walls_become_ghost_with_why():
     st = tb.status(b)
     check(st['state'] == 'done', ('an open upper floor never pauses', st['state'], st.get('pause'), _trouble(st)))
     house = _house(ts.current())
-    l1 = [w for w in house['walls'] if w['level'] == 'L1' and w.get('exterior')]
-    l2 = [w for w in house['walls'] if w['level'] == 'L2' and w.get('exterior')]
+    l1 = [w for w in _wall_runs(house['walls']) if w['level'] == 'L1' and w.get('exterior')]
+    l2 = [w for w in _wall_runs(house['walls']) if w['level'] == 'L2' and w.get('exterior')]
     check(len(l1) == 22 and all(w.get('state') == 'settled' for w in l1),
           ('the first floor closes and settles', [w.get('state') for w in l1]))
     check(len(l2) == 5, ('the open upper walls stay in the plan', len(l2)))
@@ -461,7 +481,7 @@ def test_first_floor_failure_pauses():
         check(st['state'] == 'done', (name, 'Try again reads it again', st['state'], st.get('pause'), _trouble(st)))
         check(_read_kinds(good).count('draft') == 1, (name, _read_kinds(good)))
         house = _house(ts.current())
-        l1 = [w for w in house['walls'] if w['level'] == 'L1' and w.get('exterior')]
+        l1 = [w for w in _wall_runs(house['walls']) if w['level'] == 'L1' and w.get('exterior')]
         check(len(l1) == 22 and all(w.get('state') == 'settled' for w in l1), (name, [w.get('state') for w in l1]))
 
 
@@ -580,9 +600,14 @@ def test_rooms_edges_stay_inside_a_concave_floor():
     check(st['state'] == 'done', (st['state'], _trouble(st)))
     house = _house(ts.current())
     found = {r['name']: r for r in house['rooms']}
+    # Rooms without a closed wall cycle survive in their unclosed flags (R7).
+    for flag in house.get('flags', []):
+        room = flag.get('piece', {}).get('room') if isinstance(flag.get('piece'), dict) else None
+        if room is not None:
+            found[room['name']] = room
     check(found['Inside']['state'] == 'settled', 'the outline boundary is inside')
     check(found['Across recess']['state'] == 'ghost', 'inside vertices cannot hide an edge across a recess')
-    walls = [w for w in house['walls'] if w.get('src', {}).get('step') == 'draft_rooms']
+    walls = [w for w in _wall_runs(house['walls']) if w.get('src', {}).get('step') == 'draft_rooms']
     check(len(walls) == 2, walls)
     check({w['from'][1]: w['state'] for w in walls} == {10: 'settled', 20: 'ghost'}, walls)
     stray_ids = {found['Across recess']['id']} | {w['id'] for w in walls if w['state'] == 'ghost'}

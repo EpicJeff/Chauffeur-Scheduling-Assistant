@@ -17,7 +17,7 @@ import weakref
 
 from PIL import Image, ImageOps
 
-from services import storage, twin_pdf, twin_plan, twin_place
+from services import storage, twin_model, twin_model_bridge, twin_pdf, twin_plan, twin_place
 
 DATA_DIR = os.path.join(os.path.dirname(storage.DB_PATH), 'twin')
 _LOCK = threading.RLock()
@@ -402,10 +402,20 @@ def _read_round(row, round_id):
     if type(round_id) is not int or not any(r['id'] == round_id for r in row['rounds']):
         raise KeyError(round_id)
     with open(os.path.join(DATA_DIR, 'rounds', f'{round_id}.json'), encoding='utf-8') as file:
-        return twin_plan.normalize(json.load(file))[0]
+        plan = json.load(file)
+    if plan.get('schema') == twin_model.SCHEMA:
+        return plan
+    return twin_model_bridge.assemble(twin_plan.normalize(plan)[0])[0]
 
 
 def current() -> dict | None:
+    """Return the flat view used by the build pipeline and existing editor."""
+    with _LOCK:
+        model = current_model()
+        return twin_model_bridge.flatten(model) if model is not None else None
+
+
+def current_model() -> dict | None:
     with _LOCK:
         row = _state()
         return _read_round(row, row['current']) if row['current'] is not None else None
@@ -472,7 +482,9 @@ def push_round(plan: dict, kind: str, note: str = '', cost: float | None = None,
             raise ValueError('Unknown twin round kind.')
         _check_base(base)
         plan, _ = twin_plan.normalize(plan)
-        return _append_round(row, plan, kind, note, cost, run, base, step=step)
+        previous = _read_round(row, row['current']) if row['current'] is not None else None
+        model, _ = twin_model_bridge.assemble(plan, previous=previous)
+        return _append_round(row, model, kind, note, cost, run, base, step=step)
 
 
 def update_current(mutator, kind, note='', step=None, cost=None, generation=None, *, state_mutator=None) -> int:
@@ -484,10 +496,23 @@ def update_current(mutator, kind, note='', step=None, cost=None, generation=None
         if kind not in _KINDS:
             raise ValueError('Unknown twin round kind.')
         before = _read_round(row, row['current']) if row['current'] is not None else None
-        plan, _ = twin_plan.normalize(mutator(before))
+        flat = twin_model_bridge.flatten(before) if before is not None else None
+        plan, _ = twin_plan.normalize(mutator(flat))
+        model, _ = twin_model_bridge.assemble(plan, previous=before)
         if state_mutator is not None:
             state_mutator(row)
-        return _append_round(row, plan, kind, note=note, cost=cost, step=step)
+        return _append_round(row, model, kind, note=note, cost=cost, step=step)
+
+
+def update_model(mutator, kind='edit', note='', changes=()) -> int:
+    """Publish a connected-model edit with its paired fix log."""
+    with LIFECYCLE, _LOCK:
+        row = _state()
+        if kind not in _KINDS:
+            raise ValueError('Unknown twin round kind.')
+        before = _read_round(row, row['current']) if row['current'] is not None else None
+        model, _ = twin_model.normalize(mutator(before))
+        return _append_round(row, model, kind, note=note, changes=changes)
 
 
 def revert(round_id: int, generation=None) -> int:
@@ -555,7 +580,8 @@ def save_hand_edit(plan: dict, reason: str, base: int | None = None) -> int:
         row = _state()
         if base is not None and base != row['current']:
             raise StaleRound('The twin has changed. Reload it before saving this edit.')
-        before = _read_round(row, row['current']) if row['current'] is not None else None
+        previous = _read_round(row, row['current']) if row['current'] is not None else None
+        before = twin_model_bridge.flatten(previous) if previous is not None else None
         if before is not None:
             plan = twin_plan.record_compose_overrides(before, plan)
         normalized, _ = twin_plan.normalize(plan)
@@ -578,7 +604,8 @@ def save_hand_edit(plan: dict, reason: str, base: int | None = None) -> int:
             for path in twin_plan.diff_paths(before, plan)
             if _fix_kind(path) is not None
         ]
-        return _append_round(row, normalized, 'hand', note=reason, base=base, changes=changes)
+        model, _ = twin_model_bridge.assemble(normalized, previous=previous)
+        return _append_round(row, model, 'hand', note=reason, base=base, changes=changes)
 
 
 def fixes() -> list[dict]:

@@ -7879,16 +7879,17 @@ def house_editor_state():
     from services import twin_build, twin_cost, twin_store
     with twin_store.LIFECYCLE:
         latest = twin_build.latest()
-        return {'plan': twin_store.current(), 'rounds': twin_store.rounds(),
+        return {'plan': twin_store.current(), 'model': twin_store.current_model(), 'rounds': twin_store.rounds(),
                 'cost': {'total': twin_cost.total(), 'blocking': twin_cost.blocking_checkpoint()},
                 'build': latest}
 
 
 @app.get('/api/house/twin/rounds/{round_id}')
 def house_twin_round(round_id: int):
-    from services import twin_store
+    from services import twin_model_bridge, twin_store
     with twin_store.LIFECYCLE, twin_store._LOCK:
-        return {'plan': _house_editor_call(twin_store._read_round, twin_store._state(), round_id, lookup=True)}
+        model = _house_editor_call(twin_store._read_round, twin_store._state(), round_id, lookup=True)
+        return {'plan': twin_model_bridge.flatten(model)}
 
 
 @app.get("/api/study/state")

@@ -62,6 +62,6 @@ def record():
             bid = build.get('next')
 
         # Select domain data explicitly: never include settings or build inputs.
-        return _redact({'plan': twin_store.current(), 'builds': builds,
+        return _redact({'plan': twin_store.current(), 'model': twin_store.current_model(), 'builds': builds,
                         'place': twin_store.place(), 'registrations': twin_store.registrations(),
                         'ledger': twin_cost.entries()})

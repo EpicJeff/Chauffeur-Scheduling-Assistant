@@ -28,6 +28,7 @@ def check(cond, msg):
 from services import twin_plan as tp  # noqa: E402
 from services import twin_store as ts  # noqa: E402
 from services import twin_pdf  # noqa: E402
+from services import twin_model_bridge  # noqa: E402
 
 _FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures', 'twin_poolhouse.plan.json')
 
@@ -94,10 +95,12 @@ def scenario_rounds_push_and_revert():
     b['materials']['siding']['color'] = '#111111'
     check(ts.current() is None and ts.rounds() == [], 'empty to start')
     r1 = ts.push_round(a, 'draft', note='first', cost=0.5, run='run-1')
+    first = ts.current()
+    expected = twin_model_bridge.flatten(twin_model_bridge.assemble(b, previous=ts.current_model())[0])
     r2 = ts.push_round(b, 'director', run='run-1')
-    check(ts.current() == b, 'current is the latest round')
+    check(ts.current_id() == r2 and ts.current() == expected, 'current is the latest flat view')
     r3 = ts.revert(r1)
-    check(ts.current() == a, 'revert restores that plan')
+    check(ts.current() == first, 'revert restores that flat view')
     rows = ts.rounds()
     check([r['kind'] for r in rows] == ['draft', 'director', 'revert'], rows)
     check([r['id'] for r in rows] == [r1, r2, r3] and r1 < r2 < r3, 'ids increase')
@@ -120,8 +123,10 @@ def scenario_a_stale_round_never_moves_current():
     check(ts.current_id() == r1, 'current id tracks the latest round')
     r2 = ts.push_round(b, 'hand', base=r1)
     check(ts.current_id() == r2, 'a fresh base moves current')
+    latest = ts.current()
+    check(latest['materials'] == b['materials'], 'the fresh materials are current')
     r3 = ts.push_round(a, 'director', base=r1)        # based on r1, but r2 landed first
-    check(ts.current_id() == r2 and ts.current() == b, 'a stale result does not overwrite newer work')
+    check(ts.current_id() == r2 and ts.current() == latest, 'a stale result does not overwrite newer work')
     rows = {r['id']: r for r in ts.rounds()}
     check(rows[r3]['stale'] is True and rows[r2]['stale'] is False, 'the stale round is kept, flagged')
     c = copy.deepcopy(b)
@@ -132,7 +137,7 @@ def scenario_a_stale_round_never_moves_current():
         pass
     else:
         raise AssertionError('a hand edit on a stale base raises StaleRound')
-    check(ts.current() == b and ts.fixes() == [], 'nothing logged for a refused edit')
+    check(ts.current() == latest and ts.fixes() == [], 'nothing logged for a refused edit')
 
 
 def scenario_concurrent_pushes_get_unique_ids():
@@ -159,15 +164,17 @@ def scenario_hand_edits_log_each_changed_leaf():
     _fresh()
     a = _plan()
     ts.push_round(a, 'draft')
+    a = ts.current()
     b = copy.deepcopy(a)
     b['materials']['siding']['color'] = '#222222'
-    b['buildings'][0]['walls'][2]['height'] = 9.5
+    next(w for w in b['buildings'][0]['walls'] if w['id'] == 'rear')['height'] = 9.5
     rid = ts.save_hand_edit(b, 'drawing says 9-6 at the rear')
     fixes = ts.fixes()
     check(sorted(f['path'] for f in fixes) == ['buildings[id=pool_house].walls[id=rear].height', 'materials.siding.color'], fixes)
     check(all(f['kind'] == 'extraction' for f in fixes), 'building and material fixes are extraction misses')
     wall = [f for f in fixes if f['path'].endswith('height')][0]
-    check(wall['before'] == a['buildings'][0]['walls'][2]['height'] and wall['after'] == 9.5, wall)
+    check(wall['before'] == next(w for w in a['buildings'][0]['walls'] if w['id'] == 'rear')['height']
+          and wall['after'] == 9.5, wall)
     check(all(f['reason'] == 'drawing says 9-6 at the rear' and f['round'] == rid for f in fixes), fixes)
     check(ts.rounds()[-1]['kind'] == 'hand' and ts.current()['materials']['siding']['color'] == '#222222', 'hand round current')
 
@@ -208,6 +215,7 @@ def scenario_deleting_one_item_logs_one_fix():
     _fresh()
     plan, _ = twin_compose.compose(_plan(), twin_library.kit('modern_farmhouse'), seed=2)
     rid = ts.push_round(plan, 'draft')
+    plan = ts.current()
     edited = copy.deepcopy(plan)
     edited['buildings'][0]['walls'] = [w for w in edited['buildings'][0]['walls'] if w['id'] != 'stair_wall']
     shrub = next(i for i in edited['site']['planting'] if i.get('by') == 'compose')
@@ -328,6 +336,7 @@ def scenario_routes_round_trip_through_the_app():
     plan = _plan()
     r = c.put('/api/house/twin/plan', json={'plan': plan, 'reason': 'first hand save'})
     check(r.status_code == 200 and isinstance(r.json()['round'], int), r.text)
+    plan = ts.current()
     r = c.get('/api/house/twin')
     body = r.json()
     check(r.status_code == 200 and body['plan'] == plan and len(body['rounds']) == 1
