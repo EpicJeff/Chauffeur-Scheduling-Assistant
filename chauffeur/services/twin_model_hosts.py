@@ -14,12 +14,12 @@ def snapshot(building) -> dict:
     walls = {}
     for wall in building.get('walls', []):
         ends = wall.get('joints', [])
-        if (wall.get('state') != 'ghost' and len(ends) == 2
-                and all(j in joints for j in ends)):
+        if (wall.get('state') != 'ghost' and isinstance(ends, list) and len(ends) == 2
+                and all(isinstance(j, str) and j in joints for j in ends)):
             a, b = (joints[j] for j in ends)
             if math.dist(a, b) > _EPS:
                 walls[wall['id']] = {'a': list(a), 'b': list(b), 'level': wall.get('level'),
-                                     'thickness': wall.get('thickness', 0)}
+                                     'thickness': wall.get('thickness', 0), 'joints': list(ends)}
     rooms = {}
     for room in building.get('rooms', []):
         polygon = room.get('polygon', [])
@@ -87,7 +87,7 @@ def _point(geometry, host, offset=0):
         if side in ('left', 'right'):
             sign = 1 if side == 'left' else -1
             x, y = x - sign * dy * distance, y + sign * dx * distance
-        return [x, y, elevation + host.get('z', 0)]
+        return [x, y, elevation + host.get('sill', host.get('z', 0))]
     # Roof hosts record a distance along an area edge, at its plate.
     return [x, y, surface.get('plate', 0) + host.get('z', 0) + offset]
 
@@ -138,6 +138,59 @@ def _at(host, old_line, new_line, width):
     if lo > hi + _EPS:
         raise ValueError('The hosted piece does not fit with half a foot clear on each side.')
     return max(lo, min(hi, at))
+
+
+def carry_split(building, before):
+    """Rehost split-wall pieces at their old centres; return carried host identities."""
+    current = snapshot({'joints': building.get('joints', []),
+                        'walls': building.get('walls', [])})['walls']
+    splits = {}
+    for wid, old in before['walls'].items():
+        wall = current.get(wid)
+        if wall is None or not set(wall['joints']) - set(old.get('joints', [])):
+            continue
+        candidates = [(pid, part) for pid, part in current.items()
+                      if pid == wid or (pid not in before['walls'] and pid.startswith(wid + '~')
+                                        and pid[len(wid) + 1:].isdigit())]
+        length = math.dist(old['a'], old['b'])
+        direction = [(old['b'][i] - old['a'][i]) / length for i in (0, 1)]
+        parts = []
+        for pid, part in candidates:
+            if part['level'] != old['level']:
+                continue
+            positions = [sum((point[i] - old['a'][i]) * direction[i] for i in (0, 1))
+                         for point in (part['a'], part['b'])]
+            if all(-_EPS <= at <= length + _EPS
+                   and math.dist(point, [old['a'][i] + at * direction[i] for i in (0, 1)]) <= 0.05 + _EPS
+                   for point, at in zip((part['a'], part['b']), positions)):
+                parts.append((pid, part, positions))
+        if any(pid == wid for pid, _, _ in parts) and len(parts) > 1:
+            splits[wid] = parts
+    carried = set()
+    for name in ('openings', 'anchors', 'items'):
+        pieces = building.get(name, [])
+        if not isinstance(pieces, list):
+            continue
+        for piece in pieces:
+            if not isinstance(piece, dict):
+                continue
+            host = piece if name == 'openings' else piece.get('host', {})
+            if (not isinstance(host, dict) or type(host.get('at')) not in (int, float)
+                    or not math.isfinite(host['at'])):
+                continue
+            for pid, part, (start, end) in splits.get(host.get('wall'), []):
+                if min(start, end) - _EPS <= host['at'] <= max(start, end) + _EPS:
+                    old = before['walls'][host['wall']]
+                    length = math.dist(old['a'], old['b'])
+                    point = [old['a'][i] + host['at'] * (old['b'][i] - old['a'][i]) / length
+                             for i in (0, 1)]
+                    part_length = math.dist(part['a'], part['b'])
+                    at = sum((point[i] - part['a'][i]) * (part['b'][i] - part['a'][i])
+                             for i in (0, 1)) / part_length
+                    host.update(wall=pid, at=at)
+                    carried.add(id(host))
+                    break
+    return carried
 
 
 def _texts(piece):
@@ -193,6 +246,7 @@ def _lost(building, piece, host, before, notes, *, fits=True):
 
 def follow(building, before: dict) -> list[str]:
     """Carry hosted pieces after an edit; retain and flag pieces that lose a host."""
+    carried = carry_split(building, before)
     geometry, notes = snapshot(building), []
     for collection in ('openings', 'anchors', 'items'):
         opening = collection == 'openings'
@@ -204,7 +258,8 @@ def follow(building, before: dict) -> list[str]:
             line = _line(geometry, host)
             if line is not None:
                 try:
-                    at = _at(host, _line(before, host), line, piece.get('width', 0))
+                    old_line = None if id(host) in carried else _line(before, host)
+                    at = _at(host, old_line, line, piece.get('width', 0))
                 except ValueError:
                     _lost(building, piece, host, before, notes, fits=False)
                     continue

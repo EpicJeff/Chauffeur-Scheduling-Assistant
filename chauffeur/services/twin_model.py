@@ -5,6 +5,7 @@ import math
 import re
 
 from services import twin_model_graph as graph
+from services import twin_model_hosts as hosts
 from services import twin_plan
 
 
@@ -140,37 +141,19 @@ def _joint_references(walls):
 
 def _split_t_junctions(building, joints, walls, notes):
     """Persist only endpoint splits; proper crossings remain a derivation view."""
+    before = hosts.snapshot({'joints': building.get('joints', []), 'walls': walls})
     _, split = graph.split_crossings(joints, walls, proper=False)
     old = {w['id']: w for w in walls}
     # split_crossings emits each wall's segments consecutively, first with its
-    # original id. Keep hosted distances relative to the segment they land on.
+    # original id.
     segments, source = {}, None
     for wall in split:
         if wall['id'] in old:
             source = wall['id']
         segments.setdefault(source, []).append(wall)
-    hosted = []
-    for name in ('openings', 'anchors', 'items'):
-        pieces = building.get(name, [])
-        if isinstance(pieces, list):
-            hosted.extend(p if name == 'openings' else p.get('host')
-                          for p in pieces if isinstance(p, dict))
-    for host in hosted:
-        if not isinstance(host, dict):
-            continue
-        parts = segments.get(host.get('wall'), [])
-        if not parts or not twin_plan._number(host.get('at')):
-            continue
-        origin = joints[old[host['wall']]['joints'][0]]
-        at = host['at']
-        for part in parts:
-            start, end = (joints[j] for j in part['joints'])
-            offset = math.dist(origin, start)
-            if at <= offset + math.dist(start, end) + _EPS or part is parts[-1]:
-                host.update(wall=part['id'], at=at - offset)
-                break
     building['walls'] = _cap([part for w in building.get('walls', [])
                               for part in segments.get(w['id'], [w])], 'walls', notes)
+    hosts.carry_split(building, before)
     kept = {w['id'] for w in building['walls']}
     return [w for w in split if w['id'] in kept]
 

@@ -348,6 +348,103 @@ def test_nothing_moved_changes_nothing():
     check(notes == [], notes)
 
 
+def _split_south(b):
+    b['joints'].append({'id': 'jm', 'level': 'L1', 'at': [4, 0]})
+    south = next(w for w in b['walls'] if w['id'] == 's')
+    second = copy.deepcopy(south)
+    south['joints'] = ['j1', 'jm']
+    second.update(id='s~2', joints=['jm', 'j2'])
+    b['walls'].append(second)
+
+
+def test_split_wall_carries_openings_anchors_and_items_to_the_second_part():
+    b = _box()
+    b['openings'].append(_door('d1', 's', 8))
+    for name in ('anchors', 'items'):
+        b[name].append({'id': name, 'host': {'wall': 's', 'at': 8, 'z': 4}})
+    before = hosts.snapshot(b)
+    check(before['walls']['s'].get('joints') == ['j1', 'j2'], before)
+    _split_south(b)
+    check(hosts.follow(b, before) == [], b)
+    for host in [b['openings'][0], b['anchors'][0]['host'], b['items'][0]['host']]:
+        check(host['wall'] == 's~2' and close(host['at'], 4), host)
+        check(close_pt(hosts.world_point(b, host)[:2], [8, 0]), host)
+
+
+def test_split_wall_does_not_falsely_ghost_a_wide_door():
+    b = _box()
+    b['openings'].append(_door('d1', 's', 8, width=4.5))
+    before = hosts.snapshot(b)
+    _split_south(b)
+    check(hosts.follow(b, before) == [], b)
+    door = b['openings'][0]
+    check(door['wall'] == 's~2' and door.get('state') != 'ghost', door)
+    check(close(door['at'], 3.25) and b['flags'] == [], b)
+
+
+def test_split_wall_keeps_a_door_on_the_first_part():
+    b = _box()
+    b['openings'].append(_door('d1', 's', 2))
+    before = hosts.snapshot(b)
+    _split_south(b)
+    check(hosts.follow(b, before) == [], b)
+    check(b['openings'][0]['wall'] == 's' and close(b['openings'][0]['at'], 2), b)
+
+
+def test_derive_then_follow_carries_a_split_only_once():
+    from services import twin_model
+    b = _box()
+    b['openings'].append(_door('d1', 's', 8))
+    before = hosts.snapshot(b)
+    b['joints'].extend([{'id': 'jm', 'level': 'L1', 'at': [4, 0]},
+                        {'id': 'jn', 'level': 'L1', 'at': [4, 10]}])
+    b['walls'].append({'id': 'mid', 'level': 'L1', 'joints': ['jm', 'jn'],
+                       'kind': 'solid', 'thickness': THICK})
+    twin_model.derive(b)
+    for old in (before, hosts.snapshot(b)):
+        check(hosts.follow(b, old) == [], b)
+        door = b['openings'][0]
+        check(door['wall'] == 's~2' and close(door['at'], 4), door)
+        check(close_pt(hosts.world_point(b, door), [8, 0, 0]), door)
+
+
+def test_wall_opening_world_point_is_its_bottom_centre():
+    b = _box()
+    b['levels'][0]['elevation'] = 12
+    window = _door('w1', 's', 5, kind='window')
+    check(close_pt(hosts.world_point(b, window), [5, 0, 15]), window)
+    anchor = {'wall': 's', 'at': 5, 'z': 4}
+    check(close_pt(hosts.world_point(b, anchor), [5, 0, 16]), anchor)
+
+
+def test_impossible_direct_shrink_keeps_a_ghost_with_fixed_copy():
+    b = _box()
+    b['openings'].append(_door('d1', 's', 5, width=4.5))
+    before = hosts.snapshot(b)
+    _move_joints(b, {'j2': [4, 0]})
+    text = 'This door no longer fits on its wall; place it again.'
+    check(hosts.follow(b, before) == [text], b)
+    check(len(b['openings']) == 1 and b['openings'][0].get('state') == 'ghost', b)
+    check(b['flags'][0]['text'] == text and b['flags'][0]['piece'] == 'd1', b)
+    check(close_pt(b['flags'][0]['at'], [5, 0]), b['flags'])
+    check(hosts.follow(b, hosts.snapshot(b)) == [] and len(b['flags']) == 1, b)
+
+
+def test_impossible_roof_shrink_uses_the_surface_fallback_copy():
+    b = _box()
+    b['roofs'] = [{'id': 'roof', 'level': 'L1', 'plate': 9,
+                   'area': [[0, 0], [10, 0], [10, 10], [0, 10]],
+                   'edges': [{'setting': 'gable'} for _ in range(4)]}]
+    b['openings'] = [{'id': 'w1', 'kind': 'window', 'gable': {'roof': 'roof', 'edge': 0},
+                      'at': 5, 'width': 4.5, 'sill': 1, 'head': 4}]
+    before = hosts.snapshot(b)
+    b['roofs'][0]['area'][1] = [4, 0]
+    text = 'This window no longer fits on its surface; place it again.'
+    check(hosts.follow(b, before) == [text], b)
+    check(b['openings'][0].get('state') == 'ghost' and b['flags'][0]['text'] == text, b)
+    check(close_pt(b['flags'][0]['at'], [5, 0]), b['flags'])
+
+
 TESTS = (
     test_min_clear_is_half_a_foot,
     test_door_keeps_distance_from_the_fixed_end,
@@ -360,6 +457,13 @@ TESTS = (
     test_deleted_wall_leaves_a_flagged_ghost_not_a_deletion,
     test_light_whose_room_is_gone_lost_its_surface,
     test_nothing_moved_changes_nothing,
+    test_split_wall_carries_openings_anchors_and_items_to_the_second_part,
+    test_split_wall_does_not_falsely_ghost_a_wide_door,
+    test_split_wall_keeps_a_door_on_the_first_part,
+    test_derive_then_follow_carries_a_split_only_once,
+    test_wall_opening_world_point_is_its_bottom_centre,
+    test_impossible_direct_shrink_keeps_a_ghost_with_fixed_copy,
+    test_impossible_roof_shrink_uses_the_surface_fallback_copy,
 )
 
 
