@@ -874,9 +874,29 @@ def scenario_lot_build_estimate_tracks_paid_reads():
           'an existing lot read is reused')
 
 
+def scenario_sheets_missing_tagged_photo_returns_200_without_decoding():
+    from pathlib import Path
+    _fresh()
+    _setup()
+    drawing = ts.save_source('drawing', 'floor.pdf', engine_tests._pdf(1), part='house')
+    ts.set_page_roles([{'source': drawing, 'page': 1, 'role': 'floor', 'level': 'Main floor',
+                       'box': None, 'building': 'house'}])
+    photo = ts.save_source('photo', 'missing.png', _png(), part='house')
+    for file in (Path(ts.DATA_DIR) / 'sources' / photo).iterdir():
+        if file.is_file():
+            file.unlink()
+    with _enforced(), patch.object(ts, 'source_images', side_effect=AssertionError('must not decode photos')):
+        response = _client().get('/api/house/editor/sheets', headers=PARENT)
+    check(response.status_code == 200, response.text)
+    estimate = response.json()['estimates']['build']['house']
+    check(estimate['photo_map'] == tc.estimate('photo_map', 2), estimate)
+    check(ts.source_image_count({}) == 1 and ts.source_image_count({'image_count': 0}) == 1, 'missing metadata counts as one')
+
+
 if __name__ == '__main__':
     failed = []
-    for fn in (scenario_lot_build_estimate_tracks_paid_reads,
+    for fn in (scenario_sheets_missing_tagged_photo_returns_200_without_decoding,
+               scenario_lot_build_estimate_tracks_paid_reads,
                scenario_sheets_migrates_before_returning_sources_and_rows,
                scenario_suggest_roles_after_moving_one_page_reads_only_remaining_pages,
                scenario_every_editor_route_is_parents_only,

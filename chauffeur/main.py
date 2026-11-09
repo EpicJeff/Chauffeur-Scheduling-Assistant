@@ -7520,7 +7520,7 @@ def _house_editor_sheets():
         floors = sum(r['role'] == 'floor' for r in rows)
         if not floors:
             continue
-        photo_counts = [len(twin_store.source_images(s['id'])) for s in sources
+        photo_counts = [twin_store.source_image_count(s) for s in sources
                         if s['kind'] == 'photo' and building['id'] in
                         (place['photo_tags'].get(s['id']) or ['lot'])]
         tagged_photos = sum(photo_counts)

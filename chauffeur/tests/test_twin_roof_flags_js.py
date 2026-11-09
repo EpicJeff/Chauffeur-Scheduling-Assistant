@@ -250,7 +250,54 @@ def test_flag_matches_its_block_within_a_foot():
     check(out['markers'] == [], ('a rect 2 ft off is another block', _summary(out['markers'])))
 
 
+def test_flagged_roof_card_confirms_through_accept():
+    driver = r"""
+import { pathToFileURL } from 'node:url';
+class Element {
+  constructor(tag) { this.tag = tag; this.children = []; this.listeners = {}; this.value = ''; }
+  append(...nodes) { this.children.push(...nodes); }
+  replaceChildren() { this.children = []; }
+  setAttribute() {}
+  addEventListener(name, fn) { this.listeners[name] = fn; }
+  querySelectorAll(tag) { return this.children.flatMap(c => [...(c.tag === tag ? [c] : []), ...c.querySelectorAll(tag)]); }
+}
+const host = new Element('aside');
+globalThis.document = { getElementById: () => host, createElement: tag => new Element(tag), activeElement: null };
+globalThis.window = { showGlobalAlert: message => { throw new Error(message); } };
+const { createCards } = await import(pathToFileURL(process.argv[2]).href);
+const block = [20, 0, 40, 30], text = 'The right roof: its right end was not visible in the photos; I made it a gable.';
+const section = { id: 'r', kind: 'gable', ridge: 'x', pitch: 8, plate: 10, overhang: 1, block, state: 'settled' };
+const roof = { sections: [section], flags: [{ block_rect: [20.5, 0, 40, 30], text }] };
+const plan = { buildings: [{ id: 'b', roof }] }, edits = [];
+let editable = true;
+const cards = createCards({ getPlan: () => plan, getLabel: () => 'roof', canEdit: () => editable,
+  select() {}, ask() {}, edit: async change => { edits.push(change); roof.flags = []; } });
+const assert = (test, why) => { if (!test) throw new Error(why); };
+const accept = () => host.querySelectorAll('button').find(b => b.textContent === 'Looks right');
+cards.draw({ pieceId: 'r', buildingId: 'b' });
+assert(host.querySelectorAll('p').some(p => p.textContent === text), 'card shows the exact flag text');
+assert(accept() && !accept().hidden, 'settled flagged roof can be confirmed');
+editable = false; cards.draw(); assert(accept().disabled, 'confirmation respects read-only mode');
+editable = true; cards.draw(); accept().listeners.click();
+await new Promise(resolve => setTimeout(resolve, 30));
+assert(edits.length === 1 && edits[0].op === 'accept' && edits[0].building === 'b' && edits[0].pieces[0] === 'r', 'same accept operation as ghosts');
+assert(!accept() && !host.querySelectorAll('p').some(p => p.textContent === text), 'poll/save clears confirmation and text');
+roof.flags = [{ block_rect: block, text }]; cards.draw(); assert(accept(), 'a newly arriving flag refreshes the card');
+section.dormer_of = block; cards.draw(); assert(!accept(), 'dormer is not the block choice');
+console.log('flagged roof card passed');
+"""
+    with tempfile.TemporaryDirectory(prefix='twin_flag_cards_') as tmp:
+        module = os.path.join(tmp, 'cards.mjs')
+        shutil.copy(os.path.join(TWIN, 'editor', 'cards.js'), module)
+        path = os.path.join(tmp, 'driver.mjs')
+        with open(path, 'w', encoding='utf-8') as file:
+            file.write(driver)
+        result = subprocess.run(['node', path, module], capture_output=True, text=True, timeout=30)
+        check(result.returncode == 0, result.stderr)
+
+
 TESTS = (
+    test_flagged_roof_card_confirms_through_accept,
     test_malformed_roof_metadata_normalizes_and_builds,
     test_flags_survive_normalize,
     test_flagged_roof_is_marked_and_a_tap_selects_it,

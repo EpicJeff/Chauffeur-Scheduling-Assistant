@@ -432,22 +432,23 @@ def test_pitch_clamp_and_order():
 
 
 def test_ridge_check_flags():
-    def flags_for(q_plate, q_vs='same'):
-        blocks = [_block('P', (0, 0, 20, 30), 'lower', 10), _block('Q', (20, 0, 40, 30), 'upper', q_plate)]
+    def flags_for(q_height, q_vs='same'):
+        # Height comparisons are within one storey: vary slope, not the plate.
+        blocks = [_block('P', (0, 0, 20, 30), 'upper', 20), _block('Q', (20, 0, 40, 30), 'upper', 20)]
         sides = _sides('slope', 'slope', 'gable_end', 'gable_end')
-        obs = {'P': {'sides': sides, 'pitch': 12, 'slope_vs_neighbours': 'same'},
-               'Q': {'sides': sides, 'pitch': 12, 'slope_vs_neighbours': q_vs}}
+        obs = {'P': {'sides': sides, 'pitch': 4, 'slope_vs_neighbours': 'same'},
+               'Q': {'sides': sides, 'pitch': (q_height - 20) * 12 / 15, 'slope_vs_neighbours': q_vs}}
         sections, flags = _derive(blocks, obs)
         assert abs(_ridge_line(_section(sections, 'P'))[1] - 25) < 0.01, _section(sections, 'P')
         return blocks, sections, flags
 
     # Q's ridge stands 10 ft above P's though the photos show them about level.
-    blocks, sections, flags = flags_for(20)
+    blocks, sections, flags = flags_for(35)
     assert abs(_ridge_line(_section(sections, 'Q'))[1] - 35) < 0.01, _section(sections, 'Q')
     assert _flags_for(flags, blocks, 'Q'), flags
     _flag_texts_plain(flags, blocks)
     # 2 ft apart: nothing to flag.
-    _, _, flags = flags_for(12)
+    _, _, flags = flags_for(27)
     assert flags == [], flags
 
 

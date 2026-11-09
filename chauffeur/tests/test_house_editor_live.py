@@ -1432,6 +1432,16 @@ def scenario_a_roof_that_needs_a_look_is_marked_and_opens_its_card():
                   and card.locator('select option', has_text='Gable').count(),
                   ('the card offers the roof\'s form in plain words', card.inner_text()))
             page.screenshot(path=os.path.join(tempfile.gettempdir(), 'house_editor_roof_flag.png'))
+            check(text in card.inner_text(), ('the card explains its roof flag', card.inner_text()))
+            card.get_by_role('button', name='Looks right', exact=True).click()
+            page.wait_for_function("text => !document.querySelector('#piece-card').innerText.includes(text)",
+                                   arg=text, timeout=10000)
+            check(not page.evaluate(ROOF_MARKER_JS, [roof['id'], 'house']), 'Looks right clears the marker')
+            check(text not in card.inner_text(), 'the confirmed card clears its flag text')
+            choices = _house_of(_plan(page))['roof'].get('choices', [])
+            check(any(rc._near(c['rect'], flag['block_rect']) and c.get('kind') == roof['kind']
+                      and c.get('pitch') == roof['pitch'] for c in choices), choices)
+            page.screenshot(path=os.path.join(tempfile.gettempdir(), 'house_editor_roof_confirmed.png'))
     finally:
         twin_reads.read = previous
     check(not _unexpected(s.errors()), s.errors())

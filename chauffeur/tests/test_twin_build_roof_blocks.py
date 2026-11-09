@@ -712,7 +712,11 @@ def test_multi_image_photo_estimates_match_build():
         result = real(source, *args, **kwargs)
         return result * 6 if result and result[0].get('b64') in labels else result
 
-    with patch.object(ts, 'source_images', side_effect=images):
+    metadata = copy.deepcopy(ts.sources())
+    for source in metadata:
+        if source['kind'] == 'photo':
+            source['image_count'] = 6
+    with patch.object(ts, 'source_images', side_effect=images), patch.object(ts, 'sources', return_value=metadata):
         reader = BlocksReader(labels)
         _, st = _build(reader)
         import main
@@ -758,7 +762,66 @@ def test_cross_gable_evidence_ignores_touching_wing_and_porch():
               for s in sections), sections)
 
 
+def test_garbage_observation_uses_drawings_and_logs_once():
+    # Reject unusable parses before missing context blocks can mask failure.
+    for raw in ({'blocks': 'x'}, {'blocks': {'A': {'pitch': 8}}}):
+        fragment, problems = tb._roof_observations(raw, {'blocks': [{'id': 'A'}]})
+        check(not tb.twin_reads._usable('roof_observe', fragment, problems), (fragment, problems))
+        check(not fragment.get('blocks'), ('no padding of an unusable answer', fragment))
+    labels = _main_house()
+    class GarbageReader(BlocksReader):
+        def __call__(self, kind, *args, **kwargs):
+            if kind == 'roof_observe':
+                return {'blocks': 'x'}
+            return super().__call__(kind, *args, **kwargs)
+    observed = []
+    derive = tb.twin_roof_derive.derive_roof
+    def record(blocks, observations, evidence, choices):
+        observed.append(copy.deepcopy(observations))
+        return derive(blocks, observations, evidence, choices)
+    with patch.object(tb.twin_roof_derive, 'derive_roof', side_effect=record):
+        bid, status = _build(GarbageReader(labels))
+    check(status['state'] == 'done' and observed == [{}], (status, observed))
+    line = 'The roofs could not be checked against the photos; they follow the drawings.'
+    check(sum(e.get('text') == line for e in status['events']) == 1, status['events'])
+    check(any('not visible' in f['text'] for f in _flags(status)), _flags(status))
+    build = tb._BUILDS[bid]
+    step = next(s for s in build['steps'] if s['kind'] == 'draft')
+    result = json.loads(tb._cache_path(build, step).read_text(encoding='utf-8'))
+    with ts.LIFECYCLE, tb._LOCK:
+        tb._settle(build, step, result)
+    check(sum(e.get('text') == line for e in build['events']) == 1, build['events'])
+
+
+def test_remapped_person_window_uses_merged_carrier_id():
+    labels = _main_house()
+    _build(BlocksReader(labels))
+    plan = ts.current()
+    house = next(b for b in plan['buildings'] if b['id'] == 'house')
+    target = next(s for s in house['roof']['sections'] if s.get('block') and _near(s['block'], TRUTH['C']))
+    opening = next(o for o in house['openings'] if o.get('section') == target['id'] and o.get('gable') == 'front')
+    legacy = copy.deepcopy(target)
+    legacy['id'] = 'earlier-left-carrier'
+    legacy['rect'][2] -= 3
+    legacy.pop('block', None)
+    legacy['src']['step'] = 'draft'
+    legacy['read_geometry'] = {'rect': list(legacy['rect'])}
+    house['roof']['sections'].append(legacy)
+    opening['section'] = legacy['id']
+    opening['src']['person'] = True
+    oid, target_id = opening['id'], target['id']
+    ts.push_round(twin_plan.normalize(plan)[0], 'build')
+    _build(BlocksReader(labels))
+    house = _house()
+    kept = next(o for o in house['openings'] if o['id'] == oid)
+    check(kept['section'] == target_id and any(s['id'] == kept['section'] for s in house['roof']['sections']), kept)
+    check(kept.get('state') != 'ghost' and kept['src'].get('person'), kept)
+    check(not any(s['id'] == legacy['id'] for s in house['roof']['sections']), house['roof']['sections'])
+
+
 TESTS = (
+    test_garbage_observation_uses_drawings_and_logs_once,
+    test_remapped_person_window_uses_merged_carrier_id,
     test_cross_gable_evidence_ignores_touching_wing_and_porch,
     test_reads_in_order,
     test_derived_roof_replaces_draft_roof,

@@ -8,6 +8,7 @@ roof sections; low interior knee walls identify rooms under a lower roof.
 from collections import Counter
 from functools import lru_cache
 from io import BytesIO
+from time import monotonic
 
 
 _SNAP = 0.5
@@ -81,6 +82,7 @@ def _partition(cells, xs, ys):
     A largest-first greedy cover can join distinct wings into one long strip.
     Enumerating rectangles at the first uncovered cell avoids that, while
     caching remaining masks and removing redundant grid lines keeps it small.
+    A bounded search falls back to a deterministic largest-rectangle cover.
     """
     if not cells:
         return []
@@ -95,9 +97,47 @@ def _partition(cells, xs, ys):
     nx, ny = len(xx) - 1, len(yy) - 1
     mask = sum(1 << (i * ny + j) for i in range(nx) for j in range(ny)
                if (xcuts[i], ycuts[j]) in cells)
+    deadline = monotonic() + .45
+    nodes = 0
+
+    class BudgetReached(Exception):
+        pass
+
+    def greedy(free):
+        result = []
+        while free:
+            best = None
+            for i0 in range(nx):
+                rows = (1 << ny) - 1
+                for i1 in range(i0, nx):
+                    rows &= (free >> (i1 * ny)) & ((1 << ny) - 1)
+                    if not rows:
+                        break
+                    j = 0
+                    while j < ny:
+                        if not rows & (1 << j):
+                            j += 1
+                            continue
+                        j0 = j
+                        while j < ny and rows & (1 << j):
+                            j += 1
+                        rect = (xx[i0], yy[j0], xx[i1 + 1], yy[j])
+                        candidate = (_area(rect), rect, i0, i1, j0, j)
+                        if best is None or candidate > best:
+                            best = candidate
+            _, rect, i0, i1, j0, j1 = best
+            result.append(rect)
+            strip = ((1 << (j1 - j0)) - 1) << j0
+            for i in range(i0, i1 + 1):
+                free &= ~(strip << (i * ny))
+        return result
 
     @lru_cache(maxsize=None)
     def solve(free):
+        nonlocal nodes
+        nodes += 1
+        if nodes > 15000 or monotonic() >= deadline:
+            raise BudgetReached
         if not free:
             return (), 0.0
         first = (free & -free).bit_length() - 1
@@ -128,7 +168,10 @@ def _partition(cells, xs, ys):
                 best, best_score = result, score
         return best, best_score
 
-    result, _ = solve(mask)
+    try:
+        result, _ = solve(mask)
+    except BudgetReached:
+        result = greedy(mask)
     return [list(rect) for rect in result]
 
 

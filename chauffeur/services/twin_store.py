@@ -693,6 +693,14 @@ def sources() -> list[dict]:
         return _state()['sources']
 
 
+def source_image_count(source) -> int:
+    """Count upload metadata without opening or decoding the underlying file."""
+    if isinstance(source, str):
+        source = next((s for s in sources() if s['id'] == source), {})
+    count = source.get('image_count', source.get('pages', 1))
+    return count if type(count) is int and count > 0 else 1
+
+
 def _source_page(row, source_id, page):
     source = next((s for s in row['sources'] if s['id'] == source_id), None)
     if source is None:

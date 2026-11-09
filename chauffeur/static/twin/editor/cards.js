@@ -48,14 +48,18 @@ export function createCards({ getPlan, getLabel, getFieldLabels = () => ({}), ed
   const display = (field, value) => lengths.has(field) ? feetInches(value || 0)
     : field === 'position' ? (value || [0, 0]).map(feetInches).join(', ') : String(value ?? '');
   const raw = input => input.type === 'checkbox' ? input.checked : input.value;
+  const roofFlags = record => record?.kind === 'roof' && record.piece.block && !record.piece.dormer_of
+    ? (record.building.roof.flags || []).filter(flag => flag.block_rect?.length === 4
+      && flag.block_rect.every((v, i) => Math.abs(v - record.piece.block[i]) <= 1)) : [];
   function draw(next = selection) {
     const record = next && findPiece(getPlan(), next.pieceId, next.buildingId);
-    const nextLayout = record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}` : record?.kind;
+    const flags = roofFlags(record);
+    const nextLayout = record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind;
     host.hidden = !record;
     if (record && layout === nextLayout && selection?.pieceId === next.pieceId && selection?.buildingId === next.buildingId) {
       headingNode.textContent = title(record);
       if (pitchNote) pitchNote.hidden = record.piece.pitch_source !== 'photos';
-      if (acceptButton) acceptButton.hidden = record.piece.state !== 'ghost';
+      if (acceptButton) acceptButton.hidden = record.piece.state !== 'ghost' && !flags.length;
       host.querySelectorAll('button').forEach(b => { b.disabled = !canEdit(); });
       // A save or poll refreshes clean values without replacing anyone's input.
       for (const [field, state] of inputs) {
@@ -78,6 +82,9 @@ export function createCards({ getPlan, getLabel, getFieldLabels = () => ({}), ed
     if (kind === 'roof') {
       pitchNote = document.createElement('p'); pitchNote.textContent = 'Estimated from photos';
       pitchNote.hidden = piece.pitch_source !== 'photos'; host.append(pitchNote);
+      for (const flag of flags) {
+        const note = document.createElement('p'); note.textContent = flag.text; host.append(note);
+      }
     }
     const form = document.createElement('form'); form.addEventListener('submit', event => event.preventDefault()); host.append(form);
     const more = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'More'; more.append(summary);
@@ -140,7 +147,7 @@ export function createCards({ getPlan, getLabel, getFieldLabels = () => ({}), ed
     }
     if (more.children.length > 1) form.append(more);
     host.append(button('Ask Argyle about this', () => ask(selection)));
-    if (piece.state === 'ghost') {
+    if (piece.state === 'ghost' || flags.length) {
       acceptButton = button('Looks right', async () => { await pending; await edit({ op: 'accept', building: building.id, pieces: [piece.id] }); draw(); });
       host.append(acceptButton);
     }

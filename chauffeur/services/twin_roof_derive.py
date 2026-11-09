@@ -76,7 +76,7 @@ def _shared_end(block, blocks, side):
 
 def _end_flags(block, blocks, section, observations):
     kinds = {side: observations.get('sides', {}).get(side, {}).get('kind', 'hidden') for side in _SIDES}
-    place = 'The roof over the ' + _place(block, blocks)[4:-5]
+    place = _place(block, blocks)
     flags = []
     for kind in ('hidden', 'conflict'):
         sides = [side for side, end in _SIDES.items() if end.startswith(section['ridge'])
@@ -428,6 +428,7 @@ def derive_roof(blocks, observations, evidence, choices):
         for j, other in enumerate(sections):
             if (i != j and observations.get(blocks[j]['id'], {}).get('slope_vs_neighbours') == 'same'
                     and _neighbours(section['rect'], other['rect'])
+                    and abs(section['plate'] - other['plate']) <= 1
                     and _ridge(section)[1] > _ridge(other)[1] + 6):
                 # A wholly unseen block already has its single review line.
                 text = f'{_place(block, blocks)} stands more than six feet above a neighbouring ridge; please check its height.'

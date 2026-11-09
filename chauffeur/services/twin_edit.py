@@ -201,6 +201,7 @@ def _set(kind, piece, building, field, value):
             piece['ends'] = {f'{value}{end[-1]}': style for end, style in piece['ends'].items()}
         if field == 'pitch':
             piece['pitch_source'] = 'person'
+            piece.pop('pitches', None)
         # A kind switch needs usable directions without an intermediate bad roof.
         if field == 'kind':
             if value in ('shed', 'flat') or (value == 'hip' and piece.get('ends')
@@ -219,20 +220,7 @@ def _set(kind, piece, building, field, value):
                 if (old_roof.get('ends', {}).get(end, old_roof['kind']) in ('gable', 'clip')
                         and (value in ('shed', 'flat') or piece.get('ends', {}).get(end, value) == 'hip')):
                     raise ValueError('A window sits in that gable; move or delete it first.')
-        block = piece.get('block')
-        if (block and not piece.get('dormer_of')
-                and max(abs(a - b) for a, b in zip(piece['rect'], block)) <= 1
-                and (piece.get('src', {}).get('step') == 'roof_blocks'
-                     or piece.get('src', {}).get('person'))):
-            roof = building['roof']
-            choice = {k: deepcopy(piece[k]) for k in
-                      ('kind', 'ridge', 'ends', 'pitch', 'plate', 'overhang', 'low_side') if k in piece}
-            choice.update(rect=deepcopy(block), src={'person': True})
-            def same_rect(rect):
-                return bool(rect and len(rect) == 4
-                            and max(abs(a - b) for a, b in zip(rect, block)) <= 1)
-            roof['choices'] = [c for c in twin_plan._roof_entries(roof, 'choices') if not same_rect(c['rect'])] + [choice]
-            roof['flags'] = [f for f in twin_plan._roof_entries(roof, 'flags') if not same_rect(f['block_rect'])]
+        _choose_roof(building, piece)
     if kind == 'opening':
         _opening_valid(building, piece)
     elif kind == 'wall':
@@ -407,6 +395,25 @@ def _value_words(field, value):
     return value
 
 
+def _choose_roof(building, piece):
+    block = piece.get('block')
+    if (not block or piece.get('dormer_of')
+            or max(abs(a - b) for a, b in zip(piece['rect'], block)) > 1
+            or not (piece.get('src', {}).get('step') == 'roof_blocks'
+                    or piece.get('src', {}).get('person'))):
+        return False
+    roof = building['roof']
+    choice = {k: deepcopy(piece[k]) for k in
+              ('kind', 'ridge', 'ends', 'pitch', 'plate', 'overhang', 'low_side') if k in piece}
+    choice.update(rect=deepcopy(block), src={'person': True})
+    def same_rect(rect):
+        return bool(rect and len(rect) == 4
+                    and max(abs(a - b) for a, b in zip(rect, block)) <= 1)
+    roof['choices'] = [c for c in twin_plan._roof_entries(roof, 'choices') if not same_rect(c['rect'])] + [choice]
+    roof['flags'] = [f for f in twin_plan._roof_entries(roof, 'flags') if not same_rect(f['block_rect'])]
+    return True
+
+
 def apply(plan, edit):
     """Return an edited, normalized copy and plain summary; never write storage."""
     if not isinstance(edit, dict):
@@ -425,6 +432,8 @@ def apply(plan, edit):
             raise ValueError('Accept needs a list of piece ids.')
         for pid in ids:
             kind, piece, building, _ = _find(result, pid, scope)
+            if kind == 'roof':
+                _choose_roof(building, piece)
             if kind == 'opening':
                 reason = twin_plan._opening_error(piece, {w['id']: w for w in building['walls']},
                                                   {s['id']: s for s in building['roof']['sections']})

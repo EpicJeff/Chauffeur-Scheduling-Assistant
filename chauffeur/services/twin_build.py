@@ -1087,11 +1087,16 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None):
     replaced = [s for s in house['roof']['sections'] if not s.get('src', {}).get('person')
                 and any(t.get('block') and _roof_overlap(s['rect'], t['rect']) > 0 for t in sections)
                 and not any(_matches(t, s, 'roof', house) for t in sections)]
+    incoming_ids = [s['id'] for s in sections]
     _remap_roof_attachments(house['openings'], house['roof'].get('extensions', []), replaced, sections)
     house['roof']['sections'] = [s for s in house['roof']['sections'] if s not in replaced]
     roof_step = {**step, 'removed_steps': [*step.get('removed_steps', []), 'roof_blocks']}
     house['roof']['sections'] = _merge_list(house['roof']['sections'], sections, 'roof', house, build, roof_step,
                                             tombstones=tombstones)
+    merged_ids = dict(zip(incoming_ids, (s['id'] for s in sections)))
+    for attachment in [*house['openings'], *house['roof'].get('extensions', [])]:
+        if attachment.get('section') in merged_ids:
+            attachment['section'] = merged_ids[attachment['section']]
     section_ids = dict(zip(old_sections, (s['id'] for s in sections)))
     openings = pieces('openings', 'opening')
     for opening in openings:
@@ -1681,8 +1686,12 @@ def _roof_observations(raw, context):
     photos can carry a list; validate each report through the shipped parser.
     """
     answer = deepcopy(raw)
+    if not isinstance(answer, dict) or not isinstance(answer.get('blocks'), dict):
+        return twin_reads.parse('roof_observe', answer, context)
     conflicts = []
     for bid, block in answer.get('blocks', {}).items():
+        if not isinstance(block, dict) or not isinstance(block.get('sides'), dict):
+            continue
         for side, reports in block.get('sides', {}).items():
             if not isinstance(reports, list):
                 continue
@@ -1698,6 +1707,8 @@ def _roof_observations(raw, context):
                 conflicts.append((bid, side))
             block['sides'][side] = (seen or valid or [{'kind': 'hidden'}])[0]
     parsed, problems = twin_reads.parse('roof_observe', answer, context)
+    if not twin_reads._usable('roof_observe', parsed, problems):
+        return parsed, problems
     for bid, side in conflicts:
         parsed.setdefault('blocks', {}).setdefault(bid, {}).setdefault('sides', {})[side] = {'kind': 'conflict'}
     for block in context.get('blocks', []):
@@ -1827,6 +1838,7 @@ def _read_roof_blocks(build, step, reader, ticket, result):
             evidence[block['id']] = plan
         choices = deepcopy(twin_plan._roof_entries(house['roof'], 'choices'))
         protected = [s for s in house['roof']['sections'] if s.get('src', {}).get('person')]
+        legacy_coverage = []
         for section in protected:
             block_rect = section.get('block')
             if (section.get('dormer_of') or (block_rect and
@@ -1836,6 +1848,17 @@ def _read_roof_blocks(build, step, reader, ticket, result):
                 continue  # Only a legacy read section can migrate to a choice.
             rect = block_rect or section.get('read_geometry', {}).get('rect') or section['rect']
             block = next((b for b in blocks if max(abs(a - v) for a, v in zip(rect, b['rect'])) <= 1), None)
+            if block is None and not block_rect:
+                covered = [b for b in blocks if _roof_overlap(section['rect'], b['rect']) >=
+                           _roof_overlap(b['rect'], b['rect']) / 2]
+                block = max(covered, key=lambda b: (_roof_overlap(section['rect'], b['rect']), b['id']), default=None)
+                if block:
+                    legacy_coverage.extend(b['rect'] for b in covered)
+                    place = twin_roof_derive._place(block, blocks)[4:-5]
+                    line = f'Kept your earlier roof over the {place}; please check it.'
+                    progress.setdefault('legacy_lines', [])
+                    if line not in progress['legacy_lines']:
+                        progress['legacy_lines'].append(line)
             if block is None or any(max(abs(a - v) for a, v in zip(c['rect'], block['rect'])) <= 1
                                     for c in choices):
                 continue
@@ -1866,8 +1889,8 @@ def _read_roof_blocks(build, step, reader, ticket, result):
         carriers = derived[:len(blocks)]
         legacy_ids = {s['id']: old['id'] for s in carriers for old in protected_sources
                       if _near_geometry({'rect': s['rect']}, {'rect': old['rect']}, 'roof')}
-        dropped_blocks = [s['rect'] for s in carriers if s['id'] in legacy_ids]
-        derived = [s for s in derived if s['id'] not in legacy_ids
+        dropped_blocks = [s['rect'] for s in carriers if s['id'] in legacy_ids or s['rect'] in legacy_coverage]
+        derived = [s for s in derived if s['rect'] not in dropped_blocks
                    and s.get('dormer_of') not in dropped_blocks]
         roof['sections'] = kept + derived
         _remap_roof_attachments(draft.get('openings', []), roof.get('extensions', []),
@@ -1920,7 +1943,7 @@ def _obtain(build, step, reader, ticket):
         images, context, crop = _images_context(build, step, sheets)
         if step['kind'] == 'draft':
             with twin_store.LIFECYCLE, _LOCK:
-                photos = sum(len(twin_store.source_images(source)) for source in build['inputs'].get('photos', []))
+                photos = sum(twin_store.source_image_count(source) for source in build['inputs'].get('photos', []))
                 step['estimate'] = (twin_cost.estimate('draft', len(images)) + twin_cost.estimate('outline', 1)
                                     + photos * twin_cost.estimate('photo_map', 2)
                                     + (twin_cost.estimate('roof_observe', 1 + min(8, photos)) if photos else 0))
@@ -2178,6 +2201,8 @@ def _settle(build, step, result, decision=None):
                 _event(build, 'log', step=step['id'], text=
                        'The roofs could not be built from the walls; they are shown as first read.')
             for text in dict.fromkeys(f['text'] for f in step['roof_flags']):
+                _event(build, 'log', step=step['id'], text=text)
+            for text in roof_blocks.get('legacy_lines', []):
                 _event(build, 'log', step=step['id'], text=text)
             roof_blocks['logged'] = True
             _atomic(_cache_path(build, step), result)

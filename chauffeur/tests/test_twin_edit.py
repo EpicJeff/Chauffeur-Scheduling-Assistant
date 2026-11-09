@@ -573,6 +573,21 @@ def scenario_a_choice_clears_its_blocks_flag():
           ('another block keeps its flag', flags))
 
 
+def scenario_looks_right_saves_flagged_roof_choice():
+    original = derived_house()
+    plan, summary = twin_edit.apply(original, {'op': 'accept', 'building': 'house', 'pieces': ['roof-A']})
+    choices = _roof_choices(plan)
+    check(len(choices) == 1 and choices[0]['pitch'] == 6 and choices[0]['kind'] == 'gable', choices)
+    check(choices[0]['src'].get('person') is True, choices)
+    check(not any(close(f['block_rect'], DERIVED_BLOCK, 1) for f in plan['buildings'][0]['roof']['flags']),
+          plan['buildings'][0]['roof']['flags'])
+    check([f['text'] for f in plan['buildings'][0]['roof']['flags']] == [OTHER_FLAG], 'other flags stay')
+    check(piece(plan, 'roof-A')['rect'] == piece(original, 'roof-A')['rect'], 'confirmation keeps the geometry')
+    _seed_derived()
+    twin_edit.save({'op': 'accept', 'building': 'house', 'pieces': ['roof-A']}, 'p1')
+    check(len(_roof_choices(ts.current())) == 1, 'the confirmation is published')
+
+
 if __name__ == '__main__':
     scenario_accept_invalid_door_names_kind_and_plain_reason()
     scenario_ridge_x_gable_moves_and_deletes()
@@ -601,7 +616,8 @@ if __name__ == '__main__':
         print('  ok ', fn.__name__)
     # Per-end roof ends: each reported on its own so one failure does not hide the other.
     failed = []
-    for fn in (scenario_test_card_sets_roof_ends,
+    for fn in (scenario_looks_right_saves_flagged_roof_choice,
+               scenario_test_card_sets_roof_ends,
                scenario_kind_switch_with_gable_window_refuses,
                scenario_malformed_roof_metadata_edit_is_safe,
                scenario_test_invalid_roof_ends_refused,

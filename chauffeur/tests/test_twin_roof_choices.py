@@ -356,7 +356,75 @@ def test_malformed_choices_still_rebuild_and_migrate():
     check(_choices(rb._house(), LEFT_WING)[0]['pitch'] == 6, rb._house()['roof'])
 
 
+def test_middle_pitch_changes_ridge_and_survives_rebuild():
+    from services.twin_roof_derive import _ridge
+    labels = rb._main_house()
+    rb._build(OneFlagReader(labels))
+    middle = _derived(rb._house(), MIDDLE)
+    before = _ridge(middle)[1]
+    check(middle.get('pitches'), ('setup: the middle was aligned', middle))
+    twin_edit.save({'op': 'set', 'building': 'house', 'piece': middle['id'],
+                    'field': 'pitch', 'value': 6}, 'p1')
+    edited = _over(rb._house(), MIDDLE)[0]
+    height = _ridge(edited)[1]
+    check(height < before - 6 and not edited.get('pitches'), (before, height, edited))
+    check('pitches' not in _choices(rb._house(), MIDDLE)[0], 'no stale side pitches in the choice')
+    rb._build(OneFlagReader(labels))
+    rebuilt = _over(rb._house(), MIDDLE)
+    check(len(rebuilt) == 1 and abs(_ridge(rebuilt[0])[1] - height) < .01, rebuilt)
+    # Exercise choice application without the retained person section masking it.
+    from services import twin_blocks, twin_roof_derive
+    blocks = twin_blocks.blocks(rb._house())
+    sections, _ = twin_roof_derive.derive_roof(blocks, {}, {}, rb._house()['roof']['choices'])
+    chosen = next(s for s in sections if s.get('block') and _near(s['block'], MIDDLE))
+    check(chosen['pitch'] == 6 and not chosen.get('pitches')
+          and abs(_ridge(chosen)[1] - height) < .01, chosen)
+
+
+def test_legacy_garage_carrier_uses_coverage_choice():
+    labels = rb._main_house()
+    rb._build(OneFlagReader(labels))
+    plan = ts.current()
+    house = next(b for b in plan['buildings'] if b['id'] == 'house')
+    draft, _ = twin_plan.normalize({'units': 'ft', 'buildings': [rb.recorded('draft-main-house.json')['building']]})
+    sections = copy.deepcopy(draft['buildings'][0]['roof']['sections'])
+    source = _drawing_source()
+    for section in sections:
+        section.update(src={'sheet': source, 'page': 3, 'step': 'draft'}, state='settled',
+                       read_geometry={'rect': list(section['rect'])})
+        section.pop('block', None)
+        if section['id'] == 'r_garage':
+            section.update(pitch=11, pitch_source='person', src={'person': True, 'sheet': source, 'page': 3})
+    old = copy.deepcopy(next(s for s in sections if s['id'] == 'r_garage'))
+    house['roof'].update(sections=sections, choices=[], flags=[])
+    for extension in house['roof'].get('extensions', []):
+        extension['section'] = 'r_garage'
+    ts.push_round(twin_plan.normalize(plan)[0], 'build')
+    _, status = rb._build(OneFlagReader(labels))
+    house = rb._house()
+    garage = next(s for s in house['roof']['sections'] if s['id'] == 'r_garage')
+    check(all(garage.get(k) == old.get(k) for k in ('kind', 'ridge', 'pitch', 'plate', 'overhang', 'rect')),
+          ('the person carrier stays as edited', garage, old))
+    choice = _choices(house, rb.TRUTH['D'])
+    check(len(choice) == 1 and choice[0]['pitch'] == 11 and choice[0]['ridge'] == 'y', choice)
+    from services import twin_blocks
+    for block in twin_blocks.blocks(house):
+        carriers = [s for s in house['roof']['sections'] if not s.get('dormer_of')
+                    and (s.get('block') or s.get('src', {}).get('person'))
+                    and tb._roof_overlap(s['rect'], block['rect']) >= tb._roof_overlap(block['rect'], block['rect']) / 2]
+        check(len(carriers) == 1, (block, carriers))
+    logs = [e['text'] for e in status['events'] if e['type'] == 'log'
+            and e.get('text', '').startswith('Kept your earlier roof over ')]
+    check(len(logs) == 1 and logs[0].endswith('; please check it.'), logs)
+    rb._build(OneFlagReader(labels))
+    check(len(_choices(rb._house(), rb.TRUTH['D'])) == 1
+          and not any(s.get('block') and _near(s['block'], rb.TRUTH['D'])
+                      for s in rb._house()['roof']['sections']), rb._house()['roof'])
+
+
 TESTS = (
+    test_middle_pitch_changes_ridge_and_survives_rebuild,
+    test_legacy_garage_carrier_uses_coverage_choice,
     test_choice_saved_during_read_wins_draft_merge,
     test_malformed_choices_still_rebuild_and_migrate,
     test_flags_on_build_status_and_plan,

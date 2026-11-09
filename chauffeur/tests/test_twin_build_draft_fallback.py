@@ -185,7 +185,7 @@ def _raw_ids(house):
 
 
 def _has_raw_id(text, house):
-    if re.search(r'\b(wall|opening|room|roof|extension|porch|stair|level):', text):
+    if re.search(r'\b(wall|opening|room|roof|extension|porch|stair|level):\S', text):
         return True
     return any(re.search(r'(?<![A-Za-z0-9_])' + re.escape(i) + r'(?![A-Za-z0-9_])', text)
                for i in _raw_ids(house))
@@ -641,7 +641,18 @@ def test_draft_read_error_names_the_drawings():
     check(lines == ['The drawings could not be read.'], lines)
 
 
+def test_plain_roof_colon_is_not_a_piece_id():
+    house = {'roof': {}}
+    check(not _has_raw_id('The right roof: its right end was not visible in the photos; I made it a gable.', house),
+          'the required place wording is plain text')
+    for kind in ('wall', 'opening', 'room', 'roof', 'extension', 'porch', 'stair', 'level'):
+        check(_has_raw_id(f'Check {kind}:123abc.', house), ('generated ids are still refused', kind))
+    read_id = next(s['id'] for s in spike()['building']['roof']['sections'] if '_' in s['id'])
+    check(_has_raw_id(f'Check {read_id}.', house), 'read ids are still refused')
+
+
 TESTS = (
+    test_plain_roof_colon_is_not_a_piece_id,
     test_empty_whole_draft_uses_per_floor_fallback,
     test_fallback_heartbeat_uses_one_start_time_across_floors,
     test_draft_read_error_names_the_drawings,

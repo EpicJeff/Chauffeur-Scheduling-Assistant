@@ -353,7 +353,18 @@ def test_flags_are_plain_and_decisive():
     check(not problems, (f'{len(problems)} flag problem(s) among {len(flags)} flags', problems))
 
 
+def test_height_flags_compare_same_storey_and_use_plain_places():
+    for run in RUNS:
+        built = build(run)
+        flags = _flags(built['status'])
+        height = [f['text'] for f in flags if 'six feet above' in f['text']]
+        check(any('middle' in text for text in height), (run, height))
+        check(not any('right upper' in text for text in height), (run, height))
+        check(not any(re.search(r'roof over the (left|right|middle)', f['text']) for f in flags), flags)
+
+
 TESTS = (
+    test_height_flags_compare_same_storey_and_use_plain_places,
     test_recorded_ids_name_the_builds_blocks,
     test_no_hips_on_the_main_blocks,
     test_main_block_forms,
