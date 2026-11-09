@@ -660,6 +660,169 @@ def test_migration_separator_is_flagged_with_the_exact_copy():
     check(flags == [SEPARATOR_COPY_GENERIC], f'the generic copy when a room is named Room: {flags}')
 
 
+def test_moved_person_wall_and_door_keep_identity():
+    door = {'id': 'door', 'wall': 'p', 'at': 3, 'width': 2, 'sill': 0, 'head': 7, 'kind': 'door'}
+    flat = _flat(_box_walls(30) + [_wall('p', (8, 2), (8, 8))], [], [door])
+    previous, _ = _b().assemble(flat)
+    house = previous['buildings'][0]
+    wall = _by_id(house['walls'])['p']
+    wall['src'] = {'person': True}
+    for jid in wall['joints']:
+        _by_id(house['joints'])[jid]['at'][0] = 12
+    model, _ = _b().assemble(flat, previous)
+    house = model['buildings'][0]
+    check(sorted(w['id'] for w in house['walls']) == ['e', 'n', 'p', 's', 'w'], house['walls'])
+    check(_same_segment(*_ends(house, _by_id(house['walls'])['p']), [12, 2], [12, 8]), house)
+    check(house['openings'][0]['wall'] == 'p' and house['openings'][0].get('state') != 'ghost', house['openings'])
+    check(len(house['proposals']) == 1 and house['proposals'][0]['piece']['id'] == 'p:proposal', house['proposals'])
+
+
+def test_person_split_wall_and_opening_do_not_duplicate_on_household_read():
+    previous = copy.deepcopy(_migrated()[0])
+    house = _by_id(previous['buildings'])['main-house']
+    # Simulate an explicit editor split, independent of whether migration splits.
+    opening = next(o for o in house['openings'] if o['id'].endswith('c98aa3'))
+    wall = _by_id(house['walls'])[opening['wall']]
+    if '~' not in wall['id']:
+        a, b = _ends(house, wall)
+        cut = opening['at'] - 3
+        point = [a[i] + (b[i] - a[i]) * cut / _dist(a, b) for i in (0, 1)]
+        house['joints'].append({'id': 'explicit-split', 'level': wall['level'], 'at': point})
+        part = copy.deepcopy(wall)
+        part.update(id=wall['id'] + '~2', joints=['explicit-split', wall['joints'][1]])
+        wall['joints'][1] = 'explicit-split'
+        house['walls'].append(part)
+        opening.update(wall=part['id'], at=3)
+        wall = part
+    wall['src'] = opening['src'] = {'person': True}
+    model, _ = _b().assemble(_household(), previous)
+    house = _by_id(model['buildings'])['main-house']
+    check(len([o for o in house['openings'] if o['id'] == opening['id']]) == 1, house['openings'])
+    check(len(house['openings']) == 27, house['openings'])
+    check(not any(p['kind'] == 'opening' and p['against'] == opening['id'] for p in house['proposals']),
+          'the same opening world position is dropped even when its host id changed')
+    mine = _by_id(house['walls'])[wall['id']]
+    check(mine['src']['person'], mine)
+    check(not any(w is not mine and _same_segment(*_ends(house, w), *_ends(house, mine))
+                  for w in house['walls']), house['walls'])
+
+
+def test_flat_reads_keep_wall_identity_state_why_and_room_polygons():
+    with open(os.path.join(os.path.dirname(HOUSEHOLD), '..', 'twin_reads', 'recorded',
+                           'claude', 'draft-main-spike-answer.json'), encoding='utf-8') as fh:
+        draft = json.load(fh)['building']
+    for flat in (_household(), {'units': 'ft', 'buildings': [draft], 'site': {}}):
+        original = copy.deepcopy(flat)
+        wall = flat['buildings'][0]['walls'][0]
+        wall.update(state='ghost', why='The read corner does not close.')
+        got = _b().flatten(_b().assemble(flat)[0])
+        for old, new in zip(flat['buildings'], got['buildings']):
+            walls = {w['id']: (w.get('state'), w.get('why')) for w in new['walls'] if w.get('kind') != 'separator'}
+            check(walls == {w['id']: (w.get('state'), w.get('why')) for w in old['walls']}, walls)
+        # Closed household room records keep the read polygons exactly.
+        got = _b().flatten(_b().assemble(original)[0])
+        for old, new in zip(original['buildings'], got['buildings']):
+            rooms = _by_id(new['rooms'])
+            for room in old.get('rooms', []):
+                check(rooms[room['id']]['polygon'] == room['polygon'], (room, rooms.get(room['id'])))
+
+
+def test_household_rereads_and_flat_rewrites_reuse_separators_and_flags():
+    model = copy.deepcopy(_migrated()[0])
+    for read in (_household(), _b().flatten(model), _household()):
+        following, _ = _b().assemble(read, model)
+        for old, new in zip(model['buildings'], following['buildings']):
+            old_seps = {w['id'] for w in old['walls'] if w.get('kind') == 'separator'}
+            check(old_seps == {w['id'] for w in new['walls'] if w.get('kind') == 'separator'}, new['walls'])
+            check(old['flags'] == new['flags'], (old['flags'], new['flags']))
+            rooms = _by_id(new['rooms'])
+            for room in old['rooms']:
+                check(rooms[room['id']]['name'] == room['name'], (room, rooms))
+        model = following
+
+
+def test_roof_flags_round_trip_with_block_rect_without_duplicates():
+    model = copy.deepcopy(_migrated()[0])
+    for _ in range(3):
+        flat = _b().flatten(model)
+        check(sum(len(b['roof'].get('flags', [])) for b in flat['buildings']) == 6, flat)
+        for old, new in zip(_household()['buildings'], flat['buildings']):
+            check(new['roof']['flags'] == old['roof']['flags'], new['roof'])
+        model, _ = _b().assemble(flat, model)
+
+
+def test_migration_separator_flags_group_by_level_and_exclude_porches():
+    for house in _migrated()[0]['buildings']:
+        separators = [w for w in house['walls'] if w.get('kind') == 'separator']
+        check(all(w.get('src', {}).get('step') in ('migration', 'porch') for w in separators), separators)
+        flags = [f for f in house['flags'] if f['text'].startswith('I added ')]
+        for level in house['levels']:
+            seps = [w for w in separators if w['level'] == level['id'] and w['src']['step'] == 'migration']
+            mine = [f for f in flags if f['level'] == level['id']]
+            check(len(mine) == bool(seps), (level, seps, mine))
+            if len(seps) > 1:
+                check(mine[0]['text'] == f"I added {len(seps)} invisible walls on the {level['name']} to keep rooms apart; check them.", mine)
+            if seps:
+                check(mine[0]['piece'] == seps[0]['id'], mine)
+        check(not any(f.get('piece') == w['id'] for w in separators if w['src']['step'] == 'porch' for f in flags), flags)
+
+
+def test_overlapping_read_roofs_and_explicit_person_window_carrier_round_trip():
+    roof = {'id': 'old', 'kind': 'gable', 'rect': [0, 0, 30, 10], 'ridge': 'y',
+            'pitch': 8, 'plate': 9, 'overhang': 1}
+    window = {'id': 'win', 'section': 'old', 'gable': 'front', 'x': 10,
+              'width': 3, 'sill': 3.1, 'head': 7, 'kind': 'window', 'src': {'person': True}}
+    flat = _flat(_box_walls(30), [], [window], [roof])
+    previous, _ = _b().assemble(flat)
+    flat['buildings'][0]['roof']['sections'] = [dict(roof, id='new'), dict(roof, id='porch', rect=[0, 0, 10, 10])]
+    flat['buildings'][0]['openings'][0]['section'] = 'new'
+    model, _ = _b().assemble(flat, previous)
+    got = _b().flatten(model)['buildings'][0]
+    check({s['id'] for s in got['roof']['sections']} == {'new', 'porch'}, got['roof'])
+    check(got['openings'][0]['section'] == 'new' and got['openings'][0].get('state') != 'ghost', got['openings'])
+    check(got['openings'][0]['sill'] == 3.1 and got['openings'][0]['src']['person'], got['openings'])
+
+
+def test_household_assembly_stays_under_300ms():
+    import time
+    flat = _household()
+    started = time.perf_counter()
+    _b().assemble(flat)
+    elapsed = time.perf_counter() - started
+    print(f'  household assemble: {elapsed * 1000:.1f} ms')
+    check(elapsed < .3, f'household assemble took {elapsed:.3f}s')
+
+
+def test_legacy_person_dormer_block_stays_one_dormer():
+    model = copy.deepcopy(_migrated()[0])
+    flat = _b().flatten(model)
+    house = _by_id(flat['buildings'])['main-house']
+    dormer = next(s for s in house['roof']['sections'] if s.get('dormer_of'))
+    dormer.update(pitch=11, src={'person': True})
+    model, _ = _b().assemble(flat, model)
+    flat = _b().flatten(model)
+    house = _by_id(flat['buildings'])['main-house']
+    section = _by_id(house['roof']['sections'])[dormer['id']]
+    section['block'] = section.pop('dormer_of')
+    model, _ = _b().assemble(flat, model)
+    house = _by_id(model['buildings'])['main-house']
+    check(len(house['roofs']) == 13 and len(house['dormers']) == 1, (house['roofs'], house['dormers']))
+    section = _by_id(_by_id(_b().flatten(model)['buildings'])['main-house']['roof']['sections'])[dormer['id']]
+    check(section['pitch'] == 11 and section['src']['person'] and section.get('dormer_of') and 'block' not in section, section)
+
+
+def test_derived_t_faces_and_stale_piece_flags():
+    flat = _flat(_box_walls(20) + [_wall('p', (10, 0), (10, 10))], [])
+    flat['buildings'][0]['flags'] = [{'piece': 'gone', 'at': [10, 5], 'text': 'Old wall flag.'}]
+    model, _ = _b().assemble(flat)
+    check(not model['buildings'][0]['flags'], model['buildings'][0]['flags'])
+    house = _b().flatten(model)['buildings'][0]
+    check(len(house['walls']) == 5, house['walls'])
+    points = _by_id(house['walls'])['p']['footprint']
+    check(abs(min(p[1] for p in points) - .25) < TOL and abs(max(p[1] for p in points) - 9.75) < TOL,
+          ('the T stem butts into the through walls while their ids remain whole', points))
+
+
 TESTS = (
     test_household_migrates_and_keeps_every_room_name_and_opening,
     test_household_walls_stay_within_a_foot,
@@ -671,6 +834,16 @@ TESTS = (
     test_person_wall_survives_a_new_read_and_a_disagreement_is_a_proposal,
     test_person_opening_and_roof_survive_a_new_read,
     test_migration_separator_is_flagged_with_the_exact_copy,
+    test_moved_person_wall_and_door_keep_identity,
+    test_person_split_wall_and_opening_do_not_duplicate_on_household_read,
+    test_flat_reads_keep_wall_identity_state_why_and_room_polygons,
+    test_household_rereads_and_flat_rewrites_reuse_separators_and_flags,
+    test_roof_flags_round_trip_with_block_rect_without_duplicates,
+    test_migration_separator_flags_group_by_level_and_exclude_porches,
+    test_overlapping_read_roofs_and_explicit_person_window_carrier_round_trip,
+    test_household_assembly_stays_under_300ms,
+    test_derived_t_faces_and_stale_piece_flags,
+    test_legacy_person_dormer_block_stays_one_dormer,
 )
 
 

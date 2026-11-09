@@ -158,7 +158,7 @@ def _split_t_junctions(building, joints, walls, notes):
     return [w for w in split if w['id'] in kept]
 
 
-def _derive(building, notes):
+def _derive(building, notes, *, persist_t_splits=True):
     stored = list(building.get('rooms', []))
     seen = {room.get('id') for room in stored}
     flags = []
@@ -191,7 +191,8 @@ def _derive(building, notes):
                  and len(w['joints']) == 2
                  and all(isinstance(j, str) and j in joints for j in w['joints'])
                  and math.dist(*(joints[j] for j in w['joints'])) > _EPS]
-        walls = _split_t_junctions(building, joints, walls, notes)
+        if persist_t_splits:
+            walls = _split_t_junctions(building, joints, walls, notes)
         # Use a split view for faces; original walls retain their host identities.
         split_joints, split_walls = graph.split_crossings(joints, walls)
         for region in graph.regions(split_joints, split_walls):
@@ -271,10 +272,10 @@ def _derive(building, notes):
     return building
 
 
-def derive(building: dict) -> list[str]:
-    """Rebuild room caches and unclosed flags in place, preserving identities."""
+def derive(building: dict, *, persist_t_splits=True) -> list[str]:
+    """Rebuild room caches; flat-read assembly can keep T-splits derived (R31)."""
     notes = []
-    _derive(building, notes)
+    _derive(building, notes, persist_t_splits=persist_t_splits)
     return notes
 
 
@@ -395,8 +396,8 @@ def _pieces(building, notes):
                 _note(item, kind.capitalize(), reason, notes)
 
 
-def normalize(model: dict) -> tuple[dict, list[str]]:
-    """Copy and validate a feet-based model, then derive every room from walls."""
+def normalize(model: dict, *, persist_t_splits=True) -> tuple[dict, list[str]]:
+    """Validate and derive rooms, optionally retaining whole flat-read walls."""
     model = deepcopy(model)
     if not isinstance(model, dict) or model.get('units') != 'ft':
         raise ValueError('Twin plan units must be ft.')
@@ -426,7 +427,7 @@ def normalize(model: dict) -> tuple[dict, list[str]]:
                              and twin_plan._point(f.get('at'))]
         if len(building['flags']) != len(flags):
             notes.append('Dropped flags with invalid text or position.')
-        _derive(building, notes)
+        _derive(building, notes, persist_t_splits=persist_t_splits)
         _pieces(building, notes)
         buildings.append(building)
     site = model.get('site', {})
