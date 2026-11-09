@@ -745,6 +745,80 @@ def test_roof_check_unknown_id_dropped():
           ('each dropped id is named as a problem', problems))
 
 
+# ---- R35: retry malformed draft JSON once, at the same output size ----
+
+MALFORMED_DRAFT = {'error': "Failed to parse LLM JSON: Expecting ',' delimiter: line 1 column 3153"}
+
+
+def test_draft_parse_failure_retries_once_and_meters_both_attempts():
+    answers = {'draft': spike_answer(),
+               'draft_level': {'building': {'roof': spike_answer()['building']['roof']}},
+               'draft_rooms': {'rooms': []}, 'roof_check': ROOF_CHECK_EMPTY}
+    for kind, valid in answers.items():
+        for error in (MALFORMED_DRAFT, {'error': 'Two JSON objects in one reply'}):
+            _fresh()
+            with SeqPool([error, valid]) as pool:
+                out = twin_reads.read(kind, [img()], {}, run='r35', step=kind)
+            check('error' not in out, (kind, out))
+            check(len(pool.calls) == 2, (kind, len(pool.calls)))
+            check([c['max_output_tokens'] for c in pool.calls] == [twin_reads.MAX_OUTPUT[kind]] * 2,
+                  ('parse retries keep the output size', kind, pool.calls))
+            entries = tc.entries()
+            check(len(entries) == 2 and all(e['stage'] == f'step:{kind}' and e['run'] == 'r35'
+                                           for e in entries), ('both attempts are charged', entries))
+
+
+def test_draft_two_parse_failures_stop_after_two_attempts():
+    _fresh()
+    second = {'error': 'Two JSON objects in one reply'}
+    with SeqPool([MALFORMED_DRAFT, second, spike_answer()]) as pool:
+        out = twin_reads.read('draft', [img()], {}, run='r35', step='draft')
+    check(out == second and len(pool.calls) == 2, (out, len(pool.calls)))
+    check(len(tc.entries()) == 2, ('both failed attempts are charged', tc.entries()))
+
+
+def test_draft_truncation_and_other_errors_still_stop_after_one_attempt():
+    for kind in DRAFT_KINDS + ('roof_check',):
+        for error in (DRAFT_TRUNCATED, {**MALFORMED_DRAFT, 'truncated': True},
+                      {'error': 'Claude refused the request'}, {'error': '429 Too Many Requests'},
+                      {'nonsense': True}):
+            _fresh()
+            with SeqPool([error, spike_answer()]) as pool:
+                out = twin_reads.read(kind, [img()], {}, run='r35', step=kind)
+            check('error' in out and len(pool.calls) == 1, (kind, out, len(pool.calls)))
+            if error is DRAFT_TRUNCATED or error.get('truncated'):
+                check(out.get('truncated') is True, out)
+            check(len(tc.entries()) == 1, ('one attempted read is charged', tc.entries()))
+    _fresh()
+    with SeqPool([MALFORMED_DRAFT, fixture('outline')]) as pool:
+        out = twin_reads.read('outline', [img()], {}, run='r35', step='outline')
+    check(out == MALFORMED_DRAFT and len(pool.calls) == 1, ('crop parse errors do not retry', out))
+
+
+def test_draft_parse_retry_checks_checkpoint_even_when_first_check_was_shared():
+    _fresh()
+    original = tc.require_clear
+    checks = []
+
+    def blocked():
+        checks.append(True)
+        raise tc.CheckpointReached(10, 10)
+
+    tc.require_clear = blocked
+    try:
+        with SeqPool([MALFORMED_DRAFT, spike_answer()]) as pool:
+            try:
+                twin_reads.read('draft', [img()], {}, run='r35', step='draft', checkpoint_checked=True)
+            except tc.CheckpointReached:
+                pass
+            else:
+                raise AssertionError('a newly due checkpoint must stop the retry')
+        check(checks == [True] and len(pool.calls) == 1 and len(tc.entries()) == 1,
+              ('the first attempt is charged; the retry checks before spending', checks, len(pool.calls)))
+    finally:
+        tc.require_clear = original
+
+
 if __name__ == '__main__':
     failed = []
     for fn in (scenario_kinds_and_output_caps_are_pinned,
@@ -785,7 +859,11 @@ if __name__ == '__main__':
                test_roof_check_prompt_generic,
                test_parse_roof_check_shapes,
                test_parse_roof_check_empty_lists_valid,
-               test_roof_check_unknown_id_dropped):
+               test_roof_check_unknown_id_dropped,
+               test_draft_parse_failure_retries_once_and_meters_both_attempts,
+               test_draft_two_parse_failures_stop_after_two_attempts,
+               test_draft_truncation_and_other_errors_still_stop_after_one_attempt,
+               test_draft_parse_retry_checks_checkpoint_even_when_first_check_was_shared):
         try:
             fn()
         except Exception as exc:

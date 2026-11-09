@@ -865,8 +865,9 @@ def _usable(kind, fragment, problems):
 
 
 def read(kind, images, context, *, run, step, checkpoint_checked=False):
-    """Meter every request; only legacy crop reads retry a truncated reply.
+    """Meter every request; draft reads retry parse failures once at the same size.
 
+    Only legacy crop reads retry a truncated reply, at twice the output limit.
     A paired draft's caller may check the checkpoint once for both reads.
     """
     if not isinstance(kind, str) or kind not in KINDS:
@@ -893,9 +894,9 @@ def read(kind, images, context, *, run, step, checkpoint_checked=False):
     except (TypeError, ValueError, OverflowError) as exc:
         return {'error': str(exc)}
     truncated = False
-    for attempt in range(1 if draft else 2):
+    for attempt in range(2):
         usage, provider_usage = [], []
-        if not checkpoint_checked:
+        if not checkpoint_checked or attempt:
             twin_cost.require_clear()
         try:
             # HTTP-attempt rows preserve refusal status; keep the compatibility
@@ -905,7 +906,7 @@ def read(kind, images, context, *, run, step, checkpoint_checked=False):
                     'twin', key, PROMPTS[kind], user_prompt, images=images,
                     strict_json='lenient' if draft else True, max_models=1,
                     thinking_level=THINKING.get(kind, 'low'),
-                    max_output_tokens=output_limit * (attempt + 1), timeout_s=TIMEOUT.get(kind, 120),
+                    max_output_tokens=output_limit * (1 if draft else attempt + 1), timeout_s=TIMEOUT.get(kind, 120),
                     usage=usage, settings=settings)
         except twin_cost.CheckpointReached:
             raise
@@ -914,9 +915,11 @@ def read(kind, images, context, *, run, step, checkpoint_checked=False):
         finally:
             twin_cost.record(f'step:{kind}', provider_usage or usage, run)
         error = str(answer.get('error', '')) if isinstance(answer, dict) else ''
-        truncated = bool(re.search(r'(?:finish\s*=\s*[\"\']?max_tokens\b|reason\s*=\s*max_output_tokens\b)',
-                                   error, re.IGNORECASE))
-        if draft or attempt or not truncated:
+        truncated = (draft and isinstance(answer, dict) and bool(answer.get('truncated'))) or bool(
+            re.search(r'(?:finish\s*=\s*[\"\']?max_tokens\b|reason\s*=\s*max_output_tokens\b)',
+                      error, re.IGNORECASE))
+        parse_failure = 'Failed to parse LLM JSON' in error or 'Two JSON objects' in error
+        if attempt or (draft and (truncated or not parse_failure)) or (not draft and not truncated):
             break
     if isinstance(answer, dict) and 'error' in answer:
         return {'error': str(answer['error']), **({'truncated': True} if draft and truncated else {})}
