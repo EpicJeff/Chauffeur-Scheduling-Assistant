@@ -409,6 +409,39 @@ def scenario_test_invalid_roof_ends_refused():
     check(ts.current_id() == before, 'refusal publishes nothing')
 
 
+def scenario_roof_kind_switch_clears_ends():
+    for kind in ('shed', 'flat'):
+        plan, _ = twin_edit.apply(house(), {'op': 'set', 'piece': 'roof-1', 'field': 'ends',
+                                           'value': {'x0': 'clip', 'x1': 'gable'}})
+        plan, _ = twin_edit.apply(plan, {'op': 'set', 'piece': 'roof-1', 'field': 'kind', 'value': kind})
+        roof = piece(plan, 'roof-1')
+        check(roof['kind'] == kind and 'ends' not in roof, roof)
+        check(roof['pitch'] == 0 if kind == 'flat' else roof['low_side'] == 'x0', roof)
+
+
+def scenario_hip_end_with_window_names_the_remedy():
+    for ridge, end, coordinate in (('x', 'x0', 'y'), ('y', 'y1', 'x')):
+        _seed()
+        plan = ts.current()
+        roof = piece(plan, 'roof-1')
+        roof.update(kind='gable', ridge=ridge, rect=[0, 0, 30, 20])
+        plan['buildings'][0]['openings'].append(
+            {'id': 'gable-window', 'kind': 'window', 'section': 'roof-1',
+             'gable': 'front' if end.endswith('0') else 'rear', coordinate: 10,
+             'width': 2, 'sill': 1, 'head': 3})
+        ts.push_round(plan, 'build')
+        before = ts.current_id()
+        try:
+            twin_edit.save({'op': 'set', 'piece': 'roof-1', 'field': 'ends',
+                            'value': {end: 'hip'}}, 'p1')
+        except ValueError as exc:
+            check(str(exc) == 'A window sits in that gable; move or delete it first.', str(exc))
+        else:
+            raise AssertionError('a window-bearing gable became a hip')
+        check(ts.current_id() == before, 'refusal publishes nothing')
+        check(piece(ts.current(), 'gable-window') is not None, 'window retained')
+
+
 if __name__ == '__main__':
     scenario_accept_invalid_door_names_kind_and_plain_reason()
     scenario_ridge_x_gable_moves_and_deletes()
@@ -438,7 +471,9 @@ if __name__ == '__main__':
     # Per-end roof ends: each reported on its own so one failure does not hide the other.
     failed = []
     for fn in (scenario_test_card_sets_roof_ends,
-               scenario_test_invalid_roof_ends_refused):
+               scenario_test_invalid_roof_ends_refused,
+               scenario_roof_kind_switch_clears_ends,
+               scenario_hip_end_with_window_names_the_remedy):
         try:
             fn()
         except Exception as e:

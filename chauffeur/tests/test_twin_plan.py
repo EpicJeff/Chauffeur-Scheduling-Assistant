@@ -339,6 +339,36 @@ def scenario_test_roof_invalid_end_dropped_with_note():
     check(s['kind'] == 'gable' and s['ridge'] == 'x', 'the section itself survives')
 
 
+def scenario_clipped_end_window_stays_below_the_clip():
+    for ridge, end, coordinate in (('x', 'x0', 'y'), ('y', 'y1', 'x')):
+        raw = _draft()
+        b = raw['buildings'][0]
+        roof = next(s for s in b['roof']['sections'] if s['id'] == 'left_wing')
+        roof.update(kind='gable', ridge=ridge, rect=[0, 0, 24, 24], pitch=9,
+                    ends={end: 'clip'}, pitches={'x0': 6, 'x1': 12, 'y0': 6, 'y1': 12})
+        # Asymmetric slopes: rise = 24 * (6/12) * (12/12) / (18/12) = 8.
+        limit = 8 * 2 / 3
+        for name, head in (('below-clip', limit - .01), ('at-clip', limit),
+                           ('above-clip', limit + .01)):
+            b['openings'].append({'id': name, 'section': roof['id'], 'kind': 'window',
+                                  'gable': 'front' if end.endswith('0') else 'rear',
+                                  coordinate: 16, 'width': 2, 'sill': 1, 'head': head})
+        plan, notes = tp.normalize(raw)
+        ids = {o['id'] for o in plan['buildings'][0]['openings']}
+        check('below-clip' in ids and 'at-clip' in ids and 'above-clip' not in ids, (ids, notes))
+        side = 'front' if end.endswith('0') else 'rear'
+        check(notes.count(f'Dropped opening on {side}: head is above the clipped gable height.') == 1, notes)
+
+
+def scenario_invalid_ends_use_plain_side_words():
+    for end, words in (('x0', 'left end'), ('x1', 'right end'),
+                       ('y0', 'front end'), ('y1', 'back end')):
+        raw = _set_ends(_draft(), 'left_wing', {end: 'dome'})
+        _, notes = tp.normalize(raw)
+        note = next(n for n in notes if 'invalid end' in n)
+        check(words in note and end not in note, note)
+
+
 if __name__ == '__main__':
     failed = []
     for fn in (scenario_the_fixture_normalizes_clean,
@@ -361,7 +391,9 @@ if __name__ == '__main__':
                scenario_test_ridge_x_gable_opening_outside_dropped,
                scenario_test_ridge_y_gable_opening_unchanged,
                scenario_test_roof_ends_survive_normalize,
-               scenario_test_roof_invalid_end_dropped_with_note):
+               scenario_test_roof_invalid_end_dropped_with_note,
+               scenario_clipped_end_window_stays_below_the_clip,
+               scenario_invalid_ends_use_plain_side_words):
         try:
             fn()
         except Exception as e:

@@ -163,6 +163,11 @@ def _set(kind, piece, building, field, value):
                 or any(end not in allowed or style not in ('gable', 'hip', 'clip')
                        for end, style in value.items())):
             raise ValueError('Roof ends must be gable, hip or clipped gable on the ridge ends.')
+        for opening in building['openings']:
+            if opening.get('section') == piece['id'] and 'gable' in opening:
+                end = f"{piece['ridge']}{0 if opening['gable'] == 'front' else 1}"
+                if value.get(end, piece['kind']) == 'hip':
+                    raise ValueError('A window sits in that gable; move or delete it first.')
     elif field in ('kind', 'ridge', 'low_side'):
         choices = (_OPENING_KINDS if kind == 'opening' else
                    ('hip', 'gable', 'shed', 'flat') if field == 'kind' else
@@ -197,6 +202,8 @@ def _set(kind, piece, building, field, value):
             piece['pitch_source'] = 'person'
         # A kind switch needs usable directions without an intermediate bad roof.
         if field == 'kind':
+            if value in ('shed', 'flat'):
+                piece.pop('ends', None)
             if value in ('hip', 'gable'):
                 piece.setdefault('ridge', 'y')
             elif value == 'shed':

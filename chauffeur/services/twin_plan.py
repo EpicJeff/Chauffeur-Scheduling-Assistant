@@ -233,7 +233,9 @@ def _roof(building, notes):
                                    if end in allowed and style in ('gable', 'hip', 'clip')}
                 for end, style in ends.items():
                     if end not in section['ends']:
-                        notes.append(f'Roof section {name}: dropped invalid end {end}.')
+                        words = {'x0': 'the left end', 'x1': 'the right end',
+                                 'y0': 'the front end', 'y1': 'the back end'}.get(end, 'an unknown end')
+                        notes.append(f'Roof section {name}: dropped invalid end style on {words}.')
             else:
                 notes.append(f'Roof section {name}: dropped invalid ends.')
         if 'pitches' in section:
@@ -324,6 +326,13 @@ def _opening_error(opening, walls, sections):
                 or lo >= hi or centre - width / 2 < lo - 1e-6
                 or centre + width / 2 > hi + 1e-6):
             return 'outside the roof gable span'
+        if section.get('ends', {}).get(end) == 'clip':
+            across = ('y0', 'y1') if axis else ('x0', 'x1')
+            pitches = section.get('pitches') or {}
+            a, b = (pitches.get(side, section['pitch']) / 12 for side in across)
+            rise = (hi - lo) * a * b / (a + b)
+            if head > rise * 2 / 3 + 1e-6:
+                return 'head is above the clipped gable height'
     return None
 
 
