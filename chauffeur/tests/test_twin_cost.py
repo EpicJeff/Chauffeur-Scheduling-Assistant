@@ -338,6 +338,26 @@ def test_estimate_draft():
         storage.patch_settings({'model_pool_pro': saved})
 
 
+def test_estimate_photo_reads():
+    # Roofs from photos task 4 (spec section 8: about $0.02 per photo for the
+    # photo map, about $0.08 per building for the observation): both reads carry
+    # their own image token count. The estimate is the worst case, the full output
+    # limit at the output rate, so the caps are worst-case caps at Opus 5.5 rates.
+    saved = storage.get_settings().get('model_pool_pro')
+    try:
+        storage.patch_settings({'model_pool_pro': 'anthropic:claude-opus-5-5'})
+        check(tc.PRICES['anthropic:claude-opus-5-5'] == (4.0, 20.0), 'Opus 5.5 rates')
+        for kind in ('photo_map', 'roof_observe'):
+            check(kind in tc.IMAGE_TOKENS and tc.IMAGE_TOKENS[kind] > 0, (kind, tc.IMAGE_TOKENS))
+        observe, photo_map = tc.estimate('roof_observe', 4), tc.estimate('photo_map', 1)
+        check(0 < observe <= 0.40, ('the observation read with four photos is at most $0.40', observe))
+        check(0 < photo_map <= 0.10, ('one photo map read is at most $0.10', photo_map))
+        check(tc.estimate('roof_observe', 8) > tc.estimate('roof_observe', 1),
+              'the observation estimate grows with the photos')
+    finally:
+        storage.patch_settings({'model_pool_pro': saved})
+
+
 if __name__ == '__main__':
     for fn in (scenario_refused_requests_are_not_charged_and_estimates_use_the_models_own_rate,
                scenario_constants,
@@ -354,6 +374,7 @@ if __name__ == '__main__':
                scenario_partial_metrics_are_estimated_not_zero,
                scenario_the_hard_stop_cannot_be_acknowledged,
                scenario_cost_routes,
-               test_estimate_draft):
+               test_estimate_draft,
+               test_estimate_photo_reads):
         fn()
         print('  ok ', fn.__name__)

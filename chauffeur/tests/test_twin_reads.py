@@ -79,11 +79,12 @@ DRAFT_KINDS = ('draft', 'draft_level', 'draft_rooms')
 
 def scenario_kinds_and_output_caps_are_pinned():
     # Whole-building draft task 5: the three draft kinds join the step kinds.
-    check(twin_reads.KINDS == STEP_KINDS + DRAFT_KINDS + ('roof_check',), twin_reads.KINDS)
+    check(twin_reads.KINDS == STEP_KINDS + DRAFT_KINDS + ('roof_check', 'photo_map', 'roof_observe'), twin_reads.KINDS)
     check(twin_reads.MAX_OUTPUT == {'sheet_roles': 2048, 'outline': 4096, 'walls': 16384, 'openings': 16384,
                                     'rooms': 16384, 'registration': 4096, 'roof': 8192, 'pitch': 2048,
                                     'plot': 8192, 'site': 8192, 'finishes': 8192, 'photo_parts': 2048,
-                                    'draft': 64000, 'draft_level': 32000, 'draft_rooms': 32000, 'roof_check': 16000},
+                                    'draft': 64000, 'draft_level': 32000, 'draft_rooms': 32000, 'roof_check': 16000,
+                                    'photo_map': 4000, 'roof_observe': 16000},
           twin_reads.MAX_OUTPUT)
 
 
@@ -422,9 +423,11 @@ def test_draft_call_settings():
         check(len(pool.calls) == 1 and c['thinking_level'] == 'medium' and c['max_output_tokens'] == 32000
               and c['timeout_s'] == 300 and c['strict_json'] == 'lenient' and c['max_models'] == 1,
               (kind, {k: c.get(k) for k in ('thinking_level', 'max_output_tokens', 'timeout_s', 'strict_json')}))
-    check(twin_reads.THINKING == {'draft': 'medium', 'draft_level': 'medium', 'draft_rooms': 'medium', 'roof_check': 'medium'},
+    check(twin_reads.THINKING == {'draft': 'medium', 'draft_level': 'medium', 'draft_rooms': 'medium', 'roof_check': 'medium',
+                                'photo_map': 'low', 'roof_observe': 'medium'},
           twin_reads.THINKING)
-    check(twin_reads.TIMEOUT == {'draft': 420, 'draft_level': 300, 'draft_rooms': 300, 'roof_check': 240}, twin_reads.TIMEOUT)
+    check(twin_reads.TIMEOUT == {'draft': 420, 'draft_level': 300, 'draft_rooms': 300, 'roof_check': 240,
+                               'photo_map': 120, 'roof_observe': 240}, twin_reads.TIMEOUT)
     with Pool(answer=fixture('outline')) as pool:
         twin_reads.read('outline', [img()], {'level': 'Main floor'}, run='r1', step='outline:L1')
     c = pool.calls[0]
@@ -819,6 +822,193 @@ def test_draft_parse_retry_checks_checkpoint_even_when_first_check_was_shared():
         tc.require_clear = original
 
 
+# ---- Roofs from photos task 4: the photo map and the roof observation reads ----
+# Spec docs/superpowers/specs/2026-11-08-house-editor-roofs-from-photos-design.md
+# sections 2, 3 and 5; brief task 4. photo_map gets the block diagram then one
+# photo; roof_observe gets the block diagram then the photos in order. Both are
+# lenient-JSON, one-model reads that retry a parse failure once.
+
+PHOTO_BLOCKS = [{'id': 'A', 'rect': [0, 0, 30, 40], 'storey': 1},
+                {'id': 'B', 'rect': [30, 0, 60, 40], 'storey': 2},
+                {'id': 'C', 'rect': [60, 0, 80, 40], 'storey': 1}]
+PHOTO_MAP_ANSWER = {'from_side': 'front-left',
+                    'blocks': [{'id': 'A', 'sides': ['front', 'left']},
+                               {'id': 'B', 'sides': ['front']}]}
+ROOF_OBSERVE_ANSWER = {'blocks': {
+    'A': {'sides': {'front': {'kind': 'slope', 'photo': 0},
+                    'rear': {'kind': 'hidden'},
+                    'left': {'kind': 'gable_end', 'photo': 1},
+                    'right': {'kind': 'clipped_gable_end', 'photo': 1}},
+          'pitch': 8, 'slope_vs_neighbours': 'same'},
+    'B': {'sides': {'front': {'kind': 'dormer', 'centre': 0.5, 'width': 0.3, 'photo': 0},
+                    'left': {'kind': 'slope', 'photo': 1}},
+          'pitch': 6, 'slope_vs_neighbours': 'lower'},
+    'C': {'sides': {'front': {'kind': 'slope', 'photo': 0}, 'right': {'kind': 'gable_end', 'photo': 2}},
+          'slope_vs_neighbours': 'steeper'}}}
+
+
+def _photo_map_context():
+    return {'blocks': copy.deepcopy(PHOTO_BLOCKS), 'building': 'Main house'}
+
+
+def _roof_observe_context():
+    return {'blocks': copy.deepcopy(PHOTO_BLOCKS),
+            'photo_map': {0: {'from_side': 'front', 'blocks': [{'id': 'A', 'sides': ['front']}]},
+                          1: {'from_side': 'left', 'blocks': [{'id': 'A', 'sides': ['left']}]},
+                          2: {'from_side': 'right', 'blocks': [{'id': 'C', 'sides': ['right']}]}},
+            'building': 'Main house'}
+
+
+def test_photo_reads_call_settings():
+    for kind in ('photo_map', 'roof_observe'):
+        check(kind in twin_reads.KINDS, ('a twin read kind', kind, twin_reads.KINDS))
+        check(kind in twin_reads.PROMPTS, ('the read has a prompt', kind))
+    check(twin_reads.MAX_OUTPUT.get('photo_map') == 4000, twin_reads.MAX_OUTPUT.get('photo_map'))
+    check(twin_reads.MAX_OUTPUT.get('roof_observe') == 16000, twin_reads.MAX_OUTPUT.get('roof_observe'))
+    for kind, images, effort, limit, answer, context in (
+            ('photo_map', [img(), img()], 'low', 4000, PHOTO_MAP_ANSWER, _photo_map_context()),
+            ('roof_observe', [img(), img(), img(), img()], 'medium', 16000, ROOF_OBSERVE_ANSWER,
+             _roof_observe_context())):
+        _fresh()
+        with Pool(answer=copy.deepcopy(answer)) as pool:
+            out = twin_reads.read(kind, images, context, run='r4', step=kind)
+        check(len(pool.calls) == 1, (kind, 'one request', len(pool.calls)))
+        c = pool.calls[0]
+        check(c['tier'] == 'twin' and c['system'] == twin_reads.PROMPTS[kind], (kind, c['tier'], c['system'][:80]))
+        check(c['thinking_level'] == effort and c['max_output_tokens'] == limit
+              and c['strict_json'] == 'lenient' and c['max_models'] == 1,
+              (kind, {k: c.get(k) for k in ('thinking_level', 'max_output_tokens', 'strict_json', 'max_models')}))
+        check(len(c['images']) == len(images), (kind, 'every image goes in the one request'))
+        check(json.loads(c['user'])['context'] == json.loads(json.dumps(context)),
+              (kind, 'the context goes to the model as given'))
+        check('error' not in out and not out.get('problems'), (kind, 'a clean answer is a good answer', out))
+        check(len(tc.entries()) == 1 and tc.entries()[-1]['stage'] == f'step:{kind}', (kind, 'metered once'))
+
+
+def test_photo_reads_retry_a_parse_failure_once():
+    for kind, valid, context in (('photo_map', PHOTO_MAP_ANSWER, _photo_map_context()),
+                                 ('roof_observe', ROOF_OBSERVE_ANSWER, _roof_observe_context())):
+        for error in (MALFORMED_DRAFT, {'error': 'Two JSON objects in one reply'}):
+            _fresh()
+            with SeqPool([error, copy.deepcopy(valid)]) as pool:
+                out = twin_reads.read(kind, [img(), img()], context, run='r4', step=kind)
+            check('error' not in out, (kind, out))
+            check(len(pool.calls) == 2, (kind, 'a parse failure is retried once', len(pool.calls)))
+            check([c['max_output_tokens'] for c in pool.calls] == [twin_reads.MAX_OUTPUT[kind]] * 2,
+                  (kind, 'the retry keeps the output size', [c['max_output_tokens'] for c in pool.calls]))
+            check(len(tc.entries()) == 2 and all(e['stage'] == f'step:{kind}' for e in tc.entries()),
+                  (kind, 'both attempts are charged', tc.entries()))
+        for error in (DRAFT_TRUNCATED, {'error': 'Claude refused the request'}):
+            _fresh()
+            with SeqPool([error, copy.deepcopy(valid)]) as pool:
+                out = twin_reads.read(kind, [img()], context, run='r4', step=kind)
+            check('error' in out and len(pool.calls) == 1, (kind, 'no retry for anything but a parse failure',
+                                                            out, len(pool.calls)))
+
+
+def test_parse_photo_map_shapes():
+    frag, problems = twin_reads.parse('photo_map', copy.deepcopy(PHOTO_MAP_ANSWER), _photo_map_context())
+    check(problems == [], problems)
+    check(frag == PHOTO_MAP_ANSWER, ('a clean answer passes through unchanged', frag))
+    check([b['id'] for b in frag['blocks']] == ['A', 'B'], 'blocks keep their left-to-right order')
+    for side in ('front', 'rear', 'left', 'right', 'front-left', 'front-right', 'rear-left', 'rear-right'):
+        frag, problems = twin_reads.parse('photo_map', {'from_side': side, 'blocks': [{'id': 'C', 'sides': ['rear']}]},
+                                          _photo_map_context())
+        check(problems == [] and frag.get('from_side') == side, (side, frag, problems))
+    frag, problems = twin_reads.parse('photo_map', {'from_side': 'none', 'blocks': []}, _photo_map_context())
+    check(problems == [] and frag == {'from_side': 'none', 'blocks': []},
+          ('a photo that shows no block is a valid answer', frag, problems))
+
+    bad = {'from_side': 'front',
+           'blocks': [{'id': 'A', 'sides': ['front', 'top']},       # a side outside the enum
+                      {'id': 'Z', 'sides': ['front']},              # a block the read was not given
+                      {'sides': ['left']},                          # no id
+                      {'id': 'B', 'sides': ['front']}]}
+    frag, problems = twin_reads.parse('photo_map', copy.deepcopy(bad), _photo_map_context())
+    kept = frag.get('blocks')
+    check(isinstance(kept, list), ('the blocks list stays a list', frag))
+    check([b['id'] for b in kept if b.get('id') in ('A', 'B')] == ['A', 'B'] and all(b.get('id') in ('A', 'B') for b in kept),
+          ('good blocks are kept in order, an unknown or unnamed block is dropped', kept))
+    check(not any('top' in b.get('sides', []) for b in kept), ('a side outside the enum is never kept', kept))
+    check(any('Z' in p for p in problems), ('the unknown block id is named as a problem', problems))
+    check(any('top' in p for p in problems), ('the bad side is named as a problem', problems))
+    frag, problems = twin_reads.parse('photo_map', {'from_side': 'above', 'blocks': []}, _photo_map_context())
+    check(frag.get('from_side') != 'above' and any('from_side' in p for p in problems),
+          ('a from_side outside the enum is dropped and named', frag, problems))
+
+
+def test_parse_roof_observe_shapes():
+    frag, problems = twin_reads.parse('roof_observe', copy.deepcopy(ROOF_OBSERVE_ANSWER), _roof_observe_context())
+    check(problems == [], problems)
+    check(frag.get('blocks') == ROOF_OBSERVE_ANSWER['blocks'], ('a clean answer passes through unchanged', frag))
+
+    bad = {'blocks': {
+        'A': {'sides': {'front': {'kind': 'slope', 'photo': 0},
+                        'left': {'kind': 'hip', 'photo': 1},             # a roof kind, not what is seen
+                        'right': {'kind': 'gable_end', 'photo': 1},
+                        'top': {'kind': 'slope', 'photo': 0}},           # a side outside the enum
+              'pitch': 8, 'slope_vs_neighbours': 'same'},
+        'Z': {'sides': {'front': {'kind': 'slope', 'photo': 0}}},       # a block the read was not given
+        'B': {'sides': {'front': {'kind': 'dormer', 'centre': 0.5, 'width': 0.3, 'photo': 0}},
+              'slope_vs_neighbours': 'sideways'}}}                       # outside lower/same/steeper
+    frag, problems = twin_reads.parse('roof_observe', copy.deepcopy(bad), _roof_observe_context())
+    blocks = frag.get('blocks')
+    check(isinstance(blocks, dict), ('the blocks map stays a map', frag))
+    check('Z' not in blocks and any('Z' in p for p in problems),
+          ('an unknown block id is dropped with a problem', sorted(blocks), problems))
+    sides = blocks.get('A', {}).get('sides', {})
+    check('left' not in sides and any('hip' in p or 'left' in p for p in problems),
+          ('a side kind outside the enum is dropped and named', sides, problems))
+    check('top' not in sides, ('a side outside front/rear/left/right is never kept', sides))
+    check(sides.get('front') == {'kind': 'slope', 'photo': 0} and sides.get('right') == {'kind': 'gable_end', 'photo': 1},
+          ('the good sides of the same block are kept', sides))
+    check(blocks.get('A', {}).get('pitch') == 8, ('the block pitch is kept', blocks.get('A')))
+    check(blocks.get('B', {}).get('sides', {}).get('front') == ROOF_OBSERVE_ANSWER['blocks']['B']['sides']['front'],
+          ('a dormer keeps its centre and width', blocks.get('B')))
+    check(blocks.get('B', {}).get('slope_vs_neighbours') != 'sideways',
+          ('a slope comparison outside lower/same/steeper is never kept', blocks.get('B')))
+
+
+def test_roof_observe_unknown_block_dropped_through_read():
+    _fresh()
+    answer = copy.deepcopy(ROOF_OBSERVE_ANSWER)
+    answer['blocks']['Q'] = {'sides': {'front': {'kind': 'slope', 'photo': 0}}}
+    with Pool(answer=answer) as pool:
+        out = twin_reads.read('roof_observe', [img(), img()], _roof_observe_context(), run='r4', step='roof_observe')
+    check('error' not in out, out)
+    check(out.get('blocks') == ROOF_OBSERVE_ANSWER['blocks'], ('the unknown block is dropped, the rest kept', out))
+    check(any('Q' in p for p in out.get('problems') or []), ('the dropped id is named', out.get('problems')))
+    _fresh()
+    answer = copy.deepcopy(PHOTO_MAP_ANSWER)
+    answer['blocks'].append({'id': 'Q', 'sides': ['front']})
+    with Pool(answer=answer) as pool:
+        out = twin_reads.read('photo_map', [img(), img()], _photo_map_context(), run='r4', step='photo_map')
+    check('error' not in out and out.get('blocks') == PHOTO_MAP_ANSWER['blocks'], out)
+    check(any('Q' in p for p in out.get('problems') or []), ('the dropped id is named', out.get('problems')))
+
+
+def test_photo_read_prompts_are_generic_and_ask_only_what_is_seen():
+    import re
+    observe = ' '.join(twin_reads.PROMPTS['roof_observe'].split()).lower()
+    for words in ('triangular wall', 'clipped', 'slopes down to the eave', 'hidden',
+                  'gable_end', 'clipped_gable_end', 'dormer', 'slope', 'pitch', 'slope_vs_neighbours'):
+        check(words in observe, ('the roof observation prompt says', words))
+    photo_map = ' '.join(twin_reads.PROMPTS['photo_map'].split()).lower()
+    for words in ('from_side', 'sides', 'front', 'rear', 'left', 'right', 'none'):
+        check(words in photo_map, ('the photo map prompt says', words))
+    for kind, prompt in (('roof_observe', observe), ('photo_map', photo_map)):
+        for words in ('upton', 'pool house', 'lot 58'):
+            check(words not in prompt, (kind, 'the prompt carries no household text', words))
+        check(not re.search(r'\bhip', prompt), (kind, 'the prompt never asks for a hip', prompt[:200]))
+        check('gable roof' not in prompt, (kind, 'the prompt never asks for a gable roof'))
+
+
+def test_draft_prompt_reads_the_roof_plan_by_the_conventions():
+    prompt = ' '.join(twin_reads.PROMPTS['draft'].split()).lower()
+    for words in ('eave corners', 'clipped'):
+        check(words in prompt, ('the draft prompt reads roof plans by the conventions', words))
+
+
 if __name__ == '__main__':
     failed = []
     for fn in (scenario_kinds_and_output_caps_are_pinned,
@@ -863,7 +1053,14 @@ if __name__ == '__main__':
                test_draft_parse_failure_retries_once_and_meters_both_attempts,
                test_draft_two_parse_failures_stop_after_two_attempts,
                test_draft_truncation_and_other_errors_still_stop_after_one_attempt,
-               test_draft_parse_retry_checks_checkpoint_even_when_first_check_was_shared):
+               test_draft_parse_retry_checks_checkpoint_even_when_first_check_was_shared,
+               test_photo_reads_call_settings,
+               test_photo_reads_retry_a_parse_failure_once,
+               test_parse_photo_map_shapes,
+               test_parse_roof_observe_shapes,
+               test_roof_observe_unknown_block_dropped_through_read,
+               test_photo_read_prompts_are_generic_and_ask_only_what_is_seen,
+               test_draft_prompt_reads_the_roof_plan_by_the_conventions):
         try:
             fn()
         except Exception as exc:

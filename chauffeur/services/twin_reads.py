@@ -8,14 +8,17 @@ from services.twin_draft import FINISHES_PROMPT
 
 KINDS = ('sheet_roles', 'outline', 'walls', 'openings', 'rooms', 'registration',
          'roof', 'pitch', 'plot', 'site', 'finishes', 'photo_parts',
-         'draft', 'draft_level', 'draft_rooms', 'roof_check')
+         'draft', 'draft_level', 'draft_rooms', 'roof_check', 'photo_map', 'roof_observe')
 MAX_OUTPUT = {'sheet_roles': 2048, 'outline': 4096, 'walls': 16384,
               'openings': 16384, 'rooms': 16384, 'registration': 4096,
               'roof': 8192, 'pitch': 2048, 'plot': 8192, 'site': 8192,
               'finishes': 8192, 'photo_parts': 2048,
-              'draft': 64000, 'draft_level': 32000, 'draft_rooms': 32000, 'roof_check': 16000}
-THINKING = {'draft': 'medium', 'draft_level': 'medium', 'draft_rooms': 'medium', 'roof_check': 'medium'}
-TIMEOUT = {'draft': 420, 'draft_level': 300, 'draft_rooms': 300, 'roof_check': 240}
+              'draft': 64000, 'draft_level': 32000, 'draft_rooms': 32000, 'roof_check': 16000,
+              'photo_map': 4000, 'roof_observe': 16000}
+THINKING = {'draft': 'medium', 'draft_level': 'medium', 'draft_rooms': 'medium', 'roof_check': 'medium',
+            'photo_map': 'low', 'roof_observe': 'medium'}
+TIMEOUT = {'draft': 420, 'draft_level': 300, 'draft_rooms': 300, 'roof_check': 240,
+           'photo_map': 120, 'roof_observe': 240}
 OUTPUT_CAP = {'anthropic': 64000, 'openai': 64000, 'gemini': 65536}
 
 # Reuse P0's reading/JSON rules, but its world-coordinate rules do not apply.
@@ -128,6 +131,44 @@ These are suggestions for a person to accept, never changes to their place. Retu
 "storeys":1,"roof":"gable","pitch":6,"confidence":0.5,"why":""}]}.
 '''
 
+PROMPTS['photo_map'] = '''Match one photo to the building's blocks. The first
+image is a top-view block diagram with block ids and the street/front marked;
+the second is the photo. Context supplies blocks with id, rect and storey,
+and the building. Use only those block ids. Report which side the camera is
+on as from_side: front, rear, left, right, front-left, front-right, rear-left
+or rear-right. Name visible blocks in left-to-right PHOTO order, and each
+block's visible sides from front, rear, left and right, relative to the diagram.
+Match visible walls, openings, storeys and projections; never guess an unseen
+block. If this photo shows none of the building's blocks, return
+{"from_side":"none","blocks":[]}. Otherwise return
+{"from_side":"front-left","blocks":[{"id":"block-id","sides":["front","left"]}]}.
+Describe only what is seen. Return only JSON, within 4000 tokens.
+'''
+PROMPTS['roof_observe'] = '''Observe the visible roof features of each block,
+without choosing a roof form. The first image is the top-view block diagram
+with the street/front marked; all remaining images are photos in order.
+Context supplies blocks, the building and photo_map keyed by zero-based photo
+index (the diagram is not a photo). Use the map to identify blocks and sides;
+never attribute a feature to a neighbouring block. Use only context block ids.
+For each block, report each side (front, rear, left, right) as exactly one of:
+- gable_end: a triangular wall;
+- clipped_gable_end: a triangular wall with its top cut by a small sloped roof;
+- dormer: a front-facing triangle on a sloped side, with rough centre and width;
+- slope: the roof slopes down to the eave on that side;
+- hidden: that side cannot be seen in the photos.
+Judge every side from visible evidence, never assume an unseen end matches
+another. Include photo, the zero-based index of the photo used for each seen
+side. Dormer centre is a building coordinate along that side (x for front/rear,
+y for left/right), and width is feet along it, using the diagram's block rect.
+Give a rough pitch per block as numeric rise per 12 when visible. Also give
+slope_vs_neighbours as lower, same or steeper when the comparison is visible.
+Return {"blocks":{"block-id":{"sides":{"front":{"kind":"slope","photo":0},
+"rear":{"kind":"hidden"},"left":{"kind":"dormer","centre":10,"width":5,"photo":1},
+"right":{"kind":"gable_end","photo":1}},"pitch":6,"slope_vs_neighbours":"same"}}}.
+Numbers and ids in the example explain the schema, never this building.
+Return only JSON. Fit reasoning and reply within 16000 tokens.
+'''
+
 # These rules use the successful whole-set spike's dimensioned frame, never
 # _CROP_RULES. Keep the same geometry rules in the per-level fallback.
 _DRAFT_RULES = '''
@@ -207,11 +248,26 @@ ROOF
   and lean-to. Sections may overlap; their HIGHEST surface wins. Run lower
   wings into the taller roof's footprint toward its ridge/wall so valleys form.
   A cross gable on a hip is its own section, spanning its width into the hip.
-- Read roof plans: solid outer lines are eaves; dashed lines are bearing walls
-  and give rects; heavy/double lines are ridges; diagonals from outside corners
-  to ridge ends are hips; diagonals from inside corners are valleys. A ridge
-  ending at an eave in a gable bracket/triangle is a gable end; a ridge whose
-  ends split into two hips is a hip. Read ridge axis from the ridge line itself.
+- Read roof plans by the conventions reference section 1.6 (rules R1-R12):
+  the outermost closed solid line is the roof edge, not a wall; dashed lines
+  inside it are walls below and give bearing rects. Hips run from both eave
+  corners of an end to the ridge end; valleys run from inside corners. If the
+  ridge reaches the end edge without diagonals meeting it, that end is a gable.
+  A small centred triangle narrower than the end, with its apex on the ridge
+  set back from the end and base on the end edge, is a clipped-gable mark:
+  a gable wall topped by a small hip, to confirm against elevations. Diagonals
+  from the corners ending on a short line across the ridge mark a gablet above
+  a hip. Read ridge direction from the ridge line itself, never the block shape.
+  Equal pitches imply 45-degree hips/valleys; flag other angles when pitches
+  are unknown rather than forcing them. Slope arrows point downhill unless
+  labelled UP. A triangle with 12 on one leg is a pitch annotation, never roof
+  geometry; a small triangle/diamond behind a chimney or wall is a cricket.
+  Report shingle pitches under 2:12 or any roof under 1/4:12 as drawing errors.
+  Overhang dimensions are horizontal: record their starting line, assuming
+  framing with low confidence only when unstated.
+- These roof sections are evidence only: ridge direction, pitch, clipped-gable
+  marks and dormer positions. The plan supplies ridge direction, pitch and
+  dormer position; photos decide the observed roof form and any clipped end.
 - Give each section its own plate: a one-storey wing on its own plate, a taller
   block on the upper elevation plus upper plate height. Use pitches:{x0,x1,y0,y1}
   when slopes differ. If no pitch is drawn, estimate against photos, set
@@ -663,6 +719,76 @@ def _parse_draft(kind, answer, v, context=None):
     return out
 
 
+def _parse_photo_read(kind, answer, v, context):
+    """Keep observed sides only; roof-form derivation belongs to the caller."""
+    sides = ('front', 'rear', 'left', 'right')
+    known = ({b.get('id') for b in context.get('blocks', [])
+              if isinstance(b, dict) and isinstance(b.get('id'), str)}
+             if context is not None else None)
+
+    def block_id(value, path):
+        value = v.text(value, path)
+        if value is None:
+            return None
+        if not value or (known is not None and value not in known):
+            v.bad(path, f'unknown block id {value!r}')
+            return None
+        return value
+
+    if kind == 'photo_map':
+        def block(value, path):
+            return v.fields(value, path, {
+                'id': block_id,
+                'sides': lambda x, p: v.items(x, p, lambda s, q: v.choice(s, q, sides))})
+
+        # Validate independently so one bad field does not discard good blocks.
+        return v.fields(answer, kind, {}, {
+            'from_side': lambda x, p: v.choice(x, p, sides + (
+                'front-left', 'front-right', 'rear-left', 'rear-right', 'none')),
+            'blocks': lambda x, p: v.items(x, p, block)}) or {}
+
+    def photo_index(value, path):
+        if type(value) is not int or value < 0:
+            v.bad(path, 'expected a nonnegative photo integer index')
+            return None
+        return value
+
+    def observation(value, path):
+        return v.fields(value, path, {
+            'kind': lambda x, p: v.choice(x, p, (
+                'gable_end', 'clipped_gable_end', 'dormer', 'slope', 'hidden'))}, {
+            'centre': v.numeric,
+            'width': lambda x, p: v.numeric(x, p, positive=True),
+            'photo': photo_index})
+
+    def side_map(value, path):
+        if v.object(value, path) is None:
+            return None
+        out = {}
+        for side, item in value.items():
+            if v.choice(side, path + '.' + str(side), sides) is None:
+                continue
+            checked = observation(item, path + '.' + side)
+            if checked is not None:
+                out[side] = checked
+        return out
+
+    blocks = v.object(answer.get('blocks'), kind + '.blocks')
+    if blocks is None:
+        return {}
+    out = {}
+    for bid, item in blocks.items():
+        path = kind + '.blocks.' + str(bid)
+        if block_id(bid, path) is None:
+            continue
+        checked = v.fields(item, path, {'sides': side_map}, {
+            'pitch': lambda x, p: v.numeric(x, p, maximum=24),
+            'slope_vs_neighbours': lambda x, p: v.choice(x, p, ('lower', 'same', 'steeper'))})
+        if checked is not None:
+            out[bid] = checked
+    return {'blocks': out}
+
+
 def parse(kind, answer, context=None):
     """Validate a JSON value without I/O or input mutation; drop invalid pieces.
 
@@ -674,6 +800,9 @@ def parse(kind, answer, context=None):
         return {}, ['kind: unknown read kind']
     if v.object(answer, kind) is None:
         return {}, v.problems
+    if kind in ('photo_map', 'roof_observe'):
+        fragment = _parse_photo_read(kind, answer, v, context)
+        return fragment, v.problems
     if kind in THINKING:
         fragment = _parse_draft(kind, answer, v, context)
         if kind == 'roof_check' and context is not None:
@@ -846,6 +975,9 @@ def parse(kind, answer, context=None):
 
 
 def _usable(kind, fragment, problems):
+    if kind == 'photo_map':
+        return ('from_side' in fragment and 'blocks' in fragment
+                and (bool(fragment['blocks']) or not problems))
     if kind == 'roof_check':
         return (all(key in fragment for key in ('changes', 'add', 'remove'))
                 and (not problems or any(fragment[key] for key in ('changes', 'add', 'remove'))))
@@ -864,13 +996,13 @@ def _usable(kind, fragment, problems):
     # Explicit empty collections can faithfully describe an absent feature.
     keys = {'sheet_roles': ('pages',), 'walls': ('walls',), 'openings': ('openings',),
             'rooms': ('rooms',), 'pitch': ('pitches',), 'finishes': ('materials',),
-            'photo_parts': ('photos', 'shells'),
+            'photo_parts': ('photos', 'shells'), 'roof_observe': ('blocks',),
             'site': ('pool', 'hardscape', 'fire_pit', 'retaining_walls')}[kind]
     return any(key in fragment and (fragment[key] or not problems) for key in keys)
 
 
 def read(kind, images, context, *, run, step, checkpoint_checked=False):
-    """Meter every request; draft reads retry parse failures once at the same size.
+    """Meter every request; draft/photo reads retry parse failures once at the same size.
 
     Only legacy crop reads retry a truncated reply, at twice the output limit.
     A paired draft's caller may check the checkpoint once for both reads.
