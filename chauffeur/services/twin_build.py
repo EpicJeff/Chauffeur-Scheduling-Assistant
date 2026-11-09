@@ -178,6 +178,7 @@ def status(build_id, since=0):
     with twin_store.LIFECYCLE, _LOCK:
         build = _get(build_id)
         return deepcopy({'part': build['inputs'].get('part'), 'next': build.get('next'),
+                         'roof_flags': [flag for step in build['steps'] for flag in step.get('roof_flags', [])],
                          **{key: ([e for e in build[key] if e['seq'] > since]
                                if key == 'events' else build[key])
                          for key in ('id', 'state', 'steps', 'events', 'seq', 'pause', 'cost')}})
@@ -1071,6 +1072,9 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None):
     if step['kind'] != 'draft':
         return
     roof = draft.get('roof', {})
+    for key in ('choices', 'flags'):
+        if key in roof:
+            house['roof'][key] = deepcopy(roof[key])
     sections = pieces('', 'roof', roof.get('sections', []))
     old_sections = [s['id'] for s in roof.get('sections', [])]
     # A person's gable window protects its old carrier in _merge_list. Move
@@ -1801,9 +1805,13 @@ def _read_roof_blocks(build, step, reader, ticket, result):
             # Cross gables already drawn on this roof carry their plan position.
             for section in sections:
                 if (source and section is not source and section.get('kind') == 'gable'
+                        and not porch_roof(section)
                         and section.get('ridge') != source.get('ridge')
                         and abs(section['plate'] - source['plate']) < .5
-                        and _roof_overlap(block['rect'], section['rect']) > 0
+                        # A cross gable sits on this block. A neighbouring wing
+                        # touching its edge is not evidence of a dormer.
+                        and _roof_overlap(block['rect'], section['rect']) >=
+                            _roof_overlap(section['rect'], section['rect']) / 2
                         and _roof_overlap(block['rect'], section['rect']) < _roof_overlap(block['rect'], source['rect']) / 2):
                     r, b = section['rect'], block['rect']
                     axis = 0 if source.get('ridge') == 'x' else 1
@@ -1821,10 +1829,14 @@ def _read_roof_blocks(build, step, reader, ticket, result):
                 continue
             if not block_rect and not section.get('read_geometry'):
                 continue  # Only a legacy read section can migrate to a choice.
+            rect = block_rect or section.get('read_geometry', {}).get('rect') or section['rect']
+            block = next((b for b in blocks if max(abs(a - v) for a, v in zip(rect, b['rect'])) <= 1), None)
+            if block is None or any(max(abs(a - v) for a, v in zip(c['rect'], block['rect'])) <= 1
+                                    for c in choices):
+                continue
             choices.append({**{k: deepcopy(section[k]) for k in
-                              ('kind', 'ridge', 'ends', 'pitch', 'plate', 'overhang') if k in section},
-                            'rect': deepcopy(section.get('block') or
-                                             section.get('read_geometry', {}).get('rect') or section['rect'])})
+                              ('kind', 'ridge', 'ends', 'pitch', 'plate', 'overhang', 'low_side') if k in section},
+                            'rect': deepcopy(block['rect']), 'src': {'person': True}})
         derived, flags = twin_roof_derive.derive_roof(blocks, observations, evidence, choices)
 
         protected_sources = [s for s in sections if any(
@@ -1840,6 +1852,12 @@ def _read_roof_blocks(build, step, reader, ticket, result):
             source.update(state='ghost', why='This roof section does not meet its bearing walls within 3 ft.')
         kept = [s for s in sections if s.get('src', {}).get('person') or s in protected_sources
                 or s in failed_sources or porch_roof(s)]
+        # Use the person's carrier, including its level and form. Keeping the
+        # raw draft carrier here can create a second roof beside a block roof
+        # whose level was assigned during derivation.
+        kept = [deepcopy(next(p for p in protected if _near_geometry(
+                    {'rect': s['rect']}, p.get('read_geometry') or {'rect': p['rect']}, 'roof')))
+                if s in protected_sources else s for s in kept]
         carriers = derived[:len(blocks)]
         legacy_ids = {s['id']: old['id'] for s in carriers for old in protected_sources
                       if _near_geometry({'rect': s['rect']}, {'rect': old['rect']}, 'roof')}
@@ -1852,6 +1870,8 @@ def _read_roof_blocks(build, step, reader, ticket, result):
         draft['roof'] = roof
         rects = {b['id']: b['rect'] for b in blocks}
         progress['flags'] = [{**f, 'block_rect': deepcopy(rects[f['block']])} for f in flags]
+        roof['choices'] = choices
+        roof['flags'] = deepcopy(progress['flags'])
     except twin_cost.CheckpointReached:
         raise
     except Exception as exc:

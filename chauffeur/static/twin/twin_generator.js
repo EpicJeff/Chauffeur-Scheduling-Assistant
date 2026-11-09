@@ -542,6 +542,19 @@ export function buildTwin(plan, kit, tier) {
       use(section, 'roof', `roof:${index}`);
       for (let t = 0; t < roofLayers.section.length; t++) if (roofLayers.section[t] === index) positions.push(...roofLayers.positions.slice(t * 9, t * 9 + 9));
       if (positions.length) mesh(local.roof, roofGeometry(positions), mat('roof'));
+      const block = section.block || section.rect;
+      if (positions.length && !section.dormer_of
+          && section.rect.every((v, i) => Math.abs(v - block[i]) <= 1)
+          && b.roof?.flags?.some(flag => flag.block_rect?.length === 4
+            && flag.block_rect.every((v, i) => Math.abs(v - block[i]) <= 1))) {
+        // The shared needs-checking outline keeps the settled roof and its
+        // existing pick proxy, so tapping it opens the normal roof card.
+        const geometry = roofGeometry(positions);
+        const marker = new THREE.LineSegments(new THREE.EdgesGeometry(geometry), ghostEdges);
+        geometry.dispose();
+        Object.assign(marker.userData, activePiece);
+        marker.computeLineDistances(); local.roof.add(marker);
+      }
       const underside = [], edges = new Map(), stitching = [], trim = [];
       const below = p => [p[0], p[1], p[2] - ROOF_THICKNESS];
       const edgeKey = (a, c) => [a, c].map(p => p.map(v => Math.round(v * 1e6)).join(',')).sort().join(':');

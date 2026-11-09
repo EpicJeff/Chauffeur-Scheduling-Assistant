@@ -442,6 +442,103 @@ def scenario_hip_end_with_window_names_the_remedy():
         check(piece(ts.current(), 'gable-window') is not None, 'window retained')
 
 
+
+# ---- Roof choices (plan docs/superpowers/plans/2026-11-08-house-editor-roofs-from-photos.md
+# Task 6; spec section 6): a card edit to a derived roof section (src.step
+# 'roof_blocks', block: its block's rect) is stored as the block's choice in
+# building['roof']['choices'] = [{rect, kind?, ridge?, ends?, pitch?, plate?,
+# overhang?, src: {person: True}}], and it clears that block's entry in
+# building['roof']['flags'] = [{block_rect, text}]. A dormer or other added
+# section stays a person section, as today.
+
+DERIVED_BLOCK = [0, 0, 40, 30]
+OTHER_BLOCK = [50, 0, 60, 10]
+DERIVED_FLAG = 'The upper roof: the right side was not visible in the photos; please check it.'
+OTHER_FLAG = 'The shed roof was not visible in the photos; please check its roof form.'
+
+
+def derived_house():
+    """The fixture with its roof as the photos derived it: one side gable over
+    the block, a front dormer on it, and a flag on that block and another."""
+    with open(FIXTURE, encoding='utf-8') as f:
+        raw = json.load(f)
+    src = {'sheet': '', 'page': 0, 'step': 'roof_blocks'}
+    raw['buildings'][0]['roof'] = {
+        'sections': [
+            {'id': 'roof-A', 'kind': 'gable', 'ridge': 'x', 'ends': {'x0': 'gable', 'x1': 'gable'},
+             'rect': list(DERIVED_BLOCK), 'block': list(DERIVED_BLOCK), 'level': 'L2', 'plate': 18, 'pitch': 6,
+             'overhang': 1, 'pitch_source': 'photos', 'state': 'settled', 'src': dict(src)},
+            {'id': 'roof-A-dormer-1', 'kind': 'gable', 'ridge': 'y', 'rect': [17, 0, 23, 15],
+             'block': list(DERIVED_BLOCK), 'level': 'L2', 'plate': 18, 'pitch': 6, 'overhang': 1,
+             'pitch_source': 'photos', 'state': 'settled', 'src': dict(src)}],
+        'extensions': [],
+        'flags': [{'block_rect': list(DERIVED_BLOCK), 'text': DERIVED_FLAG},
+                  {'block_rect': list(OTHER_BLOCK), 'text': OTHER_FLAG}]}
+    return raw
+
+
+def _roof_choices(plan):
+    choices = plan['buildings'][0]['roof'].get('choices')
+    check(isinstance(choices, list), ('the plan keeps building.roof.choices', sorted(plan['buildings'][0]['roof'])))
+    return [c for c in choices if isinstance(c, dict) and close(c.get('rect') or [], DERIVED_BLOCK, 1.0)]
+
+
+def _seed_derived():
+    storage.patch_settings({'house_twin': None})
+    shutil.rmtree(ts.DATA_DIR, ignore_errors=True)
+    ts.push_round(derived_house(), 'build')
+
+
+def scenario_derived_roof_edit_becomes_its_blocks_choice():
+    plan, summary = twin_edit.apply(derived_house(), {'op': 'set', 'piece': 'roof-A', 'field': 'kind', 'value': 'hip'})
+    mine = _roof_choices(plan)
+    check(len(mine) == 1, ('the card edit is stored as one choice keyed by the block rect',
+                           plan['buildings'][0]['roof'].get('choices')))
+    choice = mine[0]
+    check(choice.get('kind') == 'hip' and (choice.get('src') or {}).get('person') is True,
+          ('the choice holds the person\'s kind and is marked as theirs', choice))
+    check('ends' not in choice or all(style == 'hip' for style in choice['ends'].values()),
+          ('a hip choice never keeps the gable ends the photos gave', choice))
+    roof = piece(plan, 'roof-A')
+    check(roof['kind'] == 'hip' and all((roof.get('ends') or {}).get(end, 'hip') == 'hip' for end in ('x0', 'x1')),
+          ('Hip on the card makes a hip at both ends, not a hip kind with gable ends', roof))
+    check(summary.startswith('Set ') and 'roof-A' not in summary, ('the summary stays plain', summary))
+
+    plan, _ = twin_edit.apply(plan, {'op': 'set', 'piece': 'roof-A', 'field': 'pitch', 'value': 9})
+    mine = _roof_choices(plan)
+    check(len(mine) == 1 and mine[0].get('kind') == 'hip' and mine[0].get('pitch') == 9,
+          ('a second edit updates the same choice', plan['buildings'][0]['roof'].get('choices')))
+    renormalized, _ = tp.normalize(plan)
+    check(renormalized['buildings'][0]['roof'].get('choices') == plan['buildings'][0]['roof']['choices'],
+          'choices survive normalize')
+
+    _seed_derived()
+    twin_edit.save({'op': 'set', 'piece': 'roof-A', 'field': 'pitch', 'value': 9}, 'p1')
+    mine = _roof_choices(ts.current())
+    check(len(mine) == 1 and mine[0].get('pitch') == 9 and (mine[0].get('src') or {}).get('person') is True,
+          ('save stores the choice in the published plan', ts.current()['buildings'][0]['roof'].get('choices')))
+
+
+def scenario_dormer_edit_stays_a_person_section():
+    plan, _ = twin_edit.apply(derived_house(), {'op': 'set', 'piece': 'roof-A-dormer-1', 'field': 'pitch', 'value': 9})
+    choices = plan['buildings'][0]['roof'].get('choices') or []
+    check(not [c for c in choices if close(c.get('rect') or [], DERIVED_BLOCK, 1.0)],
+          ('a dormer edit never becomes its block\'s choice', choices))
+    dormer = piece(plan, 'roof-A-dormer-1')
+    check(dormer['pitch'] == 9 and dormer['src'].get('person') is True, ('the dormer is the person\'s section', dormer))
+    check(piece(plan, 'roof-A')['kind'] == 'gable' and piece(plan, 'roof-A')['pitch'] == 6, 'the main roof is untouched')
+
+
+def scenario_a_choice_clears_its_blocks_flag():
+    plan, _ = twin_edit.apply(derived_house(), {'op': 'set', 'piece': 'roof-A', 'field': 'pitch', 'value': 9})
+    flags = plan['buildings'][0]['roof'].get('flags')
+    check(isinstance(flags, list), ('the plan keeps building.roof.flags', sorted(plan['buildings'][0]['roof'])))
+    check(not [f for f in flags if close(f['block_rect'], DERIVED_BLOCK, 1.0)],
+          ('the person\'s choice clears its block\'s flag at once', flags))
+    check([f['text'] for f in flags if close(f['block_rect'], OTHER_BLOCK, 1.0)] == [OTHER_FLAG],
+          ('another block keeps its flag', flags))
+
+
 if __name__ == '__main__':
     scenario_accept_invalid_door_names_kind_and_plain_reason()
     scenario_ridge_x_gable_moves_and_deletes()
@@ -473,7 +570,10 @@ if __name__ == '__main__':
     for fn in (scenario_test_card_sets_roof_ends,
                scenario_test_invalid_roof_ends_refused,
                scenario_roof_kind_switch_clears_ends,
-               scenario_hip_end_with_window_names_the_remedy):
+               scenario_hip_end_with_window_names_the_remedy,
+               scenario_derived_roof_edit_becomes_its_blocks_choice,
+               scenario_dormer_edit_stays_a_person_section,
+               scenario_a_choice_clears_its_blocks_flag):
         try:
             fn()
         except Exception as e:

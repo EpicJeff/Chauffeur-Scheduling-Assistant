@@ -294,6 +294,8 @@ def _roof(building, notes):
     building['roof'] = {'sections': list(sections.values()), 'extensions': extensions}
     if isinstance(roof.get('choices'), list):
         building['roof']['choices'] = deepcopy(roof['choices'])
+    if isinstance(roof.get('flags'), list):
+        building['roof']['flags'] = deepcopy(roof['flags'])
     return sections
 
 

@@ -298,7 +298,7 @@ def derive_roof(blocks, observations, evidence, choices):
             _, choice_index, choice = match
             used_choices.add(choice_index)
             fixed.add(len(sections))
-            for field in ('kind', 'ridge', 'pitch', 'plate', 'overhang'):
+            for field in ('kind', 'ridge', 'pitch', 'plate', 'overhang', 'low_side'):
                 if field in choice:
                     section[field] = deepcopy(choice[field])
             # A changed kind must inherit its own ends, not the photo's form.
@@ -314,7 +314,7 @@ def derive_roof(blocks, observations, evidence, choices):
             if section['kind'] in ('shed', 'flat'):
                 section.pop('ends', None)
                 if section['kind'] == 'shed':
-                    section['low_side'] = 'y0' if section['ridge'] == 'x' else 'x0'
+                    section.setdefault('low_side', 'y0' if section['ridge'] == 'x' else 'x0')
             if 'pitch' in choice:
                 section['pitch_source'] = 'person'
             if section['kind'] == 'flat':

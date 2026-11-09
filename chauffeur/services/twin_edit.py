@@ -194,6 +194,7 @@ def _set(kind, piece, building, field, value):
             value = 0 if value == 360 else value
     if piece.get(field) == value:
         raise ValueError('Nothing changed')
+    old_roof = deepcopy(piece) if kind == 'roof' and field == 'kind' else None
     piece[field] = deepcopy(value)
     if kind == 'roof':
         if field == 'ridge' and piece.get('ends'):
@@ -202,13 +203,40 @@ def _set(kind, piece, building, field, value):
             piece['pitch_source'] = 'person'
         # A kind switch needs usable directions without an intermediate bad roof.
         if field == 'kind':
-            if value in ('shed', 'flat'):
+            if value in ('shed', 'flat') or (value == 'hip' and piece.get('ends')
+                                           and all(end == 'gable' for end in piece['ends'].values())):
                 piece.pop('ends', None)
             if value in ('hip', 'gable'):
                 piece.setdefault('ridge', 'y')
             elif value == 'shed':
                 piece.setdefault('low_side', 'x0')
             piece['pitch'] = 0 if value == 'flat' else max(1, piece['pitch'])
+            # Keep windows from a removed gable as the existing located
+            # diagnostics, rather than silently dropping them on normalize.
+            for opening in building['openings']:
+                if (opening.get('section') != piece['id'] or 'gable' not in opening
+                        or twin_plan._opening_error(opening, {}, {piece['id']: piece}) is None):
+                    continue
+                along = 0 if old_roof['ridge'] == 'x' else 1
+                point = [0, 0]
+                point[along] = old_roof['rect'][along + (0 if opening['gable'] == 'front' else 2)]
+                point[1 - along] = opening['y' if along == 0 else 'x']
+                opening.update(state='ghost', position=point,
+                               why='This window has no matching gable on the new roof; please place it.')
+        block = piece.get('block')
+        if (block and not piece.get('dormer_of')
+                and max(abs(a - b) for a, b in zip(piece['rect'], block)) <= 1
+                and (piece.get('src', {}).get('step') == 'roof_blocks'
+                     or piece.get('src', {}).get('person'))):
+            roof = building['roof']
+            choice = {k: deepcopy(piece[k]) for k in
+                      ('kind', 'ridge', 'ends', 'pitch', 'plate', 'overhang', 'low_side') if k in piece}
+            choice.update(rect=deepcopy(block), src={'person': True})
+            def same_rect(rect):
+                return bool(rect and len(rect) == 4
+                            and max(abs(a - b) for a, b in zip(rect, block)) <= 1)
+            roof['choices'] = [c for c in roof.get('choices', []) if not same_rect(c.get('rect'))] + [choice]
+            roof['flags'] = [f for f in roof.get('flags', []) if not same_rect(f.get('block_rect'))]
     if kind == 'opening':
         _opening_valid(building, piece)
     elif kind == 'wall':

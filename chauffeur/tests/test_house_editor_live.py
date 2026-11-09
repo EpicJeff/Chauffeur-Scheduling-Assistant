@@ -1321,6 +1321,122 @@ def scenario_download_build_record():
     check(not _unexpected(s.errors()), s.errors())
 
 
+
+# ---- Roofs from photos, Task 6 (spec docs/superpowers/specs/2026-11-08-house-editor-
+# roofs-from-photos-design.md section 6; brief .superpowers/sdd/2026-11-08-house-editor-
+# roofs-from-photos/task-6-brief.md). Runs last: it puts the household's Main house
+# in place with four tagged photos.
+
+# The flagged roof's needs-checking marker in the scene: the shown ghost
+# visuals (the 'ghost' material or the dashed ghost edges) carrying that
+# roof's pieceId. Returns the marker's middle on screen, or null.
+ROOF_MARKER_JS = """([pieceId, buildingId]) => {
+  const view = window.__twin; view.scene.updateMatrixWorld(true); view.camera.updateMatrixWorld(true);
+  const shown = o => { for (let p = o; p; p = p.parent) if (!p.visible) return false; return true; };
+  let box = null;
+  view.scene.traverse(o => {
+    if (!(o.isMesh || o.isLine) || o.layers.isEnabled(31) || !shown(o)) return;
+    if (o.userData.pieceId !== pieceId || o.userData.buildingId !== buildingId) return;
+    if (![].concat(o.material || []).some(m => m && (m.name === 'ghost' || m.isLineDashedMaterial))) return;
+    o.geometry.computeBoundingBox();
+    const b = o.geometry.boundingBox.clone().applyMatrix4(o.matrixWorld);
+    box = box ? box.union(b) : b;
+  });
+  if (!box) return null;
+  const c = box.getCenter(box.min.clone()).project(view.camera);
+  const r = view.renderer3.domElement.getBoundingClientRect();
+  return [r.left + (c.x + 1) * r.width / 2, r.top + (1 - c.y) * r.height / 2];
+}"""
+
+
+def scenario_a_roof_that_needs_a_look_is_marked_and_opens_its_card():
+    """After a stubbed build with one roof flag: the build status carries
+    roof_flags [{block_rect, text}], the plan carries building.roof.flags, the
+    panel shows the flag's plain line once, the flagged roof is drawn with the
+    needs-checking marker, and a real click on the marker opens that roof's card."""
+    s = _serve()
+    if s is None:
+        return
+    _stop_builds()
+    from services import twin_reads
+    import test_twin_roof_choices as rc
+    labels = rc.rb._main_house()
+    previous = twin_reads.read
+    twin_reads.read = rc.OneFlagReader(labels)
+    try:
+        with s.browser(launch_args=GPU_ARGS) as page:
+            page.set_viewport_size({'width': 1600, 'height': 900})
+            _signed_in(page)
+            _open(page, s)
+            if page.locator('#place-view').is_visible():
+                page.click('#place-close')
+            started = _api(page, 'POST', 'build', {'part': 'house'})
+            check(started['status'] == 200 and started['body'].get('id'), ('the build starts', started))
+            bid = started['body']['id']
+            page.evaluate('id => window.__editor.followBuild(id)', bid)
+            _wait_build(page, f"b.id === {json.dumps(bid)} && b.state === 'done'", timeout=90000)
+
+            status = _api(page, 'GET', f'build/{bid}')['body']
+            flags = status.get('roof_flags')
+            check(isinstance(flags, list) and len(flags) == 1 and isinstance(flags[0], dict)
+                  and {'block_rect', 'text'} <= set(flags[0]),
+                  ('the build status carries the one roof flag as roof_flags: [{block_rect, text}]',
+                   sorted(k for k in status if k != 'events'), flags))
+            flag = flags[0]
+            house = _house_of(_plan(page))
+            plan_flags = house['roof'].get('flags')
+            check(isinstance(plan_flags, list) and [(f.get('text'), f.get('block_rect')) for f in plan_flags]
+                  == [(flag['text'], flag['block_rect'])],
+                  ('the plan carries the same flag in building.roof.flags', plan_flags))
+
+            text = flag['text']
+            page.wait_for_function("t => document.querySelector('#editor-log').innerText.includes(t)",
+                                   arg=text, timeout=15000)
+            log = page.inner_text('#editor-log')
+            check(log.count(text) == 1, ('the panel shows the flag\'s plain line once', log[-800:]))
+            check('roof-' not in log and 'block_rect' not in log and 'roof_blocks' not in log,
+                  ('plain words, no ids', log[-800:]))
+
+            roof = [x for x in house['roof']['sections'] if (x.get('src') or {}).get('step') == 'roof_blocks'
+                    and rc._near(x.get('block') or [0, 0, 0, 0], flag['block_rect'])
+                    and rc._near(x['rect'], flag['block_rect'])]
+            check(len(roof) == 1, ('one derived roof over the flagged block', flag, rc._roof(house)))
+            roof = roof[0]
+
+            # Look down at the flagged roof from the front, in perspective (the
+            # top camera never picks roofs).
+            page.get_by_role('button', name='Orbit', exact=True).click()
+            page.wait_for_function("() => window.__editor.cameraKind() === 'perspective'", timeout=10000)
+            box = page.evaluate('([p, b]) => window.__twin.worldBox(p, b)', [roof['id'], 'house'])
+            check(box, ('the flagged roof is drawn', roof['id']))
+            ft = 0.3048
+            cx, cy = (box['min'][0] + box['max'][0]) / 2, (box['min'][1] + box['max'][1]) / 2
+            top = box['max'][2]
+            page.evaluate('state => window.__twin.setCameraState(state)', {
+                'position': [cx * ft, (top + 70) * ft, -(cy - 25) * ft],
+                'target': [cx * ft, top * ft, -cy * ft]})
+            page.wait_for_timeout(500)
+            at = page.evaluate(ROOF_MARKER_JS, [roof['id'], 'house'])
+            check(at, ('the flagged roof carries the needs-checking marker in the scene', roof['id']))
+            others = [x['id'] for x in house['roof']['sections'] if x['id'] != roof['id']
+                      and page.evaluate(ROOF_MARKER_JS, [x['id'], 'house'])]
+            check(not others, ('only the flagged roof is marked', others))
+
+            page.mouse.click(at[0], at[1])
+            page.wait_for_selector('#piece-card', state='visible', timeout=10000)
+            check(page.evaluate('window.__editor.selected() && window.__editor.selected().pieceId') == roof['id'],
+                  ('a click on the marker selects that roof', page.evaluate('window.__editor.selected()')))
+            card = page.locator('#piece-card')
+            check(card.locator('h3').inner_text().strip() == 'Roof section', ('the roof card opens', card.inner_text()))
+            check(card.locator('select').first.is_visible() and card.locator('select option', has_text='Hip').count()
+                  and card.locator('select option', has_text='Gable').count(),
+                  ('the card offers the roof\'s form in plain words', card.inner_text()))
+            page.screenshot(path=os.path.join(tempfile.gettempdir(), 'house_editor_roof_flag.png'))
+    finally:
+        twin_reads.read = previous
+    check(not _unexpected(s.errors()), s.errors())
+
+
 if __name__ == '__main__':
     for fn in (scenario_signed_out_sees_the_sign_in,
                scenario_shell_matches_the_mockup_regions,
@@ -1359,6 +1475,7 @@ if __name__ == '__main__':
                scenario_empty_state_uploads_and_suggests_roles,
                scenario_each_page_belongs_to_a_building_and_build_builds_that_one,
                scenario_floor_buttons_name_their_building,
-               scenario_download_build_record):
+               scenario_download_build_record,
+               scenario_a_roof_that_needs_a_look_is_marked_and_opens_its_card):
         fn()
         print('  ok ', fn.__name__)
