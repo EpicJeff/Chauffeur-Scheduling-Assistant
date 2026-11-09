@@ -37,7 +37,9 @@ class Kinds(unittest.TestCase):
                                     'garage', 'locks', 'alarm', 'other'))
         self.assertEqual(cr.ROLES, ('parent', 'adult', 'child', 'helper', 'guest'))
         self.assertEqual(cr.PLACES, ('panel', 'unknown_voice'))
-        for domain in ('homeassistant', 'hassio', 'automation', 'notify', 'tts', 'recorder'):
+        for domain in ('homeassistant', 'hassio', 'automation', 'system_log', 'recorder', 'logger',
+                       'notify', 'tts', 'persistent_notification', 'conversation', 'frontend',
+                       'backup', 'update', 'zone', 'person'):
             self.assertIn(domain, cr.NEVER_DOMAINS)
 
     def test_kinds(self):
@@ -112,6 +114,13 @@ class Defaults(unittest.TestCase):
         self.assertEqual(got, stored)
         self.assertEqual(cr.rules({}), cr.default_rules({}))
 
+    def test_broken_stored_rules_fall_back(self):
+        # A hand-edited or half-written blob must never crash a control check.
+        for broken in (None, {}, {'enabled': True}, 'yes'):
+            got = cr.rules({'ha_control': broken})
+            self.assertEqual(got, cr.default_rules({}), broken)
+            self.assertFalse(cr.decide(member('child'), ['locks'], got).allowed)
+
 
 class Validate(unittest.TestCase):
     def test_valid_round_trips(self):
@@ -120,6 +129,7 @@ class Validate(unittest.TestCase):
 
     def test_rejects(self):
         bad = []
+        g = cr.default_rules({}); del g['proof']; bad.append(g)
         g = cr.default_rules({}); g['people']['child']['lights'] = 'ask'; bad.append(g)
         g = cr.default_rules({}); g['places']['panel']['lights'] = 'maybe'; bad.append(g)
         g = cr.default_rules({}); g['people']['parent']['teleport'] = 'yes'; bad.append(g)
@@ -197,6 +207,9 @@ class Decide(unittest.TestCase):
         rules = copy.deepcopy(self.on)
         rules['proof']['lights'] = True
         self.assertRefused(cr.decide(PANEL, ('lights', 'locks'), rules), needs='identify')
+
+    def test_unknown_kind_refused_even_for_admin(self):
+        self.assertRefused(cr.decide(ADMIN, ['bogus'], self.off))
 
     def test_no_kinds_is_allowed(self):
         self.assertAllowed(cr.decide(member('child'), (), self.off))

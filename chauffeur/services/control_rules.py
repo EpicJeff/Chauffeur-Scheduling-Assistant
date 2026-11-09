@@ -6,6 +6,7 @@ The legacy panel switch supplies defaults only until a household saves a grid.
 Classification and decisions are pure; no Home Assistant calls belong here.
 """
 from collections.abc import Iterable
+from copy import deepcopy
 from dataclasses import dataclass
 
 
@@ -17,7 +18,8 @@ ROLES = ('parent', 'adult', 'child', 'helper', 'guest')
 PLACES = ('panel', 'unknown_voice')
 NEVER_DOMAINS: frozenset[str] = frozenset({
     'homeassistant', 'hassio', 'automation', 'system_log', 'recorder',
-    'logger', 'notify', 'tts',
+    'logger', 'notify', 'tts', 'persistent_notification', 'conversation',
+    'frontend', 'backup', 'update', 'zone', 'person',
 })
 
 _DOMAIN_KINDS = {
@@ -77,12 +79,15 @@ def default_rules(settings: dict) -> dict:
 
 
 def rules(settings: dict | None = None) -> dict:
-    """Use the saved grid as a whole; only an absent grid gets defaults."""
+    """Copy a valid saved grid; missing or malformed grids get fresh defaults."""
     if settings is None:
         from services import storage
         settings = storage.get_settings() or {}
     if 'ha_control' in settings:
-        return settings['ha_control']
+        try:
+            return deepcopy(validate_rules(settings['ha_control']))
+        except ValueError:
+            pass
     return default_rules(settings)
 
 
@@ -136,13 +141,13 @@ def decide(who: Who, kinds: Iterable[str], rules: dict) -> Decision:
     kinds = tuple(kinds)
     if rules.get('enabled') is not True:
         return Decision(False, None, kinds, 'Home Assistant control is turned off for this household.')
+    if any(kind not in KINDS for kind in kinds):
+        return Decision(False, None, kinds, 'This kind of Home Assistant control is not supported.')
     if who.admin:
         return Decision(True, None, kinds, '')
 
     needs = None
     for kind in kinds:
-        if kind not in KINDS:
-            return Decision(False, None, kinds, 'This kind of Home Assistant control is not supported.')
         proof = rules['proof'][kind]
         if who.place is not None:
             cell = rules['places'].get(who.place, {}).get(kind)
@@ -152,7 +157,7 @@ def decide(who: Who, kinds: Iterable[str], rules: dict) -> Decision:
             if cell == 'ask' or proof:
                 if who.place == 'unknown_voice' and not who.voice_id:
                     return Decision(False, None, kinds,
-                                    "Voice ID isn't on for this speaker; use your phone")
+                                    "Voice ID isn't on for this speaker; use your phone.")
                 needs = 'identify'
         else:
             cell = rules['people'].get(who.role, {}).get(kind)

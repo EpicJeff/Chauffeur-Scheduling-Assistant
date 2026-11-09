@@ -101,6 +101,8 @@ Expected: all pass.
 - Consumes: Task 1 `kind_of`, `decide`, `rules`, `Who`, `Decision`.
 - Produces:
   - `control_scripts.touched(entity_id: str) -> tuple[set[str], list[str]]`: entity ids a `script.*`/`scene.*` reaches (recursively through called scripts and scenes, devices and areas expanded to entities), and a list of unreadable reasons (empty when fully read). Cached 300 s keyed by entity id.
+  - `ha_api.get_script_config(object_id: str) -> dict | None`: REST GET `config/script/config/<object_id>` through `ha_api._request`; None when HA is absent or the script is not UI-managed (YAML scripts: rely on search/related alone).
+  - `control_scripts.clear_cache() -> None` (tests and the rules page's refresh use it).
   - `control_scripts.unreadable_scripts() -> list[dict]` each `{'entity_id', 'name', 'reason'}`, for the settings page.
   - `control_rules.targets(data: dict) -> set[str]`: entity ids named by a service call's `entity_id` (str or list), `device_id`, `area_id` (expanded through `ha_api.get_entity_registry()` / `get_device_registry()` / `get_area_map()`).
   - `control_rules.kinds_for(entity_ids: Iterable[str]) -> tuple[str, ...]`: each id's kind; a script/scene contributes the kinds of what it touches, plus EVERY kind in `KINDS` when any reason is unreadable (the spec's "strictest": it must pass every kind).
