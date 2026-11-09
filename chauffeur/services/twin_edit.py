@@ -211,18 +211,14 @@ def _set(kind, piece, building, field, value):
             elif value == 'shed':
                 piece.setdefault('low_side', 'x0')
             piece['pitch'] = 0 if value == 'flat' else max(1, piece['pitch'])
-            # Keep windows from a removed gable as the existing located
-            # diagnostics, rather than silently dropping them on normalize.
+            # Kinds and individual ends use the same window-bearing gable rule.
             for opening in building['openings']:
-                if (opening.get('section') != piece['id'] or 'gable' not in opening
-                        or twin_plan._opening_error(opening, {}, {piece['id']: piece}) is None):
+                if opening.get('section') != piece['id'] or 'gable' not in opening:
                     continue
-                along = 0 if old_roof['ridge'] == 'x' else 1
-                point = [0, 0]
-                point[along] = old_roof['rect'][along + (0 if opening['gable'] == 'front' else 2)]
-                point[1 - along] = opening['y' if along == 0 else 'x']
-                opening.update(state='ghost', position=point,
-                               why='This window has no matching gable on the new roof; please place it.')
+                end = f"{old_roof.get('ridge')}{0 if opening['gable'] == 'front' else 1}"
+                if (old_roof.get('ends', {}).get(end, old_roof['kind']) in ('gable', 'clip')
+                        and (value in ('shed', 'flat') or piece.get('ends', {}).get(end, value) == 'hip')):
+                    raise ValueError('A window sits in that gable; move or delete it first.')
         block = piece.get('block')
         if (block and not piece.get('dormer_of')
                 and max(abs(a - b) for a, b in zip(piece['rect'], block)) <= 1
@@ -235,8 +231,8 @@ def _set(kind, piece, building, field, value):
             def same_rect(rect):
                 return bool(rect and len(rect) == 4
                             and max(abs(a - b) for a, b in zip(rect, block)) <= 1)
-            roof['choices'] = [c for c in roof.get('choices', []) if not same_rect(c.get('rect'))] + [choice]
-            roof['flags'] = [f for f in roof.get('flags', []) if not same_rect(f.get('block_rect'))]
+            roof['choices'] = [c for c in twin_plan._roof_entries(roof, 'choices') if not same_rect(c['rect'])] + [choice]
+            roof['flags'] = [f for f in twin_plan._roof_entries(roof, 'flags') if not same_rect(f['block_rect'])]
     if kind == 'opening':
         _opening_valid(building, piece)
     elif kind == 'wall':

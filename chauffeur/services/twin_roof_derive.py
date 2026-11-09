@@ -7,6 +7,7 @@ two intersecting eave planes as twin_roof.js.
 
 from copy import deepcopy
 from math import isfinite
+from services.twin_plan import _roof_entries
 
 
 _SIDES = {'left': 'x0', 'right': 'x1', 'front': 'y0', 'rear': 'y1'}
@@ -57,6 +58,44 @@ def _shared_edge(a, b, along=None):
 
 def _neighbours(a, b, along=None):
     return _shared_edge(a, b, along) > 0
+
+
+def _shared_end(block, blocks, side):
+    end = _SIDES[side]
+    axis = 0 if end.startswith('x') else 1
+    other = 1 - axis
+    rect = block['rect']
+    edge = axis + (2 if end.endswith('1') else 0)
+    opposite = axis + (0 if end.endswith('1') else 2)
+    return any(neighbour is not block
+               and abs(rect[edge] - neighbour['rect'][opposite]) <= .5
+               and min(rect[other + 2], neighbour['rect'][other + 2])
+                   - max(rect[other], neighbour['rect'][other]) >= (rect[other + 2] - rect[other]) / 2
+               for neighbour in blocks)
+
+
+def _end_flags(block, blocks, section, observations):
+    kinds = {side: observations.get('sides', {}).get(side, {}).get('kind', 'hidden') for side in _SIDES}
+    place = 'The roof over the ' + _place(block, blocks)[4:-5]
+    flags = []
+    for kind in ('hidden', 'conflict'):
+        sides = [side for side, end in _SIDES.items() if end.startswith(section['ridge'])
+                 and kinds[side] == kind and not _shared_end(block, blocks, side)]
+        if not sides:
+            continue
+        plural = len(sides) > 1
+        subject = ' and '.join(sides) + (' ends' if plural else ' end')
+        reason = ('were' if plural else 'was') + ' not visible in the photos' if kind == 'hidden' else (
+            'look different between photos' if plural else 'looks different between photos')
+        styles = [section.get('ends', {}).get(_SIDES[side], section['kind']) for side in sides]
+        made = ('them ' + ('hips' if all(s == 'hip' for s in styles) else 'gables') if plural else
+                'it a ' + ('hip' if styles[0] == 'hip' else 'gable'))
+        flag = {'block': block['id'], 'sides': sides,
+                'text': f'{place}: its {subject} {reason}; I made {made}.'}
+        if not plural:
+            flag['side'] = sides[0]
+        flags.append(flag)
+    return flags
 
 
 def _place(block, blocks):
@@ -268,6 +307,7 @@ def derive_roof(blocks, observations, evidence, choices):
     gable; a wholly unseen block follows an adjacent roof and gets one review line.
     """
     sections, flags, fixed = [], [], set()
+    choices = _roof_entries({'choices': choices}, 'choices')
     used_choices = set()
     for block in blocks:
         key, rect = block['id'], block['rect']
@@ -323,17 +363,9 @@ def derive_roof(blocks, observations, evidence, choices):
                 section['pitch'] = _pitch(section['pitch'])
         else:
             place = _place(block, blocks)
-            if all(kind in _UNSEEN for kind in kinds.values()):
-                reason = ('looks different between photos' if 'conflict' in kinds.values()
-                          else 'was not visible in the photos')
-                flags.append({'block': key, 'text': f'{place} {reason}; please check its roof form.'})
-            else:
+            if not all(kind in _UNSEEN for kind in kinds.values()):
                 for side, kind in kinds.items():
-                    if kind in _UNSEEN:
-                        reason = 'was not visible in the photos' if kind == 'hidden' else 'looks different between photos'
-                        flags.append({'block': key, 'side': side,
-                                      'text': f'{place}: the {side} side {reason}; please check it.'})
-                    elif kind in ('gable_end', 'clipped_gable_end') and not _SIDES[side].startswith(section['ridge']):
+                    if kind in ('gable_end', 'clipped_gable_end') and not _SIDES[side].startswith(section['ridge']):
                         flags.append({'block': key, 'side': side, 'text':
                                       f'{place}: the {side} side shows a gable end where this roof has an eave; please check it.'})
                     elif kind == 'dormer' and _SIDES[side].startswith(section['ridge']):
@@ -369,11 +401,23 @@ def derive_roof(blocks, observations, evidence, choices):
         sections[i]['pitch_source'] = 'photos'
 
     _inherit_unseen(blocks, sections, observations, fixed)
+    wholly_unseen = set()
+    for i, (block, section) in enumerate(zip(blocks, sections)):
+        if i in fixed:
+            continue
+        obs = observations.get(block['id'], {})
+        flags.extend(_end_flags(block, blocks, section, obs))
+        if all(obs.get('sides', {}).get(side, {}).get('kind', 'hidden') in _UNSEEN for side in _SIDES):
+            wholly_unseen.add(block['id'])
+            if not any(f['block'] == block['id'] for f in flags):
+                flags.append({'block': block['id'], 'text':
+                              f'{_place(block, blocks)} was not visible in the photos; please check its roof form.'})
     for i in sorted(_align_ridges(sections, fixed) - fixed):
         block = blocks[i]
         # Keep the single review line promised for a wholly unseen block.
         text = f'{_place(block, blocks)}: its ridge could not line up with its neighbours; please check its slope.'
-        unseen_flag = next((f for f in flags if f['block'] == block['id'] and 'side' not in f), None)
+        unseen_flag = next((f for f in flags if f['block'] == block['id']
+                            and block['id'] in wholly_unseen), None)
         if unseen_flag:
             unseen_flag['text'] += ' Its ridge could not line up with its neighbours; please check its slope.'
         else:
@@ -386,9 +430,14 @@ def derive_roof(blocks, observations, evidence, choices):
                     and _neighbours(section['rect'], other['rect'])
                     and _ridge(section)[1] > _ridge(other)[1] + 6):
                 # A wholly unseen block already has its single review line.
-                if not any(f['block'] == block['id'] and 'side' not in f for f in flags):
+                text = f'{_place(block, blocks)} stands more than six feet above a neighbouring ridge; please check its height.'
+                unseen_flag = next((f for f in flags if f['block'] == block['id']
+                                    and block['id'] in wholly_unseen), None)
+                if unseen_flag:
+                    unseen_flag['text'] += ' ' + text
+                else:
                     flags.append({'block': block['id'], 'text':
-                                  f'{_place(block, blocks)} stands more than six feet above a neighbouring ridge; please check its height.'})
+                                  text})
                 break
 
     dormers = []
@@ -397,4 +446,11 @@ def derive_roof(blocks, observations, evidence, choices):
             dormers.extend(_dormers(block, section, observations.get(block['id'], {}).get('sides', {}),
                                     evidence.get(block['id'], {}), flags if i not in fixed else [],
                                     _place(block, blocks)))
+    # A completely unseen roof gets one review line, including any other checks.
+    for key in wholly_unseen:
+        mine = [f for f in flags if f['block'] == key]
+        if len(mine) > 1:
+            mine[0]['text'] = ' '.join(f['text'] for f in mine)
+            mine[0]['sides'] = list(dict.fromkeys(side for f in mine for side in f.get('sides', [])))
+            flags = [f for f in flags if f['block'] != key or f is mine[0]]
     return sections + dormers, flags

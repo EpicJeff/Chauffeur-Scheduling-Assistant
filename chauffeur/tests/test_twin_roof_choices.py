@@ -179,6 +179,10 @@ def test_card_edit_becomes_choice():
     check((section['kind'], section.get('ridge')) == ('gable', 'x'),
           ('test setup: the left wing is derived as a side gable', section))
     sid = section['id']
+    # R17a: remove gable windows before changing their carrier to a hip.
+    for opening in rb._house()['openings']:
+        if opening.get('section') == sid and 'gable' in opening:
+            twin_edit.save({'op': 'delete', 'building': 'house', 'piece': opening['id']}, 'p1')
     twin_edit.save({'op': 'set', 'building': 'house', 'piece': sid, 'field': 'kind', 'value': 'hip'}, 'p1')
     twin_edit.save({'op': 'set', 'building': 'house', 'piece': sid, 'field': 'pitch', 'value': 6}, 'p1')
 
@@ -310,7 +314,51 @@ def test_choice_clears_flag():
     check(len(roof) == 1 and roof[0].get('pitch') == 6, ('the third garage keeps the person\'s pitch', _roof(rb._house())))
 
 
+def test_choice_saved_during_read_wins_draft_merge():
+    labels = rb._main_house()
+    bid, st = _one_flag_build(labels)
+    build = tb._BUILDS[bid]
+    step = next(s for s in build['steps'] if s['kind'] == 'draft')
+    house = rb._house()
+    section = _derived(house, THIRD_GARAGE)
+    stale = {'rect': section['block'], 'pitch': 8, 'src': {'person': True}}
+    fragment = {'building': copy.deepcopy(house)}
+    fragment['building']['roof']['choices'] = [stale]
+    twin_edit.save({'op': 'set', 'building': 'house', 'piece': section['id'], 'field': 'pitch', 'value': 6}, 'p1')
+    house = rb._house()
+    current = copy.deepcopy(_choices(house, section['block'])[0])
+    tb._merge_draft(build, step, fragment, house)
+    check(_choices(house, section['block']) == [current], house['roof'])
+    check(not rb._flag_for(house['roof']['flags'], section['block']), house['roof']['flags'])
+
+
+def test_malformed_choices_still_rebuild_and_migrate():
+    labels = rb._main_house()
+    _one_flag_build(labels)
+    raw = ts.current()
+    house = next(b for b in raw['buildings'] if b['id'] == 'house')
+    section = _derived(house, LEFT_WING)
+    section['src']['person'] = True
+    section['pitch'] = 6
+    house['roof']['choices'] = [None, {}, {'rect': [0, 0, 'bad', 4]}]
+    house['roof']['flags'] = [None, {}, {'block_rect': section['block']}]
+    ts.push_round(raw, 'build')
+    original = tb.twin_roof_derive.derive_roof
+    calls = []
+    def derive(blocks, observations, evidence, choices):
+        calls.append(copy.deepcopy(choices))
+        return original(blocks, observations, evidence, choices)
+    from unittest.mock import patch
+    with patch.object(tb.twin_roof_derive, 'derive_roof', side_effect=derive):
+        _, st = rb._build(OneFlagReader(labels))
+    check(not rb._trouble(st) and calls, st)
+    check(_over(rb._house(), LEFT_WING)[0]['pitch'] == 6, _roof(rb._house()))
+    check(_choices(rb._house(), LEFT_WING)[0]['pitch'] == 6, rb._house()['roof'])
+
+
 TESTS = (
+    test_choice_saved_during_read_wins_draft_merge,
+    test_malformed_choices_still_rebuild_and_migrate,
     test_flags_on_build_status_and_plan,
     test_card_edit_becomes_choice,
     test_old_person_sections_migrate,

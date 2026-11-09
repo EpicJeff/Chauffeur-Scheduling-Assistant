@@ -44,6 +44,16 @@ def _point(value):
             and all(_number(v) for v in value))
 
 
+def _roof_entries(roof, key):
+    """Keep usable geometry-keyed roof choices and review flags."""
+    entries = roof.get(key, [])
+    rect_key = 'block_rect' if key == 'flags' else 'rect'
+    return [entry for entry in entries if isinstance(entry, dict)
+            and isinstance(entry.get(rect_key), (list, tuple)) and len(entry[rect_key]) == 4
+            and all(_number(v) for v in entry[rect_key])
+            and (key != 'flags' or isinstance(entry.get('text'), str))] if isinstance(entries, list) else []
+
+
 def _polygon(value):
     return isinstance(value, list) and len(value) >= 3 and all(_point(p) for p in value)
 
@@ -293,9 +303,9 @@ def _roof(building, notes):
             notes.append(f'Dropped roof extension {index}: malformed extension.')
     building['roof'] = {'sections': list(sections.values()), 'extensions': extensions}
     if isinstance(roof.get('choices'), list):
-        building['roof']['choices'] = deepcopy(roof['choices'])
+        building['roof']['choices'] = deepcopy(_roof_entries(roof, 'choices'))
     if isinstance(roof.get('flags'), list):
-        building['roof']['flags'] = deepcopy(roof['flags'])
+        building['roof']['flags'] = deepcopy(_roof_entries(roof, 'flags'))
     return sections
 
 

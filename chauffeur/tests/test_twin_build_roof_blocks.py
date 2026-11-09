@@ -502,8 +502,9 @@ def test_unseen_end_flagged_never_pauses():
     flags = _flags(st)
     mine = _flag_for(flags, TRUTH['F'])
     check(mine, ('the third garage is flagged', flags))
-    # The right upper's ends were never seen either.
-    check(_flag_for(flags, TRUTH['B']), ('the right upper is flagged', flags))
+    # R17: the right upper's unseen ends are shared, so they decide nothing.
+    check(not any('not visible' in f['text'] for f in _flag_for(flags, TRUTH['B'])),
+          ('shared right upper ends are not flagged', flags))
     blocks = _fixture_blocks()
     _plain(flags, blocks)
     first = _logged_once(st['events'], flags, 'first settle')
@@ -725,7 +726,40 @@ def test_multi_image_photo_estimates_match_build():
           ('both estimates count images', _draft_step(st), estimate))
 
 
+def test_cross_gable_evidence_ignores_touching_wing_and_porch():
+    _main_house(photos=())
+    reader = BlocksReader({})
+    common = {'kind': 'gable', 'plate': 20, 'pitch': 8, 'overhang': 1}
+    reader.draft['building']['roof']['sections'] = [
+        {**common, 'id': 'main', 'ridge': 'x', 'rect': [14.33, 13.33, 37.33, 52]},
+        {**common, 'id': 'centre-front', 'ridge': 'y', 'rect': [22.665, 13.33, 37.335, 31]},
+        {**common, 'id': 'touching-wing', 'ridge': 'y', 'rect': [37.33, 19.33, 59, 43]},
+        {**common, 'id': 'porch', 'ridge': 'y', 'rect': [15, 14, 21, 24]},
+    ]
+    reader.draft['building']['roof']['extensions'] = []
+    reader.draft['building']['porches'] = [
+        {'polygon': [[15, 14], [21, 14], [21, 24], [15, 24]], 'floor': 10}]
+    seen = []
+    real = tb.twin_roof_derive.derive_roof
+    def derive(blocks, observations, evidence, choices):
+        result = real(blocks, observations, evidence, choices)
+        seen.append((copy.deepcopy(blocks), copy.deepcopy(evidence), copy.deepcopy(result[0])))
+        return result
+    with patch.object(tb.twin_roof_derive, 'derive_roof', side_effect=derive):
+        _, st = _build(reader)
+    check(not _trouble(st) and seen, st)
+    blocks, evidence, sections = seen[0]
+    middle = next(b for b in blocks if _near(b['rect'], TRUTH['A'], 1.5))
+    dormers = evidence[middle['id']]['dormers']
+    check(len(dormers) == 1, ('only the centre-front cross gable is dormer evidence', dormers))
+    check(dormers[0]['side'] == 'front' and abs(dormers[0]['centre'] - 30) < .1
+          and abs(dormers[0]['width'] - 14.67) < .1, dormers)
+    check(any(s.get('dormer_of') and abs((s['rect'][0] + s['rect'][2]) / 2 - 30) < .1
+              for s in sections), sections)
+
+
 TESTS = (
+    test_cross_gable_evidence_ignores_touching_wing_and_porch,
     test_reads_in_order,
     test_derived_roof_replaces_draft_roof,
     test_no_photos_no_reads,

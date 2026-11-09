@@ -1072,9 +1072,14 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None):
     if step['kind'] != 'draft':
         return
     roof = draft.get('roof', {})
-    for key in ('choices', 'flags'):
-        if key in roof:
-            house['roof'][key] = deepcopy(roof[key])
+    current_choices = twin_plan._roof_entries(house['roof'], 'choices')
+    choices = [c for c in twin_plan._roof_entries(roof, 'choices') if not any(
+        max(abs(a - b) for a, b in zip(c['rect'], current['rect'])) <= 1
+        for current in current_choices)] + current_choices
+    house['roof']['choices'] = deepcopy(choices)
+    flags = twin_plan._roof_entries(roof if 'flags' in roof else house['roof'], 'flags')
+    house['roof']['flags'] = [deepcopy(f) for f in flags if not any(
+        max(abs(a - b) for a, b in zip(f['block_rect'], c['rect'])) <= 1 for c in choices)]
     sections = pieces('', 'roof', roof.get('sections', []))
     old_sections = [s['id'] for s in roof.get('sections', [])]
     # A person's gable window protects its old carrier in _merge_list. Move
@@ -1820,7 +1825,7 @@ def _read_roof_blocks(build, step, reader, ticket, result):
                     plan['dormers'].append({'side': side, 'centre': (r[axis] + r[axis + 2]) / 2,
                                             'width': r[axis + 2] - r[axis]})
             evidence[block['id']] = plan
-        choices = deepcopy(house['roof'].get('choices', []))
+        choices = deepcopy(twin_plan._roof_entries(house['roof'], 'choices'))
         protected = [s for s in house['roof']['sections'] if s.get('src', {}).get('person')]
         for section in protected:
             block_rect = section.get('block')

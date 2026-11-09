@@ -248,14 +248,15 @@ def test_principle_per_end():
     sections, flags = _derive(blk_deep, {'Q': {'sides': _sides('slope', 'slope')}}, {'Q': {'ridge': 'x'}})
     s = _section(sections, 'Q')
     assert (s['kind'], s['ridge']) == ('gable', 'x'), s
-    assert sorted(_side_of(f) for f in flags) == ['left', 'right'], flags
+    assert len(flags) == 1 and flags[0]['sides'] == ['left', 'right'], flags  # R17
+    assert 'its left and right ends were not visible in the photos; I made them gables.' in flags[0]['text'], flags
 
     # The same with no evidence: the ridge runs along the long side, both ends flagged.
     sections, flags = _derive(blk, {'P': {'sides': _sides('slope', 'slope')}})
     s = _section(sections, 'P')
     assert (s['kind'], s['ridge']) == ('gable', 'x'), s
     assert _end(s, 'x0') == _end(s, 'x1') == 'gable', s
-    assert sorted(_side_of(f) for f in flags) == ['left', 'right'], flags
+    assert len(flags) == 1 and flags[0]['sides'] == ['left', 'right'], flags  # R17
 
     # Every section is a block section in the plan schema.
     sections, _ = _derive(blk, {'P': {'sides': _sides('slope', 'slope', 'gable_end', 'gable_end'), 'pitch': 9}})
@@ -323,7 +324,7 @@ def test_household_truth():
             ('B', 'front'), ('D', 'front'), ('D', 'left'), ('E', 'rear'), ('E', 'left'), ('F', 'right')}
     for f in flags:
         assert (_block_of(f, HOUSE), _side_of(f)) not in seen, f
-    assert _flags_for(flags, HOUSE, 'B'), flags
+    assert not any('not visible' in f['text'] for f in _flags_for(flags, HOUSE, 'B')), flags  # R17
     _flag_texts_plain(flags, HOUSE)
 
 
@@ -382,7 +383,7 @@ def test_choice_wins():
     observations = _house_observations()
     evidence = _house_evidence()
     _, flags = _derive(HOUSE, observations, evidence, [])
-    assert _flags_for(flags, HOUSE, 'C'), 'the left wing right end is unseen, so it is flagged without a choice'
+    assert not _flags_for(flags, HOUSE, 'C'), 'R17: the left wing right end is shared with the middle'
 
     c_rect = [v + 0.6 for v in HOUSE[2]['rect']]   # within 1 ft
     choices = [{'rect': c_rect, 'kind': 'hip', 'ridge': 'y', 'pitch': 5, 'plate': 11, 'overhang': 2},
@@ -405,7 +406,7 @@ def test_choice_wins():
     sections, flags = _derive(HOUSE, observations, evidence, far)
     c = _section(sections, 'C')
     assert (c['kind'], c['ridge']) == ('gable', 'x'), c
-    assert _flags_for(flags, HOUSE, 'C'), flags
+    assert not _flags_for(flags, HOUSE, 'C'), flags  # R17: unseen end is shared.
 
 
 def test_pitch_clamp_and_order():
@@ -673,7 +674,55 @@ def test_plan_only_dormer_and_photo_plain_slope():
     assert any('plain slope instead of the drawn dormer' in f['text'] for f in flags), flags
 
 
+def test_household_flags_only_deciding_ends():
+    sections, flags = _derive(HOUSE, _house_observations(), _house_evidence(), [])
+    for block in HOUSE:
+        section = _section(sections, block['id'])
+        mine = _flags_for(flags, HOUSE, block['id'])
+        assert len([f for f in mine if 'not visible in the photos' in f['text']]) <= 1, mine
+        end_sides = ('left', 'right') if section['ridge'] == 'x' else ('front', 'rear')
+        eaves = {'left', 'right', 'front', 'rear'} - set(end_sides)
+        for flag in mine:
+            assert not any(re.search(rf'\b{side}\s+(?:side|end)', flag['text']) for side in eaves), flag
+            for side in flag.get('sides', [flag['side']] if 'side' in flag else []):
+                assert side in end_sides, flag
+                end = SIDE_END[side]
+                axis, other = (0, 1) if end.startswith('x') else (1, 0)
+                r = block['rect']
+                edge, opposite = (axis, axis + 2) if end.endswith('0') else (axis + 2, axis)
+                for neighbour in HOUSE:
+                    if neighbour is block:
+                        continue
+                    n = neighbour['rect']
+                    shared = min(r[other + 2], n[other + 2]) - max(r[other], n[other])
+                    assert abs(r[edge] - n[opposite]) > .5 or shared < (r[other + 2] - r[other]) / 2, flag
+    assert not any('not visible' in f['text'] for f in flags if f['block'] in ('B', 'C')), flags
+
+
+def test_shared_end_half_length_and_conflict_lines():
+    for ridge in ('x', 'y'):
+        blocks = [_block('P', (0, 0, 30, 20)),
+                  _block('Q', (30, 0, 40, 10) if ridge == 'x' else (0, 20, 15, 30))]
+        sides = _sides('slope', 'slope', 'hidden', 'hidden') if ridge == 'x' else _sides('hidden', 'hidden', 'slope', 'slope')
+        _, flags = _derive(blocks, {'P': {'sides': sides}}, {'P': {'ridge': ridge}})
+        mine = _flags_for(flags, blocks, 'P')
+        assert len(mine) == 1 and mine[0]['sides'] == (['left'] if ridge == 'x' else ['front']), mine
+        blocks[1]['rect'][3 if ridge == 'x' else 2] -= .1
+        _, flags = _derive(blocks, {'P': {'sides': sides}}, {'P': {'ridge': ridge}})
+        mine = _flags_for(flags, blocks, 'P')
+        assert len(mine) == 1 and len(mine[0]['sides']) == 2, mine
+    sides = _sides('hidden', 'conflict', 'hidden', 'conflict')
+    _, flags = _derive([_block('P', (0, 0, 30, 20))], {'P': {'sides': sides}})
+    assert len(flags) == 1, flags
+    sides['front'] = {'kind': 'slope'}
+    _, flags = _derive([_block('P', (0, 0, 30, 20))], {'P': {'sides': sides}})
+    assert len(flags) == 2 and flags[0]['sides'] == ['left'] and flags[1]['sides'] == ['right'], flags
+    assert 'not visible' in flags[0]['text'] and 'looks different between photos' in flags[1]['text'], flags
+
+
 TESTS = (
+    test_household_flags_only_deciding_ends,
+    test_shared_end_half_length_and_conflict_lines,
     test_plan_only_dormer_and_photo_plain_slope,
     test_photo_relative_slope_overrides_contradictory_plan_pitches,
     test_principle_per_end,

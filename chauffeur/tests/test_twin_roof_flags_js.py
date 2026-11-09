@@ -191,6 +191,24 @@ def _summary(markers):
 
 # ---- tests -----------------------------------------------------------------
 
+def test_malformed_roof_metadata_normalizes_and_builds():
+    bad = [None, {}, {'rect': [0, 1, 2]}, {'block_rect': RIGHT},
+           {'block_rect': ['bad', 0, 1, 2], 'text': 'Bad.'}, {'block_rect': RIGHT, 'text': None}]
+    raw = raw_plan(bad + [FLAG])
+    choice = {'rect': RIGHT, 'pitch': 6}
+    raw['buildings'][0]['roof']['choices'] = bad + [choice]
+    normalized, _ = twin_plan.normalize(raw)
+    roof = normalized['buildings'][0]['roof']
+    check(roof['flags'] == [FLAG] and roof['choices'] == [choice], roof)
+    # Bypass normalize too: the real generator must tolerate malformed metadata.
+    unfiltered = plan(bad + [FLAG])
+    unfiltered['buildings'][0]['roof']['choices'] = bad + [choice]
+    out = run(unfiltered)
+    check({m['pieceId'] for m in out['markers']} == {'roof-B'}, out)
+    malformed_only = run(plan(bad))
+    check(malformed_only['markers'] == [], malformed_only)
+
+
 def test_flags_survive_normalize():
     normalized, _ = twin_plan.normalize(raw_plan([FLAG]))
     flags = normalized['buildings'][0]['roof'].get('flags')
@@ -233,6 +251,7 @@ def test_flag_matches_its_block_within_a_foot():
 
 
 TESTS = (
+    test_malformed_roof_metadata_normalizes_and_builds,
     test_flags_survive_normalize,
     test_flagged_roof_is_marked_and_a_tap_selects_it,
     test_no_flags_no_marker,

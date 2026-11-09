@@ -419,6 +419,40 @@ def scenario_roof_kind_switch_clears_ends():
         check(roof['pitch'] == 0 if kind == 'flat' else roof['low_side'] == 'x0', roof)
 
 
+def scenario_kind_switch_with_gable_window_refuses():
+    for ridge, coordinate in (('x', 'y'), ('y', 'x')):
+        for kind in ('hip', 'shed', 'flat'):
+            _seed()
+            plan = ts.current()
+            roof = piece(plan, 'roof-1')
+            roof.update(kind='gable', ridge=ridge, rect=[0, 0, 30, 20],
+                        ends={f'{ridge}0': 'gable', f'{ridge}1': 'gable'})
+            plan['buildings'][0]['openings'].append(
+                {'id': 'gable-window', 'kind': 'window', 'section': 'roof-1', 'gable': 'front',
+                 coordinate: 10, 'width': 2, 'sill': 1, 'head': 3})
+            ts.push_round(plan, 'build')
+            before_id, before = ts.current_id(), ts.current()
+            try:
+                twin_edit.save({'op': 'set', 'piece': 'roof-1', 'field': 'kind', 'value': kind}, 'p1')
+            except ValueError as exc:
+                check(str(exc) == 'A window sits in that gable; move or delete it first.', str(exc))
+            else:
+                raise AssertionError(f'a window-bearing gable became {kind}')
+            check(ts.current_id() == before_id and ts.current() == before, 'refusal publishes nothing and keeps window')
+
+
+def scenario_malformed_roof_metadata_edit_is_safe():
+    _seed_derived()
+    plan = ts.current()
+    roof = plan['buildings'][0]['roof']
+    roof['choices'] = [None, {}, {'rect': ['bad', 0, 1, 2]}]
+    roof['flags'] = [None, {}, {'block_rect': DERIVED_BLOCK}]
+    carrier = next(s for s in roof['sections'] if s.get('block') == DERIVED_BLOCK)
+    twin_edit._set('roof', carrier, plan['buildings'][0], 'pitch', 7)
+    check(len(roof['choices']) == 1 and roof['choices'][0]['pitch'] == 7, roof)
+    check(roof['flags'] == [], roof)
+
+
 def scenario_hip_end_with_window_names_the_remedy():
     for ridge, end, coordinate in (('x', 'x0', 'y'), ('y', 'y1', 'x')):
         _seed()
@@ -568,6 +602,8 @@ if __name__ == '__main__':
     # Per-end roof ends: each reported on its own so one failure does not hide the other.
     failed = []
     for fn in (scenario_test_card_sets_roof_ends,
+               scenario_kind_switch_with_gable_window_refuses,
+               scenario_malformed_roof_metadata_edit_is_safe,
                scenario_test_invalid_roof_ends_refused,
                scenario_roof_kind_switch_clears_ends,
                scenario_hip_end_with_window_names_the_remedy,

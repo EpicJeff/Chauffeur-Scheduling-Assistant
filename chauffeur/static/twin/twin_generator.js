@@ -545,8 +545,9 @@ export function buildTwin(plan, kit, tier) {
       const block = section.block || section.rect;
       if (positions.length && !section.dormer_of
           && section.rect.every((v, i) => Math.abs(v - block[i]) <= 1)
-          && b.roof?.flags?.some(flag => flag.block_rect?.length === 4
-            && flag.block_rect.every((v, i) => Math.abs(v - block[i]) <= 1))) {
+          && Array.isArray(b.roof?.flags) && b.roof.flags.some(flag => Array.isArray(flag?.block_rect)
+            && flag.block_rect.length === 4 && typeof flag.text === 'string'
+            && flag.block_rect.every((v, i) => Number.isFinite(v) && Math.abs(v - block[i]) <= 1))) {
         // The shared needs-checking outline keeps the settled roof and its
         // existing pick proxy, so tapping it opens the normal roof card.
         const geometry = roofGeometry(positions);
