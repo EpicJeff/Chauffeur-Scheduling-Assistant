@@ -11,6 +11,21 @@ export function libUrl(assetId, name) {
 // The page carries the vetted manifest, not a second list of filename guesses.
 export function manifest(kit) { return kit?.manifest || window.twinManifest || {}; }
 
+// Optional finishes and furnishings must not hold scene readiness forever when
+// a connection stays open without delivering its image, buffer or HDR.
+const ASSET_TIMEOUT_MS = 15000;
+function optionalAsset(load, abort, dispose) {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = value => {
+      if (settled) { if (value) dispose(value); return; }
+      settled = true; clearTimeout(timer); resolve(value);
+    };
+    const timer = setTimeout(() => { finish(null); abort(); }, ASSET_TIMEOUT_MS);
+    Promise.resolve().then(load).then(finish, () => { finish(null); abort(); });
+  });
+}
+
 export function kitMaterial(role, kit, tier) {
   const ref = kit.materials?.[role] || {};
   const id = ref.id || ref.asset;
@@ -26,18 +41,21 @@ export function kitMaterial(role, kit, tier) {
   // A failed set is entirely plain kit colour, even if another map succeeds.
   let failed = false;
   const textures = new Set();
+  const completions = new Set();
   const clear = () => {
     failed = true;
     for (const key of ['map', 'normalMap', 'roughnessMap']) material[key] = null;
     material.color.set(ref.color || '#c3c6c2');
     textures.forEach(t => t.dispose());
     material.needsUpdate = true;
+    completions.forEach(resolve => resolve()); completions.clear();
   };
   for (const [property, pattern] of [['map', /_diff_/], ['normalMap', /_nor_gl_/], ['roughnessMap', /_rough_/]]) {
     if (tier === 'low' && property !== 'map') continue;
     const name = Object.keys(asset.files || {}).find(n => pattern.test(n));
     if (!name) continue;
     pending.push(new Promise(resolve => {
+      completions.add(resolve);
       const tex = loader.load(libUrl(id, name), texture => {
         if (failed) texture.dispose();
         else {
@@ -45,6 +63,7 @@ export function kitMaterial(role, kit, tier) {
           if (property === 'map') material.color.set('#ffffff');
           material.needsUpdate = true;
         }
+        completions.delete(resolve);
         resolve();
       }, undefined, () => { clear(); resolve(); });
       textures.add(tex);
@@ -54,8 +73,9 @@ export function kitMaterial(role, kit, tier) {
       if (property === 'map') tex.colorSpace = THREE.SRGBColorSpace;
     }));
   }
-  material.userData.ready = Promise.all(pending);
-  material.addEventListener('dispose', () => textures.forEach(t => t.dispose()));
+  const timer = pending.length ? setTimeout(clear, ASSET_TIMEOUT_MS) : null;
+  material.userData.ready = Promise.all(pending).then(() => clearTimeout(timer));
+  material.addEventListener('dispose', clear);
   return material;
 }
 
@@ -77,7 +97,10 @@ export async function loadModel(assetId, kit) {
     return raw;
   });
   try {
-    const result = await new GLTFLoader(manager).setResourcePath(directory.href).loadAsync(libUrl(assetId, name));
+    const result = await optionalAsset(
+      () => new GLTFLoader(manager).setResourcePath(directory.href).loadAsync(libUrl(assetId, name)),
+      () => manager.abort(), result => disposeObject(result.scene));
+    if (!result) return null;
     result.scene.traverse(o => {
       if (!o.isMesh) return;
       o.castShadow = o.receiveShadow = true;
@@ -105,7 +128,9 @@ export async function loadSky(kit) {
   const entry = entries.find(([id, a]) => a.kind === 'hdri' && /partly_cloudy/.test(id)) || entries.find(([, a]) => a.kind === 'hdri');
   if (!entry) return null;
   const name = Object.keys(entry[1].files).find(n => n.endsWith('.hdr'));
-  try { return name ? await new HDRLoader().loadAsync(libUrl(entry[0], name)) : null; }
+  const manager = new THREE.LoadingManager();
+  try { return name ? await optionalAsset(() => new HDRLoader(manager).loadAsync(libUrl(entry[0], name)),
+    () => manager.abort(), texture => texture.dispose()) : null; }
   catch { return null; }
 }
 

@@ -2,7 +2,8 @@
 // All geometry is in plan feet; only the returned root converts to metres.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { kitMaterial } from './twin_library.js';
+import { kitMaterial, loadModel } from './twin_library.js';
+import { hostPoint } from './twin_hosts.js';
 import { roofMesh, heightAt, stepFaces, endKind } from './twin_roof.js';
 import { groundAt } from './twin_ground.js';
 
@@ -119,7 +120,7 @@ function wallBasis(from, to, elevation) {
 
 // Join exterior walls rather than assuming the spike's 31 x 22 rectangle.
 function footprints(walls) {
-  const remaining = walls.filter(w => w.exterior).map(w => [w.from, w.to]), out = [];
+  const remaining = walls.filter(w => w.exterior && w.kind !== 'separator').map(w => [w.from, w.to]), out = [];
   const near = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.001;
   while (remaining.length) {
     const chain = remaining.shift().slice();
@@ -191,7 +192,55 @@ function batchGhost(root, objects, material, edgeMaterial) {
   };
 }
 
-export function buildTwin(plan, kit, tier) {
+// A panel keeps the wall's mitred cross-section, clipped at opening edges.
+// Its top is linear between roof samples, just like the legacy extrusion.
+function footprintPanel(footprint, a, c, lo, ta, tc) {
+  const height = x => ta + (tc - ta) * (x - a) / (c - a);
+  let poly = footprint;
+  for (const distance of [p => p[0] - a, p => c - p[0], p => height(p[0]) - lo]) {
+    const clipped = [];
+    for (let i = 0; i < poly.length; i++) {
+      const p = poly[i], q = poly[(i + 1) % poly.length], dp = distance(p), dq = distance(q);
+      if (dp >= 0) clipped.push(p);
+      if ((dp < 0) !== (dq < 0)) {
+        const t = dp / (dp - dq);
+        clipped.push(p.map((v, j) => v + t * (q[j] - v)));
+      }
+    }
+    poly = clipped;
+  }
+  if (poly.length < 3) return [];
+  const parts = { body: [], left: [], right: [] };
+  const emit = (part, ...points) => parts[part].push(...points.flat());
+  const bottom = p => [p[0], lo, p[1]], top = p => [p[0], Math.max(lo, height(p[0])), p[1]];
+  // The footprint runs counter-clockwise in local x/depth.
+  const onEdge = (p, edge) => {
+    const q = footprint[edge], r = footprint[(edge + 1) % 4];
+    return Math.abs((p[0] - q[0]) * (r[1] - q[1]) - (p[1] - q[1]) * (r[0] - q[0])) < 1e-6;
+  };
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i], q = poly[(i + 1) % poly.length];
+    const side = onEdge(p, 0) && onEdge(q, 0) ? 'left' : onEdge(p, 2) && onEdge(q, 2) ? 'right' : 'body';
+    emit(side, bottom(q), bottom(p), top(p), bottom(q), top(p), top(q));
+  }
+  for (const indices of THREE.ShapeUtils.triangulateShape(poly.map(p => new THREE.Vector2(...p)), [])) {
+    const [p, q, r] = indices.map(i => poly[i]);
+    // triangulateShape returns CCW triangles in x/depth: their normal is down.
+    emit('body', bottom(p), bottom(q), bottom(r), top(p), top(r), top(q));
+  }
+  return Object.entries(parts).filter(([, positions]) => positions.length).map(([side, positions]) => {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.computeVertexNormals();
+    const uv = [], normal = geometry.attributes.normal;
+    for (let i = 0; i < positions.length; i += 3)
+      uv.push(positions[i], Math.abs(normal.getY(i / 3)) > 0.5 ? positions[i + 2] : positions[i + 1]);
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    return [side, geometry];
+  });
+}
+
+export function buildTwin(plan, kit, tier, { showAnchors = false } = {}) {
   const root = new THREE.Group(); root.scale.setScalar(FT);
   const pieces = new Map(), pieceBounds = new Map(), pickObjects = new Map(), roofSurfaces = new Map(), mergeGroups = [], ghostBatches = [];
   const groups = { site: new THREE.Group(), roof: new THREE.Group(), gableFull: new THREE.Group(), gableCut: new THREE.Group(), lights: new THREE.Group(), levels: {} };
@@ -218,12 +267,15 @@ export function buildTwin(plan, kit, tier) {
   const ghost = plain('ghost', '#38bdf8', { opacity: 0.35, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
   const ghostEdges = new THREE.LineDashedMaterial({ color: '#38bdf8', dashSize: 0.4, gapSize: 0.25, transparent: true, opacity: 0.8, depthWrite: false });
   const pickMaterial = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
-  const roomLights = [], levelElevations = {}, notes = [];
+  const roomLights = [], levelElevations = {}, notes = [], pendingModels = [];
   for (const b of plan.buildings || []) {
     const materialKit = materialKitFor({ ...plan.materials, ...b.materials });
-    const mat = role => {
-      const key = Object.hasOwn(b.materials || {}, role) ? JSON.stringify([b.id, role]) : role;
-      if (!materials.has(key)) materials.set(key, kitMaterial(role, materialKit, tier));
+    const mat = (role, level = null, override = null) => {
+      const ref = override || level?.materials?.[role];
+      const key = ref ? JSON.stringify([role, ref, materialKit.materials[role]])
+        : Object.hasOwn(b.materials || {}, role) ? JSON.stringify([b.id, role]) : role;
+      if (!materials.has(key)) materials.set(key, kitMaterial(role,
+        ref ? materialKitFor({ ...plan.materials, ...b.materials, [role]: ref }) : materialKit, tier));
       return materials.get(key);
     };
     const levels = Object.fromEntries(b.levels.map(l => [l.id, l]));
@@ -304,7 +356,8 @@ export function buildTwin(plan, kit, tier) {
       if (!length) return;
       const ghostOpenings = holes.filter(h => h.state === 'ghost');
       holes = holes.filter(h => h.state !== 'ghost');
-      const start = -(profile.extendStart || 0), end = length + (profile.extendEnd || 0), offset = profile.offset || 0;
+      const start = profile.footprint ? Math.min(...profile.footprint.map(p => p[0])) : -(profile.extendStart || 0);
+      const end = profile.footprint ? Math.max(...profile.footprint.map(p => p[0])) : length + (profile.extendEnd || 0), offset = profile.offset || 0;
       const samples = Array.from({ length: 17 }, (_, i) => start + (end - start) * i / 16);
       // Include every envelope face boundary crossed by this wall. Uniform
       // samples alone can bridge a narrow valley and put siding above it.
@@ -385,16 +438,38 @@ export function buildTwin(plan, kit, tier) {
           // single shared height at a step would interpolate siding across it.
           const ta = Math.min(hi, top(a, mid)), tc = Math.min(hi, top(c, mid));
           if (ta <= lo && tc <= lo) continue;
+          if (profile.footprint && !role) {
+            for (const [side, geo] of footprintPanel(profile.footprint, a, c, lo, ta, tc)) {
+              separateRoofContact(geo, a, c, top(a, mid), top(c, mid), 0, true);
+              mesh(group, geo.applyMatrix4(matrix), profile.materials[side] || wallMat);
+            }
+            continue;
+          }
           const shape = new THREE.Shape([[a, lo], [c, lo], [c, Math.max(lo, tc)], [a, Math.max(lo, ta)]].map(p => new THREE.Vector2(...p)));
           const geo = new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false, steps: 1 });
           separateRoofContact(geo, a, c, top(a, mid), top(c, mid), offset - thickness / 2, true);
-          geo.translate(0, 0, offset - thickness / 2).applyMatrix4(matrix);
-          mesh(group, geo, wallMat);
+          geo.translate(0, 0, offset - thickness / 2);
+          if (profile.materials && !role) {
+            const parts = { body: [], left: [], right: [] }, normal = geo.attributes.normal;
+            for (let j = 0; j < normal.count; j += 3) {
+              const side = normal.getZ(j) < -0.5 ? 'left' : normal.getZ(j) > 0.5 ? 'right' : 'body';
+              parts[side].push(j, j + 1, j + 2);
+            }
+            for (const [side, indices] of Object.entries(parts)) if (indices.length) {
+              const part = new THREE.BufferGeometry();
+              for (const [name, attr] of Object.entries(geo.attributes)) {
+                const values = indices.flatMap(i => Array.from({ length: attr.itemSize }, (_, c) => attr.getComponent(i, c)));
+                part.setAttribute(name, new THREE.Float32BufferAttribute(values, attr.itemSize));
+              }
+              mesh(group, part.applyMatrix4(matrix), profile.materials[side] || wallMat);
+            }
+            geo.dispose();
+          } else mesh(group, geo.applyMatrix4(matrix), wallMat);
         }
       }
       const sign = profile.sign || Math.sign(z.dot(new THREE.Vector3((from[0] + to[0]) / 2 - center[0], 0, -(from[1] + to[1]) / 2 + center[1]))) || 1;
       const localBox = (u, v, w, h, d, material, faceOffset = 0) => mesh(group, boxGeometry(w, h, d).translate(u, v, offset + faceOffset).applyMatrix4(matrix), material);
-      if (exterior && materialKit.materials.siding?.asset === 'board_and_batten' && !role) {
+      if (exterior && (profile.sidingAsset || materialKit.materials.siding?.asset) === 'board_and_batten' && !role) {
         for (let u = 0.5; u < length; u += 1) {
           let intervals = [[0, Infinity]];
           holes.filter(h => u > h.u0 - 0.4 && u < h.u1 + 0.4).forEach(h => {
@@ -409,7 +484,7 @@ export function buildTwin(plan, kit, tier) {
             const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.09, bevelEnabled: false, steps: 1 });
             separateRoofContact(geo, a, c, top(a, mid), top(c, mid), offset + sign * (thickness / 2 + 0.045) - 0.045);
             geo.translate(0, 0, offset + sign * (thickness / 2 + 0.045) - 0.045).applyMatrix4(matrix);
-            mesh(group, geo, wallMat);
+            mesh(group, geo, profile.materials?.[sign > 0 ? 'right' : 'left'] || wallMat);
           }
         }
       }
@@ -455,12 +530,13 @@ export function buildTwin(plan, kit, tier) {
     const opening = (o, at = o.at) => ({ ...o, u0: at - o.width / 2, u1: at + o.width / 2, v0: o.sill, v1: o.head });
     const ownsGable = (w, section, end) => {
       const axis = section.ridge === 'y' ? 1 : 0, other = 1 - axis;
-      return w.state !== 'ghost' && w.level === ordered.at(-1).id &&
+      return w.kind !== 'separator' && w.state !== 'ghost' && w.level === ordered.at(-1).id &&
         Math.abs(w.from[axis] - end) < 1e-4 && Math.abs(w.to[axis] - end) < 1e-4 &&
         Math.max(w.from[other], w.to[other]) > section.rect[other] && Math.min(w.from[other], w.to[other]) < section.rect[other + 2];
     };
     // Half-storey knee walls use this same path and retain the roof caps.
     for (const w of b.walls) {
+      if (w.kind === 'separator') continue;
       const l = levels[w.level]; if (!l) continue;
       use(w, 'wall', w.id);
       const length = Math.hypot(w.to[0] - w.from[0], w.to[1] - w.from[1]);
@@ -469,7 +545,8 @@ export function buildTwin(plan, kit, tier) {
       const { sign, outward } = wallNormal(w);
       // Outside face stays on the drawn line. Interior walls retain their
       // centreline and sample both faces to avoid piercing a sloping roof.
-      const faces = w.exterior ? [[0, 0], outward.map(v => -v * w.thickness)]
+      const faces = w.footprint ? [-0.5, 0.5].map(f => outward.map(v => v * w.thickness * f))
+        : w.exterior ? [[0, 0], outward.map(v => -v * w.thickness)]
         : [-0.5, 0.5].map(f => outward.map(v => v * w.thickness * f));
       const extension = vertex => {
         if (!w.exterior) return 0;
@@ -505,11 +582,27 @@ export function buildTwin(plan, kit, tier) {
         return [...roof, ...visible, cap];
       };
       const top = (u, toward = u) => Math.max(0, Math.min(...limits(u, toward)));
-      const profile = { offset: w.exterior ? -sign * w.thickness / 2 : 0, sign,
+      const profile = { offset: w.footprint ? 0 : w.exterior ? -sign * w.thickness / 2 : 0, sign,
         slabCap: next ? next.elevation - 0.8 : NaN,
         slabOutlines: above,
         extendStart: extension(w.from), extendEnd: extension(w.to), faces, limits, positions: storeyRoof.positions,
         edges: above.flatMap(poly => poly.map((p, i) => [p, poly[(i + 1) % poly.length]])), panels: [] };
+      const sideMaterial = side => {
+        const direction = side === 'left' ? 1 : -1;
+        const mid = [(w.from[0] + w.to[0]) / 2 - direction * dy * (w.thickness / 2 + 0.05),
+          (w.from[1] + w.to[1]) / 2 + direction * dx * (w.thickness / 2 + 0.05)];
+        const outside = w.exterior && (side === 'right' ? sign > 0 : sign < 0);
+        const room = outside ? null : (b.rooms || []).find(r => r.level === w.level && r.state !== 'ghost' && contains(r.polygon, mid));
+        return mat(outside ? 'siding' : 'interior_wall', l, w.faces?.[side] || room?.wall_material);
+      };
+      if (w.footprint || w.faces || l.materials || (b.rooms || []).some(r => r.level === w.level && r.wall_material))
+        profile.materials = { body: mat(w.exterior ? 'siding' : 'interior_wall', l), left: sideMaterial('left'), right: sideMaterial('right') };
+      const sidingRef = w.faces?.[sign > 0 ? 'right' : 'left'] || l.materials?.siding;
+      if (sidingRef) profile.sidingAsset = materialKitFor({ ...plan.materials, ...b.materials, siding: sidingRef }).materials.siding?.asset;
+      if (w.footprint?.length === 4) profile.footprint = w.footprint.map(p => {
+        const x = p[0] - w.from[0], y = p[1] - w.from[1];
+        return [x * dx + y * dy, x * dy - y * dx];
+      });
       const holes = (b.openings || []).filter(o => o.wall === w.id).map(o => opening(o));
       for (const { section, end, axis } of gables) for (const o of b.openings || []) {
         if (o.section !== section.id || o.gable !== (end === section.rect[axis] ? 'front' : 'rear')) continue;
@@ -768,17 +861,20 @@ export function buildTwin(plan, kit, tier) {
     for (const l of ordered) {
       use({ ...l, id: `floor:${l.id}` }, 'floor', `floor:${l.id}`);
       const floorOutlines = outlines.get(l.id);
-      const polys = floorOutlines.length ? floorOutlines : (b.rooms || []).filter(r => r.level === l.id).map(r => r.polygon);
+      const rooms = (b.rooms || []).filter(r => r.level === l.id && r.polygon?.length >= 3);
+      const surfaces = rooms.length ? rooms : floorOutlines.map(polygon => ({ polygon }));
       const holes = (b.stairs || []).filter(s => s.rise_to >= l.elevation && l.elevation > first.elevation).map(s => {
         const dx = s.to[0] - s.from[0], dy = s.to[1] - s.from[1], length = Math.hypot(dx, dy), nx = -dy / length * s.width / 2, ny = dx / length * s.width / 2;
         return [[s.from[0] + nx, s.from[1] + ny], [s.to[0] + nx, s.to[1] + ny], [s.to[0] - nx, s.to[1] - ny], [s.from[0] - nx, s.from[1] - ny]];
       });
-      for (const poly of polys) {
+      for (const room of surfaces) {
+        const poly = room.polygon;
+        use(room.id ? room : { ...l, id: `floor:${l.id}` }, room.id ? 'room' : 'floor', `floor:${l.id}`);
         // Only insert stair holes fully contained in this footprint.
         const inside = p => { let v = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) if ((poly[i][1] > p[1]) !== (poly[j][1] > p[1]) && p[0] < (poly[j][0] - poly[i][0]) * (p[1] - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) v = !v; return v; };
         const cuts = holes.filter(h => h.every(inside));
         mesh(local[l.id], polygon(poly, l.id === first.id ? 0 : l.elevation - 0.8, l.elevation - 0.02, cuts), mat(l.id === first.id ? 'patio_concrete' : 'interior_wall'));
-        mesh(local[l.id], polygon(poly, l.elevation, l.elevation, cuts), mat('floor'));
+        mesh(local[l.id], polygon(poly, l.elevation, l.elevation, cuts), mat('floor', l, room.floor_material));
       }
     }
     for (const [index, po] of allPorches(b).entries()) {
@@ -854,10 +950,12 @@ export function buildTwin(plan, kit, tier) {
         mesh(local[l.id], boxGeometry(run, height, s.width).rotateY(angle).translate(s.from[0] + dx * (i + 0.5) / s.risers, l.elevation + height / 2, -s.from[1] - dy * (i + 0.5) / s.risers), mat('floor'));
       }
     }
-    for (const [index, f] of (b.fixtures || []).entries()) {
+    const itemIds = new Set((b.items || []).filter(item => item.asset).map(item => item.id));
+    const fixtureFallbacks = new Map();
+    const drawFixture = (f, index, group = null) => {
       use(f, 'fixture', `fixture:${index}`);
-      const l = levels[f.level]; if (!l || !f.rect) continue;
-      const g = local[l.id], [x0, y0, x1, y1] = f.rect, z = l.elevation + (f.z0 || 0), h = f.height || 1;
+      const l = levels[f.level]; if (!l || !f.rect) return;
+      const g = group || local[l.id], [x0, y0, x1, y1] = f.rect, z = l.elevation + (f.z0 || 0), h = f.height || 1;
       const box = (a, c, d, e, lo, hi, m) => mesh(g, boxRect(a, c, d, e, lo, hi), m);
       if (['counter', 'vanity'].includes(f.kind)) {
         box(x0, y0, x1, y1, z, z + h - 0.12, plain('cabinet', f.body || '#3a4a52'));
@@ -875,6 +973,10 @@ export function buildTwin(plan, kit, tier) {
         const m = ['fridge', 'grill'].includes(f.kind) ? mat('stainless') : plain(f.kind, f.color || (f.kind === 'toilet' ? '#f4f4f2' : '#2f3338'));
         box(x0, y0, x1, y1, z, z + h, m);
       }
+    };
+    for (const [index, f] of (b.fixtures || []).entries()) {
+      if (itemIds.has(f.id)) fixtureFallbacks.set(f.id, { piece: f, index });
+      else drawFixture(f, index);
     }
     for (const [index, l] of (b.lights || []).entries()) {
       use(l, 'light', `light:${index}`);
@@ -887,27 +989,90 @@ export function buildTwin(plan, kit, tier) {
       local.lights.add(light); roomLights.push(light);
       mesh(local[level.id], boxRect(l.at[0] - size / 2, l.at[1] - size / 2, l.at[0] + size / 2, l.at[1] + size / 2, y, y + 0.05), fixture);
     }
+    const hostLevel = host => {
+      const surface = 'wall' in host ? b.walls.find(w => w.id === host.wall)
+        : 'floor' in host || 'ceiling' in host ? (b.rooms || []).find(r => r.id === (host.floor ?? host.ceiling))
+        : (b.roofs || []).find(r => r.id === host.roof);
+      return levels[surface?.level] || first;
+    };
+    if (showAnchors) for (const anchor of b.anchors || []) {
+      // A light already has a fixture registered under this same identity.
+      if (anchor.kind === 'light') continue;
+      let point;
+      try { point = hostPoint(b, anchor.host, (anchor.offset || 0) + 0.04); }
+      catch { continue; } // Missing hosts remain represented by model flags.
+      use(anchor, 'anchor', anchor.id);
+      const geometry = new THREE.CylinderGeometry(0.22, 0.22, 0.06, 16);
+      const wall = b.walls.find(w => w.id === anchor.host.wall);
+      if (wall) {
+        const dx = wall.to[0] - wall.from[0], dy = wall.to[1] - wall.from[1];
+        const direction = anchor.host.side === 'right' ? -1 : 1;
+        geometry.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0),
+          new THREE.Vector3(-dy * direction, 0, -dx * direction).normalize()));
+      }
+      geometry.translate(point[0], point[2], -point[1]);
+      mesh(local[hostLevel(anchor.host).id], geometry, plain('anchor', '#38bdf8'));
+    }
     // Proxies retain identity after settled render meshes are merged. Their
     // layer is never enabled on a rendering camera (including shadow cameras).
-    for (const [key, { data, group, box }] of records) {
-      if (box.isEmpty()) continue;
-      pieceBounds.set(key, { box: box.clone(), group, data });
-      const size = box.getSize(new THREE.Vector3()), center = box.getCenter(new THREE.Vector3());
-      const wall = b.walls.find(w => w.id === data.pieceId);
-      let geometry;
-      if (wall) {
-        const basis = wallBasis(wall.from, wall.to, box.min.y);
-        geometry = boxGeometry(basis.length, size.y, wall.thickness + 0.2).translate(basis.length / 2, size.y / 2, 0).applyMatrix4(basis.matrix);
-      } else if (data.kind === 'roof') {
-        const index = sections.findIndex((s, i) => (s.id || `roof:${i}`) === data.pieceId), positions = [];
-        for (let t = 0; t < roofLayers.section.length; t++) if (roofLayers.section[t] === index) positions.push(...roofLayers.positions.slice(t * 9, t * 9 + 9));
-        geometry = roofGeometry(positions);
-      } else geometry = boxGeometry(Math.max(0.01, size.x), Math.max(0.01, size.y), Math.max(0.01, size.z)).translate(...center.toArray());
-      const proxy = new THREE.Mesh(geometry, pickMaterial);
-      Object.assign(proxy.userData, data); proxy.layers.set(PICK_LAYER);
-      group.add(proxy); pickObjects.set(key, proxy);
-    }
+    const registerRecords = () => {
+      for (const [key, { data, group, box }] of records) {
+        if (box.isEmpty() || pieceBounds.has(key)) continue;
+        pieceBounds.set(key, { box: box.clone(), group, data });
+        const size = box.getSize(new THREE.Vector3()), center = box.getCenter(new THREE.Vector3());
+        const wall = b.walls.find(w => w.id === data.pieceId);
+        let geometry;
+        if (wall) {
+          const basis = wallBasis(wall.from, wall.to, box.min.y);
+          geometry = boxGeometry(basis.length, size.y, wall.thickness + 0.2).translate(basis.length / 2, size.y / 2, 0).applyMatrix4(basis.matrix);
+        } else if (data.kind === 'roof') {
+          const index = sections.findIndex((s, i) => (s.id || `roof:${i}`) === data.pieceId), positions = [];
+          for (let t = 0; t < roofLayers.section.length; t++) if (roofLayers.section[t] === index) positions.push(...roofLayers.positions.slice(t * 9, t * 9 + 9));
+          geometry = roofGeometry(positions);
+        } else geometry = boxGeometry(Math.max(0.01, size.x), Math.max(0.01, size.y), Math.max(0.01, size.z)).translate(...center.toArray());
+        const proxy = new THREE.Mesh(geometry, pickMaterial);
+        Object.assign(proxy.userData, data); proxy.layers.set(PICK_LAYER);
+        group.add(proxy); pickObjects.set(key, proxy);
+      }
+    };
+    registerRecords();
     for (const [key, { data }] of records) if (data.ghost) ghostBatches.push(batchGhost(root, pieces.get(key), ghost, ghostEdges));
+    const models = new Map(), itemGroups = new Map();
+    const jobs = (b.items || []).filter(item => item.asset).map(async item => {
+      let point, source;
+      try { point = hostPoint(b, item.host, item.offset || 0); }
+      catch { /* Retain any legacy fixture when its host is unavailable. */ }
+      if (point) {
+        const asset = item.asset.replace(/^polyhaven:/, '');
+        if (!models.has(asset)) models.set(asset, loadModel(asset, kit));
+        source = await models.get(asset);
+      }
+      const fallback = fixtureFallbacks.get(item.id);
+      if (!source && !fallback) return;
+      const level = !source && fallback ? levels[fallback.piece.level] : hostLevel(item.host);
+      if (!level) return;
+      if (!itemGroups.has(level.id)) {
+        const group = new THREE.Group(); local[level.id].add(group); itemGroups.set(level.id, group);
+      }
+      const group = itemGroups.get(level.id);
+      if (source) {
+        const model = source.clone(true);
+        model.scale.multiplyScalar((item.scale ?? 1) / FT);
+        model.position.set(point[0], point[2], -point[1]);
+        model.rotation.y = THREE.MathUtils.degToRad(item.rotation || 0);
+        model.updateMatrixWorld(true);
+        use(item, 'item', item.id);
+        model.traverse(object => {
+          if (object.isMesh) mesh(group, object.geometry.clone().applyMatrix4(object.matrixWorld), object.material);
+        });
+      } else drawFixture(fallback.piece, fallback.index, group);
+      registerRecords();
+      if (item.state === 'ghost' && pieces.has(`${b.id}:${item.id}`))
+        ghostBatches.push(batchGhost(root, pieces.get(`${b.id}:${item.id}`), ghost, ghostEdges));
+    });
+    pendingModels.push(Promise.all(jobs).then(() => {
+      for (const group of itemGroups.values()) mergeStatic(group);
+    }));
   }
   // Merge within independently switchable domains, never across a floor cut.
   for (const g of mergeGroups) mergeStatic(g);
@@ -916,7 +1081,7 @@ export function buildTwin(plan, kit, tier) {
   updateGhosts();
   // The view's supplementary room meshes still use the plan's floor role.
   if (plan.buildings?.length && !materials.has('floor')) materials.set('floor', kitMaterial('floor', materialKitFor(plan.materials), tier));
-  const ready = Promise.all([...materials.values()].map(m => m.userData.ready));
+  const ready = Promise.all(pendingModels).then(() => Promise.all([...materials.values()].map(m => m.userData.ready)));
   // These two shared materials may have no objects in a settled-only plan.
   materials.set('ghostEdges', ghostEdges); materials.set('pick', pickMaterial);
   return { root, groups, pieces, pieceBounds, pickObjects, roofSurfaces, roomLights, levelElevations, materials, ready, updateGhosts, notes };

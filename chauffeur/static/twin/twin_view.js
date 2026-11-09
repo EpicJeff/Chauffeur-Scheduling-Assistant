@@ -335,7 +335,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
     },
     async rebuild(nextPlan) {
       const version = ++revision; view.ready = false;
-      const next = buildTwin(nextPlan, kit, tier);
+      const next = buildTwin(nextPlan, kit, tier, { showAnchors: !!view.showAnchors });
       const extras = new Map();
       try {
         // The generator's structural floors cover room polygons; unattached
