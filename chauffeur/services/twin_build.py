@@ -17,7 +17,7 @@ from urllib.parse import quote
 import uuid
 
 from services import (twin_compose, twin_cost, twin_draft, twin_library,
-                      twin_joints, twin_place, twin_plan, twin_reads, twin_register, twin_store)
+                      twin_joints, twin_place, twin_plan, twin_reads, twin_register, twin_roof_issues, twin_store)
 
 _LOCK = threading.RLock()
 _BUILDS = {}
@@ -1576,12 +1576,19 @@ def _read_draft_levels(build, step, reader, ticket, images, context, progress):
     return fragment, problems, reads, False
 
 
+def _draft_roof_issues(draft):
+    # Normalize a private copy, keeping the read ids used by corrections.
+    plan, _ = twin_plan.normalize({'units': 'ft', 'buildings': [draft]})
+    return twin_roof_issues.roof_issues(plan['buildings'][0])
+
+
 def _read_roof_check(build, step, reader, ticket, result, images):
     """Correct the read frame before any of its geometry settles."""
     context = result['context']
     draft = result['fragment'].get('building', {})
     sections = draft.get('roof', {}).get('sections', [])
     read_context = {
+        'issues': _draft_roof_issues(draft),
         'building': deepcopy(context['building']),
         'sections': [{k: deepcopy(s[k]) for k in
                       ('id', 'kind', 'ridge', 'low_side', 'rect', 'plate', 'pitch', 'overhang') if k in s}
@@ -1596,7 +1603,8 @@ def _read_roof_check(build, step, reader, ticket, result, images):
     if not read_images:
         result.pop('roof_check_pending', None)
         result['roof_check'] = {'context': read_context, 'reply': None, 'fragment': {},
-                                'problems': [], 'error': 'No roof check images.'}
+                                'problems': [], 'error': 'No roof check images.',
+                                'issues': read_context['issues']}
         return _cache_result(build, step, ticket, result)
     # Retain the draft across a checkpoint before this additional paid read.
     result['roof_check_pending'] = True
@@ -1663,7 +1671,8 @@ def _read_roof_check(build, step, reader, ticket, result, images):
                 fragment = {}
         result.pop('roof_check_pending', None)
         result['roof_check'] = {'context': read_context, 'reply': raw, 'fragment': fragment,
-                                'problems': problems, 'error': failure}
+                                'problems': problems, 'error': failure,
+                                'issues': _draft_roof_issues(draft)}
     return _cache_result(build, step, ticket, result)
 
 
@@ -1948,6 +1957,20 @@ def _settle(build, step, result, decision=None):
         _event(build, 'log', step=step['id'],
                text='The roof could not be double-checked; it is shown as first read.')
         roof_check['logged'] = True
+        _atomic(_cache_path(build, step), result)
+    if kind == 'draft' and roof_check.get('issues') and not roof_check.get('issues_logged'):
+        sections = {s['id']: s for s in fragment.get('building', {}).get('roof', {}).get('sections', [])}
+        for issue in roof_check['issues']:
+            section = sections.get(issue.get('section'))
+            area = 'the upper floor'
+            text = issue['text']
+            if section:
+                x0, y0, x1, y1 = section['rect']
+                area = f'x {x0:g} to {x1:g} ft, y {y0:g} to {y1:g} ft'
+                text = text.replace(f"Section {section['id']}", 'This section')
+            _event(build, 'log', step=step['id'],
+                   text=f'The roof over {area} still needs checking: {text}')
+        roof_check['issues_logged'] = True
         _atomic(_cache_path(build, step), result)
     if kind == 'draft' and not fragment.get('building', {}).get('levels'):
         _pause_draft(build, step)

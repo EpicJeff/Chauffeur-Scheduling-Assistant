@@ -308,6 +308,11 @@ from its gable-end wall back into the main roof, ridge toward the main ridge,
 plate at the upper floor's plate. Include every missed dormer and cross gable.
 Check kind, ridge axis, pitch (rise per 12), plate elevation, rect and low_side.
 low_side names the shed's low eave: x0, x1, y0 or y1 in the building frame.
+The context lists `issues` found from the geometry. Resolve every issue against
+the roof plan and photos, by changing, adding or removing sections; say in notes
+how each was resolved. Each wing roof on either side of a raised block is its
+own section; read whether it is a hip or a gable from the roof plan, and give a
+hip the ridge direction the plan shows (a hip's ridge runs along its longer side).
 Reply with corrections only, naming existing section ids for changes/removals:
 {"changes":[{"id":"section-id","kind":"hip","ridge":"x"}],
 "add":[{"id":"new-section-id","kind":"gable","ridge":"y",
