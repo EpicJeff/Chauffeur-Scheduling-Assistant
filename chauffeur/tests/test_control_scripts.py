@@ -59,6 +59,8 @@ STATES = [
     state('script.group_on', friendly_name='Group on'),
     state('script.svc_template', friendly_name='Service template'),
     state('script.scene_short', friendly_name='Scene shorthand'),
+    state('script.csv', friendly_name='CSV'),
+    state('script.fires_event', friendly_name='Fires event'),
     state('automation.unlock_front'),
     state('group.garage', entity_id=['cover.garage_door']),
     state('sensor.kitchen_temp'),
@@ -99,6 +101,8 @@ RELATED = {
     'script.group_on': {'entity': ['group.garage']},
     'script.svc_template': {},
     'script.scene_short': {},
+    'script.csv': {'entity': ['light.a']},
+    'script.fires_event': {},
 }
 CONFIGS = {
     'goodnight': {'sequence': [
@@ -136,6 +140,9 @@ CONFIGS = {
         {'service': 'homeassistant.turn_on', 'target': {'entity_id': 'group.garage'}}]},
     'svc_template': {'sequence': [{'service_template': '{{ "script.open_garage" }}'}]},
     'scene_short': {'sequence': [{'scene': 'scene.night'}]},
+    # HA splits a comma-separated entity_id string (cv.comp_entity_ids).
+    'csv': {'sequence': [{'action': 'light.turn_on', 'target': {'entity_id': 'light.a, LOCK.Front'}}]},
+    'fires_event': {'sequence': [{'event': 'unlock_requested', 'event_data': {'door': 'front'}}]},
 }
 
 
@@ -267,7 +274,8 @@ class Unreadable(Base):
         by_id = {r['entity_id']: r for r in rows}
         self.assertEqual(set(by_id), {'script.templated', 'script.gate', 'script.chatty',
                                       'script.labelled', 'script.legacy', 'script.no_config',
-                                      'script.trigger_auto', 'script.group_on', 'script.svc_template'})
+                                      'script.trigger_auto', 'script.group_on', 'script.svc_template',
+                                      'script.fires_event'})
         self.assertEqual(by_id['script.gate']['name'], 'Gate')
         for row in rows:
             self.assertTrue(row['reason'].strip())
@@ -341,6 +349,22 @@ class ReviewRound2(Base):
         kinds = set(cr.kinds_for(['script.scene_short']))
         self.assertTrue({'lights', 'locks'} <= kinds, kinds)
         self.assertFalse(cr.check(CHILD, ['script.scene_short'], {'ha_control': self.rules}).allowed)
+
+
+class ReviewRound3(Base):
+    def test_comma_separated_ids_in_a_step(self):
+        kinds = set(cr.kinds_for(['script.csv']))
+        self.assertIn('locks', kinds)
+        self.assertFalse(cr.check(CHILD, ['script.csv'], {'ha_control': self.rules}).allowed)
+
+    def test_comma_separated_ids_direct(self):
+        settings = {'ha_control': self.rules}
+        self.assertFalse(cr.check(CHILD, ['light.a, lock.front'], settings).allowed)
+        self.assertFalse(cr.check(CHILD, 'light.a,lock.front', settings).allowed)
+        self.assertEqual(cr.targets({'entity_id': 'light.a, Lock.Front'}), {'light.a', 'lock.front'})
+
+    def test_event_step_unreadable(self):
+        self.assertEqual(set(cr.kinds_for(['script.fires_event'])), set(cr.KINDS))
 
 
 class Targets(Base):

@@ -61,13 +61,12 @@ def touched(entity_id: str) -> tuple[set[str], list[str]]:
         if cached is not None and now - cached[0] < _TTL:
             return set(cached[1]), list(cached[2])
 
-    from services.control_rules import NEVER_DOMAINS, kind_of, targets
+    from services.control_rules import NEVER_DOMAINS, _entity_ids, kind_of, targets
 
     entities, reasons, visited = set(), [], set()
 
     def named_targets(value):
-        ids = [value] if isinstance(value, str) else value or []
-        for eid in ids:
+        for eid in _entity_ids(value):
             if eid != 'all' and kind_of(eid, None) is None:
                 reasons.append(f'The directly named target {eid} could not be classified.')
 
@@ -87,6 +86,8 @@ def touched(entity_id: str) -> tuple[set[str], list[str]]:
         return found
 
     def action_targets(action):
+        if 'event' in action:
+            reasons.append('The event step could start automations and could not be read.')
         if 'scene' in action:
             action = {**action, 'service': 'scene.turn_on',
                       'target': {**(action.get('target') or {}), 'entity_id': action['scene']}}
@@ -122,7 +123,7 @@ def touched(entity_id: str) -> tuple[set[str], list[str]]:
         if service_domain == 'script' and service and service not in (
             'script.turn_on', 'script.turn_off', 'script.toggle', 'script.reload',
         ):
-            found.add(service)
+            found.update(_entity_ids(service))
         if service in ('scene.apply', 'scene.create'):
             scene_entities = (action.get('data') or {}).get('entities')
             if isinstance(scene_entities, dict):
@@ -158,9 +159,7 @@ def touched(entity_id: str) -> tuple[set[str], list[str]]:
                     # those are not targets of the script's service calls.
                     children.update(expand({'entity_id': related.get('entity')}))
                     for key in ('script', 'scene'):
-                        values = related.get(key) or []
-                        if isinstance(values, str):
-                            values = [values]
+                        values = _entity_ids(related.get(key))
                         children.update(value if value.startswith(key + '.') else f'{key}.{value}'
                                         for value in values)
 

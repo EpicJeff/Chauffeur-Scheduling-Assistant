@@ -174,6 +174,13 @@ def decide(who: Who, kinds: Iterable[str], rules: dict) -> Decision:
     return Decision(True, None, kinds, '')
 
 
+def _entity_ids(value: str | Iterable[str] | None) -> tuple[str, ...]:
+    """Match HA's comma-separated entity selectors, including list members."""
+    values = (value,) if isinstance(value, str) else value if value is not None else ()
+    return tuple(part.strip().lower() for item in values for part in item.split(',')
+                 if part.strip())
+
+
 def targets(data: dict, domain: str | None = None) -> set[str]:
     """Expand selectors, filtering device/area membership to the service domain."""
     from services import ha_api
@@ -190,7 +197,9 @@ def targets(data: dict, domain: str | None = None) -> set[str]:
 
     validate(data)
 
-    def ids(value):
+    def ids(value, entity=False):
+        if entity:
+            return set(_entity_ids(value))
         if isinstance(value, str):
             return {value}
         return set(value or [])
@@ -202,7 +211,7 @@ def targets(data: dict, domain: str | None = None) -> set[str]:
 
     entities, devices, areas = set(), set(), set()
     for source in (data, data.get('target') or {}):
-        entities.update(ids(source.get('entity_id')))
+        entities.update(ids(source.get('entity_id'), entity=True))
         devices.update(ids(source.get('device_id')))
         areas.update(ids(source.get('area_id')))
     if 'all' in entities:
@@ -233,7 +242,7 @@ def targets(data: dict, domain: str | None = None) -> set[str]:
             if not members:
                 raise ValueError(f'The target {selector} could not be expanded to any entities.')
             entities.update(members)
-    return entities
+    return set(_entity_ids(entities))
 
 
 def kinds_for(entity_ids: Iterable[str]) -> tuple[str, ...]:
@@ -251,12 +260,12 @@ def kinds_for(entity_ids: Iterable[str]) -> tuple[str, ...]:
         elif direct:
             kinds.add('unsupported')
 
-    for entity_id in entity_ids:
+    for entity_id in _entity_ids(entity_ids):
         if entity_id.partition('.')[0] in ('script', 'scene'):
             touched, reasons = control_scripts.touched(entity_id)
             if reasons:
                 kinds.update(KINDS)
-            for target in touched:
+            for target in _entity_ids(touched):
                 # Script analysis already marks directly named, unclassifiable
                 # effects unreadable; kind-less search/expansion leaves can drop.
                 classify(target)
@@ -268,7 +277,7 @@ def kinds_for(entity_ids: Iterable[str]) -> tuple[str, ...]:
 def check(who: Who, entity_ids: Iterable[str], settings: dict | None = None) -> Decision:
     """A failed HA or settings read must never grant control or escape to callers."""
     try:
-        entity_ids = [entity_ids] if isinstance(entity_ids, str) else list(entity_ids)
+        entity_ids = _entity_ids(entity_ids)
         if not entity_ids:
             return Decision(False, None, (), 'Name the device to control.')
         return decide(who, kinds_for(entity_ids), rules(settings))
