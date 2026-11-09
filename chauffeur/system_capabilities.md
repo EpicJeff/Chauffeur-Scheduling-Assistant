@@ -1,6 +1,81 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.768 (2026-11-08).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.769 (2026-11-08).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.769 (2026-11-08, NOT device-verified): a drawn building is read whole, in feet.**
+
+Two local builds of the household's two buildings with real reads came in at $1.31 and $1.79, about 2 and 6 minutes, with no pauses.
+
+Spec: `docs/superpowers/specs/2026-11-08-house-editor-whole-building-draft-design.md` (§1-§8, §2b roof check). Plan: `docs/superpowers/plans/2026-11-08-house-editor-whole-building-draft.md` Tasks 5-12. Claude wrote the tests first, Codex built it, and every task was Claude-reviewed. A whole-branch review was followed by one fix wave and a small residual round.
+
+New suites:
+- `tests/test_twin_build_draft.py`
+- `test_twin_build_draft_checks.py`
+- `test_twin_build_draft_side.py`
+- `test_twin_build_draft_fallback.py`
+- `test_twin_build_draft_rooms.py`
+- `test_twin_build_draft_rebuild.py`
+- `test_twin_build_draft_migration.py`
+- `test_twin_build_draft_replay.py`, which replays the household's own recorded reads
+- `test_twin_build_roof_check.py`
+- `test_twin_build_draft_pause_js.py`
+- `test_twin_porches.py`
+- `test_twin_porches_js.py`
+
+`test_house_editor_live.py` now drives the draft flow.
+
+Why: the crop-by-crop pipeline read each building in many small crops, each in normalized crop positions, and stitched them with gates. Every seam lost precision, and each read defined the footprint differently. Spikes showed that one read of the whole set, in feet from the printed dimension strings, matched the hand plans within inches.
+
+- **The draft step.** A building part with floor pages now builds through `draft` ("Reading the drawings"), then `draft_rooms` ("Rooms"), then finishes, fit and compose.
+  - The `draft` read (`twin_reads` kind `draft`) sends every floor, roof, elevation and other page whole at up to 2576 px, plus up to 4 tagged photos.
+  - It answers the whole building in feet: levels L1..Ln by elevation, exterior walls, openings, roof sections and extensions, porches, stairs, and page anchors. Read settings: medium thinking, 64000 output, 420 s, one model.
+  - The answer is parsed with `strict_json='lenient'`: fences and leading text are stripped, one stray `}` is tolerated, and two objects are refused. Every completion check still applies, and a truncated reply is never retried.
+  - The settle order is normalize, then snap, then the §5 checks:
+    - walls close;
+    - each upper floor lies within the one below plus 2 ft and covers at least 20% of it;
+    - each roof section sits over its level's outline grown by 3 ft, or over a porch;
+    - each opening lies within its wall.
+  - A failing piece becomes a ghost with a plain why, and only the walls at an open corner are ghosted.
+  - Only when the whole first floor fails does the build pause, with "The drawings could not be read as one building." and Try again.
+  - The legacy `{building, photos}` body and shells keep their exact steps.
+- **First look, heartbeat and anchors.**
+  - Within seconds, a quick outline read on a side thread draws the ground floor as a first-look ghost. It never settles anything, and it is dropped if it lands after the draft. The panel shows it as one line and clears it.
+  - A log line goes out at least every 15 s while reading: "Reading the <name> drawings as one set, M:SS so far." There are matching lines for one-floor-at-a-time, rooms and roof-check reads.
+  - Each floor page's anchors fit `twin_register.from_points`, so every drawn floor, upper floors included, is lined up with its sheet. Anchors replace old-frame registrations; a person's registration is kept.
+  - The cost checkpoint is checked once before the paired reads, and the combined estimate is shown before Build.
+- **One floor at a time.** When the draft is cut off or its first floor fails, the step reads L1, each next floor given the floors below, then the roof (`draft_level`, 32000 output).
+  - A floor that comes back but fails a check is ghosted, and the read carries on.
+  - Only an unusable floor pauses.
+  - A draft with no levels also falls back.
+- **Rooms.** One `draft_rooms` read returns rooms (with their printed names, "Room" when none is printed) and interior walls in feet, given the settled building.
+  - Rooms and interior walls snap onto walls within 0.5 ft.
+  - Anything outside its floor's outline is a ghost.
+- **Roof check.** One `roof_check` read rechecks the roof against the roof plan, elevations and photos, and returns corrections only:
+  - hip or gable;
+  - ridge axis, pitch, plate and rect;
+  - added dormers and cross gables;
+  - removed sections.
+
+  A person-edited section is never changed. A failed check logs "The roof could not be double-checked; it is shown as first read." and the build carries on. With no images, the check is skipped and costs nothing.
+- **Schema.**
+  - Half-storey levels (`half: true`): the floor inside the knee walls, with knee walls as non-exterior walls. They get a floor slab and a floor button, and are never ghosted for lacking exterior walls.
+  - Gable windows on side-facing gables (`y` on a ridge-x gable), which the editor can move and delete.
+  - `porches: [...]`: any number of open or screened porches, each with its posts. Screens close every open side to the wall, and columns reach the roof above them. The legacy single `porch` still works.
+  - `twin_plan.porches()` and the generator's `allPorches` are the one way to read a building's porches, used by compose and the yard too.
+- **Rebuilds keep a person's edits.**
+  - Pieces are matched on their read geometry. A re-read that lands where a person moved a wall is that wall, never a second one, and a deleted wall stays deleted.
+  - The fit gate is `position_from == 'person'`, so a rename never blocks a refit.
+  - A building last read the old crop way migrates on its first draft build through a translation-only outline fit. If the fit RMS is over 2 ft or turned, the person's pieces stay put and one plain line is logged.
+  - Old crop walls are replaced. A person's window on a replaced wall moves to the parallel draft wall within 2 ft. Doors on interior partitions stay put.
+- **Joints and the joint report.**
+  - The snap welds only open ends, so a real 1 ft jog survives.
+  - The joint report knows porch posts and knee walls and names only real gaps, one line per reason, counts agreeing.
+- **Recorded fixtures.** The household's two buildings were recorded once for replay: `tests/fixtures/twin_reads/recorded/claude/draft-*.json` and `draft_rooms-*.json`, key-checked.
+- **Known limits.**
+  - The whole-building read is not consistent on roofs from one read to the next. In the second acceptance build the roof check fixed the main house's centre ridge axis and added its front dormer, but left gable ends where the house has hip ends, and read the right upper block under a one-storey roof. A person can correct both on the roof card (kind, ridge).
+  - A storey-and-a-half upper floor can leave a few short wall stubs that do not meet; the log names them.
+  - The pool-house awning can also come back as a separate shed section, which becomes a ghost.
+  - Heights are typical values when the sheets give none.
 
 **v2.499.768 (2026-11-08, NOT device-verified; checked on renders of the household's own two buildings from a whole-building read): joints first — the house holds together like a real building.**
 
