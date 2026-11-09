@@ -14,7 +14,7 @@ CHECKPOINTS = (10.0, 20.0, 30.0, 40.0)
 HARD_STOP = 50.0
 ROUND_CAP = 5
 UNKNOWN_OUTPUT_TOKENS = 65536
-IMAGE_TOKENS = {'draft': 5000, 'draft_level': 5000, 'draft_rooms': 5000}
+IMAGE_TOKENS = {'draft': 5000, 'draft_level': 5000, 'draft_rooms': 5000, 'roof_check': 5000}
 
 # USD per million input/output tokens, checked 2026-11-06.
 PRICES: dict[str, tuple[float, float]] = {

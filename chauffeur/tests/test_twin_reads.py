@@ -79,11 +79,11 @@ DRAFT_KINDS = ('draft', 'draft_level', 'draft_rooms')
 
 def scenario_kinds_and_output_caps_are_pinned():
     # Whole-building draft task 5: the three draft kinds join the step kinds.
-    check(twin_reads.KINDS == STEP_KINDS + DRAFT_KINDS, twin_reads.KINDS)
+    check(twin_reads.KINDS == STEP_KINDS + DRAFT_KINDS + ('roof_check',), twin_reads.KINDS)
     check(twin_reads.MAX_OUTPUT == {'sheet_roles': 2048, 'outline': 4096, 'walls': 16384, 'openings': 16384,
                                     'rooms': 16384, 'registration': 4096, 'roof': 8192, 'pitch': 2048,
                                     'plot': 8192, 'site': 8192, 'finishes': 8192, 'photo_parts': 2048,
-                                    'draft': 64000, 'draft_level': 32000, 'draft_rooms': 32000},
+                                    'draft': 64000, 'draft_level': 32000, 'draft_rooms': 32000, 'roof_check': 16000},
           twin_reads.MAX_OUTPUT)
 
 
@@ -422,9 +422,9 @@ def test_draft_call_settings():
         check(len(pool.calls) == 1 and c['thinking_level'] == 'medium' and c['max_output_tokens'] == 32000
               and c['timeout_s'] == 300 and c['strict_json'] == 'lenient' and c['max_models'] == 1,
               (kind, {k: c.get(k) for k in ('thinking_level', 'max_output_tokens', 'timeout_s', 'strict_json')}))
-    check(twin_reads.THINKING == {'draft': 'medium', 'draft_level': 'medium', 'draft_rooms': 'medium'},
+    check(twin_reads.THINKING == {'draft': 'medium', 'draft_level': 'medium', 'draft_rooms': 'medium', 'roof_check': 'medium'},
           twin_reads.THINKING)
-    check(twin_reads.TIMEOUT == {'draft': 420, 'draft_level': 300, 'draft_rooms': 300}, twin_reads.TIMEOUT)
+    check(twin_reads.TIMEOUT == {'draft': 420, 'draft_level': 300, 'draft_rooms': 300, 'roof_check': 240}, twin_reads.TIMEOUT)
     with Pool(answer=fixture('outline')) as pool:
         twin_reads.read('outline', [img()], {'level': 'Main floor'}, run='r1', step='outline:L1')
     c = pool.calls[0]
@@ -616,6 +616,135 @@ def test_draft_rooms_prompt_asks_names_as_printed():
     check('leave an unreadable name blank' not in prompt, 'the rooms prompt no longer asks for blank names')
 
 
+# --- Task 12: the roof check (brief .superpowers/sdd/2026-11-08-house-editor-
+# whole-building-draft/task-12-brief.md). A read after the draft that answers
+# corrections only: {"changes":[{id, kind?, ridge?, low_side?, pitch?, plate?,
+# rect?}], "add":[<full section>], "remove":[<id>], "notes":[...]}. The read
+# sections it may name go in context["sections"].
+
+ROOF_CHECK_SECTIONS = [
+    {'id': 'r_left', 'kind': 'gable', 'ridge': 'x', 'low_side': None, 'rect': [0, 14.33, 14.33, 54],
+     'plate': 10, 'pitch': 8, 'overhang': 1},
+    {'id': 'r_main', 'kind': 'gable', 'ridge': 'y', 'low_side': None, 'rect': [14.33, 13.33, 37.33, 52],
+     'plate': 20, 'pitch': 10, 'overhang': 1},
+    {'id': 'r_bkfst', 'kind': 'shed', 'ridge': None, 'low_side': 'y1', 'rect': [31, 48, 43.33, 59],
+     'plate': 10, 'pitch': 4, 'overhang': 1}]
+ROOF_CHECK_DORMER = {'id': 'r_dormer', 'kind': 'gable', 'ridge': 'y', 'rect': [22.67, 13.33, 37.33, 26],
+                     'plate': 20, 'pitch': 12, 'overhang': 1}
+ROOF_CHECK_EMPTY = {'changes': [], 'add': [], 'remove': [], 'notes': []}
+
+
+def _roof_check_context():
+    return {'building': {'name': 'Main house'}, 'sections': copy.deepcopy(ROOF_CHECK_SECTIONS),
+            'levels': [{'id': 'L1', 'elevation': 0, 'outline': [[0, 14.33], [70, 22], [59, 65.33], [0, 54]]},
+                       {'id': 'L2', 'elevation': 11, 'outline': [[14.33, 14.33], [37, 13.33], [37, 52], [14.33, 52]]}]}
+
+
+def test_roof_check_call_settings():
+    check('roof_check' in twin_reads.KINDS, twin_reads.KINDS)
+    check(twin_reads.MAX_OUTPUT.get('roof_check') == 16000, twin_reads.MAX_OUTPUT.get('roof_check'))
+    check(twin_reads.THINKING.get('roof_check') == 'medium', twin_reads.THINKING)
+    check(twin_reads.TIMEOUT.get('roof_check') == 240, twin_reads.TIMEOUT)
+    check(tc.IMAGE_TOKENS.get('roof_check') == tc.IMAGE_TOKENS['draft'],
+          ('the roof check is estimated with the draft image token count', tc.IMAGE_TOKENS))
+    check(tc.estimate('roof_check', 3) > tc.estimate('roof_check', 0) > 0, 'the roof check has an estimate')
+    _fresh()
+    with Pool(answer=copy.deepcopy(ROOF_CHECK_EMPTY)) as pool:
+        out = twin_reads.read('roof_check', [img(), img()], _roof_check_context(), run='r1', step='draft')
+    check(len(pool.calls) == 1, ('one request', len(pool.calls)))
+    c = pool.calls[0]
+    check(c['tier'] == 'twin' and c['system'] == twin_reads.PROMPTS['roof_check'], (c['tier'], c['system'][:80]))
+    check(c['thinking_level'] == 'medium' and c['max_output_tokens'] == 16000 and c['timeout_s'] == 240
+          and c['strict_json'] == 'lenient' and c['max_models'] == 1,
+          {k: c.get(k) for k in ('thinking_level', 'max_output_tokens', 'timeout_s', 'strict_json', 'max_models')})
+    check(len(c['images']) == 2, 'every image goes in the one request')
+    check('error' not in out, ('an answer with nothing to correct is a good answer', out))
+    # No doubled retry: a truncated roof check is one metered request and an error.
+    before = len(tc.entries())
+    with SeqPool([DRAFT_TRUNCATED, copy.deepcopy(ROOF_CHECK_EMPTY)]) as pool:
+        out = twin_reads.read('roof_check', [img()], _roof_check_context(), run='r1', step='draft')
+    check(len(pool.calls) == 1 and 'error' in out, ('no doubled retry', len(pool.calls), out))
+    check(len(tc.entries()) == before + 1 and tc.entries()[-1]['stage'] == 'step:roof_check', 'metered once')
+
+
+def test_roof_check_prompt_generic():
+    prompt = ' '.join(twin_reads.PROMPTS['roof_check'].split()).lower()
+    for words in ('hip', 'gable', 'ridge', 'dormer', 'cross gable', 'never simplify a hip to a gable',
+                  '"changes"', '"add"', '"remove"', '"notes"'):
+        check(words in prompt, ('the roof check prompt says', words))
+    for words in ('upton', 'lot 58', 'pool house', 'main house', 'r_main'):
+        check(words not in prompt, ('the roof check prompt carries no household text', words))
+
+
+def test_parse_roof_check_shapes():
+    answer = {'changes': [{'id': 'r_main', 'kind': 'hip', 'ridge': 'x'},
+                          {'id': 'r_left', 'pitch': 10, 'plate': 10.5, 'rect': [0, 14.33, 14.33, 54]},
+                          {'id': 'r_bkfst', 'low_side': 'y0'}],
+              'add': [copy.deepcopy(ROOF_CHECK_DORMER)],
+              'remove': ['r_left'],
+              'notes': ['The centre block is a hip with a front gable dormer.']}
+    frag, problems = twin_reads.parse('roof_check', copy.deepcopy(answer))
+    check(problems == [], problems)
+    for key in ('changes', 'add', 'remove', 'notes'):
+        check(frag.get(key) == answer[key], (key, 'a clean answer passes through unchanged', frag.get(key)))
+
+    bad = {'changes': [{'kind': 'hip', 'ridge': 'x'},                        # no id
+                       {'id': 'r_main', 'kind': 'mansard'},                  # unknown kind
+                       {'id': 'r_left', 'ridge': 'z'},                       # unknown ridge
+                       {'id': 'r_bkfst', 'rect': [40, 50, 30, 45]},          # no size
+                       'r_main'],                                            # not an object
+           'add': [{'id': 'r_a', 'kind': 'gable', 'rect': [0, 0, 10, 10], 'plate': 10, 'pitch': 8,
+                    'overhang': 1},                                          # a gable needs a ridge
+                   {'id': 'r_b', 'kind': 'hip', 'ridge': 'x', 'plate': 10, 'pitch': 8, 'overhang': 1},   # no rect
+                   copy.deepcopy(ROOF_CHECK_DORMER)],
+           'remove': [7, 'r_left'],
+           'notes': []}
+    frag, problems = twin_reads.parse('roof_check', copy.deepcopy(bad))
+    for key in ('changes', 'add', 'remove'):
+        check(any(key in p for p in problems), (key, 'a bad item is named as a problem', problems))
+    changes = frag.get('changes')
+    check(isinstance(changes, list), ('the changes list stays a list', frag))
+    check(all(isinstance(c, dict) and isinstance(c.get('id'), str) for c in changes),
+          ('every kept change is an object naming its section', changes))
+    check(not any(c.get('kind') == 'mansard' or c.get('ridge') == 'z' or c.get('rect') == [40, 50, 30, 45]
+                  for c in changes), ('an invalid value is never kept', changes))
+    check(frag.get('add') == [ROOF_CHECK_DORMER], ('added sections are validated like draft sections', frag.get('add')))
+    check(frag.get('remove') == ['r_left'], ('a remove entry that is not an id is dropped', frag.get('remove')))
+
+
+def test_parse_roof_check_empty_lists_valid():
+    for answer in (copy.deepcopy(ROOF_CHECK_EMPTY), {'changes': [], 'add': [], 'remove': []}):
+        frag, problems = twin_reads.parse('roof_check', answer)
+        check(problems == [], (answer, problems))
+        check(frag.get('changes') == [] and frag.get('add') == [] and frag.get('remove') == [],
+              ('empty lists mean the roof is right', frag))
+    _fresh()
+    with Pool(answer=copy.deepcopy(ROOF_CHECK_EMPTY)) as pool:
+        out = twin_reads.read('roof_check', [img()], _roof_check_context(), run='r1', step='draft')
+    check('error' not in out and out.get('changes') == [] and out.get('add') == [] and out.get('remove') == [],
+          ('an empty answer is usable, not an error', out))
+    check(not out.get('problems'), out.get('problems'))
+
+
+def test_roof_check_unknown_id_dropped():
+    _fresh()
+    answer = {'changes': [{'id': 'r_main', 'kind': 'hip', 'ridge': 'x'},
+                          {'id': 'r_nowhere', 'kind': 'hip', 'ridge': 'x'}],
+              'add': [copy.deepcopy(ROOF_CHECK_DORMER)],
+              'remove': ['r_gone', 'r_bkfst'],
+              'notes': []}
+    with Pool(answer=answer) as pool:
+        out = twin_reads.read('roof_check', [img()], _roof_check_context(), run='r1', step='draft')
+    check('error' not in out, out)
+    check(out.get('changes') == [{'id': 'r_main', 'kind': 'hip', 'ridge': 'x'}],
+          ('a change naming a section the check was not given is dropped', out.get('changes')))
+    check(out.get('remove') == ['r_bkfst'], ('a removal naming an unknown section is dropped', out.get('remove')))
+    check(out.get('add') == [ROOF_CHECK_DORMER], ('added sections are kept', out.get('add')))
+    problems = out.get('problems') or []
+    check(any('r_nowhere' in p for p in problems) and any('r_gone' in p for p in problems),
+          ('each dropped id is named as a problem', problems))
+
+
 if __name__ == '__main__':
     failed = []
     for fn in (scenario_kinds_and_output_caps_are_pinned,
@@ -651,7 +780,12 @@ if __name__ == '__main__':
                test_draft_rooms_prompt_scope,
                test_small_output_cap_skips_to_fallback,
                test_parse_draft_rooms_blank_name_becomes_room,
-               test_draft_rooms_prompt_asks_names_as_printed):
+               test_draft_rooms_prompt_asks_names_as_printed,
+               test_roof_check_call_settings,
+               test_roof_check_prompt_generic,
+               test_parse_roof_check_shapes,
+               test_parse_roof_check_empty_lists_valid,
+               test_roof_check_unknown_id_dropped):
         try:
             fn()
         except Exception as exc:

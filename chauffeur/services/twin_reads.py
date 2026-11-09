@@ -8,14 +8,14 @@ from services.twin_draft import FINISHES_PROMPT
 
 KINDS = ('sheet_roles', 'outline', 'walls', 'openings', 'rooms', 'registration',
          'roof', 'pitch', 'plot', 'site', 'finishes', 'photo_parts',
-         'draft', 'draft_level', 'draft_rooms')
+         'draft', 'draft_level', 'draft_rooms', 'roof_check')
 MAX_OUTPUT = {'sheet_roles': 2048, 'outline': 4096, 'walls': 16384,
               'openings': 16384, 'rooms': 16384, 'registration': 4096,
               'roof': 8192, 'pitch': 2048, 'plot': 8192, 'site': 8192,
               'finishes': 8192, 'photo_parts': 2048,
-              'draft': 64000, 'draft_level': 32000, 'draft_rooms': 32000}
-THINKING = {'draft': 'medium', 'draft_level': 'medium', 'draft_rooms': 'medium'}
-TIMEOUT = {'draft': 420, 'draft_level': 300, 'draft_rooms': 300}
+              'draft': 64000, 'draft_level': 32000, 'draft_rooms': 32000, 'roof_check': 16000}
+THINKING = {'draft': 'medium', 'draft_level': 'medium', 'draft_rooms': 'medium', 'roof_check': 'medium'}
+TIMEOUT = {'draft': 420, 'draft_level': 300, 'draft_rooms': 300, 'roof_check': 240}
 OUTPUT_CAP = {'anthropic': 64000, 'openai': 64000, 'gemini': 65536}
 
 # Reuse P0's reading/JSON rules, but its world-coordinate rules do not apply.
@@ -295,6 +295,33 @@ by about 20000 and leave the rest for the JSON.
 ''' + _DRAFT_OUTPUT
 
 
+PROMPTS['roof_check'] = '''Check every roof section in context against the roof
+plan, elevations and photos. Work in the draft's shared building frame in
+decimal feet: +x runs right along the front, +y toward the rear, elevation up.
+A ridge whose ends split into two diagonals is a hip. Diagonals from outside
+corners are hips. A ridge ending at the eave in a gable bracket or triangle
+has a gable end. Determine ridge direction from the ridge line: x runs side
+to side, y runs front to rear. Never simplify a hip to a gable.
+A front-facing gable over upper windows on a hip roof is a dormer or cross gable.
+Add it as its own gable section: its rect spans the dormer's width and runs
+from its gable-end wall back into the main roof, ridge toward the main ridge,
+plate at the upper floor's plate. Include every missed dormer and cross gable.
+Check kind, ridge axis, pitch (rise per 12), plate elevation, rect and low_side.
+low_side names the shed's low eave: x0, x1, y0 or y1 in the building frame.
+Reply with corrections only, naming existing section ids for changes/removals:
+{"changes":[{"id":"section-id","kind":"hip","ridge":"x"}],
+"add":[{"id":"new-section-id","kind":"gable","ridge":"y",
+"rect":[0,0,8,12],"plate":18,"pitch":8,"overhang":1}],
+"remove":["section-to-remove"],"notes":[]}.
+Each change may supply kind, ridge, low_side, pitch, plate or rect; omit fields
+that are correct. Added sections need a unique id, kind (hip, gable, shed or
+flat), rect [x0,y0,x1,y1], plate, pitch (0..24), overhang, and ridge for hip or
+gable, low_side for shed. Return empty lists when the roof is right.
+The example numbers are schema examples, never evidence about this building.
+Return only JSON. Fit reasoning and reply within 16000 tokens.
+'''
+
+
 def _number(value):
     # Reject bool, non-finite JSON extensions and arbitrarily large integers.
     return type(value) in (int, float) and -1e308 <= value <= 1e308
@@ -550,6 +577,26 @@ def _parse_draft(kind, answer, v):
             return None
         return out
 
+    if kind == 'roof_check':
+        def change(value, path):
+            if v.object(value, path) is None:
+                return None
+            before = len(v.problems)
+            out = v.fields(value, path, {'id': v.text}, {
+                'kind': lambda x, p: v.choice(x, p, ('gable', 'hip', 'shed', 'flat')),
+                'ridge': lambda x, p: v.choice(x, p, ('x', 'y')),
+                'low_side': lambda x, p: None if x is None else v.choice(x, p, ('x0', 'x1', 'y0', 'y1')),
+                'rect': rect, 'plate': signed, 'pitch': lambda x, p: v.numeric(x, p, maximum=24)})
+            if out is not None and 'low_side' in value and value['low_side'] is None:
+                out['low_side'] = None
+            return out if len(v.problems) == before else None
+
+        return v.fields(answer, kind, {
+            'changes': lambda x, p: v.items(x, p, change),
+            'add': lambda x, p: v.items(x, p, section),
+            'remove': lambda x, p: v.items(x, p, v.text)}, {
+            'notes': lambda x, p: v.items(x, p, v.text)}) or {}
+
     if kind == 'draft_rooms':
         out = v.fields(answer, kind, {'rooms': lambda x, p: v.items(x, p, room)},
                        {'walls': lambda x, p: v.items(x, p, wall)}) or {}
@@ -594,7 +641,7 @@ def _parse_draft(kind, answer, v):
     return out
 
 
-def parse(kind, answer):
+def parse(kind, answer, context=None):
     """Validate a JSON value without I/O or input mutation; drop invalid pieces.
 
     Problems name the affected field/index. Missing/invalid top-level fields are
@@ -606,7 +653,27 @@ def parse(kind, answer):
     if v.object(answer, kind) is None:
         return {}, v.problems
     if kind in THINKING:
-        return _parse_draft(kind, answer, v), v.problems
+        fragment = _parse_draft(kind, answer, v)
+        if kind == 'roof_check' and context is not None:
+            known = {s['id'] for s in context.get('sections', [])}
+            for key in ('changes', 'remove'):
+                kept = []
+                for i, item in enumerate(fragment.get(key, [])):
+                    sid = item['id'] if key == 'changes' else item
+                    if sid not in known:
+                        v.bad(f'roof_check.{key}[{i}]', f'unknown section id {sid!r}')
+                    else:
+                        kept.append(item)
+                if key in fragment:
+                    fragment[key] = kept
+            for i, item in enumerate(fragment.get('add', [])):
+                if item['id'] in known:
+                    v.bad(f'roof_check.add[{i}]', f'duplicate section id {item["id"]!r}')
+                else:
+                    known.add(item['id'])
+            fragment['add'] = [s for i, s in enumerate(fragment.get('add', []))
+                               if not any(p.startswith(f'roof_check.add[{i}]:') for p in v.problems)]
+        return fragment, v.problems
 
     positive = lambda value, path: v.numeric(value, path, positive=True)
     confidence = lambda value, path: v.numeric(value, path, maximum=1)
@@ -764,6 +831,9 @@ def parse(kind, answer):
 
 
 def _usable(kind, fragment, problems):
+    if kind == 'roof_check':
+        return (all(key in fragment for key in ('changes', 'add', 'remove'))
+                and (not problems or any(fragment[key] for key in ('changes', 'add', 'remove'))))
     if kind in ('draft', 'draft_level'):
         building = fragment.get('building', {})
         return bool(building.get('levels')) or (
@@ -840,7 +910,7 @@ def read(kind, images, context, *, run, step, checkpoint_checked=False):
             break
     if isinstance(answer, dict) and 'error' in answer:
         return {'error': str(answer['error']), **({'truncated': True} if draft and truncated else {})}
-    fragment, problems = parse(kind, answer)
+    fragment, problems = parse(kind, answer, context)
     if not _usable(kind, fragment, problems):
         return {'error': '; '.join(problems) or f'{kind} returned no usable fragment.'}
     if problems:

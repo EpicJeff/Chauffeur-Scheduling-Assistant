@@ -7518,10 +7518,11 @@ def _house_editor_sheets():
                             (place['photo_tags'].get(s['id']) or ['lot']) for s in sources)
         photos = min(4, tagged_photos)
         draft = twin_cost.estimate('draft', len(rows) + photos)
+        roof_check = twin_cost.estimate('roof_check', sum(r['role'] in ('roof', 'elevation') for r in rows) + photos)
         rooms = twin_cost.estimate('draft_rooms', floors)
         finishes = twin_cost.estimate('finishes', tagged_photos) if photos else 0
-        build_estimates[building['id']] = {'draft': draft, 'draft_rooms': rooms,
-                                           'total': draft + rooms + finishes}
+        build_estimates[building['id']] = {'draft': draft, 'draft_rooms': rooms, 'roof_check': roof_check,
+                                           'total': draft + roof_check + rooms + finishes}
     return {'sources': sources, 'pages': pages, 'page_roles': roles, 'registrations': registrations,
             'piece_labels': labels, 'field_labels': twin_edit.FIELD_LABELS,
             'place': place, 'kinds': [{'id': key, 'label': label} for key, label in twin_place.KINDS.items()],

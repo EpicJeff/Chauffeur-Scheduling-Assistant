@@ -444,10 +444,9 @@ def test_patched_default_reader_needs_no_internal_options():
 
 
 def test_checkpoint_combined_estimate():
-    # Ruling R14: twin_cost.require_clear() is called once, before the draft
-    # step starts either read; the step records the combined estimate as
-    # step['estimate'] = estimate('draft', n) + estimate('outline', 1).
-    combined = tc.estimate('draft', 3) + tc.estimate('outline', 1)   # 3 pages, no photos
+    # R30: check once before draft/outline, then again before roof_check.
+    # Three draft pages, one roof page, no photos.
+    combined = tc.estimate('draft', 3) + tc.estimate('outline', 1) + tc.estimate('roof_check', 1)
     real = tc.require_clear
     calls = []
     reader = None
@@ -457,7 +456,7 @@ def test_checkpoint_combined_estimate():
         stages = [e for e in (build['events'] if build else []) if e['type'] == 'stage']
         calls.append({'stage': stages[-1].get('step') if stages else None,
                       'reads_before': [c['kind'] for c in (reader.seen if reader else [])
-                                       if c['kind'] in ('draft', 'outline')]})
+                                        if c['kind'] in ('draft', 'outline', 'roof_check')]})
         return real()
 
     tc.require_clear = counted
@@ -478,8 +477,7 @@ def test_checkpoint_combined_estimate():
         check('draft' not in kinds and 'outline' not in kinds, ('neither read is made', kinds))
         check(next(s for s in st['steps'] if s['id'] == 'draft')['status'] == 'pending', st['steps'][:1])
 
-        # b. The ledger is clear: one require_clear for the step, before both reads,
-        # and the step carries the combined estimate.
+        # b. The ledger is clear: check before the paired reads and before the roof check.
         _drawn_house()
         calls.clear()
         reader = SideReader()
@@ -493,8 +491,11 @@ def test_checkpoint_combined_estimate():
     kinds = [c['kind'] for c in reader.seen]
     check(kinds.count('draft') == 1 and kinds.count('outline') == 1, ('both reads are made once', kinds))
     for_draft = [c for c in calls if c['stage'] == 'draft']
-    check(len(for_draft) == 1, ('require_clear is called exactly once for the draft step', calls))
+    check(len(for_draft) == 2, ('require_clear is called before the pair and before roof_check', calls))
     check(for_draft[0]['reads_before'] == [], ('it is called before either read starts', for_draft))
+    check(for_draft[1]['reads_before'].count('draft') == 1
+          and 'roof_check' not in for_draft[1]['reads_before'],
+          ('the second check is after the draft and before roof_check; the side read may still run', for_draft))
     step = next(s for s in st['steps'] if s['id'] == 'draft')
     check(isinstance(step.get('estimate'), (int, float)) and abs(step['estimate'] - combined) < 1e-6,
           ('the draft step carries the combined estimate as step["estimate"]', step.get('estimate'), combined))

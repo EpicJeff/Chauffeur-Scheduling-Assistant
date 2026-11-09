@@ -1282,7 +1282,8 @@ def _start_draft_heartbeat(build, step, ticket, context, finished, mode):
                     if finished.is_set() or not _live(build, ticket):
                         return
                     name = context['building']['name']
-                    text = (f'Reading the rooms of the {name} drawings, ' if step['kind'] == 'draft_rooms'
+                    text = (f'Checking the roof of the {name} drawings, ' if mode == 'roof_check'
+                            else f'Reading the rooms of the {name} drawings, ' if step['kind'] == 'draft_rooms'
                             else f'Reading the {name} drawings {mode}, ')
                     _event(build, 'log', step=step['id'],
                            text=text + f'{elapsed // 60}:{elapsed % 60:02d} so far.')
@@ -1485,11 +1486,95 @@ def _read_draft_levels(build, step, reader, ticket, images, context, progress):
     return fragment, problems, reads, False
 
 
+def _read_roof_check(build, step, reader, ticket, result, images):
+    """Correct the read frame before any of its geometry settles."""
+    context = result['context']
+    draft = result['fragment'].get('building', {})
+    sections = draft.get('roof', {}).get('sections', [])
+    read_context = {
+        'building': deepcopy(context['building']),
+        'sections': [{k: deepcopy(s[k]) for k in
+                      ('id', 'kind', 'ridge', 'low_side', 'rect', 'plate', 'pitch', 'overhang') if k in s}
+                     for s in sections],
+        'levels': [{k: deepcopy(l[k]) for k in ('id', 'outline', 'elevation', 'ceiling') if k in l}
+                   for l in draft.get('levels', [])]}
+    indices = [p['image'] for p in context['pages'] if p['role'] in ('roof', 'elevation')]
+    indices.extend(range(len(context['pages']), len(images)))
+    read_images = [images[i] for i in indices]
+    read_context['pages'] = [{**deepcopy(p), 'image': indices.index(p['image'])}
+                             for p in context['pages'] if p['image'] in indices]
+    # Retain the draft across a checkpoint before this additional paid read.
+    result['roof_check_pending'] = True
+    if _cache_result(build, step, ticket, result) is None:
+        return None
+    with twin_store.LIFECYCLE, _LOCK:
+        if not _live(build, ticket):
+            return None
+    twin_cost.require_clear()
+    finished = threading.Event()
+    pulse = _start_draft_heartbeat(build, step, ticket, context, finished, 'roof_check')
+    raw, fragment, problems, failure = None, {}, [], None
+    try:
+        options = {'checkpoint_checked': True} if reader is _REAL_READER else {}
+        raw = reader('roof_check', read_images, read_context, run=build['id'], step=step['id'], **options)
+        if isinstance(raw, dict) and raw.get('error'):
+            raise _ReadError(raw['error'])
+        fragment, problems = twin_reads.parse('roof_check', raw, read_context)
+        if isinstance(raw, dict):
+            problems = list(raw.get('problems') or []) + problems
+        if not twin_reads._usable('roof_check', fragment, problems):
+            raise _ReadError('No usable roof check.')
+    except twin_cost.CheckpointReached:
+        raise
+    except Exception as exc:
+        failure = str(exc)
+        fragment = {}
+    finally:
+        finished.set()
+        pulse.join()
+    with twin_store.LIFECYCLE, _LOCK:
+        if (build['generation'] != twin_store.generation()
+                or _BUILDS.get(build['id']) is not build
+                or _WORKERS.get(build['id'], {}).get('ticket') != ticket):
+            return None
+        house = _house(_base(twin_store.current(), build), build)
+        # Compare in the incoming frame even on the first migration from crops.
+        # This is a private copy; publication still owns the actual migration.
+        _migrate_crop_draft(house, draft, step, [], [])
+        protected = {s['id'] for s in sections if any(
+            p.get('src', {}).get('person') and (
+                _matches(s, p, 'roof', house) or _matches(s, p, 'roof', house, original=True))
+            for p in house['roof']['sections'])}
+        changes = {c['id']: c for c in fragment.get('changes', [])}
+        removed = set(fragment.get('remove', [])) - protected
+        corrected = []
+        for section in sections:
+            if section['id'] in removed:
+                continue
+            candidate = {**section, **changes.get(section['id'], {})} if section['id'] not in protected else section
+            # A partial change must still describe a complete, usable section.
+            checked, issues = twin_reads.parse('draft_level', {'building': {'roof': {'sections': [candidate]}}})
+            if checked.get('building', {}).get('roof', {}).get('sections'):
+                corrected.append(candidate)
+            else:
+                corrected.append(section)
+                problems.extend(issues)
+        if 'roof' in draft:
+            draft['roof']['sections'] = corrected + deepcopy(fragment.get('add', []))
+        result.pop('roof_check_pending', None)
+        result['roof_check'] = {'context': read_context, 'reply': raw, 'fragment': fragment,
+                                'problems': problems, 'error': failure}
+    return _cache_result(build, step, ticket, result)
+
+
 def _obtain(build, step, reader, ticket):
     path = _cache_path(build, step)
     progress = None
     if path.is_file():
         result = json.loads(path.read_text(encoding='utf-8'))
+        if result.get('roof_check_pending'):
+            images, _, _ = _images_context(build, step)
+            return _read_roof_check(build, step, reader, ticket, result, images)
         if result.get('fallback_pending'):
             progress = result
         elif not result.get('error'):
@@ -1515,7 +1600,10 @@ def _obtain(build, step, reader, ticket):
         images, context, crop = _images_context(build, step, sheets)
         if step['kind'] == 'draft':
             with twin_store.LIFECYCLE, _LOCK:
-                step['estimate'] = twin_cost.estimate('draft', len(images)) + twin_cost.estimate('outline', 1)
+                roof_images = sum(p['role'] in ('roof', 'elevation') for p in context['pages'])
+                roof_images += len(images) - len(context['pages'])
+                step['estimate'] = (twin_cost.estimate('draft', len(images)) + twin_cost.estimate('outline', 1)
+                                    + twin_cost.estimate('roof_check', roof_images))
                 _save(build)
         if progress is not None:
             raw = progress['whole_draft']['reply']
@@ -1562,6 +1650,8 @@ def _obtain(build, step, reader, ticket):
             result['context'] = context
         if step['kind'] == 'draft':
             result['sheets'] = sheets
+            if fragment.get('building', {}).get('levels') and not result.get('fallback_failed'):
+                return _read_roof_check(build, step, reader, ticket, result, images)
         if step['kind'] == 'walls' and isinstance(raw, dict) and isinstance(raw.get('walls'), list):
             result['wall_count'] = len(raw['walls'])
     return _cache_result(build, step, ticket, result)
@@ -1753,6 +1843,9 @@ def _settle(build, step, result, decision=None):
     """Merge against the latest round while LIFECYCLE and the module lock are held."""
     fragment, crop = result['fragment'], result.get('crop')
     kind = step['kind']
+    if kind == 'draft' and result.get('roof_check', {}).get('error') is not None:
+        _event(build, 'log', step=step['id'],
+               text='The roof could not be double-checked; it is shown as first read.')
     if kind == 'draft' and not fragment.get('building', {}).get('levels'):
         _pause_draft(build, step)
         return

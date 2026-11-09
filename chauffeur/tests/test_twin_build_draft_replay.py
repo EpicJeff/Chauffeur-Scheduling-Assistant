@@ -87,6 +87,9 @@ class ReplayReader(Reader):
             return {'error': 'The model did not answer in 120 s.'}
         if kind == 'finishes':
             return {'materials': {}}
+        if kind == 'roof_check':
+            # Task 12: the roof check answers that the roof is right.
+            return {'changes': [], 'add': [], 'remove': [], 'notes': []}
         return super().__call__(kind, images, context, run=run, step=step)
 
 
@@ -403,6 +406,27 @@ def test_main_house_front_jog_survives_snap():
         check(not off, (lid, 'every settled exterior wall end lies on the outline within 0.1 ft', off[:4]))
 
 
+def test_main_house_roof_check_keeps_a_right_roof():
+    # Task 12 (brief .superpowers/sdd/2026-11-08-house-editor-whole-building-draft/
+    # task-12-brief.md): the draft step runs a roof check after the draft read;
+    # an answer with no corrections leaves every recorded section as read.
+    built = build('main-house')
+    reads = [k for k in built['kinds'] if k in ('draft', 'draft_level', 'roof_check', 'draft_rooms')]
+    check(reads == ['draft', 'roof_check', 'draft_rooms'], ('the roof check runs between the draft and rooms reads',
+                                                            built['kinds']))
+    sections = built['house']['roof']['sections']
+    wanted = recorded('draft-main-house.json')['building']['roof']['sections']
+    check(len(sections) == len(wanted), ('no section added or lost', len(sections), len(wanted)))
+    for section in wanted:
+        found = [s for s in sections if tuple(s.get('read_geometry', {}).get('rect', s['rect'])) == tuple(section['rect'])]
+        check(len(found) == 1 and (found[0]['kind'], found[0].get('ridge'), found[0].get('low_side'))
+              == (section['kind'], section.get('ridge'), section.get('low_side')),
+              (section['id'], 'is left as read', [(s['kind'], s.get('ridge'), s.get('low_side')) for s in found]))
+    lines = [e.get('text') for e in built['status']['events'] if e['type'] == 'log'
+             and e.get('text') == 'The roof could not be double-checked; it is shown as first read.']
+    check(not lines, ('a roof check that answered is not reported as failed', lines))
+
+
 def test_main_house_room_names():
     rooms_named('main-house')
 
@@ -427,6 +451,7 @@ TESTS = (
     test_main_house_roof_sections_settle,
     test_main_house_upper_walls_close,
     test_main_house_front_jog_survives_snap,
+    test_main_house_roof_check_keeps_a_right_roof,
     test_main_house_room_names,
     test_main_house_rooms_cover_without_overlap,
     test_main_house_rooms_settle,
