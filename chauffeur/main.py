@@ -10309,6 +10309,73 @@ class MemberAuthRequest(BaseModel):
     pin: Optional[str] = None
     house_session: bool = False
 
+def _panel_device(request: Request = None) -> Optional[dict]:
+    headers = request.headers if request else {}
+    query = request.query_params if request else {}
+    token = headers.get('x-device-token') or query.get('device_token')
+    device = storage.get_device_by_token(token) if token else None
+    return device if device and device.get('kind') == 'panel' else None
+
+
+def _member_token_place(request: Request = None) -> str:
+    return 'panel' if _panel_device(request) else 'personal'
+
+
+class ControlGrantRequest(BaseModel):
+    member_id: str
+    pin: str
+
+
+@app.post('/api/ha/control/grant')
+def control_grant(req: ControlGrantRequest, request: Request):
+    from services import control_rules
+
+    def refuse(message, needs=None):
+        raise HTTPException(status_code=403,
+                            detail={'message': message, 'needs': needs, 'kinds': []})
+
+    device = _panel_device(request)
+    if not device:
+        refuse('A paired wall panel is required.')
+    _pin_rate_check(req.member_id, request)
+    member = storage.get_member(req.member_id)
+    if not member or not storage.member_has_access(member):
+        _pin_rate_record(req.member_id, False, request)
+        refuse('This person cannot use wall controls.')
+    if not member.get('pin_hash'):
+        refuse('Set a PIN to use this from the wall.', 'pin')
+    ok = storage.verify_member_pin(req.member_id, req.pin)
+    _pin_rate_record(req.member_id, ok, request)
+    if not ok:
+        refuse('Wrong PIN', 'pin')
+    return {'grant': control_rules.mint_grant(req.member_id, device['device_id']),
+            'expires_in': 60}
+
+
+@app.post('/api/ha/control/held/{held_id}')
+def control_held(held_id: str, request: Request):
+    from services import control_rules
+
+    device = _panel_device(request)
+    token = request.headers.get('x-control-grant')
+    member = (control_rules.consume_grant(token, device['device_id'])
+              if device and token else None)
+    if not member:
+        raise HTTPException(status_code=403,
+                            detail={'message': 'Identify yourself and enter your PIN.',
+                                    'needs': 'identify', 'kinds': []})
+    held = control_rules.take_held(held_id)
+    if not held:
+        raise HTTPException(status_code=404, detail='That action has expired or was already used.')
+    args = {**held['args'], 'acting_member': member, 'source': 'panel_grant',
+            'voice_context': None}
+    if held['tool'] == 'house':
+        from services import house as house_service
+        return house_service.house(**args)
+    from services import music_tool
+    return music_tool.music(**args)
+
+
 def _trusted_ground(request) -> bool:
     """Is this request standing somewhere the household has vouched for?
 
@@ -10403,8 +10470,10 @@ def member_auth(member_id: str, req: MemberAuthRequest, request: Request = None)
             raise HTTPException(status_code=403, detail="Wrong PIN")
     if device_id:
         storage.touch_device(device_id)
-    token = (storage.create_member_token(member_id, house_session=True)
-             if req.house_session else storage.create_member_token(member_id))
+    token = storage.create_member_token(
+        member_id, house_session=req.house_session,
+        proof='pin' if member.get('pin_hash') else 'none',
+        minted_on=_member_token_place(request))
     return {"token": token, "member": _public_member(member),
             **({'expires_in': 900} if req.house_session else {})}
 
@@ -10650,7 +10719,8 @@ def set_password_from_link(req: AcceptRequest, request: Request = None):
     storage.invalidate_auth_links(member_id)
     # Setting a password signs you in; making somebody log in again
     # immediately, having just proved themselves, is ceremony.
-    token = storage.create_member_token(member_id)
+    token = storage.create_member_token(member_id, proof='password',
+                                        minted_on=_member_token_place(request))
     _trust_this_device(request, member_id, storage.get_member(member_id).get('name'))
     return {"status": "ok", "token": token,
             "member": _public_member(storage.get_member(member_id))}
@@ -10930,8 +11000,10 @@ def account_claim(req: ClaimRequest, request: Request = None):
         updates['email'] = req.email.strip()
     storage.update_member(req.member_id, updates)
     storage.set_member_password(req.member_id, req.password)
+    token = storage.create_member_token(req.member_id, proof='password',
+                                        minted_on=_member_token_place(request))
     _trust_this_device(request, req.member_id, member.get('name'))
-    return {"status": "ok", "token": storage.create_member_token(req.member_id),
+    return {"status": "ok", "token": token,
             "member": _public_member(storage.get_member(req.member_id))}
 
 
@@ -10961,8 +11033,10 @@ def account_login(req: LoginRequest, request: Request = None):
     # the password, so they have earned a straight answer instead of being
     # sent to reset a password that was never the problem.
     _refuse_if_no_access(member)
+    token = storage.create_member_token(member['id'], proof='password',
+                                        minted_on=_member_token_place(request))
     _trust_this_device(request, member['id'], member.get('name'))
-    return {"status": "ok", "token": storage.create_member_token(member['id']),
+    return {"status": "ok", "token": token,
             "member": _public_member(member)}
 
 

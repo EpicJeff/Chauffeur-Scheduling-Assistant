@@ -8,6 +8,9 @@ Classification and decisions are pure; request expansion reads Home Assistant.
 from collections.abc import Iterable
 from copy import deepcopy
 from dataclasses import dataclass
+import secrets
+from threading import Lock
+import time
 
 
 KINDS: tuple[str, ...] = (
@@ -126,6 +129,128 @@ class Who:
     proven: bool
     admin: bool = False
     voice_id: bool = True
+
+
+_grants: dict[str, dict] = {}
+_held: dict[str, dict] = {}
+_identity_lock = Lock()
+
+
+def _prune_expired(rows: dict, now: float) -> None:
+    for token in [token for token, row in rows.items() if row['expires_at'] <= now]:
+        del rows[token]
+
+
+def mint_grant(member_id: str, device_id: str) -> str:
+    """A panel PIN proves one action on that panel for sixty seconds."""
+    token = secrets.token_urlsafe(32)
+    with _identity_lock:
+        now = time.time()
+        _prune_expired(_grants, now)
+        _grants[token] = {'member_id': member_id, 'device_id': device_id,
+                          'expires_at': now + 60}
+    return token
+
+
+def consume_grant(token: str, device_id: str) -> dict | None:
+    from services import storage
+
+    with _identity_lock:
+        _prune_expired(_grants, time.time())
+        row = _grants.pop(token, None)
+    if not row or not device_id or row['device_id'] != device_id:
+        return None
+    member = storage.get_member(row['member_id'])
+    return member if member and storage.member_has_access(member) else None
+
+
+def hold(tool: str, args: dict) -> str:
+    """Keep a copy of the requested tool call until the person identifies."""
+    if tool not in ('house', 'music'):
+        raise ValueError('Only house and music actions can be held.')
+    held_id = secrets.token_urlsafe(32)
+    with _identity_lock:
+        now = time.time()
+        _prune_expired(_held, now)
+        _held[held_id] = {'tool': tool, 'args': deepcopy(args), 'expires_at': now + 120}
+    return held_id
+
+
+def take_held(held_id: str) -> dict | None:
+    with _identity_lock:
+        _prune_expired(_held, time.time())
+        row = _held.pop(held_id, None)
+    return {'tool': row['tool'], 'args': row['args']} if row else None
+
+
+def who_from_request(headers, query) -> Who:
+    """Only personal sign-ins or a consumed panel grant prove a person."""
+    from services import auth, storage
+    from tinydb import Query
+
+    panel = Who(None, None, 'panel', False)
+    headers = {key.lower(): value for key, value in headers.items()}
+    try:
+        device_token = headers.get('x-device-token') or query.get('device_token')
+        device = storage.get_device_by_token(device_token) if device_token else None
+        is_panel = bool(device and device.get('kind') == 'panel')
+        grant = headers.get('x-control-grant')
+        if grant and is_panel:
+            member = consume_grant(grant, device['device_id'])
+            if member:
+                return Who(member.get('role'), member['id'], None, True)
+
+        token = headers.get('x-member-token') or query.get('member_token')
+        if token:
+            member = storage.get_member_by_token(token)
+            if not member or is_panel:
+                return panel
+            with storage.db_lock:
+                row = storage.member_tokens_table.get(Query().token == token)
+            if not row or row.get('house_session'):
+                return panel
+            # Only rows with NEITHER field predate provenance. Incomplete new
+            # rows must not accidentally become personal password sign-ins.
+            legacy = 'proof' not in row and 'minted_on' not in row
+            proof = 'password' if legacy else row.get('proof')
+            minted_on = 'personal' if legacy else row.get('minted_on')
+            if proof in ('password', 'pin') and minted_on and minted_on != 'panel':
+                return Who(member.get('role'), member['id'], None, True)
+            return panel
+        if device or grant:
+            return panel
+        identity = auth.identify(headers, query)
+        if (identity.get('tier') == auth.SERVICE and not identity.get('member')
+                and auth.arrived_via_ingress(headers)):
+            return Who(None, None, None, False, admin=True)
+    except Exception:
+        # A failed identity read is never evidence of an admin or a person.
+        return panel
+    return panel
+
+
+def who_from_agent(acting_member: dict | None, voice_context, source: str | None) -> Who:
+    from services import access, storage
+
+    if source == 'voice':
+        if voice_context is not None:
+            if voice_context.level == 'verified':
+                member = voice_context.verified_member()
+                if member and storage.member_has_access(member):
+                    return Who(member.get('role'), member['id'], None, True)
+            if voice_context.recognized_this_turn and voice_context.member_id:
+                member = storage.get_member(voice_context.member_id)
+                if member and storage.member_has_access(member):
+                    return Who(member.get('role'), member['id'], None, False)
+        return Who(None, None, 'unknown_voice', False,
+                   voice_id=bool(voice_context and voice_context.paired))
+    if access.is_house(acting_member):
+        return Who(None, None, 'panel', False)
+    if acting_member is None and source == 'admin':
+        return Who(None, None, None, False, admin=True)
+    if acting_member and storage.member_has_access(acting_member):
+        return Who(acting_member.get('role'), acting_member['id'], None, True)
+    return Who(None, None, 'panel', False)
 
 
 @dataclass

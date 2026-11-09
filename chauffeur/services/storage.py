@@ -2079,12 +2079,14 @@ def invalidate_auth_links(member_id: str, kind: str = None) -> None:
         auth_links_table.update({'used_at': time.time()}, q)
 
 
-def create_member_token(member_id: str, house_session: bool = False) -> str:
+def create_member_token(member_id: str, house_session: bool = False,
+                        proof: str = 'none', minted_on: str = 'personal') -> str:
     import uuid as _uuid
     import time
     token = _uuid.uuid4().hex + _uuid.uuid4().hex
     with db_lock:
-        row = {'token': token, 'member_id': member_id, 'created_at': time.time()}
+        row = {'token': token, 'member_id': member_id, 'created_at': time.time(),
+               'proof': proof, 'minted_on': minted_on}
         if house_session:
             row.update({'house_session': True, 'expires_at': time.time() + 900})
         deletion.check()
