@@ -534,7 +534,17 @@ def revert(round_id: int, generation=None) -> int:
             raise ValueError('Stop the build before returning to an earlier house.')
         plan = _read_round(row, round_id)
         _follow_place(row, plan)
+        _follow_tombstones(row, round_id)
         return _append_round(row, plan, 'revert')
+
+
+def _follow_tombstones(row, round_id):
+    """A delete made after the round returned to is undone, so is its tombstone
+    (M13); returning to the delete's round again (redo) restores it."""
+    stones = row.get('tombstones', []) + row.get('undone_tombstones', [])
+    later = lambda t: isinstance(t.get('round'), int) and t['round'] > round_id
+    row['tombstones'] = [t for t in stones if not later(t)]
+    row['undone_tombstones'] = [t for t in stones if later(t)]
 
 
 def _follow_place(row, plan):

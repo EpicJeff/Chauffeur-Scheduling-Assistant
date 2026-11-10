@@ -59,15 +59,21 @@ def _interior_parameter(point, a, b):
     return t if math.dist(point, projected) <= _TOL + _EPS else None
 
 
-def split_crossings(joints: dict[str, list], walls: list[dict], *, proper=True) -> tuple[dict, list[dict]]:
-    """Split at endpoint joints and, unless proper=False, proper crossings."""
+def split_crossings(joints: dict[str, list], walls: list[dict], *, proper=True,
+                    keep_whole=None) -> tuple[dict, list[dict]]:
+    """Split at endpoint joints and, unless proper=False, proper crossings.
+
+    keep_whole maps a wall id to joint ids that must not cut that wall (R55:
+    a T inside an opening's span stays derived)."""
     result_joints = deepcopy(joints)
+    keep_whole = keep_whole or {}
     cuts = []
     for wall in walls:
         a, b = wall['joints']
         parts = {a: 0.0, b: 1.0}
+        skip = keep_whole.get(wall['id'], ())
         for jid, point in joints.items():
-            if jid not in parts:
+            if jid not in parts and jid not in skip:
                 t = _interior_parameter(point, joints[a], joints[b])
                 if t is not None:
                     parts[jid] = t

@@ -796,7 +796,60 @@ def test_delete_corner_and_T_joint_are_refused():
     refused(two_rooms(), {'op': 'delete', 'id': 'jb'}, text)
 
 
+def test_delete_joint_between_different_kinds_is_refused():
+    """M6: merging keeps one wall's kind; a solid wall never turns invisible."""
+    m = box()
+    out, _ = ops.apply(m, {'op': 'split_wall', 'building': 'B1', 'wall': 's', 'at': 4})
+    b = bld(out)
+    joint = next(j['id'] for j in b['joints'] if near(j['at'], [4, 0]))
+    halves = [w for w in b['walls'] if joint in w['joints']]
+    check(len(halves) == 2, halves)
+    halves[1]['kind'], halves[1]['thickness'] = 'separator', 0
+    refused(out, {'op': 'delete', 'id': joint},
+            'Only a joint between two walls of the same kind can be removed.')
+    halves[1].update(kind='solid', thickness=0.5, exterior=False)
+    refused(out, {'op': 'delete', 'id': joint},
+            'Only a joint between two walls of the same kind can be removed.')
+    halves[1]['exterior'] = True
+    b2 = run(out, {'op': 'delete', 'id': joint})
+    check(len(b2['walls']) == 4 and joint not in jpos(b2), b2['walls'])
+
+
+def test_household_overshoot_corner_drags():
+    """M7: joint-67 is a read overshoot's free end; the drag moves the crossing
+    that ends the wall once promotion prunes the short tail."""
+    m = household()
+    main = next(b for b in m['buildings'] if b['id'] == 'main-house')
+    start = next(j['at'] for j in main['joints'] if j['id'] == 'joint-67')
+    to = [start[0] + 0.5, start[1]]
+    out, words = ops.apply(m, {'op': 'move_joint', 'building': 'main-house',
+                               'joint': 'joint-67', 'to': to})
+    check(words.startswith('Moved the corner.'), words)
+    got = next(b for b in out['buildings'] if b['id'] == 'main-house')
+    check(any(near(j['at'], to, 1e-6) for j in got['joints']), 'a corner stands where it was dragged')
+    check(not unclosed(got), got['flags'])
+
+
+def test_drawn_T_inside_a_window_span_stays_derived():
+    """R55: a wall drawn to meet another inside a window's span leaves that wall
+    whole; the window stays settled on it, and a T outside the span splits."""
+    m = box(w=20, openings=[_door('win', 's', 6, width=4, kind='window')])
+    b = run(m, {'op': 'add_wall', 'level': 'L1', 'from': [5, 0], 'to': [5, 10], 'kind': 'solid'})
+    south = [w for w in b['walls'] if w['id'].split('~')[0] == 's']
+    check(len(south) == 1, ('the wall under the window stays whole', south))
+    win = opening(b, 'win')
+    check(win['wall'] == 's' and close(win['at'], 6) and win.get('state') != 'ghost', win)
+    check(not any(f.get('piece') == 'win' for f in b['flags']), b['flags'])
+    b = run(m, {'op': 'add_wall', 'level': 'L1', 'from': [12, 0], 'to': [12, 10], 'kind': 'solid'})
+    south = [w for w in b['walls'] if w['id'].split('~')[0] == 's']
+    check(len(south) == 2, ('a T clear of the window splits', south))
+    check(opening(b, 'win').get('state') != 'ghost', opening(b, 'win'))
+
+
 TESTS = (
+    test_delete_joint_between_different_kinds_is_refused,
+    test_household_overshoot_corner_drags,
+    test_drawn_T_inside_a_window_span_stays_derived,
     test_shared_wall_drag_resizes_both_rooms,
     test_move_joint_moves_every_wall_on_it,
     test_move_wall_carries_its_roof_edge,

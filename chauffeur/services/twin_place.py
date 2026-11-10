@@ -23,6 +23,10 @@ KIND_SHELL = {
 BUILDING_ROLES = ('floor', 'roof', 'elevation', 'other', 'skip')
 LOT_ROLES = ('plot', 'survey', 'landscape', 'other', 'skip')
 LOT = 'lot'
+# Ids a plan's buildings may carry without a place record (read builds mint
+# 'house'; the migrated household uses hyphenated ids).
+_ID_KINDS = {'house': 'main_house', 'main_house': 'main_house', 'main-house': 'main_house',
+             'pool_house': 'pool_house', 'pool-house': 'pool_house'}
 
 
 def shell_for(kind) -> dict:
@@ -177,7 +181,8 @@ def migrate(row: dict, plan: dict | None) -> dict:
             for s in row.get('sources', [])):
         ids.append('house')
     for bid in ids:
-        kind = {'house': 'main_house', 'pool_house': 'pool_house'}.get(bid, 'other')
+        own = planned.get(bid, {}).get('kind')
+        kind = own if own in KINDS else _ID_KINDS.get(bid, 'other')
         name = planned.get(bid, {}).get('name') or (KINDS[kind] if kind != 'other' else bid)
         result['buildings'].append({
             'id': bid, 'name': name, 'kind': kind, 'footprint': None, 'footprint_from': None,

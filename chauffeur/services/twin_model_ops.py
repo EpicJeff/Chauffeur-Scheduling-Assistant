@@ -201,7 +201,10 @@ def _split_drawing(building, actor):
     for level in building['levels']:
         lid = level['id']
         walls = [w for w in building['walls'] if w['level'] == lid and w.get('state') != 'ghost']
-        _, split = graph.split_crossings(_positions(building, lid), walls, proper=False)
+        positions = _positions(building, lid)
+        _, split = graph.split_crossings(
+            positions, walls, proper=False,
+            keep_whole=twin_model.opening_spans(positions, walls, building.get('openings')))
         source = None
         originals = {w['id']: w for w in walls}
         for part in split:
@@ -312,6 +315,15 @@ def _promote_crossings(building, op, actor):
         op['joint'] = replacements.get(op['joint'], op['joint'])
     _split_drawing(building, actor)
     referenced = {j for wall in building['walls'] for j in wall['joints']}
+    if kind == 'move_joint' and op['joint'] not in referenced and op['joint'] in positions:
+        # The dragged corner was a read overshoot's free end, pruned with its
+        # short tail (R15): the drag moves the crossing that now ends the wall.
+        start = positions[op['joint']]
+        survivors = [j for j in set(replacements.values()) if j in referenced]
+        nearest = min(survivors, key=lambda j: math.dist(_positions(building, level)[j], start),
+                      default=None)
+        if nearest is not None and math.dist(_positions(building, level)[nearest], start) < 1.0 + _EPS:
+            op['joint'] = nearest
     building['joints'] = [j for j in building['joints'] if j['id'] in referenced]
     # A perpendicular wall drag carries every promoted point on that wall,
     # including the shared endpoint of a discarded read overshoot (R15/R38).
@@ -374,6 +386,11 @@ def _merge_joint(building, joint, before):
     text = 'Only a straight joint between two walls can be removed.'
     if len(walls) != 2 or any(w.get('state') == 'ghost' for w in walls):
         raise Refused(text)
+    # The merged wall keeps one wall's kind: never turn a solid wall invisible
+    # or an open side solid (M6).
+    if (len({w.get('kind', 'solid') for w in walls}) != 1
+            or len({bool(w.get('exterior')) for w in walls}) != 1):
+        raise Refused('Only a joint between two walls of the same kind can be removed.')
     positions = _positions(building)
     ends = [next(j for j in w['joints'] if j != pid) for w in walls]
     vectors = [graph._delta(joint['at'], positions[j]) for j in ends]
@@ -599,23 +616,47 @@ def _union(polygons):
 
 def _follow_dormers(building, before):
     text = 'This dormer lost its roof; place it again.'
+    def edge_of(roof, edge):
+        # One bad dormer is flagged and skipped (M5); it never refuses the op.
+        if (roof is None or type(edge) is not int or not 0 <= edge < len(roof.get('edges', []))
+                or not isinstance(roof.get('area'), list) or not 0 <= edge < len(roof['area'])):
+            return None
+        return edge
+
+    levels = [l['id'] for l in building.get('levels', [])]
     for dormer in building.get('dormers', []):
         roof = next((r for r in building['roofs'] if r['id'] == dormer.get('roof')), None)
-        if roof is not None:
-            edge = _edge_index(roof, dormer.get('edge'))
+        edge = edge_of(roof, dormer.get('edge'))
+        if edge is not None:
             length = math.dist(roof['area'][edge], roof['area'][(edge + 1) % len(roof['area'])])
             dormer['at'] = max(0, min(length, dormer['at']))
             continue
         old = before['roofs'].get(dormer.get('roof'))
-        at = [0, 0]
-        if old is not None:
-            a, b = roofs._segments(old['area'])[dormer['edge']]
-            length = math.dist(a, b)
-            at = [a[i] + (b[i] - a[i]) * dormer['at'] / length for i in (0, 1)]
+        at, level = None, None
+        for source in (old, roof):
+            index = edge_of(source, dormer.get('edge'))
+            if index is not None:
+                a, b = roofs._segments(source['area'])[index]
+                length = math.dist(a, b)
+                share = (dormer.get('at', 0) / length) if length > _EPS else 0
+                share = max(0, min(1, share)) if type(share) in (int, float) else 0.5
+                at = [a[i] + (b[i] - a[i]) * share for i in (0, 1)]
+                level = source.get('level')
+                break
+            if source is not None and isinstance(source.get('area'), list) and source['area']:
+                area = source['area']
+                at = [sum(p[i] for p in area) / len(area) for i in (0, 1)]
+                level = source.get('level')
+                break
+        previous = next((f for f in building['flags']
+                         if f.get('piece') == dormer['id'] and f.get('text') == text), None)
+        if at is None:
+            at, level = hosts.last_position(building, dormer, {}, before)
+        if level is None:
+            level = levels[-1] if levels else None
         dormer.update(state='ghost', why=text)
-        if not any(f.get('piece') == dormer['id'] and f.get('text') == text for f in building['flags']):
-            building['flags'].append({'level': old.get('level') if old else None,
-                                      'at': at, 'piece': dormer['id'], 'text': text})
+        if previous is None:
+            building['flags'].append({'level': level, 'at': at, 'piece': dormer['id'], 'text': text})
 
 
 def _set_field(building, op):

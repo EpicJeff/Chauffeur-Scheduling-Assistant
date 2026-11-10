@@ -238,14 +238,10 @@ def _lost(building, piece, host, before, notes, *, fits=True):
     flags = building.setdefault('flags', [])
     if not any(f.get('piece') == piece['id'] and f.get('text') == text for f in flags):
         previous = next((f for f in flags if f.get('piece') == piece['id'] and f.get('text') in texts), None)
-        if previous is not None:
+        if previous is not None and previous.get('level') is not None:
             at, level = previous['at'], previous.get('level')
-        elif _available(before, host):
-            at = _point(before, host, piece.get('offset', 0))[:2]
-            surface = _surface(before, host)
-            level = surface.get('level') if surface else None
         else:
-            at, level = [0, 0], None
+            at, level = last_position(building, piece, host, before)
         _clear_flags(building, piece, checked=False)
         building['flags'].append({'level': level, 'at': list(at), 'text': text, 'piece': piece['id']})
         notes.append(text)
@@ -256,6 +252,54 @@ def _lost(building, piece, host, before, notes, *, fits=True):
         piece['state'], piece['ghost_by'] = 'ghost', 'hosts'
         if 'why' not in piece:
             piece['why'] = piece['hosts_why'] = text
+
+
+def _xy(value):
+    return (isinstance(value, (list, tuple)) and len(value) >= 2
+            and all(type(v) in (int, float) and math.isfinite(v) for v in value[:2]))
+
+
+def last_position(building, piece, host, before):
+    """Where a lost piece last stood, on its level: never the building origin.
+
+    The surface before the edit wins, then the surface as it stands now (a
+    split part the snapshot predates), then the piece's own recorded position,
+    then the middle of its level's walls."""
+    for geometry in (before, snapshot(building)):
+        if not _available(geometry, host):
+            continue
+        try:
+            point = _point(geometry, host, piece.get('offset', 0))
+        except (ValueError, KeyError, TypeError, ZeroDivisionError):
+            continue
+        surface = _surface(geometry, host) or {}
+        level = surface.get('level', piece.get('level'))
+        if _xy(point) and level is not None:
+            return list(point[:2]), level
+    level = piece.get('level')
+    walls = before.get('walls', {})
+    wall = walls.get(host.get('wall')) if isinstance(host, dict) else None
+    if level is None and wall is not None:
+        level = wall.get('level')
+    levels = [l['id'] for l in building.get('levels', []) if isinstance(l, dict) and 'id' in l]
+    if level is None and levels:
+        level = levels[0]
+    if wall is not None and type(host.get('at')) in (int, float):
+        a, b = wall['a'], wall['b']
+        length = math.dist(a, b)
+        if length > _EPS:
+            t = host['at'] / length
+            return [a[i] + t * (b[i] - a[i]) for i in (0, 1)], level
+    for key in ('position', 'at'):
+        if _xy(piece.get(key)):
+            return list(piece[key][:2]), level
+    joints = [j['at'] for j in building.get('joints', [])
+              if isinstance(j, dict) and j.get('level') == level and _xy(j.get('at'))]
+    if not joints:
+        joints = [j['at'] for j in building.get('joints', []) if isinstance(j, dict) and _xy(j.get('at'))]
+    if joints:
+        return [sum(p[i] for p in joints) / len(joints) for i in (0, 1)], level
+    return [0, 0], level
 
 
 def follow(building, before: dict) -> list[str]:

@@ -394,6 +394,32 @@ def test_draw_roof_defaults_and_a_bad_area_is_refused():
     check(words == 'Roof areas must have square corners.', words)
 
 
+def test_one_bad_dormer_is_flagged_and_every_other_op_proceeds():
+    """M5: a dormer whose edge no longer exists on its roof never makes an
+    unrelated op refuse; it is ghosted and flagged where its roof stands."""
+    m0 = _house()
+    area = [[0, 0], [20, 0], [20, 10], [0, 10]]
+    m = _apply(m0, {'op': 'draw_roof', 'building': 'B1', 'area': area, 'plate': 9})
+    roof = _added(m0, m, 'roofs')
+    before = m
+    m = _apply(m, {'op': 'add_dormer', 'building': 'B1', 'roof': roof['id'],
+                   'edge': _edge_index(roof, 1, 0), 'at': 10, 'width': 4, 'pitch': 8})
+    dormer = _added(before, m, 'dormers')
+    stale = copy.deepcopy(m)
+    _by_id(_b(stale)['dormers'], dormer['id'])['edge'] = 99
+    out = _apply(stale, {'op': 'set', 'building': 'B1', 'id': 'kitchen', 'field': 'name', 'value': 'Galley'})
+    check(_by_id(_b(out)['rooms'], 'kitchen')['name'] == 'Galley', _b(out)['rooms'])
+    lost = _by_id(_b(out)['dormers'], dormer['id'])
+    text = 'This dormer lost its roof; place it again.'
+    check(lost is not None and lost.get('state') == 'ghost' and lost.get('why') == text, lost)
+    flags = [f for f in _b(out)['flags'] if f.get('piece') == dormer['id']]
+    check(len(flags) == 1 and flags[0]['text'] == text and flags[0]['level'] is not None
+          and flags[0]['at'] != [0, 0] and 0 <= flags[0]['at'][0] <= 20 and 0 <= flags[0]['at'][1] <= 10,
+          flags)
+    again = _apply(out, {'op': 'set', 'building': 'B1', 'id': 'dining', 'field': 'name', 'value': 'Eat'})
+    check(len([f for f in _b(again)['flags'] if f.get('piece') == dormer['id']]) == 1, _b(again)['flags'])
+
+
 def test_dormer_reaches_the_roof_whatever_the_pitch():
     # A 20 x 10 gable roof, ridge along x at y 5, gables at x 0 and x 20.
     m0 = _house()
@@ -974,6 +1000,7 @@ def test_legacy_edit_ops_still_work():
 
 
 TESTS = (
+    test_one_bad_dormer_is_flagged_and_every_other_op_proceeds,
     test_add_window_then_drag_it_to_another_wall_rehosts,
     test_anchors_and_items_sit_on_their_hosts_and_rehost,
     test_roof_over_rooms_then_set_an_edge_gable_and_a_side_pitch,

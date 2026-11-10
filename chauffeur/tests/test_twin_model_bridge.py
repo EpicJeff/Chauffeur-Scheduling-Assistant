@@ -726,12 +726,63 @@ def test_flat_reads_keep_wall_identity_state_why_and_room_polygons():
                           for w in parts), parts)
                 check(abs(sum(_dist(w['from'], w['to']) for w in parts) -
                           _dist(original_wall['from'], original_wall['to'])) < 2, parts)
-        # Closed household room records keep the read polygons exactly.
+        # Closed household room records keep the read polygons exactly, except
+        # a read polygon lying over a neighbour (final wave I1): that room shows
+        # its derived region, so two floors never share a patch.
         got = _b().flatten(_b().assemble(original)[0])
+        from services import twin_model
+        over = []
         for old, new in zip(original['buildings'], got['buildings']):
             rooms = _by_id(new['rooms'])
             for room in old.get('rooms', []):
+                lies_over = any(o['id'] != room['id'] and o['level'] == room['level']
+                                and twin_model._overlap(room['polygon'], o['polygon']) > 0.5
+                                for o in new['rooms'])
+                if lies_over:
+                    over.append(room['id'])
+                    check(rooms[room['id']]['polygon'] != room['polygon'], (room, rooms.get(room['id'])))
+                    continue
                 check(rooms[room['id']]['polygon'] == room['polygon'], (room, rooms.get(room['id'])))
+        if [b['id'] for b in original['buildings']] == ['main-house', 'pool-house']:
+            # ef8bd0's read lies 22 sq ft over the closure Room (R36); once it
+            # shows its region, its two L2 neighbours' reads lie over that region.
+            check(sorted(over) == ['room:48bcc32861704cc6b6edc5291031c3f8',
+                                   'room:70e732ca372344819e70454c92e85918',
+                                   'room:ef8bd041182342b28871ad178de511a6'], over)
+
+
+def test_household_window_across_an_inside_wall_stays_a_settled_window():
+    """Final wave I2 / R55: the interior wall meeting d6209c inside window
+    ...4198d's span stays a derived T for that wall, so migration keeps the
+    window settled in its wall; no flag of any piece sits at the origin."""
+    model, _ = _b().assemble(_household())
+    main = next(b for b in model['buildings'] if b['id'] == 'main-house')
+    window = next(o for o in main['openings'] if o['id'].endswith('4198d'))
+    check(window.get('state') == 'settled' and not window.get('why'), window)
+    host = next(w for w in main['walls'] if w['id'] == window['wall'])
+    joints = {j['id']: j['at'] for j in main['joints']}
+    length = _dist(*(joints[j] for j in host['joints']))
+    check(window['at'] - window['width'] / 2 >= 0 and window['at'] + window['width'] / 2 <= length,
+          ('the window fits its whole wall', window, length))
+    # The meeting point is still a joint (the stem keeps it), just not one of the host's.
+    a, b = (joints[j] for j in host['joints'])
+    inside = [jid for jid, p in joints.items() if jid not in host['joints']
+              and abs((p[0] - a[0]) * (b[1] - a[1]) - (p[1] - a[1]) * (b[0] - a[0])) / length < 0.05
+              and 0 < ((p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1])) / length < length]
+    check(inside, ('a T meets the window wall inside its span', host))
+    for building in model['buildings']:
+        for flag in building['flags']:
+            check(flag.get('at') != [0, 0], flag)
+            if 'place it again' in flag.get('text', ''):
+                check(flag.get('level') is not None, flag)
+        check(not any(o.get('state') == 'ghost' for o in building['openings']),
+              [o for o in building['openings'] if o.get('state') == 'ghost'])
+    # A later normalize keeps the rule: still one wall, still settled.
+    from services import twin_model
+    again, _ = twin_model.normalize(model)
+    main2 = next(b for b in again['buildings'] if b['id'] == 'main-house')
+    window2 = next(o for o in main2['openings'] if o['id'] == window['id'])
+    check(window2['wall'] == window['wall'] and window2.get('state') == 'settled', window2)
 
 
 def test_household_rereads_and_flat_rewrites_reuse_separators_and_flags():
@@ -1092,6 +1143,7 @@ def _segments_for_test(poly):
 
 
 TESTS = (
+    test_household_window_across_an_inside_wall_stays_a_settled_window,
     test_extra_closure_room_and_detail_hosts_survive_every_path,
     test_cleared_separator_flags_stay_cleared_and_new_separators_get_flags,
     test_separator_flag_groups_do_not_absorb_new_members,

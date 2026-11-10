@@ -508,7 +508,111 @@ def test_update_model_reconciles_registry_name_and_kind():
     check(ts.place()['buildings'] == [building], ts.place())
 
 
+def _household_in_store():
+    """The migrated household, pushed with no place registry (as the live harness
+    seeds it)."""
+    _fresh()
+    ts.push_round(_household(), 'build')
+    return ts.current_model()
+
+
+def _same_level_overlaps(model, tol=0.5):
+    from services import twin_model
+    out = []
+    for building in model['buildings']:
+        rooms = [r for r in building['rooms'] if r.get('state') != 'ghost']
+        for i, room in enumerate(rooms):
+            for other in rooms[i + 1:]:
+                if (room['level'] == other['level']
+                        and twin_model._overlap(room['polygon'], other['polygon']) > tol):
+                    out.append((room['id'], other['id']))
+    return out
+
+
+def _area(polygon):
+    from services import twin_model
+    return twin_model._area(polygon)
+
+
+def test_first_edit_logs_only_what_the_op_touched():
+    """Final wave I1: a rename on the migrated household logs one change, not
+    the re-derive of every room outline; a wall drag logs its walls only."""
+    from services import twin_edit
+    model = _household_in_store()
+    pool = next(b for b in model['buildings'] if b['id'] == 'pool-house')
+    lounge = next(r for r in pool['rooms'] if 'ounge' in (r.get('name') or ''))
+    out = twin_edit.save({'op': 'set', 'building': 'pool-house', 'id': lounge['id'],
+                          'field': 'name', 'value': 'Lounge X'}, 'p1', '')
+    logged = [f for f in ts.fixes() if f['round'] == out['round']]
+    check([f['path'] for f in logged] == [f"buildings[id=pool-house].rooms[id={lounge['id']}].name"]
+          and logged[0]['after'] == 'Lounge X', logged)
+    main = next(b for b in ts.current_model()['buildings'] if b['id'] == 'main-house')
+    wall = next(w for w in main['walls'] if w.get('kind', 'solid') == 'solid' and not w.get('exterior'))
+    out = twin_edit.save({'op': 'move_wall', 'building': 'main-house', 'wall': wall['id'], 'by': 0.5}, 'p1', '')
+    logged = [f['path'] for f in ts.fixes() if f['round'] == out['round']]
+    check(logged and all('.walls[' in p and p.rsplit('.', 1)[-1].split('[')[0] in ('from', 'to')
+                         for p in logged), logged)
+
+
+def test_migrated_floors_never_overlap_and_keep_their_outline_on_the_first_edit():
+    """Final wave I1: no two rooms on one level share floor after migration, and
+    the room whose read polygon lay over a neighbour shows the same derived
+    outline before and after the first edit (no flicker)."""
+    from services import twin_edit
+    model = _household_in_store()
+    check(_same_level_overlaps(model) == [], _same_level_overlaps(model))
+    main = next(b for b in model['buildings'] if b['id'] == 'main-house')
+    rid = 'room:ef8bd041182342b28871ad178de511a6'
+    migrated = next(r for r in main['rooms'] if r['id'] == rid)
+    pool = next(b for b in model['buildings'] if b['id'] == 'pool-house')
+    twin_edit.save({'op': 'set', 'building': 'pool-house', 'id': pool['rooms'][0]['id'],
+                    'field': 'name', 'value': 'Renamed'}, 'p1', '')
+    after = ts.current_model()
+    check(_same_level_overlaps(after) == [], _same_level_overlaps(after))
+    edited = next(r for r in next(b for b in after['buildings'] if b['id'] == 'main-house')['rooms']
+                  if r['id'] == rid)
+    check(abs(_area(edited['polygon']) - _area(migrated['polygon'])) < 0.01
+          and abs(_area(migrated['polygon']) - 196.5) > 1, (migrated['polygon'], edited['polygon']))
+
+
+def test_a_save_without_a_registry_keeps_building_kinds():
+    """Final wave M1: _follow_place never turns main-house/pool-house into 'other'."""
+    from services import twin_edit
+    model = _household_in_store()
+    kinds = {b['id']: b.get('kind') for b in model['buildings']}
+    check(kinds == {'main-house': 'main_house', 'pool-house': 'pool_house'}, kinds)
+    pool = next(b for b in model['buildings'] if b['id'] == 'pool-house')
+    twin_edit.save({'op': 'set', 'building': 'pool-house', 'id': pool['rooms'][0]['id'],
+                    'field': 'name', 'value': 'Renamed'}, 'p1', '')
+    check({b['id']: b.get('kind') for b in ts.current_model()['buildings']} == kinds,
+          ts.current_model()['buildings'][0].get('kind'))
+    check({b['id']: b['kind'] for b in ts.place()['buildings']} == kinds, ts.place())
+
+
+def test_undoing_a_delete_drops_its_tombstone_and_redo_restores_it():
+    """Final wave M13: the undo/redo the editor posts is a revert; the delete's
+    tombstone follows it."""
+    from services import twin_edit
+    model = _household_in_store()
+    main = next(b for b in model['buildings'] if b['id'] == 'main-house')
+    window = next(o for o in main['openings'] if o['id'].endswith('4198d'))
+    before = ts.current_id()
+    out = twin_edit.save({'op': 'delete', 'building': 'main-house', 'id': window['id']}, 'p1', '')
+    stones = [t for t in ts.tombstones() if t.get('round') == out['round']]
+    check(len(stones) == 1 and stones[0]['kind'] == 'opening', ts.tombstones())
+    ts.revert(before)
+    check(not any(t.get('round') == out['round'] for t in ts.tombstones()), ts.tombstones())
+    check(any(o['id'] == window['id'] for b in ts.current_model()['buildings'] for o in b['openings']),
+          'the window is back')
+    ts.revert(out['round'])
+    check([t for t in ts.tombstones() if t.get('round') == out['round']] == stones, ts.tombstones())
+
+
 TESTS = (
+    test_first_edit_logs_only_what_the_op_touched,
+    test_migrated_floors_never_overlap_and_keep_their_outline_on_the_first_edit,
+    test_a_save_without_a_registry_keeps_building_kinds,
+    test_undoing_a_delete_drops_its_tombstone_and_redo_restores_it,
     test_update_model_refuses_stale_generation_before_mutating,
     test_update_model_refuses_empty_house_before_mutating,
     test_update_model_reconciles_registry_name_and_kind,

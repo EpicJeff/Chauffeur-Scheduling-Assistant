@@ -445,7 +445,30 @@ def test_impossible_roof_shrink_uses_the_surface_fallback_copy():
     check(close_pt(b['flags'][0]['at'], [5, 0]), b['flags'])
 
 
+def test_a_lost_piece_is_flagged_where_it_last_stood_never_at_the_origin():
+    """Final wave I2: a piece whose host is unknown to the snapshot (a split part
+    the snapshot predates) is flagged at its place on the wall as it stands now,
+    on that wall's level; with no surface anywhere, on its level's walls."""
+    b = _box()
+    b['joints'] = [dict(j, at=[j['at'][0] + 20, j['at'][1] + 20]) for j in b['joints']]
+    b['openings'].append(_door('d1', 's~2', 3, width=2))
+    before = hosts.snapshot({'joints': [], 'walls': [], 'levels': b['levels']})
+    b['walls'][0]['id'] = 's~2'
+    notes = []
+    hosts._lost(b, b['openings'][0], hosts._host(b['openings'][0], True), before, notes, fits=False)
+    flag = b['flags'][-1]
+    check(flag['piece'] == 'd1' and flag['level'] == 'L1' and close_pt(flag['at'], [23, 20]), flag)
+    gone = _box()
+    gone['joints'] = [dict(j, at=[j['at'][0] + 20, j['at'][1] + 20]) for j in gone['joints']]
+    gone['openings'].append(_door('d2', 'nowhere', 3, width=2))
+    hosts._lost(gone, gone['openings'][0], hosts._host(gone['openings'][0], True),
+                hosts.snapshot(gone), [], fits=True)
+    flag = gone['flags'][-1]
+    check(flag['level'] == 'L1' and flag['at'] != [0, 0] and close_pt(flag['at'], [25, 25]), flag)
+
+
 TESTS = (
+    test_a_lost_piece_is_flagged_where_it_last_stood_never_at_the_origin,
     test_min_clear_is_half_a_foot,
     test_door_keeps_distance_from_the_fixed_end,
     test_wall_moved_sideways_carries_its_window,

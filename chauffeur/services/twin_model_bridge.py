@@ -496,7 +496,11 @@ def _details(building, flat, previous):
             building[target].append(piece)
 
 
+_RESTORE_OVERLAP = 0.5  # sq ft; rounding slivers between neighbours stay below it
+
+
 def _restore_polygons(building, stored, replaced):
+    derived = {}
     for room in building['rooms']:
         polygon = stored.get(room['id'])
         if not twin_plan._polygon(polygon):
@@ -507,7 +511,33 @@ def _restore_polygons(building, stored, replaced):
                              for a, b in _segments(polygon) for w in replaced)
         if (not moved_boundary and twin_model._overlap(polygon, room['polygon']) + _EPS
                 >= twin_model._area(room['polygon']) * .25):
+            derived[room['id']] = room['polygon']
             room['polygon'] = deepcopy(polygon)
+    # A stored outline that lies over a neighbour would draw two floors on one
+    # patch; that room shows its derived region, the one every edit keeps.
+    # Rooms over a derived neighbour yield first (until nothing changes), so a
+    # room that only touched such a stored outline keeps its own.
+    def over(room, others):
+        return any(other is not room and other['level'] == room['level']
+                   and twin_plan._polygon(other.get('polygon'))
+                   and twin_model._overlap(room['polygon'], other['polygon']) > _RESTORE_OVERLAP
+                   for other in others)
+
+    while True:
+        changed = True
+        while changed:
+            changed = False
+            fixed = [r for r in building['rooms'] if r['id'] not in derived]
+            for room in building['rooms']:
+                if room['id'] in derived and over(room, fixed):
+                    room['polygon'] = derived.pop(room['id'])
+                    changed = True
+        # Two stored outlines over each other: both show their regions.
+        stored_over = [r for r in building['rooms'] if r['id'] in derived and over(r, building['rooms'])]
+        if not stored_over:
+            break
+        for room in stored_over:
+            room['polygon'] = derived.pop(room['id'])
 
 
 def _separator_flags(building):

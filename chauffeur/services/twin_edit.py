@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 import math
+import re
 
 from services import twin_joints, twin_plan, twin_register
 
@@ -813,6 +814,15 @@ def _tombstone(kind, piece, building):
             'src': deepcopy(piece.get('src') or {})}
 
 
+# Caches the model derives from walls and joints (a person never edits them),
+# and provenance marks (who owns a piece is not a reader's error).
+_DERIVED_PATH = re.compile(r'(^|\.)(rooms\[[^\]]+\]\.(polygon|joints)|joints|walls\[[^\]]+\]\.footprint|src)(\[|\.|$)')
+
+
+def _derived_path(path):
+    return bool(_DERIVED_PATH.search(path))
+
+
 def save(edit, actor_id, reason=''):
     """Edit the latest round, preserving provenance, history and P0 fix kinds."""
     from services import twin_store
@@ -834,9 +844,13 @@ def save(edit, actor_id, reason=''):
                 raise ValueError('No registration on file for this sheet yet')
             edit['reg'] = _registration(edit.get('reg'))
             twin_store._source_page(twin_store._state(), edit.get('source'), edit.get('page'))
-        from services import twin_model_bridge
-        model, summary = apply_model(twin_store.current_model(), edit)
+        from services import twin_model, twin_model_bridge
+        current = twin_store.current_model()
+        model, summary = apply_model(current, edit)
         after = twin_model_bridge.flatten(model)
+        # The fix log compares against the house as every op sees it (normalized),
+        # so a pass's own re-derive is never logged as the person's fix.
+        logged_before = twin_model_bridge.flatten(twin_model.normalize(current)[0])
         place_row = None
         if edit.get('op') == 'set' and edit.get('field') == 'name':
             kind, piece, building, _ = _find(after, edit.get('piece', edit.get('id')), edit.get('building'))
@@ -853,10 +867,10 @@ def save(edit, actor_id, reason=''):
         tombstones = ([_tombstone(*entry) for entry in _removed(before, deletion_after)]
                       if edit.get('op') == 'delete' else [])
         changes = [{'path': path, 'kind': twin_store._fix_kind(path),
-                    'before': twin_store._leaf(before, path), 'after': twin_store._leaf(after, path),
+                    'before': twin_store._leaf(logged_before, path), 'after': twin_store._leaf(after, path),
                     'reason': reason.strip() or summary, 'actor_id': actor_id}
-                   for path in twin_plan.diff_paths(before, after)
-                   if twin_store._fix_kind(path) is not None]
+                   for path in twin_plan.diff_paths(logged_before, after)
+                   if twin_store._fix_kind(path) is not None and not _derived_path(path)]
         def metadata(row):
             if place_row is not None:
                 row['place'], row['page_roles'] = place_row['place'], place_row['page_roles']
@@ -864,7 +878,7 @@ def save(edit, actor_id, reason=''):
         round_id = twin_store.update_model(
             lambda current: model, 'edit', note=summary, changes=changes, state_mutator=metadata)
         for tombstone in tombstones:
-            twin_store.add_tombstone(tombstone)
+            twin_store.add_tombstone({**tombstone, 'round': round_id})
         if edit.get('op') == 'registration':
             edit['reg']['source'] = 'person'
             twin_store.set_registration(edit['source'], edit['page'], edit['level'], edit['reg'])

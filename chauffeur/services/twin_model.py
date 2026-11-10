@@ -139,10 +139,46 @@ def _joint_references(walls):
             for j in w['joints'] if isinstance(j, str)}
 
 
+def opening_spans(joints, walls, openings) -> dict[str, set]:
+    """R55: per wall, the joints lying inside a hosted opening's span.
+
+    A persisted T-split never lands inside an opening's span; such a T stays
+    derived for that wall, so the opening keeps its whole wall."""
+    keep = {}
+    hosted = {}
+    for opening in openings or []:
+        if (isinstance(opening, dict) and isinstance(opening.get('wall'), str)
+                and 'gable' not in opening and opening.get('state') != 'ghost'
+                and all(type(opening.get(k)) in (int, float) for k in ('at', 'width'))):
+            hosted.setdefault(opening['wall'], []).append(opening)
+    for wall in walls:
+        spans = hosted.get(wall['id'])
+        ends = wall.get('joints')
+        if not spans or not isinstance(ends, list) or len(ends) != 2 or not all(j in joints for j in ends):
+            continue
+        a, b = (joints[j] for j in ends)
+        length = math.dist(a, b)
+        if length <= _EPS:
+            continue
+        unit = [(b[i] - a[i]) / length for i in (0, 1)]
+        for jid, point in joints.items():
+            if jid in ends:
+                continue
+            along = sum((point[i] - a[i]) * unit[i] for i in (0, 1))
+            off = abs((point[0] - a[0]) * unit[1] - (point[1] - a[1]) * unit[0])
+            if off > 0.05 or not _EPS < along < length - _EPS:
+                continue
+            if any(o['at'] - o['width'] / 2 - _EPS <= along <= o['at'] + o['width'] / 2 + _EPS
+                   for o in spans):
+                keep.setdefault(wall['id'], set()).add(jid)
+    return keep
+
+
 def _split_t_junctions(building, joints, walls, notes):
     """Persist only endpoint splits; proper crossings remain a derivation view."""
     before = hosts.snapshot({'joints': building.get('joints', []), 'walls': walls})
-    _, split = graph.split_crossings(joints, walls, proper=False)
+    _, split = graph.split_crossings(joints, walls, proper=False,
+                                     keep_whole=opening_spans(joints, walls, building.get('openings')))
     old = {w['id']: w for w in walls}
     # split_crossings emits each wall's segments consecutively, first with its
     # original id.
