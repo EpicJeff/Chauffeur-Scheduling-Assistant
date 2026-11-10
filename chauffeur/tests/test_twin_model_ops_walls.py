@@ -671,6 +671,131 @@ def test_ops_mark_touched_walls_person_owned():
     check(owned == [], f'a reader operation marks nothing: {owned}')
 
 
+def household():
+    from test_twin_model_bridge import _migrated
+    return copy.deepcopy(_migrated()[0])
+
+
+def test_household_crossing_rooms_can_move():
+    for prefix in ('room:48bcc328', 'room:70e732ca', 'room:ef8bd041'):
+        m = household()
+        b = next(b for b in m['buildings'] if b['id'] == 'main-house')
+        room = next(r for r in b['rooms'] if r['id'].startswith(prefix))
+        names = {r['id']: r['name'] for r in b['rooms']}
+        original = copy.deepcopy(m)
+        out, _ = ops.apply(m, {'op': 'move_room', 'building': b['id'],
+                               'room': room['id'], 'by': [1, 0]})
+        got = next(b for b in out['buildings'] if b['id'] == 'main-house')
+        check({r['id']: r['name'] for r in got['rooms']} == names, got['rooms'])
+        check(not unclosed(got), got['flags'])
+        check(m == original, 'successful promotion mutated its input')
+
+
+def test_household_crossing_wall_moves_without_tearing_a_room():
+    m, _ = ops.twin_model.normalize(household())
+    before = next(b for b in m['buildings'] if b['id'] == 'main-house')
+    neighbour_id = 'room:48bcc32861704cc6b6edc5291031c3f8'
+    polygon = room_by_id(before, neighbour_id)['polygon']
+    expected_area = area(polygon) + 0.5 * (max(x for x, _ in polygon) - min(x for x, _ in polygon))
+    out, _ = ops.apply(m, {'op': 'move_wall', 'building': 'main-house',
+                           'wall': 'wall:203cf0d790da46f9a96eebc1fded5485', 'by': 0.5})
+    b = next(b for b in out['buildings'] if b['id'] == 'main-house')
+    check(not unclosed(b), b['flags'])
+    small = room_by_id(b, 'room:70e732ca372344819e70454c92e85918')
+    neighbour = room_by_id(b, neighbour_id)
+    check(small is not None and neighbour is not None, b['rooms'])
+    check(close(area(neighbour['polygon']), expected_area), neighbour['polygon'])
+
+
+def crossing_nub():
+    m = two_rooms()
+    b = bld(m)
+    b['joints'].extend([_joint('left', 0, 5), _joint('nub', 10.17, 5)])
+    b['walls'].append(_wall('cross', 'left', 'nub', exterior=False))
+    return ops.twin_model.normalize(m)[0]
+
+
+def test_move_joint_promotes_crossings_only_on_its_incident_walls():
+    m = crossing_nub()
+    b = run(m, {'op': 'move_joint', 'joint': 'jb', 'to': [11, 0]})
+    check(len(b['rooms']) == 3 and not unclosed(b), (b['rooms'], b['flags']))
+    crossing = [j['id'] for j in b['joints'] if near(j['at'], [10, 5])]
+    check(len(crossing) == 1, b['joints'])
+    check(sum(crossing[0] in w['joints'] for w in b['walls']) == 3, b['walls'])
+    unrelated = run(m, {'op': 'move_joint', 'joint': 'jc', 'to': [21, 0]})
+    check(not any(near(j['at'], [10, 5]) for j in unrelated['joints']), unrelated['joints'])
+
+
+def test_untouched_reader_window_keeps_its_position_ghost_flag_and_owner():
+    for actor in ('person', 'reader'):
+        m = household()
+        b = next(b for b in m['buildings'] if b['id'] == 'main-house')
+        window = next(p for p in b['openings'] if p['id'].startswith('opening:f244c24e'))
+        flags = [f for f in b['flags'] if f.get('piece') == window['id']]
+        out, _ = ops.apply(m, {'op': 'move_wall', 'building': 'main-house',
+                               'wall': 'wall:203cf0d790da46f9a96eebc1fded5485', 'by': 0.5}, actor)
+        got = next(b for b in out['buildings'] if b['id'] == 'main-house')
+        check(opening(got, window['id']) == window, opening(got, window['id']))
+        check([f for f in got['flags'] if f.get('piece') == window['id']] == flags, got['flags'])
+
+
+def test_delete_changing_removes_exclusive_edges_and_flags_surface_items():
+    m = household()
+    b = next(b for b in m['buildings'] if b['id'] == 'pool-house')
+    room = next(r for r in b['rooms'] if r['name'] == 'CHANGING')
+    before_rooms = {r['id'] for r in b['rooms']}
+    shared = {w['id'] for w in b['walls'] if set(w['joints']) in
+              [set(pair) for other in b['rooms'] if other is not room
+               for pair in zip(other['joints'], other['joints'][1:] + other['joints'][:1])]}
+    b['anchors'].append({'id': 'changing-light', 'kind': 'light',
+                          'host': {'ceiling': room['id'], 'u': 0.5, 'v': 0.5}})
+    b['items'].append({'id': 'changing-table', 'asset': 'table',
+                       'host': {'floor': room['id'], 'u': 0.5, 'v': 0.5}})
+    out, words = ops.apply(m, {'op': 'delete', 'building': 'pool-house', 'id': room['id']})
+    got = next(b for b in out['buildings'] if b['id'] == 'pool-house')
+    check(wall_by_id(got, 'wall:066fd0b4f0044afc972a7a5c39a2f883') is None, got['walls'])
+    check(shared <= {w['id'] for w in got['walls']}, 'a shared edge was removed')
+    check({r['id'] for r in got['rooms']} == before_rooms - {room['id']}, got['rooms'])
+    check(words.startswith('Deleted the CHANGING.'), words)
+    for name, pid, kind in (('anchors', 'changing-light', 'light'), ('items', 'changing-table', 'table')):
+        piece = next(p for p in got[name] if p['id'] == pid)
+        check(piece.get('state') == 'ghost', piece)
+        check(any(f.get('piece') == pid and f.get('text') ==
+                  f'This {kind} lost its surface; place it again.' for f in got['flags']), got['flags'])
+
+
+def test_delete_room_sharing_every_edge_is_refused():
+    # Use a 3-by-3 grid so every inner boundary has a neighbour.
+    model = box(w=30, h=30)
+    for x in (10, 20):
+        model, _ = ops.apply(model, {'op': 'add_wall', 'building': 'B1', 'level': 'L1',
+                                     'from': [x, 0], 'to': [x, 30]})
+    for y in (10, 20):
+        model, _ = ops.apply(model, {'op': 'add_wall', 'building': 'B1', 'level': 'L1',
+                                     'from': [0, y], 'to': [30, y]})
+    inner = next(r for r in bld(model)['rooms'] if corners(r['polygon']) == rect_corners(10, 10, 20, 20))
+    refused(model, {'op': 'delete', 'id': inner['id']},
+            'This room shares every wall; delete a wall to merge it.')
+
+
+def test_delete_straight_joint_merges_walls_and_keeps_hosts():
+    m = box(openings=[_door('win', 's', 8, width=2, kind='window')])
+    out, _ = ops.apply(m, {'op': 'split_wall', 'building': 'B1', 'wall': 's', 'at': 4})
+    joint = next(j['id'] for j in bld(out)['joints'] if near(j['at'], [4, 0]))
+    b = run(out, {'op': 'delete', 'id': joint})
+    check(len(b['walls']) == 4 and joint not in jpos(b), b['walls'])
+    check(len(b['rooms']) == 1 and close(area(b['rooms'][0]['polygon']), 100), b['rooms'])
+    check(near(centre(b, opening(b, 'win')), [8, 0]) and opening(b, 'win').get('state') != 'ghost',
+          opening(b, 'win'))
+    check(not unclosed(b), b['flags'])
+
+
+def test_delete_corner_and_T_joint_are_refused():
+    text = 'Only a straight joint between two walls can be removed.'
+    refused(box(), {'op': 'delete', 'id': 'j1'}, text)
+    refused(two_rooms(), {'op': 'delete', 'id': 'jb'}, text)
+
+
 TESTS = (
     test_shared_wall_drag_resizes_both_rooms,
     test_move_joint_moves_every_wall_on_it,
@@ -690,6 +815,14 @@ TESTS = (
     test_delete_wall_merges_two_rooms_keeping_the_larger_name,
     test_delete_wall_keeps_its_door_as_a_flagged_ghost,
     test_ops_mark_touched_walls_person_owned,
+    test_household_crossing_rooms_can_move,
+    test_household_crossing_wall_moves_without_tearing_a_room,
+    test_move_joint_promotes_crossings_only_on_its_incident_walls,
+    test_untouched_reader_window_keeps_its_position_ghost_flag_and_owner,
+    test_delete_changing_removes_exclusive_edges_and_flags_surface_items,
+    test_delete_room_sharing_every_edge_is_refused,
+    test_delete_straight_joint_merges_walls_and_keeps_hosts,
+    test_delete_corner_and_T_joint_are_refused,
 )
 
 

@@ -61,6 +61,19 @@ def _line(geometry, host):
     return None
 
 
+def surface_changed(before, geometry, host, prior_host=None):
+    """Whether a piece's surface or its storey's dimensions changed."""
+    old = _surface(before, host if prior_host is None else prior_host)
+    current = _surface(geometry, host)
+    if old != current:
+        return True
+    if current is None:
+        return False
+    old_level = before['levels'].get(old.get('level'), {})
+    level = geometry['levels'].get(current.get('level'), {})
+    return any(old_level.get(key) != level.get(key) for key in ('elevation', 'ceiling'))
+
+
 def _point(geometry, host, offset=0):
     if host.get('ground') is True:
         return [*host['at'], offset]
@@ -252,6 +265,8 @@ def follow(building, before: dict) -> list[str]:
         opening = collection == 'openings'
         for piece in building.get(collection, []):
             host = _host(piece, opening)
+            if id(host) not in carried and not surface_changed(before, geometry, host):
+                continue
             if not _available(geometry, host, opening and 'gable' in piece):
                 _lost(building, piece, host, before, notes)
                 continue

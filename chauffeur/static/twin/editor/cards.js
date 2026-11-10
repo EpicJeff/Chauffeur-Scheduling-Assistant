@@ -30,7 +30,7 @@ export function findPiece(plan, pieceId, buildingId) {
   const building = plan?.buildings.find(b => b.id === buildingId);
   if (!building) return null;
   if (building.id === pieceId) return { piece: building, building, kind: 'building' };
-  for (const [list, kind] of [['levels', 'level'], ['walls', 'wall'], ['openings', 'opening'], ['rooms', 'room'], ['stairs', 'stair'], ['fixtures', 'fixture'], ['lights', 'light']]) {
+  for (const [list, kind] of [['levels', 'level'], ['walls', 'wall'], ['openings', 'opening'], ['rooms', 'room'], ['stairs', 'stair'], ['anchors', 'anchor'], ['items', 'item'], ['fixtures', 'fixture'], ['lights', 'light']]) {
     const piece = building[list]?.find(p => p.id === pieceId);
     if (piece) return { piece, building, kind };
   }
@@ -38,13 +38,35 @@ export function findPiece(plan, pieceId, buildingId) {
   return piece ? { piece, building, kind: 'roof' } : null;
 }
 
-export function createCards({ getPlan, getLabel, getFieldLabels = () => ({}), edit, ask, canEdit, select }) {
+export function createCards({ getPlan, getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, ask, canEdit, select }) {
   const host = document.getElementById('piece-card');
   let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
   const endNames = { x0: 'Left end', x1: 'Right end', y0: 'Front end', y1: 'Back end' };
   const fieldValue = (piece, field) => field.startsWith('ends.') ? (piece.ends?.[field.slice(5)] ?? piece.kind) : piece[field];
-  const title = ({ kind, piece }) => kind === 'opening' ? (piece.kind === 'window' ? 'Window' : 'Door')
-    : piece.name || (kind === 'roof' ? 'Roof section' : kind[0].toUpperCase() + kind.slice(1));
+  const title = ({ kind, piece, building }) => {
+    const name = kind === 'opening' ? (piece.kind === 'window' ? 'Window' : 'Door')
+      : piece.name || (kind === 'roof' ? 'Roof section' : kind[0].toUpperCase() + kind.slice(1));
+    if (!['wall', 'opening'].includes(kind)) return name;
+    const wall = kind === 'wall' ? piece : building.walls.find(w => w.id === (piece.wall || piece.host?.wall));
+    const room = building.rooms?.find(r => r.id === getSelection().room);
+    if (!wall || !room?.polygon?.length) return name;
+    const [a, b] = [wall.from, wall.to], length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (!length) return name;
+    let nx = (b[1] - a[1]) / length, ny = -(b[0] - a[0]) / length;
+    const x = (a[0] + b[0]) / 2 + .25 * nx, y = (a[1] + b[1]) / 2 + .25 * ny;
+    let inside = false;
+    const poly = room.polygon;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      if ((poly[i][1] > y) !== (poly[j][1] > y)
+          && x < (poly[j][0] - poly[i][0]) * (y - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) inside = !inside;
+    }
+    if (inside) { nx = -nx; ny = -ny; }
+    const angle = (building.rotation || 0) * Math.PI / 180;
+    const east = Math.cos(angle) * nx - Math.sin(angle) * ny, north = Math.sin(angle) * nx + Math.cos(angle) * ny;
+    const direction = Math.abs(east) >= Math.abs(north) ? east > 0 ? 'east' : 'west' : north > 0 ? 'north' : 'south';
+    const wallName = `${room.name || 'Room'}, ${direction} wall`;
+    return kind === 'wall' ? wallName : `${name}, ${(room.name || 'Room').toLowerCase()} ${direction} wall`;
+  };
   const display = (field, value) => lengths.has(field) ? feetInches(value || 0)
     : field === 'position' ? (value || [0, 0]).map(feetInches).join(', ') : String(value ?? '');
   const raw = input => input.type === 'checkbox' ? input.checked : input.value;

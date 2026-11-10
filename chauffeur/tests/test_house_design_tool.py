@@ -108,6 +108,40 @@ def scenario_tool_is_registered_and_never_runs_from_a_mission():
     check('house_design' not in missions.proposable_tools(), 'never offered to a mission, like house and music')
 
 
+def scenario_tool_documents_connected_operation_arguments():
+    schema = agent_tools_v2.TOOL_SCHEMAS['house_design']
+    description = schema['properties']['edit']['description']
+    arguments = {
+        'move_joint': ('joint', 'to'), 'move_wall': ('wall', 'by'), 'move_room': ('room', 'by'),
+        'split_wall': ('wall', 'at'), 'draw_room': ('level', 'polygon'),
+        'split_room': ('room', 'from', 'to'), 'delete': ('id',),
+        'add_wall': ('level', 'from', 'to'), 'add_opening': ('wall', 'kind', 'at', 'width', 'sill', 'head'),
+        'move_hosted': ('id', 'host', 'at', 'z', 'offset'),
+        'resize_opening': ('id', 'width', 'sill', 'head', 'at'),
+        'add_anchor': ('kind', 'host'), 'add_item': ('asset', 'host', 'rotation', 'scale'),
+        'draw_roof': ('area', 'plate', 'pitch', 'overhang'), 'roof_over': ('rooms', 'null'),
+        'set_roof_edge': ('roof', 'edge', 'setting', 'pitch', 'clip'),
+        'move_roof_edge': ('roof', 'edge', 'by', 'detach'),
+        'add_dormer': ('roof', 'edge', 'at', 'width', 'pitch'), 'move_dormer': ('id', 'at', 'width'),
+        'add_level': ('name', 'elevation', 'ceiling'), 'move_building': ('to',),
+        'rotate_building': ('rotation', 'about'), 'set': ('id', 'field', 'value'),
+        'set_material': ('target', 'material'), 'accept_proposal': ('id',), 'dismiss_proposal': ('id',),
+        'move_site_item': ('list', 'index', 'at'), 'delete_site_item': ('list', 'index'),
+        'add_site_item': ('list', 'asset', 'at'),
+    }
+    for op, keys in arguments.items():
+        marker = op + ' ('
+        check(marker in description, f'{op} needs its argument shape')
+        clause = description.split(marker, 1)[1].split(';', 1)[0]
+        check(all(key in clause for key in keys), f'{op} needs {keys}: {clause}')
+    for shape in ('{wall, side, at, z}', '{floor: room, u, v}', '{ceiling: room, u, v}',
+                  '{wall, side}', '{room, surface', '{roof}', '{level, role}', '{building, role}',
+                  '{id, color}', 'left|right', 'floor|ceiling|walls', 'rectilinear',
+                  '0-based', '<piece>:proposal', 'planting|furniture', 'lot feet'):
+        check(shape in description, f'missing shape or coordinate convention: {shape}')
+    check(len(json.dumps(schema)) <= 4500, 'keep the tool schema compact')
+
+
 def scenario_tool_edits_through_the_same_operations():
     _seed()
     _people()
@@ -397,6 +431,7 @@ def scenario_status_drawings_follows_moved_pages():
 if __name__ == '__main__':
     for fn in (scenario_status_drawings_follows_moved_pages,
                scenario_tool_is_registered_and_never_runs_from_a_mission,
+               scenario_tool_documents_connected_operation_arguments,
                scenario_tool_edits_through_the_same_operations,
                scenario_tool_refuses_non_parents,
                scenario_a_real_turn_edits_the_house_and_is_metered,

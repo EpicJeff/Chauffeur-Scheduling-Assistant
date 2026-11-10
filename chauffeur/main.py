@@ -7763,6 +7763,20 @@ def house_editor_build_resume(build_id: str):
     return _house_editor_call(twin_build.resume, build_id, lookup=True)
 
 
+@app.post('/api/house/editor/op')
+def house_editor_op(request: Request, body: dict = Body(default={})):
+    from services import twin_edit, twin_store
+    parent = require_parent_token(request.headers.get('x-member-token') or
+                                  request.query_params.get('member_token'))
+    with twin_store.LIFECYCLE, twin_store._LOCK:
+        try:
+            result = twin_edit.save(body.get('op'), parent['id'], reason=body.get('reason', ''))
+        except ValueError as exc:
+            return JSONResponse(status_code=400, content={'error': str(exc)})
+        return {'round': result['round'], 'words': result['summary'], 'plan': twin_store.current(),
+                'model': twin_store.current_model()}
+
+
 @app.post('/api/house/editor/edit')
 def house_editor_edit(request: Request, body: dict = Body(default={})):
     from services import twin_edit, twin_store

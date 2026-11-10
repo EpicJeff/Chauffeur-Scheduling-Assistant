@@ -65,9 +65,17 @@ export async function request(path, method = 'GET', body, area = 'editor') {
       if (await checkpoint(data.detail)) continue;
       throw Object.assign(new Error('Stopped at the spending checkpoint.'), { cancelled: true });
     }
-    throw Object.assign(new Error(typeof data?.detail === 'string' ? plain(data.detail) : 'The house request could not finish.'), {
+    throw Object.assign(new Error(typeof data?.error === 'string' ? plain(data.error)
+      : typeof data?.detail === 'string' ? plain(data.detail) : 'The house request could not finish.'), {
       status: response.status, detail: data?.detail,
     });
+  }
+}
+
+export async function op(operation) {
+  try { return await request('op', 'POST', { op: operation }); }
+  catch (error) {
+    report(error); error.shown = true; throw error;
   }
 }
 
