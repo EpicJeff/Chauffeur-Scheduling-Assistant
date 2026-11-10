@@ -807,7 +807,107 @@ def scenario_library_panel_shows_thumbnails_from_one_renderer():
         _no_errors(s)
 
 
+def _outside_row(page):
+    return page.locator('#piece-card .editor-material-line').filter(
+        has=page.locator('span', has_text='Outside')).first
+
+
+def scenario_pick_a_material_on_the_card_by_keyboard():
+    # Final wave I3 (spec 5.7, pick it on the card) and I4 (This floor; a floor
+    # line clears from the card): every step here is a key press.
+    s = _serve()
+    if s is None:
+        return
+    _facts()
+    library = _library(s)
+    brick = _material(library, BRICK)
+    with s.browser(launch_args=H.GPU_ARGS) as page:
+        posted = _ops(page)
+        _floor_view(page, s)
+        _select_front_wall(page)
+        change = _outside_row(page).locator('button:text-is("Change")')
+        check(change.count() == 1, ('the outside line offers Change', _card_text(page)))
+        change.focus()
+        page.keyboard.press('Enter')
+        page.wait_for_selector('#library-panel', state='visible', timeout=10000)
+        check('Choose a material for the outside face.' in page.inner_text('#library-status'),
+              page.inner_text('#library-status'))
+        thumb = page.locator(f'#library-panel [data-material="{BRICK}"]').first
+        thumb.wait_for(state='visible', timeout=10000)
+        thumb.focus()
+        page.keyboard.press('Enter')
+        floor = page.locator('#material-chooser button:text-is("This floor")')
+        floor.wait_for(state='visible', timeout=5000)
+        for scope in SCOPES:
+            check(page.locator(f'#material-chooser button:text-is("{scope}")').is_visible(), scope)
+        floor.focus()
+        page.keyboard.press('Enter')
+        _until(H.model, lambda m: (_by_id(H.building(m, POOL)['levels'], 'L1').get('materials') or {}).get('siding') == brick,
+                       'the floor siding reaches the store')
+        sets = [op for op in posted if op and op.get('op') == 'set_material']
+        check(len(sets) == 1 and sets[0]['target'] == {'level': 'L1', 'role': 'siding'} and sets[0]['material'] == brick, sets)
+        _close_library(page)
+        _select_front_wall(page)
+        text = _card_text(page)
+        check(any(f'{n}, from the level' in text for n in _names(library, BRICK)), ('the card reads it from the level', text))
+        clear = _outside_row(page).locator('button:text-is("Clear for this floor")')
+        check(clear.count() == 1, ('the floor line clears there', text))
+        clear.focus()
+        page.keyboard.press('Enter')
+        _until(H.model, lambda m: 'siding' not in (_by_id(H.building(m, POOL)['levels'], 'L1').get('materials') or {}),
+               'Clear for this floor reaches the store')
+        _no_errors(s)
+
+
+def scenario_item_card_turns_and_sizes_the_item():
+    # Final wave I4: what Argyle sets on an item (rotation, scale, offset) a
+    # person sets on its card.
+    s = _serve()
+    if s is None:
+        return
+    _facts()
+    from services import twin_edit
+    twin_edit.save({'op': 'add_item', 'building': POOL, 'asset': SOFA,
+                    'host': {'floor': FAMILY_ROOM, 'u': 0.5, 'v': 0.5}}, 'p1', 'test: a chair')
+    item = [i for i in H.building(H.model(), POOL)['items'] if i['asset'] == SOFA][-1]
+    with s.browser(launch_args=H.GPU_ARGS) as page:
+        posted = _ops(page)
+        _floor_view(page, s)
+        page.evaluate("([id, b]) => window.__editor.clickPiece(id, b)", [item['id'], POOL])
+        page.wait_for_selector('#piece-card label:has-text("Size") input', timeout=10000)
+
+        def typed(label, text):
+            box = page.locator(f'#piece-card label:has-text("{label}") input')
+            box.fill(text)
+            box.press('Enter')
+
+        typed('Size', '150')
+        _until(H.model, lambda m: abs(_by_id(H.building(m, POOL)['items'], item['id']).get('scale', 1) - 1.5) < 1e-9,
+               'the size reaches the store')
+        page.wait_for_timeout(300)
+        typed('Turn', '90')
+        _until(H.model, lambda m: abs(_by_id(H.building(m, POOL)['items'], item['id']).get('rotation', 0) - 90) < 1e-9,
+               'the turn reaches the store')
+        page.wait_for_timeout(300)
+        typed('Distance from surface', '6"')
+        _until(H.model, lambda m: abs(_by_id(H.building(m, POOL)['items'], item['id']).get('offset', 0) - 0.5) < 1e-9,
+               'the offset reaches the store')
+        page.wait_for_timeout(300)
+        typed('Size', '500')
+        deadline = time.time() + 10
+        while time.time() < deadline and not page.locator('#cc-alert-modal').is_visible():
+            page.wait_for_timeout(100)
+        check(page.inner_text('#cc-alert-message').strip() == 'Choose a size from 50% to 200%.',
+              ('a size past the library limit is refused in words', page.inner_text('#cc-alert-message')))
+        check(abs(_by_id(H.building(H.model(), POOL)['items'], item['id'])['scale'] - 1.5) < 1e-9, 'the size stays')
+        ops = [op.get('op') for op in posted if op]
+        check(ops.count('set') >= 2 and 'move_hosted' in ops, posted)
+        _no_errors(s)
+
+
 SCENARIOS = [
+    scenario_pick_a_material_on_the_card_by_keyboard,
+    scenario_item_card_turns_and_sizes_the_item,
     scenario_drop_siding_on_one_face_sets_here,
     scenario_whole_building_scope_recolours_all_faces,
     scenario_card_reads_from_the_building,

@@ -427,6 +427,14 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       camera.position.set(cx * FT, cy * FT, -cz * FT);
       controls.target.set(x * FT, (name === 'top' ? 3 : 8) * FT, -y * FT); controls.update(); render();
     },
+    // Look from one lot point at another (feet; z above the ground). The editor
+    // opens this way (M3); later rebuilds keep the camera as it was left.
+    aim(position, target) {
+      camera = perspective; view.camera = camera; controls.object = camera; controls.enableRotate = true;
+      cameraMoved = true;
+      camera.position.set(position[0] * FT, position[2] * FT, -position[1] * FT);
+      controls.target.set(target[0] * FT, target[2] * FT, -target[1] * FT); controls.update(); render();
+    },
     async capture(names, width = 1280, height = 800) {
       if (disposed) throw new Error('This twin has been disposed.');
       width = Math.max(1, Math.floor(width)); height = Math.max(1, Math.floor(height));

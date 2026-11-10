@@ -706,6 +706,46 @@ def scenario_undo_is_off_while_a_build_runs():
         _no_errors(s, dialogs)
 
 
+CHANGED_SINCE = 'Something else changed the house since; use the timeline to go back.'
+
+
+def scenario_undo_refuses_after_another_change():
+    # Final wave I5: a round the editor did not make (Argyle, a build, another
+    # parent) since the step: undo and redo refuse in words and never revert
+    # over it; the timeline keeps every round.
+    from services import twin_edit
+    s = _serve()
+    if s is None:
+        return
+    _facts()
+    with s.browser(launch_args=H.GPU_ARGS) as page:
+        dialogs = _open(page, s)
+        _split_kitchen(page, None)
+        _wait_model(_split_done, 'the Kitchen split in two')
+        page.wait_for_timeout(500)
+        twin_edit.save({'op': 'set', 'building': POOL, 'id': NORTH_ROOM, 'field': 'name', 'value': 'Studio'},
+                       'p1', 'Argyle renamed it')
+        later = H.model()
+        check(_rooms(later)[NORTH_ROOM]['name'] == 'Studio', 'the outside change is stored')
+        for key in ('Control+z', '#rail-undo'):
+            _blur(page)
+            if key.startswith('#'):
+                page.click(key)
+            else:
+                H.press(page, key)
+            deadline = time.time() + 10
+            while time.time() < deadline and not page.locator('#cc-alert-modal').is_visible():
+                page.wait_for_timeout(100)
+            check(page.locator('#cc-alert-modal').is_visible()
+                  and page.inner_text('#cc-alert-message').strip() == CHANGED_SINCE,
+                  ('undo refuses in words', key, page.locator('#cc-alert-modal').is_visible()))
+            _still(later, page)
+            page.evaluate("() => { const m = document.getElementById('cc-alert-modal'); m.classList.add('hidden'); m.classList.remove('flex'); }")
+        check(_rooms(H.model())[NORTH_ROOM]['name'] == 'Studio' and _split_done(H.model()),
+              'the later change and the split both stand')
+        _no_errors(s, dialogs)
+
+
 def scenario_plan_mode_is_gone_and_top_camera_draws():
     s = _serve()
     if s is None:
@@ -779,6 +819,7 @@ SCENARIOS = [
     scenario_undo_restores_walls_rooms_and_names_after_a_split,
     scenario_redo_reapplies,
     scenario_undo_is_off_while_a_build_runs,
+    scenario_undo_refuses_after_another_change,
     scenario_plan_mode_is_gone_and_top_camera_draws,
 ]
 

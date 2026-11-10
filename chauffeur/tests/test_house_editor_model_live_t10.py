@@ -353,7 +353,89 @@ def scenario_building_and_level_get_their_cards():
         _no_errors(s)
 
 
+def scenario_sign_in_survives_a_failed_navigation():
+    # Final wave M2 (R56): the harness's sign-in init script runs in every
+    # document, Chromium's error page after a loopback reset included, and must
+    # not throw there; on the app it still signs the parent in.
+    import socket
+    s = _serve()
+    if s is None:
+        return
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+    with s.browser(launch_args=H.GPU_ARGS) as page:
+        H.signed_in(page)
+        try:
+            page.goto(f'http://127.0.0.1:{port}/', timeout=5000)
+        except Exception:
+            pass
+        page.wait_for_timeout(300)
+        check(not any('localStorage' in e for e in s.errors()), s.errors())
+        H.open_editor(page, s)
+        check(page.evaluate("() => localStorage.getItem('chauffeur_admin_token')") == H.STATE['token'],
+              'the app page is still signed in')
+        _no_errors(s)
+
+
+def scenario_default_camera_sees_the_house_past_the_trees():
+    # Final wave M3: the editor opens looking from the street toward the house,
+    # and no yard plant stands between the eye and the house. Checked with the
+    # scene's own geometry: rays from the eye to the house's middle and half-way
+    # to each corner meet a building before any tree.
+    s = _serve()
+    if s is None:
+        return
+    with s.browser(launch_args=H.GPU_ARGS) as page:
+        H.open_editor(page, s)
+        result = page.evaluate("""async () => {
+            const THREE = await import('three');
+            const { Tree } = await import('@dgreenheck/ez-tree');
+            const view = window.__twin, state = view.cameraState(), FT = 0.3048;
+            const eye = new THREE.Vector3().fromArray(state.position);
+            const points = (view.plan.buildings || []).flatMap(b => {
+              const a = (b.rotation || 0) * Math.PI / 180;
+              return (b.walls || []).flatMap(w => [w.from, w.to]).map(p => [Math.cos(a) * p[0] - Math.sin(a) * p[1] + b.position[0],
+                Math.sin(a) * p[0] + Math.cos(a) * p[1] + b.position[1]]);
+            });
+            const lo = [0, 1].map(i => Math.min(...points.map(p => p[i]))), hi = [0, 1].map(i => Math.max(...points.map(p => p[i])));
+            const mid = [0, 1].map(i => (lo[i] + hi[i]) / 2);
+            const sights = [mid, [lo[0], lo[1]], [hi[0], lo[1]], [hi[0], hi[1]], [lo[0], hi[1]]]
+              .map((p, i) => i ? [(p[0] + mid[0]) / 2, (p[1] + mid[1]) / 2] : p);
+            let trees = 0;
+            for (let wait = 0; wait < 300 && !trees; wait++) {
+              view.scene.traverse(o => { if (o instanceof Tree) trees++; });
+              if (!trees) await new Promise(r => setTimeout(r, 100));
+            }
+            const shown = o => { for (; o; o = o.parent) if (!o.visible) return false; return true; };
+            const out = [];
+            for (const [x, y] of sights) {
+              const target = new THREE.Vector3(x * FT, 8 * FT, -y * FT);
+              const ray = new THREE.Raycaster(eye, target.clone().sub(eye).normalize(), 0, eye.distanceTo(target) + 30 * FT);
+              let first = null;
+              for (const hit of ray.intersectObjects(view.scene.children, true)) {
+                let tree = false, building = false;
+                for (let o = hit.object; o; o = o.parent) {
+                  if (o instanceof Tree) tree = true;
+                  if (o.userData?.buildingId) building = true;
+                }
+                if (!shown(hit.object)) continue;
+                if (tree || building) { first = tree ? 'tree' : 'building'; break; }
+              }
+              out.push(first);
+            }
+            return { eye: [eye.x / FT, -eye.z / FT, eye.y / FT], mid, lo, out, trees };
+        }""")
+        check(result['trees'] > 0, ('the yard has its trees in the scene', result))
+        check(all(hit != 'tree' for hit in result['out']) and result['out'][0] == 'building',
+              ('no tree stands between the first view and the house', result))
+        check(result['eye'][1] < result['mid'][1], ('the first view looks from the street side', result))
+        _no_errors(s)
+
+
 SCENARIOS = [
+    scenario_sign_in_survives_a_failed_navigation,
+    scenario_default_camera_sees_the_house_past_the_trees,
     scenario_click_floor_tints_room_and_its_walls,
     scenario_outside_pieces_are_ghosted_and_unpickable,
     scenario_escape_steps_out,

@@ -490,6 +490,15 @@ MORE_OPS = ('add_opening', 'move_hosted', 'resize_opening', 'add_anchor', 'add_i
             'move_site_item', 'delete_site_item', 'add_site_item')
 
 
+def _item_scale(value):
+    from services.twin_library import ITEM_SCALE
+    value = _number(value)
+    low, high = ITEM_SCALE
+    if not low - _EPS <= value <= high + _EPS:
+        raise Refused(f'Choose a size from {round(low * 100)}% to {round(high * 100)}%.')
+    return value
+
+
 def _positive(value):
     value = _number(value)
     if value <= 0:
@@ -679,6 +688,11 @@ def _set_field(building, op):
                 building['checked_flags'].append(deepcopy(flag))
         return
     kind, piece = _piece(building, op.get('id'))
+    if kind == 'item' and op.get('field') in ('rotation', 'scale'):
+        # The card's Turn and Size fields (spec 5.7), the hand path for add_item's own.
+        piece[op['field']] = (_number(op.get('value')) % 360 if op['field'] == 'rotation'
+                              else _item_scale(op.get('value')))
+        return
     if kind == 'roof':
         # Reuse the established field validation and window-bearing gable guard,
         # then translate the section's changed planes back to its area edges.
@@ -782,7 +796,7 @@ def _more(building, op):
             piece.update(kind=op['kind'], offset=0, device=None)
         else:
             piece.update(asset=_text(op.get('asset')), rotation=_number(op.get('rotation', 0)) % 360,
-                         scale=_positive(op.get('scale', 1)))
+                         scale=_item_scale(op.get('scale', 1)))
         building[collection].append(piece)
         _rehost(building, piece, op.get('host'))
     elif kind in ('move_hosted', 'resize_opening'):

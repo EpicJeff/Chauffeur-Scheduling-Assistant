@@ -15,35 +15,60 @@ export function wallFace(building, wall, side) {
   return { room, role: wall.exterior && !room ? 'siding' : 'interior_wall' };
 }
 
+// Each line names its material and where it comes from. `clear` is set when the
+// surface itself holds it (Clear returns it to the inherited one); `reset` is the
+// building's or the floor's own role, cleared from the card (I4); `surface` is
+// what the card's Change applies to, through the same scope chooser as a drop.
 export function materialLines(record, plan, kit) {
   const { piece, building, kind } = record;
   if (!building) return [];
   const level = building.levels?.find(l => l.id === piece.level);
-  const line = (label, role, override, target, roomMaterial) => {
+  const line = (label, role, override, target, roomMaterial, surface) => {
     const ref = override || roomMaterial || level?.materials?.[role] || building.materials?.[role]
       || plan.materials?.[role] || kit?.materials?.[role];
     if (!ref) return null;
     const source = override ? 'set here' : `from the ${roomMaterial ? 'room' : level?.materials?.[role] ? 'level' : 'building'}`;
-    return { label, text: `${materialName(ref.id || ref.asset)}, ${source}`, target, clear: !!override };
+    const reset = override || roomMaterial ? null
+      : level?.materials?.[role] ? { target: { level: level.id, role }, label: 'Clear for this floor' }
+        : building.materials?.[role] ? { target: { building: building.id, role }, label: 'Clear for the building' } : null;
+    const result = { label, text: `${materialName(ref.id || ref.asset)}, ${source}`, target, clear: !!override, reset };
+    // Not enumerable: the card compares lines as text, never whole buildings.
+    Object.defineProperty(result, 'surface', { value: { building, piece, kind, role, level: piece.level, ...surface } });
+    return result;
   };
   if (kind === 'wall') return ['left', 'right'].map(side => {
     const face = wallFace(building, piece, side);
     // Which face a line speaks for: the room it faces, or the outside.
     const label = face.room ? face.room.name || 'Room' : face.role === 'siding' ? 'Outside' : 'Inside';
-    return line(label, face.role, piece.faces?.[side], { wall: piece.id, side }, face.room?.wall_material);
+    // Room scope on an outside face refers to the room behind that wall.
+    const room = face.room || wallFace(building, piece, side === 'left' ? 'right' : 'left').room;
+    return line(label, face.role, piece.faces?.[side], { wall: piece.id, side }, face.room?.wall_material,
+      { side, room, label: `${label.toLowerCase()} face` });
   }).filter(Boolean);
-  if (kind === 'room') return [line('Floor', 'floor', piece.floor_material, { room: piece.id, surface: 'floor' }),
-    line('Ceiling', 'porch_ceiling', piece.ceiling_material, { room: piece.id, surface: 'ceiling' }),
-    piece.wall_material && line('Walls', 'interior_wall', piece.wall_material, { room: piece.id, surface: 'walls' })].filter(Boolean);
-  if (kind === 'roof') return [line('Roof', 'roof', piece.material, { roof: piece.roof || piece.id })].filter(Boolean);
+  if (kind === 'room') return [line('Floor', 'floor', piece.floor_material, { room: piece.id, surface: 'floor' }, null, { room: piece, surface: 'floor', label: 'floor' }),
+    line('Ceiling', 'porch_ceiling', piece.ceiling_material, { room: piece.id, surface: 'ceiling' }, null, { room: piece, surface: 'ceiling', label: 'ceiling' }),
+    piece.wall_material && line('Walls', 'interior_wall', piece.wall_material, { room: piece.id, surface: 'walls' }, null, { room: piece, surface: 'walls', label: 'walls' })].filter(Boolean);
+  if (kind === 'roof') return [line('Roof', 'roof', piece.material, { roof: piece.roof || piece.id }, null, { label: 'roof' })].filter(Boolean);
   return [];
+}
+
+// The scope chooser's choices, surface first and the whole building last
+// (spec 5.7: the surface, the room, the floor, the building).
+export function scopeChoices(surface) {
+  const floor = surface.level ? [['This floor', 'level']] : [];
+  if (surface.kind === 'wall') return [['This wall face', 'face'], ['This room', 'room'], ...floor, ['The whole building', 'building']];
+  if (surface.kind === 'room') return [['This room', 'face'], ...floor, ['The whole building', 'building']];
+  return [['This roof', 'face'], ...floor, ['The whole building', 'building']];
 }
 
 export function surfaceOperation(surface, scope, material) {
   const { building, piece, kind, side, room, role } = surface;
   let target;
   if (scope === 'building') target = { building: building.id, role };
-  else if (scope === 'room') {
+  else if (scope === 'level') {
+    if (!surface.level) throw new Error('This surface is on no floor. Choose the surface or the whole building.');
+    target = { level: surface.level, role };
+  } else if (scope === 'room') {
     if (!room) throw new Error('This face has no room. Choose the face or the whole building.');
     target = { room: room.id, surface: kind === 'wall' ? 'walls' : surface.surface || 'floor' };
   } else target = kind === 'wall' ? { wall: piece.id, side }
@@ -123,7 +148,8 @@ function createThumbnails(kit) {
 export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, onInteract }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement, host = el('library-panel');
   const raycaster = new THREE.Raycaster(), thumbnails = { current: null };
-  let catalog = null, loading = null, tab = 'materials', drag = null, siteDrag = null, chooser = null;
+  let catalog = null, loading = null, tab = 'materials', drag = null, siteDrag = null, chooser = null, picking = null;
+  const hint = 'Drag a thumbnail onto the house or yard.';
   const outline = new THREE.Box3Helper(new THREE.Box3(), '#52ccff'); outline.visible = false; view.scene.add(outline);
   const listen = (node, type, action, options = {}) => node.addEventListener(type, action, { ...options, signal });
   function ray(event) {
@@ -174,24 +200,37 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       const hit = raycaster.intersectObjects(view.scene.children, true).find(h => h.object.userData.kind === 'roof' && h.object.userData.buildingId === building.id);
       point = hit && local(building, hit.point);
     }
-    return point && { building, kind, piece, point: point.toArray(), side, room, role, surface };
+    return point && { building, kind, piece, point: point.toArray(), side, room, role, surface, level: piece.level };
   }
   function dismiss() { chooser?.remove(); chooser = null; }
+  function stopPicking() {
+    if (!picking) return;
+    picking = null; el('library-status').textContent = hint;
+  }
   function choose(surface, material, event) {
     dismiss(); chooser = document.createElement('div'); chooser.id = 'material-chooser'; chooser.setAttribute('role', 'group'); chooser.setAttribute('aria-label', 'Apply material');
     chooser.style.left = `${Math.max(96, Math.min(event.clientX, window.innerWidth - 240))}px`;
     chooser.style.top = `${Math.max(74, Math.min(event.clientY, window.innerHeight - 240))}px`;
-    const choices = surface.kind === 'wall' ? [['This wall face', 'face'], ['This room', 'room'], ['The whole building', 'building']]
-      : surface.kind === 'room' ? [['This room', 'face'], ['The whole building', 'building']] : [['This roof', 'face'], ['The whole building', 'building']];
-    for (const [label, scope] of [...choices, ['Cancel', null]]) {
+    for (const [label, scope] of [...scopeChoices(surface), ['Cancel', null]]) {
       const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
       listen(button, 'click', () => {
         if (!scope) { dismiss(); return; }
         if (!canEdit()) return;
-        try { const operation = surfaceOperation(surface, scope, material); dismiss(); op(operation).catch(report); } catch (error) { report(error); }
+        try { const operation = surfaceOperation(surface, scope, material); dismiss(); stopPicking(); op(operation).catch(report); } catch (error) { report(error); }
       }); chooser.append(button);
     }
     el('editor-scene').parentElement.append(chooser); chooser.querySelector('button').focus();
+  }
+  // The card's Change (spec 5.7, pick it on the card): the same list opens on
+  // its materials, and a thumbnail pressed (mouse, Enter or Space) goes to the
+  // same scope chooser as a drop.
+  async function pick(surface) {
+    if (!canEdit()) return;
+    dismiss(); picking = surface; tab = 'materials';
+    if (host.hidden) { host.hidden = false; el('rail-library').setAttribute('aria-pressed', 'true'); }
+    await browse();
+    el('library-status').textContent = `Choose a material for the ${surface.label || 'surface'}.`;
+    el('library-entries').querySelector('button')?.focus();
   }
   async function browse() {
     if (!catalog) {
@@ -212,15 +251,23 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
         onInteract?.(); dismiss(); event.preventDefault(); button.setPointerCapture(event.pointerId);
         drag = { entry, material: tab === 'materials', x: event.clientX, y: event.clientY, pointer: event.pointerId };
       });
+      listen(button, 'click', () => {
+        if (!picking || tab !== 'materials' || !canEdit()) return;
+        const r = button.getBoundingClientRect?.() || { left: 0, top: 0, width: 0 };
+        choose(picking, entry, { clientX: r.left + r.width / 2, clientY: r.top });
+      });
     }
     host.querySelectorAll('[data-library-tab]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.libraryTab === tab)));
-    el('library-status').textContent = 'Drag a thumbnail onto the house or yard.';
+    el('library-status').textContent = hint;
   }
   listen(el('rail-library'), 'click', () => {
     host.hidden = !host.hidden; el('rail-library').setAttribute('aria-pressed', String(!host.hidden));
+    if (host.hidden) stopPicking();
     if (!host.hidden) browse().catch(error => { el('library-status').textContent = 'Could not load the library. Open it again to retry.'; report(error); });
   });
-  for (const button of host.querySelectorAll('[data-library-tab]')) listen(button, 'click', () => { tab = button.dataset.libraryTab; browse().catch(report); });
+  for (const button of host.querySelectorAll('[data-library-tab]')) listen(button, 'click', () => {
+    tab = button.dataset.libraryTab; if (tab !== 'materials') stopPicking(); browse().catch(report);
+  });
   listen(document, 'pointerup', event => {
     if (!drag || drag.pointer !== event.pointerId) return;
     const moved = drag; drag = null;
@@ -232,7 +279,11 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     op(itemOperation(surface, moved.entry, at)).catch(report);
   }, { capture: true });
   listen(document, 'pointercancel', () => { drag = null; });
-  listen(document, 'keydown', event => { if (event.key === 'Escape' && chooser) { dismiss(); event.stopImmediatePropagation(); } }, { capture: true });
+  listen(document, 'keydown', event => {
+    if (event.key !== 'Escape' || !chooser && !picking) return;
+    if (chooser) dismiss(); else stopPicking();
+    event.stopImmediatePropagation();
+  }, { capture: true });
 
   function siteBox(piece, kind) {
     const height = kind === 'planting' ? piece.height || 4 : 3, radius = kind === 'planting' ? Math.max(1, height * .18) : 2;
@@ -297,5 +348,5 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     dismiss(); thumbnails.current?.dispose(); if (siteDrag) view.controls.enabled = siteDrag.enabled;
     view.controls.removeEventListener('change', refresh); outline.removeFromParent(); outline.geometry.dispose(); outline.material.dispose();
   }, { once: true });
-  return { pickSite, pointerDown, pointerMove, pointerUp, refresh };
+  return { pickSite, pointerDown, pointerMove, pointerUp, refresh, pick };
 }

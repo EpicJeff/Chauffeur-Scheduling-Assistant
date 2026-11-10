@@ -10,10 +10,15 @@ const fields = {
   wall: ['height', 'thickness', 'exterior'], opening: ['width', 'sill', 'head', 'kind', 'panels', 'at'],
   room: ['name', 'ha_area'], roof: ['kind', 'pitch', 'plate', 'overhang', 'ridge', 'low_side', 'ends'],
   building: ['name', 'position', 'rotation', 'base'], level: ['name', 'elevation', 'ceiling'],
+  // Hosted pieces save through model ops (twin_model_ops: set, move_hosted).
+  anchor: ['offset'], item: ['rotation', 'scale', 'offset'],
 };
-const lengths = new Set(['height', 'thickness', 'width', 'sill', 'head', 'at', 'plate', 'overhang', 'base', 'elevation', 'ceiling']);
+const lengths = new Set(['height', 'thickness', 'width', 'sill', 'head', 'at', 'plate', 'overhang', 'base', 'elevation', 'ceiling', 'offset']);
 const labels = { ha_area: 'Home Assistant area', low_side: 'Low side', at: 'Distance along the wall', ridge: 'Ridge',
-  sill: 'Height above floor', head: 'Top of opening', plate: 'Wall height under the roof', base: 'Height above ground', elevation: 'Height above ground' };
+  sill: 'Height above floor', head: 'Top of opening', plate: 'Wall height under the roof', base: 'Height above ground', elevation: 'Height above ground',
+  offset: 'Distance from surface' };
+const hostedLabels = { rotation: 'Turn', scale: 'Size' };
+const units = { pitch: 'in 12', rotation: '°', scale: '%' };
 export function feetInches(value) {
   const inches = Math.round(Math.abs(value) * 12);
   return `${value < 0 ? '-' : ''}${Math.floor(inches / 12)}'-${inches % 12}"`;
@@ -49,7 +54,7 @@ export function findPiece(plan, pieceId, buildingId) {
   return proposal ? { piece: { ...proposal.piece, id: proposal.id || proposal.piece.id }, building, kind: 'proposal' } : null;
 }
 
-export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select }) {
+export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, pickMaterial }) {
   const host = document.getElementById('piece-card');
   let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
   let edgeIndex = null;
@@ -73,8 +78,11 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     const wallName = `${room.name || 'Room'}, ${direction} wall`;
     return kind === 'wall' ? wallName : `${name}, ${(room.name || 'Room').toLowerCase()} ${direction} wall`;
   };
-  const display = (field, value) => lengths.has(field) ? feetInches(value || 0)
-    : field === 'position' ? (value || [0, 0]).map(feetInches).join(', ') : String(value ?? '');
+  const display = (field, value, kind) => kind && hostedLabels[field]
+    ? String(field === 'scale' ? Math.round((value ?? 1) * 100) : Math.round((value ?? 0) * 100) / 100)
+    : lengths.has(field) ? feetInches(value || 0)
+      : field === 'position' ? (value || [0, 0]).map(feetInches).join(', ') : String(value ?? '');
+  const hosted = kind => kind === 'anchor' || kind === 'item';
   const raw = input => input.type === 'checkbox' ? input.checked : input.value;
   const roofFlags = record => record?.kind === 'roof' && record.piece.block && !record.piece.dormer_of
     ? (record.building.roof.flags || []).filter(flag => flag.block_rect?.length === 4
@@ -87,7 +95,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     if (roof && edgeIndex !== null) { drawEdge(next, record, roof); return; }
     const materials = record ? materialLines(record, getPlan(), getKit()) : [];
     const flags = roofFlags(record);
-    const nextLayout = JSON.stringify([record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind, materials]);
+    const nextLayout = JSON.stringify([record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind, materials, !!pickMaterial]);
     host.hidden = !record;
     if (record && layout === nextLayout && selection?.pieceId === next.pieceId && selection?.buildingId === next.buildingId) {
       headingNode.textContent = title(record);
@@ -99,7 +107,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
         const { input } = state;
         if (document.activeElement !== input && raw(input) === state.baseline && !state.queued) {
           if (field === 'exterior') input.checked = !!record.piece[field];
-          else input.value = display(field, fieldValue(record.piece, field));
+          else input.value = display(field, fieldValue(record.piece, field), hosted(record.kind) && record.kind);
           state.baseline = raw(input);
         }
         input.disabled = !canEdit();
@@ -116,9 +124,19 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       const row = document.createElement('div'); row.className = 'editor-material-line';
       const words = document.createElement('div'), label = document.createElement('span'), text = document.createElement('p');
       label.textContent = material.label; text.textContent = material.text; words.append(label, text); row.append(words);
-      if (material.clear) row.append(button('Clear', async () => {
+      const actions = document.createElement('div'); actions.className = 'editor-material-actions';
+      if (pickMaterial && material.surface) {
+        const change = button('Change', () => pickMaterial(material.surface));
+        change.setAttribute('aria-label', `Change the ${material.label.toLowerCase()} material`);
+        actions.append(change);
+      }
+      if (material.clear) actions.append(button('Clear', async () => {
         if (canEdit()) await op({ op: 'set_material', building: building.id, target: material.target, material: null });
       }));
+      if (material.reset) actions.append(button(material.reset.label, async () => {
+        if (canEdit()) await op({ op: 'set_material', building: building.id, target: material.reset.target, material: null });
+      }));
+      if (actions.children.length) row.append(actions);
       host.append(row);
     }
     if (kind === 'roof') {
@@ -142,7 +160,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     for (const field of cardFields) {
       const end = field.startsWith('ends.') ? field.slice(5) : null;
       const label = document.createElement('label'); label.textContent = end ? endNames[end]
-        : getFieldLabels()[field] || labels[field] || field[0].toUpperCase() + field.slice(1);
+        : hosted(kind) && hostedLabels[field] || getFieldLabels()[field] || labels[field] || field[0].toUpperCase() + field.slice(1);
       let input;
       const choices = field === 'kind' ? (['roof', 'dormer'].includes(kind) ? ['hip', 'gable', 'shed', 'flat'] : ['window', 'door', 'slider', 'bifold', 'passage', 'garage'])
         : end ? ['gable', 'hip', 'clip'] : field === 'ridge' ? ['x', 'y'] : field === 'low_side' ? ['x0', 'x1', 'y0', 'y1'] : null;
@@ -157,7 +175,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
         });
       } else { input = document.createElement('input'); input.type = field === 'exterior' ? 'checkbox' : 'text'; }
       const initial = fieldValue(piece, field);
-      input.value = display(field, initial);
+      input.value = display(field, initial, hosted(kind) && kind);
       if (field === 'exterior') input.checked = !!initial;
       input.disabled = !canEdit();
       const state = { input, baseline: raw(input), queued: 0, lastQueued: undefined };
@@ -167,11 +185,12 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
         const typed = raw(input);
         if (typed === (state.queued ? state.lastQueued : state.baseline)) return;
         try {
-          const value = field === 'exterior' ? input.checked : lengths.has(field) ? parseLength(input.value)
+          let value = field === 'exterior' ? input.checked : lengths.has(field) ? parseLength(input.value)
             : field === 'position' ? input.value.split(',').map(parseLength)
-              : ['pitch', 'rotation', 'panels'].includes(field) ? Number(input.value) : input.value;
-          if (['pitch', 'rotation', 'panels'].includes(field) && (!input.value.trim() || !Number.isFinite(value)))
+              : ['pitch', 'rotation', 'panels', 'scale'].includes(field) ? Number(input.value.replace(/[°%]/g, '')) : input.value;
+          if (['pitch', 'rotation', 'panels', 'scale'].includes(field) && (!input.value.trim() || !Number.isFinite(value)))
             throw new Error('Use a finite number.');
+          if (field === 'scale') value /= 100;
           if (field === 'panels' && (!Number.isInteger(value) || value < 1)) throw new Error('Use a whole number of panels, at least 1.');
           if (field === 'position' && value.length !== 2) throw new Error('Use two distances, separated by a comma.');
           ++state.queued; state.lastQueued = typed;
@@ -179,7 +198,11 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
             const current = findPiece(getPlan(), piece.id, building.id)?.piece;
             const savedField = end ? 'ends' : field;
             const savedValue = end ? { ...current?.ends, [end]: value } : value;
-            if (current && JSON.stringify(current[savedField]) !== JSON.stringify(savedValue))
+            if (current && hosted(kind)) {
+              if (JSON.stringify(current[field] ?? (field === 'scale' ? 1 : 0)) !== JSON.stringify(value))
+                await op(field === 'offset' ? { op: 'move_hosted', building: building.id, id: piece.id, offset: value }
+                  : { op: 'set', building: building.id, id: piece.id, field, value });
+            } else if (current && JSON.stringify(current[savedField]) !== JSON.stringify(savedValue))
               await edit({ op: 'set', building: building.id, piece: piece.id, field: savedField, value: savedValue });
             state.baseline = typed;
           }).catch(report).finally(() => {
@@ -191,7 +214,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       input.addEventListener('change', save);
       input.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); save(); } });
       label.append(input);
-      if (field === 'pitch') { const unit = document.createElement('span'); unit.textContent = 'in 12'; label.append(unit); }
+      if (field === 'pitch' || hosted(kind) && units[field]) { const unit = document.createElement('span'); unit.textContent = units[field]; label.append(unit); }
       (['ridge', 'low_side'].includes(field) ? more : form).append(label);
     }
     if (more.children.length > 1) form.append(more);

@@ -28,6 +28,59 @@ function footprint(building) {
   return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
 }
 
+// The street edge as a segment in lot feet, from the plot read or the confirmed
+// placement, or null when neither names one.
+export function streetSegment(place, plan) {
+  const lot = place?.lot || {};
+  for (const [edge, outline] of [[lot.read?.street_edge, lot.read?.lot], [lot.placement?.street_edge, lot.placement?.outline || plan?.site?.lot]]) {
+    if (Array.isArray(edge) && edge.length === 2 && outline?.[edge[0]] && outline?.[edge[1]]) return [outline[edge[0]], outline[edge[1]]];
+  }
+  return null;
+}
+
+// Whether a yard plant stands in a sight line (lot feet, z above the ground).
+// A crown is taken as a cylinder of a third of its height, at least 1.5 ft.
+function blocks(plant, eye, target) {
+  const height = plant.height || 0, radius = Math.max(1.5, height / 3);
+  const d = subtract(target.slice(0, 2), eye.slice(0, 2)), from = subtract(eye.slice(0, 2), plant.at);
+  const a = d[0] ** 2 + d[1] ** 2, b = d[0] * from[0] + d[1] * from[1], c = from[0] ** 2 + from[1] ** 2 - radius ** 2;
+  if (!(height > 0) || !a || b * b - a * c < 0) return false;
+  // Where the sight line runs over the crown's footprint, its lowest point decides.
+  const root = Math.sqrt(b * b - a * c), enter = Math.max(0, (-b - root) / a), leave = Math.min(1, (-b + root) / a);
+  if (enter >= 1 || leave < enter) return false;
+  return Math.min(...[enter, leave].map(t => eye[2] + (target[2] - eye[2]) * t)) < height;
+}
+
+// The editor's first view (M3): from the street toward the house, framed the way
+// the shared Front camera frames it, raised or swung until no yard plant stands
+// between the eye and the house. Lot feet; z above the ground.
+export function streetView(plan, street) {
+  const points = (plan?.buildings || []).flatMap(b => placed(b, (b.walls || []).flatMap(w => [w.from, w.to])));
+  if (!points.length) return null;
+  const [x0, y0] = [0, 1].map(i => Math.min(...points.map(p => p[i])));
+  const [x1, y1] = [0, 1].map(i => Math.max(...points.map(p => p[i])));
+  const middle = [(x0 + x1) / 2, (y0 + y1) / 2], span = Math.max(x1 - x0 + 7, y1 - y0, 20), k = span / 38;
+  let away = [-41, -69];
+  if (street) {
+    const mid = centre(street), out = subtract(mid, middle);
+    if (Math.hypot(...out) > 1e-6) away = out;
+  }
+  const unit = away.map(v => v / Math.hypot(...away)), reach = Math.hypot(41, 69, 22) * k;
+  const target = [...middle, 8];
+  // The house's body: its middle and half-way out to each corner, at head height.
+  const sights = [target, ...[[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(p => [(p[0] + middle[0]) / 2, (p[1] + middle[1]) / 2, 8])];
+  const plants = (plan.site?.planting || []).filter(p => Array.isArray(p.at) && p.height > 0);
+  let best = null;
+  for (const lift of [15, 22, 30, 38, 46, 55, 65]) for (const swing of [0, 12, -12, 24, -24, 36, -36, 48, -48]) {
+    const along = rotate(unit, swing), up = lift * Math.PI / 180;
+    const eye = [middle[0] + along[0] * reach * Math.cos(up), middle[1] + along[1] * reach * Math.cos(up), 8 + reach * Math.sin(up)];
+    const blocked = sights.reduce((n, sight) => n + (plants.some(p => blocks(p, eye, sight)) ? 1 : 0), 0);
+    if (!best || blocked < best.blocked) best = { blocked, position: eye, target };
+    if (!blocked) return best;
+  }
+  return best;
+}
+
 // Compare rigid footprints, including different starting corners and winding.
 // A near centroid alone must never snap a differently sized building.
 export function snapFootprint(building, outline, suggestions) {

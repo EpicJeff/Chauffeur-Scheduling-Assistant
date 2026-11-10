@@ -319,6 +319,47 @@ def test_anchors_and_items_sit_on_their_hosts_and_rehost():
           hosts.world_point(_b(m5), moved['host']))
 
 
+def test_item_turn_and_size_and_anchor_offset_have_card_ops():
+    """Final wave I4: what add_item takes (rotation, scale) a person can change
+    afterwards; scale stays within the library's limits; offset rides move_hosted."""
+    m0 = _house()
+    m1 = _apply(m0, {'op': 'add_item', 'building': 'B1', 'asset': 'mid_century_lounge_chair',
+                     'host': {'floor': 'dining', 'u': 0.5, 'v': 0.5}})
+    chair = _added(m0, m1, 'items')
+    m2 = _apply(m1, {'op': 'set', 'building': 'B1', 'id': chair['id'], 'field': 'rotation', 'value': 450})
+    check(close(_by_id(_b(m2)['items'], chair['id'])['rotation'], 90), _b(m2)['items'])
+    m3 = _apply(m2, {'op': 'set', 'building': 'B1', 'id': chair['id'], 'field': 'scale', 'value': 1.5})
+    check(close(_by_id(_b(m3)['items'], chair['id'])['scale'], 1.5), _b(m3)['items'])
+    words = _refused(m3, {'op': 'set', 'building': 'B1', 'id': chair['id'], 'field': 'scale', 'value': 3})
+    check(words == 'Choose a size from 50% to 200%.', words)
+    words = _refused(m0, {'op': 'add_item', 'building': 'B1', 'asset': 'mid_century_lounge_chair',
+                          'host': {'floor': 'dining', 'u': 0.5, 'v': 0.5}, 'scale': 0.1})
+    check(words == 'Choose a size from 50% to 200%.', words)
+    m4 = _apply(m3, {'op': 'move_hosted', 'building': 'B1', 'id': chair['id'], 'offset': 1.5})
+    check(close(_by_id(_b(m4)['items'], chair['id'])['offset'], 1.5), _b(m4)['items'])
+    m5 = _apply(m4, {'op': 'add_anchor', 'building': 'B1', 'kind': 'switch',
+                     'host': {'wall': 's1', 'side': 'left', 'at': 2.0, 'z': 4.0}})
+    switch = _added(m4, m5, 'anchors')
+    m6 = _apply(m5, {'op': 'move_hosted', 'building': 'B1', 'id': switch['id'], 'offset': 0.25})
+    check(close(_by_id(_b(m6)['anchors'], switch['id'])['offset'], 0.25), _b(m6)['anchors'])
+
+
+def test_level_and_building_materials_set_and_clear():
+    """Final wave I4: the scope chooser's This floor writes level materials (R17);
+    the card's Clear on a building or level line clears that role."""
+    m0 = _house()
+    brick = {'id': 'red_brick_03', 'color': '#a0522d'}
+    m1 = _apply(m0, {'op': 'set_material', 'building': 'B1', 'target': {'level': 'L1', 'role': 'interior_wall'},
+                     'material': brick})
+    check(_b(m1)['levels'][0]['materials']['interior_wall'] == brick, _b(m1)['levels'][0])
+    m2 = _apply(m1, {'op': 'set_material', 'building': 'B1', 'target': {'level': 'L1', 'role': 'interior_wall'},
+                     'material': None})
+    check('interior_wall' not in _b(m2)['levels'][0].get('materials', {}), _b(m2)['levels'][0])
+    m3 = _apply(m2, {'op': 'set_material', 'building': 'B1', 'target': {'building': 'B1', 'role': 'siding'},
+                     'material': None})
+    check('siding' not in _b(m3)['materials'], _b(m3)['materials'])
+
+
 # ---------------------------------------------------------------- roofs
 
 def test_roof_over_rooms_then_set_an_edge_gable_and_a_side_pitch():
@@ -1000,6 +1041,8 @@ def test_legacy_edit_ops_still_work():
 
 
 TESTS = (
+    test_item_turn_and_size_and_anchor_offset_have_card_ops,
+    test_level_and_building_materials_set_and_clear,
     test_one_bad_dormer_is_flagged_and_every_other_op_proceeds,
     test_add_window_then_drag_it_to_another_wall_rehosts,
     test_anchors_and_items_sit_on_their_hosts_and_rehost,

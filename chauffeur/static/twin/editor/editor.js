@@ -10,7 +10,7 @@ import { createPauses, applyRegistration, invertRegistration } from './pauses.js
 import { createTimeline } from './timeline.js';
 import { createPlace } from './place.js';
 import { createRoofTools } from './roof_tools.js';
-import { createLotTools } from './lot_tools.js';
+import { createLotTools, streetView, streetSegment } from './lot_tools.js';
 import { createLibrary } from './library.js';
 import { createFlags } from './flags.js';
 
@@ -25,7 +25,7 @@ export async function boot() {
   let resuming = false, stopping = false;
   let menuBusy = false, directing = false, downloading = false, advancedBase = null;
   let tools = null, draw = null, history = null, pauses = null, timeline = null, place = null, library = null, previewing = false, lastSummary = '';
-  let roofTools = null, lot = null, flags = null;
+  let roofTools = null, lot = null, flags = null, aimed = false;
   const lifecycle = new AbortController();
   const listen = (node, type, handler) => node.addEventListener(type, handler, { signal: lifecycle.signal });
   const ghosts = new Map(), prompted = new Set();
@@ -144,6 +144,9 @@ export async function boot() {
       await view.rebuild(plan);
       view.scene.background?.set?.('#171e27');
       lastScene = signature;
+      // The first view of the house: from the street, past the yard's plants (M3).
+      const eye = !aimed && streetView(plan, streetSegment(sheets.place, plan));
+      if (eye) { aimed = true; view.aim(eye.position, eye.target); }
     }
     renderedGhosts = countGhosts(plan);
     drawFloors();
@@ -421,10 +424,10 @@ export async function boot() {
     view.showAnchors = true;
     const onInteract = () => { pauses?.dismiss(); syncBuildButton(); };
     history = createHistory({ getRound: currentRound, getBuild: () => currentBuild,
-      canEdit, signal: lifecycle.signal,
+      canEdit, signal: lifecycle.signal, latest: () => polling.refreshState(),
       refresh: async () => { draw?.cancel(); await polling.refreshState(); await renderScene(); } });
     tools = createSceneTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getModel: () => snapshot.model, getKit: () => kit, getSheets: () => sheets,
-      pickSite: (x, y) => library?.pickSite(x, y),
+      pickSite: (x, y) => library?.pickSite(x, y), pickMaterial: surface => library?.pick(surface),
       edit, op: applyOp, panel, canEdit, signal: lifecycle.signal, onInteract, addDormer: () => roofTools?.addDormer() });
     library = createLibrary({ view, kit, getPlan: () => timeline?.preview() || snapshot.plan, tools,
       op: applyOp, canEdit, signal: lifecycle.signal, onInteract });

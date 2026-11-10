@@ -1,6 +1,11 @@
 import { active, report, request } from './api.js';
 
-export function createHistory({ getRound, getBuild, canEdit, refresh, signal }) {
+export const CHANGED_SINCE = 'Something else changed the house since; use the timeline to go back.';
+
+// A step remembers the round its change left the house at (`at`). Undo and
+// redo act only while the house is still at that round: a build, Argyle or
+// another parent's later round is never reverted over (I5).
+export function createHistory({ getRound, getBuild, canEdit, refresh, latest, signal }) {
   const undo = [], redo = [];
   const el = id => document.getElementById(id);
   let busy = false, queue = Promise.resolve();
@@ -19,7 +24,7 @@ export function createHistory({ getRound, getBuild, canEdit, refresh, signal }) 
       finally {
         const after = getRound();
         if (before !== null && after !== null && before !== after) {
-          undo.push({ before, after }); redo.length = 0;
+          undo.push({ before, after, at: after }); redo.length = 0;
         }
         busy = false; sync();
       }
@@ -33,7 +38,13 @@ export function createHistory({ getRound, getBuild, canEdit, refresh, signal }) 
     const step = source[source.length - 1];
     busy = true; sync();
     try {
-      await request('revert', 'POST', { round: back ? step.before : step.after }, 'twin');
+      await latest?.();
+      if (getRound() !== step.at) {
+        window.showGlobalAlert(CHANGED_SINCE);
+        return;
+      }
+      const result = await request('revert', 'POST', { round: back ? step.before : step.after }, 'twin');
+      step.at = result?.round ?? null;
       source.pop(); destination.push(step);
       await refresh();
     } finally { busy = false; sync(); }

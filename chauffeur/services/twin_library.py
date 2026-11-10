@@ -14,6 +14,8 @@ _ROOT = Path(__file__).resolve().parent.parent
 _LOCK = threading.Lock()
 _ASSET_LOCKS: dict[str, threading.Lock] = {}
 _urlopen = urlopen
+# The size range a placed item may take, as a factor of the asset's own size.
+ITEM_SCALE = (0.5, 2.0)
 
 
 def manifest() -> dict:

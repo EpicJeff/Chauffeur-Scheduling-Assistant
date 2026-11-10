@@ -90,7 +90,7 @@ tools.select({pieceId:room.id,buildingId:b.id});while(!view.ready)await settle()
 look([16.9,-25,6.5],[16.9,0,5.5]);await drop([16.9,0,5.5]);
 const chooser=descendants(doc.getElementById('editor-scene').parentElement).find(n=>n.id==='material-chooser');
 assert.ok(chooser,'real pointer drop opens the chooser');
-assert.deepEqual(chooser.children.map(n=>n.textContent),['This wall face','This room','The whole building','Cancel']);
+assert.deepEqual(chooser.children.map(n=>n.textContent),['This wall face','This room','This floor','The whole building','Cancel']);
 chooser.children[0].dispatchEvent(new Event('click'));await settle();
 assert.deepEqual(ops.pop(),{op:'set_material',building:b.id,target:{wall:front.id,side:'right'},material:{id:finish.id,color:finish.color}});
 ok('real thumbnail pointer drop resolves the rotated outside face and chosen material scope');
@@ -116,6 +116,58 @@ assert.ok(Math.hypot(moved.at[0]-96,moved.at[1]-75)<.1);assert.equal(view.contro
 const del=descendants(doc.getElementById('piece-card')).find(n=>n.textContent==='Delete');del.dispatchEvent(new Event('click'));await settle();
 assert.deepEqual(ops.pop(),{op:'delete_site_item',list:'planting',index:flat.site.planting.indexOf(tree)});
 ok('canvas delegates select and move a yard tree; its card Delete uses the site operation');
+// Final wave I3: the card's Change opens the same list on its materials; a
+// thumbnail pressed there (a button, so Enter and Space press it too) opens the
+// same scope chooser, which now offers This floor (I4, R17).
+const {createCards} = await import(file('static/twin/editor/cards.js'));
+const cards = createCards({getPlan:()=>flat,getKit:()=>kit,getLabel:()=>'the piece',edit:op,op,canEdit:()=>true,
+  select(){},ask(){},pickMaterial:s=>library.pick(s)});
+const card = () => descendants(doc.getElementById('piece-card'));
+const labelled = text => card().find(n=>n.tag==='label'&&n.textContent===text);
+panel.hidden=true;
+cards.draw({pieceId:front.id,buildingId:b.id});
+const changes=card().filter(n=>n.textContent==='Change');
+assert.equal(changes.length,2,'each face line offers Change');
+changes[1].dispatchEvent(new Event('click'));await settle();
+assert.equal(panel.hidden,false,'Change opens the library');
+assert.equal(doc.getElementById('library-status').textContent,'Choose a material for the outside face.');
+const thumb=doc.getElementById('library-entries').children[0];assert.equal(thumb.tag,'button');
+thumb.dispatchEvent(new Event('click'));await settle();
+const picked=descendants(doc.getElementById('editor-scene').parentElement).find(n=>n.id==='material-chooser');
+assert.deepEqual(picked.children.map(n=>n.textContent),['This wall face','This room','This floor','The whole building','Cancel']);
+picked.children[2].dispatchEvent(new Event('click'));await settle();
+assert.deepEqual(ops.pop(),{op:'set_material',building:b.id,target:{level:front.level,role:'siding'},material:{id:finish.id,color:finish.color}});
+assert.equal(doc.getElementById('library-status').textContent,'Drag a thumbnail onto the house or yard.');
+thumb.dispatchEvent(new Event('click'));await settle();assert.equal(ops.length,0,'a thumbnail press outside Change never applies');
+ok('card Change opens the library list; a pressed thumbnail applies at the chosen scope, This floor included');
+
+// Final wave I4: a line from the building or the floor can be cleared there.
+b.materials={...(b.materials||{}),siding:{id:'building_finish',color:'#223344'}};
+cards.draw(null);cards.draw({pieceId:front.id,buildingId:b.id});
+const outside = () => descendants(card().find(n=>n.className==='editor-material-line'&&n.children[0].children[0].textContent==='Outside'));
+outside().find(n=>n.textContent==='Clear for the building').dispatchEvent(new Event('click'));await settle();
+assert.deepEqual(ops.pop(),{op:'set_material',building:b.id,target:{building:b.id,role:'siding'},material:null});
+const floor=b.levels.find(l=>l.id===front.level);floor.materials={siding:{id:'floor_finish',color:'#556677'}};
+cards.draw(null);cards.draw({pieceId:front.id,buildingId:b.id});
+assert.ok(!outside().some(n=>n.textContent==='Clear for the building'));
+outside().find(n=>n.textContent==='Clear for this floor').dispatchEvent(new Event('click'));await settle();
+assert.deepEqual(ops.pop(),{op:'set_material',building:b.id,target:{level:floor.id,role:'siding'},material:null});
+delete floor.materials;
+ok('a building or floor line clears that role from the card');
+
+// Final wave I4: an item's card turns and sizes it; anchors and items set their offset.
+b.items=[...(b.items||[]),{id:'item:test',asset:chair.id,host:{floor:room.id,u:.5,v:.5},rotation:0,scale:1,state:'settled'}];
+b.anchors=[...(b.anchors||[]),{id:'anchor:test',kind:'switch',host:{wall:front.id,side:'left',at:2,z:4},offset:0,state:'settled'}];
+const type = async (label,text) => {const input=labelled(label).children[0];input.value=text;input.dispatchEvent(new Event('change'));await settle();};
+cards.draw({pieceId:'item:test',buildingId:b.id});
+assert.equal(labelled('Size').children[0].value,'100');assert.equal(labelled('Turn').children[0].value,'0');
+await type('Size','150');assert.deepEqual(ops.pop(),{op:'set',building:b.id,id:'item:test',field:'scale',value:1.5});
+await type('Turn','90');assert.deepEqual(ops.pop(),{op:'set',building:b.id,id:'item:test',field:'rotation',value:90});
+await type('Distance from surface',`1'-0"`);assert.deepEqual(ops.pop(),{op:'move_hosted',building:b.id,id:'item:test',offset:1});
+cards.draw({pieceId:'anchor:test',buildingId:b.id});
+assert.ok(labelled('Distance from surface')&&!labelled('Turn')&&!labelled('Size'));
+await type('Distance from surface','3"');assert.deepEqual(ops.pop(),{op:'move_hosted',building:b.id,id:'anchor:test',offset:.25});
+ok('item cards carry Turn and Size; anchor and item cards carry Distance from surface');
 abort.abort();view.dispose();console.log(`${passed}/${passed} passed`);
 """
 

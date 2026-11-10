@@ -7788,7 +7788,8 @@ def house_editor_library(request: Request):
                           ('tree', kit['backdrop_trees'] + kit['specimen_trees'])):
         for preset in presets:
             items[preset] = {'id': preset, 'name': words(preset), 'kind': kind}
-    return {'materials': materials, 'items': list(items.values())}
+    return {'materials': materials, 'items': list(items.values()),
+            'scale': list(twin_library.ITEM_SCALE)}
 
 
 @app.post('/api/house/editor/op')

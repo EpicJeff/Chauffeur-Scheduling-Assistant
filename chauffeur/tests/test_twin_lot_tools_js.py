@@ -167,7 +167,41 @@ console.log('  ok an unbuilt footprint can move and be redrawn in the scene');
 
 abort.abort();assert.equal(sheet.parent,null);assert.equal(captures.size,0);view.dispose();
 console.log('  ok cancellation, read-only state and disposal preserve the saved building');
-console.log('9/9 passed');
+
+// Final wave M3: the editor's first view comes from the street and no yard plant
+// stands between it and the house. Checked by sampling each sight line against
+// every plant's trunk-to-crown column (a quarter of its height across).
+const {streetView, streetSegment} = await import(file('static/twin/editor/lot_tools.js'));
+const houses = flat.buildings.flatMap(b => {
+  const a = (b.rotation || 0) * Math.PI / 180;
+  return b.walls.flatMap(w => [w.from, w.to]).map(p => [Math.cos(a) * p[0] - Math.sin(a) * p[1] + b.position[0], Math.sin(a) * p[0] + Math.cos(a) * p[1] + b.position[1]]);
+});
+const box = [0, 1].map(i => [Math.min(...houses.map(p => p[i])), Math.max(...houses.map(p => p[i]))]);
+const middle = box.map(([lo, hi]) => (lo + hi) / 2);
+const hidden = (eye, target) => flat.site.planting.some(p => {
+  for (let i = 1; i < 200; i++) {
+    const t = i / 200, q = [0, 1, 2].map(k => eye[k] + (target[k] - eye[k]) * t);
+    if (Math.hypot(q[0] - p.at[0], q[1] - p.at[1]) < p.height / 4 && q[2] < p.height) return true;
+  }
+  return false;
+});
+const span = Math.max(box[0][1] - box[0][0] + 7, box[1][1] - box[1][0], 20), k = span / 38;
+assert.ok(hidden([middle[0] - 41 * k, middle[1] - 69 * k, 22 * k], [...middle, 8]), 'the old fixed Front looks through the street trees');
+const lotOutline = flat.site.lot, south = [lotOutline[1], lotOutline[2]];
+assert.deepEqual(streetSegment({lot: {read: {street_edge: [1, 2], lot: lotOutline}}}, flat), south);
+assert.deepEqual(streetSegment({lot: {read: null, placement: {street_edge: [1, 2]}}}, flat), south);
+assert.equal(streetSegment({lot: {read: null, placement: null}}, flat), null);
+for (const [street, side] of [[south, eye => eye[1] < box[1][0]], [[lotOutline[0], lotOutline[1]], eye => eye[0] > box[0][1]], [null, eye => eye[1] < middle[1]]]) {
+  const view = streetView(flat, street);
+  assert.ok(view && side(view.position), ['the eye stands on the street side', street, view?.position]);
+  assert.deepEqual(view.target, [...middle, 8]);
+  for (const sight of [view.target, ...[[box[0][0], box[1][0]], [box[0][1], box[1][0]], [box[0][1], box[1][1]], [box[0][0], box[1][1]]].map(p => [(p[0] + middle[0]) / 2, (p[1] + middle[1]) / 2, 8])])
+    assert.ok(!hidden(view.position, sight), ['no plant stands in the sight line', street, view.position, sight]);
+  assert.ok(Math.hypot(view.position[0] - middle[0], view.position[1] - middle[1]) > span, 'framed from a distance, not inside the house');
+}
+assert.equal(streetView({buildings: [], site: {}}, south), null);
+console.log('  ok the first view comes from the street and past the yard plants');
+console.log('10/10 passed');
 """
 
 
