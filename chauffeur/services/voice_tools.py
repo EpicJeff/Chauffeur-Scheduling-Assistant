@@ -23,9 +23,9 @@ SPEAKABLE = frozenset({
     'add_shopping_items', 'check_off_shopping_item', 'remove_shopping_item_by_name',
     'send_family_message', 'send_direct_message', 'announce_to_room',
     'create_list', 'create_trip', 'start_project', 'add_project_step', 'add_to_project',
-    'set_project_state', 'set_step_state', 'make_request', 'answer_request',
+    'set_project_state', 'set_step_state', 'make_request',
     'add_thread_note', 'close_thread', 'update_thread_action', 'mark_ask_sent',
-    'answer_ask', 'start_ask', 'propose_family_action', 'dismiss_insight',
+    'answer_ask', 'propose_family_action', 'dismiss_insight',
     'add_errand', 'update_errand', 'delete_errand', 'add_errand_rule', 'delete_errand_rule',
     'set_errand_habits', 'forget_errand_preference', 'update_memory',
     'add_routing_rule', 'delete_routing_rule', 'add_priority_rule', 'delete_priority_rule',
@@ -33,7 +33,7 @@ SPEAKABLE = frozenset({
     'cancel_event', 'restore_event', 'group_events_ride_together', 'ungroup_event',
     'add_trip_accommodation', 'edit_trip_accommodation', 'add_trip_poi', 'edit_trip_poi',
     'clear_trip_itinerary', 'auto_schedule_trip_itinerary', 'schedule_trip_itinerary',
-    'adjust_points', 'contribute_to_family_goal', 'cover_with_assist', 'log_program_session',
+    'contribute_to_family_goal', 'cover_with_assist', 'log_program_session',
     'add_dishes', 'add_meal_to_repertoire', 'add_meal_ingredients_to_list',
     'mark_meal_served', 'mark_leftovers', 'clear_leftovers', 'refine_meal_dish',
     'change_tonights_plate', 'approve_week_dinners', 'set_meal_rule', 'plan_specific_dinner',
@@ -44,6 +44,7 @@ SPEAKABLE = frozenset({
     'set_occasion_menu', 'add_occasion_gift_list',
 })
 PRIVATE = frozenset({
+    'answer_request', 'adjust_points', 'start_ask',
     'read_mail', 'search_mail', 'get_family_messages', 'list_threads',
     'find_in_chauffeur', 'get_requests', 'research_question', 'start_mission_for',
     'launch_mission', 'act_on_situation', 'explain_situation', 'next_situation',

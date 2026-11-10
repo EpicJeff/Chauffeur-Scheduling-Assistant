@@ -3935,22 +3935,13 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
             res['message'] = readback  # a model summary cannot change an approval question
 
         actor = ctx.actor()
-        private_answer = satellite_turn is not None and not satellite_turn.safe
+        private_answer = not readback and satellite_turn is not None and not satellite_turn.safe
         if private_answer:
             res['message'] = voice_private.hold(ctx, satellite_turn.member, res.get('message', 'Done.'), res.get('card'))
         elif actor and res.get('card'):
-            try:
-                from services.agent_tools_v2 import _post_chat_message
-                argyle = storage.ensure_argyle_member()
-                channel = storage.get_or_create_dm(actor['id'], argyle['id'])
-                card = res['card']
-                if card.get('proposal_id'):
-                    storage.update_action_proposal(card['proposal_id'], {'channel_id': channel['id']})
-                reply = res.get('message', 'Done.')
-                _post_chat_message(channel, argyle, reply, card=card)
-                res['message'] = reply.rstrip() + " I've put that in your Argyle chat."
-            except Exception as e:
-                logger.error(f"Voice Argyle reply post failed: {e}")
+            reply = res.get('message', 'Done.')
+            if voice_private.post_reply_to_chat(actor['id'], reply, res['card']):
+                res['message'] = reply.rstrip() + voice_private.CHAT_NOTICE
 
         if conv_id:
             storage.add_message_to_conversation(conv_id, {'role': 'assistant', 'content': res.get("message", "Done."), 'timestamp': time.time()})

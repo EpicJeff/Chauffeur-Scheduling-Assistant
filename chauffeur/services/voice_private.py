@@ -9,11 +9,12 @@ from services import storage, voice_tools
 
 QUESTION = "That's private. Read it out, or send it to your chat?"
 SENT = 'Sent to your chat.'
+CHAT_NOTICE = " I've put that in your Argyle chat."
 current = ContextVar('chauffeur_satellite_voice', default=None)
 _held = {}
 _lock = threading.RLock()
 _READ = re.compile(r'\b(?:read|out loud|aloud|tell me|yes|go ahead)\b', re.I)
-_SEND = re.compile(r'\b(?:send|chat|phone|no|later)\b', re.I)
+_SEND = re.compile(r"\b(?:send|chat|phone|no|later|don['’]t read|do not read|not out loud)\b", re.I)
 
 
 class SatelliteTurn:
@@ -27,15 +28,18 @@ class SatelliteTurn:
     def safe(self):
         return self._safe
 
-    def before_tool(self, name, args):
+    def before_tool(self, name, args=None):
+        args = args or {}
         self._name = name
+        # A private call can disclose records even in a refusal or bare result.
+        if name not in voice_tools.SPEAKABLE:
+            self._safe = False
         self._pending_safe = (name in voice_tools.SPEAKABLE
                               and not (name == 'house' and args.get('action') == 'locate')
                               and voice_tools.row_checks_before(name, args, self.member))
 
-    def tool_result(self, result):
-        # A failed read discloses no private result. Unlike the phone, this
-        # does not suppress its ordinary error message.
+    def tool_result(self, result=None):
+        # Speakable errors/refusals (such as a PIN request) remain audible.
         if not isinstance(result, dict) or result.get('error') \
                 or result.get('status') not in ('success', 'ok'):
             return
@@ -50,44 +54,65 @@ def _discard(key):
     return entry
 
 
+def post_reply_to_chat(member_id, reply, card):
+    """Shared actor reply/card delivery; only a successful post earns a notice."""
+    try:
+        from services.agent_tools_v2 import _post_chat_message
+        argyle = storage.ensure_argyle_member()
+        channel = storage.get_or_create_dm(member_id, argyle['id'])
+        if card and card.get('proposal_id'):
+            storage.update_action_proposal(card['proposal_id'], {'channel_id': channel['id']})
+        if not _post_chat_message(channel, argyle, reply, card=card):
+            raise RuntimeError('The voice answer could not be sent to chat.')
+        return True
+    except Exception:
+        logging.getLogger(__name__).exception('Voice Argyle reply post failed')
+        return False
+
+
 def _release(key):
     """Caller holds _lock; a failed post leaves the answer available to retry."""
     entry = _held.get(key)
     if not entry:
-        return
-    from services.agent_tools_v2 import _post_chat_message
-    argyle = storage.ensure_argyle_member()
-    channel = storage.get_or_create_dm(entry['member_id'], argyle['id'])
-    card = entry['card']
-    if card and card.get('proposal_id'):
-        storage.update_action_proposal(card['proposal_id'], {'channel_id': channel['id']})
-    if not _post_chat_message(channel, argyle, entry['reply'], card=card):
-        raise RuntimeError('The private voice answer could not be sent to chat.')
+        return True
+    if not post_reply_to_chat(entry['member_id'], entry['reply'], entry['card']):
+        return False
     _discard(key)
+    return True
+
+
+def _try_release(key):
+    try:
+        return _release(key)
+    except Exception:
+        logging.getLogger(__name__).exception('Private voice answer delivery failed')
+        return False
 
 
 def release(ctx, reason):
     with _lock:
-        _release((ctx.ha_instance_id, ctx.satellite_id))
+        return _try_release((ctx.ha_instance_id, ctx.satellite_id))
 
 
 def expire(ha_instance_id, satellite_id):
     """Deliver once if this satellite still has an answer waiting."""
     with _lock:
-        _release((ha_instance_id, satellite_id))
+        return _try_release((ha_instance_id, satellite_id))
 
 
 def release_all():
     """Reconfiguring identity ends every session, delivering pending answers."""
     with _lock:
         for key in list(_held):
-            _release(key)
+            _try_release(key)
 
 
 def hold(ctx, actor, reply, card):
     key = (ctx.ha_instance_id, ctx.satellite_id)
     with _lock:
-        _release(key)
+        if not _try_release(key):
+            # Do not overwrite an answer whose delivery must still be retried.
+            return QUESTION
         entry = {'member_id': actor['id'], 'reply': reply, 'card': card,
                  'expires': time.time() + 60, 'reasks': 0}
 
@@ -119,18 +144,24 @@ def intercept(text, ctx):
         actor = ctx.actor()
         if entry['expires'] <= time.time() or voice_conversation.is_sign_off(text) \
                 or not actor or actor['id'] != entry['member_id']:
-            _release(key)
+            _try_release(key)
             return None
         # Prefer the private destination when a reply includes both choices
         # ("no, don't read it; send it"). Match words, never substrings.
         if _SEND.search(text or ''):
-            _release(key)
-            return {'message': SENT}
+            if _try_release(key):
+                return {'message': SENT}
+            return {'message': "I couldn't send that yet. Please try again.", 'continue': True}
         if _READ.search(text or ''):
-            _discard(key)
-            return {'message': entry['reply']}
+            reply = entry['reply']
+            if entry['card']:
+                if _try_release(key):
+                    reply = reply.rstrip() + CHAT_NOTICE
+            else:
+                _discard(key)
+            return {'message': reply}
         if not entry['reasks']:
             entry['reasks'] += 1
             return {'message': QUESTION, 'continue': True}
-        _release(key)
+        _try_release(key)
         return None
