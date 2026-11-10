@@ -22,6 +22,16 @@
 
     <div>
         <label class="flex items-center gap-2 text-sm text-gray-300">
+            <input id="panel-talk-glow-setting" type="checkbox" x-model="panel.panel_talk_glow" @change="savePanel()">
+            Glow while the speaker listens
+        </label>
+        <p class="text-xs text-gray-500 mt-1">
+            A soft rainbow glow around the wall panel's edges while its room's voice satellite is in a conversation, started by a tap or a wake word.
+        </p>
+    </div>
+
+    <div>
+        <label class="flex items-center gap-2 text-sm text-gray-300">
             <input id="panel-house-home" type="checkbox" x-model="panel.panel_house_home" @change="savePanel()">
             Use The House as Home
         </label>

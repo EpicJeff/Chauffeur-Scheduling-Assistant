@@ -108,13 +108,14 @@ def ok(state, glow=True, available=True):
     return js.ok({'available': available, 'state': state, 'glow': glow})
 
 
-STEP = """
+STEP = """{
     out.steps = out.steps || [];
     out.go = await window.chfPanelGlow.tick();
     const el = byId['panel-talk-glow'];
     out.steps.push([el.classList.contains('hidden'),
                     ['glow-listening', 'glow-processing', 'glow-responding'].filter(c => el.classList.contains(c))]);
-"""
+}
+"""   # a block of its own: STEP * 5 must not redeclare `el`
 
 
 class GlowPage(unittest.TestCase):

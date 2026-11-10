@@ -9,18 +9,34 @@ DEFAULT_GREETING = 'How can I help?'
 
 _last_start: dict[str, float] = {}
 _start_lock = threading.Lock()
+_fresh_cache: dict[str, tuple[dict, float]] = {}
+_fresh_lock = threading.Lock()
+
+
+def _shared_fresh_state(entity_id: str) -> dict:
+    """Share a live satellite read across panels for less than one poll interval."""
+    with _fresh_lock:
+        cached = _fresh_cache.get(entity_id)
+        if cached is not None and time.monotonic() - cached[1] < 0.8:
+            return cached[0]
+        state = ha_api.get_state_fresh(entity_id) or {}
+        _fresh_cache[entity_id] = (state, time.monotonic())
+        return state
 
 
 def status(device: dict | None) -> dict:
     """Availability and the satellite's own state, never a fabricated state."""
-    if not device or not device.get('area_id'):
-        return {'available': False, 'state': None}
+    result = {'available': False, 'state': None, 'glow': True}
     try:
+        result['glow'] = (storage.get_settings() or {}).get('panel_talk_glow', True)
+        if not device or not device.get('area_id'):
+            return result
         satellite = satellite_for_panel(device)
-        state = (ha_api.get_state_fresh(satellite) or {}).get('state') if satellite else None
-        return {'available': state not in (None, 'unavailable', 'unknown'), 'state': state}
+        state = _shared_fresh_state(satellite).get('state') if satellite else None
+        result.update(available=state not in (None, 'unavailable', 'unknown'), state=state)
+        return result
     except Exception:
-        return {'available': False, 'state': None}
+        return result
 
 
 def _offline_message(device: dict) -> str:

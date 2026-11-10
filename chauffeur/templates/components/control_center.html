@@ -1,3 +1,51 @@
+{% if request.query_params.get('panel') == 'true' %}
+<style>
+    /* Above panel_skin's screensaver (300), without intercepting its wake tap.
+       Two soft edge masks leave the board's middle completely transparent. */
+    #panel-talk-glow {
+        position: fixed;
+        inset: 0;
+        z-index: 301;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 650ms ease;
+        background: linear-gradient(115deg, #ff80ab, #c084fc, #818cf8, #67e8f9,
+            #86efac, #fde68a, #fb923c, #ff80ab, #c084fc, #818cf8);
+        background-size: 300% 300%;
+        --glow-edge: clamp(20px, 4vmin, 44px);
+        -webkit-mask-image: linear-gradient(to right, #000, transparent var(--glow-edge),
+            transparent calc(100% - var(--glow-edge)), #000),
+            linear-gradient(to bottom, #000, transparent var(--glow-edge),
+            transparent calc(100% - var(--glow-edge)), #000);
+        mask-image: linear-gradient(to right, #000, transparent var(--glow-edge),
+            transparent calc(100% - var(--glow-edge)), #000),
+            linear-gradient(to bottom, #000, transparent var(--glow-edge),
+            transparent calc(100% - var(--glow-edge)), #000);
+    }
+    /* Keep the layer painted at zero opacity so 'hidden' can fade out. */
+    #panel-talk-glow.hidden { display: block; opacity: 0; }
+    #panel-talk-glow:not(.hidden) { opacity: .85; }
+    #panel-talk-glow.glow-listening { animation: panel-glow-flow 6s ease-in-out infinite; }
+    #panel-talk-glow.glow-processing { animation: panel-glow-flow 14s ease-in-out infinite; }
+    #panel-talk-glow.glow-responding { animation: panel-glow-pulse 4s ease-in-out infinite; }
+    @keyframes panel-glow-flow {
+        0%, 100% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+    }
+    @keyframes panel-glow-pulse {
+        0%, 100% { filter: brightness(.75); }
+        50% { filter: brightness(1); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        #panel-talk-glow { animation: none; transition: none; }
+        #panel-talk-glow.glow-listening,
+        #panel-talk-glow.glow-processing,
+        #panel-talk-glow.glow-responding { animation: none; }
+    }
+</style>
+<div id="panel-talk-glow" class="hidden" aria-hidden="true"></div>
+{% endif %}
+
 <!-- OPERATIONS SIDEBAR -->
 <style>
     #operations-sidebar ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -604,6 +652,74 @@ function closeChatHelpModal() {
 
 <script>
     (function () {
+        if (new URLSearchParams(window.location.search).get('panel') !== 'true') return;
+        const states = ['listening', 'processing', 'responding'];
+        let running = false;
+        let timer = null;
+        let polling = false;
+        window.chfPanelGlow = { tick, start };
+
+        function render(state) {
+            const glow = document.getElementById('panel-talk-glow');
+            if (!glow) return;
+            states.forEach(value => glow.classList.toggle('glow-' + value, state === value));
+            glow.classList.toggle('hidden', !states.includes(state));
+        }
+
+        async function tick() {
+            try {
+                const headers = {};
+                try {
+                    const token = localStorage.getItem('chauffeur_device_token');
+                    if (token) headers['X-Device-Token'] = token;
+                } catch (e) {}
+                const base = window.chfBase !== undefined ? window.chfBase : '';
+                const response = await fetch(base + 'api/panel/talk', { headers });
+                if (!response.ok) throw new Error('Panel status unavailable');
+                const data = await response.json();
+                render(data.available && data.glow ? data.state : null);
+                return data.available !== false;
+            } catch (e) {
+                render(null);
+                return true; // A dropped poll is quiet and retried next second.
+            }
+        }
+
+        function schedule() {
+            if (running && !polling && timer === null && document.visibilityState !== 'hidden') {
+                timer = setTimeout(loop, 1000);
+            }
+        }
+
+        async function loop() {
+            timer = null;
+            if (!running || document.visibilityState === 'hidden') return;
+            polling = true;
+            const keepGoing = await tick();
+            polling = false;
+            if (!keepGoing) running = false;
+            schedule();
+        }
+
+        function start() {
+            running = true;
+            schedule();
+        }
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                clearTimeout(timer);
+                timer = null;
+            } else {
+                schedule();
+            }
+        });
+        document.addEventListener('DOMContentLoaded', start);
+    })();
+</script>
+
+<script>
+    (function () {
         let busy = false;
         let turn = 0;
         let pollTimer = null;
@@ -649,6 +765,7 @@ function closeChatHelpModal() {
             try { available = (await request('GET')).available === true; } catch (e) {}
             buttons().forEach(button => button.classList.toggle('hidden', !available));
             if (!available && busy) idle();
+            if (available && window.chfPanelGlow) window.chfPanelGlow.start();
             return available;
         }
 

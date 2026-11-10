@@ -168,6 +168,10 @@ ENTRIES: List[dict] = [
        "What the room's speaker says when someone taps the mic on a wall panel's "
        "Argyle chat, before it listens. Blank uses 'How can I help?'.",
        page='config', anchor='boards'),
+    _e('panel_talk_glow', 'panel', 'Glow while the speaker listens',
+       "A soft rainbow glow around the wall panel's edges while its room's voice "
+       "satellite is in a conversation, started by a tap or a wake word.",
+       page='config', anchor='boards'),
     _e('panel_background', 'panel', 'Panel background',
        'The photograph the wall panel floats on. A web address, or just a '
        'phrase like "mountains at dusk" to have one found for you.',
