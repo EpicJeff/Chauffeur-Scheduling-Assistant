@@ -405,7 +405,7 @@ def _merge_joint(building, joint, before):
     geometry = hosts.snapshot(building)
     line = geometry['walls'][keep['id']]
     length = math.dist(line['a'], line['b'])
-    for name in ('openings', 'anchors', 'items'):
+    for name in ('openings', 'anchors', 'items', 'devices'):
         for piece in building.get(name, []):
             host = hosts._host(piece, name == 'openings')
             if host.get('wall') not in (keep['id'], removed['id']):
@@ -487,7 +487,7 @@ MORE_OPS = ('add_opening', 'move_hosted', 'resize_opening', 'add_anchor', 'add_i
             'draw_roof', 'roof_over', 'set_roof_edge', 'move_roof_edge', 'add_dormer',
             'move_dormer', 'add_level', 'move_building', 'rotate_building', 'set',
             'set_material', 'accept_proposal', 'dismiss_proposal',
-            'move_site_item', 'delete_site_item', 'add_site_item')
+            'move_site_item', 'delete_site_item', 'add_site_item', 'place_device', 'unplace_device')
 
 
 def _item_scale(value):
@@ -510,6 +510,54 @@ def _text(value):
     if not isinstance(value, str) or not value.strip():
         raise Refused('Enter a name.')
     return value
+
+
+def _unplace_device(model, device, actor):
+    for building in model['buildings']:
+        for anchor in building.get('anchors', []):
+            if anchor.get('device') == device:
+                anchor['device'] = None
+                if actor == 'person':
+                    _person(anchor)
+        building['devices'] = [p for p in building.get('devices', []) if p['device'] != device]
+        for name in ('flags', 'checked_flags'):
+            if name in building:
+                building[name] = [f for f in building[name] if f.get('piece') != f'device:{device}']
+
+
+def _place_device(model, op, actor):
+    device = _text(op.get('device'))
+    if 'anchor' in op:
+        matches = [(b, a) for b in model['buildings'] for a in b.get('anchors', [])
+                   if a['id'] == op['anchor'] and (not op.get('building') or b['id'] == op['building'])]
+        if len(matches) != 1:
+            raise Refused('Choose a device spot in its building.')
+        _, anchor = matches[0]
+        if anchor.get('device') and anchor['device'] != device:
+            raise Refused('That spot already holds a device; move it first.')
+        _unplace_device(model, device, actor)
+        anchor['device'] = device
+        if actor == 'person':
+            _person(anchor)
+        return
+    building = _find(model, 'buildings', op.get('building'))
+    host = deepcopy(op.get('host'))
+    reason = twin_model._host_error(host, building)
+    if reason:
+        raise Refused(reason)
+    offset = _number(op.get('offset', 0))
+    geometry = hosts.snapshot(building)
+    try:
+        hosts._point(geometry, host, offset)
+        line = hosts._line(geometry, host)
+        if line is not None:
+            host['at'] = hosts._at(host, None, line, 0)
+    except (ValueError, KeyError, TypeError, ZeroDivisionError) as exc:
+        raise Refused('Choose a host surface where this device fits.') from exc
+    _unplace_device(model, device, actor)
+    src = {'auto': True} if actor == 'auto' else {'person': True} if actor == 'person' else {}
+    building['devices'].append({'id': f'device:{device}', 'device': device,
+                                'host': host, 'offset': offset, 'src': src})
 
 
 def _piece(building, pid):
@@ -680,7 +728,7 @@ def _set_field(building, op):
                 or 'flag' in value and value['flag'] != flags[index]):
             raise Refused('That check has changed. Open it again.')
         flag = flags.pop(index)
-        piece = next((p for name in ('openings', 'anchors', 'items', 'dormers')
+        piece = next((p for name in ('openings', 'anchors', 'items', 'devices', 'dormers')
                       for p in building.get(name, []) if p['id'] == flag.get('piece')), None)
         if (text == twin_model.NOT_CLOSED or piece is not None
                 and text in (*hosts._texts(piece), 'This dormer lost its roof; place it again.')):
@@ -982,6 +1030,13 @@ def apply(model, op: dict, actor: str = 'person') -> tuple[dict, str]:
         raise Refused('That operation is not available.')
     op = deepcopy(op)
     model, notes = twin_model.normalize(model)
+    if kind in ('place_device', 'unplace_device'):
+        device = _text(op.get('device'))
+        if kind == 'place_device':
+            _place_device(model, op, actor)
+        else:
+            _unplace_device(model, device, actor)
+        return model, 'Placed the device.' if kind == 'place_device' else 'Removed the device placement.'
     if kind in ('move_site_item', 'delete_site_item', 'add_site_item'):
         return _site_op(model, op, actor)
     building = _find(model, 'buildings', op.get('building'))
@@ -1046,6 +1101,10 @@ def apply(model, op: dict, actor: str = 'person') -> tuple[dict, str]:
     twin_model.filter_checked_flags(building)
     if actor == 'person':
         _mark_touched(building, previous, op)
+    if kind == 'set' and op.get('field') == 'ha_area':
+        from services import twin_ha
+        for placement in twin_ha.obvious(model, op.get('id'), twin_ha.catalogue()):
+            _place_device(model, placement, 'auto')
     words = {'move_joint': 'Moved the corner.', 'move_wall': 'Moved the wall.',
              'move_room': 'Moved the room.', 'add_wall': 'Added the wall.',
              'split_wall': 'Split the wall.', 'draw_room': 'Drew the room.',

@@ -28,12 +28,21 @@ def snapshot(building) -> dict:
                                  'bounds': [min(p[0] for p in polygon), min(p[1] for p in polygon),
                                             max(p[0] for p in polygon), max(p[1] for p in polygon)]}
     return {'walls': walls, 'rooms': rooms,
+            'openings': {o['id']: deepcopy(o) for o in building.get('openings', [])
+                         if o.get('state') != 'ghost'},
             'roofs': {r['id']: deepcopy(r) for r in building.get('roofs', [])
                       if r.get('state') != 'ghost'},
             'levels': {l['id']: deepcopy(l) for l in building.get('levels', [])}}
 
 
 def _surface(geometry, host):
+    if 'opening' in host:
+        opening = geometry.get('openings', {}).get(host['opening'])
+        if opening is not None:
+            surface = _surface(geometry, _host(opening, True))
+            if surface is not None:
+                return {'opening': opening, 'surface': surface, 'level': surface.get('level')}
+        return None
     if 'wall' in host:
         return geometry['walls'].get(host['wall'])
     if 'floor' in host or 'ceiling' in host:
@@ -82,6 +91,13 @@ def _point(geometry, host, offset=0):
         raise ValueError('The host surface is missing.')
     level = geometry['levels'].get(surface.get('level'), {})
     elevation = level.get('elevation', 0)
+    if 'opening' in host:
+        opening = surface['opening']
+        opening_host = deepcopy(_host(opening, True))
+        height = opening.get('sill', 0) + 1 if opening.get('kind') == 'window' else 3.5
+        opening_host.update(side='left' if host.get('side') == 'in' else 'right',
+                            sill=height, z=height)
+        return _point(geometry, opening_host, offset)
     if 'floor' in host or 'ceiling' in host:
         x0, y0, x1, y1 = surface['bounds']
         z = (elevation + level.get('ceiling', 0) - offset
@@ -180,7 +196,7 @@ def carry_split(building, before):
         if any(pid == wid for pid, _, _ in parts) and len(parts) > 1:
             splits[wid] = parts
     carried = set()
-    for name in ('openings', 'anchors', 'items'):
+    for name in ('openings', 'anchors', 'items', 'devices'):
         pieces = building.get(name, [])
         if not isinstance(pieces, list):
             continue
@@ -207,7 +223,7 @@ def carry_split(building, before):
 
 
 def _texts(piece):
-    kind = piece.get('kind', piece.get('asset', 'item'))
+    kind = 'device' if 'device' in piece and 'kind' not in piece else piece.get('kind', piece.get('asset', 'item'))
     return (f'This {kind} lost its wall; place it again.',
             f'This {kind} lost its surface; place it again.',
             f'This {kind} no longer fits on its wall; place it again.',
@@ -244,6 +260,8 @@ def _lost(building, piece, host, before, notes, *, fits=True):
             at, level = last_position(building, piece, host, before)
         _clear_flags(building, piece, checked=False)
         building['flags'].append({'level': level, 'at': list(at), 'text': text, 'piece': piece['id']})
+        if 'device' in piece and 'kind' not in piece:
+            piece.update(position=list(at), level=level)
         notes.append(text)
     # A reader's ghost and explanation belong to the reader. A normalize ghost
     # is temporary; surface loss transfers that responsibility to this module.
@@ -306,7 +324,10 @@ def follow(building, before: dict) -> list[str]:
     """Carry hosted pieces after an edit; retain and flag pieces that lose a host."""
     carried = carry_split(building, before)
     geometry, notes = snapshot(building), []
-    for collection in ('openings', 'anchors', 'items'):
+    for collection in ('openings', 'anchors', 'items', 'devices'):
+        # Opening centres may have been clamped while their wall changed.
+        if collection != 'openings':
+            geometry = snapshot(building)
         opening = collection == 'openings'
         for piece in building.get(collection, []):
             host = _host(piece, opening)
@@ -331,7 +352,7 @@ def follow(building, before: dict) -> list[str]:
 
 def rehost(building, piece_id, host: dict) -> None:
     """Place an existing piece on another surface, clearing its unhosted flag."""
-    for collection in ('openings', 'anchors', 'items'):
+    for collection in ('openings', 'anchors', 'items', 'devices'):
         piece = next((p for p in building.get(collection, []) if p['id'] == piece_id), None)
         if piece is None:
             continue

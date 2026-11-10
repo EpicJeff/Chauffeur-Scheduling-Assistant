@@ -576,6 +576,10 @@ def _details(building, flat, previous):
         pinned = [deepcopy(p) for p in previous.get(name, []) if _person(p)]
         ids = {p['id'] for p in pinned}
         building[name] = pinned + [deepcopy(p) for p in flat.get(name, []) if p.get('id') not in ids]
+    pinned = {p['id']: deepcopy(p) for p in previous.get('devices', []) if _person(p)}
+    building['devices'] = [pinned.pop(p['id'], deepcopy(p))
+                           for p in flat.get('devices', previous.get('devices', []))]
+    building['devices'].extend(pinned.values())
     for name, target, surface in (('lights', 'anchors', 'ceiling'), ('fixtures', 'items', 'floor')):
         for index, detail in enumerate(flat.get(name, [])):
             piece = deepcopy(detail)
@@ -765,7 +769,7 @@ def assemble(flat: dict, previous: dict | None = None) -> tuple[dict, list[str]]
         _restore_polygons(building, polygons, replaced)
         building['rooms'].extend(deepcopy(ghosts))
         _separator_flags(building)
-        live_ids = {p['id'] for name in ('walls', 'rooms', 'roofs', 'dormers', 'openings', 'anchors', 'items')
+        live_ids = {p['id'] for name in ('walls', 'rooms', 'roofs', 'dormers', 'openings', 'anchors', 'items', 'devices')
                     for p in building.get(name, [])}
         building['flags'] = [f for f in building['flags'] if not isinstance(f.get('piece'), str)
                              or f['piece'] in live_ids]

@@ -146,10 +146,27 @@ def _opening_valid(building, piece):
         raise ValueError(f'Invalid opening: {reason}.')
 
 
+def _ha_area(value):
+    from services import twin_ha
+    if not isinstance(value, str):
+        raise ValueError('ha_area must be text.')
+    if not value:
+        return ''
+    areas = twin_ha.catalogue().get('areas', [])
+    if not areas:
+        return value
+    resolved = twin_ha.resolve_area(value, areas)
+    if resolved is None:
+        raise ValueError('Pick an area from Home Assistant.')
+    return resolved
+
+
 def _set(kind, piece, building, field, value):
     if kind not in EDITABLE or field not in EDITABLE[kind]:
         raise ValueError(f'Cannot set {field} on a {kind}.')
-    if field in ('name', 'ha_area'):
+    if field == 'ha_area':
+        value = _ha_area(value)
+    elif field == 'name':
         if not isinstance(value, str):
             raise ValueError(f'{field} must be text.')
     elif field == 'position':
@@ -192,7 +209,7 @@ def _set(kind, piece, building, field, value):
         elif field == 'rotation':
             value %= 360
             value = 0 if value == 360 else value
-    if piece.get(field) == value:
+    if piece.get(field) == value and field != 'ha_area':
         raise ValueError('Nothing changed')
     old_roof = deepcopy(piece) if kind == 'roof' and field == 'kind' else None
     piece[field] = deepcopy(value)

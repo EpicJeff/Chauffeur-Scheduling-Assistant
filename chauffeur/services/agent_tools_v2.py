@@ -7637,6 +7637,8 @@ class HouseDesignTool(BaseModel):
         "add_opening (wall, kind, at, width?=3, sill?, head?); "
         "move_hosted (id, host?, at?, z?, offset?); resize_opening (id, width?, sill?, head?, at?); "
         "add_anchor (kind, host); add_item (asset, host, rotation?, scale?); "
+        "place_device (device, anchor or building+host, offset?, host may be {opening, side:in|out}); "
+        "unplace_device (device); "
         "host is {wall, side, at, z} with side left|right, {floor: room, u, v}, or {ceiling: room, u, v}; "
         "u,v are room fractions 0..1. "
         "draw_roof (area:rectilinear [[x,y],...], plate?, pitch?=6, overhang?=1); "

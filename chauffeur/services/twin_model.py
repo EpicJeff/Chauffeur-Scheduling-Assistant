@@ -401,17 +401,20 @@ def _network(building, levels, notes):
 def _host_error(host, building):
     if not isinstance(host, dict):
         return 'missing host'
-    kinds = [key for key in ('wall', 'floor', 'ceiling', 'ground', 'roof') if key in host]
+    kinds = [key for key in ('wall', 'floor', 'ceiling', 'ground', 'roof', 'opening') if key in host]
     if len(kinds) != 1:
         return 'invalid host'
     kind = kinds[0]
     if kind == 'ground':
         return None if host['ground'] is True and twin_plan._point(host.get('at')) else 'invalid ground host'
-    collection = 'walls' if kind == 'wall' else 'roofs' if kind == 'roof' else 'rooms'
+    collection = ('walls' if kind == 'wall' else 'roofs' if kind == 'roof'
+                  else 'openings' if kind == 'opening' else 'rooms')
     target = next((p for p in building[collection] if p['id'] == host[kind]), None)
     if target is None or target.get('state') == 'ghost':
         return f'unknown {kind} host {host[kind]}'
-    if kind == 'wall':
+    if kind == 'opening':
+        valid = host.get('side') in ('in', 'out')
+    elif kind == 'wall':
         valid = host.get('side') in ('left', 'right') and all(twin_plan._number(host.get(k)) for k in ('at', 'z'))
     elif kind == 'roof':
         valid = (isinstance(target.get('area'), list) and type(host.get('edge')) is int
@@ -482,6 +485,47 @@ def _pieces(building, notes):
                     reason = reason or 'invalid item asset, rotation or scale'
             if reason:
                 _note(item, kind.capitalize(), reason, notes)
+    devices = []
+    for item in _list(building, 'devices', notes):
+        device = item.get('device')
+        if not isinstance(device, str) or not device.strip():
+            notes.append('Dropped device placement with no device id.')
+            continue
+        item['id'] = f'device:{device}'
+        item.setdefault('offset', 0)
+        if not isinstance(item.get('src'), dict):
+            item['src'] = {}
+        reason = _host_error(item.get('host'), building)
+        if not twin_plan._number(item['offset']):
+            reason = reason or 'invalid offset'
+        if reason:
+            _note(item, 'Device', reason, notes)
+        devices.append(item)
+    building['devices'] = devices
+
+
+def _unique_devices(buildings, notes):
+    seen = set()
+    # Anchors own their device; duplicate imported references cannot also place it.
+    for building in buildings:
+        for anchor in building.get('anchors', []):
+            device = anchor.get('device')
+            if not device:
+                continue
+            if not isinstance(device, str) or device in seen:
+                anchor['device'] = None
+                notes.append('Cleared a duplicate or invalid anchor device.')
+            else:
+                seen.add(device)
+    for building in buildings:
+        kept = []
+        for item in building['devices']:
+            if item['device'] in seen:
+                notes.append(f"Dropped duplicate placement for device {item['device']}.")
+            else:
+                seen.add(item['device'])
+                kept.append(item)
+        building['devices'] = kept
 
 
 def normalize(model: dict, *, persist_t_splits=True) -> tuple[dict, list[str]]:
@@ -519,6 +563,7 @@ def normalize(model: dict, *, persist_t_splits=True) -> tuple[dict, list[str]]:
         _pieces(building, notes)
         filter_checked_flags(building)
         buildings.append(building)
+    _unique_devices(buildings, notes)
     site = model.get('site', {})
     if not isinstance(site, dict):
         site = {}
