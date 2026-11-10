@@ -70,6 +70,12 @@
         #house-back:hover, #house-back:focus-visible { background: rgba(54,43,29,.94);
           outline: 2px solid #e3d3ab; outline-offset: 2px; }
         #house-back[hidden] { display: none; }
+        #house-twin-link { position:fixed; top:76px; right:16px; z-index:46;
+          border:1px solid rgba(227,211,171,.45); border-radius:999px;
+          padding:6px 11px; min-height:44px; display:inline-flex; align-items:center;
+          background:rgba(28,23,16,.82); color:#f0e6cf; text-decoration:none; font:600 13px system-ui; }
+        #house-twin-link:hover, #house-twin-link:focus-visible { background:rgba(54,43,29,.94);
+          outline:2px solid #e3d3ab; outline-offset:2px; }
         /* ORBIT (massing arc 1, spec §4): the exterior's two chevrons. Same
            tokens as #house-back above — the same ink, the same parchment
            border, the same pill — sized to the 56px touch target the spec
@@ -229,6 +235,7 @@
         {% if house_comparison %}{% include 'components/house_comparison.html' %}{% endif %}
         {% if house_exterior %}{% include 'components/house_exterior.html' %}{% endif %}
         <h1 id="kitchen-title" class="panel-page-title">The Home</h1>
+        <a id="house-twin-link" href="{{ '../' if request.url.path.endswith('/house/') else '' }}house/twin?panel={{ request.query_params.get('panel', 'false') | urlencode }}&amp;kiosk={{ request.query_params.get('kiosk', 'false') | urlencode }}">3D house</a>
         <button id="house-back" type="button" hidden aria-label="Go back"></button>
         <div id="house-hints" hidden aria-label="House rooms and features"></div>
         <!-- ORBIT (spec §4): the hand path for the eight stops. house.js

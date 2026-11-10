@@ -7396,7 +7396,7 @@ def house_live(request: Request):
     who = control_rules.who_from_request(request.headers, request.query_params)
     states = {row['entity_id']: row for row in ha_api.get_states()} if catalogue['available'] else {}
     geometry = {}
-    rooms, markers = [], []
+    rooms, markers, devices = [], [], []
     for building in model['buildings']:
         for room in building.get('rooms', []):
             area = twin_ha.resolve_area(room.get('ha_area'), catalogue['areas']) if catalogue['available'] else None
@@ -7410,6 +7410,9 @@ def house_live(request: Request):
     for device in catalogue['devices'] if catalogue['available'] else []:
         if device.get('area_id') not in areas:
             continue
+        # Area membership is independent of a person's chosen marker position.
+        devices.append({**device, 'offered': control_rules.offered(
+            who, device['entity_id'], settings, states=states)})
         device_id = device['device_id']
         placement = placed.get(device_id)
         if placement:
@@ -7426,8 +7429,8 @@ def house_live(request: Request):
         markers[-1].update(building=spot['building'], level=spot['level'], room=spot['room'],
                            at=_house_lot_point(building, [*spot['at'], spot['z']]),
                            placed=placement is not None,
-                           offered=control_rules.offered(who, device['entity_id'], settings, states=states))
-    return {'available': catalogue['available'], 'rooms': rooms, 'markers': markers}
+                           offered=devices[-1]['offered'])
+    return {'available': catalogue['available'], 'rooms': rooms, 'markers': markers, 'devices': devices}
 
 
 class HouseHaIdentifyRequest(BaseModel):

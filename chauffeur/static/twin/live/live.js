@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { base } from '../twin_library.js';
 import { groundAt } from '../twin_ground.js';
 import { markerState, levelOfDetail, markerTexture, markerSprite } from './markers.js';
+import { deviceActions, mountRoomPanel } from './room_panel.js';
+import { roomStates, mountModes } from './modes.js';
 
 const FT = .3048, unreachable = 'Home Assistant is not reachable.';
 // Screen sizes in CSS px: a marker is a 44 px tap target (the page's own controls' hit height),
@@ -35,6 +37,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   const raycaster = new THREE.Raycaster(), projected = new THREE.Vector3();
   let states = {}, stopped = false, stale = true, mode = null, timer = null, polling = Promise.resolve();
   let selected = null, pointer = null;
+  let roomPanel = null, modes = null;
   const texture = (kind, look, count = null) => {
     const key = JSON.stringify([kind, look, count]);
     if (!textures.has(key)) textures.set(key, markerTexture(kind, look, count));
@@ -54,11 +57,8 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     const { sprite, labelNode, labelBox, screen, ...data } = row;
     return { ...data, at: [...data.at], entities: [...data.entities] };
   };
-  const roomRows = () => layout.rooms.filter(room => room.area_id).map(room => {
-    const on = room.lights.map(id => states[id]).filter(state => state?.state === 'on');
-    return { ...room, glow: on.length ? on.reduce((sum, state) => sum + (state.attributes?.brightness ?? 255) / 255, 0) / on.length : 0,
-      rgb: on.find(state => Array.isArray(state.attributes?.rgb_color))?.attributes.rgb_color || null };
-  });
+  const devices = layout.devices || layout.markers;
+  const roomRows = () => roomStates(layout.rooms, states);
   function notify() {
     for (const row of rows) {
       row.stale = stale; row.dim = stale || mode === 'lights' && row.kind !== 'light';
@@ -74,26 +74,18 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   }
   function closeSheet() { selected = null; sheet.hidden = true; sheet.replaceChildren(); }
   function showSheet(row) {
+    roomPanel?.close();
     selected = row; sheet.replaceChildren(); sheet.hidden = false;
     sheet.setAttribute('aria-label', row.name);
     const heading = document.createElement('h2'); heading.textContent = row.name;
     const status = document.createElement('p'); status.textContent = row.label;
-    const actions = document.createElement('div'); actions.className = 'twin-device-actions';
+    const actions = deviceActions(row, states[row.entity_id], async (...args) => {
+      closeSheet(); return control(...args);
+    }, { compact: true });
     const button = (name, action) => {
       const node = document.createElement('button'); node.type = 'button'; node.textContent = name;
       node.addEventListener('click', action); actions.append(node);
     };
-    if (row.offered) {
-      const action = (name, service, confirm = false) => button(name, async () => {
-        if (confirm && !await window.promptConfirm(`${name} ${row.name}?`, 'Are you sure?', name, 'Cancel')) return;
-        closeSheet(); await control(row.entity_id, service);
-      });
-      if (row.kind === 'lock') { action('Lock', 'lock'); action('Unlock', 'unlock', true); }
-      if (row.kind === 'garage') { action('Open', 'open_cover', true); action('Close', 'close_cover'); }
-      if (iconKind(row) === 'alarm') {
-        action('Arm home', 'alarm_arm_home'); action('Arm away', 'alarm_arm_away'); action('Disarm', 'alarm_disarm', true);
-      }
-    }
     button('Close', closeSheet);
     // Garage already has a Close action; the dismiss control has a distinct name.
     if (row.kind === 'garage' && row.offered) actions.lastChild.setAttribute('aria-label', 'Dismiss');
@@ -103,12 +95,16 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     closeSheet();
     const row = layout.rooms.find(r => r.building === building && r.room === room);
     const event = new CustomEvent('twinroom', { detail: row, cancelable: true });
-    if (canvas.dispatchEvent(event) && fallback) showSheet(fallback);
+    if (canvas.dispatchEvent(event)) {
+      if (row?.area_id) roomPanel?.open(row);
+      else if (fallback) showSheet(fallback);
+      else roomPanel?.close();
+    }
   }
   async function control(entityId, service, data = {}) {
     if (stopped || busy.has(entityId)) return false;
     if (stale) { window.showGlobalAlert(unreachable); return false; }
-    if (!rows.some(row => row.entity_id === entityId && row.offered
+    if (!devices.some(row => row.entity_id === entityId && row.offered
       || row.entities.includes(entityId) && row.offered)) return false;
     busy.add(entityId);
     try {
@@ -139,6 +135,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   }
   function draw() {
     if (stopped) return;
+    modes?.draw();
     const camera = view.camera, rect = canvas.getBoundingClientRect(); camera.updateMatrixWorld(true);
     const pixelSize = point => camera.isOrthographicCamera ? (camera.top - camera.bottom) / camera.zoom / Math.max(1, rect.height)
       : 2 * Math.max(.1, -point.clone().applyMatrix4(camera.matrixWorldInverse).z)
@@ -226,7 +223,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       const response = await api(`api/ha/card/states?fresh=${fresh ? 1 : 0}`, { signal: requests.signal });
       if (!response.ok) throw new Error('states unavailable');
       const body = await response.json();
-      if (!body.states || typeof body.states !== 'object' || rows.length && !Object.keys(body.states).length)
+      if (body.reachable === false || !body.states || typeof body.states !== 'object' || rows.length && !Object.keys(body.states).length)
         throw new Error('states unavailable');
       if (stopped) return;
       states = body.states; stale = false;
@@ -256,26 +253,38 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     else if (hit?.userData.room) {
       if (stale) window.showGlobalAlert(unreachable);
       else openRoom(hit.userData.room.building, hit.userData.room.room);
-    } else closeSheet();
+    } else {
+      const room = view.pick(event.clientX, event.clientY);
+      if (room?.kind === 'room') openRoom(room.building, room.id);
+      else { closeSheet(); roomPanel?.close(); }
+    }
   }, { signal: events.signal });
   canvas.addEventListener('pointercancel', () => { pointer = null; }, { signal: events.signal });
-  document.addEventListener('keydown', event => { if (event.key === 'Escape') closeSheet(); }, { signal: events.signal });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { closeSheet(); roomPanel?.close(); }
+  }, { signal: events.signal });
   const live = {
     refresh, draw, control, openRoom,
-    setMode(name) { mode = name; notify(); draw(); },
+    setMode(name) { mode = name === 'lights' ? 'lights' : null; modes?.setMode(mode); notify(); draw(); view.render(); },
+    closeRoom() { roomPanel?.close(); closeSheet(); },
     markers: () => rows.map(plain),
     rooms: roomRows,
+    devices: area => devices.filter(row => row.area_id === area).map(row => ({ ...row,
+      ...markerState(row.kind, states[row.entity_id]?.state ?? 'unavailable', states[row.entity_id]?.attributes) })),
     states: () => structuredClone(states),
     layout: () => structuredClone(layout),
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     stop() {
       if (stopped) return;
       stopped = true; clearTimeout(timer); events.abort(); requests.abort(); listeners.clear();
+      roomPanel?.stop(); modes?.stop();
       root.traverse(object => object.material?.dispose()); root.removeFromParent();
       textures.forEach(value => value.dispose()); textures.clear(); labels.remove(); sheet.remove();
     },
   };
   view.live = live;
+  roomPanel = mountRoomPanel(live);
+  modes = mountModes(view, live);
   await refresh();
   const schedule = () => { timer = setTimeout(async () => { await refresh(); if (!stopped) schedule(); }, 10000); };
   if (!stopped) schedule();

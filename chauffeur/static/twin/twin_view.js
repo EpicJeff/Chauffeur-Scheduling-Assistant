@@ -899,7 +899,7 @@ async function boot() {
     const sync = () => document.querySelectorAll('[data-view], [data-time], [data-camera]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view ? b.dataset.view === view.state.view : b.dataset.time ? b.dataset.time === view.state.time : b.dataset.camera === view.state.camera)));
     const click = event => {
       const button = event.target.closest('button'); if (!button) return;
-      if (button.dataset.view) { view.setView(button.dataset.view); if (button.dataset.view !== 'ext') view.setCamera('top'); }
+      if (button.dataset.view) { view.live?.closeRoom(); view.setView(button.dataset.view); if (button.dataset.view !== 'ext') view.setCamera('top'); }
       if (button.dataset.time) view.setTime(button.dataset.time);
       if (button.dataset.camera) view.setCamera(button.dataset.camera);
       sync();

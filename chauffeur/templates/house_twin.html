@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 {% set _up = '../../' if request.url.path.endswith('/house/twin/') else '../' %}
-<html lang="en">
+<html lang="en"{% if request.query_params.get('panel') == 'true' and request.query_params.get('kiosk') == 'true' %} data-twin-wall{% endif %}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -22,7 +22,7 @@
       'three/addons/': twinBase + 'static/vendor/three-r187/addons/',
       '@dgreenheck/ez-tree': twinBase + {{ 'static/vendor/ez-tree/ez-tree.es.js' | ver | tojson }}
     };
-    {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'live/markers', 'live/live'] %}
+    {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'live/markers', 'live/live', 'live/room_panel', 'live/modes'] %}
     twinImports[new URL(twinBase + 'static/twin/{{ name }}.js', location.href).href] = twinBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     const twinMap = document.createElement('script'); twinMap.type = 'importmap';
@@ -58,6 +58,23 @@
     .twin-device-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
     .twin-device-actions button { border:1px solid rgba(227,211,171,.45); border-radius:999px; padding:6px 11px; min-height:44px; background:transparent; color:inherit; font:inherit; cursor:pointer; }
     .twin-device-actions button:hover, .twin-device-actions button:focus-visible { background:rgba(54,43,29,.94); outline:2px solid #e3d3ab; outline-offset:2px; }
+    .twin-device-actions button:disabled { opacity:.5; cursor:default; }
+    /* The editor's dock and fixed header/scrolling body; rows follow agenda-event. */
+    #twin-room-panel { width:min(364px, calc(100vw - 32px)); display:flex; flex-direction:column; overflow:hidden; }
+    #twin-room-panel > header { flex-shrink:0; align-items:center; margin-top:0; margin-bottom:12px; }
+    #twin-room-panel h2 { flex:1; margin:0; }
+    .twin-room-devices { min-height:0; overflow-y:auto; scrollbar-color:rgba(227,211,171,.28) transparent; }
+    .twin-room-device { margin-bottom:8px; padding:10px; border-radius:8px; background:rgba(227,211,171,.08); border-left:4px solid rgba(227,211,171,.45); }
+    .twin-room-device h3 { margin:0; font-size:14px; font-weight:700; }
+    .twin-room-device p { margin:4px 0; }
+    .twin-room-device .twin-device-actions { margin-top:8px; align-items:center; }
+    .twin-room-device label { display:flex; flex-wrap:wrap; align-items:center; gap:8px; width:100%; }
+    .twin-room-device input[type="range"] { flex:1; min-width:100px; min-height:44px; accent-color:#e3d3ab; }
+    html[data-twin-wall] #top-nav-bar, html[data-twin-wall] #chat-overlay-container,
+    html[data-twin-wall] #twin-tier, html[data-twin-wall] #twin-hud,
+    html[data-twin-wall] #twin-controls > fieldset:not(#twin-modes) { display:none !important; }
+    html[data-twin-wall] #twin-controls { top:16px; }
+    html[data-twin-wall] .twin-device-sheet { top:86px; max-height:calc(100dvh - 112px - var(--panel-shelf-h, 0px)); }
     [hidden] { display:none !important; }
   </style>
 </head>
