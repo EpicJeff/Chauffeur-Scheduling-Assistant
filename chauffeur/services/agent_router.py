@@ -142,6 +142,7 @@ DEFAULT_AGENT_MESSAGE = "I have processed your request."
 PROPOSE_ONLY_READS = {
     "research_question",
     "get_calendar_events",
+    "get_weather",
     "get_household_tasks", "get_household_load",
     "get_shopping_list_items", "get_kid_tasks",
     "get_family_messages", "get_requests",
@@ -192,11 +193,13 @@ def process_agent_request(user_prompt: str, context: Optional[Dict] = None, hist
     """
     from services import access
     asked = user_prompt   # the person's words, before history is folded in; the gap log's view
+    voice_actor = None
     if source == 'voice':
         from services.voice_identity import VoiceContext
         if not isinstance(voice_context, VoiceContext):
             return {'status': 'refused', 'message': 'Voice identity context is missing. Please try again.'}
-        acting_member = voice_context.verified_member()
+        voice_actor = voice_context.actor()
+        acting_member = voice_actor
         context = None
     # Resolve driver context (PWA chat only). The driver must actually exist —
     # a stale localStorage id must not grant driver tools acting on nobody.
@@ -357,7 +360,7 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                       'on that project, never a new project. '
                       + release_instruction)
 
-    if source == 'voice':
+    if source == 'voice' and voice_actor is None:
         lens = voice_context.member()
         system_prompt += (f"\nSHARED SPEAKER. Identity level: {voice_context.level}. "
                           f"Named lens: {(lens or {}).get('name') or 'unknown'}. "
@@ -381,18 +384,28 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
             system_prompt += (f"\nYou are speaking with {_nm} (role: {_role}) in the family chat. "
                               f"Resolve 'me', 'my', 'I', and 'mine' to {_nm}. For messaging and chore tools, "
                               f"pass from_member/member_name as \"{_nm}\" automatically — never ask who is "
-                              f"speaking, you already know.\n"
-                              "When the request would CHANGE the schedule (reassign a driver, mark someone "
-                              "unavailable, add/remove a routing or priority rule, or add an errand), call "
-                              "propose_family_action with a clear one-sentence summary instead of doing it "
-                              "silently — a parent approves it with one tap. Answer questions, read the "
-                              "schedule, send messages, and claim chores directly.\n")
+                              f"speaking, you already know.\n")
+            if not voice_actor:
+                system_prompt += ("When the request would CHANGE the schedule (reassign a driver, mark someone "
+                                  "unavailable, add/remove a routing or priority rule, or add an errand), call "
+                                  "propose_family_action with a clear one-sentence summary instead of doing it "
+                                  "silently — a parent approves it with one tap. Answer questions, read the "
+                                  "schedule, send messages, and claim chores directly.\n")
             if not _is_admin_member(acting_member):
                 system_prompt += ("This person is NOT a parent/admin: answer questions, send their messages, and "
                                   "manage their own chores, but you cannot change global scheduling (routing/priority "
                                   "rules, the solver, or errands) — those tools are not available to them.\n")
             if (acting_member.get('role') or '') == 'child':
-                system_prompt += (
+                system_prompt += ((
+                    "SPEAKING WITH A CHILD — they are often the FIRST to know about logistics changes, "
+                    "so treat their reports as valuable. For schedule facts beyond direct driver and "
+                    "shopping changes (practice moved or cancelled, a new event, or needing money or "
+                    "supplies by a date), call propose_family_action so a parent can approve them. "
+                    "Tell them you've flagged those facts for their parents. Ask at most ONE short "
+                    "clarifying question; if they don't know, propose with what you have and note the "
+                    "gap in the summary. Be warm, brief, and reassuring. Never lecture, never "
+                    "guilt-trip about chores, points, or streaks.\n"
+                ) if voice_actor else (
                     "SPEAKING WITH A CHILD — they are often the FIRST to know about logistics changes, "
                     "so treat their reports as valuable. When they report schedule information (practice "
                     "moved or cancelled, a new event, needing money or supplies by a date, a ride "
@@ -403,7 +416,8 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                     "question; if they don't know, propose with what you have and note the gap in the "
                     "summary. Be warm, brief, and reassuring. Never lecture, never guilt-trip about "
                     "chores, points, or streaks. You never change the schedule directly for a child — "
-                    "always the proposal card.\n"
+                    "always the proposal card.\n"))
+                system_prompt += (
                     "SCHOOL LIST: they manage their OWN school/deadline list directly with "
                     "add_kid_task / complete_kid_task / get_kid_tasks (homework, tests, projects, "
                     "things to bring) — no approval needed, it's their list. For a big project weeks "
@@ -422,12 +436,20 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                     "plainly that you have asked and that nothing is decided yet; never promise the "
                     "answer, and never treat a no as a failure — a parent saying no with a reason is "
                     "a real answer and better than silence. Use propose_family_action for FACTS they "
-                    "are reporting; make_request for things they are ASKING for.\n")
+                    + ("are reporting beyond direct driver and shopping changes; " if voice_actor else "are reporting; ")
+                    + "make_request for things they are ASKING for.\n")
         else:
             system_prompt += ("\nFAMILY MESSAGING & CHORES: you can send family/direct messages and claim chores, "
                               "but you do NOT know who is speaking in this context. If the speaker has identified "
                               "themselves (or the request implies it: 'tell Mom Dad is on his way' -> from Dad), pass "
                               "from_member/member_name. Otherwise ask who it is BEFORE sending or claiming — never guess.\n")
+
+    if voice_actor:
+        system_prompt += (
+            f"\nSHARED SPEAKER. Recognised by voice as {voice_actor.get('name')}; "
+            "acting as themselves; not proven. Do assign/clear drivers and shopping changes directly "
+            "with the tools; never as a propose_family_action card. "
+            "The server handles recognition greetings; answer without adding a greeting.\n")
 
     if driver:
         system_prompt += f"""
@@ -546,9 +568,15 @@ sending or claiming, and never pass from_member/member_name for them.
             "honest 'I can't do this without acting' is a real answer.\n")
 
     if source == 'voice':
-        from services.voice_tools import TOOLS
+        from services.voice_tools import TOOLS, MUTATIONS
         from services.voice_approval import tool_schema
-        tools = [t for t in tools if t.get('name') in TOOLS] + [tool_schema()]
+        if voice_actor:
+            from services.agent_tools_v2 import _flat_tool
+            declared = {tool['name'] for tool in tools}
+            tools = tools + [_flat_tool(name) for name in sorted(MUTATIONS - declared)]
+            tools = tools + [tool_schema()]
+        else:
+            tools = [t for t in tools if t.get('name') in TOOLS] + [tool_schema()]
 
     import time as _time
     request_start = _time.time()
@@ -744,6 +772,10 @@ sending or claiming, and never pass from_member/member_name for them.
             args = tool_call.get("arguments", {})
             from services.app_voice import current as phone_voice
             phone_turn = phone_voice.get()
+            from services.voice_private import current as satellite_voice
+            satellite_turn = satellite_voice.get() if voice_actor else None
+            if satellite_turn is not None:
+                satellite_turn.before_tool(func_name, args)
             if phone_turn is not None:
                 phone_turn.before_tool(func_name, args)
                 if func_name not in {t.get('name') for t in tools}:
@@ -792,13 +824,15 @@ sending or claiming, and never pass from_member/member_name for them.
 
             try:
                 if source == 'voice':
-                    from services.voice_tools import dispatch, scope_to_speaker
+                    from services.voice_tools import dispatch, scope_to_speaker, MUTATIONS
                     _lens = voice_context.member()
                     if _lens:
                         from services import storage as _st
                         args = scope_to_speaker(func_name, args, asked, _lens.get('name'),
                                                 [m.get('name') for m in _st.get_all_members()
                                                  if not m.get('system') and m.get('id') != _lens.get('id')])
+                if source == 'voice' and (voice_actor is None or func_name in MUTATIONS
+                        or func_name in ('send_family_message', 'send_direct_message', 'prepare_voice_approval')):
                     res = dispatch(func_name, args, voice_context, focus_key)
                     if res.get('schedule_dirty'): schedule_dirty = True
                     if res.get('target_element_id'): target_id = res['target_element_id']
@@ -811,8 +845,17 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = agent_tools_v2.execute_tool('house_design', args, actor=acting_member, focus_key=focus_key)
                         if res.get('status') == 'ok' and res.get('changed'):
                             house_design_summary.append(res['summary'])
+                elif func_name == "get_weather":
+                    from services.agent_tools_v2 import get_weather
+                    res = get_weather(days=args.get('days', 7))
+                    if res.get('message'): agent_message = res['message']
                 elif func_name == "get_calendar_events":
-                    res = get_calendar_events(args.get("start_date"), args.get("end_date"))
+                    if voice_actor:
+                        from services import agent_tools_v2 as _atv2
+                        res = _atv2.get_calendar_events(args.get('start_date'), args.get('end_date'),
+                                                       spoken=True, member_name=args.get('member_name') or '')
+                    else:
+                        res = get_calendar_events(args.get('start_date'), args.get('end_date'))
                 elif func_name == "assign_driver_to_event_fuzzy":
                     from services.agent_tools_v2 import assign_driver_to_event_fuzzy
                     res = assign_driver_to_event_fuzzy(args.get("event_name"), args.get("driver_name"), args.get("target_date"))
@@ -1038,7 +1081,13 @@ sending or claiming, and never pass from_member/member_name for them.
                     res = _atv2.house(**{k: v for k, v in args.items() if k in (
                         'action', 'query', 'entity_id', 'domain', 'service', 'data', 'hours', 'app')},
                         acting_member=actor, voice_context=voice_context, source=source,
-                        proven=proven, device_id=device_id)
+                        proven=proven, device_id=device_id,
+                        **({'spoken': True} if voice_actor else {}))
+                    if voice_actor and args.get('action') in ('act', 'app') and res.get('status') == 'success':
+                        from services.voice_tools import record_action
+                        record_action(voice_context, 'house', voice_actor,
+                                      {'entity_id': res.get('entity_id'), 'service': res.get('service'),
+                                       'app': res.get('app')}, voice_context.provenance())
                     if res.get('message'): agent_message = res['message']
                 elif func_name == 'music':
                     from services import agent_tools_v2 as _atv2
@@ -1051,7 +1100,13 @@ sending or claiming, and never pass from_member/member_name for them.
                     res = _atv2.music(**{k: v for k, v in args.items() if k in (
                         'action', 'query', 'room', 'player', 'media_type', 'mode', 'level')},
                         acting_member=actor, voice_context=voice_context, source=source,
-                        proven=proven, device_id=device_id)
+                        proven=proven, device_id=device_id,
+                        **({'spoken': True} if voice_actor else {}))
+                    if voice_actor and args.get('action') == 'play' and res.get('status') == 'success':
+                        from services.voice_tools import record_action
+                        record_action(voice_context, 'music', voice_actor,
+                                      {'entity_id': res.get('entity_id'), 'item': res['item'].get('name')},
+                                      voice_context.provenance())
                     if res.get('message'): agent_message = res['message']
                 elif func_name == "announce_to_room":
                     from services.agent_tools_v2 import announce_to_room
@@ -1131,20 +1186,33 @@ sending or claiming, and never pass from_member/member_name for them.
                                                       'list_projects', 'get_project', 'find_in_chauffeur'):
                         actor = access.HOUSE
                     fn = getattr(_atv2, func_name)
-                    allowed = fn.__code__.co_varnames[:fn.__code__.co_argcount]
+                    import inspect
+                    parameters = inspect.signature(fn).parameters
+                    allowed = set(parameters)
+                    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+                        allowed.update(args or {})
+                        allowed.update(('focus_key', 'spoken', 'voice_context'))
                     kwargs = {k: v for k, v in (args or {}).items()
                               if k in allowed and k not in ('acting_member', 'focus_key', 'spoken', 'voice_context', 'mission_id')}
                     if 'focus_key' in allowed:
                         kwargs['focus_key'] = focus_key
                     if 'spoken' in allowed:
-                        # Panels read as HOUSE; the satellite's additional
-                        # spoken restriction belongs to voice dispatch (§4.2).
-                        kwargs['spoken'] = substituted and (
+                        # An actor keeps their identity while spoken results
+                        # still obey the shared speaker's read restrictions.
+                        kwargs['spoken'] = bool(voice_actor) or substituted and (
                             source == 'voice' or (focus_key or '').startswith('voice:')
                             or func_name in ('search_mail', 'read_mail'))
                     if 'voice_context' in allowed:
                         kwargs['voice_context'] = voice_context
+                    if voice_actor and 'source' in allowed:
+                        kwargs['source'] = source
                     res = fn(**kwargs, acting_member=actor)
+                    if voice_actor and func_name == 'memory' and args.get('action') in ('remember', 'forget') \
+                            and res.get('status') == 'success':
+                        from services.voice_tools import record_action
+                        record_action(voice_context, 'memory', voice_actor,
+                                      {'action': args.get('action'), 'text': (res.get('memory') or {}).get('text')},
+                                      voice_context.provenance())
                     if isinstance(res, dict) and res.get("schedule_dirty"):
                         schedule_dirty = True
                     if res.get("message"): agent_message = res["message"]
@@ -1568,10 +1636,14 @@ sending or claiming, and never pass from_member/member_name for them.
                 _calendar_viewer.reset(calendar_token)
 
             tool_status = res.get("status", "ok") if isinstance(res, dict) else "?"
+            if voice_actor and isinstance(res, dict) and res.get('card'):
+                card = res['card']
             if isinstance(res, dict) and res.get('control_held'):
                 control_held = res['control_held']
             if phone_turn is not None:
                 phone_turn.tool_result(res)
+            if satellite_turn is not None:
+                satellite_turn.tool_result(res)
             if isinstance(res, dict) and (res.get("error") or res.get("status") == "error"):
                 logger.warning(f"[agent] tool {func_name} error: {res.get('message') or res.get('error')}")
             logger.info(f"[agent-timing] tool {func_name} took {_time.time() - tool_start:.1f}s (status={tool_status})")

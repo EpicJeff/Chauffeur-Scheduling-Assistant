@@ -1760,6 +1760,21 @@ def ha_toggle(req: HAToggleRequest, request: Request):
     # and the board's next poll is what makes it true.
     return {'ok': True}
 
+@app.get("/api/panel/talk")
+def panel_talk_status(request: Request):
+    from services import control_rules, panel_talk
+    device = control_rules.panel_device(request.headers, request.query_params)
+    return panel_talk.status(device)
+
+
+@app.post("/api/panel/talk")
+def panel_talk_start(request: Request):
+    from services import control_rules, panel_talk
+    device = control_rules.panel_device(request.headers, request.query_params)
+    code, body = panel_talk.start(device)
+    return JSONResponse(status_code=code, content=body)
+
+
 @app.get("/api/panel/profile")
 def panel_profile(tabs: Optional[str] = None, widgets: Optional[str] = None,
                   page: Optional[str] = None):
@@ -3861,7 +3876,7 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
     """
     from services.agent_router import process_agent_request
 
-    from services import voice_identity, voice_approval
+    from services import voice_identity, voice_approval, voice_private
     import hashlib
     headers = getattr(request, 'headers', {}) or {}
     authenticated = voice_identity.service_authenticated(headers)
@@ -3895,6 +3910,9 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
         control = voice_approval.intercept(req.text, ctx)
         if control is not None:
             return _voice_response(control.get('message', 'Please try again.'), req.language)
+        control = voice_private.intercept(req.text, ctx)
+        if control is not None:
+            return _voice_response(control['message'], req.language, control.get('continue', False))
         conv_history = []
         conv_id = None
         if req.conversation_id:
@@ -3918,10 +3936,27 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
                 conv_history = conv.get("messages", [])
             storage.add_message_to_conversation(conv_id, {'role': 'user', 'content': req.text, 'timestamp': time.time()})
 
-        res = process_agent_request(req.text, history=conv_history, source='voice', voice_context=ctx,
-                                    proven=ctx.level == 'verified', at_panel=False,
-                                    focus_key=f"voice:{ctx.scope_key}:{req.conversation_id}" if req.conversation_id else None)
+        actor = ctx.actor()
+        satellite_turn = voice_private.SatelliteTurn(actor) if actor else None
+        satellite_token = voice_private.current.set(satellite_turn)
+        try:
+            res = process_agent_request(req.text, history=conv_history, source='voice', voice_context=ctx,
+                                        proven=ctx.level == 'verified', at_panel=False,
+                                        focus_key=f"voice:{ctx.scope_key}:{req.conversation_id}" if req.conversation_id else None)
+        finally:
+            voice_private.current.reset(satellite_token)
         readback = voice_approval.current_readback(ctx)
+        actor = ctx.actor()
+        unsafe_answer = satellite_turn is not None and not satellite_turn.safe
+        private_answer = not readback and unsafe_answer
+        if readback and unsafe_answer:
+            voice_private.post_reply_to_chat(satellite_turn.member['id'], res.get('message', 'Done.'), res.get('card'))
+        elif private_answer:
+            res['message'] = voice_private.hold(ctx, satellite_turn.member, res.get('message', 'Done.'), res.get('card'))
+        elif actor and res.get('card'):
+            reply = res.get('message', 'Done.')
+            if voice_private.post_reply_to_chat(actor['id'], reply, res['card']):
+                res['message'] = reply.rstrip() + voice_private.CHAT_NOTICE
         if readback:
             res['message'] = readback  # a model summary cannot change an approval question
 
@@ -3949,14 +3984,24 @@ def converse_ha_assist(req: ConverseRequest, request: Request = None):
             
         # Return format expected by Home Assistant Conversation integration
         speech = res.get('message', 'I did not understand that.')
-        if ctx.greeting and not readback:
+        if ctx.greeting and not readback and not private_answer:
             speech = ctx.greeting + ' ' + speech
         from services import voice_conversation
         keep_listening = voice_conversation.continue_conversation(ctx, req.text)
-        return _voice_response(speech, req.language, voice_identity.expects_reply(ctx) or keep_listening)
+        signed_off = voice_conversation.is_sign_off(req.text)
+        if signed_off:
+            voice_identity.end_session(ctx.ha_instance_id, ctx.satellite_id)
+        return _voice_response(speech, req.language,
+                               not signed_off and (private_answer or voice_identity.expects_reply(ctx) or keep_listening))
 
     def perform_and_speak():
-        return _answer_in_room(perform(), req)
+        result = perform()
+        from services import voice_conversation
+        if result.get('continue_conversation'):
+            voice_conversation.touch(ctx)
+        else:
+            voice_conversation.close(ctx)
+        return _answer_in_room(result, req)
 
     # Cache only sanitized replies. Authentication retries never check a PIN twice,
     # and a duplicate delivery of one utterance never says its answer twice on the
@@ -10992,8 +11037,38 @@ def list_trusted_devices(x_member_token: Optional[str] = Header(None)):
     a lost tablet from."""
     require_parent_token(x_member_token)
     names = {m['id']: m.get('name') for m in storage.get_all_members(include_archived=True)}
-    return [{**d, 'trusted_by_name': names.get(d.get('trusted_by'))}
+    return [{**{k: v for k, v in d.items() if k != 'device_token'},
+             'trusted_by_name': names.get(d.get('trusted_by'))}
             for d in storage.get_trusted_devices()]
+
+
+@app.get("/api/account/devices/rooms")
+def device_rooms(x_member_token: Optional[str] = Header(None)):
+    require_parent_token(x_member_token)
+    from services import panel_talk
+    return panel_talk.rooms()
+
+
+class DeviceRoomRequest(BaseModel):
+    area_id: Optional[str] = None
+    satellite_id: Optional[str] = None
+
+
+@app.post("/api/account/devices/{device_id}/room")
+def set_panel_room(device_id: str, req: DeviceRoomRequest,
+                   x_member_token: Optional[str] = Header(None)):
+    require_parent_token(x_member_token)
+    device = storage.get_trusted_device(device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+    if device.get('kind') != 'panel':
+        raise HTTPException(status_code=400, detail="Only panels have a room")
+    if req.satellite_id and not req.satellite_id.startswith('assist_satellite.'):
+        raise HTTPException(status_code=400, detail="Choose an assist_satellite entity")
+    row = storage.set_device_room(device_id, req.area_id or None, req.satellite_id or None)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Panel not found")
+    return {k: v for k, v in row.items() if k != 'device_token'}
 
 
 # Labels `trust_device` and the pairing flow hand out when nobody chose one.

@@ -87,6 +87,53 @@ def get_travel_time(origin: str = '', destination: str = '') -> Dict[str, Any]:
             "travel_mins": mins,
             "message": f"About {mins} min from {'home' if from_home else origin} to {destination}, without traffic."}
 
+def get_weather(days: int = 7) -> Dict[str, Any]:
+    """Read HA's daily forecast; an unavailable or malformed feed stays harmless."""
+    unavailable = {"status": "error", "message": "I can't see a weather forecast right now."}
+    try:
+        from services import ha_api, storage
+        # An explicit zero still clamps to one; an omitted/null count is a week.
+        days = max(1, min(10, int(days or 7) if days != 0 else 0))
+        settings = storage.get_settings()
+        forecast = ha_api.get_weather_forecast(settings.get('weather_entity') or None, 'daily')
+        today = datetime.date.today()
+        upcoming = []
+        for entry in forecast or []:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                date = datetime.date.fromisoformat(str(entry.get('datetime') or '')[:10])
+            except ValueError:
+                continue
+            if date < today:
+                continue
+            upcoming.append({
+                'date': date.isoformat(), 'weekday': date.strftime('%A'),
+                'condition': entry.get('condition'), 'high': entry.get('temperature'),
+                'low': entry.get('templow'), 'precipitation': entry.get('precipitation_probability'),
+            })
+        upcoming = sorted(upcoming, key=lambda row: row['date'])[:days]
+        if not upcoming:
+            return unavailable
+        lines = []
+        for day in upcoming:
+            label = 'Today' if day['date'] == today.isoformat() else day['weekday']
+            condition = {'partlycloudy': 'partly cloudy', 'clear-night': 'clear',
+                         'rainy': 'rain likely', 'pouring': 'heavy rain',
+                         'snowy': 'snow', 'snowy-rainy': 'snow and rain',
+                         'lightning-rainy': 'thunderstorms', 'windy-variant': 'windy and cloudy',
+                         'exceptional': 'unusual weather'}.get(day['condition'], day['condition'])
+            condition = condition or 'condition unavailable'
+            if day['precipitation'] is not None and day['precipitation'] != 0:
+                condition += f" ({day['precipitation']}%)"
+            high = day['high'] if day['high'] is not None else 'unknown'
+            low = day['low'] if day['low'] is not None else 'unknown'
+            lines.append(f"{label}: {condition}, {high}/{low}.")
+        return {'status': 'success', 'days': upcoming, 'message': ' '.join(lines)}
+    except Exception:
+        return unavailable
+
+
 def _get_target_element_id(entity_type: str, entity_id: str) -> str:
     """Helper to generate consistent DOM element IDs for UI anchoring."""
     if entity_type == "event":
@@ -1826,11 +1873,12 @@ def act_on_situation(ref: str = '', verb: str = '', option_id: str = None, kind:
                        and set(channel.get('member_ids') or []) == {acting_member.get('id'), 'argyle'})
         if spoken:
             from services.voice_identity import VoiceContext
-            verified = voice_context.verified_member() if isinstance(voice_context, VoiceContext) else None
+            voice_actor = (voice_context.actor() or voice_context.verified_member()) \
+                if isinstance(voice_context, VoiceContext) else None
             # Revalidate voice identity here; a household fallback actor is
-            # not evidence that the person speaking has been verified.
+            # not evidence that the person speaking is the situation actor.
             row = _sit.load(k, sid)
-            private = (bool(verified) and verified.get('id') == acting_member.get('id')
+            private = (bool(voice_actor) and voice_actor.get('id') == acting_member.get('id')
                        and k in ('mission', 'thread')
                        and all(subjects.spoken_safe(sk, record)
                                for sk, record in subjects.subject_records(k, row)))
@@ -2225,11 +2273,11 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
     """The one chat door for anything that takes steps, time or outside people
     (front door §1): the project is created at once, its card is posted
     first, then Argyle plans inside it. A child's project waits for a parent
-    to plan it. Verified voice acts as its member; other voice and House
+    to plan it. Recognised or verified voice acts as its member; other voice and House
     callers use the parent of record. Rooms use the household audience."""
     from services.voice_identity import VoiceContext
     from services import storage, subjects, situations, projects, missions as _missions, triage as _tri
-    # Voice writes use the verified member when present. Room reads still
+    # Voice writes use the actor or verified member when present. Room reads still
     # use HOUSE and spoken_safe, independently of that write identity.
     ctx = voice_context if isinstance(voice_context, VoiceContext) else None
     house = not ctx and access.is_house(acting_member)
@@ -2237,7 +2285,7 @@ def start_project(goal: str, title: str = None, for_member_name: str = None, act
     goal = (goal or '').strip()
     if not goal:
         return {"status": "error", "message": "Say what you want to get done."}
-    actor = (ctx.verified_member() or situations.parent_of_record()) if ctx else acting_member
+    actor = (ctx.actor() or ctx.verified_member() or situations.parent_of_record()) if ctx else acting_member
     if house or (spoken and not actor):
         actor = situations.parent_of_record()
     if not actor or not actor.get('id'):
@@ -4884,6 +4932,7 @@ def get_available_tools() -> List[Dict]:
             }
         },
         _flat_tool("get_travel_time"),
+        _flat_tool("get_weather"),
         _flat_tool("find_in_chauffeur"),
         _flat_tool("list_projects"),
         _flat_tool("get_project"),
@@ -5296,13 +5345,13 @@ def get_available_tools() -> List[Dict]:
         },
         {
             "name": "house",
-            "description": "Reads any Home Assistant device and controls devices exposed to Assist (or unexposed devices when the household allows it); locks, alarms and garage doors need a parent or adult. Actions: find, read, history, act, app, locate. A category word (locks, doors, windows, lights, cameras, motion, thermostats, fans, smoke, leaks, batteries) returns 'categories': EVERY such entity in the house (a room or device word narrows it) with a 'tally' by state and a 'message' the tool computed; answer 'are all the doors locked' from that message, and never say yes while it lists anything unlocked, open or unavailable. A device is many entities (a Powerwall is fifty sensors, a car is thirty): find and read return 'devices', each with its make, model and kind (car, tv) and listing EVERY entity on the HA device with state, unit and device_class; a device is found by any of its names, its maker or its model ('mercedes' and 'gls' both find the VIN-named car; 'car' finds every car), and when 'devices' holds more than one, answer for each or ask which, never for the first alone; answer from the row that fits the question (battery level = device_class battery or unit %, not the first candidate); a binary sensor's state is already the word HA shows (a lock sensor reads unlocked or locked, a door open or closed), so answer with that word and never reinterpret raw_state, and when no row fits say what the device does report. read with a query naming a device returns that whole device. To open an app on an Android TV ('put Netflix on in the office', 'open YouTube on the living room TV') use action=app with query naming the TV or its room and app as the person said it (Netflix, Disney plus, prime); the TV's own app list rides find results as 'apps'. ha_area is the room in HA's registry an entity is assigned to (or, when ha_area_inferred is true, the room its name starts with), never where a mobile thing (car, phone, person) is. For 'where is X' use action=locate; it also finds people by name or alias (Chauffeur family members and HA person entities). A child who keeps location private is only visible to a parent. You MUST call find first when you do not already hold an entity id, before read or act. Services include turn_on, turn_off, toggle, open_cover, set_temperature or light.turn_on; service domains must match the device.",
+            "description": "Reads any Home Assistant device and controls devices exposed to Assist (or unexposed devices when the household allows it); locks, alarms and garage doors need a parent or adult. Actions: find, read, history, act, app, locate. A category word (locks, doors, windows, lights, cameras, motion, thermostats, fans, smoke, leaks, batteries) returns 'categories': EVERY such entity in the house (a room or device word narrows it) with a 'tally' by state and a 'message' the tool computed; answer 'are all the doors locked' from that message, and never say yes while it lists anything unlocked, open or unavailable. A device is many entities (a Powerwall is fifty sensors, a car is thirty): find and read return 'devices', each with its make, model and kind (car, tv) and listing EVERY entity on the HA device with state, unit and device_class; a device is found by any of its names, its maker or its model ('mercedes' and 'gls' both find the VIN-named car; 'car' finds every car), and when 'devices' holds more than one, answer for each or ask which, never for the first alone; answer from the row that fits the question (battery level = device_class battery or unit %, not the first candidate); a binary sensor's state is already the word HA shows (a lock sensor reads unlocked or locked, a door open or closed), so answer with that word and never reinterpret raw_state, and when no row fits say what the device does report. read with a query naming a device returns that whole device. To open an app on an Android TV or Apple TV ('put Netflix on in the office', 'open YouTube on the living room TV') use action=app with query naming the TV or its room and app as the person said it (Netflix, Disney plus, prime); the TV's own app list rides find results as 'apps'. ha_area is the room in HA's registry an entity is assigned to (or, when ha_area_inferred is true, the room its name starts with), never where a mobile thing (car, phone, person) is. For 'where is X' use action=locate; it also finds people by name or alias (Chauffeur family members and HA person entities). A child who keeps location private is only visible to a parent. You MUST call find first when you do not already hold an entity id, before read or act. Services include turn_on, turn_off, toggle, open_cover, set_temperature or light.turn_on; service domains must match the device.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "enum": ["find", "read", "history", "act", "app", "locate"]},
                     "query": {"type": "string", "description": "Device name, alias or room; required for find. For app: the TV or its room."},
-                    "app": {"type": "string", "description": "For app: the app as the person said it (Netflix, YouTube, Disney plus) or an Android package id."},
+                    "app": {"type": "string", "description": "For app: the app as the person said it (Netflix, YouTube, Disney plus) or an Android package id. Apple TVs launch only names from their listed apps."},
                     "entity_id": {"type": "string", "description": "An entity id returned by find."},
                     "domain": {"type": "string", "description": "Optional domain filter, e.g. light."},
                     "service": {"type": "string", "description": "For act: HA service, e.g. turn_off or light.turn_on."},
@@ -7536,6 +7585,11 @@ class GetHouseholdStatusTool(BaseModel):
     """
     target_date: Optional[str] = Field(None, description="Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD.")
 
+class GetWeatherTool(BaseModel):
+    """The weather forecast for today and the coming days (up to 10) from Home Assistant: 'what's the weather this week', 'will it rain Saturday'."""
+    days: int = Field(7, description="How many forecast days, clamped to 1..10.")
+
+
 class GetTravelTimeTool(BaseModel):
     """Looks up a typical drive without live traffic, for places not on the
     schedule. A scheduled drive's departure is the leave_label returned by
@@ -7680,6 +7734,7 @@ TOOL_SCHEMAS = {
     "add_occasion_gift_list": AddOccasionGiftListTool.model_json_schema(),
 
     "get_travel_time": GetTravelTimeTool.model_json_schema(),
+    "get_weather": GetWeatherTool.model_json_schema(),
     "start_drive": StartDriveTool.model_json_schema(),
     "update_drive_status": UpdateDriveStatusTool.model_json_schema(),
     "get_current_state": GetCurrentStateTool.model_json_schema(),
@@ -9496,6 +9551,10 @@ def handle_create_thread(args: dict, actor=None, focus_key=None) -> dict:
                          acting_member=actor, idem=args.get('idem'), project_id=args.get('project_id'), focus_key=focus_key)
 
 
+def handle_get_weather(args: dict) -> dict:
+    return get_weather(days=args.get('days', 7))
+
+
 def handle_get_travel_time(args: dict) -> dict:
     return get_travel_time(origin=args.get("origin") or '',
                            destination=args.get("destination") or '')
@@ -9882,6 +9941,7 @@ TOOL_HANDLERS = {
     "log_program_session": handle_log_program_session,
     "propose_program": handle_propose_program,
     "get_travel_time": handle_get_travel_time,
+    "get_weather": handle_get_weather,
     "start_drive": handle_start_drive,
     "update_drive_status": handle_update_drive_status,
     "get_current_state": handle_get_current_state,

@@ -164,6 +164,14 @@ ENTRIES: List[dict] = [
        'How much room each tile gets on its board, in columns and rows. Set on '
        'the tile itself, or by dragging its corner in Arrange.',
        page='home', anchor='board-settings', ui_marker='setSpan'),
+    _e('panel_talk_greeting', 'panel', 'Tap-to-talk greeting',
+       "What the room's speaker says when someone taps the mic on a wall panel's "
+       "Argyle chat, before it listens. Blank uses 'How can I help?'.",
+       page='config', anchor='boards'),
+    _e('panel_talk_glow', 'panel', 'Glow while the speaker listens',
+       "A soft rainbow glow around the wall panel's edges while its room's voice "
+       "satellite is in a conversation, started by a tap or a wake word.",
+       page='config', anchor='boards'),
     _e('panel_background', 'panel', 'Panel background',
        'The photograph the wall panel floats on. A web address, or just a '
        'phrase like "mountains at dusk" to have one found for you.',
@@ -687,7 +695,7 @@ ENTRIES: List[dict] = [
        'traffic stays on the free key.', page='work?tab=projects', anchor='missions-settings'),
     _e('model_pool_pro', 'missions', 'Pro model pool',
        'Comma-separated pro models missions may use '
-       '(default gemini-4-argon, gemini-3.1-pro-preview).', page='work?tab=projects', anchor='missions-settings'),
+       '(default gemini-4-carbon, gemini-4-argon, gemini-3.1-pro-preview).', page='work?tab=projects', anchor='missions-settings'),
     _e('mission_cap_launch', 'missions', 'Daily launch cap',
        'Missions that may be started per day (default 3).', page='work?tab=projects', anchor='missions-settings'),
     _e('mission_step_cap', 'missions', 'Steps per mission',

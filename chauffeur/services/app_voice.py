@@ -78,37 +78,20 @@ class Turn:
 
     def before_tool(self, name, args):
         self.check()  # immediately before dispatch; not only before the model call
-        from services.voice_tools import TOOLS, speech_safe
+        from services.voice_tools import TOOLS, row_checks_before
         self.tools.append(name)
         if name not in TOOLS or name == 'prepare_voice_approval':
             self.speech_safe = False
-        elif name in ('assign_driver_to_event_fuzzy', 'remove_override_for_event_fuzzy'):
-            from services.agent_tools_v2 import _find_event_fuzzy
-            row, error = _find_event_fuzzy(args.get('event_name') or '', args.get('target_date') or 'today')
-            if error or not row or not speech_safe(row):
-                self.speech_safe = False
-        elif name in ('get_shopping_list_items', 'add_shopping_items', 'check_off_shopping_item'):
-            from services.agent_tools_v2 import _resolve_shopping_list
-            from services import scope
-            row, error = _resolve_shopping_list(args.get('list_name') or '', self.member)
-            if error or not row or not scope.audience_allows(row, 'shopping_list', None) \
-                    or row.get('private') or row.get('sensitivity') == 'sensitive':
-                self.speech_safe = False
-        elif name in ('start_mission_for', 'find_in_chauffeur'):
-            self.speech_safe = False  # goal/focus/mission results can contain private details
+        elif not row_checks_before(name, args, self.member):
+            self.speech_safe = False
 
     def tool_result(self, result):
         if not isinstance(result, dict) or result.get('error') or result.get('status') not in ('success', 'ok'):
             self.speech_safe = False
-        if self.tools and self.tools[-1] == 'get_calendar_events' and isinstance(result, dict):
-            from services.voice_tools import speech_safe
-            from services import access
-            # Match the audible HOUSE projection, including hashed Busy ids.
-            sources = {r.get('id'): r for r in access.cached_schedule().get('events', [])}
-            for row in result.get('events', []):
-                source = sources.get(row.get('id'))
-                if not source or not speech_safe(source):
-                    self.speech_safe = False
+        from services.voice_tools import row_checks_after
+        # Digest row gating is satellite-only; retain the phone's existing policy.
+        if self.tools and not row_checks_after(self.tools[-1], result, check_drive_digest=False):
+            self.speech_safe = False
 
     def audible(self, result):
         return self.speech_safe and (bool(self.tools) or self.had_safe_history) \

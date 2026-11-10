@@ -9,6 +9,28 @@
 #}
 <div class="space-y-6 max-w-2xl">
     <div>
+        <label for="panel-talk-greeting" class="block text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
+            Tap-to-talk greeting
+        </label>
+        <input id="panel-talk-greeting" type="text" x-model="panel.panel_talk_greeting"
+            @change="savePanel()" placeholder="How can I help?" maxlength="200"
+            class="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-sm text-white">
+        <p class="text-xs text-gray-500 mt-1">
+            What the room's speaker says before listening. Blank uses "How can I help?".
+        </p>
+    </div>
+
+    <div>
+        <label class="flex items-center gap-2 text-sm text-gray-300">
+            <input id="panel-talk-glow-setting" type="checkbox" x-model="panel.panel_talk_glow" @change="savePanel()">
+            Glow while the speaker listens
+        </label>
+        <p class="text-xs text-gray-500 mt-1">
+            A soft rainbow glow around the wall panel's edges while its room's voice satellite is in a conversation, started by a tap or a wake word.
+        </p>
+    </div>
+
+    <div>
         <label class="flex items-center gap-2 text-sm text-gray-300">
             <input id="panel-house-home" type="checkbox" x-model="panel.panel_house_home" @change="savePanel()">
             Use The House as Home

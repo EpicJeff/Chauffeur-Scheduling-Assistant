@@ -1,6 +1,103 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.775 (2026-11-10).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.781 (2026-11-10).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.781 (2026-11-10, NOT device-verified): a rainbow glow around the wall panel while its room's satellite is in a conversation.**
+
+The user: "When the voice satellite associated with a wall panel is actively in a conversation, can we have an effect show on the panel like the dynamic Siri rainbow border?"
+
+- Any conversation on the panel's room satellite counts: a tap on the mic or a wake word from across the room. A soft flowing rainbow glow on all four edges (`#panel-talk-glow` in `components/control_center.html`, panel pages only): listening bright and flowing, thinking a slower shimmer, answering a gentle pulse; fades on idle; a static glow under prefers-reduced-motion; above the screensaver without waking it; never blocks a tap.
+- The panel asks `GET /api/panel/talk` once a second while the screen is visible (now also `glow`); the server shares one fresh Home Assistant read per satellite per 0.8 s across panels (`panel_talk._fresh_cache`), while a tap's busy check still reads HA itself.
+- Household switch `panel_talk_glow` (default on), Config › Boards › The wall panel.
+
+Tests: `tests/test_panel_glow.py`; `tests/test_panel_talk.py` updated for the `glow` field.
+
+**v2.499.780 (2026-11-10, NOT device-verified): the schedule is read aloud again; Argyle tells the weather; Argyle opens apps on an Apple TV.**
+
+From the first device run of tap-to-talk. The user: "I got a lot of 'That's private' responses even though it knew who I was and I was just asking for the schedule which should not be private by default."; "It also told me it had no tool to tell me the weather for the week which is silly."; "I was also told there is no tool to open an app on an Apple TV."
+
+Privacy follows the data (`services/voice_tools.py`):
+- Cause: v2.499.776 classified every read outside the old voice-only set PRIVATE, so the drive digest, run sheet, chores, dinners and routines were held behind "Read it out, or send it to your chat?".
+- Now shared household information is SPEAKABLE: schedule, drives, chores, routines, meals, lists, errands, trips, projects, points, goals, weather, web research.
+- PRIVATE: mail, family messages, threads and asks, requests, the Mind's insights and findings, wide searches, the raw admin state, gift-bearing occasion reads, a person's whereabouts (house locate, manage_car), and four reads that would speak calendar or program titles with no per-row check (assist coverage, day negotiation, programs list, program progress).
+- Per-row checks still hold a private or sensitive calendar event: `get_calendar_events` as before, and now the drive digest (its result carries the ids it speaks; household errands pass; an unknown id holds). The phone path is unchanged.
+
+Weather (`agent_tools_v2.get_weather`): the daily forecast from Home Assistant (`settings.weather_entity`, else the first weather entity), today onward, 1-10 days (default 7), one spoken line per day; offered to every voice, speakable; "I can't see a weather forecast right now." when HA has none. The weather board tile is the hand path.
+
+Apple TV apps (`services/house.open_app`): an Apple TV is a `media_player` from the `apple_tv` platform with an app list (`source_list`); HomePods are not TVs. "Put ESPN on the living room Apple TV" matches the spoken app to a name the TV lists (known nicknames too: HBO Max to Max), wakes the TV when off, and calls `media_player.select_source`; the same exposure check and control rulebook apply before anything is sent, and the TV is read back. Android TVs behave as before; a room with both kinds asks which TV unless the name is exact.
+
+Tests: `tests/test_voice_privacy_weather.py`, `tests/test_house_apple_tv.py`, `tests/test_house_apple_tv_edges.py`; `test_voice_private_answers.py` updated to the ruling.
+
+Device steps: rebuild; at the panel or a satellite ask "what's next on the schedule today" (answered aloud), "what's the weather this week", and "open Disney Plus on the living room Apple TV".
+
+**v2.499.779 (2026-11-10, NOT device-verified): Gemini 4 Carbon leads the pro model pool.**
+
+The user: "gemini 4 carbon is available now. It is the top model." `model_pools.DEFAULT_POOLS['pro']` is now `gemini-4-carbon`, `gemini-4-argon`, `gemini-3.1-pro-preview` (missions and the house twin's reads; everyday Argyle stays on the free flash/lite pools). The id `gemini-4-carbon` comes from Google's AI Studio developer guide; if the API answers 404 the model cools for 6 hours and the pool falls through to Argon. A household that saved its own `model_pool_pro` keeps it. No price is listed for Carbon yet, so the twin cost guard charges it at the highest known rate. Tests: `tests/test_missions_pools.py`, `tests/test_model_pool_providers.py`.
+
+**v2.499.778 (2026-11-10, NOT device-verified): the family chooses what the speaker says when someone taps to talk.**
+
+The user: '"Yes?" isn't the best. At the very least it should be something like "How can I help?", but I would make it something a family can configure any way they want.'
+
+- `settings.panel_talk_greeting` (household-wide, default "How can I help?"), declared in `settings_registry` and edited in Config › Boards › The wall panel (`components/panel_settings.html`).
+- `panel_talk.start` sends it as `start_message`, trimmed and capped at 200 characters; blank falls back to the default because Home Assistant refuses a start with no message (the v2.499.777 spike).
+- Saving it goes through `/api/settings` like the other wall-panel settings (which today also marks schedules for a rebuild; the opt-in rebuild fix is separate).
+
+Tests: `tests/test_panel_talk_greeting.py`.
+
+Device step: Config › Boards › The wall panel › Tap-to-talk greeting; tap the panel's mic and the room's speaker says it.
+
+**v2.499.777 (2026-11-10, NOT device-verified): tap to talk on a wall panel, through the room's voice satellite.**
+
+Spec: `docs/superpowers/specs/2026-11-10-voice-acts-and-panel-talk-design.md` (piece 2 of 2; piece 1 is v2.499.776). Plan: `docs/superpowers/plans/2026-11-10-voice-acts-and-panel-talk.md`, Tasks 4-6, rulings in the SDD ledger. Claude wrote every test first, Codex built the code, every task, every fix round and a whole-branch review were Claude-reviewed.
+
+Why: a wall TV or monitor has no microphone, kids forget the name "Argyle", and some people feel silly saying a wake word. Standing at the panel, a tap is enough; the wake word stays for across the room.
+
+A panel's room (`services/panel_talk.py`, `services/storage.set_device_room`):
+- A panel's row in Config › Trusted devices (parents only) has a Room picker (HA areas) and a Satellite picker (Automatic, or a satellite Chauffeur knows). Routes `GET /api/account/devices/rooms`, `POST /api/account/devices/{id}/room`. A panel has no settings drawer of its own, so this is the one place.
+- The room's satellite: a still-usable override, else the area's announce pin when it is a satellite, else the first usable `assist_satellite` in the area.
+- The device list now loads at once and the room lookup after it, so Revoke never waits on Home Assistant. `GET /api/account/devices` no longer sends any panel's device token to the browser (nothing read it).
+
+The button (`templates/components/control_center.html`, `GET`/`POST /api/panel/talk`):
+- The Ask Argyle orb stays the only way into Argyle on a panel; the open chat box has a plain mic button beside send (the user: no speaker name, no second orb). It shows only when the panel's room has a usable satellite.
+- A tap calls `assist_satellite.start_conversation` with `start_message: 'Yes?'` and the preannounce chime. A live test on the Office Voice PE (2026-11-10) found HA refuses a start with no message (400); with "Yes?" the satellite chimed, asked, heard "What time is it?" and Argyle answered.
+- From then on it is an ordinary satellite conversation: voice recognition, the HA control grid, v2.499.776's actor and private-answer rules, conversation mode and goodbye. The panel adds no identity of its own.
+- The button follows the satellite's live state (read fresh from HA, never the 5 s cache): Listening, Thinking, Answering, back to idle; the first two polls ignore "idle" while the satellite starts. A tap while the satellite is busy is refused (409); one start per panel per 5 s; "The Kitchen speaker is offline." when HA cannot start it.
+- Panel-only: `/api/panel/talk` needs the panel's paired device token (a member session gets 403); `nav.html` keeps that token on this URL during a house session.
+
+Tests: `tests/test_panel_room.py`, `tests/test_panel_talk.py` (server + node scenarios of the page).
+
+Device steps: rebuild the add-on. Config › Trusted devices: give the kitchen panel its room (leave Satellite on Automatic). On the panel, tap the Ask Argyle orb, then the mic: the room's Voice PE says "Yes?"; ask something; watch the button go Listening, Thinking, Answering, idle.
+
+**v2.499.776 (2026-11-10, NOT device-verified): a voice Argyle recognises acts as that person; a goodbye ends it; private answers wait for "read it" or "send it".**
+
+Spec: `docs/superpowers/specs/2026-11-10-voice-acts-and-panel-talk-design.md` (piece 1 of 2; piece 2, panel tap-to-talk, follows). Plan: `docs/superpowers/plans/2026-11-10-voice-acts-and-panel-talk.md`, Tasks 1-3, rulings in the SDD ledger. Claude wrote every test first, Codex built the code, every task, every fix round and a whole-branch review were Claude-reviewed.
+
+Why: the user, 2026-11-10: "If you are recognized by voice, you should be able to do whatever you can do in chat on your phone. That is the point of recognition." Before this, a recognised voice was only a lens for questions; writes ran on the household's behalf (`parent_of_record`, "Household voice:" messages) and most changes said "That needs your phone."
+
+Who acts (`VoiceContext.actor()`, `services/voice_identity.py`):
+- A voice recognised on THIS turn (a fingerprint match, a continuation of the PIN speaker's anchor, or a short reply inside the same conversation), with Argyle chat scope. A PIN-verified session also needs that per-turn evidence; without it the turn keeps the verified household rail exactly as before (the PIN holder as principal and sender, provenance `member`).
+- Never a claimed name ("It's Jeff"), never an uncertain long sample, never a short first turn of a new conversation.
+- A fingerprint is never proof: `proven` stays `level == 'verified'`, so booking approvals and HA kinds with "Require authentication" still ask for the PIN.
+
+What the actor gets (`services/agent_router.py`):
+- The tools, role prompt and dispatch that person's Argyle DM on the phone gets (the same builder, not a copy), plus the household voice mutations (drivers, shopping) done directly as them: recognised never means less than a stranger.
+- Writes are recorded as the member with `via: 'voice'`; messages come from them with no prefix; device control, music and memory reach Config › Voice identity's action history.
+- A card (a proposal, a request) is posted with the reply into their Argyle DM, bound to it, and the speech ends "I've put that in your Argyle chat."
+
+Conversations and goodbye (`services/voice_conversation.py`, `voice_fingerprint.apply`):
+- A conversation ends when the answer HA is sent closes the mic (any path, intercepts included) or 30 s pass between turns. Short replies (under 1.2 s, or no audio) inherit the recognised speaker only inside one conversation; HA's own conversation_id is not the boundary (ESPHome keeps it ~5 minutes).
+- A sign-off ("thanks, that's all", "bye") still gets Argyle's answer, closes the mic and now ends the satellite's identity session (`voice_identity.end_session`).
+
+Private answers (`services/voice_private.py`):
+- Every agent tool is classified in `voice_tools.SPEAKABLE` or `voice_tools.PRIVATE` (a test fails on an unclassified tool; unknown names count as private at runtime). Calling a private tool makes the turn private whatever it returns; a speakable tool's errors stay speakable ("Say your PIN first"); the phone's per-row checks (calendar, shopping, driver events) apply; a person's whereabouts (house locate) are private.
+- On a private actor turn Argyle holds the answer and asks "That's private. Read it out, or send it to your chat?" The same person's next turn decides ("read it", "out loud" / "send it", "chat", "don't read it"), one re-ask when unclear. Another voice, an unknown voice, a goodbye, a second unclear reply or 60 s post it to their DM ("Sent to your chat."). A held card is posted even on "read it". A failed DM post never breaks a turn; the answer stays queued and is retried.
+- The phone path (`app_voice.PhoneTurn`) is unchanged; its per-row checks moved verbatim into shared `voice_tools` helpers.
+
+Unrecognised voices are unchanged.
+
+Tests: `tests/test_voice_session_end.py`, `test_voice_actor.py`, `test_voice_private_answers.py`; `test_voice_identity.py` (the privileged-tool refusal is now the stranger's case). `tests/test_panel_room.py` is committed for piece 2 and skips until it is built.
+
+Device steps: rebuild the add-on. At a satellite with your voice set up: ask for something only your phone could do before ("add take out the bins to the house list", "cancel Ben's dentist on Friday"); ask "read me my latest email" and answer "read it" or "send it"; say "thanks, that's all", then a short "yes" in a new conversation should not be treated as you. A kid's recognised voice should get the kid's own rail.
 
 **v2.499.775 (2026-11-10, NOT device-verified): the house is one connected model, and the editor edits the house itself.**
 
@@ -1608,7 +1705,7 @@ Every Gemini call in the app routes through quota-bucket pools so same-ability m
 - **lite** — `gemini-3.5-flash-lite` (500/day), `gemini-3.1-flash-lite` (500/day), `gemini-2.5-flash-lite` (20/day tail) → ~1,020 fast requests/day.
 - **flash** — `gemini-3.8-flash`,`gemini-3.7-flash`,`gemini-3.6-flash`, `gemini-3-flash`, `gemini-2.5-flash` (20/day each) → ~100 quality requests/day. `gemini-3.5-flash` was retired by Google (notice 2026-10-09, v2.499.324): it is named in `model_pools.RETIRED_MODELS`, a test refuses any retired id in a pool default, and `migrate_retired_gemini_models_v2499324` moves a stored `llm_gemini_model` off it (the trip planner reads that setting directly, outside the pools). A `model_pool_flash` override set by hand is the household's own and is not rewritten.
 - **gemma** — `gemma-4-31b-it` plus the large Gemmas the key lists (discovered daily since v2.499.239; `gemma-4-26b-it` was here until Google withdrew it 2026-10-05), but 44-180s per call.
-- **pro** — `gemini-4-argon` first (Gemini 4 Argon, added 2026-10-19), then `gemini-3.1-pro-preview` as the fallback when Argon is on cooldown (paid key, mission-tier only; 2.5-pro is closed to new users, and preview ids are served on v1beta — all Gemini calls now use v1beta) → billed per call, no free-tier quota to combine.
+- **pro** — `gemini-4-carbon` first (the user, 2026-11-10), then `gemini-4-argon`, then `gemini-3.1-pro-preview` as cooldown fallbacks (paid key, mission-tier only; 2.5-pro is closed to new users, and preview ids are served on v1beta — all Gemini calls now use v1beta) → billed per call, no free-tier quota to combine.
 
 Tiers map work onto pool chains: **interactive** (chat widget, @argyle, PWA driver chat, HA voice, prep-kit suggest, refine button, v1 loop, conversation auto-naming) = lite → gemma — the user is waiting, and scarce flash is never burned on chat; **background** (email ingest, chat-suggestion classifier) = gemma → lite — nobody is waiting, burn the huge gemma quota first; **heavy** (massive trip generation incl. accommodations/flights/date suggestions, philosophy → rules, override-pattern analysis) = flash → lite → gemma — rare, quality-critical. A 429 puts the model on cooldown (until midnight Pacific when the error body names a per-day quota, else 2 min for per-minute limits; unknown-model 404s cool 6h and log loudly) so subsequent calls skip straight to a model with quota left — this is what makes pooling additive instead of retrying a dead model. `call_pool_json` walks up to 4 candidates per request; `pooled_or_direct` is the drop-in at provider-branched call sites (ollama keeps its single configured model, untouched by pools); `resolve_model(tier)` serves call sites with their own request code (v1 `agentic_chat_loop`, which feeds 429s back via `note_failure`). Pools are overridable without a code change via `model_pool_lite`/`model_pool_flash`/`model_pool_gemma` comma-separated settings keys (no UI). The `llm_gemini_model` setting now only affects the config-page connection test and ollama-parity defaults; the old `agent_primary_model`/`agent_fallback_model` keys are retired. Cooldown state is in-memory (resets on add-on restart — worst case one wasted 429 round-trip per model).
 

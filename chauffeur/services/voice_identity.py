@@ -68,6 +68,8 @@ def configure(enabled: bool, satellites: list, approvals_enabled: bool = False) 
                      'answer_speaker': speaker if speaker.startswith('media_player.') and len(speaker) <= 128 else ''})
     if enabled and not _revision():
         raise ValueError('Set an Argyle service token before enabling voice identity.')
+    from services import voice_private
+    voice_private.release_all()
     with _lock:
         storage.set_app_state('voice_identity_config', {'enabled': bool(enabled), 'satellites': rows,
                                                       'approvals_enabled': bool(approvals_enabled) and bool(enabled)})
@@ -115,10 +117,29 @@ class VoiceContext:
     def verified_member(self):
         return self.member() if self.level == 'verified' else None
 
+    def actor(self) -> dict | None:
+        """The person speaking, revalidated independently of PIN proof."""
+        from services import scope
+        if not self.recognized_this_turn:
+            return None
+        if self.level == 'verified':
+            member = self.verified_member()
+            return member if member and scope.can_see(member, 'chat.agent') else None
+        if self.level != 'named':
+            return None
+        with _lock:
+            row = _sessions.get((self.ha_instance_id, self.satellite_id))
+            if not row or row.get('level') != 'named' or not row.get('recognized'):
+                return None
+            member = self.member()
+            return member if member and scope.can_see(member, 'chat.agent') else None
+
     def provenance(self):
-        member = self.verified_member()
+        actor = self.actor()
+        member = actor or self.verified_member()
         return {'actor_kind': 'member' if member else 'household_voice',
                 'actor_member_id': member['id'] if member else None,
+                **({'via': 'voice'} if actor else {}),
                 'ha_instance_id': self.ha_instance_id, 'satellite_id': self.satellite_id,
                 'request_id': self.request_id}
 
@@ -159,6 +180,17 @@ def _new_session(device=None):
     return {'generation': uuid.uuid4().hex, 'level': 'unknown', 'member_id': None,
             'expires_at': time.time() + SESSION_SECONDS, 'device_id': device,
             'role': None, 'pin_revision': None, 'pin_pending': False, 'name_pending': False}
+
+
+def end_session(ha_instance_id, satellite_id) -> None:
+    """End this satellite's identity while allowing recognition next time."""
+    from services import voice_private
+    voice_private.expire(ha_instance_id, satellite_id)
+    with _lock:
+        key = (ha_instance_id, satellite_id)
+        row = _sessions.get(key)
+        if row is not None:
+            _sessions[key] = _new_session(row.get('device_id'))
 
 
 def voice_names(member):

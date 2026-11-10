@@ -10,9 +10,9 @@ of 2026-08-30):
          (3.5-flash retired by Google 2026-10-09; see RETIRED_MODELS).
 - gemma: gemma-4-31b-it (14,400) + whatever large Gemma the key lists (discovered daily), but
          44-180s per call measured on the free API (2026-07-30).
-- pro:   gemini-4-argon, then gemini-3.1-pro-preview (paid key only, mission
-         tier exclusive; Argon added 2026-10-19, the 3.1 preview stays as the
-         fallback when Argon is on cooldown).
+- pro:   gemini-4-carbon, then gemini-4-argon, then gemini-3.1-pro-preview
+         (paid key only, mission tier exclusive; Carbon leads per the user,
+         2026-11-10; cooldowns fall through to the next model).
 
 Tiers map a class of work onto an ordered chain of pools:
 
@@ -67,11 +67,13 @@ DEFAULT_POOLS = {
     # model list once a day (refresh_gemma_models). gemma-4-26b-it was a
     # working default until Google withdrew it (404 on device, 2026-10-05).
     'gemma': ["gemma-4-31b-it", "gemma-3-27b-it"],
-    # Gemini 4 Argon (stable id gemini-4-argon, 2026-10-19) leads; the 3.1
-    # preview stays as the fallback. gemini-2.5-pro is closed to new users;
+    # Carbon leads (the user, 2026-11-10); if the id is wrong, the call gets
+    # a 404, which cools that model for 6 hours and falls through to Argon.
+    # The 3.1 preview stays as the final fallback. gemini-2.5-pro is closed
+    # to new users;
     # the live 3.1 id is the -preview one (device-verified error text,
     # 2026-09-06). Served via v1beta only.
-    'pro': ["gemini-4-argon", "gemini-3.1-pro-preview"],
+    'pro': ["gemini-4-carbon", "gemini-4-argon", "gemini-3.1-pro-preview"],
     # Browse missions (services/browse.py): Gemini Computer Use on flash,
     # billed on the paid key like the pro pool. One model; no free fallback.
     'cu': ["gemini-3.8-flash"],

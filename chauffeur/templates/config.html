@@ -1115,6 +1115,37 @@
                                             <span x-show="d.last_seen"> · last used
                                                 <span x-text="new Date(d.last_seen * 1000).toLocaleDateString()"></span></span>
                                         </div>
+                                        <template x-if="d.kind === 'panel'">
+                                            <div class="mt-2 space-y-2">
+                                                <template x-if="deviceRoomsAvailable">
+                                                    <div class="flex gap-2 flex-wrap">
+                                                        <label class="flex items-center gap-2 text-xs">
+                                                            <span class="whitespace-nowrap">Room</span>
+                                                            <select data-device-room x-model="d.area_id" @change="saveDeviceRoom(d)"
+                                                                    :disabled="!!deviceRoomBusy[d.device_id]"
+                                                                    class="bg-gray-800 border border-gray-600 rounded p-2 text-xs">
+                                                                <option value="" :selected="!d.area_id">None</option>
+                                                                <template x-for="a in deviceRooms.areas" :key="a.id">
+                                                                    <option :value="a.id" :selected="a.id === d.area_id" x-text="a.name"></option>
+                                                                </template>
+                                                            </select>
+                                                        </label>
+                                                        <label class="flex items-center gap-2 text-xs">
+                                                            <span class="whitespace-nowrap">Satellite</span>
+                                                            <select data-device-satellite x-model="d.satellite_id" @change="saveDeviceRoom(d)"
+                                                                    :disabled="!!deviceRoomBusy[d.device_id]"
+                                                                    class="bg-gray-800 border border-gray-600 rounded p-2 text-xs">
+                                                                <option value="" :selected="!d.satellite_id">Automatic</option>
+                                                                <template x-for="s in deviceRooms.satellites" :key="s.id">
+                                                                    <option :value="s.id" :selected="s.id === d.satellite_id" x-text="s.name"></option>
+                                                                </template>
+                                                            </select>
+                                                        </label>
+                                                    </div>
+                                                </template>
+                                                <p x-show="!deviceRoomsAvailable" class="text-xs text-gray-500">Home Assistant is not connected</p>
+                                            </div>
+                                        </template>
                                     </div>
                                     <button type="button" @click="revokeDevice(d)"
                                         class="bg-red-900/60 hover:bg-red-800 px-3 py-1 rounded text-xs">Revoke</button>
@@ -2566,6 +2597,9 @@
                 // makes the toggle offer itself in the first place.
                 showArchivedMembers: false, archivedMemberCount: 0,
                 trustedDevices: [],                          // auth arc S5
+                deviceRooms: { areas: [], satellites: [] },
+                deviceRoomsAvailable: false,
+                deviceRoomBusy: {},
                 pairCode: '', pairLabel: '', pairFound: null,  // auth arc S6
                 serviceToken: '', serviceBusy: false,          // auth arc S7
                 // This panel owns these keys and POSTs only these keys — the
@@ -4321,8 +4355,42 @@
                 async loadDevices() {
                     try {
                         const r = await fetch('api/account/devices');
-                        this.trustedDevices = r.ok ? await r.json() : [];
-                    } catch (e) { this.trustedDevices = []; }
+                        if (!r.ok) throw new Error('Could not load trusted devices.');
+                        this.trustedDevices = (await r.json()).map(d => ({
+                            ...d, area_id: d.area_id || '', satellite_id: d.satellite_id || ''
+                        }));
+                    } catch (e) {
+                        showGlobalAlert('Could not load trusted devices.');
+                        return;
+                    }
+                    await this.loadDeviceRooms();
+                },
+
+                async loadDeviceRooms() {
+                    this.deviceRoomsAvailable = false;
+                    this.deviceRooms = { areas: [], satellites: [] };
+                    try {
+                        const r = await fetch('api/account/devices/rooms');
+                        if (!r.ok) throw new Error('Could not load panel rooms.');
+                        this.deviceRooms = await r.json();
+                        this.deviceRoomsAvailable = this.deviceRooms.areas.length > 0;
+                    } catch (e) { showGlobalAlert('Could not load panel rooms.'); }
+                },
+
+                async saveDeviceRoom(d) {
+                    this.deviceRoomBusy[d.device_id] = true;
+                    try {
+                        const r = await fetch(`api/account/devices/${encodeURIComponent(d.device_id)}/room`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({area_id: d.area_id || null, satellite_id: d.satellite_id || null})
+                        });
+                        const row = await r.json();
+                        if (!r.ok) throw new Error(row.detail || 'Could not save this panel\'s room.');
+                        Object.assign(d, row, {area_id: row.area_id || '', satellite_id: row.satellite_id || ''});
+                    } catch (e) {
+                        showGlobalAlert(e.message || 'Could not save this panel\'s room.');
+                        await this.loadDevices();
+                    } finally { this.deviceRoomBusy[d.device_id] = false; }
                 },
 
                 async revokeDevice(d) {

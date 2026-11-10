@@ -1,3 +1,51 @@
+{% if request.query_params.get('panel') == 'true' %}
+<style>
+    /* Above panel_skin's screensaver (300), without intercepting its wake tap.
+       Two soft edge masks leave the board's middle completely transparent. */
+    #panel-talk-glow {
+        position: fixed;
+        inset: 0;
+        z-index: 301;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 650ms ease;
+        background: linear-gradient(115deg, #ff80ab, #c084fc, #818cf8, #67e8f9,
+            #86efac, #fde68a, #fb923c, #ff80ab, #c084fc, #818cf8);
+        background-size: 300% 300%;
+        --glow-edge: clamp(20px, 4vmin, 44px);
+        -webkit-mask-image: linear-gradient(to right, #000, transparent var(--glow-edge),
+            transparent calc(100% - var(--glow-edge)), #000),
+            linear-gradient(to bottom, #000, transparent var(--glow-edge),
+            transparent calc(100% - var(--glow-edge)), #000);
+        mask-image: linear-gradient(to right, #000, transparent var(--glow-edge),
+            transparent calc(100% - var(--glow-edge)), #000),
+            linear-gradient(to bottom, #000, transparent var(--glow-edge),
+            transparent calc(100% - var(--glow-edge)), #000);
+    }
+    /* Keep the layer painted at zero opacity so 'hidden' can fade out. */
+    #panel-talk-glow.hidden { display: block; opacity: 0; }
+    #panel-talk-glow:not(.hidden) { opacity: .85; }
+    #panel-talk-glow.glow-listening { animation: panel-glow-flow 6s ease-in-out infinite; }
+    #panel-talk-glow.glow-processing { animation: panel-glow-flow 14s ease-in-out infinite; }
+    #panel-talk-glow.glow-responding { animation: panel-glow-pulse 4s ease-in-out infinite; }
+    @keyframes panel-glow-flow {
+        0%, 100% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+    }
+    @keyframes panel-glow-pulse {
+        0%, 100% { filter: brightness(.75); }
+        50% { filter: brightness(1); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        #panel-talk-glow { animation: none; transition: none; }
+        #panel-talk-glow.glow-listening,
+        #panel-talk-glow.glow-processing,
+        #panel-talk-glow.glow-responding { animation: none; }
+    }
+</style>
+<div id="panel-talk-glow" class="hidden" aria-hidden="true"></div>
+{% endif %}
+
 <!-- OPERATIONS SIDEBAR -->
 <style>
     #operations-sidebar ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -524,6 +572,16 @@ function closeChatHelpModal() {
             style="scrollbar-width: none;"
             oninput="this.style.height = ''; this.style.height = this.scrollHeight + 'px'; const wrapper = this.parentElement; if(this.scrollHeight > 50) { wrapper.classList.remove('rounded-3xl'); wrapper.classList.add('rounded-2xl'); } else { wrapper.classList.add('rounded-3xl'); wrapper.classList.remove('rounded-2xl'); }"></textarea>
 
+        <!-- Talk through the panel room's satellite, when one is available. -->
+        <button type="button" id="chat-talk-btn" onclick="window.chfPanelTalk.start()"
+            aria-label="Talk to Argyle" title="Talk to Argyle"
+            class="hidden bg-indigo-600 hover:bg-indigo-500 text-white p-2 rounded-full transition-colors focus:outline-none flex items-center justify-center h-10 w-10 ml-2 flex-shrink-0">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="9" y="2" width="6" height="12" rx="3" stroke-width="2"></rect>
+                <path stroke-linecap="round" stroke-width="2" d="M5 10v2a7 7 0 0014 0v-2M12 19v3m-4 0h8"></path>
+            </svg>
+        </button>
+
         <!-- Submit Button -->
         <button type="button" id="chat-submit-btn" onclick="submitChat(event)"
             class="bg-indigo-600 hover:bg-indigo-500 text-white p-2 rounded-full transition-colors focus:outline-none flex items-center justify-center h-10 w-10 ml-2 flex-shrink-0">
@@ -589,6 +647,173 @@ function closeChatHelpModal() {
         if (window.ResizeObserver) new ResizeObserver(measure).observe(bar);
         window.addEventListener('resize', measure);
         window.addEventListener('load', measure);
+    })();
+</script>
+
+<script>
+    (function () {
+        if (new URLSearchParams(window.location.search).get('panel') !== 'true') return;
+        const states = ['listening', 'processing', 'responding'];
+        let running = false;
+        let timer = null;
+        let polling = false;
+        window.chfPanelGlow = { tick, start };
+
+        function render(state) {
+            const glow = document.getElementById('panel-talk-glow');
+            if (!glow) return;
+            states.forEach(value => glow.classList.toggle('glow-' + value, state === value));
+            glow.classList.toggle('hidden', !states.includes(state));
+        }
+
+        async function tick() {
+            try {
+                const headers = {};
+                try {
+                    const token = localStorage.getItem('chauffeur_device_token');
+                    if (token) headers['X-Device-Token'] = token;
+                } catch (e) {}
+                const base = window.chfBase !== undefined ? window.chfBase : '';
+                const response = await fetch(base + 'api/panel/talk', { headers });
+                if (!response.ok) throw new Error('Panel status unavailable');
+                const data = await response.json();
+                render(data.available && data.glow ? data.state : null);
+                return data.available !== false;
+            } catch (e) {
+                render(null);
+                return true; // A dropped poll is quiet and retried next second.
+            }
+        }
+
+        function schedule() {
+            if (running && !polling && timer === null && document.visibilityState !== 'hidden') {
+                timer = setTimeout(loop, 1000);
+            }
+        }
+
+        async function loop() {
+            timer = null;
+            if (!running || document.visibilityState === 'hidden') return;
+            polling = true;
+            const keepGoing = await tick();
+            polling = false;
+            if (!keepGoing) running = false;
+            schedule();
+        }
+
+        function start() {
+            running = true;
+            schedule();
+        }
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                clearTimeout(timer);
+                timer = null;
+            } else {
+                schedule();
+            }
+        });
+        document.addEventListener('DOMContentLoaded', start);
+    })();
+</script>
+
+<script>
+    (function () {
+        let busy = false;
+        let turn = 0;
+        let pollTimer = null;
+        let stopTimer = null;
+        let polls = 0;
+        const talk = window.chfPanelTalk = { check, start, state: 'idle' };
+        const buttons = () => ['chat-talk-btn'].map(id => document.getElementById(id)).filter(Boolean);
+        const base = () => window.chfBase !== undefined ? window.chfBase : '';
+
+        function render(state) {
+            talk.state = state;
+            const label = { listening: 'Listening', processing: 'Thinking', responding: 'Answering' }[state] || 'Talk to Argyle';
+            buttons().forEach(button => {
+                button.setAttribute('aria-label', label);
+                button.setAttribute('title', label);
+                button.setAttribute('aria-busy', String(busy));
+                button.disabled = busy;
+            });
+        }
+
+        function idle() {
+            ++turn; // Ignore responses from a turn that has ended or timed out.
+            clearTimeout(pollTimer);
+            clearTimeout(stopTimer);
+            busy = false;
+            render('idle');
+        }
+
+        async function request(method) {
+            const headers = {};
+            try {
+                const token = localStorage.getItem('chauffeur_device_token');
+                if (token) headers['X-Device-Token'] = token;
+            } catch (e) {}
+            const response = await fetch(base() + 'api/panel/talk', { method, headers });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.message || 'Could not reach the room speaker.');
+            return data;
+        }
+
+        async function check() {
+            let available = false;
+            try { available = (await request('GET')).available === true; } catch (e) {}
+            buttons().forEach(button => button.classList.toggle('hidden', !available));
+            if (!available && busy) idle();
+            if (available && window.chfPanelGlow) window.chfPanelGlow.start();
+            return available;
+        }
+
+        async function poll(current) {
+            try {
+                const data = await request('GET');
+                if (turn !== current) return;
+                ++polls;
+                if (data.available && data.state === 'idle' && polls <= 2) {
+                    pollTimer = setTimeout(() => poll(current), 1000);
+                    return;
+                }
+                if (!data.available || !['listening', 'processing', 'responding'].includes(data.state)) {
+                    idle();
+                    return;
+                }
+                render(data.state);
+                pollTimer = setTimeout(() => poll(current), 1000);
+            } catch (e) {
+                if (turn !== current) return;
+                idle();
+                showGlobalAlert(e.message || 'Could not reach the room speaker.');
+            }
+        }
+
+        async function start() {
+            if (busy) return;
+            busy = true;
+            const current = ++turn;
+            render('idle');
+            stopTimer = setTimeout(idle, 120000);
+            try {
+                await request('POST');
+                if (turn !== current) return;
+                polls = 0;
+                render('listening');
+                pollTimer = setTimeout(() => poll(current), 1000);
+            } catch (e) {
+                if (turn !== current) return;
+                idle();
+                showGlobalAlert(e.message || 'Could not reach the room speaker.');
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            check();
+            setInterval(check, 5 * 60 * 1000);
+        });
     })();
 </script>
 
