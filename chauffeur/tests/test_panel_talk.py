@@ -26,7 +26,15 @@ Page, templates/components/control_center.html, window.chfPanelTalk:
   start() -> Promise: POST the same URL; on a refusal showGlobalAlert(message);
        on success state 'listening', then GET once a second (at most 120 s) and
        follow the satellite: listening / processing / responding, back to
-       'idle' when HA says idle. window.chfPanelTalk.state holds it.
+       'idle' when HA says idle. window.chfPanelTalk.state holds it. The first
+       two polls after the POST ignore 'idle' (HA can answer before the
+       satellite flips).
+
+Branch review (2026-11-10): the satellite's state is read FRESH
+(ha_api.get_state_fresh: GET /api/states/<entity_id>, no cache), never from the
+5 s states cache, by both GET and POST; POST refuses with 409 while the satellite
+is listening / processing / responding; the HA call gets timeout >= 15 s (HA
+holds it open while the start message plays).
   nav.html keeps the panel's X-Device-Token on api/panel/talk during a house
   session (chfIsControlUrl), like the HA control URLs.
 
@@ -68,6 +76,8 @@ class PanelTalkServer(unittest.TestCase):
         self.states = {KITCHEN_SAT: 'idle', 'media_player.kitchen_sonos': 'idle', 'media_player.hall': 'idle'}
         self.ha = True
         self.calls = []
+        self.timeouts = []
+        self.fresh = {}                     # entity -> state HA reports right now
         self.call_result = {}
         base = dict(storage.get_settings() or {})
         p = patch.object(storage, 'get_settings', side_effect=lambda: {**base, 'auth_enforce': True})
@@ -78,7 +88,15 @@ class PanelTalkServer(unittest.TestCase):
 
         def call_service(domain, service, data=None, return_response=False, timeout=None, **kw):
             self.calls.append((domain, service, dict(data or {})))
+            self.timeouts.append(timeout)
             return self.call_result
+
+        def fresh(eid):
+            if not self.ha or eid not in self.states:
+                return None
+            return {'entity_id': eid, 'state': self.fresh.get(eid, self.states[eid]), 'attributes': {}}
+        p = patch.object(ha_api, 'get_state_fresh', side_effect=fresh, create=True)
+        p.start(); self.addCleanup(p.stop)
         for name, value in (('is_available', lambda: self.ha),
                             ('get_area_map', lambda ttl=60: AREAS if self.ha else []),
                             ('get_states', states),
@@ -166,10 +184,43 @@ class PanelTalkServer(unittest.TestCase):
         self.assertEqual(r.status_code, 502)
         self.assertEqual(r.json()['message'], 'The Kitchen speaker is offline.')
 
+    def test_status_reads_fresh_state(self):
+        self.fresh[KITCHEN_SAT] = 'listening'          # the cache still says idle
+        self.assertEqual(self.get().json(), {'available': True, 'state': 'listening'})
+
+    def test_post_ignored_while_busy(self):
+        for busy in ('listening', 'processing', 'responding'):
+            self.fresh[KITCHEN_SAT] = busy
+            r = self.post()
+            self.assertEqual(r.status_code, 409, busy)
+            self.assertTrue(r.json().get('message'))
+        self.assertEqual(self.calls, [])
+
+    def test_post_uses_a_long_timeout(self):
+        self.assertEqual(self.post().status_code, 200)
+        self.assertGreaterEqual(self.timeouts[0] or 0, 15)
+
     def test_post_no_ha_409(self):
         self.ha = False
         self.assertEqual(self.post().status_code, 409)
         self.assertEqual(self.calls, [])
+
+
+class FreshState(unittest.TestCase):
+    def test_get_state_fresh_bypasses_the_cache(self):
+        seen = []
+
+        def request(method, path, json_body=None, params=None, timeout=None):
+            seen.append((method, path))
+            return {'entity_id': 'assist_satellite.x', 'state': 'listening'}
+        with patch.object(ha_api, '_request', side_effect=request):
+            self.assertEqual(ha_api.get_state_fresh('assist_satellite.x')['state'], 'listening')
+            ha_api.get_state_fresh('assist_satellite.x')
+        self.assertEqual(seen, [('GET', '/states/assist_satellite.x')] * 2)
+
+    def test_get_state_fresh_none_on_failure(self):
+        with patch.object(ha_api, '_request', return_value=None):
+            self.assertIsNone(ha_api.get_state_fresh('assist_satellite.x'))
 
 
 TALK_SCENARIO_ROUTES = 'api/panel/talk'
@@ -225,6 +276,16 @@ class PanelTalkPage(unittest.TestCase):
         self.assertEqual((out['s1'], out['s2'], out['s3']), ('processing', 'responding', 'idle'))
         polls = len(calls)
         self.assertLessEqual(polls, 4, 'polling stops once the satellite is idle')
+
+    def test_idle_right_after_start_is_not_the_end(self):
+        out = self.run_page("""
+            await window.chfPanelTalk.start();
+            await advance(1000); out.s1 = window.chfPanelTalk.state;
+            await advance(1000); out.s2 = window.chfPanelTalk.state;
+            await advance(1000); out.s3 = window.chfPanelTalk.state;
+        """, [[TALK_SCENARIO_ROUTES, [js.ok({'ok': True}), js.ok({'available': True, 'state': 'idle'})]]],
+            fakeTimers=True)
+        self.assertEqual((out['s1'], out['s2'], out['s3']), ('listening', 'listening', 'idle'))
 
     def test_polling_stops_after_two_minutes(self):
         out = self.run_page("""
