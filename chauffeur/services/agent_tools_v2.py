@@ -7625,20 +7625,29 @@ class HouseDesignTool(BaseModel):
     action: Literal['status', 'edit', 'accept', 'reread', 'describe',
                     'add_building', 'set_building', 'remove_building']
     edit: Optional[dict] = Field(None, description=(
-        "One twin_edit operation: set (piece, field, value), move (piece, by [dx,dy]), "
-        "rotate (building, to), delete (piece), accept (pieces), add_wall (level, from, to), "
-        "add_opening (wall, kind, at, width), or registration (source, page, level, reg). "
-        "Connected edits also accept move_joint (move a corner), move_wall, move_room, "
-        "split_wall, draw_room, split_room, move_hosted (slide or rehost a piece), "
-        "resize_opening, add_anchor (place a device point), add_item (place a library asset), "
-        "draw_roof (area), roof_over (rooms or null for the top floor), set_roof_edge, "
-        "move_roof_edge (positive by grows the roof; detach clears its wall attachment), "
-        "add_dormer, move_dormer, add_level, move_building (to lot coordinates), "
-        "rotate_building (rotation, optional about in lot feet), set (id, field, value), "
-        "set_material (target surface and material or null to clear), accept_proposal, "
-        "dismiss_proposal, move_site_item, delete_site_item, add_site_item. "
-        "Lengths and coordinates are feet; rotation is degrees; pitch is rise in 12. "
-        "An optional building id disambiguates pieces."))
+        "One op object; ? means optional. Feet, degrees, pitch in 12. Include building id for connected edits. "
+        "set (id or legacy piece, field, value); move (piece, by:[dx,dy]); rotate (building, to); "
+        "delete (id or legacy piece); accept (pieces); registration (source, page, level, reg); "
+        "move_joint (joint, to:[x,y]); move_wall (wall, by:distance); move_room (room, by:[dx,dy]); "
+        "split_wall (wall, at); add_wall (level, from:[x,y], to:[x,y], kind?, exterior?); "
+        "draw_room (level, polygon:[[x,y],...], name?); split_room (room, from:[x,y], to:[x,y]); "
+        "add_opening (wall, kind, at, width?=3, sill?, head?); "
+        "move_hosted (id, host?, at?, z?, offset?); resize_opening (id, width?, sill?, head?, at?); "
+        "add_anchor (kind, host); add_item (asset, host, rotation?, scale?); "
+        "host is {wall, side, at, z} with side left|right, {floor: room, u, v}, or {ceiling: room, u, v}; "
+        "u,v are room fractions 0..1. "
+        "draw_roof (area:rectilinear [[x,y],...], plate?, pitch?=6, overhang?=1); "
+        "roof_over (rooms:[ids] or null for top floor); set_roof_edge (roof, edge, setting:sloped|gable|clip, pitch?, clip?); "
+        "move_roof_edge (roof, edge, by, detach? clears wall attachment), positive by grows roof; "
+        "add_dormer (roof, edge, at, width, pitch); move_dormer (id, at?, width?); "
+        "edge is a 0-based area index, at is feet from that edge's first point. "
+        "add_level (name, elevation, ceiling); move_building (to:[x,y] in lot feet); "
+        "rotate_building (rotation, about?:[x,y] in lot feet); "
+        "set_material (target:{wall, side}|{room, surface:floor|ceiling|walls}|{roof}|{level, role}|{building, role}, "
+        "material:{id, color} or null clears override); "
+        "accept_proposal (id:'<piece>:proposal'); dismiss_proposal (id:'<piece>:proposal'); "
+        "move_site_item (list, index, at:[x,y]); delete_site_item (list, index); add_site_item (list, asset, at:[x,y]); "
+        "site list is planting|furniture, index is 0-based."))
     step: Optional[str] = Field(None, description="Build step id to reread.")
     piece: Optional[str] = Field(None, description="Piece id to describe.")
     building: Optional[str] = Field(None, description=(

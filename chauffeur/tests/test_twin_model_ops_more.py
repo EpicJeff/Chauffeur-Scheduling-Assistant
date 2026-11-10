@@ -719,6 +719,58 @@ def test_op_route_round_trip():
     check([o['id'] for o in stored] == [on_s[0]['id']], f'the store holds it: {stored}')
     check([o['id'] for o in ts.current()['buildings'][0]['openings'] if o.get('wall') == 's']
           == [on_s[0]['id']], 'and the flat view of the store')
+    fixes = [f for f in ts.fixes() if f['round'] == body['round']]
+    check(fixes and all(f['actor_id'] == 'p1' and f['reason'] == body['words'] for f in fixes),
+          'without a reason the fix log uses the saved summary and parent')
+
+
+def test_op_route_rename_uses_the_saved_summary_and_registry():
+    tokens = _people()
+    _seed()
+    old_name = ts.current()['buildings'][0]['name']
+    with _enforced():
+        response = _client().post('/api/house/editor/op', headers=tokens['parent'], json={'op': {
+            'op': 'set', 'building': 'b1', 'id': 'b1', 'field': 'name', 'value': 'Our home'}})
+    check(response.status_code == 200, response.text)
+    body = response.json()
+    check(body['words'] == f'Renamed {old_name} to Our home', body['words'])
+    check(body['plan']['buildings'][0]['name'] == body['model']['buildings'][0]['name'] == 'Our home', body)
+    check(next(b for b in ts.place()['buildings'] if b['id'] == 'b1')['name'] == 'Our home', ts.place())
+    check(ts.rounds()[-1]['note'] == body['words'], ts.rounds()[-1])
+
+
+def test_op_route_delete_survives_a_sheet_reread_and_logs_the_parent():
+    import test_twin_build as engine_tests
+    from services import twin_build
+
+    tokens = _people()
+    engine_tests._fresh()
+    _, _, photo = engine_tests._sources()
+    reader = engine_tests.Reader()
+    build = twin_build.start(engine_tests._inputs(photo), reader=reader, inline=True)
+    engine_tests._run_to(build, 'registration:L2')
+    house = ts.current()['buildings'][0]
+    wall = next(w for w in house['walls'] if w.get('src', {}).get('step') == 'walls:L1:main')
+    reason = 'This wall is not on the drawing.'
+    with _enforced():
+        response = _client().post('/api/house/editor/op', headers=tokens['parent'], json={
+            'op': {'op': 'delete', 'building': house['id'], 'id': wall['id']}, 'reason': reason})
+    check(response.status_code == 200, response.text)
+    body = response.json()
+    check(not any(w['id'] == wall['id'] for w in body['model']['buildings'][0]['walls']), 'deleted in the response')
+    stone = next((t for t in ts.tombstones() if t['kind'] == 'wall'
+                  and t['geometry'] == {k: wall[k] for k in ('from', 'to')}), None)
+    check(stone and stone['src'] == wall['src'] and stone['building'] == house['id'], ts.tombstones())
+    fixes = [f for f in ts.fixes() if f['round'] == body['round']]
+    check(fixes and all(f['actor_id'] == 'p1' and f['reason'] == reason for f in fixes), fixes)
+    check(ts.rounds()[-1]['note'] == body['words'] and ts.rounds()[-1]['kind'] == 'edit', ts.rounds()[-1])
+
+    calls = len(reader.calls)
+    twin_build.reread(build, 'walls:L1:main', reader=reader, inline=True)
+    check(any(c['step'] == 'walls:L1:main' for c in reader.calls[calls:]), 'the same sheet was read again')
+    after = ts.current()['buildings'][0]['walls']
+    check(not any(_same_segment((w['from'], w['to']), wall['from'], wall['to']) for w in after),
+          'the deleted wall stays gone after the real rebuild merge')
 
 
 def test_op_route_refusal_is_400_with_words():
@@ -811,6 +863,8 @@ TESTS = (
     test_accept_and_dismiss_a_proposal,
     test_site_items_record_compose_overrides,
     test_op_route_round_trip,
+    test_op_route_rename_uses_the_saved_summary_and_registry,
+    test_op_route_delete_survives_a_sheet_reread_and_logs_the_parent,
     test_op_route_refusal_is_400_with_words,
     test_house_design_tool_reaches_new_ops,
     test_legacy_edit_ops_still_work,

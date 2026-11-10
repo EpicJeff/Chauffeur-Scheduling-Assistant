@@ -7765,20 +7765,15 @@ def house_editor_build_resume(build_id: str):
 
 @app.post('/api/house/editor/op')
 def house_editor_op(request: Request, body: dict = Body(default={})):
-    from services import twin_model_ops, twin_store
-    require_parent_token(request.headers.get('x-member-token') or
-                         request.query_params.get('member_token'))
+    from services import twin_edit, twin_store
+    parent = require_parent_token(request.headers.get('x-member-token') or
+                                  request.query_params.get('member_token'))
     with twin_store.LIFECYCLE, twin_store._LOCK:
         try:
-            op = body.get('op')
-            model, words = twin_model_ops.apply(twin_store.current_model(), op)
-            def metadata(row):
-                if op.get('op') == 'set' and op.get('field') == 'name' and op.get('id') == op.get('building'):
-                    twin_store._update_place_building(row, op['building'], {'name': op['value']})
-            round_id = twin_store.update_model(lambda current: model, note=words, state_mutator=metadata)
+            result = twin_edit.save(body.get('op'), parent['id'], reason=body.get('reason', ''))
         except ValueError as exc:
             return JSONResponse(status_code=400, content={'error': str(exc)})
-        return {'round': round_id, 'words': words, 'plan': twin_store.current(),
+        return {'round': result['round'], 'words': result['summary'], 'plan': twin_store.current(),
                 'model': twin_store.current_model()}
 
 
