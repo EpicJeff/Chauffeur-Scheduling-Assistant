@@ -19,7 +19,7 @@ import uuid
 
 from services import (twin_blocks, twin_compose, twin_cost, twin_draft, twin_library,
                       twin_joints, twin_place, twin_plan, twin_reads, twin_register,
-                      twin_roof_derive, twin_roof_issues, twin_store)
+                      twin_model, twin_roof_derive, twin_roof_issues, twin_store)
 
 _LOCK = threading.RLock()
 _BUILDS = {}
@@ -733,6 +733,15 @@ def _merge_list(existing, incoming, kind, house, build, step=None, *, tombstones
         return math.dist(geometry['from'], geometry['to'])
     merged = list(existing)
     kept = set()
+
+    def keep_run(wall):
+        # The connected model splits a read wall at its T joints into parts
+        # id, id~2, id~3. A read of the whole wall matched to the person's
+        # part is the same wall, so its other parts stay too.
+        base = wall['id'].split('~')[0]
+        kept.update(p['id'] for p in merged if p.get('level') == wall.get('level')
+                    and p['id'].split('~')[0] == base)
+
     for piece in incoming:
         if _deleted(piece, kind, house, build, tombstones):
             continue
@@ -748,6 +757,8 @@ def _merge_list(existing, incoming, kind, house, build, step=None, *, tombstones
             if covering:
                 piece['id'] = covering['id']
                 kept.add(covering['id'])
+                if protected(covering):
+                    keep_run(covering)
                 if covering.get('src', {}).get('person') and not covering.get('read_geometry'):
                     covering['read_geometry'] = deepcopy(_geometry(covering, kind, house))
                 if not protected(covering) and piece.get('state') == 'settled':
@@ -766,6 +777,8 @@ def _merge_list(existing, incoming, kind, house, build, step=None, *, tombstones
         if old:
             piece['id'] = old['id']
             kept.add(old['id'])
+            if kind == 'wall' and protected(old):
+                keep_run(old)
             if old.get('src', {}).get('person') and not old.get('read_geometry'):
                 old['read_geometry'] = deepcopy(piece['read_geometry'])
             if not protected(old):
@@ -2296,11 +2309,16 @@ def _settle(build, step, result, decision=None):
             house['roof']['sections'] = _merge_list(
                 house['roof']['sections'], shell['roof']['sections'], 'roof', house, build, step)
             incoming_ids = {l['id'] for l in shell['levels']}
+            # A Room the model derived from the generated walls is not content
+            # of its own: it neither keeps a level nor outlives it.
             occupied = {p.get('level') for key in ('walls', 'rooms', 'stairs', 'fixtures', 'lights')
-                        for p in house.get(key, [])}
+                        for p in house.get(key, []) if not twin_model.derived_room(p)}
             house['levels'] = [l for l in house['levels'] if l['id'] in incoming_ids
                                or l.get('src', {}).get('person') or l['id'] in occupied
                                or (l.get('src', {}).get('step') != step['id'] and l['id'] not in generated_levels)]
+            kept_levels = {l['id'] for l in house['levels']}
+            house['rooms'] = [r for r in house.get('rooms', [])
+                              if r.get('level') in kept_levels or not twin_model.derived_room(r)]
         elif kind in ('outline', 'registration'):
             reg = decision.get('registration', build['pause']['registration'])
             if not level.get('src', {}).get('person'):

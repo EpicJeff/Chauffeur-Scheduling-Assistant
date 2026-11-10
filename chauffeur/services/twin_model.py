@@ -125,6 +125,14 @@ def _flag_room(flag):
     return piece.get('room') if isinstance(piece, dict) else None
 
 
+def derived_room(room) -> bool:
+    """A Room the model found between walls that nobody read, drew, named or
+    touched: it carries its joint cycle, the default name and no source. It is
+    the walls' own record, so it lasts exactly as long as they enclose it."""
+    return (isinstance(room, dict) and not room.get('src') and room.get('name', 'Room') == 'Room'
+            and room.get('kind', 'room') == 'room' and isinstance(room.get('joints'), list))
+
+
 def _room_position(room, valid):
     polygon = room.get('polygon')
     if valid:
