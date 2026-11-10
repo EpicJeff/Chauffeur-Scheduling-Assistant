@@ -310,6 +310,84 @@ class VoiceActorTests(unittest.TestCase):
                                     'arguments': {'mission_ref': 'dentist', 'kind': 'submit'}})
         self.assertIn('PIN', speech)
 
+    # --- review round 1: the parent-visible history and the DM card ------------
+    def history(self):
+        return storage.get_app_state('voice_action_history') or []
+
+    def test_actor_device_control_recorded(self):
+        from services import agent_tools_v2
+        with patch.object(agent_tools_v2, 'house',
+                          return_value={'status': 'success', 'message': 'Done.', 'entity_id': 'light.office',
+                                        'service': 'turn_off'}):
+            self.say('turn off the office light please', JEFF,
+                     call={'name': 'house', 'arguments': {'action': 'act', 'entity_id': 'light.office',
+                                                          'service': 'turn_off'}})
+        row = self.history()[-1]
+        self.assertEqual(row['action'], 'house')
+        self.assertEqual(row['principal_member_id'], 'jeff')
+        self.assertEqual(row['via'], 'voice')
+        self.assertEqual(row['details'].get('entity_id'), 'light.office')
+
+    def test_actor_failed_control_not_recorded(self):
+        from services import agent_tools_v2
+        with patch.object(agent_tools_v2, 'house',
+                          return_value={'status': 'refused', 'message': 'Say your PIN first.'}):
+            self.say('unlock the front door please', JEFF,
+                     call={'name': 'house', 'arguments': {'action': 'act', 'entity_id': 'lock.front',
+                                                          'service': 'unlock'}})
+        self.assertEqual(self.history(), [])
+
+    def test_actor_music_and_memory_recorded(self):
+        from services import agent_tools_v2
+        with patch.object(agent_tools_v2, 'music',
+                          return_value={'status': 'success', 'message': 'Playing.', 'entity_id': 'media_player.office',
+                                        'item': {'name': 'Abbey Road'}}):
+            self.say('play abbey road in the office please', JEFF,
+                     call={'name': 'music', 'arguments': {'action': 'play', 'query': 'abbey road'}})
+        with patch.object(agent_tools_v2, 'memory',
+                          return_value={'status': 'success', 'message': 'Noted.',
+                                        'memory': {'text': 'Ben likes the window seat'}}):
+            self.say('remember that Ben likes the window seat', JEFF,
+                     call={'name': 'memory', 'arguments': {'action': 'remember',
+                                                           'text': 'Ben likes the window seat'}})
+        actions = [(r['action'], r['principal_member_id']) for r in self.history()]
+        self.assertEqual(actions, [('music', 'jeff'), ('memory', 'jeff')])
+
+    def test_actor_card_bound_to_dm(self):
+        from services import agent_tools_v2
+        card = {'kind': 'family_action', 'id': 'card-2', 'proposal_id': 'prop-1', 'summary': "Ben to Sam's"}
+        with patch.object(agent_tools_v2, 'propose_family_action',
+                          return_value={'status': 'success', 'message': 'I asked a parent.', 'card': card}), \
+                patch.object(storage, 'update_action_proposal') as bind:
+            self.say('can I go to Sams on saturday please', BEN,
+                     call={'name': 'propose_family_action',
+                           'arguments': {'action_type': 'request', 'summary': "Ben to Sam's"}})
+        dm = storage.get_or_create_dm('ben', storage.ensure_argyle_member()['id'])
+        bind.assert_called_once_with('prop-1', {'channel_id': dm['id']})
+
+    def test_card_post_failure_keeps_the_answer(self):
+        from services import agent_tools_v2
+        card = {'kind': 'family_action', 'id': 'card-3', 'summary': "Ben to Sam's"}
+        with patch.object(agent_tools_v2, 'propose_family_action',
+                          return_value={'status': 'success', 'message': 'I asked a parent.', 'card': card}), \
+                patch.object(agent_tools_v2, '_post_chat_message', side_effect=RuntimeError('db locked')):
+            speech = self.say('can I go to Sams on saturday please', BEN,
+                              call={'name': 'propose_family_action',
+                                    'arguments': {'action_type': 'request', 'summary': "Ben to Sam's"}})
+        self.assertTrue(speech, 'a failed DM post never turns the answer into an error')
+        self.assertNotIn("I've put that in your Argyle chat.", speech)
+
+    def test_verified_without_chat_scope_is_not_actor(self):
+        from services import scope
+        real = scope.can_see
+        self.say("It's Jeff")
+        self.say('my PIN is 1234')
+        with patch.object(scope, 'can_see', side_effect=lambda m, facet, *a, **kw:
+                          False if facet == 'chat.agent' and (m or {}).get('id') == 'jeff' else real(m, facet, *a, **kw)):
+            self.say('what is on the calendar tomorrow')
+            self.assertIsNone(self.ctx().actor())
+            self.assertEqual(self.ctx().verified_member()['id'], 'jeff', 'still verified for the stranger rail')
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
