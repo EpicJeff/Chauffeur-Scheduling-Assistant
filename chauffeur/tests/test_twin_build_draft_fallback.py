@@ -222,6 +222,31 @@ def _spike_open_first_floor():
     return answer
 
 
+def _wall_runs(walls):
+    """A read wall split at its T joints (R31b) is one run: parts id, id~2...
+    each joining the next, with one state and source. Invisible separators
+    are the model's closures, not read walls (as test_twin_build_draft)."""
+    parts = {}
+    for wall in walls:
+        if wall.get('kind') != 'separator':
+            parts.setdefault(wall['id'].split('~')[0], []).append(wall)
+    runs = []
+    for wid, chain in parts.items():
+        # Parts are numbered as they are split, so follow them end to end.
+        ends = [p['to'] for p in chain]
+        first = next((p for p in chain if not any(math.dist(p['from'], q) <= 1e-6 for q in ends)), chain[0])
+        run, left = copy.deepcopy(first), [p for p in chain if p is not first]
+        while left:
+            wall = next((p for p in left if math.dist(run['to'], p['from']) <= 1e-6), None)
+            check(wall is not None, ('split wall stays connected', wid, run, left))
+            check(run.get('state') == wall.get('state') and run.get('src') == wall.get('src'),
+                  ('split wall keeps its state and source', wid, run, wall))
+            run['to'] = list(wall['to'])
+            left.remove(wall)
+        runs.append(run)
+    return runs
+
+
 def _check_whole_house(house, label):
     """The plan holds the spike building, as the whole draft would have left it."""
     levels = sorted(house['levels'], key=lambda l: l['elevation'])
@@ -232,10 +257,10 @@ def _check_whole_house(house, label):
     check(all(abs(a - b) <= 0.5 for a, b in zip(box, [0, -1, 70, 65.33])), (label, 'L1 stays in feet', box))
     check(abs(levels[1]['elevation'] - 10.9) <= 0.5, (label, levels[1]))
     l1 = [w for w in house['walls'] if w['level'] == 'L1' and w.get('exterior')]
-    check(len(l1) == 22 and all(w.get('state') == 'settled' for w in l1),
+    check(len(_wall_runs(l1)) == 22 and all(w.get('state') == 'settled' for w in l1),
           (label, 'the first floor closes and settles', len(l1), [w.get('state') for w in l1]))
     l2 = [w for w in house['walls'] if w['level'] == 'L2' and w.get('src', {}).get('step') == 'draft']
-    check(len(l2) == 12, (label, 'every upper-floor wall is in the plan', len(l2)))
+    check(len(_wall_runs(l2)) == 12, (label, 'every upper-floor wall is in the plan', len(l2)))
     sections = house['roof']['sections']
     # Ruling R14: after the fallback too, the main roof comes from the blocks and the porch roofs stay as read.
     problems, block_ids = _block_roofs_cover(house)
@@ -248,11 +273,13 @@ def _check_whole_house(house, label):
     check(len(house['openings']) >= 20, (label, 'wall and gable openings', len(house['openings'])))
     check(sum('section' in o for o in house['openings']) >= 1, (label, 'the gable windows come with the roof',
                                                                 [o for o in house['openings'] if 'section' in o]))
-    check(house.get('porch') and len(house['porch'].get('columns') or []) == 4, (label, house.get('porch')))
+    # The schema 3 flat view lists porches (R31a, as test_twin_build_draft).
+    check(len(house.get('porches') or []) == 1 and len(house['porches'][0].get('columns') or []) == 4,
+          (label, house.get('porches')))
     check(len(house.get('stairs') or []) == 1, (label, house.get('stairs')))
     extensions = house['roof'].get('extensions') or []
     check(len(extensions) == 1 and extensions[0].get('wall'), (label, 'snap attached the awning', extensions))
-    for piece in [*house['walls'], *house['openings'], *sections]:
+    for piece in [*_wall_runs(house['walls']), *house['openings'], *sections]:
         if piece.get('src', {}).get('step') != 'draft_rooms':
             allowed = ('draft', 'roof_blocks') if piece in sections else ('draft',)
             check((piece.get('src') or {}).get('step') in allowed,
@@ -388,7 +415,8 @@ def test_fallback_stops_and_pauses_on_empty_level():
                                                               _draft_reads(good)))
         house = _house(ts.current())
         l1 = [w for w in house['walls'] if w['level'] == 'L1' and w.get('exterior')]
-        check(len(l1) == 22 and all(w.get('state') == 'settled' for w in l1), (name, [w.get('state') for w in l1]))
+        check(len(_wall_runs(l1)) == 22 and all(w.get('state') == 'settled' for w in l1),
+              (name, [w.get('state') for w in l1]))
 
 
 def test_fallback_failed_upper_floor_is_ghost_and_still_reads_roof():
@@ -532,9 +560,16 @@ def test_rooms_read_settles_rooms_and_interior_walls():
         house = _house(ts.current())
         rooms = {r['name']: r for r in house['rooms'] if r.get('src', {}).get('step') == 'draft_rooms'}
         check(set(rooms) == {'Kitchen', 'Study'}, (name, 'both rooms are in the plan', list(rooms)))
-        for room, given in ((rooms['Kitchen'], KITCHEN), (rooms['Study'], STUDY)):
+        for room, given, partition in ((rooms['Kitchen'], KITCHEN, PARTITION_L1), (rooms['Study'], STUDY, PARTITION_L2)):
+            # A room is the region its walls enclose (spec 4.2, R36): where the
+            # read partition runs through the read room, it keeps the part on
+            # its side, still in the read's feet.
+            x0, y0, x1, y1 = (f(p[i] for p in given['polygon']) for f, i in ((min, 0), (min, 1), (max, 0), (max, 1)))
+            cut = all(x0 < p[0] < x1 and y0 <= p[1] <= y1 for p in (partition['from'], partition['to']))
+            inside = all(x0 <= p[0] <= x1 and y0 <= p[1] <= y1 for p in room['polygon'])
             check(room.get('state') == 'settled' and room['level'] == given['level']
-                  and room['polygon'] == given['polygon'], (name, 'each room settles in feet as is', room))
+                  and (room['polygon'] == given['polygon'] or (cut and inside)),
+                  (name, 'each room settles in feet as is', room))
         walls = [w for w in house['walls'] if w.get('src', {}).get('step') == 'draft_rooms']
         check(len(walls) == 2 and all(w.get('state') == 'settled' and not w.get('exterior') for w in walls),
               (name, 'both interior walls settle', walls))

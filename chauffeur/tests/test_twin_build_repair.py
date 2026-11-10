@@ -213,6 +213,31 @@ def _point_segment(p, a, b):
     return math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy)
 
 
+def _wall_runs(walls):
+    """A read wall split at its T joints (R31b) is one run: parts id, id~2...
+    each joining the next, with one state and source. Invisible separators
+    are the model's closures, not read walls (as test_twin_build_draft)."""
+    parts = {}
+    for wall in walls:
+        if wall.get('kind') != 'separator':
+            parts.setdefault(wall['id'].split('~')[0], []).append(wall)
+    runs = []
+    for wid, chain in parts.items():
+        # Parts are numbered as they are split, so follow them end to end.
+        ends = [p['to'] for p in chain]
+        first = next((p for p in chain if not any(math.dist(p['from'], q) <= 1e-6 for q in ends)), chain[0])
+        run, left = copy.deepcopy(first), [p for p in chain if p is not first]
+        while left:
+            wall = next((p for p in left if math.dist(run['to'], p['from']) <= 1e-6), None)
+            check(wall is not None, ('split wall stays connected', wid, run, left))
+            check(run.get('state') == wall.get('state') and run.get('src') == wall.get('src'),
+                  ('split wall keeps its state and source', wid, run, wall))
+            run['to'] = list(wall['to'])
+            left.remove(wall)
+        runs.append(run)
+    return runs
+
+
 def _overlaps(walls, tol=1.0):
     """Pairs of walls on one floor where the shorter lies along the longer:
     the same real wall drawn twice."""
@@ -298,7 +323,7 @@ def scenario_whole_floor_walls_settle_on_the_outline():
     l1 = [w for w in house['walls'] if w['level'] == 'L1']
     for a, b in edges(L1):
         a, b = _world(sheet, 1, 'L1', a), _world(sheet, 1, 'L1', b)
-        on_edge = [w for w in l1 if _same_wall(w, a, b)]
+        on_edge = [w for w in _wall_runs(l1) if _same_wall(w, a, b)]
         check(len(on_edge) == 1 and on_edge[0].get('state') == 'settled',
               ('the outside wall along each outline edge settles once', a, b, [(w['from'], w['to'], w.get('state')) for w in l1]))
 
@@ -308,11 +333,11 @@ def scenario_a_wall_two_reads_return_settles_once():
     _build('house', _r1_reader(), legacy=True)
     l1 = [w for w in _building('house')['walls'] if w['level'] == 'L1']
     a, b = (_world(sheet, 1, 'L1', p) for p in PARTITION)
-    partition = [w for w in l1 if _same_wall(w, a, b)]
+    partition = [w for w in _wall_runs(l1) if _same_wall(w, a, b)]
     check(len(partition) == 1, ('the partition both reads returned is one wall', [(w['id'], w['from'], w['to']) for w in partition]))
     check(partition[0].get('state') == 'settled', partition)
     check(not _overlaps(l1), ('no wall lies on top of another', _overlaps(l1)))
-    check(len(l1) == 8 and all(w.get('state') == 'settled' for w in l1),
+    check(len(_wall_runs(l1)) == 8 and all(w.get('state') == 'settled' for w in l1),
           ('four outside walls, the partition, the garage wall and two porch walls, all settled',
            len(l1), [(w['from'], w['to'], w.get('state')) for w in l1]))
 

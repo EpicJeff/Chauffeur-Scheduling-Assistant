@@ -369,7 +369,10 @@ def scenario_shell_fewer_storeys_drops_only_empty_generated_levels():
         check(tb.status(b)['state'] == 'done', tb.status(b))
         shed = _plan_building(ts.current(), 'shed')
         check([l['id'] for l in shed['levels']] == (['L1'] if edit == 'none' else ['L1', 'L2']), (edit, shed))
-        check(not any(w['level'] == 'L2' and not w.get('src', {}).get('person') for w in shed['walls']), shed)
+        # Invisible separators that keep the person's room closed are the
+        # model's (R1), not generated walls.
+        check(not any(w['level'] == 'L2' and not w.get('src', {}).get('person')
+                      and w.get('kind') != 'separator' for w in shed['walls']), shed)
 
 
 def scenario_renamed_shell_still_lands_on_footprint():

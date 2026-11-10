@@ -68,7 +68,9 @@ def test_checks_follow_snap_and_reread_invalidates_rooms():
     reader = DraftReader(answer=answer)
     build = tb.start({'part': 'house'}, reader=reader, inline=True)
     check(tb.status(build)['state'] == 'done', tb.status(build)['pause'])
-    check(all(w['state'] == 'settled' for w in _house(ts.current())['walls'] if w['level'] == 'L1'),
+    # Invisible separators are the model's closures (R1, R43), not read walls.
+    check(all(w['state'] == 'settled' for w in _house(ts.current())['walls']
+              if w['level'] == 'L1' and w.get('kind') != 'separator'),
           'the half-foot gap is welded before closure checks')
     again = DraftReader()
     tb.reread(build, 'draft', reader=again, inline=True)

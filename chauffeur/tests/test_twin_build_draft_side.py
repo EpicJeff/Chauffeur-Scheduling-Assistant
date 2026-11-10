@@ -303,7 +303,9 @@ def test_outline_ghost_first():
     plan = ts.current()
     check(FIRST_LOOK not in json.dumps(plan), 'the first-look outline never lands in the plan')
     house = _house(plan)
-    check(all((w.get('src') or {}).get('step') in ('draft', 'draft_rooms') for w in house['walls']),
+    # Invisible separators (porch sides, R28) are the model's closures, not read walls.
+    check(all((w.get('src') or {}).get('step') in ('draft', 'draft_rooms') for w in house['walls']
+              if w.get('kind') != 'separator'),
           ('every wall comes from the draft, none from the quick outline',
            sorted({(w.get('src') or {}).get('step') for w in house['walls']}, key=str)))
 

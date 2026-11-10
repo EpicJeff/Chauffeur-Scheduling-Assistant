@@ -510,8 +510,11 @@ def test_stored_block_choices_reach_derivation():
     check(st['state'] == 'done', st['state'])
     found = _at(_house(), choice['rect'], tol=1)
     check(len(found) == 1, found)
+    # The flat view omits ends that match the section kind (R51), so read
+    # them with the kind as the default.
+    got = dict(found[0], ends=found[0].get('ends', {side: found[0]['kind'] for side in choice['ends']}))
     for field in ('kind', 'ridge', 'pitch', 'ends', 'plate', 'overhang'):
-        check(found[0][field] == choice[field], (field, found[0], choice))
+        check(got[field] == choice[field], (field, found[0], choice))
     flags = next(s for s in st['steps'] if s['kind'] == 'draft')['roof_flags']
     check(not any(f['block_rect'] == choice['rect'] for f in flags), ('person choices are never flagged', flags))
 

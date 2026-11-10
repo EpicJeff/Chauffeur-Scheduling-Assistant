@@ -221,6 +221,31 @@ def _seed_old_pipeline(*, offset=(-3, 2), scale=1.0, without=()):
     return sheets
 
 
+def _wall_runs(walls):
+    """A read wall split at its T joints (R31b) is one run: parts id, id~2...
+    each joining the next, with one state and source. Invisible separators
+    are the model's closures, not read walls (as test_twin_build_draft)."""
+    parts = {}
+    for wall in walls:
+        if wall.get('kind') != 'separator':
+            parts.setdefault(wall['id'].split('~')[0], []).append(wall)
+    runs = []
+    for wid, chain in parts.items():
+        # Parts are numbered as they are split, so follow them end to end.
+        ends = [p['to'] for p in chain]
+        first = next((p for p in chain if not any(_near(p['from'], q, 1e-6) for q in ends)), chain[0])
+        run, left = copy.deepcopy(first), [p for p in chain if p is not first]
+        while left:
+            wall = next((p for p in left if _near(run['to'], p['from'], 1e-6)), None)
+            check(wall is not None, ('split wall stays connected', wid, run, left))
+            check(run.get('state') == wall.get('state') and run.get('src') == wall.get('src'),
+                  ('split wall keeps its state and source', wid, run, wall))
+            run['to'] = list(wall['to'])
+            left.remove(wall)
+        runs.append(run)
+    return runs
+
+
 def _crop_step(piece):
     return str((piece.get('src') or {}).get('step') or '').startswith(('walls:', 'outline:'))
 
@@ -352,9 +377,12 @@ def test_old_pipeline_edits_migrate():
     _seed_old_pipeline(offset=offset, without=('i2',))
     old = {name: [_old_point(p, offset, 1) for p in ends] for name, ends in INTERIOR.items()}
     # Person-added: the wall the crop read missed, drawn where the drawing has it.
+    # Drawing it splits the walls it meets, and those parts are the person's too
+    # (spec 4.6a), so the added wall is the new one drawn where it was asked.
     twin_edit.save({'op': 'add_wall', 'building': 'house', 'level': 'L1',
                     'from': old['i2'][0], 'to': old['i2'][1]}, 'p1')
-    added = next(w for w in _house(ts.current())['walls'] if (w.get('src') or {}).get('person'))
+    added = next(w for w in _house(ts.current())['walls'] if _same_wall(w, *old['i2']))
+    check((added.get('src') or {}).get('person'), ('test setup: the added wall is the person\'s', added))
     # Person-moved: i1 slid 2 ft toward the rear.
     twin_edit.save({'op': 'move', 'building': 'house', 'piece': 'wall:old-i1', 'by': [0, 2]}, 'p1')
     # Tombstoned: i3 deleted.
@@ -436,9 +464,11 @@ def test_old_crop_walls_replaced_by_draft():
         orphans = [w for w in walls if str(w[3] or '').startswith(('walls:', 'outline:'))]
         check(not orphans, (name, 'no old crop wall is left beside the draft\'s', orphans))
         check(all(w[3] == 'draft' for w in walls), (name, 'every wall is the draft\'s', walls))
-        check(len(l1) == expected, (name, 'the draft\'s walls, once each', expected, len(l1), walls))
+        runs = _wall_runs(l1)
+        check(len(runs) == expected, (name, 'the draft\'s walls, once each', expected, len(runs), walls))
         for a, b in [*zip(L_DRAFT, L_DRAFT[1:] + L_DRAFT[:1]), *INTERIOR.values()]:
-            check(len(_walls_at(house, 'L1', a, b)) == 1, (name, 'one wall on each drawn wall', a, b, walls))
+            check(len([r for r in runs if _same_wall(r, a, b, 1.0)]) == 1,
+                  (name, 'one wall on each drawn wall', a, b, walls))
         check(not any(_crop_step(l) for l in house['levels']), (name, 'the old outline is replaced too',
                                                                 [l.get('src') for l in house['levels']]))
 
