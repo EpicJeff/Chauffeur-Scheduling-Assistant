@@ -629,7 +629,7 @@ KNOWN_APPS = (
     ('Tubi', 'com.tubitv', (), ('https://tubitv.com', 'tubitv://open')),                               # both verified
     ('Crunchyroll', 'com.crunchyroll.crunchyroid', (), ('crunchyroll://', 'https://www.crunchyroll.com')),
     ('ESPN', 'com.espn.score_center', (), ('sportscenter://x-callback-url', 'https://www.espn.com/watch')),  # scheme verified
-    ('Apple Music', 'com.apple.android.music', ('music',), ('https://music.apple.com',)),
+    ('Apple Music', 'com.apple.android.music', (), ('https://music.apple.com',)),
     ('Pandora', 'com.pandora.android.atv', (), ('https://www.pandora.com',)),
     ('Play Store', 'com.android.vending', ('google play', 'google play store', 'app store'),
      ('https://play.google.com/store',)),                                                              # verified
@@ -766,7 +766,9 @@ def _resolve_app(app, listed, listed_only=False):
         requested = next((known[f] for f in wanted if f in known), None)
         if requested:
             for name in listed:
-                if any(f in known and known[f][1] == requested[1] for f in _app_forms(name)):
+                # Apple TV can list Apple's own apps without the vendor prefix.
+                forms = _app_forms(name) + _app_forms(f'Apple {name}')
+                if any(f in known and known[f][1] == requested[1] for f in forms):
                     return name, name, (name,)
     best, best_score = None, 0.0
     for name in listed:
