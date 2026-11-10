@@ -114,6 +114,15 @@ class AppleTvApps(unittest.TestCase):
             self.assertEqual(res['status'], 'success', (spoken, res))
             self.assertEqual(self.calls[-1], ('media_player', 'select_source', {'entity_id': ATV, 'source': listed}))
 
+    def test_music_on_an_android_tv_still_means_what_it_lists(self):
+        # Re-review 2026-11-10: the Apple Music nickname must not hijack an Android TV that
+        # lists YouTube Music.
+        office = next(s for s in self.states if s['entity_id'] == 'remote.office_tv')
+        office['attributes']['activity_list'] = list(base.TV_APPS) + ['YouTube Music']
+        res = self.run_tool(action='app', query='office tv', app='music')
+        self.assertEqual(res['status'], 'success', res)
+        self.assertEqual(res['app'], 'YouTube Music')
+
     def test_a_homepod_is_never_a_tv(self):
         res = self.open('ESPN', query='kitchen homepod')
         self.assertEqual(res['status'], 'error')
