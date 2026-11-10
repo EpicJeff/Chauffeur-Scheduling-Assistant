@@ -35,9 +35,6 @@ STATES = [{'entity_id': e, 'state': 'idle', 'attributes': {'friendly_name': e.sp
                     'media_player.kitchen_sonos', 'media_player.hall', 'light.office')]
 
 
-# Task 4 lands after Tasks 1-3 (landing point A): until set_device_room exists the
-# suite skips rather than sitting red on main. Delete this guard in Task 4.
-@unittest.skipUnless(hasattr(storage, 'set_device_room'), 'Task 4 (panel room) not built yet')
 class PanelRoomTests(unittest.TestCase):
     def setUp(self):
         for table in (storage.members_table, storage.member_tokens_table, storage.trusted_devices_table,
