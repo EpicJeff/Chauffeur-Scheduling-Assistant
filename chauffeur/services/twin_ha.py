@@ -5,6 +5,9 @@ Placement helpers only describe choices; model operations own all writes.
 from collections import Counter
 from copy import deepcopy
 import math
+import logging
+import threading
+import time
 
 from services import control_rules, ha_api, house, twin_model
 
@@ -31,10 +34,13 @@ def _entity_kind(entity):
 def catalogue() -> dict:
     if ha_api.mode() == 'unconfigured':
         return {'available': False, 'areas': [], 'floors': [], 'devices': []}
+    area_rows = ha_api.get_area_registry()
+    if not area_rows:
+        return {'available': False, 'areas': [], 'floors': [], 'devices': []}
     floors = ha_api.get_floor_registry()
     floor_by_id = {f['floor_id']: f for f in floors}
     areas = []
-    for row in ha_api.get_area_registry():
+    for row in area_rows:
         floor = floor_by_id.get(row.get('floor_id'), {})
         areas.append({'area_id': row['area_id'], 'name': row['name'],
                       'floor_id': row.get('floor_id'), 'floor_name': floor.get('name'),
@@ -69,12 +75,26 @@ def resolve_area(value, areas):
     return None
 
 
+_catalogue_failed_until = 0
+_catalogue_lock = threading.Lock()
+
+
 def safe_catalogue():
-    """An unavailable HA must never prevent a person's model edit."""
-    try:
-        return catalogue()
-    except Exception:
-        return {'available': False, 'areas': [], 'floors': [], 'devices': []}
+    """Share failed reads across editors and live views while HA recovers."""
+    global _catalogue_failed_until
+    unavailable = {'available': False, 'areas': [], 'floors': [], 'devices': []}
+    configured = ha_api.mode() != 'unconfigured'
+    with _catalogue_lock:
+        if configured and time.monotonic() < _catalogue_failed_until:
+            return unavailable
+        try:
+            result = catalogue()
+        except Exception as error:
+            logging.getLogger(__name__).warning('House HA catalogue unavailable: %s', error)
+            result = unavailable
+        if configured and not result['available']:
+            _catalogue_failed_until = time.monotonic() + 30
+        return result
 
 
 def _rooms(model):

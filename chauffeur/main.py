@@ -7299,10 +7299,10 @@ def house_twin_api():
             'kit_id': 'modern_farmhouse'}
 
 
-def _house_ha_context():
+def _house_ha_context(settings=None):
     from services import twin_ha, twin_store
-    model = twin_store.current_model() or {'buildings': []}
-    catalogue = twin_ha.catalogue()
+    model = twin_store.current_model(settings=settings) or {'buildings': []}
+    catalogue = twin_ha.safe_catalogue()
     # Resolve legacy area names on this read only; the model operations own writes.
     for building in model['buildings']:
         for room in building.get('rooms', []):
@@ -7352,18 +7352,17 @@ def _house_lot_point(building, point):
     return out
 
 
-def _house_ha_placed_spot(building, device_id, placement):
+def _house_ha_placed_spot(building, device_id, placement, geometry):
     from services import twin_ha, twin_model_hosts
     if placement['kind'] == 'anchor':
         piece = next(a for a in building.get('anchors', []) if a['id'] == placement['anchor'])
     else:
         piece = next(d for d in building.get('devices', []) if d.get('device') == device_id)
     host = piece.get('host', {})
-    geometry = twin_model_hosts.snapshot(building)
     surface = twin_model_hosts._surface(geometry, host) or {}
     level = surface.get('level', piece.get('level'))
     try:
-        point = twin_model_hosts.world_point(building, host, piece.get('offset', 0))
+        point = twin_model_hosts._point(geometry, host, piece.get('offset', 0))
     except ValueError:
         # Lost hosts retain their last position in the model's flag.
         flag = next((f for f in building.get('flags', []) if f.get('piece') == piece['id']), None)
@@ -7388,12 +7387,15 @@ def _house_ha_placed_spot(building, device_id, placement):
 
 @app.get('/api/house/live')
 def house_live(request: Request):
-    from services import control_rules, twin_ha
-    model, catalogue = _house_ha_context()
+    from services import control_rules, ha_api, twin_ha, twin_model_hosts
+    settings = storage.get_settings() or {}
+    model, catalogue = _house_ha_context(settings)
     buildings = {b['id']: b for b in model['buildings']}
     placed = twin_ha.placements(model)
     auto = twin_ha.auto_spots(model, catalogue)
     who = control_rules.who_from_request(request.headers, request.query_params)
+    states = {row['entity_id']: row for row in ha_api.get_states()} if catalogue['available'] else {}
+    geometry = {}
     rooms, markers = [], []
     for building in model['buildings']:
         for room in building.get('rooms', []):
@@ -7412,7 +7414,9 @@ def house_live(request: Request):
         placement = placed.get(device_id)
         if placement:
             building = buildings[placement['building']]
-            spot = _house_ha_placed_spot(building, device_id, placement)
+            if building['id'] not in geometry:
+                geometry[building['id']] = twin_model_hosts.snapshot(building)
+            spot = _house_ha_placed_spot(building, device_id, placement, geometry[building['id']])
         else:
             spot = auto.get(device_id)
         if spot is None:
@@ -7422,7 +7426,7 @@ def house_live(request: Request):
         markers[-1].update(building=spot['building'], level=spot['level'], room=spot['room'],
                            at=_house_lot_point(building, [*spot['at'], spot['z']]),
                            placed=placement is not None,
-                           offered=control_rules.offered(who, device['entity_id']))
+                           offered=control_rules.offered(who, device['entity_id'], settings, states=states))
     return {'available': catalogue['available'], 'rooms': rooms, 'markers': markers}
 
 
@@ -7430,11 +7434,15 @@ class HouseHaIdentifyRequest(BaseModel):
     device_id: str
 
 
+_house_blink_lock = _notif_threading.Lock()
+_house_blink_pending = set()
+
+
 @app.post('/api/house/ha/identify')
 def house_ha_identify(req: HouseHaIdentifyRequest, request: Request):
     from threading import Timer
     from services import control_rules, ha_api, twin_ha
-    catalogue = twin_ha.catalogue()
+    catalogue = twin_ha.safe_catalogue()
     if not catalogue['available']:
         raise HTTPException(status_code=503, detail='Home Assistant is not reachable.')
     device = next((d for d in catalogue['devices'] if d['device_id'] == req.device_id), None)
@@ -7444,19 +7452,35 @@ def house_ha_identify(req: HouseHaIdentifyRequest, request: Request):
     control_rules.guard(request, [entity_id])
     if not entity_id.startswith('light.'):
         raise HTTPException(status_code=400, detail='Only lights can blink.')
-    state = ha_api.get_state(entity_id)
-    if not state or state.get('state') not in ('on', 'off'):
-        raise HTTPException(status_code=503, detail='Could not blink that light.')
-    if int((state.get('attributes') or {}).get('supported_features') or 0) & 8:
-        if ha_api.call_service('light', 'turn_on', {'entity_id': entity_id, 'flash': 'short'}) is None:
+    with _house_blink_lock:
+        if entity_id in _house_blink_pending:
+            return {'ok': True, 'how': 'toggle'}
+        _house_blink_pending.add(entity_id)
+    try:
+        state = next((s for s in ha_api.get_states(ttl=0) if s.get('entity_id') == entity_id), None)
+        if not state or state.get('state') not in ('on', 'off'):
+            raise HTTPException(status_code=503, detail='Could not blink that light.')
+        if int((state.get('attributes') or {}).get('supported_features') or 0) & 8:
+            if ha_api.call_service('light', 'turn_on', {'entity_id': entity_id, 'flash': 'short'}) is None:
+                raise HTTPException(status_code=502, detail='Could not blink that light.')
+            with _house_blink_lock:
+                _house_blink_pending.discard(entity_id)
+            return {'ok': True, 'how': 'flash'}
+        if ha_api.call_service('light', 'toggle', {'entity_id': entity_id}) is None:
             raise HTTPException(status_code=502, detail='Could not blink that light.')
-        return {'ok': True, 'how': 'flash'}
-    if ha_api.call_service('light', 'toggle', {'entity_id': entity_id}) is None:
-        raise HTTPException(status_code=502, detail='Could not blink that light.')
+    except Exception:
+        with _house_blink_lock:
+            _house_blink_pending.discard(entity_id)
+        raise
 
     def restore():
-        ha_api.call_service('light', 'turn_on' if state['state'] == 'on' else 'turn_off',
-                            {'entity_id': entity_id})
+        try:
+            if ha_api.call_service('light', 'turn_on' if state['state'] == 'on' else 'turn_off',
+                                   {'entity_id': entity_id}) is None:
+                logger.warning('Could not restore light after Blink: %s', entity_id)
+        finally:
+            with _house_blink_lock:
+                _house_blink_pending.discard(entity_id)
 
     timer = Timer(1.5, restore)
     timer.daemon = True

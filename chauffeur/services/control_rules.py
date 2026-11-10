@@ -518,11 +518,12 @@ def call_targets(domain: str, service: str, data: dict) -> set[str]:
     return entity_ids
 
 
-def kinds_for(entity_ids: Iterable[str]) -> tuple[str, ...]:
+def kinds_for(entity_ids: Iterable[str], states: dict | None = None) -> tuple[str, ...]:
     """Use live attributes and recursively judge scripts/scenes by their effects."""
     from services import control_scripts, ha_api
 
-    states = {row['entity_id']: row for row in ha_api.get_states()}
+    if states is None:
+        states = {row['entity_id']: row for row in ha_api.get_states()}
     kinds = set()
 
     def classify(entity_id, direct=False):
@@ -573,13 +574,13 @@ def check_kind(who: Who, kind: str, settings: dict | None = None) -> Decision:
         return Decision(False, None, (kind,), 'Home Assistant could not answer that request.')
 
 
-def check(who: Who, entity_ids: Iterable[str], settings: dict | None = None) -> Decision:
+def check(who: Who, entity_ids: Iterable[str], settings: dict | None = None, *, states: dict | None = None) -> Decision:
     """A failed HA or settings read must never grant control or escape to callers."""
     try:
         entity_ids = _entity_ids(entity_ids)
         if not entity_ids:
             return Decision(False, None, (), 'Name the device to control.')
-        return _check_kinds(who, kinds_for(entity_ids), settings)
+        return _check_kinds(who, kinds_for(entity_ids, states), settings)
     except Exception:
         return Decision(False, None, (), 'Home Assistant could not answer that request.')
 
@@ -595,7 +596,7 @@ def guard(request, entity_ids: Iterable[str]) -> None:
         })
 
 
-def offered(who: Who, entity_id: str, settings: dict | None = None) -> bool:
+def offered(who: Who, entity_id: str, settings: dict | None = None, *, states: dict | None = None) -> bool:
     """A tile offers an action when allowed now or available after identification."""
-    decision = check(who, (entity_id,), settings)
+    decision = check(who, (entity_id,), settings, states=states)
     return decision.allowed or decision.needs is not None

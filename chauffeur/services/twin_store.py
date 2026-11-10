@@ -39,8 +39,10 @@ class StaleGeneration(ValueError):
     """A worker belongs to a house that has since been started over."""
 
 
-def _state():
-    row = deepcopy(storage.get_settings().get('house_twin') or {})
+def _state(settings=None):
+    if settings is None:
+        settings = storage.get_settings()
+    row = deepcopy(settings.get('house_twin') or {})
     row.setdefault('current', None)
     row.setdefault('generation', 0)
     for key in ('rounds', 'fixes', 'sources', 'page_roles', 'registrations', 'tombstones'):
@@ -415,9 +417,9 @@ def current() -> dict | None:
         return twin_model_bridge.flatten(model) if model is not None else None
 
 
-def current_model() -> dict | None:
+def current_model(*, settings=None) -> dict | None:
     with _LOCK:
-        row = _state()
+        row = _state(settings)
         return _read_round(row, row['current']) if row['current'] is not None else None
 
 

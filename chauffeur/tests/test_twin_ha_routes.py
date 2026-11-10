@@ -570,6 +570,93 @@ def test_identify_guarded():
         check(c.ha.calls == [], c.ha.calls)
 
 
+def test_blink_fresh_state_and_single_pending_restore():
+    seed()
+    with Ctx() as c:
+        eid = 'light.kitchen_lamp'
+        stale = copy.deepcopy(c.ha.states[eid])
+        c.ha.states[eid]['state'] = 'on'
+        timers = []
+
+        class Timer:
+            def __init__(self, delay, callback):
+                self.callback = callback
+                timers.append(self)
+
+            def start(self):
+                pass
+
+        fresh_reads = []
+        original = ha_api.get_states
+
+        def states(ttl=5):
+            fresh_reads.append(ttl)
+            return original(ttl)
+
+        with patch('threading.Timer', Timer), patch.object(ha_api, 'get_state', return_value=stale), \
+                patch.object(ha_api, 'get_states', side_effect=states):
+            check(_identify(c, 'dev-k-lamp').status_code == 200, 'first blink')
+            check(0 in fresh_reads, 'Blink must bypass the five-second state cache')
+            check(_identify(c, 'dev-k-lamp').status_code == 200, 'second blink')
+            check(len(timers) == 1 and len(c.ha.calls) == 1, 'one pending toggle and restore per entity')
+            timers[0].callback()
+            check(c.ha.states[eid]['state'] == 'on', 'restore the fresh original state')
+            check(_identify(c, 'dev-k-lamp').status_code == 200, 'restore releases the pending slot')
+            timers[1].callback()
+
+
+def test_routes_guard_catalogue_failure():
+    from services import house, twin_ha
+    seed()
+    with Ctx() as c, patch.object(twin_ha, '_catalogue_failed_until', 0, create=True), \
+            patch.object(house, '_catalogue', side_effect=RuntimeError('catalogue unavailable')):
+        for url in (LINK, LIVE):
+            r = c.client.get(url, headers=c.mum)
+            check(r.status_code == 200 and r.json()['available'] is False, (url, r.text))
+            check(bool(r.json()['rooms']), 'plain rooms survive a failed HA read')
+        r = _identify(c, 'dev-k-light')
+        check(r.status_code == 503 and 'Home Assistant is not reachable.' in r.text, r.text)
+
+
+def test_live_shares_settings_states_and_geometry():
+    import main
+    seed(anchors=[ceiling_anchor(), ceiling_anchor('a2', 'dev-k-lamp')])
+    from services import twin_ha
+    with Ctx() as c:
+        catalogue = twin_ha.catalogue()
+        settings = storage.get_settings
+        states = ha_api.get_states
+        snapshot = hosts.snapshot
+        with patch.object(twin_ha, 'catalogue', return_value=catalogue), \
+                patch.object(storage, 'get_settings', wraps=settings) as settings_read, \
+                patch.object(ha_api, 'get_states', wraps=states) as state_read, \
+                patch.object(hosts, 'snapshot', wraps=snapshot) as geometry_read:
+            # Call the real handler without auth middleware's independent settings reads.
+            from starlette.requests import Request
+            result = main.house_live(Request({'type': 'http', 'headers': [], 'query_string': b''}))
+            check(len(result['markers']) >= 2, result)
+            check(settings_read.call_count == 1, f'settings reads: {settings_read.call_count}')
+            check(state_read.call_count == 1, f'state map reads: {state_read.call_count}')
+            check(geometry_read.call_count == 1, f'geometry reads: {geometry_read.call_count}')
+
+
+def test_failed_catalogue_remembered_thirty_seconds():
+    from services import twin_ha
+    seed()
+    with Ctx() as c, patch.object(twin_ha, '_catalogue_failed_until', 0, create=True), \
+            patch('time.monotonic', return_value=100) as now, \
+            patch.object(ha_api, 'get_area_registry', return_value=[]) as read:
+        check(c.client.get(LIVE, headers=c.mum).json()['available'] is False, 'HA down')
+        first = read.call_count
+        check(first == 1, 'first request checks HA once')
+        now.return_value = 129
+        check(c.client.get(LINK, headers=c.mum).json()['available'] is False, 'negative cache')
+        check(read.call_count == first, 'no retry during the thirty-second window')
+        now.return_value = 131
+        c.client.get(LIVE, headers=c.mum)
+        check(read.call_count == first + 1, 'retry after thirty seconds')
+
+
 TESTS = [v for k, v in sorted(globals().items()) if k.startswith('test_') and callable(v)]
 
 
