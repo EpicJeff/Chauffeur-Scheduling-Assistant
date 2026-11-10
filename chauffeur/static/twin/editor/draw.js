@@ -8,8 +8,15 @@ const drawingTools = ['draw-room', 'draw-wall', 'split-room', 'add-door', 'add-w
 
 export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal, onInteract, panel }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
-  let tool = null, points = [], press = null, busy = false, anchorKind = 'light';
-  let saving = Promise.resolve(), pending = 0;
+  let tool = null, points = [], press = null, anchorKind = 'light';
+  let saving = Promise.resolve(), inbox = Promise.resolve(), run = 0;
+  // A click that places something on a wall or a room waits until the changes
+  // before it are saved, so it sees the walls they made and is never dropped.
+  // Waiting clicks from an ended or replaced tool (`run` moved on) are dropped.
+  const enqueue = work => {
+    const at = run;
+    inbox = inbox.then(() => saving).then(() => { if (run === at) return work(); }).catch(report);
+  };
   const note = text => { el('draw-note').textContent = text; el('draw-tools').hidden = !text; };
   const outline = polygon => {
     const key = tools.floor()?.key;
@@ -23,9 +30,11 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
     if (canvas.hasPointerCapture(previous.id)) canvas.releasePointerCapture(previous.id);
   }
   function cancel() {
-    release(); tool = null; points = []; outline([]); note(''); tools.setTool('select');
+    ++run; release(); tool = null; points = []; outline([]); note(''); tools.setTool('select');
     for (const name of drawingTools) el(`rail-${name}`).setAttribute('aria-pressed', 'false');
   }
+  // Ends this tool once its change is saved, unless another tool took over.
+  const done = () => { const at = run; return () => { if (run === at) cancel(); }; };
   function snap(p, from) {
     const { building, level } = tools.floor();
     const below = building.levels.filter(l => l.elevation < level.elevation).sort((a, b) => b.elevation - a.elevation)[0];
@@ -35,9 +44,24 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
     const screen = view.screenOfFloor(...p, tools.floor().key);
     const nearby = screen && view.floorAt(screen[0] + 12, screen[1], tools.floor().key);
     const reach = Math.max(.25, Math.min(1, nearby ? distance(nearby, p) : 1));
-    return snapTo(p, { from, reach, joints: (building.joints || []).filter(j => j.level === level.id),
+    const snapped = snapTo(p, { from, reach, joints: (building.joints || []).filter(j => j.level === level.id),
       walls: building.walls.filter(w => w.level === level.id), anchors,
-      below: building.walls.filter(w => w.level === below?.id) }).point;
+      below: building.walls.filter(w => w.level === below?.id) });
+    // Quantize only the unconstrained coordinate of an axis-aligned snap.
+    if (snapped.target === 'right_angle') {
+      const axis = snapped.point[0] === from[0] ? 1 : 0;
+      snapped.point[axis] = Math.round(snapped.point[axis] * 12) / 12;
+    } else if (['line', 'extension', 'below'].includes(snapped.target)) {
+      const walls = building.walls.filter(w => w.level === (snapped.target === 'below' ? below?.id : level.id));
+      const wall = walls.find(w => {
+        const d = w.to.map((v, i) => v - w.from[i]);
+        return Math.abs(d[0] * (snapped.point[1] - w.from[1]) - d[1] * (snapped.point[0] - w.from[0])) < 1e-8;
+      });
+      const axis = wall && (Math.abs(wall.to[0] - wall.from[0]) < 1e-8 ? 1
+        : Math.abs(wall.to[1] - wall.from[1]) < 1e-8 ? 0 : null);
+      if (axis !== null && axis !== undefined) snapped.point[axis] = Math.round(snapped.point[axis] * 12) / 12;
+    }
+    return snapped.point;
   }
   function wallAt(p, walls = tools.floor().building.walls.filter(w => w.level === tools.floor().level.id)) {
     return walls.map(wall => {
@@ -48,13 +72,13 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
     }).filter(row => row.distance <= 1).sort((a, b) => a.distance - b.distance)[0];
   }
   function save(operation, nameRoom = false) {
-    busy = true; ++pending;
     // Keep every corner even when the person clicks faster than a round saves.
     const result = saving.then(() => gesture(async () => {
-      const old = new Set(getPlan().buildings.find(b => b.id === operation.building).rooms.map(r => r.id));
+      const before = getPlan().buildings.find(b => b.id === operation.building).rooms;
+      const old = new Set(before.map(r => r.id));
       await op(operation);
       const added = getPlan().buildings.find(b => b.id === operation.building).rooms.filter(r => !old.has(r.id));
-      if (nameRoom) for (const room of added) {
+      if (nameRoom) for (const room of added.slice(0, 1)) {
         const answer = window.promptInput('Name the new room', 'What is the new room called? Skip keeps Room.', { value: '', placeholder: 'Room' });
         const button = el('cc-input-cancel-btn'), label = button.textContent;
         button.textContent = 'Skip';
@@ -64,10 +88,10 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
       }
     }));
     saving = result.catch(() => {});
-    return result.finally(() => { busy = --pending > 0; });
+    return result;
   }
   async function choose(name) {
-    if (!canEdit() || busy) return;
+    if (!canEdit()) return;
     cancel();
     if (!tools.floor()) { panel.message('Add a floor before drawing.'); return; }
     if (name === 'split-room' && !tools.selection().room) { panel.message('Select the room to split first.'); return; }
@@ -77,7 +101,7 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
       if (!kind || !canEdit()) return;
       anchorKind = kind;
     }
-    tool = name; tools.setTool(name); el(`rail-${name}`).setAttribute('aria-pressed', 'true');
+    ++run; tool = name; tools.setTool(name); el(`rail-${name}`).setAttribute('aria-pressed', 'true');
     note(({ 'draw-room': 'Drag a rectangle, or click corners and close on the first corner.',
       'draw-wall': 'Click wall corners. Escape or a double click ends the chain.',
       'split-room': 'Click two walls of this room to draw the split.',
@@ -95,7 +119,7 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
     if (tool === 'draw-room') {
       if (points.length >= 3 && distance(p, points[0]) <= 1) {
         const polygon = points; points = []; outline([]);
-        save({ op: 'draw_room', building: building.id, level: level.id, polygon }, true).catch(report);
+        save({ op: 'draw_room', building: building.id, level: level.id, polygon }).catch(report);
       } else { points.push(snap(p, points.at(-1))); outline(points); }
     } else if (tool === 'draw-wall' || tool === 'split-room') {
       const point = tool === 'split-room' ? splitPoint(p) : snap(p, points.at(-1));
@@ -106,7 +130,7 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
       const splitting = tool === 'split-room', room = tools.selection().room;
       points = splitting ? [] : [point]; outline(points);
       save({ op: splitting ? 'split_room' : 'add_wall', building: building.id, level: level.id,
-        ...(splitting ? { room } : {}), from, to: point }, true).then(() => { if (splitting) cancel(); }).catch(report);
+        ...(splitting ? { room } : {}), from, to: point }, splitting).then(splitting ? done() : () => {}).catch(report);
     } else {
       const target = wallAt(p, building.walls.filter(w => w.level === level.id && w.kind !== 'separator'));
       if (tool === 'add-anchor') {
@@ -123,12 +147,12 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
             u: (p[0] - Math.min(...xs)) / (Math.max(...xs) - Math.min(...xs)),
             v: (p[1] - Math.min(...ys)) / (Math.max(...ys) - Math.min(...ys)) };
         }
-        save({ op: 'add_anchor', building: building.id, kind: anchorKind, host }).then(cancel).catch(report); return;
+        save({ op: 'add_anchor', building: building.id, kind: anchorKind, host }).then(done()).catch(report); return;
       }
       if (!target) { note('Click a solid wall.'); return; }
       const operation = { op: 'add_opening', building: building.id, wall: target.wall.id, kind: tool === 'add-door' ? 'door' : 'window',
         width: 3, at: Math.max(2, Math.min(target.length - 2, target.at)) };
-      save(operation).then(cancel).catch(report);
+      save(operation).then(done()).catch(report);
     }
   }
   for (const name of drawingTools) {
@@ -138,14 +162,14 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
   el('draw-cancel').addEventListener('click', cancel, { signal });
   el('rail-delete').disabled = false;
   el('rail-delete').addEventListener('click', () => {
-    if (!canEdit() || busy) return;
+    if (!canEdit()) return;
     const selection = tools.selection(); cancel();
     if (!selection.id) { panel.message('Select a piece to delete first.'); return; }
     save({ op: 'delete', building: selection.building, id: selection.id }).catch(report);
   }, { signal });
   el('rail-add-level').disabled = false;
   el('rail-add-level').addEventListener('click', async () => {
-    if (!canEdit() || busy || !tools.floor()) return;
+    if (!canEdit() || !tools.floor()) return;
     cancel();
     const { building } = tools.floor();
     const name = await window.promptInput('Add floor', 'Name the new floor.', { value: `Floor ${building.levels.length + 1}` });
@@ -170,7 +194,6 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
     cancel, floorChanged: cancel,
     pointerDown(event) {
       if (!tool || !canEdit()) return false;
-      if (busy && tool !== 'draw-wall') return true;
       const p = view.floorAt(event.clientX, event.clientY, tools.floor().key);
       if (!p) return true;
       onInteract?.();
@@ -190,13 +213,14 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
       if (!tool && !press) return false;
       if (!press) return true;
       const start = press, p = view.floorAt(event.clientX, event.clientY, tools.floor().key); release();
-      if (cancelled || !p || busy && tool !== 'draw-wall') return true;
+      if (cancelled || !p) return true;
       if (tool === 'draw-room' && !points.length && Math.hypot(event.clientX - start.x, event.clientY - start.y) >= 3) {
         const a = snap(start.p), b = snap(p), { building, level } = tools.floor(); outline([]);
         if (Math.abs(a[0] - b[0]) >= 1 && Math.abs(a[1] - b[1]) >= 1)
           save({ op: 'draw_room', building: building.id, level: level.id,
-            polygon: [a, [b[0], a[1]], b, [a[0], b[1]]] }, true).catch(report);
-      } else click(p);
+            polygon: [a, [b[0], a[1]], b, [a[0], b[1]]] }).catch(report);
+      } else if (['draw-room', 'draw-wall'].includes(tool)) click(p);
+      else enqueue(() => click(p));
       return true;
     },
   };

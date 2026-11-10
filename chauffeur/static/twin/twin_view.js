@@ -145,7 +145,20 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
   function floorFrame(key) {
     const building = plan.buildings.find(b => b.levels.some(l => `${b.id}:${l.id}` === key));
     const level = building?.levels.find(l => `${building.id}:${l.id}` === key);
-    return building && { building, elevation: groundAt(plan, ...(building.position || [0, 0])) + (building.base || 0) + level.elevation };
+    return building && { building, level, elevation: groundAt(plan, ...(building.position || [0, 0])) + (building.base || 0) + level.elevation };
+  }
+  // The selected room on this floor, else the floor's walls, in lot feet.
+  function floorFocus(frame) {
+    const room = selectionStyle?.room;
+    const focused = room?.building === frame.building.id && room.level === frame.level.id
+      ? frame.building.rooms.find(r => r.id === room.id)?.polygon : null;
+    const points = focused || frame.building.walls.filter(w => w.level === frame.level.id).flatMap(w => [w.from, w.to]);
+    const angle = (frame.building.rotation || 0) * Math.PI / 180;
+    const world = points.map(([x, y]) => [Math.cos(angle) * x - Math.sin(angle) * y + (frame.building.position?.[0] || 0),
+      Math.sin(angle) * x + Math.cos(angle) * y + (frame.building.position?.[1] || 0)]);
+    const xs = world.map(p => p[0]), ys = world.map(p => p[1]);
+    return world.length ? { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2,
+      span: Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) } : bounds;
   }
   // Optional height is in feet above the level, using the same live camera
   // and building transform as the floor point.
@@ -253,14 +266,23 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       const x = point.x / FT - (b.position?.[0] || 0), y = -point.z / FT - (b.position?.[1] || 0);
       return [Math.cos(a) * x - Math.sin(a) * y, Math.sin(a) * x + Math.cos(a) * y];
     },
+    // The Top camera in perspective, straight above the focused room or floor.
+    setTopCamera(key) {
+      view.setCamera('top');
+      const frame = floorFrame(key); if (!frame) return;
+      const focus = floorFocus(frame), height = Math.max(20, focus.span * 1.6);
+      camera.position.set(focus.x * FT, (frame.elevation + height) * FT, -(focus.y - 0.01) * FT);
+      controls.target.set(focus.x * FT, frame.elevation * FT, -focus.y * FT); controls.update(); render();
+    },
     setPlanCamera(key) {
       const frame = floorFrame(key); if (!frame) return;
+      const focus = floorFocus(frame);
       camera = orthographic; view.camera = camera; controls.object = camera;
       state.camera = 'top';
-      orthographic.top = Math.max(20, bounds.span * 0.72) * FT; orthographic.bottom = -orthographic.top;
+      orthographic.top = Math.max(20, focus.span * 0.72) * FT; orthographic.bottom = -orthographic.top;
       orthographic.zoom = 1;
-      camera.position.set(bounds.x * FT, (frame.elevation + 250) * FT, -bounds.y * FT);
-      controls.target.set(bounds.x * FT, frame.elevation * FT, -bounds.y * FT);
+      camera.position.set(focus.x * FT, (frame.elevation + 250) * FT, -focus.y * FT);
+      controls.target.set(focus.x * FT, frame.elevation * FT, -focus.y * FT);
       controls.enableRotate = false; controls.update(); resize();
     },
     pick(clientX, clientY) {

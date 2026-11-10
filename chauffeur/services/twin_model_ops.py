@@ -925,6 +925,10 @@ def apply(model, op: dict, actor: str = 'person') -> tuple[dict, str]:
         else:
             level = (_find(building, 'rooms', op.get('room'))['level']
                      if kind == 'split_room' else op.get('level'))
+            if kind == 'split_room':
+                # This is a deliberate split: overlap, not the number of old
+                # corners on each side, decides which part keeps the name.
+                _find(building, 'rooms', op.get('room'))['joints'] = []
             _draw(building, level, op.get('from'), op.get('to'),
                   'separator' if kind == 'split_room' else op.get('kind', 'solid'),
                   op.get('exterior', False), actor)

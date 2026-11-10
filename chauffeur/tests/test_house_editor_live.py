@@ -722,14 +722,19 @@ def scenario_plan_view_is_flat_and_adds_walls_and_windows():
         page.set_viewport_size({'width': 1600, 'height': 900})
         _signed_in(page)
         _open(page, s)
+        page.click('#editor-floors [data-floor="house:L1"]')
         page.click('#editor-cameras [data-editor-camera="top"]')
-        check(page.evaluate('window.__editor.cameraKind()') == 'orthographic-top', 'flat top-down')
+        # Plan mode's flat (orthographic) view is retired with Plan mode (spec
+        # section 3 item 9, one 3D view); the Top camera looks straight down.
+        top = page.evaluate('() => { const c = window.__twin.camera; c.updateMatrixWorld(true);'
+                            ' return [window.__twin.state.camera, c.getWorldDirection(c.position.clone()).y]; }')
+        check(top[0] == 'top' and top[1] < -0.999, ('straight top-down', top))
         page.click('#rail-draw-wall')
         for x, y in ((10, 10), (20, 10.4)):
             px, py = page.evaluate("([x, y]) => window.__editor.screenOfFloor(x, y, 'house:L1')", [x, y])
             page.mouse.click(px, py)
         page.keyboard.press('Escape')
-        page.wait_for_function("() => window.__editor.lastSummary().startsWith('Added the wall')", timeout=10000)
+        page.wait_for_function("() => window.__editor.lastSummary().startsWith('Added a wall')", timeout=10000)
         walls = _plan(page)['buildings'][0]['walls']
         added = [w for w in walls if abs(w['from'][0] - 10) < 0.3 and abs(w['from'][1] - 10) < 0.3]
         check(added and abs(added[0]['to'][1] - added[0]['from'][1]) < 0.01, ('snapped straight', added))
@@ -737,7 +742,7 @@ def scenario_plan_view_is_flat_and_adds_walls_and_windows():
         mid = [(added[0]['from'][0] + added[0]['to'][0]) / 2, added[0]['from'][1]]
         px, py = page.evaluate("([x, y]) => window.__editor.screenOfFloor(x, y, 'house:L1')", mid)
         page.mouse.click(px, py)
-        page.wait_for_function("() => window.__editor.lastSummary().startsWith('Added the opening')", timeout=10000)
+        page.wait_for_function("() => window.__editor.lastSummary().startsWith('Added a window')", timeout=10000)
         check(any(o.get('wall') == added[0]['id'] and o['kind'] == 'window' and o['width'] == 3
                   for o in _plan(page)['buildings'][0]['openings']), 'window added')
         page.screenshot(path=os.path.join(tempfile.gettempdir(), 'house_editor_plan_view.png'))

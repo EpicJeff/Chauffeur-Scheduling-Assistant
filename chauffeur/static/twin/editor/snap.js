@@ -9,8 +9,21 @@ export function snapTo(p, { joints = [], walls = [], below = [], anchors = [], f
     const d = wall.to.map((v, i) => v - wall.from[i]), n = d[0] ** 2 + d[1] ** 2;
     if (!n) return null;
     const t = d.reduce((s, v, i) => s + (p[i] - wall.from[i]) * v, 0) / n;
-    return { point: wall.from.map((v, i) => v + t * d[i]), target: t >= 0 && t <= 1 ? 'line' : 'extension' };
+    const point = wall.from.map((v, i) => v + t * d[i]);
+    if (t >= 0 && t <= 1) return { point, target: 'line' };
+    // An extension runs on from the wall's end across open floor, never
+    // through another wall to the far side of it.
+    return blocked(t > 1 ? wall.to : wall.from, point, wall) ? null : { point, target: 'extension' };
   };
+  const blocked = (a, b, own) => walls.some(w => {
+    if (w === own) return false;
+    const r = [b[0] - a[0], b[1] - a[1]], s = [w.to[0] - w.from[0], w.to[1] - w.from[1]];
+    const cross = r[0] * s[1] - r[1] * s[0];
+    if (Math.abs(cross) < 1e-12) return false;
+    const q = [w.from[0] - a[0], w.from[1] - a[1]];
+    const t = (q[0] * s[1] - q[1] * s[0]) / cross, u = (q[0] * r[1] - q[1] * r[0]) / cross;
+    return t > 1e-9 && t < 1 - 1e-9 && u > -1e-9 && u < 1 + 1e-9;
+  });
   const joint = nearest(joints.map(j => j.at ?? j));
   if (joint) return { point: [...joint], target: 'joint' };
   const lines = walls.map(project).filter(Boolean);

@@ -307,7 +307,7 @@ export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op,
   el('rail-sheet').disabled = false; listen(el('rail-sheet'), 'click', () => { onInteract?.(); sheet().catch(report); });
   document.querySelectorAll('[data-editor-camera]').forEach(button => listen(button, 'click', () => {
     onInteract?.(); delegate?.cancel?.();
-    if (button.dataset.editorCamera === 'top' && floor()) view.setPlanCamera(floor().key);
+    if (button.dataset.editorCamera === 'top' && floor()) view.setTopCamera(floor().key);
     else view.setCamera(button.dataset.editorCamera);
   }));
   return {

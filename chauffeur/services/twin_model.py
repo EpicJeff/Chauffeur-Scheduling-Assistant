@@ -158,6 +158,18 @@ def _split_t_junctions(building, joints, walls, notes):
     return [w for w in split if w['id'] in kept]
 
 
+_OUTLINE_ROUNDING = 0.01
+
+
+def _same_outline(cached, derived):
+    """The same corners, each within a reader's rounding (0.01 ft) of one another."""
+    if len(cached) != len(derived):
+        return False
+    close = lambda p, q: math.dist(p[:2], q[:2]) <= _OUTLINE_ROUNDING
+    return (all(any(close(p, q) for q in derived) for p in cached)
+            and all(any(close(q, p) for p in cached) for q in derived))
+
+
 def _derive(building, notes, *, persist_t_splits=True):
     ghosts = [room for room in building.get('rooms', []) if room.get('state') == 'ghost']
     stored = [room for room in building.get('rooms', []) if room.get('state') != 'ghost']
@@ -252,6 +264,17 @@ def _derive(building, notes, *, persist_t_splits=True):
         region = candidates[index]
         room = deepcopy(stored[inherited[index]]) if index in inherited else {'name': 'Room', 'kind': 'room'}
         room.update({key: region[key] for key in ('level', 'polygon', 'joints')})
+        # The joint cycle retains every T-junction for connected edits; the
+        # floor outline needs only corners, not collinear wall subdivisions.
+        polygon = room['polygon']
+        room['polygon'] = [p for i, p in enumerate(polygon)
+                           if abs(_cross([p[k] - polygon[i - 1][k] for k in (0, 1)],
+                                         [polygon[(i + 1) % len(polygon)][k] - p[k] for k in (0, 1)])) > _EPS]
+        # A cached outline that differs from its region only by the reader's
+        # rounding stays, so an edit elsewhere never resizes this room.
+        if (index in inherited and valid[inherited[index]]
+                and _same_outline(stored[inherited[index]]['polygon'], room['polygon'])):
+            room['polygon'] = deepcopy(stored[inherited[index]]['polygon'])
         room.setdefault('kind', 'room')
         rooms.append(room)
     # Reserve even lost identities, so a newly discovered Room cannot take one.
