@@ -1,6 +1,28 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.776 (2026-11-10).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.777 (2026-11-10).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.777 (2026-11-10, NOT device-verified): tap to talk on a wall panel, through the room's voice satellite.**
+
+Spec: `docs/superpowers/specs/2026-11-10-voice-acts-and-panel-talk-design.md` (piece 2 of 2; piece 1 is v2.499.776). Plan: `docs/superpowers/plans/2026-11-10-voice-acts-and-panel-talk.md`, Tasks 4-6, rulings in the SDD ledger. Claude wrote every test first, Codex built the code, every task, every fix round and a whole-branch review were Claude-reviewed.
+
+Why: a wall TV or monitor has no microphone, kids forget the name "Argyle", and some people feel silly saying a wake word. Standing at the panel, a tap is enough; the wake word stays for across the room.
+
+A panel's room (`services/panel_talk.py`, `services/storage.set_device_room`):
+- A panel's row in Config › Trusted devices (parents only) has a Room picker (HA areas) and a Satellite picker (Automatic, or a satellite Chauffeur knows). Routes `GET /api/account/devices/rooms`, `POST /api/account/devices/{id}/room`. A panel has no settings drawer of its own, so this is the one place.
+- The room's satellite: a still-usable override, else the area's announce pin when it is a satellite, else the first usable `assist_satellite` in the area.
+- The device list now loads at once and the room lookup after it, so Revoke never waits on Home Assistant. `GET /api/account/devices` no longer sends any panel's device token to the browser (nothing read it).
+
+The button (`templates/components/control_center.html`, `GET`/`POST /api/panel/talk`):
+- The Ask Argyle orb stays the only way into Argyle on a panel; the open chat box has a plain mic button beside send (the user: no speaker name, no second orb). It shows only when the panel's room has a usable satellite.
+- A tap calls `assist_satellite.start_conversation` with `start_message: 'Yes?'` and the preannounce chime. A live test on the Office Voice PE (2026-11-10) found HA refuses a start with no message (400); with "Yes?" the satellite chimed, asked, heard "What time is it?" and Argyle answered.
+- From then on it is an ordinary satellite conversation: voice recognition, the HA control grid, v2.499.776's actor and private-answer rules, conversation mode and goodbye. The panel adds no identity of its own.
+- The button follows the satellite's live state (read fresh from HA, never the 5 s cache): Listening, Thinking, Answering, back to idle; the first two polls ignore "idle" while the satellite starts. A tap while the satellite is busy is refused (409); one start per panel per 5 s; "The Kitchen speaker is offline." when HA cannot start it.
+- Panel-only: `/api/panel/talk` needs the panel's paired device token (a member session gets 403); `nav.html` keeps that token on this URL during a house session.
+
+Tests: `tests/test_panel_room.py`, `tests/test_panel_talk.py` (server + node scenarios of the page).
+
+Device steps: rebuild the add-on. Config › Trusted devices: give the kitchen panel its room (leave Satellite on Automatic). On the panel, tap the Ask Argyle orb, then the mic: the room's Voice PE says "Yes?"; ask something; watch the button go Listening, Thinking, Answering, idle.
 
 **v2.499.776 (2026-11-10, NOT device-verified): a voice Argyle recognises acts as that person; a goodbye ends it; private answers wait for "read it" or "send it".**
 
