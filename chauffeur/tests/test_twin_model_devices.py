@@ -641,6 +641,136 @@ def test_house_design_places_a_device():
     check(len(json.dumps(agent_tools_v2.TOOL_SCHEMAS['house_design'])) <= 4500, 'keep the tool schema compact')
 
 
+def test_i1a_catalogue_failure_keeps_the_area_link():
+    from services import twin_edit
+    with patch.object(twin_ha(), 'catalogue', side_effect=RuntimeError('HA stopped')):
+        for edit in ({'op': 'set', 'building': 'B1', 'id': 'garage', 'field': 'ha_area', 'value': 'saved-area'},
+                     {'op': 'set', 'building': 'B1', 'piece': 'garage', 'field': 'ha_area', 'value': 'saved-area'}):
+            model, _ = twin_edit.apply_model(_house(), edit)
+            check(_by_id(_bld(model)['rooms'], 'garage')['ha_area'] == 'saved-area', model)
+            check(_bld(model)['devices'] == [], 'no guesses when HA is unavailable')
+
+
+def test_i1b_save_reads_catalogue_once_outside_store_locks():
+    from services import twin_edit
+    import threading
+    for key in ('id', 'piece'):
+        storage.patch_settings({'house_twin': None, 'house_twin_cost': None})
+        shutil.rmtree(ts.DATA_DIR, ignore_errors=True)
+        ts.push_round(_bridge.flatten(_house()), 'build')
+        ts.update_model(lambda _: _house())
+        calls = []
+
+        def catalogue():
+            # Another thread must be able to acquire both locks during HA IO.
+            free = []
+            def probe():
+                for lock in (ts.LIFECYCLE, ts._LOCK):
+                    acquired = lock.acquire(timeout=0.1)
+                    free.append(acquired)
+                    if acquired:
+                        lock.release()
+            thread = threading.Thread(target=probe)
+            thread.start()
+            thread.join(1)
+            calls.append(free)
+            return copy.deepcopy(LIVE)
+
+        with patch.object(twin_ha(), 'catalogue', side_effect=catalogue):
+            before = ts.current_id()
+            twin_edit.save({'op': 'set', 'building': 'B1', key: 'garage',
+                            'field': 'ha_area', 'value': 'Garage'}, 'p1')
+        check(calls == [[True, True]], f'{key}: catalogue once, outside both locks: {calls}')
+        result = ts.current_model()
+        check(ts.current_id() == before + 1, 'link and placements share one round')
+        check(_by_id(_bld(result)['rooms'], 'garage')['ha_area'] == 'a_garage', result)
+        check(len(_bld(result)['devices']) == 2, 'same catalogue supplies obvious devices')
+
+
+def test_i1c_unplaceable_obvious_device_never_blocks_link():
+    model = _house()
+    _by_id(_bld(model)['openings'], 'g1').update(state='ghost', why='No longer fits.')
+    with _ha(LIVE):
+        result = _apply(model, {'op': 'set', 'building': 'B1', 'id': 'garage',
+                                'field': 'ha_area', 'value': 'a_garage'})
+    check(_by_id(_bld(result)['rooms'], 'garage')['ha_area'] == 'a_garage', result)
+    check([d['host']['opening'] for d in _bld(result)['devices']] == ['g2'], result)
+    # Even a stale suggestion that refuses must not abort the person's link.
+    suggestions = [{'device': 'bad', 'building': 'B1', 'host': {'opening': 'gone', 'side': 'in'}},
+                   {'device': 'dev_garage_right', 'building': 'B1', 'host': {'opening': 'g2', 'side': 'in'}}]
+    with _ha(LIVE), patch.object(twin_ha(), 'obvious', return_value=suggestions):
+        result = _apply(_house(), {'op': 'set', 'building': 'B1', 'id': 'garage',
+                                  'field': 'ha_area', 'value': 'a_garage'})
+    check(_by_id(_bld(result)['rooms'], 'garage')['ha_area'] == 'a_garage', result)
+    check(len(_places(result, 'dev_garage_right')) == 1 and not _places(result, 'bad'), result)
+
+
+def test_i2_anchor_delete_retains_device_on_its_surface():
+    from services import twin_edit
+    for key in ('id', 'piece'):
+        for lost in (False, True):
+            model = _apply(_house(), {'op': 'place_device', 'device': 'dev_lamp', 'anchor': 'a-light'})
+            anchor = _by_id(_bld(model)['anchors'], 'a-light')
+            anchor['offset'] = 0.35
+            position = _hosts.world_point(_bld(model), anchor['host'], anchor['offset'])
+            if lost:
+                model = _apply(model, {'op': 'delete', 'building': 'B1', 'id': 'kitchen'})
+                anchor = _by_id(_bld(model)['anchors'], 'a-light')
+            saved = copy.deepcopy(anchor)
+            result, _ = twin_edit.apply_model(model, {'op': 'delete', 'building': 'B1', key: 'a-light'})
+            entry = _entry(result, 'dev_lamp')
+            check(_by_id(_bld(result)['anchors'], 'a-light') is None, 'anchor deleted')
+            check(all(entry[k] == saved[k] for k in ('host', 'offset', 'src')), entry)
+            check(len(_places(result, 'dev_lamp')) == 1, result)
+            if lost:
+                check(entry.get('state') == 'ghost', entry)
+                check(any(f.get('piece') == entry['id'] for f in _bld(result)['flags']), result)
+            else:
+                check(close_pt(_point(result, entry), position), entry)
+    # Legacy level deletion also removes anchors as dependants.
+    model = _apply(_house(), {'op': 'place_device', 'device': 'dev_lamp', 'anchor': 'a-light'})
+    result, _ = twin_edit.apply_model(model, {'op': 'delete', 'building': 'B1', 'piece': 'L1'})
+    entry = _entry(result, 'dev_lamp')
+    check(entry.get('state') == 'ghost', entry)
+    check(any(f.get('piece') == entry['id'] for f in _bld(result)['flags']), result)
+
+
+def test_m1_device_refusals_use_q8_copy():
+    for op in ('place_device', 'unplace_device'):
+        for value in ('', ' ', None, 42):
+            check(_refused(_house(), {'op': op, 'device': value, 'anchor': 'a-light'}) == 'Choose a device.', value)
+    for host in (None, {}, {'opening': 'nope', 'side': 'in'}, {'opening': 'd-front', 'side': 'up'},
+                 {'wall': 'nope', 'at': 2, 'z': 4, 'side': 'left'}):
+        words = _refused(_house(), {'op': 'place_device', 'device': 'dev_lamp', 'building': 'B1', 'host': host})
+        check(words == 'Pick a wall, floor, ceiling or door for it.', words)
+
+
+def test_m2_opening_inside_follows_room_not_wall_direction():
+    for reverse in (False, True):
+        model = _house()
+        if reverse:
+            _by_id(_bld(model)['walls'], 'w')['joints'].reverse()
+        inside = _hosts.world_point(_bld(model), {'opening': 'd-front', 'side': 'in'}, 0.5)
+        outside = _hosts.world_point(_bld(model), {'opening': 'd-front', 'side': 'out'}, 0.5)
+        check(close_pt(inside, [0.75, 10, 3.5]), inside)
+        check(close_pt(outside, [-0.75, 10, 3.5]), outside)
+
+
+def test_m3_unplacing_unplaced_device_refuses_without_a_round():
+    from services import twin_edit
+    storage.patch_settings({'house_twin': None, 'house_twin_cost': None})
+    shutil.rmtree(ts.DATA_DIR, ignore_errors=True)
+    ts.push_round(_bridge.flatten(_house()), 'build')
+    before = ts.current_id()
+    try:
+        twin_edit.save({'op': 'unplace_device', 'device': 'not-placed'}, 'p1')
+    except _ops.Refused as exc:
+        check(str(exc) == 'Nothing changed.', str(exc))
+    else:
+        raise AssertionError('unplaced device must refuse')
+    check(ts.current_id() == before, 'refusal must not write an empty round')
+
+
 TESTS = (
     test_place_on_anchor_then_move_to_wall,
     test_one_device_one_place,
@@ -653,6 +783,13 @@ TESTS = (
     test_linking_the_garage_places_its_doors,
     test_devices_survive_flatten_and_assemble,
     test_house_design_places_a_device,
+    test_i1a_catalogue_failure_keeps_the_area_link,
+    test_i1b_save_reads_catalogue_once_outside_store_locks,
+    test_i1c_unplaceable_obvious_device_never_blocks_link,
+    test_i2_anchor_delete_retains_device_on_its_surface,
+    test_m1_device_refusals_use_q8_copy,
+    test_m2_opening_inside_follows_room_not_wall_direction,
+    test_m3_unplacing_unplaced_device_refuses_without_a_round,
 )
 
 

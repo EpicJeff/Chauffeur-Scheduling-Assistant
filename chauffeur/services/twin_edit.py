@@ -146,13 +146,13 @@ def _opening_valid(building, piece):
         raise ValueError(f'Invalid opening: {reason}.')
 
 
-def _ha_area(value):
+def _ha_area(value, ha_catalogue=None):
     from services import twin_ha
     if not isinstance(value, str):
         raise ValueError('ha_area must be text.')
     if not value:
         return ''
-    areas = twin_ha.catalogue().get('areas', [])
+    areas = (ha_catalogue if ha_catalogue is not None else twin_ha.safe_catalogue()).get('areas', [])
     if not areas:
         return value
     resolved = twin_ha.resolve_area(value, areas)
@@ -161,11 +161,11 @@ def _ha_area(value):
     return resolved
 
 
-def _set(kind, piece, building, field, value):
+def _set(kind, piece, building, field, value, ha_catalogue=None):
     if kind not in EDITABLE or field not in EDITABLE[kind]:
         raise ValueError(f'Cannot set {field} on a {kind}.')
     if field == 'ha_area':
-        value = _ha_area(value)
+        value = _ha_area(value, ha_catalogue)
     elif field == 'name':
         if not isinstance(value, str):
             raise ValueError(f'{field} must be text.')
@@ -431,7 +431,7 @@ def _choose_roof(building, piece):
     return True
 
 
-def _apply_legacy(plan, edit):
+def _apply_legacy(plan, edit, ha_catalogue=None):
     """Return an edited, normalized copy and plain summary; never write storage."""
     if not isinstance(edit, dict):
         raise ValueError('An edit must be an object.')
@@ -503,7 +503,7 @@ def _apply_legacy(plan, edit):
         label = _label(kind, piece, building)
         if op == 'set':
             field = edit.get('field')
-            _set(kind, piece, building, field, edit.get('value'))
+            _set(kind, piece, building, field, edit.get('value'), ha_catalogue)
             field_label = FIELD_LABELS.get(field, field.capitalize()).lower()
             summary = f'Set {label}\'s {field_label} to {_value_words(field, piece[field])}'
         elif op == 'rotate':
@@ -576,7 +576,7 @@ def _apply_legacy(plan, edit):
     return normalized, summary
 
 
-def apply_model(model, edit, validated=None):
+def apply_model(model, edit, validated=None, ha_catalogue=None):
     """Translate the old editor vocabulary at the connected-model boundary."""
     from services import twin_model_ops as ops, twin_model_bridge as bridge
     from services import twin_model_hosts as hosts, twin_model_roofs as roofs, twin_model
@@ -584,18 +584,26 @@ def apply_model(model, edit, validated=None):
     if not isinstance(edit, dict):
         raise ValueError('An edit must be an object.')
     op = edit.get('op')
+    if op == 'set' and edit.get('field') == 'ha_area' and ha_catalogue is None:
+        from services import twin_ha
+        ha_catalogue = twin_ha.safe_catalogue()
+    if op == 'delete' and 'piece' in edit:
+        anchors = [(b, a) for b in model['buildings'] for a in b.get('anchors', [])
+                   if a['id'] == edit['piece'] and (not edit.get('building') or b['id'] == edit['building'])]
+        if len(anchors) == 1:
+            return ops.apply(model, {**edit, 'building': anchors[0][0]['id'], 'id': edit['piece']})
     # A flag_ok set names a building's check, not a piece, so it carries no id.
     if (op in ops.MORE_OPS and (op not in ('set', 'add_opening') or 'id' in edit
                                 or op == 'set' and edit.get('field') == 'flag_ok')
             or op in ('move_joint', 'move_wall', 'move_room', 'split_wall', 'draw_room', 'split_room')
             or op == 'delete' and 'id' in edit):
-        return ops.apply(model, edit)
+        return ops.apply(model, edit, ha_catalogue=ha_catalogue)
 
     flat = bridge.flatten(model)
     checked = deepcopy(edit)
     if op == 'add_opening':
         checked.setdefault('width', 3)
-    legacy, summary = validated[:2] if validated is not None else _apply_legacy(flat, checked)
+    legacy, summary = validated[:2] if validated is not None else _apply_legacy(flat, checked, ha_catalogue)
     comparison = validated[2] if validated is not None else flat
     scope = edit.get('building')
     if op in ('move', 'set', 'delete', 'rotate', 'add_wall', 'add_opening'):
@@ -623,7 +631,7 @@ def apply_model(model, edit, validated=None):
             result, _ = ops.apply(model, translated)
             return result, summary
         if op in ('add_wall', 'add_opening') or op == 'set' and kind != 'roof':
-            result, _ = ops.apply(model, translated)
+            result, _ = ops.apply(model, translated, ha_catalogue=ha_catalogue)
             return result, summary
         if op == 'delete' and kind in ('wall', 'room', 'opening', 'roof'):
             # The legacy delete explicitly removes its dependants. New model
@@ -631,6 +639,9 @@ def apply_model(model, edit, validated=None):
             result, _ = ops.apply(model, translated)
             building = next(b for b in result['buildings'] if b['id'] == bid)
             removed = {p['id'] for _, p, b in _removed(flat, legacy) if b['id'] == bid}
+            for anchor in building.get('anchors', []):
+                if anchor['id'] in removed:
+                    ops.release_anchor_device(building, anchor, hosts.snapshot(building))
             for name in ('openings', 'anchors', 'items', 'dormers', 'stairs'):
                 building[name] = [p for p in building.get(name, []) if p['id'] not in removed]
             building['flags'] = [f for f in building['flags'] if not isinstance(f.get('piece'), str)
@@ -652,6 +663,9 @@ def apply_model(model, edit, validated=None):
         if op == 'delete':
             removed = {p['id'] for _, p, b in _removed(comparison, legacy)
                        if b['id'] == building['id'] and 'id' in p}
+            for anchor in building.get('anchors', []):
+                if anchor['id'] in removed:
+                    ops.release_anchor_device(building, anchor, before)
             for name in ('walls', 'rooms', 'roofs', 'dormers', 'openings', 'anchors', 'items', 'levels', 'stairs'):
                 building[name] = [p for p in building.get(name, []) if p['id'] not in removed]
         remaining_flags = new_flat['roof'].get('flags', [])
@@ -849,6 +863,10 @@ def save(edit, actor_id, reason=''):
     if not isinstance(edit, dict):
         raise ValueError('An edit must be an object.')
     edit = deepcopy(edit)
+    ha_catalogue = None
+    if edit.get('op') == 'set' and edit.get('field') == 'ha_area':
+        from services import twin_ha
+        ha_catalogue = twin_ha.safe_catalogue()
     # Same lock order as update_current/start_over. Keep the snapshot, new round,
     # fixes and ancillary metadata together against other readers and writers.
     with twin_store.LIFECYCLE, twin_store._LOCK:
@@ -863,7 +881,7 @@ def save(edit, actor_id, reason=''):
             twin_store._source_page(twin_store._state(), edit.get('source'), edit.get('page'))
         from services import twin_model, twin_model_bridge
         current = twin_store.current_model()
-        model, summary = apply_model(current, edit)
+        model, summary = apply_model(current, edit, ha_catalogue=ha_catalogue)
         after = twin_model_bridge.flatten(model)
         # The fix log compares against the house as every op sees it (normalized),
         # so a pass's own re-derive is never logged as the person's fix.

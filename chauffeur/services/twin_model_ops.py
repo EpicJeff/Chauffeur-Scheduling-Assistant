@@ -458,6 +458,8 @@ def _delete(building, pid, before):
     for name in ('openings', 'anchors', 'items', 'roofs', 'dormers', 'extensions', 'stairs'):
         piece = next((p for p in building.get(name, []) if p['id'] == pid), None)
         if piece is not None:
+            if name == 'anchors':
+                release_anchor_device(building, piece, before)
             building[name].remove(piece)
             if name == 'roofs':
                 _follow_dormers(building, before)
@@ -512,21 +514,47 @@ def _text(value):
     return value
 
 
+def release_anchor_device(building, anchor, before):
+    """Deleting a spot leaves its device on the same surface."""
+    if not anchor.get('device'):
+        return
+    device = {'id': f'device:{anchor["device"]}', 'device': anchor['device'],
+              'host': deepcopy(anchor.get('host', {})), 'offset': anchor.get('offset', 0),
+              'src': deepcopy(anchor.get('src', {}))}
+    building.setdefault('devices', []).append(device)
+    if not hosts._available(hosts.snapshot(building), device['host']):
+        flag = next((f for f in building.get('flags', []) if f.get('piece') == anchor['id']), None)
+        if flag is not None:
+            device.update(position=deepcopy(flag['at']), level=flag.get('level'))
+        hosts._lost(building, device, device['host'], before, [])
+
+
+def _device_id(value):
+    if not isinstance(value, str) or not value.strip():
+        raise Refused('Choose a device.')
+    return value
+
+
 def _unplace_device(model, device, actor):
+    changed = False
     for building in model['buildings']:
         for anchor in building.get('anchors', []):
             if anchor.get('device') == device:
+                changed = True
                 anchor['device'] = None
                 if actor == 'person':
                     _person(anchor)
-        building['devices'] = [p for p in building.get('devices', []) if p['device'] != device]
+        devices = building.get('devices', [])
+        building['devices'] = [p for p in devices if p['device'] != device]
+        changed |= len(devices) != len(building['devices'])
         for name in ('flags', 'checked_flags'):
             if name in building:
                 building[name] = [f for f in building[name] if f.get('piece') != f'device:{device}']
+    return changed
 
 
 def _place_device(model, op, actor):
-    device = _text(op.get('device'))
+    device = _device_id(op.get('device'))
     if 'anchor' in op:
         matches = [(b, a) for b in model['buildings'] for a in b.get('anchors', [])
                    if a['id'] == op['anchor'] and (not op.get('building') or b['id'] == op['building'])]
@@ -544,7 +572,7 @@ def _place_device(model, op, actor):
     host = deepcopy(op.get('host'))
     reason = twin_model._host_error(host, building)
     if reason:
-        raise Refused(reason)
+        raise Refused('Pick a wall, floor, ceiling or door for it.')
     offset = _number(op.get('offset', 0))
     geometry = hosts.snapshot(building)
     try:
@@ -553,7 +581,7 @@ def _place_device(model, op, actor):
         if line is not None:
             host['at'] = hosts._at(host, None, line, 0)
     except (ValueError, KeyError, TypeError, ZeroDivisionError) as exc:
-        raise Refused('Choose a host surface where this device fits.') from exc
+        raise Refused('Pick a wall, floor, ceiling or door for it.') from exc
     _unplace_device(model, device, actor)
     src = {'auto': True} if actor == 'auto' else {'person': True} if actor == 'person' else {}
     building['devices'].append({'id': f'device:{device}', 'device': device,
@@ -716,7 +744,7 @@ def _follow_dormers(building, before):
             building['flags'].append({'level': level, 'at': at, 'piece': dormer['id'], 'text': text})
 
 
-def _set_field(building, op):
+def _set_field(building, op, ha_catalogue=None):
     from services import twin_edit, twin_model_bridge
     if op.get('field') == 'flag_ok':
         value = op.get('value')
@@ -764,7 +792,7 @@ def _set_field(building, op):
     checked = next((p for p in flat.get(collection, []) if p['id'] == piece['id']), None) if collection else flat
     if checked is None:
         raise Refused('That piece is missing.')
-    twin_edit._set(kind, checked, flat, op.get('field'), op.get('value'))
+    twin_edit._set(kind, checked, flat, op.get('field'), op.get('value'), ha_catalogue)
     piece[op['field']] = deepcopy(checked[op['field']])
     if kind == 'building' and op['field'] in ('position', 'rotation'):
         piece['position_from'] = 'person'
@@ -821,7 +849,7 @@ def _proposal(building, op):
     building['proposals'].remove(proposal)
 
 
-def _more(building, op):
+def _more(building, op, ha_catalogue=None):
     kind = op['op']
     if kind == 'add_opening':
         from services.twin_edit import _OPENING_KINDS
@@ -969,7 +997,7 @@ def _more(building, op):
         building['rotation'] = rotation
         building['position_from'] = 'person'
     elif kind == 'set':
-        _set_field(building, op)
+        _set_field(building, op, ha_catalogue)
     elif kind == 'set_material':
         _material(building, op)
     elif kind in ('accept_proposal', 'dismiss_proposal'):
@@ -1020,7 +1048,7 @@ def _site_op(model, op, actor):
     return twin_plan.record_compose_overrides(before, model), 'Changed the site item.'
 
 
-def apply(model, op: dict, actor: str = 'person') -> tuple[dict, str]:
+def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None) -> tuple[dict, str]:
     """Return an edited model and plain words, leaving the input untouched."""
     if not isinstance(op, dict):
         raise Refused('Choose an operation.')
@@ -1031,11 +1059,12 @@ def apply(model, op: dict, actor: str = 'person') -> tuple[dict, str]:
     op = deepcopy(op)
     model, notes = twin_model.normalize(model)
     if kind in ('place_device', 'unplace_device'):
-        device = _text(op.get('device'))
+        device = _device_id(op.get('device'))
         if kind == 'place_device':
             _place_device(model, op, actor)
         else:
-            _unplace_device(model, device, actor)
+            if not _unplace_device(model, device, actor):
+                raise Refused('Nothing changed.')
         return model, 'Placed the device.' if kind == 'place_device' else 'Removed the device placement.'
     if kind in ('move_site_item', 'delete_site_item', 'add_site_item'):
         return _site_op(model, op, actor)
@@ -1044,9 +1073,12 @@ def apply(model, op: dict, actor: str = 'person') -> tuple[dict, str]:
     _roof_offsets(building, before)
     previous = deepcopy(building)
     deleted_words = None
+    if kind == 'set' and op.get('field') == 'ha_area' and ha_catalogue is None:
+        from services import twin_ha
+        ha_catalogue = twin_ha.safe_catalogue()
     if kind in MORE_OPS:
         try:
-            deleted_words = _more(building, op)
+            deleted_words = _more(building, op, ha_catalogue)
         except ValueError as exc:
             raise Refused(str(exc)) from exc
     elif kind in ('move_joint', 'move_wall', 'move_room'):
@@ -1103,8 +1135,11 @@ def apply(model, op: dict, actor: str = 'person') -> tuple[dict, str]:
         _mark_touched(building, previous, op)
     if kind == 'set' and op.get('field') == 'ha_area':
         from services import twin_ha
-        for placement in twin_ha.obvious(model, op.get('id'), twin_ha.catalogue()):
-            _place_device(model, placement, 'auto')
+        for placement in twin_ha.obvious(model, op.get('id'), ha_catalogue):
+            try:
+                _place_device(model, placement, 'auto')
+            except Refused:
+                continue
     words = {'move_joint': 'Moved the corner.', 'move_wall': 'Moved the wall.',
              'move_room': 'Moved the room.', 'add_wall': 'Added the wall.',
              'split_wall': 'Split the wall.', 'draw_room': 'Drew the room.',

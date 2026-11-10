@@ -25,6 +25,7 @@ def snapshot(building) -> dict:
         polygon = room.get('polygon', [])
         if polygon and room.get('state') != 'ghost':
             rooms[room['id']] = {'level': room.get('level'),
+                                 'polygon': deepcopy(polygon),
                                  'bounds': [min(p[0] for p in polygon), min(p[1] for p in polygon),
                                             max(p[0] for p in polygon), max(p[1] for p in polygon)]}
     return {'walls': walls, 'rooms': rooms,
@@ -95,8 +96,16 @@ def _point(geometry, host, offset=0):
         opening = surface['opening']
         opening_host = deepcopy(_host(opening, True))
         height = opening.get('sill', 0) + 1 if opening.get('kind') == 'window' else 3.5
-        opening_host.update(side='left' if host.get('side') == 'in' else 'right',
-                            sill=height, z=height)
+        inside = 'left'
+        if 'wall' in opening_host:
+            from services import twin_blocks
+            left = _point(geometry, {**opening_host, 'side': 'left'}, 0.01)
+            if not any(r['level'] == surface.get('level')
+                       and twin_blocks._inside(r['polygon'], *left[:2])
+                       for r in geometry['rooms'].values()):
+                inside = 'right'
+        side = inside if host.get('side') == 'in' else 'right' if inside == 'left' else 'left'
+        opening_host.update(side=side, sill=height, z=height)
         return _point(geometry, opening_host, offset)
     if 'floor' in host or 'ceiling' in host:
         x0, y0, x1, y1 = surface['bounds']

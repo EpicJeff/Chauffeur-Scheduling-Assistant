@@ -69,6 +69,14 @@ def resolve_area(value, areas):
     return None
 
 
+def safe_catalogue():
+    """An unavailable HA must never prevent a person's model edit."""
+    try:
+        return catalogue()
+    except Exception:
+        return {'available': False, 'areas': [], 'floors': [], 'devices': []}
+
+
 def _rooms(model):
     for building in model.get('buildings', []):
         for room in building.get('rooms', []):
@@ -209,7 +217,8 @@ def obvious(model, room_id, catalogue) -> list:
         if room['id'] != room_id or not room.get('ha_area'):
             continue
         walls = _room_walls(building, room)
-        openings = [o for w in walls for o in building.get('openings', []) if o.get('wall') == w['id']]
+        openings = [o for w in walls for o in building.get('openings', [])
+                    if o.get('wall') == w['id'] and o.get('state') != 'ghost']
         exterior = {w['id'] for w in walls if w.get('exterior')}
         doors = [o for o in openings if o.get('kind') == 'door' and o['wall'] in exterior]
         occupied = {p.get('host', {}).get('opening') for p in placed.values() if p['building'] == building['id']}
