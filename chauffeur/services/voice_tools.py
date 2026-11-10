@@ -49,13 +49,14 @@ SPEAKABLE = frozenset({
     'get_errand_preferences', 'get_eating_plan', 'get_meal_rules', 'get_tonights_plate',
     'get_week_dinners', 'get_shopping_trip', 'get_prep_ahead', 'get_run_sheet',
     'suggest_dinner', 'search_places', 'generate_trip_plan', 'post_weekly_digest',
-    'negotiate_day', 'program_progress', 'manage_car', 'manage_trip_rules', 'manage_trip_flights',
+    'negotiate_day', 'program_progress', 'manage_trip_rules', 'manage_trip_flights',
     # Registry-only household actions follow the same rule as the chat tools.
     'house_design', 'propose_program', 'start_drive', 'update_drive_status',
     'add_override', 'delete_override', 'generate_trip_flights', 'add_trip_flight',
     'edit_trip_flight', 'delete_trip_flight', 'challenge_pet_battle', 'award_pet_xp', 'get_pet_status',
 })
 PRIVATE = frozenset({
+    'manage_car',  # Locating a family car also reveals a person's whereabouts.
     'answer_request', 'start_ask', 'mark_ask_sent', 'answer_ask',
     'read_mail', 'search_mail', 'get_family_messages', 'list_threads',
     'add_thread_note', 'close_thread', 'update_thread_action', 'create_thread',
