@@ -1533,6 +1533,7 @@ class Settings(BaseModel):
     # a plain phrase ("mountains at dusk") which is handed to the Unsplash
     # endpoint that already backs trip artwork. Empty = the built-in gradient.
     panel_background: str = ''
+    panel_talk_greeting: str = 'How can I help?'
     # `{slug: picture}` for the SHIPPED boards, and only those. A household
     # cannot edit those boards — they are authored data — but a picture is
     # presentation, not content, and refusing to personalise it was a silly

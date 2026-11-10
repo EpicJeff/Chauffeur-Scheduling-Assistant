@@ -1,6 +1,18 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.777 (2026-11-10).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.778 (2026-11-10).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.778 (2026-11-10, NOT device-verified): the family chooses what the speaker says when someone taps to talk.**
+
+The user: '"Yes?" isn't the best. At the very least it should be something like "How can I help?", but I would make it something a family can configure any way they want.'
+
+- `settings.panel_talk_greeting` (household-wide, default "How can I help?"), declared in `settings_registry` and edited in Config › Boards › The wall panel (`components/panel_settings.html`).
+- `panel_talk.start` sends it as `start_message`, trimmed and capped at 200 characters; blank falls back to the default because Home Assistant refuses a start with no message (the v2.499.777 spike).
+- Saving it goes through `/api/settings` like the other wall-panel settings (which today also marks schedules for a rebuild; the opt-in rebuild fix is separate).
+
+Tests: `tests/test_panel_talk_greeting.py`.
+
+Device step: Config › Boards › The wall panel › Tap-to-talk greeting; tap the panel's mic and the room's speaker says it.
 
 **v2.499.777 (2026-11-10, NOT device-verified): tap to talk on a wall panel, through the room's voice satellite.**
 

@@ -5,7 +5,7 @@ import time
 
 from services import announce, ha_api, storage, voice_identity
 
-START_MESSAGE = 'Yes?'
+DEFAULT_GREETING = 'How can I help?'
 
 _last_start: dict[str, float] = {}
 _start_lock = threading.Lock()
@@ -70,9 +70,10 @@ def start(device: dict | None) -> tuple[int, dict]:
             _last_start[device_id] = stamp
         started = False
         try:
+            greeting = (storage.get_settings().get('panel_talk_greeting') or '').strip()[:200]
             result = ha_api.call_service('assist_satellite', 'start_conversation',
                                          {'entity_id': satellite, 'preannounce': True,
-                                          'start_message': START_MESSAGE}, timeout=15)
+                                          'start_message': greeting or DEFAULT_GREETING}, timeout=15)
             started = result is not None
         finally:
             if not started:

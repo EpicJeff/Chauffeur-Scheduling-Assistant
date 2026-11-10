@@ -164,6 +164,10 @@ ENTRIES: List[dict] = [
        'How much room each tile gets on its board, in columns and rows. Set on '
        'the tile itself, or by dragging its corner in Arrange.',
        page='home', anchor='board-settings', ui_marker='setSpan'),
+    _e('panel_talk_greeting', 'panel', 'Tap-to-talk greeting',
+       "What the room's speaker says when someone taps the mic on a wall panel's "
+       "Argyle chat, before it listens. Blank uses 'How can I help?'.",
+       page='config', anchor='boards'),
     _e('panel_background', 'panel', 'Panel background',
        'The photograph the wall panel floats on. A web address, or just a '
        'phrase like "mountains at dusk" to have one found for you.',
