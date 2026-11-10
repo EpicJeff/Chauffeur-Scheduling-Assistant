@@ -253,8 +253,13 @@ function adminGate() {
     store(d) {
       // Admin keys only: whoever the PWA in this browser is signed in as
       // stays signed in as them.
-      localStorage.setItem('chauffeur_admin_token', d.token);
-      localStorage.setItem('chauffeur_admin_token_for', d.member.id);
+      try {
+        localStorage.setItem('chauffeur_admin_token', d.token);
+        localStorage.setItem('chauffeur_admin_token_for', d.member.id);
+      } catch (e) {
+        this.error = 'Browser storage is unavailable. Allow storage and sign in again.';
+        return null;
+      }
       this.state = 'in';
       location.reload();   // let the page load its data as somebody
     }

@@ -1,4 +1,5 @@
-// Kept dependency-free so the length parser can also run outside the browser.
+import { contains } from '../twin_generator.js';
+
 const report = error => {
   if (!error.shown && !error.cancelled) window.showGlobalAlert(error.message || 'Could not save this change.');
 };
@@ -54,13 +55,7 @@ export function createCards({ getPlan, getLabel, getSelection = () => ({}), getF
     if (!length) return name;
     let nx = (b[1] - a[1]) / length, ny = -(b[0] - a[0]) / length;
     const x = (a[0] + b[0]) / 2 + .25 * nx, y = (a[1] + b[1]) / 2 + .25 * ny;
-    let inside = false;
-    const poly = room.polygon;
-    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-      if ((poly[i][1] > y) !== (poly[j][1] > y)
-          && x < (poly[j][0] - poly[i][0]) * (y - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) inside = !inside;
-    }
-    if (inside) { nx = -nx; ny = -ny; }
+    if (contains(room.polygon, [x, y])) { nx = -nx; ny = -ny; }
     const angle = (building.rotation || 0) * Math.PI / 180;
     const east = Math.cos(angle) * nx - Math.sin(angle) * ny, north = Math.sin(angle) * nx + Math.cos(angle) * ny;
     const direction = Math.abs(east) >= Math.abs(north) ? east > 0 ? 'east' : 'west' : north > 0 ? 'north' : 'south';

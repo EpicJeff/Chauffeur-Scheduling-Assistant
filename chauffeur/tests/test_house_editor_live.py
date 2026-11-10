@@ -625,6 +625,43 @@ def scenario_card_edit_round_trip():
         page.screenshot(path=os.path.join(tempfile.gettempdir(), 'house_editor_card.png'))
 
 
+def _visible_wall_for_handle_drag(page):
+    drawn = set(page.evaluate("() => window.__twin.pieceIds('house')"))
+    house = next(b for b in _plan(page)['buildings'] if b['id'] == 'house')
+    walls = [w for w in house['walls'] if w.get('level') == 'L1' and w.get('state') != 'ghost'
+             and w.get('kind') != 'separator' and w['id'] in drawn]
+    check(walls, 'a visible solid wall is available for a handle drag')
+    return next((w for w in walls if w.get('exterior')), walls[0])
+
+
+def _wall_handle_drag_points(page, wall):
+    # R44: the current wall handle owns a small outward floor-plane drag.
+    page.click(f'#editor-floors [data-floor="house:{wall["level"]}"]')
+    page.evaluate("([p, b]) => window.__editor.clickPiece(p, b)", [wall['id'], 'house'])
+    points = page.evaluate("""wall => {
+        const view = window.__twin, b = view.plan.buildings.find(b => b.id === 'house');
+        const at = wall.from.map((v, i) => (v + wall.to[i]) / 2);
+        const d = wall.to.map((v, i) => v - wall.from[i]), length = Math.hypot(...d);
+        const normal = [-d[1] / length, d[0] / length];
+        const vertices = b.walls.filter(w => w.level === wall.level).flatMap(w => [w.from, w.to]);
+        const centre = [0, 1].map(i => vertices.reduce((n, p) => n + p[i], 0) / vertices.length);
+        const sign = normal.reduce((n, v, i) => n + v * (at[i] - centre[i]), 0) >= 0 ? 1 : -1;
+        const to = at.map((v, i) => v + normal[i] * sign * .5);
+        const a = (b.rotation || 0) * Math.PI / 180, p = b.position || [0, 0];
+        const x = Math.cos(a) * at[0] - Math.sin(a) * at[1] + p[0];
+        const y = Math.sin(a) * at[0] + Math.cos(a) * at[1] + p[1];
+        const z = (b.base || 0) + b.levels.find(l => l.id === wall.level).elevation;
+        view.setCamera('front');
+        view.setCameraState({position: [x * .3048, (z + 50) * .3048, -(y - .01) * .3048],
+            target: [x * .3048, z * .3048, -y * .3048]});
+        return [at, to].map(p => view.screenOfFloor(...p, 'house:' + wall.level));
+    }""", wall)
+    page.wait_for_timeout(700)
+    handles = page.evaluate('window.__twinEditor.handles()')
+    check(any(h['kind'] == 'wall' and h.get('id') == wall['id'] for h in handles), handles)
+    return points
+
+
 def scenario_drag_moves_on_the_floor_only():
     s = _serve()
     if s is None:
@@ -633,9 +670,12 @@ def scenario_drag_moves_on_the_floor_only():
         page.set_viewport_size({'width': 1600, 'height': 900})
         _signed_in(page)
         _open(page, s)
-        page.click('#rail-move')
-        wall = _first(_plan(page), 'walls')
-        page.evaluate("([p, b, dx, dy]) => window.__editor.dragPiece(p, b, dx, dy)", [wall['id'], 'house', 80, 0])
+        wall = _visible_wall_for_handle_drag(page)
+        points = _wall_handle_drag_points(page, wall)
+        page.mouse.move(*points[0])
+        page.mouse.down()
+        page.mouse.move(*points[1], steps=10)
+        page.mouse.up()
         page.wait_for_function("() => window.__editor.lastSummary().startsWith('Moved')", timeout=10000)
         moved = _piece(_plan(page), wall['id'])
         check(moved['from'] != wall['from'] and moved['height'] == wall['height'], (wall, moved))
@@ -682,21 +722,22 @@ def scenario_plan_view_is_flat_and_adds_walls_and_windows():
         page.set_viewport_size({'width': 1600, 'height': 900})
         _signed_in(page)
         _open(page, s)
-        page.click('#rail-plan')
+        page.click('#editor-cameras [data-editor-camera="top"]')
         check(page.evaluate('window.__editor.cameraKind()') == 'orthographic-top', 'flat top-down')
-        page.click('#plan-add-wall')
+        page.click('#rail-draw-wall')
         for x, y in ((10, 10), (20, 10.4)):
             px, py = page.evaluate("([x, y]) => window.__editor.screenOfFloor(x, y, 'house:L1')", [x, y])
             page.mouse.click(px, py)
-        page.wait_for_function("() => window.__editor.lastSummary().startsWith('Added a wall')", timeout=10000)
+        page.keyboard.press('Escape')
+        page.wait_for_function("() => window.__editor.lastSummary().startsWith('Added the wall')", timeout=10000)
         walls = _plan(page)['buildings'][0]['walls']
         added = [w for w in walls if abs(w['from'][0] - 10) < 0.3 and abs(w['from'][1] - 10) < 0.3]
         check(added and abs(added[0]['to'][1] - added[0]['from'][1]) < 0.01, ('snapped straight', added))
-        page.click('#plan-add-window')
+        page.click('#rail-add-window')
         mid = [(added[0]['from'][0] + added[0]['to'][0]) / 2, added[0]['from'][1]]
         px, py = page.evaluate("([x, y]) => window.__editor.screenOfFloor(x, y, 'house:L1')", mid)
         page.mouse.click(px, py)
-        page.wait_for_function("() => window.__editor.lastSummary().startsWith('Added a window')", timeout=10000)
+        page.wait_for_function("() => window.__editor.lastSummary().startsWith('Added the opening')", timeout=10000)
         check(any(o.get('wall') == added[0]['id'] and o['kind'] == 'window' and o['width'] == 3
                   for o in _plan(page)['buildings'][0]['openings']), 'window added')
         page.screenshot(path=os.path.join(tempfile.gettempdir(), 'house_editor_plan_view.png'))
@@ -1009,15 +1050,12 @@ def scenario_a_real_mouse_drag_moves_a_wall_without_turning_the_view():
         page.set_viewport_size({'width': 1600, 'height': 900})
         _signed_in(page)
         _open(page, s)
-        page.get_by_role('button', name='Top', exact=True).click()
-        page.click('#rail-move')
-        wall = _first(_plan(page), 'walls')
-        x, y = page.evaluate("([p, b]) => window.__twin.screenOf(p, b)", [wall['id'], 'house'])
+        wall = _visible_wall_for_handle_drag(page)
+        points = _wall_handle_drag_points(page, wall)
         camera = page.evaluate('window.__twin.cameraState()')
-        page.mouse.move(x, y)
+        page.mouse.move(*points[0])
         page.mouse.down()
-        for step in range(1, 9):
-            page.mouse.move(x + step * 6, y)
+        page.mouse.move(*points[1], steps=8)
         page.mouse.up()
         page.wait_for_function("() => (window.__editor.lastSummary() || '').startsWith('Moved')", timeout=10000)
         moved = _piece(_plan(page), wall['id'])

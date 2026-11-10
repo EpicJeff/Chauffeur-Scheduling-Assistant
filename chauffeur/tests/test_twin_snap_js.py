@@ -25,6 +25,7 @@ Run from chauffeur/:  env -u HA_BASE_URL python tests/test_twin_snap_js.py
 """
 import json
 import os
+from pathlib import Path
 import shutil
 import subprocess
 import tempfile
@@ -92,10 +93,14 @@ def scenario_rotation_snaps_to_quarter_turns_within_seven_degrees():
 
 def scenario_lengths_parse_the_way_people_type_them():
     d = tempfile.mkdtemp(prefix='twin_cards_js_')
-    shutil.copy(os.path.join(ROOT, 'static', 'twin', 'editor', 'cards.js'), os.path.join(d, 'cards.mjs'))
     driver = os.path.join(d, 'driver.mjs')
     with open(driver, 'w', encoding='utf-8') as f:
-        f.write("""import { parseLength } from './cards.mjs';
+        f.write("import { registerHooks } from 'node:module';\n"
+                + "const root = " + json.dumps(Path(ROOT).as_uri() + '/') + ";\n"
+                + "registerHooks({resolve(s,c,n){if(s==='three')return {url:root+'static/vendor/three-r187/three.module.js',shortCircuit:true};"
+                + "if(s.startsWith('three/addons/'))return {url:root+'static/vendor/three-r187/addons/'+s.slice(13),shortCircuit:true};return n(s,c);},"
+                + "load(u,c,n){return u.startsWith('file:')&&u.endsWith('.js')?{...n(u,{...c,format:'module'}),format:'module'}:n(u,c);}});\n"
+                + "const {parseLength}=await import(root+'static/twin/editor/cards.js');\n" + """
 const inputs = JSON.parse(process.argv[2]);
 console.log(JSON.stringify(inputs.map(i => { try { return parseLength(i); } catch (e) { return null; } })));""")
     cases = ["5'6\"", '5.5', '66in', '5ft', '5 ft 6 in', "11'-0\"", '0x1A', '1e3', '', 'nonsense', 'Infinity']

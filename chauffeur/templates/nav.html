@@ -572,8 +572,8 @@
         // Guarded: nav's script is also executed outside a browser (the nav
         // runtime test runs it under node), and auth plumbing must never be
         // the reason a page fails to boot.
-        if (typeof window === 'undefined' || typeof window.fetch !== 'function'
-            || typeof localStorage === 'undefined') return;
+        if (typeof window === 'undefined' || typeof window.fetch !== 'function') return;
+        try { if (typeof localStorage === 'undefined') return; } catch (e) { return; }
         // Shared with the admin gate, which installs its wrapper before nav.
         window.chfIsControlUrl = function (url) {
             return /(?:^|\/)api\/(?:ha\/(?:control\/|toggle(?:[?#]|$)|card\/(?:service|climate)(?:[?#]|$)|media_players\/[^/?#]+\/command(?:[?#]|$))|music\/(?:play|queue\/command)(?:[?#]|$))/.test(url);

@@ -15,6 +15,8 @@ Run from chauffeur/:  python tests/test_twin_editor_api_js.py
 """
 import json
 import os
+from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -202,11 +204,74 @@ console.log('ok');
     check(result.returncode == 0, result.stdout + result.stderr)
 
 
+def scenario_shared_editor_chrome_survives_denied_storage():
+    scripts = {}
+    for name in ('control_center', 'admin_gate', 'panel_enrol'):
+        source = (Path(ROOT) / 'templates/components' / (name + '.html')).read_text(encoding='utf-8')
+        scripts[name] = re.findall(r'<script>(.*?)</script>', source, re.S)
+    nav = (Path(ROOT) / 'templates/nav.html').read_text(encoding='utf-8')
+    script = re.findall(r'<script>(.*?)</script>', nav, re.S)[-1]
+    scripts['nav'] = [re.sub(r'{% for item in NAV_ITEMS %}.*?{% endfor %}', '', script, flags=re.S)]
+    driver = r"""
+import assert from 'node:assert/strict';
+import vm from 'node:vm';
+import {readFileSync} from 'node:fs';
+const scripts=JSON.parse(readFileSync(process.argv[2]));
+for(const mode of ['getter','methods','available']) {
+  const handlers=[], nodes=new Map();let reloads=0;
+  const element=()=>({style:{},dataset:{},children:[],classList:{add(){},remove(){},contains(){return true;}},
+    addEventListener(){},appendChild(){},querySelectorAll(){return [];},getBoundingClientRect(){return {height:0};},setAttribute(){},focus(){}});
+  const get=id=>{if(id==='chat-input')return null;if(!nodes.has(id))nodes.set(id,element());return nodes.get(id);};
+  const context={console,URL,URLSearchParams,Headers,DOMException,
+    location:{search:'',pathname:'/house/editor',origin:'http://localhost',reload(){reloads++;}},innerWidth:1600,
+    document:{getElementById:get,querySelectorAll:()=>[],querySelector:()=>null,createElement:element,
+      body:element(),documentElement:element(),addEventListener:(name,fn)=>{if(name==='DOMContentLoaded')handlers.push(fn);}},
+    addEventListener(){},dispatchEvent(){},setTimeout(){},setInterval(){},clearTimeout(){},clearInterval(){},
+    CustomEvent:class{},crypto:{randomUUID:()=> 'device'},
+    fetch:async()=>({ok:true,status:200,json:async()=>({claimed:true,parents:[]})}),
+    ensureMemberAuth:async()=>null};
+  const data=new Map();
+  const storage={getItem:k=>{if(mode==='methods')throw new DOMException('denied','SecurityError');return data.get(k)||null;},
+    setItem:(k,v)=>{if(mode==='methods')throw new DOMException('denied','QuotaExceededError');data.set(k,v);},removeItem:k=>data.delete(k)};
+  Object.defineProperty(context,'localStorage',{get(){if(mode==='getter')throw new DOMException('denied','SecurityError');return storage;}});
+  context.window=context;vm.createContext(context);
+  for(const name of ['admin_gate','control_center','panel_enrol'])for(const source of scripts[name])vm.runInContext(source,context,{filename:name+'.html'});
+  for(const fn of handlers)await fn();
+  // nav's real startup used to throw even on typeof localStorage.
+  for(const source of scripts.nav)vm.runInContext(source,context,{filename:'nav.html'});
+  context.toggleOperationsSidebar(false);
+  context.chfStoreMemberToken('p1','pin-token');context.chfClearMemberToken('p1');
+  assert.equal(await context.chfMemberToken({id:'p1',name:'Pat',has_pin:false}), '');
+  assert.equal(await context.chfMemberToken({id:'p1',name:'Pat',has_pin:true}), null,'missing storage never bypasses a PIN');
+  const panel=context.panelEnrol();panel.init();context.chfRequestPairing();
+  const gate=context.adminGate();gate.store({token:'admin-token',member:{id:'p1'}});
+  if(mode==='available') {assert.equal(reloads,1);assert.equal(context.chfAdminSession().token,'admin-token');}
+  else {
+    assert.equal(context.chfAdminSession(),null);assert.equal(panel.deviceId(),null);await panel.ask();
+    assert.match(panel.error,/storage/);assert.equal(reloads,0);assert.match(gate.error,/storage/);
+  }
+}
+console.log('ok shared chrome boots and its storage paths retain auth behavior under denied getters, denied methods and available storage');
+"""
+    paths = []
+    try:
+        for suffix, content in [('.mjs', driver), ('.json', json.dumps(scripts))]:
+            with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix=suffix, prefix='chauffeur_storage_', delete=False) as f:
+                paths.append(Path(f.name))
+                f.write(content)
+        result = subprocess.run([shutil.which('node'), str(paths[0]), str(paths[1])], capture_output=True, text=True, timeout=20)
+        check(result.returncode == 0, result.stdout + result.stderr)
+    finally:
+        for path in paths:
+            path.unlink(missing_ok=True)
+
+
 if __name__ == '__main__':
     if not shutil.which('node'):
         print('  ..  skipped (node not available)')
     else:
-        for fn in (scenario_place_suggest_stays_enabled_for_unassigned_pages,
+        for fn in (scenario_shared_editor_chrome_survives_denied_storage,
+                   scenario_place_suggest_stays_enabled_for_unassigned_pages,
                    scenario_a_done_build_with_next_is_followed_by_the_poller,
                    scenario_a_chain_is_followed_link_by_link,
                    scenario_a_done_build_without_next_is_not_followed_further):

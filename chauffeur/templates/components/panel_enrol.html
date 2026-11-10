@@ -95,7 +95,9 @@ function panelEnrol() {
       // fetch wrapper in nav.html calls this on a 401/403. Paired loads,
       // unpaired-but-allowed loads, unpaired-and-refused asks.
       window.chfRequestPairing = () => {
-        if (this.open || localStorage.getItem('chauffeur_device_token')) return;
+        let token = null;
+        try { token = localStorage.getItem('chauffeur_device_token'); } catch (e) {}
+        if (this.open || token) return;
         const p = new URLSearchParams(location.search);
         // A phone browser has a person behind it who can sign in properly;
         // showing them a pairing code would be an odd answer to "open the app".
@@ -106,13 +108,15 @@ function panelEnrol() {
     },
 
     deviceId() {
-      let id = localStorage.getItem('chauffeur_device_id');
-      if (!id) {
-        id = (crypto.randomUUID ? crypto.randomUUID()
-              : String(Date.now()) + Math.random().toString(16).slice(2));
-        localStorage.setItem('chauffeur_device_id', id);
-      }
-      return id;
+      try {
+        let id = localStorage.getItem('chauffeur_device_id');
+        if (!id) {
+          id = (crypto.randomUUID ? crypto.randomUUID()
+                : String(Date.now()) + Math.random().toString(16).slice(2));
+          localStorage.setItem('chauffeur_device_id', id);
+        }
+        return id;
+      } catch (e) { return null; }
     },
 
     // ha_theme.html works the path climb out once, board level included.
@@ -120,9 +124,11 @@ function panelEnrol() {
 
     async ask() {
       try {
+        const deviceId = this.deviceId();
+        if (!deviceId) { this.error = 'This screen needs browser storage to pair.'; return; }
         const r = await fetch(`${this.base()}api/account/devices/pair-request`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ device_id: this.deviceId() }) });
+          body: JSON.stringify({ device_id: deviceId }) });
         const d = await r.json();
         if (!r.ok) { this.error = d.detail || 'Could not ask to pair.'; return; }
         this.code = d.code;

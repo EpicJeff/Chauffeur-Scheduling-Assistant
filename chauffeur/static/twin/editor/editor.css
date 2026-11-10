@@ -5,7 +5,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #chat-overlay-container { display: none !important; }
 #editor-chrome #top-nav-bar, #editor-chrome #panel-shelf,
 #editor-chrome #panel-shelf-flyout { display: none !important; }
-.editor-shell { --editor-panel: rgba(21, 27, 34, .96); --editor-line: #2b3847; --editor-muted: #a0afc1; --editor-accent: #52ccff; --editor-side: 364px; position: fixed; inset: 0; background: #171e27; color: #dce4ef; font: 13px/1.5 Inter, system-ui, sans-serif; }
+.editor-shell { --editor-panel: rgba(21, 27, 34, .96); --editor-line: #2b3847; --editor-muted: #a0afc1; --editor-accent: #52ccff; --editor-room-wall: #9b7cdb; --editor-side: 364px; --editor-floor-height: min(28dvh, 240px); position: fixed; inset: 0; background: #171e27; color: #dce4ef; font: 13px/1.5 Inter, system-ui, sans-serif; }
 .editor-shell * { box-sizing: border-box; }
 .editor-shell [hidden] { display: none !important; }
 .editor-shell button, .editor-shell input, .editor-shell select, .editor-shell textarea, #editor-menu summary,
@@ -20,7 +20,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 .editor-shell h3 { font-size: 16px; font-weight: 600; }
 #editor-scene { position: absolute; inset: 0 calc(var(--editor-side) + 28px) 0 0; }
 #editor-scene canvas { display: block; width: 100%; height: 100%; touch-action: none; }
-#editor-top { position: absolute; top: 14px; left: 16px; right: calc(var(--editor-side) + 152px); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; pointer-events: none; z-index: 3; }
+#editor-top { position: absolute; top: 14px; left: 16px; right: calc(var(--editor-side) + 28px); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; pointer-events: none; z-index: 3; }
 #editor-top > * { pointer-events: auto; }
 #editor-top h1, #editor-top output { background: var(--editor-panel); border: 1px solid var(--editor-line); border-radius: 24px; padding: 8px 14px; }
 #editor-top #editor-status { color: var(--editor-accent); border-color: #167aa5; }
@@ -28,14 +28,15 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #editor-menu summary { list-style: none; border: 1px solid var(--editor-line); border-radius: 10px; padding: 10px; background: var(--editor-panel); }
 #editor-menu > div { position: absolute; left: 0; top: 48px; width: 210px; padding: 8px; background: var(--editor-panel); border: 1px solid var(--editor-line); border-radius: 12px; }
 #editor-menu button, #editor-menu a { display: block; width: 100%; text-align: left; text-decoration: none; padding: 10px; border: 0; border-radius: 8px; }
-#editor-rail { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; padding: 6px; gap: 2px; border: 1px solid var(--editor-line); border-radius: 16px; background: var(--editor-panel); z-index: 2; }
+#editor-rail { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; padding: 6px; gap: 2px; border: 1px solid var(--editor-line); border-radius: 16px; background: var(--editor-panel); z-index: 2; max-height: calc(100dvh - 210px); overflow-y: auto; }
 #editor-rail button { font-size: 11px; border: 0; background: transparent; padding: 6px; }
 #editor-rail button[aria-pressed="true"] { background: #0ba7df; color: white; }
-#editor-floors { position: absolute; right: calc(var(--editor-side) + 28px); top: 14px; display: flex; flex-direction: column; gap: 5px; width: 112px; z-index: 2; }
+#editor-floors { position: absolute; right: 14px; top: 14px; display: flex; flex-direction: column; gap: 5px; width: var(--editor-side); height: var(--editor-floor-height); overflow-y: auto; z-index: 2; }
+#editor-floors > * { flex: 0 0 auto; }
 #editor-floors > span { color: var(--editor-muted); text-align: right; }
 #editor-floors button, #editor-floors p { background: var(--editor-panel); border: 1px solid var(--editor-line); border-radius: 10px; padding: 6px 10px; text-align: right; }
 #editor-floors button[aria-pressed="true"] { border-color: var(--editor-accent); color: var(--editor-accent); }
-#editor-agent { position: absolute; right: 14px; top: 14px; bottom: 96px; width: var(--editor-side); display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--editor-line); border-radius: 16px; background: var(--editor-panel); overflow: hidden; }
+#editor-agent { position: absolute; right: 14px; top: calc(var(--editor-floor-height) + 28px); bottom: 96px; width: var(--editor-side); display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--editor-line); border-radius: 16px; background: var(--editor-panel); overflow: hidden; }
 #editor-agent > header { display: flex; gap: 12px; justify-content: space-between; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--editor-line); }
 #editor-source-count { font-size: 12px; color: var(--editor-muted); }
 #editor-panel-scroll { flex: 1; min-height: 0; overflow: auto; padding: 14px; }
@@ -75,12 +76,12 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 .editor-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 #editor-cameras { position: absolute; left: 96px; bottom: 160px; display: flex; flex-wrap: wrap; gap: 4px; z-index: 2; }
 #editor-cameras button { background: var(--editor-panel); }
-#plan-tools { position: absolute; left: 96px; top: 74px; right: calc(var(--editor-side) + 158px); z-index: 3; padding: 10px; background: var(--editor-panel); border: 1px solid var(--editor-line); border-radius: 12px; }
-#plan-tools > div, #pause-card > div { display: flex; flex-wrap: wrap; gap: 6px; }
-#plan-note { color: var(--editor-muted); margin-top: 6px; }
+#draw-tools { position: absolute; left: 96px; top: 74px; right: calc(var(--editor-side) + 28px); z-index: 3; padding: 10px; background: var(--editor-panel); border: 1px solid var(--editor-line); border-radius: 12px; }
+#draw-tools > div, #pause-card > div { display: flex; flex-wrap: wrap; gap: 6px; }
+#draw-note { color: var(--editor-muted); margin-top: 6px; }
 #piece-card, #pause-card { position: fixed; z-index: 4; width: 280px; padding: 14px; border: 1px solid var(--editor-accent); border-radius: 16px; background: var(--editor-panel); max-height: calc(100dvh - 260px); overflow-y: auto; }
 /* Dock over the panel's scroll area, leaving Argyle's replies and composer free. */
-#piece-card { right: 14px; top: 74px; width: var(--editor-side); max-height: calc(100dvh - 300px); }
+#piece-card { right: 14px; top: calc(var(--editor-floor-height) + 88px); width: var(--editor-side); max-height: calc(100dvh - var(--editor-floor-height) - 314px); }
 #piece-card h3 { padding-right: 50px; margin-bottom: 12px; }
 #piece-card > button[aria-label] { position: absolute; right: 8px; top: 8px; }
 #piece-card label, #pause-card label { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 8px 0; }
@@ -97,6 +98,9 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #pause-card[data-pinning="true"] > div, #pause-card[data-pinning="true"] #pause-reason { display: none; }
 #editor-drag-hint, .editor-pin-dot { position: fixed; z-index: 6; pointer-events: none; background: #104566; border: 1px solid var(--editor-accent); border-radius: 12px; padding: 8px; }
 .editor-dimensions { pointer-events: none; }
+.editor-handles { pointer-events: none; }
+.editor-handle { position: fixed; z-index: 3; width: 10px; height: 10px; transform: translate(-50%, -50%); border: 1px solid var(--editor-accent); border-radius: 50%; background: var(--editor-panel); }
+.editor-handle-joint { background: var(--editor-accent); }
 .editor-dimensions button { position: fixed; z-index: 3; pointer-events: auto; transform: translate(-50%, -50%); background: var(--editor-panel); color: var(--editor-accent); border: 1px solid var(--editor-accent); border-radius: 12px; padding: 6px 8px; font-size: 12px; white-space: nowrap; }
 #editor-drag-layer { position: fixed; inset: 0; width: 100vw; height: 100dvh; pointer-events: none; z-index: 3; }
 #editor-drag-outline { fill: #52ccff22; stroke: #52ccff; stroke-width: 3; stroke-dasharray: 8 4; }
@@ -184,23 +188,24 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
   .place-footer .editor-actions button { flex: 1; }
 }
 @media (prefers-reduced-motion: reduce) { .editor-shell * { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
-@media (max-width: 1050px) { .editor-shell { --editor-side: 320px; } #editor-top { right: calc(var(--editor-side) + 28px); } #editor-floors { top: 120px; } }
+@media (max-width: 1050px) { .editor-shell { --editor-side: 320px; } }
 @media (max-width: 700px) {
   .editor-shell { --editor-side: 0px; }
   #editor-scene { inset: 0 0 48% 0; }
   #editor-top { left: 8px; right: 8px; top: 8px; gap: 4px; }
   #editor-top h1, #editor-top output { padding: 6px 8px; font-size: 11px; }
-  #editor-agent { top: 52%; bottom: calc(8px + env(safe-area-inset-bottom)); left: 8px; right: 8px; width: auto; }
+  #editor-agent { top: calc(52% + 72px); bottom: calc(8px + env(safe-area-inset-bottom)); left: 8px; right: 8px; width: auto; }
   #editor-rail { left: 8px; top: 100px; transform: none; max-height: calc(52% - 160px); overflow: auto; }
-  #editor-floors { right: 8px; top: 100px; max-height: calc(52% - 160px); overflow: auto; }
+  #editor-floors { left: 8px; right: 8px; top: calc(52% + 8px); width: auto; height: 56px; flex-direction: row; align-items: center; overflow: auto; }
+  #editor-floors > *, #editor-floors .editor-floor-row { flex: 0 0 auto; }
   #editor-time { left: 8px; right: 8px; bottom: 49%; padding: 6px 10px; }
   #editor-time-labels { height: 44px; }
   #editor-cameras { left: 76px; bottom: calc(49% + 96px); }
   #editor-cameras button { padding: 5px 8px; }
-  #piece-card { top: calc(52% + 62px); right: 8px; width: calc(100vw - 16px); max-height: calc(48dvh - 200px); }
+  #piece-card { top: calc(52% + 134px); right: 8px; width: calc(100vw - 16px); max-height: calc(48dvh - 224px); }
   #pause-card { max-height: calc(52dvh - 150px); width: min(280px, calc(100vw - 96px)); }
-  #plan-tools { left: 76px; right: 8px; top: 75px; }
-  #plan-tools button { font-size: 11px; padding: 5px; }
-  #plan-note { font-size: 11px; }
+  #draw-tools { left: 76px; right: 8px; top: 75px; }
+  #draw-tools button { font-size: 11px; padding: 5px; }
+  #draw-note { font-size: 11px; }
   #time-chip { top: 60px; left: 76px; }
 }

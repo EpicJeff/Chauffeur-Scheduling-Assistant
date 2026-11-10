@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
-import { buildTwin, FT, PICK_LAYER, polygon, mergeStatic } from './twin_generator.js';
+import { buildTwin, FT, PICK_LAYER, polygon, mergeStatic, contains, stairHoles } from './twin_generator.js';
 import { heightAt } from './twin_roof.js';
 import { groundAt } from './twin_ground.js';
 import { buildYard } from './twin_yard.js';
@@ -38,6 +38,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
   }
   const ambient = new THREE.HemisphereLight('#d9e9ff', '#68764f', 1.8);
   scene.add(sun, sun.target, ambient);
+  let yardGroup = null;
   let twin = null, disposed = false, revision = 0, sky = null, environment = null, environmentTarget = null;
   const state = { view: 'ext', time: 'day', camera: 'front' };
   let bounds = { x: 19, y: 11, span: 38 };
@@ -65,7 +66,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
     const allowed = new Set(room?.allowed || []), walls = new Set(room?.walls || []);
     const style = getComputedStyle(el.closest('.editor-shell') || el);
     const accent = new THREE.Color(style.getPropertyValue('--editor-accent').trim() || '#52ccff');
-    const wallTint = new THREE.Color(style.getPropertyValue('--ha-primary-text').trim() || '#dce4ef');
+    const wallTint = new THREE.Color(style.getPropertyValue('--editor-room-wall').trim() || '#9b7cdb');
     const styled = new Set();
     for (const [key, objects] of twin.pieces) {
       const data = twin.pieceBounds.get(key)?.data;
@@ -100,28 +101,39 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       };
       object.material = Array.isArray(object.material) ? object.material.map(clone) : clone(object.material);
     });
-    function outline(pick, isHover) {
-      if (!pick) return;
-      const keys = [...twin.pieceBounds].filter(([, { data }]) => data.buildingId === pick.building
-        && (data.pieceId === pick.id || pick.kind === 'building' || pick.kind === 'level'
-          && plan.buildings.find(b => b.id === pick.building)?.levels.some(l => l.id === pick.id)
-          && twin.pickObjects.get(`${data.buildingId}:${data.pieceId}`)?.parent?.userData.levelKey === `${pick.building}:${pick.id}`));
-      for (const [key] of keys) {
-        const proxy = twin.pickObjects.get(key); if (!proxy) continue;
-        const material = new THREE.LineBasicMaterial({ color: accent, transparent: true, opacity: isHover ? .65 : 1, depthTest: false });
-        let geometry;
-        const b = plan.buildings.find(b => b.id === pick.building), r = b?.rooms?.find(r => r.id === pick.id);
-        if (r && pick.kind === 'room') {
-          const z = (b.levels.find(l => l.id === r.level)?.elevation || 0) + .04;
-          geometry = new THREE.BufferGeometry().setFromPoints([...r.polygon, r.polygon[0]].map(p => new THREE.Vector3(p[0], z, -p[1])));
-        } else geometry = new THREE.EdgesGeometry(proxy.geometry);
-        const line = r && pick.kind === 'room' ? new THREE.Line(geometry, material) : new THREE.LineSegments(geometry, material);
-        line.userData.selectionKey = key;
-        line.userData.roomOutline = !!r && pick.kind === 'room';
-        line.renderOrder = isHover ? 11 : 10; proxy.parent.add(line); selectionLines.push(line);
-      }
-    }
     outline(selected, false); outline(hover, true);
+    render();
+  }
+  function outline(pick, isHover) {
+    if (!pick) return;
+    const accent = new THREE.Color(getComputedStyle(el.closest('.editor-shell') || el).getPropertyValue('--editor-accent').trim() || '#52ccff');
+    const keys = [...twin.pieceBounds].filter(([, { data }]) => data.buildingId === pick.building
+      && (data.pieceId === pick.id || pick.kind === 'building' || pick.kind === 'level'
+        && plan.buildings.find(b => b.id === pick.building)?.levels.some(l => l.id === pick.id)
+        && twin.pickObjects.get(`${data.buildingId}:${data.pieceId}`)?.parent?.userData.levelKey === `${pick.building}:${pick.id}`));
+    for (const [key] of keys) {
+      const proxy = twin.pickObjects.get(key); if (!proxy) continue;
+      const material = new THREE.LineBasicMaterial({ color: accent, transparent: true, opacity: isHover ? .65 : 1, depthTest: false });
+      let geometry;
+      const b = plan.buildings.find(b => b.id === pick.building), r = b?.rooms?.find(r => r.id === pick.id);
+      if (r && pick.kind === 'room') {
+        const z = (b.levels.find(l => l.id === r.level)?.elevation || 0) + .04;
+        geometry = new THREE.BufferGeometry().setFromPoints([...r.polygon, r.polygon[0]].map(p => new THREE.Vector3(p[0], z, -p[1])));
+      } else geometry = new THREE.EdgesGeometry(proxy.geometry);
+      const line = r && pick.kind === 'room' ? new THREE.Line(geometry, material) : new THREE.LineSegments(geometry, material);
+      line.userData.selectionKey = key;
+      line.userData.isHover = isHover;
+      line.userData.roomOutline = !!r && pick.kind === 'room';
+      line.renderOrder = isHover ? 11 : 10; proxy.parent.add(line); selectionLines.push(line);
+    }
+  }
+  function paintHover() {
+    for (let i = selectionLines.length - 1; i >= 0; i--) {
+      const line = selectionLines[i];
+      if (!line.userData.isHover) continue;
+      line.removeFromParent(); line.geometry.dispose(); line.material.dispose(); selectionLines.splice(i, 1);
+    }
+    if (twin) outline(selectionStyle?.hover, true);
     render();
   }
   function restoreFloors() {
@@ -135,13 +147,15 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
     const level = building?.levels.find(l => `${building.id}:${l.id}` === key);
     return building && { building, elevation: groundAt(plan, ...(building.position || [0, 0])) + (building.base || 0) + level.elevation };
   }
-  function projectFloor(x, y, key) {
+  // Optional height is in feet above the level, using the same live camera
+  // and building transform as the floor point.
+  function projectFloor(x, y, key, height = 0) {
     const frame = floorFrame(key); if (!frame) return null;
     const b = frame.building, a = (b.rotation || 0) * Math.PI / 180;
     const wx = Math.cos(a) * x - Math.sin(a) * y + (b.position?.[0] || 0);
     const wy = Math.sin(a) * x + Math.cos(a) * y + (b.position?.[1] || 0);
     camera.updateMatrixWorld(true);
-    const p = new THREE.Vector3(wx * FT, frame.elevation * FT, -wy * FT).project(camera);
+    const p = new THREE.Vector3(wx * FT, (frame.elevation + height) * FT, -wy * FT).project(camera);
     const r = renderer3.domElement.getBoundingClientRect();
     return [r.left + (p.x + 1) * r.width / 2, r.top + (1 - p.y) * r.height / 2];
   }
@@ -211,19 +225,22 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
     },
     screenOfFloor: projectFloor,
     setSelection(value) {
+      const sameMaterials = selectionStyle && JSON.stringify([selectionStyle.selected, selectionStyle.room])
+        === JSON.stringify([value.selected, value.room]);
       selectionStyle = value;
       const focus = value.room || (value.selected?.kind === 'level' ? { building: value.selected.building, level: value.selected.id } : null);
-      const key = focus ? `${focus.building}:${focus.level}` : editableLevel;
+      const key = focus ? `${focus.building}:${focus.level}` : null;
       if (key !== editableLevel) {
         editableLevel = key;
-        view.rebuild(plan).catch(error => el.dispatchEvent(new CustomEvent('twinerror', { detail: error })));
-      } else paintSelection();
+        view.rebuild(plan, { preserveYard: true }).catch(error => el.dispatchEvent(new CustomEvent('twinerror', { detail: error })));
+      } else if (sameMaterials) paintHover();
+      else paintSelection();
       return value.room ? [...(twin?.pieceBounds.values() || [])].filter(({ data }) =>
         data.buildingId !== value.room.building || !value.room.allowed.includes(data.pieceId)).length : 0;
     },
     async setEditableLevel(key) {
       if (key === editableLevel) return;
-      editableLevel = key; await view.rebuild(plan);
+      editableLevel = key; await view.rebuild(plan, { preserveYard: true });
     },
     floorAt(clientX, clientY, key) {
       const frame = floorFrame(key); if (!frame) return null;
@@ -255,6 +272,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       // The plan camera reaches pieces beneath the roof, as a floor editor
       // must; perspective views can select the roof itself.
       const candidates = [...twin.pickObjects.values()].filter(o => {
+        const room = selectionStyle?.room, data = o.userData;
+        if (room && (data.buildingId !== room.building || !room.allowed.includes(data.pieceId))) return false;
         if (!visible(o) || (state.camera === 'top' && o.userData.kind === 'roof')) return false;
         if (camera.isOrthographicCamera && state.view !== 'ext') {
           for (let p = o; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey === state.view;
@@ -269,25 +288,25 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
         // Room proxies enclose the slab. Reject the empty corners of concave
         // rooms so a ray cannot select their floor through a neighbour.
         const point = hit.object.parent.worldToLocal(hit.point.clone()), x = point.x, y = -point.z;
-        const poly = room.polygon; let inside = false;
-        for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-          if ((poly[i][1] > y) !== (poly[j][1] > y)
-              && x < (poly[j][0] - poly[i][0]) * (y - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) inside = !inside;
-        }
-        return inside;
+        return contains(room.polygon, [x, y]);
       });
       let hit = state.camera === 'top' ? hits.find(h => h.object.userData.kind === 'wall') || hits[0] : hits[0];
       if (!hit) return null;
-      if (hit.object.userData.kind === 'wall') {
-        const { pieceId, buildingId } = hit.object.userData;
-        const b = plan.buildings.find(b => b.id === buildingId);
-        hit = hits.find(h => h.object.userData.kind === 'opening' && h.object.userData.buildingId === buildingId
-          && Math.abs(h.distance - hit.distance) < FT
-          && b?.openings?.some(o => o.id === h.object.userData.pieceId && (o.wall || o.host?.wall) === pieceId)) || hit;
-      }
+      const surface = hit.object.userData;
+      const building = plan.buildings.find(b => b.id === surface.buildingId);
+      // A proxy surrounds the wall/slab, so it can be slightly nearer than a
+      // switch, window or item attached to that surface. Prefer its hosted hit.
+      hit = hits.find(h => {
+        const data = h.object.userData;
+        if (data.buildingId !== surface.buildingId || Math.abs(h.distance - hit.distance) >= FT) return false;
+        const list = { opening: 'openings', anchor: 'anchors', light: 'anchors', item: 'items', fixture: 'items' }[data.kind];
+        const piece = list && building?.[list]?.find(p => p.id === data.pieceId);
+        if (!piece) return false;
+        return surface.kind === 'wall' && (piece.wall || piece.host?.wall) === surface.pieceId
+          || surface.kind === 'room' && (piece.host?.floor === surface.pieceId || piece.host?.ceiling === surface.pieceId)
+          || surface.kind === 'roof' && piece.host?.roof === surface.pieceId;
+      }) || hit;
       const { pieceId, kind, buildingId } = hit.object.userData;
-      const room = selectionStyle?.room;
-      if (room && (buildingId !== room.building || !room.allowed.includes(pieceId))) return null;
       let level = null;
       for (let p = hit.object; p; p = p.parent) if (p.userData.levelKey) { level = p.userData.levelKey.slice(buildingId.length + 1); break; }
       return { kind, id: pieceId, building: buildingId, level, pieceId, buildingId };
@@ -453,7 +472,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
     rebuildLevel(buildingId, levelId, flat, touched = null) {
       const key = `${buildingId}:${levelId}`, group = twin?.groups.levels[key];
       const before = plan.buildings.find(b => b.id === buildingId), after = flat.buildings.find(b => b.id === buildingId);
-      if (!group || !before || !after || editableLevel !== key) return;
+      if (!group || !before || !after || twin.editableLevel !== key) return;
       // The focused level has per-piece meshes (R42). Rebuild its changed
       // buffers in place: no roof, yard, texture or optional-model work per frame.
       // Keep selection materials alive throughout a gesture. Replacing every
@@ -482,20 +501,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
           if (room && object !== proxy && object.isMesh) {
             geometry.computeBoundingBox();
             const { min, max } = geometry.boundingBox;
-            const holes = (after.stairs || []).filter(s => s.rise_to >= min.y && min.y > 0).map(s => {
-              const dx = s.to[0] - s.from[0], dy = s.to[1] - s.from[1], length = Math.hypot(dx, dy);
-              const nx = -dy / length * s.width / 2, ny = dx / length * s.width / 2;
-              return [[s.from[0] + nx, s.from[1] + ny], [s.to[0] + nx, s.to[1] + ny],
-                [s.to[0] - nx, s.to[1] - ny], [s.from[0] - nx, s.from[1] - ny]];
-            });
-            const inside = p => {
-              const poly = room.polygon; let inside = false;
-              for (let i = 0, j = poly.length - 1; i < poly.length; j = i++)
-                if ((poly[i][1] > p[1]) !== (poly[j][1] > p[1])
-                  && p[0] < (poly[j][0] - poly[i][0]) * (p[1] - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) inside = !inside;
-              return inside;
-            };
-            object.geometry = polygon(room.polygon, min.y, max.y, holes.filter(h => h.every(inside)));
+            const level = after.levels.find(l => l.id === levelId);
+            const holes = stairHoles(after, level).filter(h => h.every(p => contains(room.polygon, p)));
+            object.geometry = polygon(room.polygon, min.y, max.y, holes);
             geometry.dispose(); geometry = object.geometry;
           } else {
             const positions = geometry.attributes.position;
@@ -551,13 +559,22 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
             let parent = record?.group;
             while (parent && !parent.userData.levelKey) parent = parent.parent;
             const wallId = piece.host?.wall || piece.wall;
-            const oldWall = wallsBefore.get(wallId), wall = after.walls.find(w => w.id === wallId);
+            const oldWall = wallsBefore.get(old.host?.wall || old.wall), wall = after.walls.find(w => w.id === wallId);
             const angle = list !== 'items' && oldWall && wall ? Math.atan2(wall.to[1] - wall.from[1], wall.to[0] - wall.from[0])
-              - Math.atan2(oldWall.to[1] - oldWall.from[1], oldWall.to[0] - oldWall.from[0]) : 0;
-            if (!a || !b || same(a, b) && !angle || parent?.userData.levelKey !== key) continue;
+              - Math.atan2(oldWall.to[1] - oldWall.from[1], oldWall.to[0] - oldWall.from[0])
+              + (old.host?.side && piece.host?.side && old.host.side !== piece.host.side ? Math.PI : 0) : 0;
+            const resized = list === 'openings' && !same([old.width, old.sill, old.head], [piece.width, piece.sill, piece.head]);
+            if (!a || !b || same(a, b) && !angle && !resized || parent?.userData.levelKey !== key) continue;
             const c = Math.cos(angle), s = Math.sin(angle);
-            update(piece.id, (x, y, z) => [b[0] + (x - a[0]) * c - (y - a[1]) * s,
-              b[1] + (x - a[0]) * s + (y - a[1]) * c, z + b[2] - a[2]]);
+            update(piece.id, (x, y, z) => {
+              let dx = x - a[0], dy = y - a[1], dz = z - a[2];
+              if (list === 'openings' && oldWall) {
+                const axis = direction(oldWall), extra = (dx * axis.x + dy * axis.y) * (piece.width / old.width - 1);
+                dx += axis.x * extra; dy += axis.y * extra;
+                dz *= (piece.head - piece.sill) / (old.head - old.sill);
+              }
+              return [b[0] + dx * c - dy * s, b[1] + dx * s + dy * c, b[2] + dz];
+            });
           } catch { /* Missing hosts keep their ghost geometry. */ }
         }
       }
@@ -576,9 +593,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       render();
       el.dispatchEvent(new CustomEvent('twinlevelrebuilt', { detail: { buildingId, levelId } }));
     },
-    async rebuild(nextPlan) {
+    async rebuild(nextPlan, { preserveYard = false } = {}) {
       const version = ++revision; view.ready = false;
       const next = buildTwin(nextPlan, kit, tier, { showAnchors: !!view.showAnchors, editableLevel });
+      next.editableLevel = editableLevel;
       const extras = new Map();
       try {
         // The generator's structural floors cover room polygons; unattached
@@ -606,18 +624,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
                 }
               };
               if (kind === 'room') {
-                const first = Math.min(...building.levels.map(l => l.elevation));
-                const holes = (building.stairs || []).filter(s => s.rise_to >= level.elevation && level.elevation > first).map(s => {
-                  const dx = s.to[0] - s.from[0], dy = s.to[1] - s.from[1], length = Math.hypot(dx, dy);
-                  const nx = -dy / length * s.width / 2, ny = dx / length * s.width / 2;
-                  return [[s.from[0] + nx, s.from[1] + ny], [s.to[0] + nx, s.to[1] + ny], [s.to[0] - nx, s.to[1] - ny], [s.from[0] - nx, s.from[1] - ny]];
-                });
-                const inside = p => {
-                  const poly = piece.polygon; let inside = false;
-                  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) if ((poly[i][1] > p[1]) !== (poly[j][1] > p[1]) && p[0] < (poly[j][0] - poly[i][0]) * (p[1] - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) inside = !inside;
-                  return inside;
-                };
-                add(polygon(piece.polygon, level.elevation + .012, level.elevation + .012, holes.filter(h => h.every(inside))));
+                const holes = stairHoles(building, level).filter(h => h.every(p => contains(piece.polygon, p)));
+                add(polygon(piece.polygon, level.elevation + .012, level.elevation + .012, holes));
               } else {
                 const [x, y] = piece.position, height = piece.head - piece.sill;
                 const wall = building.walls.find(w => w.id === piece.wall);
@@ -634,7 +642,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
           }
         }
         for (const [parent, group] of extras) mergeStatic(group, { perPiece: !!editableLevel && parent.userData.levelKey === editableLevel });
-        const yard = await buildYard(nextPlan, kit, tier); next.groups.site.add(yard.group); await next.ready;
+        if (!preserveYard || !yardGroup) {
+          const yard = await buildYard(nextPlan, kit, tier); next.groups.site.add(yard.group);
+          next.yardGroup = yard.group;
+        }
+        await next.ready;
       } catch (error) { release(next); throw error; }
       if (disposed || version !== revision) { release(next); return; }
       const levelsToRestore = visibleLevels && [...visibleLevels];
@@ -646,7 +658,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false } 
       // The underlay owns its image independently of the rebuilt geometry.
       // Detach before releasing the old scene, then place the same object.
       sheet?.object?.removeFromParent();
+      if (!next.yardGroup && yardGroup) {
+        yardGroup.removeFromParent(); next.groups.site.add(yardGroup); next.yardGroup = yardGroup;
+      }
       if (twin) { scene.remove(twin.root); release(twin); }
+      yardGroup = next.yardGroup;
       twin = next; plan = nextPlan; scene.add(twin.root);
       // Read-only legacy property access for P0 embeds, never enumerable scene
       // keys and never a resolution when two buildings share the level name.

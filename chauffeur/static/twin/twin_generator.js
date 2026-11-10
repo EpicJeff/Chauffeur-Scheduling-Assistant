@@ -138,7 +138,7 @@ function footprints(walls) {
 }
 
 // Include edges: a wall on the next floor's outline supports its slab too.
-function contains(poly, [x, y]) {
+export function contains(poly, [x, y]) {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
     const [ax, ay] = poly[j], [bx, by] = poly[i], dx = bx - ax, dy = by - ay;
@@ -147,6 +147,17 @@ function contains(poly, [x, y]) {
     if ((ay > y) !== (by > y) && x < ax + dx * (y - ay) / dy) inside = !inside;
   }
   return inside;
+}
+
+// The same stair cutouts serve authoritative floors and drag previews.
+export function stairHoles(building, level) {
+  const first = Math.min(...building.levels.map(l => l.elevation));
+  return (building.stairs || []).filter(s => s.rise_to >= level.elevation && level.elevation > first).map(s => {
+    const dx = s.to[0] - s.from[0], dy = s.to[1] - s.from[1], length = Math.hypot(dx, dy);
+    const nx = -dy / length * s.width / 2, ny = dx / length * s.width / 2;
+    return [[s.from[0] + nx, s.from[1] + ny], [s.to[0] + nx, s.to[1] + ny],
+      [s.to[0] - nx, s.to[1] - ny], [s.from[0] - nx, s.from[1] - ny]];
+  });
 }
 
 // One render mesh and one dashed line per ghost, even when wall openings or
@@ -869,18 +880,14 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
       const floorOutlines = outlines.get(l.id);
       const rooms = (b.rooms || []).filter(r => r.level === l.id && r.polygon?.length >= 3);
       const surfaces = rooms.length ? rooms : floorOutlines.map(polygon => ({ polygon }));
-      const holes = (b.stairs || []).filter(s => s.rise_to >= l.elevation && l.elevation > first.elevation).map(s => {
-        const dx = s.to[0] - s.from[0], dy = s.to[1] - s.from[1], length = Math.hypot(dx, dy), nx = -dy / length * s.width / 2, ny = dx / length * s.width / 2;
-        return [[s.from[0] + nx, s.from[1] + ny], [s.to[0] + nx, s.to[1] + ny], [s.to[0] - nx, s.to[1] - ny], [s.from[0] - nx, s.from[1] - ny]];
-      });
+      const holes = stairHoles(b, l);
       for (const room of surfaces) {
         const poly = room.polygon;
         const porch = room.kind === 'porch' && porches.find(po => po.polygon && porchRoom(po) === room);
         const elevation = porch ? porch.floor : l.elevation;
         use(room.id ? room : { ...l, id: `floor:${l.id}` }, room.id ? 'room' : 'floor', `floor:${l.id}`);
         // Only insert stair holes fully contained in this footprint.
-        const inside = p => { let v = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) if ((poly[i][1] > p[1]) !== (poly[j][1] > p[1]) && p[0] < (poly[j][0] - poly[i][0]) * (p[1] - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) v = !v; return v; };
-        const cuts = holes.filter(h => h.every(inside));
+        const cuts = holes.filter(h => h.every(p => contains(poly, p)));
         mesh(local[l.id], polygon(poly, l.id === first.id ? 0 : elevation - 0.8, elevation - 0.02, cuts), mat(l.id === first.id ? 'patio_concrete' : 'interior_wall'));
         mesh(local[l.id], polygon(poly, elevation, elevation, cuts), mat(porch ? 'patio_concrete' : 'floor', l, room.floor_material));
       }
@@ -889,7 +896,7 @@ export function buildTwin(plan, kit, tier, { showAnchors = false, editableLevel 
       if (l.id !== first.id) for (const wall of b.walls.filter(w => w.level === l.id && w.exterior
         && w.kind !== 'separator' && w.state !== 'ghost' && w.footprint?.length === 4)) {
         use({ ...l, id: `floor:${l.id}` }, 'floor', `floor:${l.id}`);
-        mesh(local[l.id], polygon(wall.footprint, l.elevation - 0.8, l.elevation), mat('interior_wall'));
+        mesh(local[l.id], polygon(wall.footprint, l.elevation - 0.8, l.elevation), mat('siding', l));
       }
     }
     for (const [index, po] of porches.entries()) {

@@ -62,9 +62,11 @@ export function createDrag({ view, model, onPreview, onCommit }) {
       : g.piece.at || b.joints.find(j => j.id === g.piece.joints[0]).at;
     if (g.normal) by = g.normal.map(v => v * dot(by, g.normal));
     const destination = shifted(origin, by);
-    // Two inches keeps a constrained wall drag from jumping to a distant
-    // extension across another room; snapTo's general-purpose reach is a foot.
-    const snap = snapTo(destination, { joints, walls, anchors, reach: 1 / 6,
+    const key = `${b.id}:${level.id}`;
+    const screen = view.screenOfFloor(...destination, key);
+    const nearby = screen && view.floorAt(screen[0] + 12, screen[1], key);
+    const reach = Math.max(.25, Math.min(1, nearby ? Math.hypot(...delta(nearby, destination)) : 1));
+    const snap = snapTo(destination, { joints, walls, anchors, reach,
       below: b.walls.filter(w => w.level === below?.id) });
     // A wall has one degree of freedom. Reject a snap that would pull it along itself.
     const correction = delta(snap.point, destination);
@@ -86,6 +88,10 @@ export function createDrag({ view, model, onPreview, onCommit }) {
       if (wall.footprint) wall.footprint = wall.footprint.map((p, i) =>
         shifted(p, delta(i === 0 || i === 3 ? wall.from : wall.to, i === 0 || i === 3 ? old.from : old.to)));
     }
+    // Snapping onto a joint can collapse an attached wall to nothing (a wall
+    // dragged onto its neighbour's corner). That shape has no direction and
+    // would deform the scene into NaN, so keep the last drawn frame instead.
+    if (building.walls.some(w => wallIds.has(w.id) && Math.hypot(...delta(w.to, w.from)) < 1e-6)) return true;
     for (const room of building.rooms) if (roomIds.has(room.id) && room.joints?.every(id => positions.has(id)))
       room.polygon = room.joints.map(id => [...positions.get(id)]);
     for (const l of building.levels) {

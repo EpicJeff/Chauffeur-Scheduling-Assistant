@@ -18,7 +18,7 @@
       'three/addons/': window.chfBase + 'static/vendor/three-r187/addons/',
       '@dgreenheck/ez-tree': window.chfBase + {{ 'static/vendor/ez-tree/ez-tree.es.js' | ver | tojson }}
     };
-    {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'twin_roof', 'twin_ground', 'twin_director', 'editor/editor', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/selection', 'editor/cards', 'editor/snap', 'editor/plan_view', 'editor/pauses', 'editor/timeline', 'editor/words', 'editor/place'] %}
+    {% for name in ['twin_generator', 'twin_hosts', 'twin_yard', 'twin_tiers', 'twin_library', 'twin_view', 'twin_roof', 'twin_ground', 'twin_director', 'editor/editor', 'editor/api', 'editor/panel', 'editor/scene_tools', 'editor/selection', 'editor/cards', 'editor/snap', 'editor/draw', 'editor/history', 'editor/drag', 'editor/handles', 'editor/dimensions', 'editor/pauses', 'editor/timeline', 'editor/words', 'editor/place'] %}
     imports[new URL(window.chfBase + 'static/twin/{{ name }}.js', location.href).href] = window.chfBase + {{ ('static/twin/' ~ name ~ '.js') | ver | tojson }};
     {% endfor %}
     const map = document.createElement('script'); map.type = 'importmap';
@@ -54,7 +54,7 @@
       </details>
     </header>
     <nav id="editor-rail" aria-label="House tools">
-      {% for tool, label in [('select', 'Select'), ('move', 'Move'), ('rotate', 'Turn'), ('sheet', 'Sheet'), ('plan', 'Plan')] %}
+      {% for tool, label in [('select', 'Select'), ('move', 'Move'), ('rotate', 'Turn'), ('draw-room', 'Draw room'), ('draw-wall', 'Draw wall'), ('split-room', 'Split room'), ('add-door', 'Add door'), ('add-window', 'Add window'), ('add-anchor', 'Add anchor'), ('add-level', 'Add floor'), ('delete', 'Delete'), ('undo', 'Undo'), ('redo', 'Redo'), ('sheet', 'Sheet')] %}
       <button id="rail-{{ tool }}" type="button" aria-pressed="{{ 'true' if tool == 'select' else 'false' }}" {% if tool != 'select' %}disabled{% endif %}>{{ label }}</button>
       {% endfor %}
     </nav>
@@ -63,12 +63,9 @@
       <button type="button" data-editor-camera="{{ camera | lower }}">{{ camera }}</button>
       {% endfor %}
     </nav>
-    <section id="plan-tools" aria-label="Plan tools" hidden>
-      <div><button id="plan-add-wall" type="button">Add wall</button>
-        <button id="plan-add-door" type="button">Add door</button>
-        <button id="plan-add-window" type="button">Add window</button>
-        <button id="plan-cancel" type="button">Cancel drawing</button></div>
-      <p id="plan-note" role="status"></p>
+    <section id="draw-tools" aria-label="Drawing tools" hidden>
+      <p id="draw-note" role="status"></p>
+      <button id="draw-cancel" type="button">Cancel drawing</button>
     </section>
     <aside id="piece-card" aria-label="Selected piece" hidden></aside>
     <aside id="pause-card" aria-label="Check this step" hidden>

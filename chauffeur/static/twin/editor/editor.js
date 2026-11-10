@@ -4,7 +4,8 @@ import { request, createPolling, idleInterval, buildInterval, checkpoint, plain,
 import * as api from './api.js';
 import { createPanel } from './panel.js';
 import { createSceneTools } from './scene_tools.js';
-import { createPlanView } from './plan_view.js';
+import { createDraw } from './draw.js';
+import { createHistory } from './history.js';
 import { createPauses, applyRegistration, invertRegistration } from './pauses.js';
 import { createTimeline } from './timeline.js';
 import { createPlace } from './place.js';
@@ -19,7 +20,7 @@ export async function boot() {
   let currentBuild = null, ghostBuild = null, renderedGhosts = 0, lastScene = '';
   let resuming = false, stopping = false;
   let menuBusy = false, directing = false, downloading = false, advancedBase = null;
-  let tools = null, planView = null, pauses = null, timeline = null, place = null, previewing = false, lastSummary = '';
+  let tools = null, draw = null, history = null, pauses = null, timeline = null, place = null, previewing = false, lastSummary = '';
   const lifecycle = new AbortController();
   const listen = (node, type, handler) => node.addEventListener(type, handler, { signal: lifecycle.signal });
   const ghosts = new Map(), prompted = new Set();
@@ -35,7 +36,9 @@ export async function boot() {
     lastSummary = text;
     panel.message(text);
   }
-  async function edit(change) {
+  const edit = change => history.perform(() => editNow(change));
+  const applyOp = operation => history.perform(() => applyOpNow(operation));
+  async function editNow(change) {
     if (!canEdit()) throw new Error('Use Back to now before changing your house.');
     let result;
     for (const op of Array.isArray(change) ? change : [change]) {
@@ -47,7 +50,7 @@ export async function boot() {
     lastSummary = result.summary;
     return result;
   }
-  async function applyOp(operation) {
+  async function applyOpNow(operation) {
     if (!canEdit()) throw new Error('Use Back to now before changing your house.');
     const result = await api.op(operation);
     snapshot = { ...snapshot, plan: result.plan, model: result.model };
@@ -60,6 +63,7 @@ export async function boot() {
 
   function setStatus(text) { el('editor-status').textContent = plain(text); }
   function syncBuildButton() {
+    history?.sync();
     // Reaching ready requires successful parent-only editor API requests.
     el('menu-record').hidden = !hooks.ready || session.signedOut;
     el('menu-record').disabled = !hooks.ready || session.signedOut || downloading;
@@ -342,7 +346,7 @@ export async function boot() {
         'Start over', 'Keep it')) return;
       await request('start-over', 'POST', {});
       currentBuild = null; ghostBuild = null; ghosts.clear(); prompted.clear();
-      panel.reset(); tools?.select(null); pauses?.dismiss(); planView?.leavePlan();
+      panel.reset(); tools?.select(null); pauses?.dismiss(); draw?.cancel(); history?.clear();
       el('editor-advanced').hidden = true; advancedBase = null;
       await polling.pollNow(true);
       await loadSheets();
@@ -354,7 +358,7 @@ export async function boot() {
     finally { menuBusy = false; syncBuildButton(); }
   });
   listen(el('editor-check-step'), 'click', () => {
-    tools?.select(null); planView?.leavePlan(); pauses?.show();
+    tools?.select(null); draw?.cancel(); pauses?.show();
   });
 
   if (new URLSearchParams(location.search).get('test') === '1') Object.assign(hooks, {
@@ -397,26 +401,31 @@ export async function boot() {
     await loadSheets();
     const kit = await request('kit/modern_farmhouse', 'GET', undefined, 'twin');
     view = await mountTwin(el('editor-scene'), { plan: emptyPlan(), kit, preserveCamera: true });
+    view.showAnchors = true;
     const onInteract = () => { pauses?.dismiss(); syncBuildButton(); };
+    history = createHistory({ getRound: currentRound, getBuild: () => currentBuild,
+      canEdit, signal: lifecycle.signal,
+      refresh: async () => { draw?.cancel(); await polling.refreshState(); await renderScene(); } });
     tools = createSceneTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getModel: () => snapshot.model, getSheets: () => sheets,
       edit, op: applyOp, panel, canEdit, signal: lifecycle.signal, onInteract });
-    planView = createPlanView({ view, tools, edit, canEdit, signal: lifecycle.signal, onInteract });
+    draw = createDraw({ view, tools, getPlan: () => snapshot.plan, op: applyOpNow,
+      gesture: history.perform, canEdit, panel, signal: lifecycle.signal, onInteract });
     pauses = createPauses({ view, getBuild: () => currentBuild, getGhost: step => ghosts.get(step),
       getSheets: () => sheets, refresh: () => polling.pollNow(true), preview: () => renderScene().catch(report),
       visibilityChanged: syncBuildButton, canEdit, signal: lifecycle.signal });
     tools.delegate({
-      pointerDown: event => pauses.pointerDown(event) || planView.pointerDown(event),
-      pointerMove: event => pauses.pointerMove(event),
-      pointerUp: (event, cancel) => pauses.pointerUp(event, cancel),
-      floorChanged: planView.floorChanged, leavePlan: planView.leavePlan, cancel: planView.cancel,
+      pointerDown: event => pauses.pointerDown(event) || draw.pointerDown(event),
+      pointerMove: event => pauses.pointerMove(event) || draw.pointerMove(event),
+      pointerUp: (event, cancel) => pauses.pointerUp(event, cancel) || draw.pointerUp(event, cancel),
+      floorChanged: draw.floorChanged, cancel: draw.cancel,
     });
     timeline = createTimeline({ getState: () => snapshot, render: renderScene, signal: lifecycle.signal,
       canScrub: () => !menuBusy && !directing,
       log(summary) { const line = document.createElement('li'); line.textContent = summary; el('editor-log').append(line); lastSummary = summary; },
       onPreview(value) {
-        previewing = value; tools.select(null); pauses.dismiss(); panel.readOnly(value);
+        previewing = value; draw.cancel(); tools.select(null); pauses.dismiss(); panel.readOnly(value);
         tools.refreshCard(); syncBuildButton();
-        for (const id of ['rail-move', 'rail-rotate', 'plan-add-wall', 'plan-add-door', 'plan-add-window']) el(id).disabled = value;
+        for (const id of ['move', 'rotate', 'draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor', 'add-level', 'delete']) el(`rail-${id}`).disabled = value;
         if (!value) pauses.resume();
       },
     });
@@ -431,7 +440,7 @@ export async function boot() {
       buildingCentre: tools.buildingCentre, clearLastAnswer: pauses.clearLastAnswer, dragPauseGhost: pauses.dragPauseGhost,
     });
     if (new URLSearchParams(location.search).get('test') === '1') window.__twinEditor = {
-      selection: tools.selection, handles: () => [], op: applyOp,
+      selection: tools.selection, handles: tools.handles, op: applyOp,
       get lastDragFrameMs() { return tools.lastDragFrameMs; },
     };
     // The editor uses the mockup's dark work surface; the shared preview keeps

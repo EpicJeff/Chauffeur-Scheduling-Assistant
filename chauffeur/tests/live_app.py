@@ -79,7 +79,7 @@ def _install_bounded_socketpair(tries=5, step_timeout=5.0):
 
 _install_bounded_socketpair()
 
-_RETRY_NAV = ('ERR_CONNECTION_TIMED_OUT', 'ERR_CONNECTION_RESET', 'ERR_CONNECTION_REFUSED')
+_RETRY_NAV = ('ERR_CONNECTION_TIMED_OUT', 'ERR_CONNECTION_RESET', 'ERR_CONNECTION_REFUSED', 'Timeout')
 
 
 def goto_retry(page, url, tries=3, **kw):
@@ -109,6 +109,9 @@ def _patch_page_goto():
     orig = Page.goto
 
     def goto(self, url, **kw):
+        # A page's later sub-resource can stall on this PC's loopback; tests wait for
+        # their own readiness signal, so navigation only needs the document parsed.
+        kw.setdefault('wait_until', 'domcontentloaded')
         for i in range(3):
             try:
                 return orig(self, url, **kw)

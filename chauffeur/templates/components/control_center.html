@@ -884,11 +884,13 @@ function closeChatHelpModal() {
 
     // The server owns conversation identity; a panel never uses a person's chat.
     let activeConversationId = null;
+    let storedChatDeviceToken = null;
+    try { storedChatDeviceToken = localStorage.getItem('chauffeur_device_token'); } catch (e) {}
     const chatSurface = (new URLSearchParams(location.search).get('panel') === 'true'
-        || (localStorage.getItem('chauffeur_device_token') && !window.chfPersonToken?.())) ? 'panel' : 'admin';
+        || (storedChatDeviceToken && !window.chfPersonToken?.())) ? 'panel' : 'admin';
     // nav's member session intentionally replaces device headers. Carry the
     // panel credential explicitly so that signing in keeps this device's chat.
-    const chatDeviceToken = chatSurface === 'panel' ? localStorage.getItem('chauffeur_device_token') : '';
+    const chatDeviceToken = chatSurface === 'panel' ? storedChatDeviceToken || '' : '';
     const chatDeviceQuery = chatDeviceToken ? '&device_token=' + encodeURIComponent(chatDeviceToken) : '';
     async function resolveChatConversation() {
         const apiBase = window.chfBase !== undefined ? window.chfBase : '';
@@ -942,7 +944,7 @@ function closeChatHelpModal() {
         
         chatInputHistory.push(text);
         if (chatInputHistory.length > 50) chatInputHistory.shift();
-        localStorage.setItem('chauffeurChatInputHistory', JSON.stringify(chatInputHistory));
+        try { localStorage.setItem('chauffeurChatInputHistory', JSON.stringify(chatInputHistory)); } catch (e) {}
         chatHistoryIndex = -1;
         tempChatInput = '';
 
@@ -1092,7 +1094,7 @@ function closeChatHelpModal() {
             isOperationsSidebarOpen = !isOperationsSidebarOpen;
         }
         
-        localStorage.setItem('controlCenterOpen', isOperationsSidebarOpen);
+        try { localStorage.setItem('controlCenterOpen', isOperationsSidebarOpen); } catch (e) {}
 
         // The sidebar has its own close button — showing the nav toggle next
         // to an open sidebar reads as two hamburgers. Kiosk never shows it.
@@ -1188,7 +1190,9 @@ function closeChatHelpModal() {
         // Kiosk is a display surface — never restore an open control center
         // there, even if this browser left it open in normal mode.
         if (new URLSearchParams(window.location.search).get('kiosk') === 'true') return;
-        const isOpen = localStorage.getItem('controlCenterOpen') === 'true';
+        let storedOpen = null;
+        try { storedOpen = localStorage.getItem('controlCenterOpen'); } catch (e) {}
+        const isOpen = storedOpen === 'true';
         if (isOpen) {
             // Disable transition temporarily for instant open
             const sidebar = document.getElementById('operations-sidebar');
@@ -1644,10 +1648,12 @@ window.chfMemberToken = async function (member, opts) {
         } catch (e) { /* offline: a PIN'd member will fail at the save instead */ }
     }
     // 1. already proven, this session or a previous one
-    if (localStorage.getItem('chauffeur_member_token_for') === member.id) {
-        const tok = localStorage.getItem('chauffeur_member_token');
-        if (tok) return tok;
-    }
+    try {
+        if (localStorage.getItem('chauffeur_member_token_for') === member.id) {
+            const tok = localStorage.getItem('chauffeur_member_token');
+            if (tok) return tok;
+        }
+    } catch (e) { /* no cached proof: continue through the PIN gate */ }
     // 2. nothing to prove. '' and null are DIFFERENT answers: '' means "no
     //    gate needed, go ahead", null means "asked and refused". A caller that
     //    was handed only an id cannot tell those apart on its own.

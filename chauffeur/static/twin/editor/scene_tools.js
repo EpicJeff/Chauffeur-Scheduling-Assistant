@@ -5,6 +5,7 @@ import { sheetMaster, localCentre } from './words.js';
 import { createSelection } from './selection.js';
 import { createDrag } from './drag.js';
 import { createDimensions } from './dimensions.js';
+import { createHandles } from './handles.js';
 
 const rotatePoint = (p, angle) => {
   const a = angle * Math.PI / 180;
@@ -14,25 +15,42 @@ const rotatePoint = (p, angle) => {
 export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op, panel, canEdit, signal, onInteract }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
   let selection = null, tool = 'select', levelKey = null, sheetOn = false, gesture = null, delegate = null, pointerId = null;
-  let ownsGesture = false;
+  let ownsGesture = false, handles = null;
   const pointers = new Set();
-  const dimensions = createDimensions({ view, onCommit: op, canEdit, signal });
+  const dimensions = createDimensions({ view, onCommit: op, canEdit, signal, getHandles: () => handles?.handles() || [] });
   function drawDimensions(plan = getPlan(), state = roomSelection.current()) {
     const building = plan?.buildings.find(b => b.id === state.building);
-    dimensions.show({ building, piece: building?.walls.find(w => state.kind === 'wall' && w.id === state.id) });
+    dimensions.show({ building, piece: building?.walls.find(w => state.kind === 'wall' && w.id === state.id),
+      room: building?.rooms.find(r => r.id === state.room) });
   }
-  const drag = createDrag({ view, model: getPlan, onPreview: drawDimensions, onCommit: op });
+  const drag = createDrag({ view, model: getPlan, onPreview(plan, state) {
+    handles?.show(plan); drawDimensions(plan, state);
+  }, onCommit(operation) {
+    if (operation.op === 'move_wall') {
+      const wall = getPlan().buildings.find(b => b.id === operation.building).walls.find(w => w.id === operation.wall);
+      const d = wall.to.map((v, i) => v - wall.from[i]), length = Math.hypot(...d);
+      operation = { ...operation, by: (-d[1] * operation.by[0] + d[0] * operation.by[1]) / length };
+    }
+    return op(operation);
+  } });
   const getLabel = item => getSheets().piece_labels?.find(p => p.piece === item.pieceId && p.building === item.buildingId)?.label || 'this piece';
   const roomSelection = createSelection({ view, getModel, onChange(state) {
     selection = state.id ? { pieceId: state.id, buildingId: state.building, kind: state.kind, room: state.room } : null;
     if (!selection) panel.clearSelection();
     if (state.level) levelKey = `${state.building}:${state.level}`;
     cards.draw(selection);
+    handles?.refresh();
     drawDimensions(getPlan(), state);
   } });
   const cards = createCards({ getPlan, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
     canEdit, select, ask: item => panel.focusSelection(item, getLabel(item)) });
+  handles = createHandles({ view, getPlan, getSelection: roomSelection.current, canEdit, drag, onCommit: op,
+    onPreview: drawDimensions, signal });
+  const hasHandles = ({ kind, piece, building }) => piece.state !== 'ghost'
+    && (['wall', 'joint', 'room'].includes(kind)
+      || kind === 'opening' && building.walls.some(w => w.id === piece.wall)
+      || ['anchor', 'item'].includes(kind) && !!piece.host);
   const listen = (node, event, fn, options = {}) => node.addEventListener(event, fn, { ...options, signal });
   function levels() {
     const buildings = getPlan()?.buildings || [];
@@ -66,8 +84,8 @@ export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op,
   }
   function setTool(name) {
     tool = name; onInteract?.();
-    for (const id of ['select', 'move', 'rotate']) el(`rail-${id}`).setAttribute('aria-pressed', String(id === name));
-    canvas.style.cursor = name === 'move' ? 'grab' : name === 'rotate' ? 'crosshair' : '';
+    for (const id of ['select', 'move', 'rotate', 'draw-room', 'draw-wall', 'split-room', 'add-door', 'add-window', 'add-anchor']) el(`rail-${id}`).setAttribute('aria-pressed', String(id === name));
+    canvas.style.cursor = name === 'move' ? 'grab' : name === 'select' ? '' : 'crosshair';
   }
   async function sheet(key = floor()?.key, show = !sheetOn) {
     const target = levels().find(l => l.key === key); if (!target) return;
@@ -149,6 +167,7 @@ export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op,
     const walls = anchor.record.building.walls.filter(w => w.level === anchor.key.slice(item.buildingId.length + 1) && w.id !== item.pieceId);
     const by = [to[0] - from[0], to[1] - from[1]];
     const { kind, piece, building } = anchor.record;
+    if (hasHandles(anchor.record)) return;
     let destination = anchor.point.map((v, i) => v + by[i]);
     if (kind === 'opening') {
       const wall = building.walls.find(w => w.id === piece.wall); if (!wall) return;
@@ -170,6 +189,7 @@ export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op,
   async function dragPiece(pieceId, buildingId, dx, dy) {
     const item = { pieceId, buildingId }; select(item);
     const anchor = pieceAnchor(item); if (!anchor) return;
+    if (hasHandles(anchor.record)) return;
     const p = view.screenOfFloor(...anchor.point, anchor.key); if (!p) return;
     await move(item, view.floorAt(...p, anchor.key), view.floorAt(p[0] + dx, p[1] + dy, anchor.key));
   }
@@ -185,23 +205,23 @@ export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op,
     if (event.button !== 0 || !canEdit()) return;
     pointerId = event.pointerId;
     if (delegate?.pointerDown?.(event)) { ownsGesture = true; event.stopImmediatePropagation(); return; }
+    if (handles.begin(event)) {
+      gesture = { x: event.clientX, y: event.clientY, pointerId, dragging: true, enabled: view.controls.enabled };
+      ownsGesture = true; onInteract?.(); view.controls.enabled = false;
+      canvas.setPointerCapture(event.pointerId); event.stopImmediatePropagation(); return;
+    }
     if (tool === 'select') {
-      const selected = roomSelection.current(), picked = view.pick(event.clientX, event.clientY);
-      if (selected.room && selected.kind === 'wall' && (picked?.id ?? picked?.pieceId) === selected.id
-        && (picked?.building ?? picked?.buildingId) === selected.building) {
-        const key = `${selected.building}:${selected.level}`, start = view.floorAt(event.clientX, event.clientY, key);
-        if (drag.begin(selected, start)) {
-          gesture = { x: event.clientX, y: event.clientY, key, pointerId, dragging: true, enabled: view.controls.enabled };
-          ownsGesture = true; onInteract?.(); view.controls.enabled = false;
-          canvas.setPointerCapture(event.pointerId); event.stopImmediatePropagation(); return;
-        }
-      }
       gesture = { x: event.clientX, y: event.clientY, pointerId, selecting: true }; return;
     }
-    const picked = view.pick(event.clientX, event.clientY);
+    let picked = view.pick(event.clientX, event.clientY);
+    if (picked && view.state.view === 'ext' && ['building', null].includes(roomSelection.current().kind))
+      picked = { pieceId: picked.buildingId, buildingId: picked.buildingId, kind: 'building' };
     if (!picked || !findPiece(getPlan(), picked.pieceId, picked.buildingId)) return;
     onInteract?.(); select(picked);
     const anchor = pieceAnchor(picked); if (!anchor) return;
+    if (hasHandles(anchor.record)) {
+      gesture = { x: event.clientX, y: event.clientY, pointerId, selecting: true }; return;
+    }
     const start = view.floorAt(event.clientX, event.clientY, anchor.key); if (!start) return;
     const centre = localCentre(anchor.record.building);
     gesture = { item: picked, start, key: anchor.key, centre, pointerId, x: event.clientX, y: event.clientY, enabled: view.controls.enabled };
@@ -213,14 +233,14 @@ export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op,
     if (event.pointerId !== pointerId) return;
     if (delegate?.pointerMove?.(event)) return;
     if (!gesture || gesture.selecting) return;
-    const end = view.floorAt(event.clientX, event.clientY, gesture.key); if (!end) return;
     if (gesture.dragging) {
       if (Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) >= 3) {
         gesture.moved = true;
-        try { drag.update(end); } catch (error) { finish(event, true); report(error); }
+        try { handles.update(event); } catch (error) { finish(event, true); report(error); }
       }
       return;
     }
+    const end = view.floorAt(event.clientX, event.clientY, gesture.key); if (!end) return;
     const hint = el('editor-drag-hint'); hint.hidden = false; hint.style.left = `${event.clientX + 18}px`; hint.style.top = `${event.clientY + 18}px`;
     hint.textContent = tool === 'move' ? `${feetInches(Math.hypot(end[0] - gesture.start[0], end[1] - gesture.start[1]))} along the floor` : `${Math.round(turn(gesture, end))}°`;
     const record = findPiece(getPlan(), gesture.item.pieceId, gesture.item.buildingId);
@@ -252,7 +272,7 @@ export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op,
     if (g.dragging) {
       view.controls.enabled = g.enabled;
       if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-      drag.finish(cancel || !g.moved).catch(report); return;
+      handles.finish(cancel || !g.moved).catch(report); return;
     }
     if (g.selecting) {
       if (!cancel && Math.hypot(event.clientX - g.x, event.clientY - g.y) < 3) { onInteract?.(); roomSelection.select(pick(event.clientX, event.clientY)); }
@@ -279,18 +299,21 @@ export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op,
     roomSelection.back();
   });
   signal.addEventListener('abort', () => { if (gesture && !gesture.selecting) view.controls.enabled = gesture.enabled;
-    if (drag.active()) drag.finish(true).catch(report);
+    if (handles.active()) handles.finish(true).catch(report);
     gesture = null; pointerId = null; ownsGesture = false; pointers.clear(); }, { once: true });
   for (const id of ['select', 'move', 'rotate']) {
     el(`rail-${id}`).disabled = false; listen(el(`rail-${id}`), 'click', () => { delegate?.cancel?.(); setTool(id); });
   }
   el('rail-sheet').disabled = false; listen(el('rail-sheet'), 'click', () => { onInteract?.(); sheet().catch(report); });
   document.querySelectorAll('[data-editor-camera]').forEach(button => listen(button, 'click', () => {
-    onInteract?.(); delegate?.leavePlan?.(); view.setCamera(button.dataset.editorCamera);
+    onInteract?.(); delegate?.cancel?.();
+    if (button.dataset.editorCamera === 'top' && floor()) view.setPlanCamera(floor().key);
+    else view.setCamera(button.dataset.editorCamera);
   }));
   return {
     select, selected: () => selection, selection: roomSelection.current, dragPiece, rotateBuilding: rotate, floor, chooseFloor, drawFloors, sheet, setTool,
-    get lastDragFrameMs() { return drag.lastDragFrameMs; }, dragging: drag.active,
+    handles: handles.handles,
+    get lastDragFrameMs() { return handles.lastDragFrameMs; }, dragging: handles.active,
     buildingCentre(id) { const b = getPlan()?.buildings.find(b => b.id === id); return b && rotatePoint(localCentre(b), b.rotation || 0).map((v, i) => v + (b.position?.[i] || 0)); },
     delegate(value) { delegate = value; },
     refresh() { drawFloors(); if (selection && !findPiece(getPlan(), selection.pieceId, selection.buildingId)) select(null); else roomSelection.refresh(); },
