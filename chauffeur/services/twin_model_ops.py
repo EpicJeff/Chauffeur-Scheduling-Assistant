@@ -865,7 +865,7 @@ def _more(building, op):
             'dismiss_proposal': 'Dismissed the proposal.'}[kind]
 
 
-def _site_op(model, op):
+def _site_op(model, op, actor):
     from services import twin_plan
     before = deepcopy(model)
     name = op.get('list')
@@ -873,13 +873,28 @@ def _site_op(model, op):
         raise Refused('Choose plants or furniture.')
     pieces = model['site'].setdefault(name, [])
     if op['op'] == 'add_site_item':
-        pieces.append({'asset': _text(op.get('asset')), 'at': _point(op.get('at'))})
+        asset = _text(op.get('asset'))
+        piece = {'id': _id(model['site'], name), 'asset': asset, 'at': _point(op.get('at'))}
+        if name == 'planting':
+            from services import twin_library
+            kit = twin_library.kit('modern_farmhouse')
+            if asset in kit['shrubs']:
+                piece.update(preset=asset, kind='shrub', height=4, seed=1)
+            elif asset in kit['backdrop_trees'] + kit['specimen_trees']:
+                piece.update(preset=asset, kind='tree', height=25, seed=1)
+            else:
+                raise Refused('Choose a plant from the library.')
+        if actor == 'person':
+            piece['src'] = {'person': True}
+        pieces.append(piece)
     else:
         index = op.get('index')
         if type(index) is not int or not 0 <= index < len(pieces):
             raise Refused('That site item is missing.')
         if op['op'] == 'move_site_item':
             pieces[index]['at'] = _point(op.get('at'))
+            if actor == 'person':
+                pieces[index].setdefault('src', {})['person'] = True
         else:
             pieces.pop(index)
     return twin_plan.record_compose_overrides(before, model), 'Changed the site item.'
@@ -896,7 +911,7 @@ def apply(model, op: dict, actor: str = 'person') -> tuple[dict, str]:
     op = deepcopy(op)
     model, notes = twin_model.normalize(model)
     if kind in ('move_site_item', 'delete_site_item', 'add_site_item'):
-        return _site_op(model, op)
+        return _site_op(model, op, actor)
     building = _find(model, 'buildings', op.get('building'))
     before = hosts.snapshot(building)
     _roof_offsets(building, before)

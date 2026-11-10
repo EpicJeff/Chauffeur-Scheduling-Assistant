@@ -13,7 +13,7 @@ const rotatePoint = (p, angle) => {
   return [Math.cos(a) * p[0] - Math.sin(a) * p[1], Math.sin(a) * p[0] + Math.cos(a) * p[1]];
 };
 
-export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op, panel, canEdit, signal, onInteract, addDormer }) {
+export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, edit, op, panel, canEdit, signal, onInteract, addDormer, pickSite }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
   let selection = null, tool = 'select', levelKey = null, sheetOn = false, gesture = null, delegate = null, pointerId = null;
   let ownsGesture = false, handles = null;
@@ -47,7 +47,7 @@ export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op,
     handles?.refresh();
     drawDimensions(getPlan(), state);
   } });
-  const cards = createCards({ getPlan, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
+  const cards = createCards({ getPlan, getKit, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
     op, addDormer, canEdit, select, ask: item => panel.focusSelection(item, getLabel(item)) });
   handles = createHandles({ view, getPlan, getSelection: roomSelection.current, canEdit, drag, onCommit: op,
@@ -72,12 +72,16 @@ export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op,
     if (!item) { roomSelection.clear(); return; }
     const record = findPiece(getPlan(), item.id ?? item.pieceId, item.building ?? item.buildingId);
     if (!record) return;
+    if (['planting', 'furniture'].includes(record.kind)) {
+      roomSelection.clear(); roomSelection.select({ kind: record.kind, id: record.piece.id }); return;
+    }
     const level = record.kind === 'level' ? record.piece.id : record.piece.level
       || record.building.walls.find(w => w.id === (record.piece.wall || record.piece.host?.wall))?.level;
     if (['roof', 'dormer'].includes(record.kind) && roomSelection.current().room) roomSelection.clear();
     roomSelection.select({ kind: record.kind, id: record.piece.id, building: record.building.id, level });
   }
   function pick(x, y) {
+    const site = pickSite?.(x, y); if (site) return site;
     let item = view.pick(x, y);
     if (item?.kind === 'roof') {
       const building = getPlan()?.buildings.find(b => b.id === item.building);
@@ -344,6 +348,8 @@ export function createSceneTools({ view, getPlan, getModel, getSheets, edit, op,
     select, selected: () => selection, selection: roomSelection.current, dragPiece, rotateBuilding: rotate, floor, chooseFloor, drawFloors, sheet, setTool,
     handles: handles.handles,
     selectedRooms: () => roofRooms.size ? [...roofRooms] : null,
+    // A press on the selected piece's handle belongs to the handle, never to a yard item behind it.
+    handleAt: event => !!handles.hit(event),
     get lastDragFrameMs() { return handles.lastDragFrameMs; }, dragging: handles.active,
     buildingCentre(id) { const b = getPlan()?.buildings.find(b => b.id === id); return b && rotatePoint(localCentre(b), b.rotation || 0).map((v, i) => v + (b.position?.[i] || 0)); },
     delegate(value) { delegate = value; },

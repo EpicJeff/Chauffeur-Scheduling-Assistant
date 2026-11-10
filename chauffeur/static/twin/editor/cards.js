@@ -1,4 +1,5 @@
 import { contains } from '../twin_generator.js';
+import { materialLines } from './library.js';
 
 const report = error => {
   if (!error.shown && !error.cancelled) window.showGlobalAlert(error.message || 'Could not save this change.');
@@ -28,6 +29,10 @@ export function parseLength(text) {
   return value;
 }
 export function findPiece(plan, pieceId, buildingId) {
+  for (const kind of ['planting', 'furniture']) {
+    const index = plan?.site?.[kind]?.findIndex((p, i) => (p.id || `${kind}:${i}`) === pieceId) ?? -1;
+    if (index >= 0 && !buildingId) return { piece: { ...plan.site[kind][index], id: pieceId }, kind, index, building: null };
+  }
   const building = plan?.buildings.find(b => b.id === buildingId);
   if (!building) return null;
   if (building.id === pieceId) return { piece: building, building, kind: 'building' };
@@ -42,7 +47,7 @@ export function findPiece(plan, pieceId, buildingId) {
   return piece ? { piece, building, kind: 'roof' } : null;
 }
 
-export function createCards({ getPlan, getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select }) {
+export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select }) {
   const host = document.getElementById('piece-card');
   let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
   let edgeIndex = null;
@@ -50,7 +55,7 @@ export function createCards({ getPlan, getLabel, getSelection = () => ({}), getF
   const fieldValue = (piece, field) => field.startsWith('ends.') ? (piece.ends?.[field.slice(5)] ?? piece.kind) : piece[field];
   const title = ({ kind, piece, building }) => {
     const name = kind === 'opening' ? (piece.kind === 'window' ? 'Window' : 'Door')
-      : piece.name || (kind === 'roof' ? 'Roof section' : kind[0].toUpperCase() + kind.slice(1));
+      : piece.name || piece.preset || (kind === 'roof' ? 'Roof section' : kind[0].toUpperCase() + kind.slice(1));
     if (!['wall', 'opening'].includes(kind)) return name;
     const wall = kind === 'wall' ? piece : building.walls.find(w => w.id === (piece.wall || piece.host?.wall));
     const room = building.rooms?.find(r => r.id === getSelection().room);
@@ -77,8 +82,9 @@ export function createCards({ getPlan, getLabel, getSelection = () => ({}), getF
     const record = next && findPiece(getPlan(), next.pieceId, next.buildingId);
     const roof = record?.kind === 'roof' && record.building.roofs?.find(r => r.id === record.piece.id);
     if (roof && edgeIndex !== null) { drawEdge(next, record, roof); return; }
+    const materials = record ? materialLines(record, getPlan(), getKit()) : [];
     const flags = roofFlags(record);
-    const nextLayout = record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind;
+    const nextLayout = JSON.stringify([record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : record?.kind, materials]);
     host.hidden = !record;
     if (record && layout === nextLayout && selection?.pieceId === next.pieceId && selection?.buildingId === next.buildingId) {
       headingNode.textContent = title(record);
@@ -103,6 +109,15 @@ export function createCards({ getPlan, getLabel, getSelection = () => ({}), getF
     const heading = headingNode = document.createElement('h3'); heading.textContent = title(record);
     const close = button('Close', () => select(null)); close.setAttribute('aria-label', 'Close piece card');
     host.append(heading, close);
+    for (const material of materials) {
+      const row = document.createElement('div'); row.className = 'editor-material-line';
+      const words = document.createElement('div'), label = document.createElement('span'), text = document.createElement('p');
+      label.textContent = material.label; text.textContent = material.text; words.append(label, text); row.append(words);
+      if (material.clear) row.append(button('Clear', async () => {
+        if (canEdit()) await op({ op: 'set_material', building: building.id, target: material.target, material: null });
+      }));
+      host.append(row);
+    }
     if (kind === 'roof') {
       pitchNote = document.createElement('p'); pitchNote.textContent = 'Estimated from photos';
       pitchNote.hidden = piece.pitch_source !== 'photos'; host.append(pitchNote);
@@ -186,7 +201,8 @@ export function createCards({ getPlan, getLabel, getSelection = () => ({}), getF
       if (!canEdit()) return;
       if (!await window.promptConfirm(`Delete ${getLabel(selection)}?`, 'Attached doors or windows may also be removed. The timeline keeps the earlier house.', 'Delete', 'Cancel')) return;
       await pending;
-      if (roof && !piece.rect && op) await op({ op: 'delete', building: building.id, id: piece.id });
+      if (['planting', 'furniture'].includes(kind)) await op({ op: 'delete_site_item', list: kind, index: record.index });
+      else if (roof && !piece.rect && op) await op({ op: 'delete', building: building.id, id: piece.id });
       else await edit({ op: 'delete', building: building.id, piece: piece.id });
       select(null);
     }));

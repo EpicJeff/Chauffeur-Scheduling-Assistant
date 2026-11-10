@@ -11,6 +11,7 @@ import { createTimeline } from './timeline.js';
 import { createPlace } from './place.js';
 import { createRoofTools } from './roof_tools.js';
 import { createLotTools } from './lot_tools.js';
+import { createLibrary } from './library.js';
 
 const el = id => document.getElementById(id);
 const emptyPlan = () => ({ schema: 'chauffeur.twin.plan/2', units: 'ft', buildings: [], site: {}, materials: {} });
@@ -22,7 +23,7 @@ export async function boot() {
   let currentBuild = null, ghostBuild = null, renderedGhosts = 0, lastScene = '';
   let resuming = false, stopping = false;
   let menuBusy = false, directing = false, downloading = false, advancedBase = null;
-  let tools = null, draw = null, history = null, pauses = null, timeline = null, place = null, previewing = false, lastSummary = '';
+  let tools = null, draw = null, history = null, pauses = null, timeline = null, place = null, library = null, previewing = false, lastSummary = '';
   let roofTools = null, lot = null;
   const lifecycle = new AbortController();
   const listen = (node, type, handler) => node.addEventListener(type, handler, { signal: lifecycle.signal });
@@ -146,6 +147,7 @@ export async function boot() {
     renderedGhosts = countGhosts(plan);
     drawFloors();
     tools?.refresh();
+    library?.refresh();
     pauses?.sync();
     timeline?.sync(currentBuild);
   }
@@ -419,8 +421,11 @@ export async function boot() {
     history = createHistory({ getRound: currentRound, getBuild: () => currentBuild,
       canEdit, signal: lifecycle.signal,
       refresh: async () => { draw?.cancel(); await polling.refreshState(); await renderScene(); } });
-    tools = createSceneTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getModel: () => snapshot.model, getSheets: () => sheets,
+    tools = createSceneTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getModel: () => snapshot.model, getKit: () => kit, getSheets: () => sheets,
+      pickSite: (x, y) => library?.pickSite(x, y),
       edit, op: applyOp, panel, canEdit, signal: lifecycle.signal, onInteract, addDormer: () => roofTools?.addDormer() });
+    library = createLibrary({ view, kit, getPlan: () => timeline?.preview() || snapshot.plan, tools,
+      op: applyOp, canEdit, signal: lifecycle.signal, onInteract });
     draw = createDraw({ view, tools, getPlan: () => snapshot.plan, op: operation => applyOpNow(operation),
       gesture: history.perform, canEdit, panel, signal: lifecycle.signal, onInteract });
     roofTools = createRoofTools({ view, tools, getPlan: () => snapshot.plan,
@@ -437,9 +442,9 @@ export async function boot() {
       // rebuild (seconds for a refitted house) follows on the poll's tick.
       reload: async () => { await loadSheets(); polling.pollNow(true).catch(report); } });
     tools.delegate({
-      pointerDown: event => lot.pointerDown(event) || pauses.pointerDown(event) || roofTools.pointerDown(event) || draw.pointerDown(event),
-      pointerMove: event => lot.pointerMove(event) || pauses.pointerMove(event) || roofTools.pointerMove(event) || draw.pointerMove(event),
-      pointerUp: (event, cancel) => lot.pointerUp(event, cancel) || pauses.pointerUp(event, cancel) || roofTools.pointerUp(event, cancel) || draw.pointerUp(event, cancel),
+      pointerDown: event => lot.pointerDown(event) || pauses.pointerDown(event) || roofTools.pointerDown(event) || draw.pointerDown(event) || library.pointerDown(event),
+      pointerMove: event => lot.pointerMove(event) || pauses.pointerMove(event) || roofTools.pointerMove(event) || draw.pointerMove(event) || library.pointerMove(event),
+      pointerUp: (event, cancel) => lot.pointerUp(event, cancel) || pauses.pointerUp(event, cancel) || roofTools.pointerUp(event, cancel) || draw.pointerUp(event, cancel) || library.pointerUp(event, cancel),
       floorChanged() { roofTools.cancel(); draw.floorChanged(); }, cancel() { roofTools.cancel(); draw.cancel(); },
     });
     timeline = createTimeline({ getState: () => snapshot, render: renderScene, signal: lifecycle.signal,
