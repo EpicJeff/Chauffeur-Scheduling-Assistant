@@ -2,13 +2,18 @@ import * as THREE from 'three';
 import { base } from '../twin_library.js';
 import { groundAt } from '../twin_ground.js';
 import { markerState, levelOfDetail, markerTexture, markerSprite } from './markers.js';
-import { deviceActions, mountRoomPanel } from './room_panel.js';
+import { deviceActions, confirmUnsafe, mountRoomPanel } from './room_panel.js';
 import { roomStates, mountModes } from './modes.js';
 
 const FT = .3048, unreachable = 'Home Assistant is not reachable.';
 // Screen sizes in CSS px: a marker is a 44 px tap target (the page's own controls' hit height),
 // a room badge a little larger; labels never cover another marker or another label.
 const MARKER_PX = 44, BADGE_PX = 52, LABEL_GAP = 4, LABEL_H = 23, LABEL_MAX = 190;
+// A request that has not answered in this long has failed: the poll goes stale and a control
+// says Home Assistant is not reachable, instead of waiting on a dead network for minutes.
+const REQUEST_MS = 15000;
+// Page chrome drawn over the scene: no label goes under it, and a marker under it gets none.
+const OVERLAYS = '#twin-controls > *, #twin-tier, #twin-hud, #twin-status, #panel-shelf';
 let measurer = null;
 function labelWidth(text) {
   measurer ||= document.createElement('canvas').getContext('2d');
@@ -17,49 +22,68 @@ function labelWidth(text) {
 }
 const overlaps = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 const iconKind = row => row.entity_id.startsWith('alarm_control_panel.') ? 'alarm' : row.kind;
+const report = error => console.error('[twin live]', error);
+
+// A signal that aborts when the layer stops or after `ms`, whichever comes first.
+function deadline(stop, ms) {
+  if (typeof AbortSignal.any === 'function' && typeof AbortSignal.timeout === 'function')
+    return { signal: AbortSignal.any([stop, AbortSignal.timeout(ms)]), done() {} };
+  const controller = new AbortController(), abort = () => controller.abort();
+  const timer = setTimeout(abort, ms);
+  stop.addEventListener('abort', abort, { once: true });
+  return { signal: controller.signal, done() { clearTimeout(timer); stop.removeEventListener('abort', abort); } };
+}
+
+function readOverlays() {
+  if (typeof getComputedStyle !== 'function' || typeof document.querySelectorAll !== 'function') return [];
+  return [...document.querySelectorAll(OVERLAYS)].flatMap(node => {
+    const style = getComputedStyle(node);
+    if (node.hidden || style.display === 'none' || style.visibility === 'hidden') return [];
+    const r = node.getBoundingClientRect();
+    return r.width && r.height ? [{ left: r.left, top: r.top, right: r.right, bottom: r.bottom }] : [];
+  });
+}
 
 export async function mountLive(view, { api = (path, options) => fetch(base() + path, options) } = {}) {
+  const events = new AbortController(), requests = new AbortController();
   let layout;
+  const first = deadline(requests.signal, REQUEST_MS);
   try {
-    const response = await api('api/house/live');
+    const response = await api('api/house/live', { signal: first.signal });
     if (!response.ok) return null;
     layout = await response.json();
-  } catch { return null; }
-  if (!layout.available || !view.ready) return null;
+  } catch { return null; } finally { first.done(); }
+  if (!layout?.available || !view.ready) return null;
 
   const canvas = view.renderer3.domElement, host = canvas.parentElement;
-  const root = new THREE.Group(); view.scene.add(root);
-  const labels = document.createElement('div'); labels.className = 'twin-live-labels'; host.append(labels);
+  const root = new THREE.Group();
+  const labels = document.createElement('div'); labels.className = 'twin-live-labels';
   const sheet = document.createElement('aside'); sheet.className = 'twin-device-sheet'; sheet.hidden = true;
-  sheet.setAttribute('role', 'dialog'); document.body.append(sheet);
+  sheet.setAttribute('role', 'dialog');
   const textures = new Map(), badges = new Map(), listeners = new Set(), busy = new Set();
-  const events = new AbortController(), requests = new AbortController();
-  const raycaster = new THREE.Raycaster(), projected = new THREE.Vector3();
+  const raycaster = new THREE.Raycaster(), projected = new THREE.Vector3(), scratch = new THREE.Vector3();
   let states = {}, stopped = false, stale = true, mode = null, timer = null, polling = Promise.resolve();
-  let selected = null, pointer = null;
-  let roomPanel = null, modes = null;
+  let selected = null, sheetKey = null, sheetStatus = null, pointer = null;
+  let roomPanel = null, modes = null, rows = [], levelKeys = [], resizeObserver = null;
+  // Layout runs only when something it reads changed (review M1): the camera, the canvas,
+  // the shown levels, a poll or mode (revision), or the page's overlays.
+  const lastCamera = new Float64Array(32);
+  let revision = 0, lastKey = '', overlays = null;
   const texture = (kind, look, count = null) => {
     const key = JSON.stringify([kind, look, count]);
     if (!textures.has(key)) textures.set(key, markerTexture(kind, look, count));
     return textures.get(key);
   };
-  const rows = layout.markers.map(marker => {
-    const sprite = markerSprite(texture(iconKind(marker), 'unavailable'));
-    sprite.userData.deviceId = marker.device_id;
-    const building = view.plan.buildings.find(b => b.id === marker.building);
-    const ground = groundAt(view.plan, ...(building?.position || [0, 0]));
-    sprite.position.set(marker.at[0] * FT, (marker.at[2] + ground) * FT, -marker.at[1] * FT);
-    root.add(sprite);
-    const label = document.createElement('span'); labels.append(label);
-    return { ...marker, ...markerState(marker.kind, 'unknown'), stale: true, dim: true, sprite, labelNode: label };
-  });
   const plain = row => {
-    const { sprite, labelNode, labelBox, screen, ...data } = row;
+    const { sprite, labelNode, labelBox, labelAt, screen, ...data } = row;
     return { ...data, at: [...data.at], entities: [...data.entities] };
   };
   const devices = layout.devices || layout.markers;
   const roomRows = () => roomStates(layout.rooms, states);
+  const stateOf = row => markerState(row.kind, states[row.entity_id]?.state ?? 'unavailable',
+    states[row.entity_id]?.attributes, row.entity_id);
   function notify() {
+    revision++; overlays = null;
     for (const row of rows) {
       row.stale = stale; row.dim = stale || mode === 'lights' && row.kind !== 'light';
       row.sprite.material.map = texture(iconKind(row), row.look);
@@ -67,21 +91,31 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       const text = `${row.name} · ${row.label}`;
       if (row.labelNode.textContent !== text) { row.labelNode.textContent = text; row.labelBox = null; }
       row.labelBox ||= { w: labelWidth(text), h: LABEL_H };
-      row.labelNode.style.opacity = row.dim ? '.4' : '1';
+      const opacity = row.dim ? '.4' : '1';
+      if (row.labelNode.style.opacity !== opacity) row.labelNode.style.opacity = opacity;
     }
     if (selected) showSheet(selected);
-    listeners.forEach(listener => listener());
+    // One broken listener never stops the others, or the polls that follow (review M3).
+    for (const listener of [...listeners]) { try { listener(); } catch (error) { report(error); } }
   }
-  function closeSheet() { selected = null; sheet.hidden = true; sheet.replaceChildren(); }
+  function closeSheet() { selected = null; sheetKey = null; sheetStatus = null; sheet.hidden = true; sheet.replaceChildren(); }
+  // A poll only refreshes the open sheet's status line; its buttons are rebuilt only when the
+  // device or what it offers changes, so a press that spans a poll still lands (review M2).
   function showSheet(row) {
     roomPanel?.close();
-    selected = row; sheet.replaceChildren(); sheet.hidden = false;
+    const key = JSON.stringify([row.device_id, row.kind, row.offered]);
+    selected = row; sheet.hidden = false;
+    if (key === sheetKey && sheetStatus) {
+      if (sheetStatus.textContent !== row.label) sheetStatus.textContent = row.label;
+      return;
+    }
+    sheetKey = key; sheet.replaceChildren();
     sheet.setAttribute('aria-label', row.name);
     const heading = document.createElement('h2'); heading.textContent = row.name;
-    const status = document.createElement('p'); status.textContent = row.label;
-    const actions = deviceActions(row, states[row.entity_id], async (...args) => {
-      closeSheet(); return control(...args);
-    }, { compact: true });
+    const status = document.createElement('p'); status.textContent = row.label; sheetStatus = status;
+    // control() asks before an unlock, an open or a disarm; the sheet never asks a second time.
+    const act = Object.assign(async (...args) => { closeSheet(); return control(...args); }, { confirmsUnsafe: true });
+    const actions = deviceActions(row, states[row.entity_id], act, { compact: true });
     const button = (name, action) => {
       const node = document.createElement('button'); node.type = 'button'; node.textContent = name;
       node.addEventListener('click', action); actions.append(node);
@@ -101,17 +135,23 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       else roomPanel?.close();
     }
   }
+  // The one control path for every surface (marker sheet, room panel, a tap). It asks
+  // before an unlock, an open or a disarm (review I1), and reads no state of its own.
   async function control(entityId, service, data = {}) {
     if (stopped || busy.has(entityId)) return false;
     if (stale) { window.showGlobalAlert(unreachable); return false; }
-    if (!devices.some(row => row.entity_id === entityId && row.offered
-      || row.entities.includes(entityId) && row.offered)) return false;
+    const device = devices.find(row => row.offered && (row.entity_id === entityId || row.entities?.includes(entityId)));
+    if (!device) return false;
     busy.add(entityId);
     try {
+      if (!await confirmUnsafe(device.name, service) || stopped) return false;
+      if (stale) { window.showGlobalAlert(unreachable); return false; }
       const response = await window.chfControlFetch(base() + 'api/ha/card/service', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ domain: entityId.split('.')[0], service, data: { ...data, entity_id: entityId } }),
-        signal: requests.signal,
+        // Read when each request starts: chfControlFetch reads it again for its retry after
+        // "Who's asking?", so the time a person takes over the PIN is never counted.
+        get signal() { return deadline(requests.signal, REQUEST_MS).signal; },
       });
       if (stopped) return false;
       if (response.status === 503) { stale = true; notify(); window.showGlobalAlert(unreachable); }
@@ -126,6 +166,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       return false;
     } finally { busy.delete(entityId); }
   }
+  control.confirmsUnsafe = true;
   function tap(row) {
     if (stale) { window.showGlobalAlert(unreachable); return; }
     if (!row.offered) { showSheet(row); return; }
@@ -133,12 +174,32 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     else if (['lock', 'garage', 'alarm'].includes(iconKind(row))) showSheet(row);
     else openRoom(row.building, row.room, row);
   }
+  function changed(camera, rect) {
+    let moved = false;
+    const take = (i, value) => { if (lastCamera[i] !== value) { lastCamera[i] = value; moved = true; } };
+    camera.matrixWorld.elements.forEach((value, i) => take(i, value));
+    camera.projectionMatrix.elements.forEach((value, i) => take(16 + i, value));
+    const target = view.controls?.target;
+    const key = [camera.uuid, rect.left, rect.top, rect.width, rect.height, target?.x, target?.y, target?.z, revision,
+      levelKeys.map(level => view.groups?.levels[level]?.visible === false ? 0 : 1).join('')].join('|');
+    if (key !== lastKey) { lastKey = key; moved = true; }
+    return moved;
+  }
+  function setLabel(row, spot) {
+    const label = row.labelNode, at = spot ? `${spot.left}px ${spot.top}px` : null;
+    if (label.hidden !== !spot) label.hidden = !spot;
+    if (!spot || row.labelAt === at) return;
+    row.labelAt = at; label.style.left = `${spot.left}px`; label.style.top = `${spot.top}px`;
+  }
   function draw() {
     if (stopped) return;
     modes?.draw();
     const camera = view.camera, rect = canvas.getBoundingClientRect(); camera.updateMatrixWorld(true);
+    if (!changed(camera, rect)) return;
+    overlays ||= readOverlays();
+    const blocked = overlays.map(o => ({ left: o.left - rect.left, top: o.top - rect.top, right: o.right - rect.left, bottom: o.bottom - rect.top }));
     const pixelSize = point => camera.isOrthographicCamera ? (camera.top - camera.bottom) / camera.zoom / Math.max(1, rect.height)
-      : 2 * Math.max(.1, -point.clone().applyMatrix4(camera.matrixWorldInverse).z)
+      : 2 * Math.max(.1, -scratch.copy(point).applyMatrix4(camera.matrixWorldInverse).z)
         * Math.tan(camera.fov * Math.PI / 360) / camera.zoom / Math.max(1, rect.height);
     const shown = rows.filter(row => view.groups?.levels[`${row.building}:${row.level}`]?.visible !== false);
     const lod = levelOfDetail(shown, FT / pixelSize(view.controls.target));
@@ -149,46 +210,56 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       return { x: (projected.x + 1) * rect.width / 2, y: (1 - projected.y) * rect.height / 2,
         front: projected.z >= -1 && projected.z <= 1 };
     };
+    const half = MARKER_PX / 2;
+    const onCanvas = at => at.x >= -half && at.y >= -half && at.x <= rect.width + half && at.y <= rect.height + half;
+    const covered = at => blocked.some(b => at.x >= b.left && at.x <= b.right && at.y >= b.top && at.y <= b.bottom);
     const icons = [];
     for (const row of rows) {
       row.sprite.visible = individual.has(row.device_id); row.sprite.center.set(.5, .5); place(row.sprite, MARKER_PX);
       row.screen = row.sprite.visible ? screen(row.sprite.position) : null;
-      if (row.screen?.front) {
-        const half = MARKER_PX / 2;
+      // Only on-screen icons can be covered by a label.
+      if (row.screen?.front && onCanvas(row.screen))
         icons.push({ row, left: row.screen.x - half, right: row.screen.x + half, top: row.screen.y - half, bottom: row.screen.y + half });
-      }
     }
     // Labels: attention first, then what is on; each takes the first side that covers no other
-    // marker and no placed label, inside the canvas, or stays hidden until the camera comes closer.
+    // marker, no placed label and none of the page's overlays, inside the canvas, or stays
+    // hidden until the camera comes closer. A marker under an overlay gets no label.
     const rank = row => row.look === 'attention' ? 0 : row.look === 'on' ? 1 : 2;
     const taken = [];
     for (const row of [...rows].sort((a, b) => rank(a) - rank(b))) {
-      const label = row.labelNode, at = row.screen;
+      const at = row.screen;
       let spot = null;
-      if (lod.labels && at?.front && row.labelBox) {
-        const { w, h } = row.labelBox, half = MARKER_PX / 2;
+      if (lod.labels && at?.front && row.labelBox && onCanvas(at) && !covered(at)) {
+        const { w, h } = row.labelBox;
         const sides = [[at.x + half + LABEL_GAP, at.y - h / 2], [at.x - half - LABEL_GAP - w, at.y - h / 2],
           [at.x - w / 2, at.y + half + LABEL_GAP], [at.x - w / 2, at.y - half - LABEL_GAP - h]];
         for (const [left, top] of sides) {
           const box = { left, top, right: left + w, bottom: top + h };
           if (left < 0 || top < 0 || box.right > rect.width || box.bottom > rect.height) continue;
+          if (blocked.some(other => overlaps(other, box))) continue;
           if (icons.some(icon => icon.row !== row && overlaps(icon, box)) || taken.some(other => overlaps(other, box))) continue;
           spot = box; break;
         }
       }
-      label.hidden = !spot;
-      if (spot) { taken.push(spot); label.style.left = `${spot.left}px`; label.style.top = `${spot.top}px`; }
+      if (spot) taken.push(spot);
+      setLabel(row, spot);
+    }
+    const members = new Map();
+    for (const row of shown) {
+      const key = JSON.stringify([row.building, row.room]);
+      if (!members.has(key)) members.set(key, []);
+      members.get(key).push(row);
     }
     const shownBadges = [];
     for (const badge of lod.badges) {
       const key = JSON.stringify([badge.building, badge.room]); visibleBadges.add(key);
       let sprite = badges.get(key);
       if (!sprite) { sprite = markerSprite(null); badges.set(key, sprite); root.add(sprite); }
-      const members = shown.filter(row => row.building === badge.building && row.room === badge.room);
-      sprite.position.set(0, 0, 0); members.forEach(row => sprite.position.add(row.sprite.position));
-      sprite.position.divideScalar(members.length);
+      const inRoom = members.get(key) || [];
+      sprite.position.set(0, 0, 0); inRoom.forEach(row => sprite.position.add(row.sprite.position));
+      sprite.position.divideScalar(Math.max(1, inRoom.length));
       sprite.material.map = texture('room', badge.attention ? 'attention' : 'off', badge.count);
-      sprite.material.opacity = members.every(row => row.dim) ? .4 : 1;
+      sprite.material.opacity = inRoom.every(row => row.dim) ? .4 : 1;
       sprite.userData.room = { building: badge.building, room: badge.room };
       sprite.visible = true; place(sprite, BADGE_PX);
       shownBadges.push({ sprite, ...screen(sprite.position), dx: 0, dy: 0 });
@@ -213,34 +284,46 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     badges.forEach((sprite, key) => { sprite.visible = visibleBadges.has(key); });
     root.updateMatrixWorld(true);
   }
+  // Resolves whatever the frame does: a throw in draw or render never strands a poll (review M3).
   const drawn = () => new Promise(resolve => requestAnimationFrame(() => {
-    if (!stopped) { draw(); view.render(); }
-    resolve();
+    try { if (!stopped) { draw(); view.render(); } }
+    catch (error) { report(error); }
+    finally { resolve(); }
   }));
   async function poll(fresh) {
     if (stopped) return;
+    const limit = deadline(requests.signal, REQUEST_MS);
     try {
-      const response = await api(`api/ha/card/states?fresh=${fresh ? 1 : 0}`, { signal: requests.signal });
+      const response = await api(`api/ha/card/states?fresh=${fresh ? 1 : 0}`, { signal: limit.signal });
       if (!response.ok) throw new Error('states unavailable');
       const body = await response.json();
+      // reachable:false is the route serving a stale or empty copy because Home Assistant did
+      // not answer (Ruling Q13); an empty answer while markers exist is the same (Q12).
       if (body.reachable === false || !body.states || typeof body.states !== 'object' || rows.length && !Object.keys(body.states).length)
         throw new Error('states unavailable');
       if (stopped) return;
       states = body.states; stale = false;
-      for (const row of rows) {
-        const state = states[row.entity_id];
-        Object.assign(row, markerState(row.kind, state?.state ?? 'unavailable', state?.attributes));
-      }
-    } catch { if (!stopped) stale = true; }
-    if (!stopped) { notify(); await drawn(); }
+      for (const row of rows) Object.assign(row, stateOf(row));
+    } catch { if (!stopped) stale = true; } finally { limit.done(); }
+    if (stopped) return;
+    try { notify(); } catch (error) { report(error); }
+    await drawn();
   }
-  // Serialize polls: a pre-control response can never replace the fresh one.
+  // Serialize polls: a pre-control response can never replace the fresh one. A poll that
+  // failed never blocks the next.
   function refresh(fresh = false) {
-    polling = polling.then(() => poll(fresh));
+    polling = polling.catch(report).then(() => poll(fresh));
     return polling;
   }
-  canvas.addEventListener('pointerdown', event => { pointer = { x: event.clientX, y: event.clientY, id: event.pointerId }; }, { signal: events.signal });
-  canvas.addEventListener('pointerup', event => {
+  function stop() {
+    if (stopped) return;
+    stopped = true; clearTimeout(timer); events.abort(); requests.abort(); listeners.clear();
+    resizeObserver?.disconnect();
+    for (const part of [roomPanel, modes]) { try { part?.stop(); } catch (error) { report(error); } }
+    root.traverse(object => object.material?.dispose()); root.removeFromParent();
+    textures.forEach(value => value.dispose()); textures.clear(); labels.remove(); sheet.remove();
+  }
+  function onPointerUp(event) {
     const start = pointer; pointer = null;
     if (!start || start.id !== event.pointerId || Math.hypot(start.x - event.clientX, start.y - event.clientY) > 6) return;
     draw();
@@ -258,35 +341,60 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       if (room?.kind === 'room') openRoom(room.building, room.id);
       else { closeSheet(); roomPanel?.close(); }
     }
-  }, { signal: events.signal });
-  canvas.addEventListener('pointercancel', () => { pointer = null; }, { signal: events.signal });
-  document.addEventListener('keydown', event => {
-    if (event.key === 'Escape') { closeSheet(); roomPanel?.close(); }
-  }, { signal: events.signal });
+  }
   const live = {
-    refresh, draw, control, openRoom,
+    refresh, draw, control, openRoom, stop,
     setMode(name) { mode = name === 'lights' ? 'lights' : null; modes?.setMode(mode); notify(); draw(); view.render(); },
     closeRoom() { roomPanel?.close(); closeSheet(); },
     markers: () => rows.map(plain),
     rooms: roomRows,
-    devices: area => devices.filter(row => row.area_id === area).map(row => ({ ...row,
-      ...markerState(row.kind, states[row.entity_id]?.state ?? 'unavailable', states[row.entity_id]?.attributes) })),
+    devices: area => devices.filter(row => row.area_id === area).map(row => ({ ...row, ...stateOf(row) })),
     states: () => structuredClone(states),
     layout: () => structuredClone(layout),
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    stop() {
-      if (stopped) return;
-      stopped = true; clearTimeout(timer); events.abort(); requests.abort(); listeners.clear();
-      roomPanel?.stop(); modes?.stop();
-      root.traverse(object => object.material?.dispose()); root.removeFromParent();
-      textures.forEach(value => value.dispose()); textures.clear(); labels.remove(); sheet.remove();
-    },
   };
   view.live = live;
-  roomPanel = mountRoomPanel(live);
-  modes = mountModes(view, live);
+  // A layout the layer cannot draw (say a malformed spot) takes down only the layer: everything
+  // it built so far is removed and the house carries on without markers (review M5).
+  try {
+    view.scene.add(root); host.append(labels); document.body.append(sheet);
+    rows = layout.markers.map(marker => {
+      const sprite = markerSprite(texture(iconKind(marker), 'unavailable'));
+      sprite.userData.deviceId = marker.device_id;
+      const building = view.plan.buildings.find(b => b.id === marker.building);
+      const ground = groundAt(view.plan, ...(building?.position || [0, 0]));
+      sprite.position.set(marker.at[0] * FT, (marker.at[2] + ground) * FT, -marker.at[1] * FT);
+      root.add(sprite);
+      const label = document.createElement('span'); labels.append(label);
+      return { ...marker, ...markerState(marker.kind, 'unknown'), stale: true, dim: true, sprite, labelNode: label };
+    });
+    levelKeys = [...new Set(rows.map(row => `${row.building}:${row.level}`))];
+    canvas.addEventListener('pointerdown', event => { pointer = { x: event.clientX, y: event.clientY, id: event.pointerId }; }, { signal: events.signal });
+    canvas.addEventListener('pointerup', onPointerUp, { signal: events.signal });
+    canvas.addEventListener('pointercancel', () => { pointer = null; }, { signal: events.signal });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { closeSheet(); roomPanel?.close(); }
+    }, { signal: events.signal });
+    // The overlays are read again only when the page resizes, the controls reflow, or a poll lands.
+    const reflow = () => { overlays = null; lastKey = ''; };
+    if (typeof window.addEventListener === 'function') window.addEventListener('resize', reflow, { signal: events.signal });
+    if (typeof ResizeObserver === 'function') {
+      resizeObserver = new ResizeObserver(reflow);
+      for (const id of ['twin-controls', 'panel-shelf']) { const node = document.getElementById(id); if (node) resizeObserver.observe(node); }
+    }
+    roomPanel = mountRoomPanel(live);
+    modes = mountModes(view, live);
+  } catch (error) {
+    report(error); stop();
+    if (view.live === live) view.live = null;
+    return null;
+  }
   await refresh();
-  const schedule = () => { timer = setTimeout(async () => { await refresh(); if (!stopped) schedule(); }, 10000); };
+  const schedule = () => {
+    timer = setTimeout(async () => {
+      try { await refresh(); } catch (error) { report(error); } finally { if (!stopped) schedule(); }
+    }, 10000);
+  };
   if (!stopped) schedule();
   return live;
 }

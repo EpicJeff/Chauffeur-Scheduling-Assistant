@@ -1,13 +1,17 @@
 import * as THREE from 'three';
 
-export function markerState(kind, state, attributes) {
+// entityId is optional: an alarm panel is known by its domain (the catalogue may not kind it 'alarm').
+export function markerState(kind, state, attributes, entityId = '') {
   const attrs = attributes || {}, value = String(state ?? 'unknown');
   const label = value + (kind === 'sensor' && attrs.unit_of_measurement ? ` ${attrs.unit_of_measurement}` : '');
   if (['unknown', 'unavailable'].includes(value)) return { look: 'unavailable', label };
-  const attention = kind === 'lock' && value === 'unlocked'
+  const alarm = kind === 'alarm' || String(entityId).startsWith('alarm_control_panel.');
+  const attention = kind === 'lock' && ['unlocked', 'unlocking', 'open', 'opening', 'jammed'].includes(value)
     || kind === 'garage' && ['open', 'opening'].includes(value)
+    || alarm && ['triggered', 'pending', 'arming'].includes(value)
     || kind === 'sensor' && ['smoke', 'moisture', 'gas'].includes(attrs.device_class) && value === 'on';
-  return { look: attention ? 'attention' : ['off', 'closed', 'locked', 'idle', 'standby'].includes(value) ? 'off' : 'on', label };
+  const off = ['off', 'closed', 'locked', 'idle', 'standby'].includes(value) || alarm && value === 'disarmed';
+  return { look: attention ? 'attention' : off ? 'off' : 'on', label };
 }
 
 export function levelOfDetail(markers, pxPerFoot) {

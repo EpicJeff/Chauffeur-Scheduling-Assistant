@@ -265,6 +265,62 @@ def scenario_panel_kiosk_has_no_editing():
         L.no_errors(s)
 
 
+KITCHEN_BADGE_JS = """(room) => {
+    // The Kitchen's room badge as drawn: its sprite's projected spot, moved by sprite.center
+    // (live.js pushes neighbouring badges apart that way). null when no badge is drawn.
+    const v = window.__twin, camera = v.camera, r = v.renderer3.domElement.getBoundingClientRect();
+    const shown = o => { for (let p = o; p; p = p.parent) if (!p.visible) return false; return true; };
+    let out = null;
+    v.scene.traverse(o => {
+        if (out || !o.isSprite || !o.userData || !o.userData.room || o.userData.room.room !== room || !shown(o)) return;
+        camera.updateMatrixWorld(true); o.updateMatrixWorld(true);
+        const p = o.getWorldPosition(o.position.clone()).project(camera);
+        out = [r.left + (p.x + 1) * r.width / 2 + (0.5 - o.center.x) * 52,
+               r.top + (1 - p.y) * r.height / 2 + (o.center.y - 0.5) * 52];
+    });
+    return out;
+}"""
+
+
+def scenario_wall_picks_a_floor_then_opens_the_kitchen():
+    """The wall twin lands on the Exterior, where a tap meets the roof. A person picks the
+    floor with its own control (no test-code view switching), then taps the Kitchen's room
+    badge (or its floor, when the markers are drawn one by one), and the Kitchen's panel
+    opens with its devices."""
+    s = L.serve()
+    if s is None:
+        return
+    L.reset()
+    L.facts()
+    with s.browser(launch_args=L.GPU_ARGS) as page:
+        seen = L.record(page)
+        L.open_twin(page, s, query='tier=low&test=1&panel=true&kiosk=true')
+        check(page.evaluate('() => window.__twin.state.view') == 'ext', 'the wall lands on the Exterior')
+        floor = page.locator(f'[data-view="{L.FLOOR}"]').locator('visible=true')
+        check(floor.count() == 1, ('the wall shows the floor picker', page.locator('#twin-controls').inner_html()[:400]))
+        floor.first.click()
+        L.H.settle(page, 3)
+        check(page.evaluate('() => window.__twin.state.view') == L.FLOOR, 'the floor control picks the floor')
+        spot = page.evaluate(KITCHEN_BADGE_JS, L.KITCHEN)
+        if spot:
+            L.on_canvas(page, *spot)
+            page.mouse.click(*spot)
+            L.H.settle(page)
+        else:
+            L.tap_local_floor(page, *KITCHEN_SAMPLE)
+        try:
+            page.wait_for_selector('#twin-room-panel', state='visible', timeout=8000)
+        except Exception:
+            raise AssertionError(('a tap on the Kitchen after picking its floor opens #twin-room-panel',
+                                  'badge' if spot else 'floor', spot))
+        check(_panel(page).get_by_role('heading', name='Kitchen', exact=True).count() >= 1,
+              ('the panel is the Kitchen', _panel(page).inner_text()))
+        for did in L.KITCHEN_DEVICES:
+            check(L.NAMES[did] in _row(page, did).inner_text(), ('the row names its device', did))
+        check(L.service_posts(seen) == [] and FAKE.calls == [], ('reaching a room sends nothing', L.service_posts(seen), FAKE.calls))
+        L.no_errors(s)
+
+
 def scenario_house_page_links_to_the_3d_house():
     s = L.serve()
     if s is None:
@@ -348,6 +404,7 @@ SCENARIOS = [
     scenario_brightness_slider_sets_percent,
     scenario_lights_mode_lights_rooms,
     scenario_panel_kiosk_has_no_editing,
+    scenario_wall_picks_a_floor_then_opens_the_kitchen,
     scenario_house_page_links_to_the_3d_house,
     scenario_room_panel_respects_the_grid,
 ]

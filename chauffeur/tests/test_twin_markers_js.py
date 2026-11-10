@@ -4,7 +4,7 @@ docs/superpowers/plans/2026-11-10-house-ha-link-piece-3.md; brief
 
 static/twin/live/markers.js runs in node (three resolves to the vendored r187):
 
-    markerState(kind, state, attributes) -> {look: 'on'|'off'|'attention'|'unavailable', label: str}
+    markerState(kind, state, attributes, entityId?) -> {look: 'on'|'off'|'attention'|'unavailable', label: str}
     levelOfDetail(markers, pxPerFoot) -> {badges: [{building, room, count, attention}],
                                           markers: [device_id], labels: bool}
 
@@ -14,8 +14,11 @@ What this file assumes of markers.js (the implementer matches these):
 - `kind` is the catalogue's device kind (twin_ha: light, switch, fan, lock,
   garage, climate, sensor, ...); a binary sensor is kind 'sensor' and its
   class rides in attributes.device_class.
-- attention: a lock 'unlocked'; a garage 'open' or 'opening'; a sensor whose
-  device_class is smoke, moisture or gas and whose state is 'on'.
+- attention: a lock 'unlocked', 'unlocking', 'open', 'opening' or 'jammed'; a
+  garage 'open' or 'opening'; an alarm panel (kind 'alarm', or a fourth argument
+  entity id in the alarm_control_panel domain) 'triggered', 'pending' or 'arming',
+  and 'disarmed' reads 'off'; a sensor whose device_class is smoke, moisture or
+  gas and whose state is 'on'.
   unavailable: state 'unavailable' or 'unknown', for any kind (it beats attention).
   Otherwise 'on' or 'off'.
 - `label` is a non-empty string; a sensor's label carries its reading.
@@ -91,6 +94,16 @@ check('marker_states_cover_attention_and_unavailable', () => {
   for (const cls of ['motion', 'door', 'occupancy']) {
     assert.notEqual(S('sensor', 'on', {device_class: cls}).look, 'attention', `${cls} on is not an alarm`);
   }
+  // A jammed, open or opening lock, and one mid-unlock, want attention too (review M7).
+  for (const state of ['jammed', 'open', 'opening', 'unlocking']) assert.equal(S('lock', state).look, 'attention', `lock ${state}`);
+  // An alarm panel is known by its domain: triggered, pending and arming want attention;
+  // disarmed is calm 'off'; armed is not attention.
+  const A = state => markerState('other', state, {}, 'alarm_control_panel.house');
+  for (const state of ['triggered', 'pending', 'arming']) assert.equal(A(state).look, 'attention', `alarm ${state}`);
+  assert.equal(A('disarmed').look, 'off', 'a disarmed alarm reads off, not lit');
+  assert.notEqual(A('armed_away').look, 'attention', 'an armed alarm is calm');
+  assert.equal(A('unavailable').look, 'unavailable');
+  assert.equal(S('alarm', 'triggered').look, 'attention', 'kind alarm, without the entity id');
   // Unavailable and unknown, whatever the kind; unavailable beats attention.
   for (const kind of ['light', 'switch', 'fan', 'lock', 'garage', 'climate', 'sensor', 'other']) {
     assert.equal(S(kind, 'unavailable').look, 'unavailable', `${kind} unavailable`);

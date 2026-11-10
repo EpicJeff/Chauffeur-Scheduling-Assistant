@@ -912,7 +912,10 @@ async function boot() {
       const stats = view.stats(); hud.textContent = `${stats.fps.toFixed(1)} fps · ${stats.drawCalls} draw calls`;
     }, 500) : null;
     window.addEventListener('pagehide', () => { clearInterval(hudTimer); view.dispose(); }, { once: true });
-    await mountLive(view, { api: (path, options) => fetch(base() + path, options) });
+    // The live layer comes up on its own: a slow or absent Home Assistant never delays the
+    // probe below, and a layer that fails never reaches this page's status line.
+    mountLive(view, { api: (path, options) => fetch(base() + path, options) })
+      .catch(error => console.error('[twin live]', error));
     const query = new URLSearchParams(location.search);
     if (query.get('probe') === '1') {
       let result;

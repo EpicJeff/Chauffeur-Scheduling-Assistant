@@ -85,11 +85,21 @@ def get_states(ttl: float = 5) -> list:
             return _states_cache['data']
     data = _request('GET', '/states')
     with _cache_lock:
+        # Whether the last real fetch failed rides beside the cache: callers keep the
+        # stale copy, and states_unreachable() lets a live view say it is stale.
+        _states_cache['failed'] = data is None
         if data is None:
             return _states_cache['data'] or []
         _states_cache['ts'] = now
         _states_cache['data'] = data
         return data
+
+
+def states_unreachable() -> bool:
+    """True when the last real GET /states failed, so get_states is serving a
+    stale (or empty) copy rather than what Home Assistant says now."""
+    with _cache_lock:
+        return bool(_states_cache.get('failed'))
 
 
 def get_state(entity_id: str):

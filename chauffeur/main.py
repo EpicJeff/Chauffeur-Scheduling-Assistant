@@ -11493,15 +11493,20 @@ def ha_card_states(fresh: int = 0):
     is why a lock toggled from a card looked dead until the next poll. The
     card host polls this every ten seconds while any card is mounted, and
     with `fresh=1` right after a card calls a service, when the cached copy
-    is by definition the state somebody just changed. Empty (not an error)
-    when HA is away: the host keeps showing what the cards last knew.
+    is by definition the state somebody just changed. Not an error when HA is
+    away: the host keeps showing what the cards last knew (the stale copy, or
+    empty), and `reachable: false` says so, so the 3D house dims its markers
+    instead of reading an old copy as live (Ruling Q13).
     """
-    from services import ha_cards
+    from services import ha_api, ha_cards
     try:
-        return {'states': ha_cards.states_all(ttl=0 if fresh else 5)}
+        body = {'states': ha_cards.states_all(ttl=0 if fresh else 5)}
+        if ha_api.states_unreachable():
+            body['reachable'] = False
+        return body
     except Exception as e:
         print(f"[main] card states failed: {e}")
-        return {'states': {}}
+        return {'states': {}, 'reachable': False}
 
 @app.get("/api/ha/card/resources")
 def ha_card_resources():
