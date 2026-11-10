@@ -577,6 +577,45 @@ def scenario_anchor_card_removes_its_device():
         _no_errors(s)
 
 
+def scenario_a_carried_row_says_where_to_drop():
+    # Browser fix round: a row carried over the scene says what a drop does, the
+    # note never blocks a drop beneath it, and Escape puts the row down unplaced.
+    s = _serve()
+    if s is None:
+        return
+    _reset()
+    _facts()
+    with s.browser(launch_args=H.GPU_ARGS) as page:
+        posted = _record_ops(page)
+        _open(page, s)
+        _kitchen(page, 'wall')
+        row = _row(page, 'Counter lamp')
+        box = row.bounding_box()
+        sx, sy = H.screen_of_world(page, *DROP, POOL)
+        x0, y0 = box['x'] + 12, box['y'] + box['height'] / 2
+        page.mouse.move(x0, y0)
+        page.mouse.down()
+        page.mouse.move(x0 - 20, y0 + 6, steps=3)
+        page.mouse.move(sx, sy, steps=10)
+        H.settle(page)
+        note = page.locator('#device-tools')
+        check(note.is_visible(), 'a carried row shows the placement note')
+        text = ' '.join(page.inner_text('#device-note').split())
+        check(text == 'Drop Counter lamp on a wall, the floor, the ceiling or a spot. Escape cancels.', text)
+        nb = note.bounding_box()
+        under = page.evaluate("""([x, y]) => document.elementFromPoint(x, y) === window.__twin.renderer3.domElement""",
+                              [nb['x'] + nb['width'] / 2, nb['y'] + nb['height'] / 2])
+        check(under, 'the note lets a drop under it reach the scene')
+        before = _store()
+        H.press(page, 'Escape')
+        check(not note.is_visible(), 'Escape puts the row down and hides the note')
+        page.mouse.up()
+        page.wait_for_timeout(1000)
+        check(posted == [] and _store() == before, ('a cancelled carry places nothing', posted))
+        check(_status(page, 'Counter lamp') == 'Not placed yet', _status(page, 'Counter lamp'))
+        _no_errors(s)
+
+
 SCENARIOS = [
     scenario_count_note_shows,
     scenario_pick_a_spot_on_an_anchor,
@@ -585,6 +624,7 @@ SCENARIOS = [
     scenario_blink_calls_identify,
     scenario_escape_cancels_an_armed_placement,
     scenario_anchor_card_removes_its_device,
+    scenario_a_carried_row_says_where_to_drop,
 ]
 
 

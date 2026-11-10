@@ -184,7 +184,7 @@ class El {
     return !e.defaultPrevented;
   }
   click() { if (!this.disabled) this.dispatchEvent({ type: 'click' }); }
-  focus() {} blur() {} scrollIntoView() {}
+  focus() { document.activeElement = this; } blur() {} scrollIntoView() {}
   getBoundingClientRect() { return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }; }
 }
 const descendants = node => node.children.flatMap(c => [c, ...descendants(c)]);
@@ -408,6 +408,161 @@ check('no_ha_shows_the_line', async () => {
   assert.ok(!building || !words(building).includes('Areas with no room'), `no unlinked list: ${building && words(building)}`);
   assert.equal(commits.length, 0);
   assert.deepEqual(alerts, [], `nothing alerts: ${alerts}`);
+  abort.abort();
+});
+
+// ---------------------------------------------------------------- fix round 1 (task-4-review.md)
+// I1: two refreshes while the first read is out end on the newer answer, after exactly two reads.
+check('concurrent_refresh_keeps_the_newest_answer', async () => {
+  const before = linked(), after = linked({ 'r-dining': { ha_area: 'dining_area' } });
+  after.unlinked = [{ area_id: 'patio', name: 'Patio' }];
+  const { link, abort } = mount(before);
+  const realFetch = globalThis.fetch, waiting = [];
+  globalThis.fetch = (input, init = {}) => {
+    fetched.push({ url: String(input), method: (init.method || 'GET').toUpperCase() });
+    return new Promise(resolve => waiting.push(resolve));
+  };
+  const answer = body => {
+    const text = JSON.stringify(body);
+    waiting.shift()({ ok: true, status: 200, headers: { get: () => 'application/json' }, text: async () => text, json: async () => JSON.parse(text) });
+  };
+  try {
+    const first = link.refresh();
+    await settle();
+    const second = link.refresh();   // a save landed while the first read was out
+    await settle();
+    assert.equal(waiting.length, 1, 'the second refresh waits for the read already out, never a parallel read');
+    answer(before);
+    await first; await settle();
+    assert.equal(waiting.length, 1, 'then exactly one follow-up read goes out');
+    answer(after);
+    await second; await settle();
+    assert.equal(fetched.filter(f => /api\/house\/ha\/link/.test(f.url)).length, 2, `two reads: ${JSON.stringify(fetched)}`);
+    assert.deepEqual(link.state().unlinked, after.unlinked, 'state() ends on the post-save answer');
+  } finally { globalThis.fetch = realFetch; abort.abort(); }
+});
+
+// M2: a dropped read keeps the last good answer.
+check('failed_read_keeps_the_last_answer', async () => {
+  const { link, abort } = mount(linked());
+  await link.refresh();
+  const realFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
+    await link.refresh();
+    assert.equal(link.state()?.available, true, 'a network drop keeps the good answer');
+    globalThis.fetch = async () => ({ ok: false, status: 502, headers: { get: () => 'text/html' }, text: async () => '<html>', json: async () => { throw new Error('x'); } });
+    await link.refresh();
+    assert.equal(link.state()?.available, true, 'a 502 keeps the good answer');
+    const section = link.roomSection(BUILDING.rooms[0]);
+    assert.ok(areaSelect(section) && !words(section).includes(NO_HA), `the pick-list stays: ${words(section)}`);
+  } finally { globalThis.fetch = realFetch; abort.abort(); }
+  // With nothing read yet, a failure reads as not connected.
+  const second = mount(linked());
+  try {
+    globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
+    await second.link.refresh();
+    assert.equal(second.link.state()?.available, false, 'a first read that fails says not connected');
+  } finally { globalThis.fetch = realFetch; second.abort.abort(); }
+});
+
+// M5: the unlinked-area room chooser names each room's floor and leaves out ghost rooms.
+check('room_chooser_names_the_floor_and_skips_ghosts', async () => {
+  const { link, commits, abort } = mount(linked());
+  await link.refresh();
+  const building = { ...BUILDING, rooms: [...BUILDING.rooms, room('r-den2', 'Den', '', 'L2'),
+    { ...room('r-ghost', 'Proposed room'), state: 'ghost' }] };
+  choose = options => (options.find(o => String(o.label) === 'Den · Upstairs') || {}).value ?? null;
+  buttonHolding(link.buildingSection(building), 'Office').click(); await settle();
+  const asked = choices.at(-1).options.map(o => String(o.label));
+  assert.ok(asked.includes('Den · Main floor') && asked.includes('Den · Upstairs'), `each room names its floor: ${asked}`);
+  assert.ok(!asked.some(l => l.includes('Proposed room')), `a ghost room is not offered: ${asked}`);
+  assert.equal(commits.length, 1, JSON.stringify(commits));
+  assert.ok(subset(commits[0], { id: 'r-den2', value: 'office' }), JSON.stringify(commits[0]));
+  abort.abort();
+});
+
+// N1: a gone area shows as the current choice; No area can still be picked.
+check('gone_area_shows_in_the_select', async () => {
+  const gone = linked({ 'r-den': { gone: true, ha_area: 'old_area' } });
+  const { link, commits, abort } = mount(gone);
+  await link.refresh();
+  const select = areaSelect(link.roomSection({ ...BUILDING.rooms[0], ha_area: 'old_area' }));
+  assert.equal(select.value, 'old_area', 'the select shows the gone area, not a blank');
+  const option = select.options.find(o => o.value === 'old_area');
+  assert.ok(option && option.disabled, 'the gone area cannot be picked again');
+  select.value = ''; select.dispatchEvent({ type: 'change' }); await settle();
+  assert.ok(subset(commits[0], { value: '' }), JSON.stringify(commits));
+  abort.abort();
+});
+
+// N3: floors are grouped by level, a floor with no level last, whatever the registry order.
+check('floors_ordered_by_level', async () => {
+  const body = linked();
+  body.floors = [{ floor_id: 'attic', name: 'Attic', level: null }, { floor_id: 'upstairs', name: 'Upstairs', level: 1 },
+    { floor_id: 'ground', name: 'Ground floor', level: 0 }];
+  body.areas = [...AREAS, { area_id: 'loft', name: 'Loft', floor_id: 'attic', floor_name: 'Attic', floor_level: null }];
+  const { link, abort } = mount(body);
+  await link.refresh();
+  const select = areaSelect(link.roomSection(BUILDING.rooms[0]));
+  const groups = descendants(select).filter(n => n.localName === 'optgroup').map(g => g.label);
+  assert.deepEqual(groups, ['Ground floor', 'Upstairs', 'Attic'], `by level: ${groups}`);
+  abort.abort();
+});
+
+// M3 + M4: draw(host, record) redraws only when what the section shows changes,
+// keeps a focused area select in place, and hands focus on to a redrawn control.
+check('draw_keeps_focus_and_skips_unchanged', async () => {
+  const body = linked();
+  body.devices = [{ device_id: 'd1', name: 'Den lamp', kind: 'light', area_id: 'kitchen' }];
+  const { link, abort } = mount(body);
+  await link.refresh();
+  const host = new El('section');
+  const record = { kind: 'room', piece: BUILDING.rooms[0], building: BUILDING };
+  assert.equal(link.draw(host, record), true, 'the first draw draws');
+  assert.equal(link.draw(host, record), false, 'an unchanged answer does not redraw');
+  // A device in another area changes nothing this card shows.
+  linkBody = { ...body, devices: [...body.devices, { device_id: 'd2', name: 'Patio light', kind: 'light', area_id: 'patio' }] };
+  await link.refresh();
+  assert.equal(link.draw(host, record), false, 'another area\'s device does not redraw this room');
+  // The person is in the select when a new answer lands: the same select stays.
+  const select = areaSelect(host);
+  document.activeElement = select;
+  linkBody = { ...linkBody, devices: [...linkBody.devices, { device_id: 'd3', name: 'Den fan', kind: 'fan', area_id: 'kitchen' }] };
+  await link.refresh();
+  assert.equal(link.draw(host, record), true, 'a new device in the area redraws');
+  assert.equal(areaSelect(host), select, 'the focused select is the same node: focus and an open list survive');
+  assert.ok(words(host).includes('Den fan'), `the rest of the section is fresh: ${words(host)}`);
+  // Focus on a device button hands on to its successor after a redraw.
+  const blinkButton = descendants(host).find(n => n.localName === 'button' && words(n) === 'Blink');
+  document.activeElement = blinkButton;
+  linkBody = { ...linkBody, devices: linkBody.devices.map(d => d.device_id === 'd1' ? { ...d, name: 'Den lamp 2' } : d) };
+  await link.refresh();
+  assert.equal(link.draw(host, record), true);
+  const successor = descendants(host).find(n => n.localName === 'button' && words(n) === 'Blink');
+  assert.ok(successor && successor !== blinkButton && document.activeElement === successor, 'focus moves to the redrawn Blink');
+  document.activeElement = null;
+  abort.abort();
+});
+
+// Browser fix round (Task 5): an unnamed spot says what it is for and where it sits.
+check('pick_a_spot_names_each_spot', async () => {
+  const body = linked();
+  body.devices = [{ device_id: 'd-plug', name: 'Kettle plug', kind: 'switch', area_id: 'kitchen' }];
+  const { link, commits, abort } = mount(body);
+  await link.refresh();
+  link.setPlacement({ cancel() {}, arm() {}, startDrag() {},
+    anchors: () => [{ id: 'a1', kind: 'switch', host: { wall: 'w1', side: 'left', at: 2, z: 4 } },
+      { id: 'a2', kind: 'switch', host: { wall: 'w2', side: 'left', at: 2, z: 4 }, device: 'd-other' },
+      { id: 'a3', kind: 'light', host: { ceiling: 'r-den', u: .5, v: .5 } },
+      { id: 'a4', kind: 'switch', name: 'By the fridge', host: { wall: 'w3', side: 'left', at: 1, z: 4 } }] });
+  const section = link.roomSection(BUILDING.rooms[0]);
+  choose = options => (options.find(o => o.label === 'Switch spot 1 on a wall') || {}).value ?? null;
+  buttonNamed(section, 'Pick a spot').click(); await settle();
+  const asked = choices.at(-1).options.map(o => o.label);
+  assert.deepEqual(asked, ['Switch spot 1 on a wall', 'By the fridge', 'On a wall', 'On the ceiling'],
+    `free spots of the device's kind, named, then the surfaces: ${asked}`);
+  assert.ok(subset(commits[0], { op: 'place_device', device: 'd-plug', anchor: 'a1' }), JSON.stringify(commits));
   abort.abort();
 });
 

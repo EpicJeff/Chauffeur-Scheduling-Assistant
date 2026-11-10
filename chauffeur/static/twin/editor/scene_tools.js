@@ -1,4 +1,4 @@
-import { report } from './api.js';
+import { report, idleInterval } from './api.js';
 import { createCards, findPiece, feetInches } from './cards.js';
 import { createHaLink } from './ha_link.js';
 import { snapPoint, snapRotation } from './snap.js';
@@ -48,7 +48,9 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     handles?.refresh();
     drawDimensions(getPlan(), state);
   } });
-  const haLink = createHaLink({ api, onCommit: op, signal, getPlan, canEdit });
+  // Area picks and placements wait behind the card's own field saves (cards.queue).
+  const haLink = createHaLink({ api, onCommit: operation => cards.queue(() => op(operation)), signal, getPlan, canEdit });
+  let linkReadAt = 0;
   const cards = createCards({ getPlan, getKit, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
     op, addDormer, canEdit, select, pickMaterial, haLink, ask: item => panel.focusSelection(item, getLabel(item)) });
@@ -362,6 +364,14 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     refresh() { drawFloors(); if (selection && !findPiece(getPlan(), selection.pieceId, selection.buildingId)) select(null); else roomSelection.refresh(); },
     refreshCard() { cards.draw(selection); },
     // The card's area section redraws once the link answers; the scene never waits on it.
-    refreshLink() { return haLink.refresh().then(() => { if (!signal?.aborted) cards.draw(selection); }).catch(report); },
+    // The link is read when the house changed, while a room, building or anchor card
+    // is open, and otherwise once per idle interval: never on every build poll.
+    refreshLink(changed = true) {
+      const record = selection && findPiece(getPlan(), selection.pieceId, selection.buildingId);
+      const open = ['room', 'building', 'anchor'].includes(record?.kind);
+      if (!changed && !open && haLink.state() && Date.now() - linkReadAt < idleInterval) return Promise.resolve(haLink.state());
+      linkReadAt = Date.now();
+      return haLink.refresh().then(() => { if (!signal?.aborted) cards.draw(selection); }).catch(report);
+    },
   };
 }

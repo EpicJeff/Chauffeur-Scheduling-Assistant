@@ -14,7 +14,7 @@ const fields = {
   anchor: ['offset'], item: ['rotation', 'scale', 'offset'],
 };
 const lengths = new Set(['height', 'thickness', 'width', 'sill', 'head', 'at', 'plate', 'overhang', 'base', 'elevation', 'ceiling', 'offset']);
-const labels = { ha_area: 'Home Assistant area', low_side: 'Low side', at: 'Distance along the wall', ridge: 'Ridge',
+const labels = { low_side: 'Low side', at: 'Distance along the wall', ridge: 'Ridge',
   sill: 'Height above floor', head: 'Top of opening', plate: 'Wall height under the roof', base: 'Height above ground', elevation: 'Height above ground',
   offset: 'Distance from surface' };
 const hostedLabels = { rotation: 'Turn', scale: 'Size' };
@@ -58,7 +58,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
   const host = document.getElementById('piece-card');
   let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
   let edgeIndex = null;
-  let haSection = null, haSignature = null;
+  let haSection = null;
   const endNames = { x0: 'Left end', x1: 'Right end', y0: 'Front end', y1: 'Back end' };
   const fieldValue = (piece, field) => field.startsWith('ends.') ? (piece.ends?.[field.slice(5)] ?? piece.kind) : piece[field];
   const title = ({ kind, piece, building }) => {
@@ -88,15 +88,10 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
   const roofFlags = record => record?.kind === 'roof' && record.piece.block && !record.piece.dormer_of
     ? (record.building.roof.flags || []).filter(flag => flag.block_rect?.length === 4
       && flag.block_rect.every((v, i) => Math.abs(v - record.piece.block[i]) <= 1)) : [];
+  // The Home Assistant section redraws only when what it shows changes, and
+  // never pulls a pick-list out from under a person (ha_link.js draw).
   function drawHaSection(record) {
-    if (!haSection) return;
-    const signature = JSON.stringify([haLink.state(), record.piece, record.building.anchors, record.building.devices, canEdit()]);
-    if (signature === haSignature) return;
-    haSignature = signature;
-    haSection.replaceChildren(record.kind === 'room'
-      ? haLink.roomSection({ ...record.piece, room: record.piece.id, building: record.building.id })
-      : record.kind === 'anchor' ? haLink.anchorSection(record.piece) : haLink.buildingSection(record.building));
-    haSection.querySelectorAll('select, button').forEach(node => { node.disabled = !canEdit(); });
+    if (haSection) haLink.draw(haSection, record);
   }
   function draw(next = selection) {
     if (next?.pieceId !== selection?.pieceId || next?.buildingId !== selection?.buildingId) edgeIndex = null;
@@ -127,7 +122,7 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       return;
     }
     selection = next; layout = nextLayout; host.replaceChildren(); inputs = new Map(); acceptButton = null; pitchNote = null;
-    haSection = null; haSignature = null;
+    haSection = null;
     if (!record) return;
     const { piece, kind, building } = record;
     const heading = headingNode = document.createElement('h3'); heading.textContent = title(record);
@@ -293,7 +288,15 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
     node.disabled = !canEdit();
     node.addEventListener('click', () => Promise.resolve().then(action).catch(report)); return node;
   }
-  return { draw, edge(handle) {
+  // A change from outside the fields (the area pick, Use, a device placement)
+  // waits behind any field save still running, as Delete does, rather than
+  // being refused while the house finishes that save.
+  function queue(work) {
+    const run = pending.then(() => work());
+    pending = run.catch(() => {});
+    return run;
+  }
+  return { draw, queue, edge(handle) {
     const next = { pieceId: handle.id, buildingId: handle.building };
     selection = next; edgeIndex = handle.edge; layout = null; draw(next);
   } };

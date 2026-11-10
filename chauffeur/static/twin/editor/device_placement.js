@@ -71,7 +71,8 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
       const previous = drag; drag = null;
       if (previous.row.hasPointerCapture(previous.pointer)) previous.row.releasePointerCapture(previous.pointer);
     }
-    armed = null; el('device-tools').hidden = true; canvas.style.cursor = '';
+    armed = null; el('device-tools').hidden = true; el('device-tools').classList.remove('editor-device-dragging');
+    canvas.style.cursor = ''; document.body.style.cursor = '';
   }
   function arm(device, kind) {
     cancel(); prepare(); tools.setTool('select');
@@ -84,8 +85,18 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     cancel(); prepare(); tools.setTool('select');
     event.preventDefault();
     const row = event.currentTarget; row.setPointerCapture(event.pointerId);
-    drag = { row, device, pointer: event.pointerId, x: event.clientX, y: event.clientY };
+    drag = { row, device, pointer: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
   }
+  // A carried row says what a drop does; the note lets pointer presses through
+  // (editor-device-dragging), so a drop under it still reaches the scene.
+  listen(document, 'pointermove', event => {
+    if (!drag || drag.pointer !== event.pointerId || drag.moved
+      || Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 3) return;
+    drag.moved = true;
+    el('device-note').textContent = `Drop ${drag.device.name} on a wall, the floor, the ceiling or a spot. Escape cancels.`;
+    el('device-tools').classList.add('editor-device-dragging');
+    el('device-tools').hidden = false; document.body.style.cursor = 'grabbing';
+  }, { capture: true });
   function pointerDown(event) {
     if (!armed || !canEdit() || event.button !== 0) return false;
     press = { pointer: event.pointerId, x: event.clientX, y: event.clientY, enabled: view.controls.enabled };

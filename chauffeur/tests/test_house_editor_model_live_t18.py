@@ -34,6 +34,15 @@ What the editor must give (the brief):
   `Home Assistant is not connected, so areas and devices are hidden.` in place of
   the select, the building card has no unlinked list, and the editor still edits.
 
+Fix round 1 (task-4-review.md) adds:
+- the link held unanswered: the editor still reaches ready and a Name save
+  still stores (renderScene reads the link beside the scene, never awaits it);
+- `Use` pressed straight after typing a new Name: the area pick waits behind
+  the field's save instead of being refused ('Wait for the house to finish
+  this change.'); both are stored;
+- with no room, building or anchor card open and the house unchanged, a poll
+  reads no link; an open room card does, and so does a change to the house.
+
 Hooks: window.__twinEditor.haLink is the createHaLink(...) object; its state()
 is the last GET api/house/ha/link answer (null until the first one arrives).
 Pieces are selected with the existing test hook window.__editor.clickPiece.
@@ -441,11 +450,120 @@ def scenario_no_ha_editor_still_edits():
         FAKE.available = True
 
 
+# --- fix round 1 (task-4-review.md) ------------------------------------------------
+
+def _link_reads(page):
+    """Every GET of api/house/ha/link the page sends, in order."""
+    reads = []
+    page.on('request', lambda r: reads.append(r.url) if r.method == 'GET'
+            and r.url.split('?')[0].endswith('/api/house/ha/link') else None)
+    return reads
+
+
+def scenario_editor_never_waits_on_the_link():
+    # I1: a Home Assistant that never answers must not hold the editor's start or a save.
+    # renderScene reads the link beside the scene; if it awaited it, `ready` would never come.
+    s = _serve()
+    if s is None:
+        return
+    _reset()
+    _facts()
+    with s.browser(launch_args=H.GPU_ARGS) as page:
+        held = []
+        page.route('**/api/house/ha/link', lambda route: held.append(route))
+        reads = _link_reads(page)
+        H.open_editor(page, s)   # waits for __editor.ready within its normal timeout
+        check(reads and held, ('the link was asked for and is held unanswered', reads, len(held)))
+        check(_link_state(page) is None, ('nothing has answered the link yet', _link_state(page)))
+        _select(page, DEN, MAIN, 'Den')
+        before = _store()
+        name = page.locator('#piece-card').get_by_label('Name', exact=True)
+        name.fill('Study')
+        name.press('Enter')
+        from services import twin_store
+        check(_wait(page, lambda: twin_store.current_id() != before['round'], 20),
+              'a save is stored while the link is still held')
+        check(_wait(page, lambda: _room(H.model(), MAIN, DEN)['name'] == 'Study'), _room(H.model(), MAIN, DEN))
+        check(_wait(page, lambda: H.card_title(page) == 'Study'), ('the card follows the save', H.card_title(page)))
+        check(_alert(page) is None, ('nothing alerts', _alert(page)))
+        for route in held:
+            try:
+                route.abort()
+            except Exception:
+                pass
+        _no_errors(s)
+
+
+def scenario_use_right_after_a_rename_is_kept():
+    # M1: Use pressed straight after typing a new name. The press blurs the Name
+    # field, whose save starts first; the link must wait its turn, not be refused
+    # with 'Wait for the house to finish this change.'
+    s = _serve()
+    if s is None:
+        return
+    _reset()
+    _facts()
+    with s.browser(launch_args=H.GPU_ARGS) as page:
+        posted = _record_ops(page)
+        _open(page, s)
+        _select(page, GARAGE, MAIN, 'Garage')
+        check('Suggested: Garage' in _card_text(page), _card_text(page))
+        from services import twin_store
+        before = _store()
+        name = page.locator('#piece-card').get_by_label('Name', exact=True)
+        name.fill('Big garage')
+        page.locator('#piece-card').get_by_role('button', name='Use', exact=True).click()
+        check(_wait(page, lambda: _room(H.model(), MAIN, GARAGE)['ha_area'] == 'garage', 20),
+              ('the area pick is kept', _alert(page), posted, _room(H.model(), MAIN, GARAGE)))
+        check(_room(H.model(), MAIN, GARAGE)['name'] == 'Big garage', ('the rename is kept too', _room(H.model(), MAIN, GARAGE)))
+        check(len(twin_store.rounds()) == before['rounds'] + 2, 'the rename and the link are two rounds')
+        check(len(posted) == 1 and _is_set(posted[0], MAIN, GARAGE, 'garage'), ('one set op for the link', posted))
+        check(_alert(page) is None, ('nothing is refused', _alert(page)))
+        _no_errors(s)
+
+
+def scenario_link_is_read_only_when_needed():
+    # M4: with no room, building or anchor card open and the house unchanged, a
+    # poll does not read the link; an open room card does, and so does a change.
+    s = _serve()
+    if s is None:
+        return
+    _reset()
+    _facts()
+    with s.browser(launch_args=H.GPU_ARGS) as page:
+        _open(page, s)
+        reads = _link_reads(page)
+        check(page.evaluate('() => window.__twinEditor.selection().id ?? null') is None, 'nothing is selected')
+        for _ in range(3):
+            page.evaluate('() => window.__editor.pollNow()')
+        page.wait_for_timeout(800)
+        check(reads == [], ('an idle poll with no card open reads nothing', reads))
+
+        _select(page, DEN, MAIN, 'Den')
+        del reads[:]
+        page.evaluate('() => window.__editor.pollNow()')
+        check(_wait(page, lambda: len(reads) >= 1, 5), ('an open room card keeps its link fresh', reads))
+
+        page.locator('#piece-card').get_by_role('button', name='Close piece card').click()
+        check(_wait(page, lambda: H.card_title(page) is None, 5), 'the card closes')
+        page.wait_for_timeout(800)
+        del reads[:]
+        page.evaluate("""([b, r]) => window.__twinEditor.op({ op: 'set', building: b, id: r, field: 'ha_area', value: 'office' })""",
+                      [MAIN, DEN])
+        check(_wait(page, lambda: len(reads) >= 1, 10), ('a change to the house reads the link again', reads))
+        check(_wait(page, lambda: 'office' not in {u['area_id'] for u in (_link_state(page) or {}).get('unlinked', [])}),
+              ('and the answer follows the change', _link_state(page)))
+        _no_errors(s)
+
+
 SCENARIOS = [
     scenario_room_card_picks_an_area,
     scenario_suggestion_use_links_and_places_the_garage_doors,
     scenario_unlinked_area_is_placed_on_a_room,
     scenario_no_ha_editor_still_edits,
+    scenario_editor_never_waits_on_the_link,
+    scenario_use_right_after_a_rename_is_kept,
+    scenario_link_is_read_only_when_needed,
 ]
 
 

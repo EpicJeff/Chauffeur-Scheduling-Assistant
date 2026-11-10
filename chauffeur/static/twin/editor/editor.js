@@ -65,6 +65,9 @@ export async function boot() {
     const result = await api.op(operation);
     snapshot = { ...snapshot, plan: result.plan, model: result.model };
     saved?.(result);
+    // The card shows the saved change at once (a device reads Placed); the
+    // scene rebuild below can take seconds on a large house.
+    tools?.refreshCard();
     const line = document.createElement('li'); line.textContent = plain(result.words); el('editor-log').append(line);
     lastSummary = result.words;
     if (!settle) {
@@ -141,7 +144,8 @@ export async function boot() {
   async function renderScene() {
     if (tools?.dragging() || lot?.dragging()) return;
     const plan = timeline?.preview() || previewPlan(), signature = JSON.stringify(plan);
-    if (view && signature !== lastScene) {
+    const changed = signature !== lastScene;
+    if (view && changed) {
       await view.rebuild(plan);
       view.scene.background?.set?.('#171e27');
       lastScene = signature;
@@ -159,7 +163,7 @@ export async function boot() {
     timeline?.sync(currentBuild);
     // Read the Home Assistant link beside the scene, never before it: a slow or
     // unreachable Home Assistant must not hold the editor's start, a poll or a save.
-    tools?.refreshLink().then(() => devices?.refresh()).catch(report);
+    tools?.refreshLink(changed).then(() => devices?.refresh()).catch(report);
   }
   function drawFloors() {
     tools?.drawFloors();
