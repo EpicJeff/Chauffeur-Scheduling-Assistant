@@ -460,6 +460,11 @@ def _details(building, levels, notes):
                          and _lookup(levels, item.get('level')) is not None)
             elif valid and name == 'lights':
                 valid = _point(item.get('at')) and _lookup(levels, item.get('level')) is not None
+            elif valid and name == 'fixtures' and 'rect' not in item:
+                valid = (_point(item.get('at')) and _lookup(levels, item.get('level')) is not None
+                         and isinstance(item.get('kind'), str)
+                         and item.get('surface') in ('ceiling', 'wall', 'floor')
+                         and ('wall' not in item or isinstance(item['wall'], str)))
             elif valid:
                 rect = item.get('rect')
                 valid = (isinstance(rect, (list, tuple)) and len(rect) == 4

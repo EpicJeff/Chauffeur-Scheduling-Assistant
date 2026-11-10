@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 _LABELS = {'roof': 'Roof sections', 'pitch': 'Roof slopes', 'plot': 'Lot',
            'draft': 'Reading the drawings', 'draft_rooms': 'Rooms',
            'site': 'Yard', 'compose': 'Plants and beds', 'finishes': 'Colours and finishes'}
+STREAM_PATHS = {'building.levels': 'outline', 'building.walls': 'walls',
+                'building.openings': 'doors and windows', 'building.fixtures': 'fixtures',
+                'building.roof.sections': 'roofs', 'rooms': 'rooms', 'walls': 'walls'}
 
 
 class _ReadError(ValueError):
@@ -695,6 +698,8 @@ def _matches(a, b, kind, house, *, original=False):
         return p.get('level')
     if level(a) != level(b) or (kind == 'site' and a.get('kind') != b.get('kind')):
         return False
+    if kind == 'fixture' and any(a.get(k) != b.get(k) for k in ('kind', 'surface')):
+        return False
     ga = _match_geometry(a, kind, house)
     gb = (_geometry(b, kind, house) if kind == 'wall' and not original
           else _match_geometry(b, kind, house))
@@ -1021,7 +1026,7 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None):
             return
         house['levels'] = levels + [l for l in house['levels']
             if l['id'] not in remap.values() and l.get('src', {}).get('person')]
-        for key in ('walls', 'rooms', 'stairs'):
+        for key in ('walls', 'rooms', 'stairs', 'fixtures'):
             for piece in draft.get(key, []):
                 piece['level'] = remap.get(piece.get('level'), piece.get('level'))
 
@@ -1141,6 +1146,21 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None):
                           if draft.get('porch') else None)
     house['stairs'] = _merge_list(house.get('stairs', []), pieces('stairs', 'stair'),
                                   'stair', house, build, step, tombstones=tombstones)
+    if 'fixtures' in draft:
+        fixtures = pieces('fixtures', 'fixture')
+        for fixture in fixtures:
+            if 'wall' in fixture:
+                fixture['wall'] = wall_ids.get(fixture['wall'], fixture['wall'])
+        # Flat output keeps anchors for the renderer. Only a new fixture read
+        # converts generated anchors back to read pieces for identity merging.
+        anchors = [p for p in house.get('anchors', []) if 'surface' in p]
+        ids = {p['id'] for p in anchors if not p.get('src', {}).get('person')}
+        existing = house.get('fixtures', []) + anchors
+        house['anchors'] = [p for p in house.get('anchors', []) if p['id'] not in ids]
+        house['lights'] = [p for p in house.get('lights', []) if p['id'] not in ids]
+        house['fixtures'] = [p for p in existing if 'rect' in p] + _merge_list(
+            [p for p in existing if 'rect' not in p], fixtures, 'fixture', house, build, step,
+            tombstones=tombstones)
 
 
 def _check_draft(house):
@@ -1579,11 +1599,14 @@ def _read_draft_levels(build, step, reader, ticket, images, context, progress):
                     wall['id'] = wall_ids[wall['id']]
             incoming['openings'] = [{**o, 'wall': wall_ids[o['wall']]}
                                     for o in incoming.get('openings', []) if o.get('wall') in wall_ids]
-            for key in ('rooms', 'stairs'):
+            for key in ('rooms', 'stairs', 'fixtures'):
                 incoming[key] = [p for p in incoming.get(key, []) if p['level'] == scope]
+            for fixture in incoming['fixtures']:
+                if 'wall' in fixture:
+                    fixture['wall'] = wall_ids.get(fixture['wall'], fixture['wall'])
             incoming.pop('roof', None)
         else:
-            for key in ('walls', 'rooms', 'stairs'):
+            for key in ('walls', 'rooms', 'stairs', 'fixtures'):
                 incoming.pop(key, None)
             incoming['openings'] = [o for o in incoming.get('openings', []) if 'gable' in o]
             # Floor reads own their porches, including columns. A roof read
@@ -1593,6 +1616,8 @@ def _read_draft_levels(build, step, reader, ticket, images, context, progress):
             incoming.pop('porch', None)
         for key in ('levels', 'walls', 'openings', 'rooms', 'porches', 'stairs'):
             fragment['building'][key].extend(deepcopy(incoming.get(key, [])))
+        if 'fixtures' in incoming:
+            fragment['building'].setdefault('fixtures', []).extend(deepcopy(incoming['fixtures']))
         if incoming.get('porch'):
             fragment['building']['porches'].append(deepcopy(incoming['porch']))
             fragment['building'].setdefault('porch', deepcopy(incoming['porch']))

@@ -227,6 +227,7 @@ LEVELS AND WALLS
   bounded by knee walls and the gable ends themselves.
 
 OPENINGS
+- Every opening sits on a wall and names it (except the gable form below).
 - openings: [{id, wall, kind, at, width, sill, head}]. kind is window, door,
   slider, bifold, passage or garage. at is the distance in feet from the wall's
   from point to the opening's CENTRE. Sill and head are above its level's floor;
@@ -237,6 +238,12 @@ OPENINGS
   y0 end, rear the y1 end. For ridge "x", give y instead of x: y is the centre
   along the building y axis, front is the x0 end, rear the x1 end. Gable sill
   and head are measured above the section's PLATE, not the level's floor.
+
+FIXTURES
+- Rooms are closed by walls. Fixtures are anchors: read lights, switches,
+  outlets, fans and smoke alarms shown on plans as
+  fixtures:[{kind, level, at:[x,y], surface:'ceiling'|'wall'|'floor', wall?}].
+  Use singular kinds; a smoke alarm is a sensor. A wall fixture names its wall.
 
 ROOF
 - roof: {sections:[...], extensions:[...]}. Each section is {id, kind, rect,
@@ -309,8 +316,9 @@ PROMPTS['draft'] = '''Read the complete architectural set for ONE building as
 one 3D plan in feet. All relevant sheets and photos are attached: read them
 together, including elevations and sections when present. Write exterior walls
 and knee walls only, no interior partitions, and rooms: []. Return
-{building:{id,name,position:[0,0],rotation:0,base:0,levels,walls,openings,rooms,
-roof:{sections,extensions},porches,stairs},pages,checks,notes}.
+{building:{id,name,position:[0,0],rotation:0,base:0,levels,walls,openings,fixtures,
+roof:{sections,extensions},rooms,porches,stairs},pages,checks,notes}.
+Write the building keys in that order.
 ''' + _DRAFT_RULES + '''
 Your whole reply, reasoning included, must fit in 64000 tokens: stop reasoning
 by about 45000 and leave the rest for the JSON.
@@ -319,7 +327,7 @@ PROMPTS['draft_level'] = '''Read ONLY the requested level, or ONLY the roof
 when context requests the roof. Settled lower levels in context fix the frame
 and dimensions; preserve them and their ids. Use shared dimension strings to
 place the requested level in that same frame; never restart at a local origin.
-Return {building:{levels,walls,openings,rooms:[],porches,stairs},pages,checks,notes}
+Return {building:{levels,walls,openings,fixtures,rooms:[],porches,stairs},pages,checks,notes}
 restricted to that one level (exterior and knee walls only, no partitions).
 For a roof-only request return {building:{roof:{sections,extensions},openings,porches},
 pages,checks,notes}, with only roof and gable openings, given all settled levels.
@@ -346,7 +354,7 @@ the rear. Upper floors keep their settled offsets; do not use a local origin.
 Wall height is above its own floor and thickness is in feet. Read ceiling and
 knee-wall heights from sheet notes and sections; use a typical height only
 when none is given. Wall endpoints should meet adjoining walls exactly.
-Rooms use at least three polygon corners, without repeating the first point.
+Rooms are closed by walls. Use at least three polygon corners, without repeating the first point.
 The walls key is optional when there are no interior walls to return.
 Your whole reply, reasoning included, must fit in 32000 tokens: stop reasoning
 by about 20000 and leave the rest for the JSON.
@@ -610,6 +618,10 @@ def _parse_draft(kind, answer, v, context=None):
                         {'id': v.text, 'wall': v.text, 'overhang': v.numeric})
 
     room = lambda x, p: v.fields(x, p, {'name': v.text, 'level': v.text, 'polygon': polygon}, {'id': v.text})
+    fixture = lambda x, p: v.fields(x, p, {
+        'kind': v.text, 'level': v.text, 'at': point,
+        'surface': lambda x, p: v.choice(x, p, ('ceiling', 'wall', 'floor'))},
+        {'id': v.text, 'wall': v.text})
     stair = lambda x, p: v.fields(x, p, {
         'level': v.text, 'from': point, 'to': point, 'width': positive,
         'risers': positive, 'rise_to': signed}, {'id': v.text})
@@ -690,6 +702,7 @@ def _parse_draft(kind, answer, v, context=None):
         'levels': lambda x, p: v.items(x, p, level),
         'walls': lambda x, p: v.items(x, p, wall),
         'openings': lambda x, p: v.items(x, p, opening),
+        'fixtures': lambda x, p: v.items(x, p, fixture),
         'rooms': lambda x, p: v.items(x, p, room), 'roof': roof,
         'porch': lambda x, p: None if x is None else porch(x, p),
         'porches': lambda x, p: v.items(x, p, porch),
@@ -1063,6 +1076,94 @@ def read(kind, images, context, *, run, step, checkpoint_checked=False):
             break
     if isinstance(answer, dict) and 'error' in answer:
         return {'error': str(answer['error']), **({'truncated': True} if draft and truncated else {})}
+    fragment, problems = parse(kind, answer, context)
+    if not _usable(kind, fragment, problems):
+        return {'error': '; '.join(problems) or f'{kind} returned no usable fragment.'}
+    if problems:
+        fragment['problems'] = problems
+    return fragment
+
+
+class Cancelled(RuntimeError):
+    """The person stopped a read; its cost has already been recorded."""
+
+
+def read_stream(kind, context, images, *, cancel, on_text, run, step):
+    """Read one model answer with live text and the usual twin validation."""
+    from services import llm_stream
+
+    if not isinstance(kind, str) or kind not in KINDS:
+        return {'error': 'Unknown twin read kind.'}
+    if cancel.cancelled:
+        raise Cancelled('Read stopped.')
+    try:
+        settings = storage.get_settings()
+        model, key = model_pools.credentials('twin', settings)
+    except twin_cost.CheckpointReached:
+        raise
+    except Exception as exc:
+        return {'error': str(exc)}
+    if not key:
+        return {'error': 'No model key is configured for twin reads.'}
+    provider, bare = model_pools.split_model(model)
+    draft = kind in THINKING
+    cap = OUTPUT_CAP.get(provider, 0)
+    if draft and (cap <= 0 or (kind == 'draft' and cap < 32000)):
+        return {'error': 'too small', 'truncated': True}
+    limit = min(MAX_OUTPUT[kind], cap) if cap else MAX_OUTPUT[kind]
+    try:
+        user = json.dumps({'step': step, 'context': context}, ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError, OverflowError) as exc:
+        return {'error': str(exc)}
+    twin_cost.require_clear()
+    parts = []
+    error = None
+    try:
+        for delta in llm_stream.stream_json(
+                provider, settings.get('llm_ollama_url') or '', key, bare, PROMPTS[kind], user,
+                images=images, max_output_tokens=limit, thinking_level=THINKING.get(kind, 'low'),
+                timeout_s=TIMEOUT.get(kind, 120), cancel=cancel):
+            parts.append(delta)
+            on_text(delta)
+    except Exception as exc:
+        error = str(exc)
+    finally:
+        usage = cancel.usage
+        if usage.get('dispatched'):
+            row = dict(usage, model=model, images=len(images or []),
+                       prompt_chars=len(PROMPTS[kind]) + len(user), max_output_tokens=limit)
+            twin_cost.record(f'step:{kind}', [row], run, cancelled=cancel.cancelled,
+                             produced_chars=cancel.produced_chars)
+    if cancel.cancelled:
+        raise Cancelled('Read stopped.')
+    if error:
+        return {'error': error}
+    if not cancel.usage['complete']:
+        truncated = cancel.usage.get('finish_reason') in ('max_tokens', 'MAX_TOKENS', 'incomplete')
+        return {'error': 'The model reply ended before it was complete.',
+                **({'truncated': True} if draft and truncated else {})}
+    try:
+        reply = ''.join(parts).strip()
+        if draft:
+            # Same lenient wrappers as llm's blocking draft path. Never accept
+            # a partial JSON object or choose between multiple answers.
+            reply = re.sub(r'```+\s*$', '', reply).strip()
+            start = reply.find('{')
+            if start < 0:
+                raise ValueError('Expected a JSON object')
+            reply = reply[start:]
+            answer, end = json.JSONDecoder().raw_decode(reply)
+            trailing = reply[end:].strip()
+            if trailing.startswith('{'):
+                second, _ = json.JSONDecoder().raw_decode(trailing)
+                if isinstance(second, dict):
+                    raise ValueError('Two JSON objects in one reply')
+            if trailing not in ('', '}'):
+                raise ValueError('Extra data')
+        else:
+            answer = json.loads(reply)
+    except (ValueError, TypeError) as exc:
+        return {'error': f'Failed to parse LLM JSON: {exc}'}
     fragment, problems = parse(kind, answer, context)
     if not _usable(kind, fragment, problems):
         return {'error': '; '.join(problems) or f'{kind} returned no usable fragment.'}

@@ -559,7 +559,7 @@ def _flat_opening(opening, roof_ids):
 
 def _surface_host(building, point, level, kind):
     for room in building['rooms']:
-        if room['level'] != level:
+        if room['level'] != level or room.get('state') in ('ghost', 'proposal'):
             continue
         # A tiny square also counts boundary points without another polygon API.
         x, y = point
@@ -571,6 +571,66 @@ def _surface_host(building, point, level, kind):
     return None
 
 
+def _fixture_host(building, piece):
+    point, level, surface = piece['at'], piece['level'], piece['surface']
+    if surface in ('ceiling', 'floor'):
+        return _surface_host(building, point, level, surface)
+    if surface != 'wall':
+        return None
+    geometry = hosts.snapshot(building)
+    candidates = []
+    for wid, wall in geometry['walls'].items():
+        if wall['level'] != level or (wid != piece.get('wall') and wid.split('~')[0] != piece.get('wall')):
+            continue
+        a, b = wall['a'], wall['b']
+        length = math.dist(a, b)
+        dx, dy = (b[0] - a[0]) / length, (b[1] - a[1]) / length
+        at = max(0, min(length, (point[0] - a[0]) * dx + (point[1] - a[1]) * dy))
+        side = 'left' if (point[1] - a[1]) * dx - (point[0] - a[0]) * dy >= 0 else 'right'
+        host = {'wall': wid, 'side': side, 'at': at, 'z': 3.5}
+        gap = math.dist(hosts._point(geometry, host)[:2], point)
+        if gap <= .5:
+            candidates.append((gap, wid, host))
+    return min(candidates, default=(None, None, None), key=lambda c: c[:2])[2]
+
+
+def _read_fixtures(building, fixtures):
+    for index, detail in enumerate(fixtures):
+        piece = deepcopy(detail)
+        piece.setdefault('id', f'fixtures-{index + 1}')
+        building['flags'] = [f for f in building['flags']
+                             if not (isinstance(f.get('piece'), dict)
+                                     and f['piece'].get('fixture', {}).get('id') == piece['id'])]
+        if any(p['id'] == piece['id'] for p in building['anchors']):
+            continue
+        piece['src'] = piece.get('src') or {'sheet': '', 'page': 0, 'step': 'draft'}
+        if piece['kind'] in ('smoke alarm', 'smoke_alarm', 'smoke alarms'):
+            piece['kind'] = 'sensor'
+        host = _fixture_host(building, piece)
+        if (host is None or twin_model._host_error(host, building) is not None
+                or piece['kind'] not in ('light', 'switch', 'outlet', 'fan', 'camera', 'sensor')):
+            flag = {'level': piece['level'], 'at': list(piece['at']),
+                    'text': f"This {detail['kind']} has no valid surface; place it again.",
+                    'piece': {'fixture': piece}}
+            if flag not in building['flags']:
+                building['flags'].append(flag)
+            continue
+        point = hosts.world_point(building, host)
+        occupied = False
+        for anchor in building['anchors']:
+            if not _person(anchor) or twin_model._host_error(anchor.get('host'), building):
+                continue
+            geometry = hosts.snapshot(building)
+            surface = hosts._surface(geometry, anchor['host'])
+            if surface and surface.get('level') == piece['level'] and math.dist(
+                    point[:2], hosts.world_point(building, anchor['host'])[:2]) <= .5:
+                occupied = True
+                break
+        if not occupied:
+            piece.update(host=host, offset=0, device=None)
+            building['anchors'].append(piece)
+
+
 def _details(building, flat, previous):
     for name in ('anchors', 'items'):
         pinned = [deepcopy(p) for p in previous.get(name, []) if _person(p)]
@@ -580,8 +640,11 @@ def _details(building, flat, previous):
     building['devices'] = [pinned.pop(p['id'], deepcopy(p))
                            for p in flat.get('devices', previous.get('devices', []))]
     building['devices'].extend(pinned.values())
+    _read_fixtures(building, [p for p in flat.get('fixtures', []) if 'rect' not in p])
     for name, target, surface in (('lights', 'anchors', 'ceiling'), ('fixtures', 'items', 'floor')):
         for index, detail in enumerate(flat.get(name, [])):
+            if name == 'fixtures' and 'rect' not in detail:
+                continue
             piece = deepcopy(detail)
             piece.setdefault('id', f'{name}-{index + 1}')
             if any(p['id'] == piece['id'] for p in building[target]):
