@@ -381,6 +381,22 @@ class PrivateAnswerTests(unittest.TestCase):
                                     'device_id': 'device-' + KITCHEN, 'enabled': True,
                                     'recognition_enabled': True}])
 
+    def test_new_answer_survives_a_failed_release_of_the_old_one(self):
+        """Round 2: hold() must never drop the NEW answer because the OLD one could not
+        be posted. The new one is held; the old one is delivered on a later release."""
+        from services import agent_tools_v2
+        self.hold_mail()                                   # the old answer: pineapple
+        newer = 'The second email says the field trip form is due Friday.'
+        with patch.object(agent_tools_v2, '_post_chat_message', side_effect=RuntimeError('db locked')):
+            self.assertEqual(self.vp.hold(self._ctx(), storage.get_member('jeff'), newer, None), QUESTION)
+        self.assertEqual(self.vp._held[('ha', KITCHEN)]['reply'], newer)
+        speech, _ = self.say('send it to my chat', JEFF, seconds=0.4)
+        self.assertEqual(speech, 'Sent to your chat.')
+        bodies = self.dm()
+        self.assertTrue(any('field trip' in b for b in bodies), bodies)
+        self.assertTrue(any('pineapple' in b for b in bodies), 'the old answer is delivered too, never lost')
+        self.assertEqual(sum('pineapple' in b for b in bodies), 1)
+
     def test_approval_readback_is_never_held(self):
         from services import voice_approval
         with patch.object(voice_approval, 'current_readback',
