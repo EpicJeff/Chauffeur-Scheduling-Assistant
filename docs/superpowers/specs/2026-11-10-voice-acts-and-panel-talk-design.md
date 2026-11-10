@@ -92,7 +92,7 @@ A panel is a `trusted_devices` row with `kind='panel'`. The row gains two option
 - `area_id`: the Home Assistant area this panel hangs in.
 - `satellite_id`: an `assist_satellite.*` override; empty means automatic.
 
-Both are set in one place: the panel's row in Config › Trusted devices (`config.html`, the auth-arc S5 list where panels are paired and revoked; parents only), with a room picker from HA areas and a satellite picker of the satellites Chauffeur knows (Config › Voice identity rows), defaulting to Automatic. A panel has no settings drawer of its own (Config › Boards › "The wall panel" is household-wide), so the panel only shows the result: the mic button's label names the speaker ("Talk on the Kitchen speaker"). A panel with no room shows no button. With HA absent, the pickers say so and the mic never appears.
+Both are set in one place: the panel's row in Config › Trusted devices (`config.html`, the auth-arc S5 list where panels are paired and revoked; parents only), with a room picker from HA areas and a satellite picker of the satellites Chauffeur knows (Config › Voice identity rows), defaulting to Automatic. A panel has no settings drawer of its own (Config › Boards › "The wall panel" is household-wide), so the panel only shows the result: a plain mic button (no speaker name; the user, 2026-11-10: it adds nothing) when the panel's room has a satellite, and no button otherwise. With HA absent, the pickers say so and the mic never appears.
 
 ### The room's satellite
 
