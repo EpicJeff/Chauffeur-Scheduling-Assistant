@@ -149,6 +149,7 @@ export async function boot() {
       if (eye) { aimed = true; view.aim(eye.position, eye.target); }
     }
     renderedGhosts = countGhosts(plan);
+    await tools?.haLink?.refresh();
     drawFloors();
     tools?.refresh();
     library?.refresh();
@@ -428,7 +429,7 @@ export async function boot() {
       refresh: async () => { draw?.cancel(); await polling.refreshState(); await renderScene(); } });
     tools = createSceneTools({ view, getPlan: () => timeline?.preview() || snapshot.plan, getModel: () => snapshot.model, getKit: () => kit, getSheets: () => sheets,
       pickSite: (x, y) => library?.pickSite(x, y), pickMaterial: surface => library?.pick(surface),
-      edit, op: applyOp, panel, canEdit, signal: lifecycle.signal, onInteract, addDormer: () => roofTools?.addDormer() });
+      edit, op: applyOp, panel, canEdit, signal: lifecycle.signal, onInteract, api, addDormer: () => roofTools?.addDormer() });
     library = createLibrary({ view, kit, getPlan: () => timeline?.preview() || snapshot.plan, tools,
       op: applyOp, canEdit, signal: lifecycle.signal, onInteract });
     flags = createFlags({ view, getModel: () => snapshot.model, getPlan: () => snapshot.plan,
@@ -476,6 +477,7 @@ export async function boot() {
       buildingCentre: tools.buildingCentre, clearLastAnswer: pauses.clearLastAnswer, dragPauseGhost: pauses.dragPauseGhost,
     });
     if (new URLSearchParams(location.search).get('test') === '1') window.__twinEditor = {
+      haLink: tools.haLink,
       selection: tools.selection, handles: () => [...tools.handles(), ...lot.handles()], op: applyOp,
       underlay: lot.underlay, lotHandles: lot.lotHandles, lotSuggestions: lot.lotSuggestions,
       flags: flags.flags, proposals: flags.proposals,

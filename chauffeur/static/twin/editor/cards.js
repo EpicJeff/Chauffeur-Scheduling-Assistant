@@ -8,7 +8,7 @@ const report = error => {
 // Keep this list aligned with twin_edit.EDITABLE; the server validates every save.
 const fields = {
   wall: ['height', 'thickness', 'exterior'], opening: ['width', 'sill', 'head', 'kind', 'panels', 'at'],
-  room: ['name', 'ha_area'], roof: ['kind', 'pitch', 'plate', 'overhang', 'ridge', 'low_side', 'ends'],
+  room: ['name'], roof: ['kind', 'pitch', 'plate', 'overhang', 'ridge', 'low_side', 'ends'],
   building: ['name', 'position', 'rotation', 'base'], level: ['name', 'elevation', 'ceiling'],
   // Hosted pieces save through model ops (twin_model_ops: set, move_hosted).
   anchor: ['offset'], item: ['rotation', 'scale', 'offset'],
@@ -54,10 +54,11 @@ export function findPiece(plan, pieceId, buildingId) {
   return proposal ? { piece: { ...proposal.piece, id: proposal.id || proposal.piece.id }, building, kind: 'proposal' } : null;
 }
 
-export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, pickMaterial }) {
+export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, pickMaterial, haLink }) {
   const host = document.getElementById('piece-card');
   let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
   let edgeIndex = null;
+  let haSection = null, haSignature = null;
   const endNames = { x0: 'Left end', x1: 'Right end', y0: 'Front end', y1: 'Back end' };
   const fieldValue = (piece, field) => field.startsWith('ends.') ? (piece.ends?.[field.slice(5)] ?? piece.kind) : piece[field];
   const title = ({ kind, piece, building }) => {
@@ -87,6 +88,16 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
   const roofFlags = record => record?.kind === 'roof' && record.piece.block && !record.piece.dormer_of
     ? (record.building.roof.flags || []).filter(flag => flag.block_rect?.length === 4
       && flag.block_rect.every((v, i) => Math.abs(v - record.piece.block[i]) <= 1)) : [];
+  function drawHaSection(record) {
+    if (!haSection) return;
+    const signature = JSON.stringify([haLink.state(), record.piece, canEdit()]);
+    if (signature === haSignature) return;
+    haSignature = signature;
+    haSection.replaceChildren(record.kind === 'room'
+      ? haLink.roomSection({ ...record.piece, room: record.piece.id, building: record.building.id })
+      : haLink.buildingSection(record.building));
+    haSection.querySelectorAll('select, button').forEach(node => { node.disabled = !canEdit(); });
+  }
   function draw(next = selection) {
     if (next?.pieceId !== selection?.pieceId || next?.buildingId !== selection?.buildingId) edgeIndex = null;
     const record = next && findPiece(getPlan(), next.pieceId, next.buildingId);
@@ -112,9 +123,11 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
         }
         input.disabled = !canEdit();
       }
+      drawHaSection(record);
       return;
     }
     selection = next; layout = nextLayout; host.replaceChildren(); inputs = new Map(); acceptButton = null; pitchNote = null;
+    haSection = null; haSignature = null;
     if (!record) return;
     const { piece, kind, building } = record;
     const heading = headingNode = document.createElement('h3'); heading.textContent = title(record);
@@ -218,6 +231,9 @@ export function createCards({ getPlan, getKit = () => ({}), getLabel, getSelecti
       (['ridge', 'low_side'].includes(field) ? more : form).append(label);
     }
     if (more.children.length > 1) form.append(more);
+    if (haLink && ['room', 'building'].includes(kind)) {
+      haSection = document.createElement('section'); host.append(haSection); drawHaSection(record);
+    }
     host.append(button('Ask Argyle about this', () => ask(selection)));
     if (piece.state === 'ghost' || flags.length) {
       acceptButton = button('Looks right', async () => { await pending; await edit({ op: 'accept', building: building.id, pieces: [piece.id] }); draw(); });

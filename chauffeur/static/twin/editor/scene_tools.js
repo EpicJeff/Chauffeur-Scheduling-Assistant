@@ -1,5 +1,6 @@
 import { report } from './api.js';
 import { createCards, findPiece, feetInches } from './cards.js';
+import { createHaLink } from './ha_link.js';
 import { snapPoint, snapRotation } from './snap.js';
 import { sheetMaster, localCentre } from './words.js';
 import { createSelection } from './selection.js';
@@ -13,7 +14,7 @@ const rotatePoint = (p, angle) => {
   return [Math.cos(a) * p[0] - Math.sin(a) * p[1], Math.sin(a) * p[0] + Math.cos(a) * p[1]];
 };
 
-export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, edit, op, panel, canEdit, signal, onInteract, addDormer, pickSite, pickMaterial }) {
+export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, edit, op, panel, canEdit, signal, onInteract, addDormer, pickSite, pickMaterial, api }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
   let selection = null, tool = 'select', levelKey = null, sheetOn = false, gesture = null, delegate = null, pointerId = null;
   let ownsGesture = false, handles = null;
@@ -47,9 +48,10 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     handles?.refresh();
     drawDimensions(getPlan(), state);
   } });
+  const haLink = createHaLink({ api, onCommit: op, signal });
   const cards = createCards({ getPlan, getKit, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
-    op, addDormer, canEdit, select, pickMaterial, ask: item => panel.focusSelection(item, getLabel(item)) });
+    op, addDormer, canEdit, select, pickMaterial, haLink, ask: item => panel.focusSelection(item, getLabel(item)) });
   handles = createHandles({ view, getPlan, getSelection: roomSelection.current, canEdit, drag, onCommit: op,
     onPreview: drawDimensions, onClick: cards.edge, signal });
   const hasHandles = ({ kind, piece, building }) => piece.state !== 'ghost'
@@ -347,6 +349,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     else view.setCamera(button.dataset.editorCamera);
   }));
   return {
+    haLink,
     select, selected: () => selection, selection: roomSelection.current, dragPiece, rotateBuilding: rotate, floor, chooseFloor, drawFloors, sheet, setTool,
     handles: handles.handles,
     selectedRooms: () => roofRooms.size ? [...roofRooms] : null,
